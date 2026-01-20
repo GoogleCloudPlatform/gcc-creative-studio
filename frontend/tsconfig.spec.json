@@ -2,11 +2,15 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "outDir": "./creative-studio/spec",
+    
+    "outDir": "./out-tsc/spec",
     "types": [
       "jasmine"
     ]
   },
+   "files": [
+    "src/test.ts"  // <--- Make sure this points to your file
+  ],
   "include": [
     "src/**/*.spec.ts",
     "src/**/*.d.ts"

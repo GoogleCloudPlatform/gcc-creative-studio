@@ -45,7 +45,13 @@ class MediaRepository(BaseRepository[MediaItem, MediaItemModel]):
             query = query.where(self.model.user_email == search_dto.user_email)
         
         if search_dto.mime_type:
-            query = query.where(self.model.mime_type == search_dto.mime_type.value)
+            if search_dto.mime_type.value.endswith("/*"):
+                # Handle wildcard search (e.g., "image/*")
+                prefix = search_dto.mime_type.value[:-1]  # Remove the "*"
+                query = query.where(self.model.mime_type.like(f"{prefix}%"))
+            else:
+                # Handle exact match
+                query = query.where(self.model.mime_type == search_dto.mime_type.value)
         
         if search_dto.model:
             query = query.where(self.model.model == search_dto.model.value)

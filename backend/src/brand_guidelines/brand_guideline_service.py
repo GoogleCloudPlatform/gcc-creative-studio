@@ -22,7 +22,6 @@ import shutil
 import sys
 import uuid
 from concurrent.futures import (
-    ProcessPoolExecutor,
     ThreadPoolExecutor,
     as_completed,
 )
@@ -73,7 +72,7 @@ def _process_brand_guideline_in_background(
     workspace_id: Optional[int],
 ):
     """
-    This is the long-running worker task that runs in a separate process.
+    This is the long-running worker task that runs in a separate thread.
     It handles PDF splitting, uploading, AI extraction, and database updates.
     """
     import asyncio

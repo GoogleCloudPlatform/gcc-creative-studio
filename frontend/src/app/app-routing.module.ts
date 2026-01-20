@@ -14,23 +14,27 @@
  * limitations under the License.
  */
 
-import {NgModule} from '@angular/core';
-import {RouterModule, Routes} from '@angular/router';
-import {HomeComponent} from './home/home.component';
-import {LoginComponent} from './login/login.component';
-import {AuthGuardService} from './common/services/auth.guard.service';
-import {FunTemplatesComponent} from './fun-templates/fun-templates.component';
-import {VideoComponent} from './video/video.component';
-import {ArenaComponent} from './arena/arena.component';
-import {MediaGalleryComponent} from './gallery/media-gallery/media-gallery.component';
-import {MediaDetailComponent} from './gallery/media-detail/media-detail.component';
-import {AdminAuthGuard} from './admin/admin-auth.guard';
-import {VtoComponent} from './vto/vto.component';
-import {AudioComponent} from './audio/audio.component';
+import { NgModule } from '@angular/core';
+import { RouterModule, Routes } from '@angular/router';
+import { AdminAuthGuard } from './admin/admin-auth.guard';
+import { ArenaComponent } from './arena/arena.component';
+import { AudioComponent } from './audio/audio.component';
+import { AuthGuardService } from './common/services/auth.guard.service';
+import { FunTemplatesComponent } from './fun-templates/fun-templates.component';
+import { MediaDetailComponent } from './gallery/media-detail/media-detail.component';
+import { MediaGalleryComponent } from './gallery/media-gallery/media-gallery.component';
+import { HomeComponent } from './home/home.component';
+import { LoginComponent } from './login/login.component';
+import { VideoComponent } from './video/video.component';
+import { VtoComponent } from './vto/vto.component';
+import { ExecutionHistoryComponent } from './workflows/execution-history/execution-history.component';
+import { WorkflowEditorComponent } from './workflows/workflow-editor/workflow-editor.component';
+import { WorkflowListComponent } from './workflows/workflow-list/workflow-list.component';
+import { WorkbenchComponent } from './workbench/workbench.component';
 
 const routes: Routes = [
-  {path: 'login', component: LoginComponent},
-  {path: '', component: HomeComponent, canActivate: [AuthGuardService]},
+  { path: 'login', component: LoginComponent },
+  { path: '', component: HomeComponent, canActivate: [AuthGuardService] },
   {
     path: 'fun-templates',
     component: FunTemplatesComponent,
@@ -40,6 +44,7 @@ const routes: Routes = [
   {path: 'arena', component: ArenaComponent, canActivate: [AuthGuardService]},
   {path: 'vto', component: VtoComponent, canActivate: [AuthGuardService]},
   {path: 'audio', component: AudioComponent, canActivate: [AuthGuardService]},
+  {path: 'workbench', component:WorkbenchComponent, canActivate: [AuthGuardService]},
   // When a user goes to '/gallery', show the main feed.
   {
     path: 'gallery',
@@ -62,10 +67,21 @@ const routes: Routes = [
     loadChildren: () => import('./admin/admin.module').then(m => m.AdminModule),
     canActivate: [AdminAuthGuard],
   },
+  {
+    path: 'workflows',
+    canActivate: [AuthGuardService],
+    children: [
+      { path: '', component: WorkflowListComponent, pathMatch: 'full' },
+      { path: 'new', component: WorkflowEditorComponent },
+      // Match the parameter names used in your WorkflowEditorComponent
+      { path: 'edit/:workflowId', component: WorkflowEditorComponent },
+      { path: ':id/executions', component: ExecutionHistoryComponent },
+    ],
+  },
 ];
 
 @NgModule({
   imports: [RouterModule.forRoot(routes)],
   exports: [RouterModule],
 })
-export class AppRoutingModule {}
+export class AppRoutingModule { }

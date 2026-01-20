@@ -14,20 +14,55 @@
  * limitations under the License.
  */
 
-import {TestBed} from '@angular/core/testing';
-import {CanActivateFn} from '@angular/router';
+import { TestBed } from '@angular/core/testing';
+import { HttpClientTestingModule } from '@angular/common/http/testing';
+import { AngularFireModule } from '@angular/fire/compat';
+import { AngularFirestoreModule } from '@angular/fire/compat/firestore';
+import { of } from 'rxjs';
+// Removed import of environment as it was causing issues in test
+import { AdminAuthGuard } from './admin-auth.guard';
+import { AuthService } from '../common/services/auth.service';
+import { UserService } from '../common/services/user.service';
 
-import {AdminAuthGuard} from './admin-auth.guard';
+const mockFirebaseConfig = {
+  apiKey: 'mock-api-key',
+  authDomain: 'mock-auth-domain',
+  projectId: 'mock-project-id',
+  storageBucket: 'mock-storage-bucket',
+  messagingSenderId: 'mock-messaging-sender-id',
+  appId: 'mock-app-id',
+  measurementId: 'mock-measurement-id',
+};
 
 describe('AdminAuthGuard', () => {
-  let service: AdminAuthGuard;
+  let guard: AdminAuthGuard;
+  let authService: jasmine.SpyObj<AuthService>;
+  let userService: jasmine.SpyObj<UserService>;
 
   beforeEach(() => {
-    TestBed.configureTestingModule({});
-    service = TestBed.inject(AdminAuthGuard);
+    const authServiceSpy = jasmine.createSpyObj('AuthService', ['isAdmin']);
+    const userServiceSpy = jasmine.createSpyObj('UserService', ['getUser']);
+
+    TestBed.configureTestingModule({
+      imports: [
+        HttpClientTestingModule,
+        AngularFireModule.initializeApp(mockFirebaseConfig),
+        AngularFirestoreModule,
+      ],
+      providers: [
+        AdminAuthGuard,
+        { provide: AuthService, useValue: authServiceSpy },
+        { provide: UserService, useValue: userServiceSpy },
+      ],
+    });
+
+    guard = TestBed.inject(AdminAuthGuard);
+    authService = TestBed.inject(AuthService) as jasmine.SpyObj<AuthService>;
+    userService = TestBed.inject(UserService) as jasmine.SpyObj<UserService>;
   });
 
   it('should be created', () => {
-    expect(service).toBeTruthy();
+    expect(guard).toBeTruthy();
   });
 });
+

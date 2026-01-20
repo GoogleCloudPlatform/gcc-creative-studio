@@ -1,0 +1,209 @@
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* Base Card Container */
+.step-card {
+  background-color: var(--card-bg);
+  border-radius: 0.5rem;
+  border: 1px solid var(--border-color);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+
+  &:hover {
+    border-color: #555;
+    box-shadow: 0 15px 40px rgba(0,0,0,0.4);
+  }
+
+  /* --- Step Type Specific Top Borders --- */
+  &.user-input { border-top: 4px solid #f87171; }                  /* Red */
+  &.generate-text { border-top: 4px solid #339af0; }               /* Blue */
+  &.generate-image { border-top: 4px solid #51cf66; }              /* Green */
+  &.edit-image { border-top: 4px solid #ff922b; }                  /* Orange */
+  &.generate-video { border-top: 4px solid #fcc419; }              /* Purple */
+  &.crop-image { border-top: 4px solid #22b8cf; }                  /* Cyan */
+  &.virtual-try-on { border-top: 4px solid #8b5cf6; }              /* Purple */
+
+  &.invalid-step {
+    border-color: #f44336 !important;
+    box-shadow: 0 0 0 1px #f44336, 0 10px 30px rgba(244, 67, 54, 0.2) !important;
+
+    .step-header {
+      background: rgba(244, 67, 54, 0.1);
+    }
+  }
+}
+
+/* 1. Header Section */
+.step-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid var(--border-color);
+  cursor: move;
+
+  .step-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+
+    mat-icon {
+      color: var(--text-secondary);
+    }
+  }
+
+  .step-id {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: rgba(0,0,0,0.2);
+    padding: 4px 8px;
+    border-radius: 4px;
+  }
+}
+
+.step-content {
+  .section {
+    padding: 16px 24px;
+  }
+}
+
+/* 2. Body Section */
+.step-body {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px; /* Space between main sections (Inputs vs Settings) */
+}
+
+/* 3. Inner Sections (Inputs, Settings, Outputs) */
+.section {
+  h3 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--text-secondary);
+    margin: 0 0 16px 0;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    &::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border-color);
+      opacity: 0.5;
+    }
+  }
+}
+
+/* Controls Grid - keeps form fit neatly */
+.controls-row {
+  display: grid;
+  grid-template-columns: 140px 1fr; /* Mode dropdown gets fixed width, input gets rest */
+  gap: 12px;
+  align-items: start;
+  margin-bottom: 16px;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr); /* Two columns for settings */
+  gap: 16px;
+}
+
+/* Input Group Labels */
+.input-group {
+  margin-bottom: 20px;
+
+  label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+  }
+}
+
+/* Mode Select (Fixed/Linked) specific styling to make it compact */
+.mode-select {
+  .mat-mdc-form-field-subscript-wrapper {
+    display: none; /* Hides helper text space to make it compact */
+  }
+}
+
+/* Output Pills */
+.output-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(140, 92, 245, 0.15); /* Tint of accent color */
+  color: #d0bfff;
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid rgba(140, 92, 245, 0.3);
+
+  mat-icon {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+  }
+}
+
+/* Slider Group */
+.slider-group {
+  margin-top: 8px;
+  
+  label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+  }
+  
+  mat-slider {
+    width: 100%;
+  }
+}
+
+/* Radio Group */
+.radio-group {
+  margin-top: 8px;
+  
+  label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+  }
+  
+  mat-radio-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+}

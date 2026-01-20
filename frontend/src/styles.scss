@@ -475,3 +475,10 @@ app-workspace-switcher .workspace-name {
 // 4K Displays (Ultra HD) (Projectors or Higher Resolution Screens, 2160px and up)
 @media screen and (min-width: 2160px) {
 }
+
+// Execution Details Modal
+.execution-details-modal {
+  .mat-mdc-dialog-surface {
+    @apply bg-neutral-800;
+  }
+}

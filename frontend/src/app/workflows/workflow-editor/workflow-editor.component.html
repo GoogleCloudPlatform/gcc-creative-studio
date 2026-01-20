@@ -1,0 +1,205 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<div class="editor-container h-full flex flex-col bg-neutral-800 text-white">
+  <!-- A. Global Header -->
+  <header class="flex items-center p-4 pb-10 border-b border-neutral-700">
+    <!-- Breadcrumbs/Title Area -->
+    <div class="flex-grow">
+      <div *ngIf="isReadOnly; else editableHeader">
+        <h1 class="text-2xl font-semibold">{{ displayedWorkflow?.name }}</h1>
+        <p class="text-sm text-neutral-400">{{ displayedWorkflow?.description }}</p>
+      </div>
+      <ng-template #editableHeader>
+        <div [formGroup]="workflowForm">
+          <input formControlName="name" placeholder="Untitled Workflow"
+            class="text-5xl font-semibold bg-transparent outline-none border-none p-0 w-full">
+          <input formControlName="description" placeholder="Add a description..."
+            class="text-sm text-neutral-400 bg-transparent outline-none border-none p-0 w-full mt-1">
+        </div>
+      </ng-template>
+    </div>
+
+    <!-- Status Badge -->
+    <div class="mx-6">
+      <ng-container [ngSwitch]="mode">
+        <mat-chip *ngSwitchCase="EditorMode.Run" [ngClass]="getWorkflowStatusClass(currentExecutionState)">
+          <mat-icon *ngIf="getWorkflowStatusIcon(currentExecutionState)" class="!text-sm !w-4 !h-4 mr-1">
+            {{ getWorkflowStatusIcon(currentExecutionState) }}
+          </mat-icon>
+          {{ currentExecutionState || 'IDLE' }}
+        </mat-chip>
+      </ng-container>
+    </div>
+
+    <!-- Primary Actions -->
+    <div class="flex items-center gap-2">
+      <button *ngIf="!isReadOnly" mat-raised-button color="primary" (click)="run()">
+        <mat-icon>play_arrow</mat-icon>
+        Run Workflow
+      </button>
+      <button *ngIf="!isReadOnly" mat-raised-button color="primary" (click)="save()" [disabled]="workflowForm.pristine">Save</button>
+      <button mat-raised-button color="primary" routerLink="/workflows">Go Back</button>
+    </div>
+  </header>
+
+  <!-- Main Content Area -->
+  <div class="flex-grow flex overflow-hidden">
+    <!-- Left Panel (Workflow Graph / History) -->
+    <div class="w-2/3 flex flex-col">
+      <div class="p-4 border-b border-neutral-700 flex justify-between items-center">
+        <h5 class="text-lg font-semibold">Workflow Graph</h5>
+        <div class="flex items-center gap-2">
+          <button *ngIf="!isReadOnly" mat-stroked-button color="accent"
+            (click)="openAddStepModal()">
+            <mat-icon>add</mat-icon>
+            Add Step
+          </button>
+        </div>
+      </div>
+      <div class="flex-grow p-4 overflow-auto" [formGroup]="workflowForm">
+        <!-- User Input Section -->
+        <div class="user-input-panel" formGroupName="userInput">
+          
+          <div class="step-content">
+            <div class="section">
+              <h3>Define Workflow Parameters</h3>
+              <div formGroupName="settings" class="step-settings">
+                <div formArrayName="definitions" class="definitions-list">
+                  <div class="definition-row header-row">
+                    <div class="name-col">Parameter Name</div>
+                    <div class="type-col">Data Type</div>
+                    <div class="action-col"></div>
+                  </div>
+                  <div *ngFor="let def of outputDefinitionsArray.controls; let i = index" [formGroupName]="i" class="definition-row">
+                    <mat-form-field appearance="outline" class="name-col">
+                      <mat-label>Parameter Name</mat-label>
+                      <input matInput formControlName="name" placeholder="e.g., Main Prompt" />
+                    </mat-form-field>
+                    <mat-form-field appearance="outline" class="type-col">
+                      <mat-label>Type</mat-label>
+                      <mat-select formControlName="type">
+                        <mat-option value="text">Text</mat-option>
+                        <mat-option value="image">Image</mat-option>
+                      </mat-select>
+                    </mat-form-field>
+                    <button mat-icon-button color="warn" (click)="removeOutput(i)" class="action-col" aria-label="Delete output">
+                      <mat-icon>delete_outline</mat-icon>
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <button mat-stroked-button color="primary" (click)="addOutput()" class="add-output-btn">
+                Add Input Field
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Steps Section -->
+        <div cdkDropList formArrayName="steps" (cdkDropListDropped)="dropStep($event)" class="space-y-4">
+          <ng-container *ngFor="let step of stepsArray.controls; let i = index" [formGroupName]="i">
+            <app-generic-step
+              class="step-card block bg-neutral-700/50 rounded-lg transition-all duration-200 hover:bg-neutral-700"
+              [class.ring-2]="selectedStepIndex === i"
+              [class.ring-blue-500]="selectedStepIndex === i"
+              (click)="selectedStepIndex = i"
+              cdkDrag [cdkDragDisabled]="isReadOnly"
+              [stepForm]="asFormGroup(step)"
+              [stepIndex]="i"
+              [config]="getStepConfig(step.value.type)"
+              [availableOutputs]="availableOutputsPerStep[i]"
+              [showValidationErrors]="submitted"
+              (delete)="deleteStep(i)">
+            </app-generic-step>
+          </ng-container>
+        </div>
+      </div>
+    </div>
+
+    <!-- Separator -->
+    <div class="w-px bg-neutral-700"></div>
+
+    <!-- Right Panel (Outputs) -->
+    <div class="w-1/3 flex flex-col">
+      <div class="p-4 border-b border-neutral-700 flex items-center justify-between">
+        <h5 class="text-lg font-semibold">Outputs</h5>
+        <!-- TODO: Add tabs if a step has multiple output types -->
+      </div>
+      <div class="flex-grow p-4 overflow-auto">
+        <!-- Zero State (No execution) -->
+        <div *ngIf="!currentExecutionId && !selectedStep"
+          class="flex flex-col items-center justify-center h-full text-center text-neutral-500">
+          <mat-icon class="!text-8xl !w-36 !h-36 text-neutral-600">hub</mat-icon>
+          <p class="mt-4 font-medium">Run the workflow to generate results</p>
+          <p class="text-sm text-neutral-600">Select a step on the left to see its outputs</p>
+          <p class="text-sm text-neutral-600">here once a run is complete.</p>
+        </div>
+
+        <!-- Workflow Running State -->
+        <div *ngIf="currentExecutionId && currentExecutionState === 'ACTIVE' && !selectedStep"
+          class="flex flex-col items-center justify-center h-full text-center text-blue-300">
+          
+          <mat-icon class="hourglass-loader !text-8xl !w-36 !h-36">
+            hourglass_top
+          </mat-icon>
+
+          <p class="mt-4 font-medium">Workflow is running...</p>
+          <p class="text-sm text-neutral-400">Select a step to see its output as it completes</p>
+        </div>
+
+        <!-- Workflow Completed State (no step selected) -->
+        <div *ngIf="currentExecutionId && currentExecutionState !== 'ACTIVE' && !selectedStep"
+          class="flex flex-col items-center justify-center h-full text-center"
+          [ngClass]="currentExecutionState === 'SUCCEEDED' ? 'text-green-300' : 'text-red-300'">
+          <mat-icon class="!text-8xl !w-36 !h-36">
+            {{ currentExecutionState === 'SUCCEEDED' ? 'check_circle' : 'error' }}
+          </mat-icon>
+          <p class="mt-4 font-medium">
+            Workflow {{ currentExecutionState === 'SUCCEEDED' ? 'completed successfully' : 'failed' }}
+          </p>
+          <p class="text-sm text-neutral-400">Select a step to view its outputs</p>
+        </div>
+
+        <!-- Selected Step Outputs -->
+        <div *ngIf="selectedStep" class="step-outputs">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-semibold">{{ selectedStep.type | titlecase }} Outputs</h3>
+            <mat-chip [ngClass]="getStepStatusChipClass(selectedStep.status)">
+              <mat-icon *ngIf="getStepStatusIcon(selectedStep.status)" class="!text-sm !w-4 !h-4 mr-1">
+                {{ getStepStatusIcon(selectedStep.status) }}
+              </mat-icon>
+              {{ selectedStep.status | uppercase }}
+            </mat-chip>
+          </div>
+
+          <div *ngIf="!selectedStepExecution || (selectedStepExecution | keyvalue)?.length === 0; else elseBlock" class="text-neutral-500 text-sm italic">
+            No outputs generated yet.
+          </div>
+          <ng-template #elseBlock>
+            <app-step-execution-details
+              [stepId]="selectedStep.stepId"
+              [stepType]="selectedStep.type"
+              [inputs]="selectedStepExecution.step_inputs"
+              [outputs]="selectedStepExecution.step_outputs"
+              [mediaUrlMap]="mediaUrlMap">
+            </app-step-execution-details>
+          </ng-template>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

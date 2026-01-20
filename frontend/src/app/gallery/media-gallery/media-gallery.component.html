@@ -126,9 +126,9 @@
             <mat-label>Media Type</mat-label>
             <mat-select [(ngModel)]="mediaTypeFilter">
               <mat-option>None</mat-option>
-              <mat-option value="image/png">Image</mat-option>
-              <mat-option value="video/mp4">Video</mat-option>
-              <mat-option value="audio/wav">Audio</mat-option>
+              <mat-option value="image/*">Image</mat-option>
+              <mat-option value="video/*">Video</mat-option>
+              <mat-option value="audio/*">Audio</mat-option>
             </mat-select>
           </mat-form-field>
         </div>
@@ -183,7 +183,7 @@
             [class.cursor-pointer]="isSelectionMode"
             class="transition-opacity duration-500 block"
           >
-            <ng-container *ngIf="media.mimeType === 'image/png'">
+            <ng-container *ngIf="media.mimeType?.startsWith('image/')">
               <img
                 *ngFor="let url of media.presignedUrls; let i = index"
                 class="absolute top-0 left-0 h-full w-full cursor-pointer object-cover transition-opacity duration-500 group-hover:opacity-80"
@@ -202,7 +202,7 @@
                 "
               ></div>
             </ng-container>
-            <ng-container *ngIf="media.mimeType === 'video/mp4'">
+            <ng-container *ngIf="media.mimeType?.startsWith('video/')">
               <!-- Show video on hover -->
               <ng-container *ngIf="hoveredVideoId === media.id">
                 <video
@@ -266,7 +266,7 @@
               ></div>
             </ng-container>
 
-            <ng-container *ngIf="media.mimeType === 'audio/wav' || media.mimeType === 'audio/mpeg'">
+            <ng-container *ngIf="media.mimeType?.startsWith('audio/')">
               <div class="audio-card-preview">
 
                 <mat-icon *ngIf="hoveredAudioId !== media.id">graphic_eq</mat-icon>
@@ -274,7 +274,7 @@
                 <ng-container *ngIf="hoveredAudioId === media.id">
                     <mat-icon class="playing-icon">volume_up</mat-icon>
 
-                    <audio autoplay [src]="getCurrentImageUrl(media)" (ended)="stopAudio()"></audio>
+                    <audio autoplay oncanplay="this.play()" [src]="getCurrentImageUrl(media)" (ended)="stopAudio()"></audio>
                 </ng-container>
 
               </div>

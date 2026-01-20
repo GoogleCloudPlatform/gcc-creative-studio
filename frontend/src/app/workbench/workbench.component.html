@@ -1,0 +1,524 @@
+<!--
+ Copyright 2025 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<div class="lg:max-w-[80vw] lg:mx-auto border-none">
+    <div class="home-margin grid grid-cols-1">
+        <!-- Main App Container (Dark Theme) -->
+        <div class="flex justify-center  text-white font-sans overflow-hidden selection:bg-blue-500 selection:text-white"
+            (mousemove)="onTrimMove($event); onDragMove($event); onScrubMove($event)" (mouseup)="onTrimEnd(); onDragEnd(); onScrubEnd()">
+
+            <!-- Main Content Area -->
+            <div class="flex flex-col  md:w-11/12 mx-auto">
+
+                <!-- Top Workspace (3 Columns) -->
+                <div class="flex flex-col xl:flex-row justify-between p-6 gap-6 min-h-0 mt-[5rem] mb-4">
+
+                    <!-- COL 1: Assets Panel -->
+                    <div
+                        class="min-w-[28rem] max-w-[36rem] rounded-xl p-5 flex flex-col bg-gradient-to-b from-zinc-500/50 to-neutral-700/20 rounded-[48px] shadow-[2px_2px_12px_0px_rgba(0,0,0,0.10)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-[10px]">
+                        <div class="flex items-center justify-between mb-4">
+                            <h2 class="text-sm font-medium text-gray-200 tracking-tight">Assets</h2>
+                        </div>
+
+                        <!-- Grid of assets -->
+                        <div class="flex-1 overflow-y-auto grid grid-cols-2 gap-3 content-start custom-scrollbar">
+
+                            <!-- "Add New" Card (Cloud Media Selector) -->
+                            <div (click)="openMediaSelector()"
+                                class="aspect-square border-2 border-dashed border-gray-700 rounded-xl flex flex-col items-center justify-center text-gray-500 gap-2 cursor-pointer hover:border-blue-500 hover:text-blue-400 transition-colors relative group bg-[#151517]">
+                                <div
+                                    class="w-12 h-12 rounded-full bg-gray-800 group-hover:bg-blue-500/20 flex items-center justify-center transition-colors">
+                                    <mat-icon class="!w-6 !h-6">filter_drama</mat-icon>
+                                </div>
+                                <span class="text-[10px] font-medium">Add from Cloud</span>
+                            </div>
+
+                            <!-- Asset Cards (filtered by activeTab) -->
+                            <div *ngFor="let asset of filteredAssets()"
+                                (click)="addToTimeline(asset)"
+                                class="group relative aspect-square bg-black rounded-xl overflow-hidden border border-white/5 cursor-pointer hover:ring-2 hover:ring-blue-500/50 transition-all">
+                                <img *ngIf="asset.thumbnail" [src]="asset.thumbnail"
+                                    class="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                                    (error)="onThumbnailError(asset)">
+                                <div *ngIf="!asset.thumbnail && asset.type === 'video'"
+                                    class="w-full h-full flex items-center justify-center bg-gray-900">
+                                    <svg class="text-blue-400 w-8 h-8" viewBox="0 0 24 24" fill="none"
+                                        stroke="currentColor" stroke-width="2">
+                                        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                                    </svg>
+                                </div>
+                                <div *ngIf="!asset.thumbnail && asset.type === 'audio'"
+                                    class="w-full h-full flex items-center justify-center bg-gray-900">
+                                    <svg class="text-purple-400 w-8 h-8" viewBox="0 0 24 24" fill="none"
+                                        stroke="currentColor" stroke-width="2">
+                                        <path d="M9 18V5l12-2v13" />
+                                        <circle cx="6" cy="18" r="3" />
+                                        <circle cx="18" cy="16" r="3" />
+                                    </svg>
+                                </div>
+
+                                <!-- Overlay Info -->
+                                <div
+                                    class="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/90 to-transparent">
+                                    <p class="text-[10px] font-medium truncate text-white">{{asset.name}}</p>
+                                    <p class="text-[9px] text-gray-400">{{formatTime(asset.duration)}}</p>
+                                </div>
+
+                                <!-- Delete Button (Hover) -->
+                                <button (click)="deleteAsset(asset, $event)"
+                                    class="absolute top-2 right-2 bg-red-500/80 hover:bg-red-600 rounded-full p-1.5 opacity-0 group-hover:opacity-100 transition-all hover:scale-110 shadow-lg"
+                                    title="Delete Asset">
+                                    <mat-icon class="!w-4 !h-4 text-white text-[16px] leading-none flex items-center justify-center">delete</mat-icon>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Bottom Tabs (Video / Audio filter) -->
+                        <div class="mt-4 flex gap-2 justify-center ">
+                            <button (click)="activeTab.set('video')"
+                                class="w-32 flex items-center justify-center gap-1.5 py-2 px-2 rounded-full text-lg font-medium shadow-sm bg-gradient-to-b from-zinc-500/50 to-neutral-700/20 shadow-[2px_2px_12px_0px_rgba(0,0,0,0.10)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-[10px]"
+                                [ngClass]="activeTab() === 'video' ? 'text-white' : 'text-white/50'">
+                                <mat-icon svgIcon="video-clap-icon" class="!w-6 !h-6"></mat-icon>
+                                Videos
+                            </button>
+                            <button (click)="activeTab.set('audio')"
+                                class="w-32 flex items-center justify-center gap-1.5 py-2 px-2 rounded-full text-lg font-medium shadow-sm bg-gradient-to-b from-zinc-500/50 to-neutral-700/20 shadow-[2px_2px_12px_0px_rgba(0,0,0,0.10)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-[10px]"
+                                [ngClass]="activeTab() === 'audio' ? 'text-white' : 'text-white/50'">
+                                <mat-icon svgIcon="sound-sensing-icon" class="!w-6 !h-6"></mat-icon>
+                                Audio
+                            </button>
+                            <button
+                                matTooltip="Drive coming soon!"
+                                class="w-32 flex items-center justify-center gap-1.5 py-2 px-2 rounded-full text-lg font-medium text-white/40 shadow-sm bg-gradient-to-b from-zinc-500/20 to-neutral-700/10 shadow-none outline outline-1 outline-offset-[-1px] outline-stone-300/20 backdrop-blur-[10px] cursor-not-allowed opacity-60">
+                                <mat-icon svgIcon="drive-icon" class="!w-6 !h-6 grayscale opacity-50"></mat-icon>
+                                Drive
+                            </button>
+                            <!-- Functional Upload Button -->
+                            <label
+                                class="h-12 w-12 flex items-center justify-center cursor-pointer bg-gradient-to-b from-zinc-500/50 to-neutral-700/20 rounded-[50%] shadow-[2px_2px_12px_0px_rgba(0,0,0,0.10)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-[10px]"
+                                title="Upload Media">
+                                <mat-icon svgIcon="upload-icon" class="!w-6 !h-6"></mat-icon>
+                                <button type="file" multiple accept="video/*,audio/*" class="hidden" (click)="openMediaSelector()"></button>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- COL 2: Preview Area -->
+                    <div
+                        class="w-[28rem]  min-h-[600px] min-w-[400px] flex flex-col items-center justify-center rounded-xl overflow-hidden bg-gradient-to-b from-zinc-500/50 to-neutral-700/20 rounded-[48px] shadow-[2px_2px_12px_0px_rgba(0,0,0,0.10)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-[10px]">
+
+                        <!-- Video Player (Flexible Size) -->
+                        <div
+                            class="relative w-full h-full flex items-center justify-center group bg-black/20 rounded-lg overflow-hidden">
+
+                            <!-- Placeholder when no video (Empty State) -->
+                            <div [class.hidden]="activeVideoClip()"
+                                class="absolute inset-0 flex flex-col items-center justify-center text-white/80 pointer-events-none select-none z-10">
+                                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18" />
+                                    <line x1="7" y1="2" x2="7" y2="22" />
+                                    <line x1="17" y1="2" x2="17" y2="22" />
+                                    <line x1="2" y1="12" x2="22" y2="12" />
+                                    <line x1="2" y1="7" x2="7" y2="7" />
+                                    <line x1="2" y1="17" x2="7" y2="17" />
+                                    <line x1="17" y1="17" x2="22" y2="17" />
+                                    <line x1="17" y1="7" x2="22" y2="7" />
+                                </svg>
+                                <p class="text-xs font-medium mt-2 tracking-wide">No Signal</p>
+                            </div>
+
+                            <!-- The Video Element -->
+                            <video #mainVideo class="max-w-full max-h-full object-contain shadow-2xl rounded-lg"
+                                [class.hidden]="!activeVideoClip()" [style.filter]="videoFilter()"
+                                [src]="activeVideoSrc()" [muted]="true" (loadedmetadata)="onMetadataLoaded()"
+                                (ended)="onVideoEnded()"></video>
+
+                            <!-- Hidden Audio (Multi-track) -->
+                            <ng-container *ngFor="let src of activeAudioSrcs()">
+                                <audio #bgAudio [src]="src"></audio>
+                            </ng-container>
+
+                            <!-- Playback Controls Overlay (Hover) -->
+                            <div [class.hidden]="!activeVideoClip()"
+                                class="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
+                                <div *ngIf="!isPlaying()"
+                                    class="w-16 h-16 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center cursor-pointer pointer-events-auto shadow-lg ring-1 ring-white/20"
+                                    (click)="togglePlay()">
+                                    <svg class="fill-white ml-1" width="32" height="32" viewBox="0 0 24 24">
+                                        <path d="M8 5v14l11-7z" />
+                                    </svg>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Time Display Pill -->
+                        <div
+                            class="absolute bottom-6 px-4 py-1.5 text-white/90 z-20 bg-gradient-to-b from-zinc-500/50 to-neutral-700/20 rounded-3xl shadow-[2px_2px_12px_0px_rgba(0,0,0,0.10)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-[10px]">
+                            {{ formatTime(currentTime()) }} <span class="text-gray-600 mx-1">/</span> {{
+                            formatTime(totalDuration()) }}
+                        </div>
+                    </div>
+
+                    <!-- COL 3: Properties Panel -->
+                    <div
+                        class="min-w-[28rem] max-w-[36rem] rounded-xl p-6 flex flex-col bg-gradient-to-b from-zinc-500/50 to-neutral-700/20 rounded-[48px] shadow-[2px_2px_12px_0px_rgba(0,0,0,0.10)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-[10px]">
+
+                        <!-- Aspect Ratio -->
+                        <div class="mb-8">
+                            <h3 class="text-white-900 text-sm font-medium mb-3">Aspect Ratio</h3>
+                            <div class="grid grid-cols-4 gap-2">
+                                <button
+                                    class=" w-[6rem] h-[3rem] flex flex-row items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-s font-medium shadow-sm bg-gradient-to-b from-zinc-500/50 to-neutral-700/20 shadow-[2px_2px_12px_0px_rgba(0,0,0,0.10)] outline outline-1 outline-offset-[-1px] outline-stone-300/60 backdrop-blur-[10px]">
+                                    <mat-icon svgIcon="desktop-mac-icon" class="!w-5 !h-5"></mat-icon>
+                                    <span class="text-sm font-medium">16:9</span>
+                                </button>
+                                <button
+                                    class=" w-[6rem] h-[3rem] flex flex-row items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-s font-medium shadow-sm bg-gradient-to-b from-zinc-500/50 to-neutral-700/20 shadow-[2px_2px_12px_0px_rgba(0,0,0,0.10)] outline outline-1 outline-offset-[-1px] outline-stone-300/60 backdrop-blur-[10px]">
+                                    <mat-icon svgIcon="desktop-icon" class="!w-5 !h-5"></mat-icon>
+                                    <span class="text-sm font-medium">9:16</span>
+                                </button>
+                                <button
+                                    class=" w-[6rem] h-[3rem] flex flex-row items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-s font-medium shadow-sm bg-gradient-to-b from-zinc-500/50 to-neutral-700/20 shadow-[2px_2px_12px_0px_rgba(0,0,0,0.10)] outline outline-1 outline-offset-[-1px] outline-stone-300/60 backdrop-blur-[10px]">
+                                    <mat-icon svgIcon="square-icon" class="!w-5 !h-5"></mat-icon>
+                                    <span class="text-sm font-medium">1:1</span>
+                                </button>
+                                <button
+                                    class=" w-[6rem] h-[3rem] flex flex-row items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-s font-medium shadow-sm bg-gradient-to-b from-zinc-500/50 to-neutral-700/20 shadow-[2px_2px_12px_0px_rgba(0,0,0,0.10)] outline outline-1 outline-offset-[-1px] outline-stone-300/60 backdrop-blur-[10px]">
+                                    <mat-icon svgIcon="desktop-icon" class="!w-5 !h-5"></mat-icon>
+                                    <span class="text-sm font-medium">4:3</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Lighting Controls -->
+                        <div class="flex-1 space-y-6">
+                            <div class="flex items-center  gap-2 text-gray-200 mb-2">
+                                <mat-icon svgIcon="lightbulb-icon" class="!w-10 !h-10"></mat-icon>
+                                <h3 class="text-sm font-medium !m-0">Lighting</h3>
+                            </div>
+
+                            <!-- Exposure Slider -->
+                            <div class="space-y-2">
+                                <div class="flex justify-between text-[10px] text-gray-400 font-medium">
+                                    <span>Exposure</span>
+                                    <span>{{exposureVal}}%</span>
+                                </div>
+                                <input type="range" [(ngModel)]="exposureVal" min="0" max="200"
+                                    class="w-full h-1.5 bg-gray-700 rounded-full appearance-none cursor-pointer accent-blue-500">
+                            </div>
+
+                            <!-- Contrast Slider -->
+                            <div class="space-y-2">
+                                <div class="flex justify-between text-[10px] text-gray-400 font-medium">
+                                    <span>Contrast</span>
+                                    <span>{{contrastVal}}%</span>
+                                </div>
+                                <input type="range" [(ngModel)]="contrastVal" min="0" max="200"
+                                    class="w-full h-1.5 bg-gray-700 rounded-full appearance-none cursor-pointer accent-blue-500">
+                            </div>
+
+                            <!-- Saturation Slider -->
+                            <div class="space-y-2">
+                                <div class="flex justify-between text-[10px] text-gray-400 font-medium">
+                                    <span>Saturation</span>
+                                    <span>{{saturateVal}}%</span>
+                                </div>
+                                <input type="range" [(ngModel)]="saturateVal" min="0" max="200"
+                                    class="w-full h-1.5 bg-gray-700 rounded-full appearance-none cursor-pointer accent-blue-500">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Bottom Timeline (Floating) -->
+                <div
+                    class="h-104 p-6 my-8 flex flex-col overflow-hidden relative z-10 ">
+                    <!-- Timeline Header / Toolbar -->
+                    <div class="h-12 border-b border-white/5 flex items-center justify-between px-4 ">
+                         <!-- Time Ruler -->
+                         <div class="h-10 ml-96 p-2 overflow-x-hidden border-b border-white/5 w-full sticky top-0 z-10 bg-gradient-to-b from-zinc-500/50 to-neutral-700/20 rounded-3xl shadow-[2px_2px_12px_0px_rgba(0,0,0,0.10)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-[10px]">
+                            <div class="relative h-full" [style.width.px]="timelineWidth()">
+                                <!-- Major ticks with labels (every second) -->
+                                <ng-container *ngFor="let tick of timeRulerTicks()">
+                                    <!-- Major tick line -->
+                                    <div class="absolute top-0 h-full flex flex-col items-center"
+                                        [style.left.px]="tick * pixelsPerSecond">
+                                        <div class="w-0.5 h-5 bg-white/80"></div>
+                                        <span class="text-[10px] font-semibold text-white/90 mt-0.5">{{tick}}s</span>
+                                    </div>
+                                    <!-- Minor ticks (subdivisions) - show half-second marks -->
+                                    <div *ngIf="pixelsPerSecond >= 20" 
+                                        class="absolute top-0 w-0.5 h-3 bg-white/50"
+                                        [style.left.px]="(tick + 0.5) * pixelsPerSecond">
+                                    </div>
+                                    <!-- Quarter-second marks when zoomed in -->
+                                    <ng-container *ngIf="pixelsPerSecond >= 40">
+                                        <div class="absolute top-0 w-px h-2 bg-white/40"
+                                            [style.left.px]="(tick + 0.25) * pixelsPerSecond"></div>
+                                        <div class="absolute top-0 w-px h-2 bg-white/40"
+                                            [style.left.px]="(tick + 0.75) * pixelsPerSecond"></div>
+                                    </ng-container>
+                                </ng-container>
+                            </div>
+                         </div>
+
+                        <div class="flex items-center justify-center  gap-4">
+                            <!-- Split Button -->
+                            <button (click)="splitSelectedClip()" [disabled]="!canSplit()"
+                                class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                title="Split Clip (Razor)">
+                                <mat-icon>content_cut</mat-icon>
+                            </button>
+                            <!-- Zoom Slider -->
+                            <div class="flex items-center text-white/90">
+                                <span class="text-[1rem]">Zoom</span>
+                                <input type="range" [(ngModel)]="pixelsPerSecond" min="5" max="100" step="5"
+                                    class="w-20 h-1 bg-gray-700 rounded-full appearance-none cursor-pointer accent-gray-400">
+                            </div>
+
+                            <button (click)="deleteSelectedClip()" [disabled]="!selectedClipId()"
+                                class="flex items-center justify-center text-white/90 hover:text-red-400 disabled:opacity-20 transition-colors">
+                                <mat-icon class="!w-6 !h-6">delete</mat-icon>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Tracks Area -->
+                    <div class="flex-1 flex p-2 relative overflow-hidden bg-gradient-to-b from-zinc-500/50 to-neutral-700/20 rounded-3xl shadow-[2px_2px_12px_0px_rgba(0,0,0,0.10)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-[10px]" #timelineContainer>
+
+                        <!-- Left Track Controls -->
+                        <div
+                            class="w-96  flex flex-col align-items-center  justify-evenly z-20 relative shadow-lg shrink-0 border-r border-white/5">
+                            <!-- Video Control -->
+                            <div class="flex flex-row items-center justify-between ">
+                                <div class="h-16 flex items-center px-3 gap-6 border-b border-white/5">
+                                    <mat-icon svgIcon="movie-shallow-icon" class="!w-6 !h-6"></mat-icon>
+                                    <div
+                                        class="flex gap-2 p-2 bg-gradient-to-b from-zinc-500/50 to-neutral-700/20 rounded-[48px] shadow-[2px_2px_12px_0px_rgba(0,0,0,0.10)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-[10px]">
+                                        <button
+                                            class="w-10 h-10 rounded-[50%] bg-black/20 flex items-center justify-center  hover:text-white"><mat-icon
+                                                svgIcon="eye-icon" class="!w-5 !h-5"></mat-icon></button>
+                                        <button
+                                            class="w-10 h-10 rounded-[50%] bg-black/20 flex items-center justify-center  hover:text-white"><mat-icon
+                                                svgIcon="lock-icon" class="!w-5 !h-5"></mat-icon></button>
+                                        <button
+                                            class="w-10 h-10 rounded-[50%] bg-black/20 flex items-center justify-center  hover:text-white"><mat-icon
+                                                svgIcon="volume-off-icon" class="!w-5 !h-5"></mat-icon></button>
+                                    </div>
+                                </div>
+                                <button (click)="togglePlay()"
+                                    class="flex items-center justify-center w-15 h-15 p-4 mr-8 rounded-[50%] bg-gradient-to-b from-zinc-500/50 to-neutral-700/20 rounded-[48px] shadow-[2px_2px_12px_0px_rgba(0,0,0,0.10)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-[10px]">
+                                    <mat-icon *ngIf="!isPlaying()" svgIcon="play-arrow-icon"
+                                        class="!w-6 !h-6"></mat-icon>
+                                    <mat-icon *ngIf="isPlaying()" class="!w-6 !h-6">pause</mat-icon>
+                                </button>
+                            </div>
+                            <!-- Audio Control (Dynamic) -->
+                            <div *ngFor="let track of audioTracks(); let i = index" class="h-16 flex items-center px-3 gap-6 mt-2">
+                                <mat-icon svgIcon="sound-sensing-icon" class="!w-6 !h-6"></mat-icon>
+                                <span class="text-xs text-gray-400">Track {{i+1}}</span>
+                                <div
+                                    class="flex gap-2 p-2 bg-gradient-to-b from-zinc-500/50 to-neutral-700/20 rounded-[48px] shadow-[2px_2px_12px_0px_rgba(0,0,0,0.10)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-[10px]">
+                                    <button
+                                        class="w-10 h-10 rounded-[50%] bg-black/20 flex items-center justify-center  hover:text-white"><mat-icon
+                                            svgIcon="audio-magic-eraser-icon" class="!w-5 !h-5"></mat-icon></button>
+                                    <button
+                                        class="w-10 h-10 rounded-[50%] bg-black/20 flex items-center justify-center  hover:text-white"><mat-icon
+                                            svgIcon="lock-icon" class="!w-5 !h-5"></mat-icon></button>
+                                    <button
+                                        class="w-10 h-10 rounded-[50%] bg-black/20 flex items-center justify-center  hover:text-white"><mat-icon
+                                            svgIcon="volume-off-icon" class="!w-5 !h-5"></mat-icon></button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Main Scrollable Timeline -->
+                        <div #timelineContainer class="flex-1 overflow-x-auto overflow-y-hidden relative custom-scrollbar "
+                            (mousedown)="onTimelineMouseDown($event)">
+
+                            <div class="relative min-w-full h-full" [style.width.px]="timelineWidth()">
+
+                                <!-- Playhead -->
+                                <div class="absolute top-0 bottom-0 w-px bg-white pointer-events-none !z-[100]"
+                                    [style.left.px]="currentTime() * pixelsPerSecond">
+                                    
+                                    <!-- Transparent Hit Box for Dragging -->
+                                    <div class="absolute top-0 bottom-0 w-6 -left-3 cursor-grab active:cursor-grabbing pointer-events-auto z-[101] hover:bg-white/5 transition-colors"
+                                         (mousedown)="onScrubStart($event)">
+                                    </div>
+
+                                    <!-- Handle Circle -->
+                                    <div
+                                        class="w-3 h-3 -ml-1.5 bg-white rounded-full -mt-1.5 shadow-[0_0_10px_rgba(255,255,255,0.5)] pointer-events-none relative z-[102]">
+                                    </div>
+                                    <div
+                                        class="absolute bottom-2 left-2 bg-[#2a2a2c] text-[9px] px-1.5 py-0.5 rounded text-white border border-white/10 whitespace-nowrap z-50">
+                                        {{formatTime(currentTime())}}
+                                    </div>
+                                </div>
+
+                                <!-- VIDEO TRACK (draggable clips) -->
+                                <div class="h-24 mt-2 relative w-full">
+                                    <div *ngFor="let clip of videoClips()" (mousedown)="startDrag($event, clip)"
+                                        (click)="selectClip(clip.id, $event)"
+                                        class="absolute top-1 bottom-1 rounded-xl cursor-pointer overflow-hidden border flex items-center group"
+                                        [ngClass]="{
+                                        'border-blue-500 ring-2 ring-blue-500/50 shadow-xl shadow-blue-500/40 z-30': selectedClipId() === clip.id,
+                                        'border-white/10 bg-[#2a2a2c] hover:border-white/30': selectedClipId() !== clip.id
+                                    }" [style.left.px]="clip.startTime * pixelsPerSecond"
+                                        [style.width.px]="clip.duration * pixelsPerSecond">
+
+                                        <!-- Thumbnail Strip (when thumbnail available) -->
+                                        <div *ngIf="getAssetThumbnail(clip.assetId)"
+                                            class="absolute inset-0 flex opacity-50 group-hover:opacity-70 transition-opacity pointer-events-none grayscale group-hover:grayscale-0 overflow-hidden">
+                                            <ng-container *ngFor="let i of [1,2,3,4,5]">
+                                                <img [src]="getAssetThumbnail(clip.assetId)"
+                                                    class="h-full object-cover w-20 flex-shrink-0">
+                                            </ng-container>
+                                        </div>
+
+                                        <!-- Fallback gradient when no thumbnail -->
+                                        <div *ngIf="!getAssetThumbnail(clip.assetId)"
+                                            class="absolute inset-0 bg-gradient-to-r from-blue-900/50 to-blue-700/30 flex items-center justify-center">
+                                            <svg class="text-blue-400 w-6 h-6 opacity-50" viewBox="0 0 24 24" fill="none"
+                                                stroke="currentColor" stroke-width="2">
+                                                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                                            </svg>
+                                        </div>
+
+                                        <!-- Trim Handles -->
+                                        <div class="absolute left-0 top-0 bottom-0 w-1.5 bg-white/40 cursor-ew-resize">
+                                        </div>
+                                        <div class="absolute right-0 top-0 bottom-0 w-1.5 bg-white/40 cursor-ew-resize">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- AUDIO TRACKS (draggable clips) -->
+                                <div *ngFor="let track of audioTracks(); let i = index" class="h-24 mt-2 relative w-full">
+                                    <div *ngFor="let clip of track" (mousedown)="startDrag($event, clip)"
+                                        (click)="selectClip(clip.id, $event)"
+                                        class="absolute top-2 bottom-2 rounded-lg cursor-pointer overflow-hidden border  flex items-center justify-center"
+                                        [ngClass]="{
+                                        'border-emerald-500 ring-2 ring-emerald-500/50 shadow-xl shadow-emerald-500/40 z-30': selectedClipId() === clip.id,
+                                        'border-white/5 hover:border-white/20': selectedClipId() !== clip.id
+                                    }" [style.left.px]="clip.startTime * pixelsPerSecond"
+                                        [style.width.px]="clip.duration * pixelsPerSecond">
+
+                                        <!-- Waveform Graphic -->
+                                        <div
+                                            class="flex items-center gap-0.5 h-full w-full justify-center px-2 opacity-80">
+                                            <div *ngFor="let i of getSequence(clip.duration * pixelsPerSecond / 10)"
+                                                class="flex-1 rounded-[180px] bg-gradient-to-r from-[rgba(30,220,136,0.75)] to-[rgba(37,165,163,0.75)]"
+                                                [style.height.%]="getRandomHeight(i)"></div>
+                                        </div>
+
+                                        <!-- Trim Handles for Audio -->
+                                        <div class="absolute left-0 top-0 bottom-0 w-1.5 bg-white/20 cursor-ew-resize"></div>
+                                        <div class="absolute right-0 top-0 bottom-0 w-1.5 bg-white/20 cursor-ew-resize"></div>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+<!-- 
+                <div class="flex justify-center items-center min-h-[300px]  p-10">
+
+                    <div
+                        class="relative w-full max-w-2xl p-4 bg-gradient-to-b from-zinc-500/50 to-neutral-700/20 rounded-3xl shadow-[2px_2px_12px_0px_rgba(0,0,0,0.10)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-[10px]">
+
+                        <div class="flex justify-between items-start mb-4">
+
+                            <button
+                                class="flex items-center gap-2 px-4 py-1.5 bg-white/5 hover:bg-white/10 border border-white/5 rounded-full transition-colors cursor-pointer">
+                                <span class="text-sm font-medium text-gray-300">Text to Video</span>
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2"
+                                    stroke="currentColor" class="w-3 h-3 text-gray-400">
+                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                        d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                                </svg>
+                            </button>
+
+                            <div class="flex items-center gap-4 text-gray-400">
+                                <span
+                                    class="text-sm font-medium hover:text-white cursor-pointer transition-colors">x4</span>
+                                <button class="hover:text-white transition-colors">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+                                        stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
+                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                            d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="py-2">
+                            <textarea placeholder="Describe your scene" rows="1"
+                                class="w-full bg-transparent text-xl text-gray-100 placeholder-gray-400/80 outline-none resize-none overflow-hidden leading-relaxed font-light"
+                                style="min-height: 3rem;"></textarea>
+                        </div>
+
+                        <div class="flex justify-between items-center mt-6">
+
+                            <button
+                                class="flex items-center justify-center w-8 h-8 rounded-full text-gray-400 hover:text-white hover:bg-white/10 transition-all duration-200">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2"
+                                    stroke="currentColor" class="w-6 h-6">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                                </svg>
+                            </button>
+
+                            <button
+                                class="flex items-center justify-center w-8 h-8 rounded-full text-gray-400 hover:text-white hover:bg-white/10 transition-all duration-200">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2"
+                                    stroke="currentColor" class="w-5 h-5">
+                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                        d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" />
+                                </svg>
+                            </button>
+
+                        </div>
+                    </div>
+                </div> -->
+
+                <!-- Floating AI Bar (Bottom Center) -->
+                <!-- <div class="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-50 w-96">
+            <div class="bg-[#1c1c1e]/90 backdrop-blur-xl border border-white/10 rounded-2xl p-1.5 flex items-center shadow-2xl ring-1 ring-black/50">
+                <button class="flex items-center gap-1.5 px-3 py-1.5 bg-[#2a2a2c] rounded-xl text-[10px] font-medium text-gray-300 hover:text-white">
+                    Text to Video <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+                </button>
+                <input type="text" placeholder="Describe your scene" class="flex-1 bg-transparent border-none text-xs px-3 text-white placeholder-gray-500 focus:outline-none">
+                <div class="flex items-center gap-1 pr-1">
+                    <span class="text-[9px] text-gray-600 font-mono">x4</span>
+                    <button class="p-1.5 text-gray-400 hover:text-white rounded-lg hover:bg-white/10">
+                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+                    </button>
+                    <button class="p-1.5 text-white hover:bg-white/10 rounded-lg">
+                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                    </button>
+                </div>
+            </div>
+        </div> -->
+
+            </div>
+        </div>
+    </div>
+</div>

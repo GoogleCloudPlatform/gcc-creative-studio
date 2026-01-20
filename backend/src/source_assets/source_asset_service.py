@@ -189,9 +189,12 @@ class SourceAssetService:
             )
             return await self._create_asset_response(existing_asset)
 
-        # 2. Handle file processing based on type (image vs. video)
+        # 2. Handle file processing based on type (image vs. video vs. audio)
         is_video: bool = bool(
             file.content_type and "video" in file.content_type
+        )
+        is_audio: bool = bool(
+            file.content_type and "audio" in file.content_type
         )
         final_gcs_uri: Optional[str] = None
         thumbnail_gcs_uri: Optional[str] = None
@@ -230,6 +233,23 @@ class SourceAssetService:
                         destination_blob_name=f"source_assets/{user.id}/{file_hash}/thumbnail.png",
                         mime_type="image/png",
                     )
+            elif is_audio:
+                # --- Audio Upload Logic ---
+                # Audio files don't need image processing or aspect ratio
+                final_aspect_ratio = aspect_ratio or AspectRatioEnum.RATIO_1_1
+                
+                # Determine audio mime type
+                audio_mime = file.content_type or "audio/mpeg"
+                file_extension = os.path.splitext(file.filename or "audio.mp3")[1] or ".mp3"
+                
+                # Upload the audio file directly
+                final_gcs_uri = self.gcs_service.store_to_gcs(
+                    folder=f"source_assets/{user.id}/audio",
+                    file_name=f"{file_hash}{file_extension}",
+                    mime_type=audio_mime,
+                    contents=contents,
+                    decode=False,
+                )
             else:
                 # --- Image Upload & Upscale Logic ---
                 # Check for valid aspect ratio early in the process
@@ -334,11 +354,25 @@ class SourceAssetService:
                 shutil.rmtree(temp_dir)
 
         # 4. Create and save the new UserAsset document
-        mime_type: MimeTypeEnum = (
-            MimeTypeEnum.VIDEO_MP4
-            if file.content_type == MimeTypeEnum.VIDEO_MP4
-            else MimeTypeEnum.IMAGE_PNG
-        )
+        # Determine mime_type based on content_type
+        content_type = file.content_type or ""
+        if content_type.startswith("video/"):
+            mime_type = MimeTypeEnum.VIDEO_MP4
+        elif content_type.startswith("audio/"):
+            # Map common audio types to enum values
+            if content_type in ["audio/mpeg", "audio/mp3"]:
+                mime_type = MimeTypeEnum.AUDIO_MPEG
+            elif content_type == "audio/wav":
+                mime_type = MimeTypeEnum.AUDIO_WAV
+            elif content_type == "audio/ogg":
+                mime_type = MimeTypeEnum.AUDIO_OGG
+            elif content_type == "audio/webm":
+                mime_type = MimeTypeEnum.AUDIO_WEBM
+            else:
+                # Default to MPEG for unknown audio types
+                mime_type = MimeTypeEnum.AUDIO_MPEG
+        else:
+            mime_type = MimeTypeEnum.IMAGE_PNG
 
         is_admin = UserRoleEnum.ADMIN in user.roles
         final_scope = AssetScopeEnum.PRIVATE
@@ -504,3 +538,25 @@ class SourceAssetService:
                 asset_map[asset.asset_type].append(asset)
 
         return categorized_assets
+
+    async def get_asset_by_id(
+        self, asset_id: int, user: UserModel
+    ) -> Optional[SourceAssetResponseDto]:
+        """
+        Retrieves a single source asset by ID, ensuring the user has access.
+        """
+        asset = await self.repo.get_by_id(asset_id)
+        if not asset:
+            return None
+
+        # Authorization check
+        is_admin = UserRoleEnum.ADMIN in user.roles
+        is_owner = asset.user_id == user.id
+        is_system = asset.scope in [
+            AssetScopeEnum.SYSTEM,
+        ]
+
+        if not (is_admin or is_owner or is_system):
+            return None
+
+        return await self._create_asset_response(asset)

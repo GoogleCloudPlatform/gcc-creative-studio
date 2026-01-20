@@ -44,7 +44,7 @@
           type="file"
           #fileInput
           (change)="onFileSelected($event)"
-          [accept]="data.mimeType || 'image/*,video/mp4'"
+          [accept]="getAcceptTypes()"
           [disabled]="isUploading"
         />
       </div>
@@ -60,13 +60,7 @@
     <mat-tab label="From Gallery">
       <app-media-gallery
         (mediaItemSelected)="onMediaItemSelected($event)"
-        [filterByType]="
-          data.mimeType
-            ? data.mimeType.startsWith('video/')
-              ? 'video/mp4'
-              : 'image/png'
-            : null
-        "
+        [filterByType]="data.mimeType"
       ></app-media-gallery>
     </mat-tab>
   </mat-tab-group>

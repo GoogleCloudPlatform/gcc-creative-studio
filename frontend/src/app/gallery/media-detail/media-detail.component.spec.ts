@@ -14,23 +14,80 @@
  * limitations under the License.
  */
 
+import { HttpClientTestingModule } from '@angular/common/http/testing';
+import { ActivatedRoute } from '@angular/router';
+import { RouterTestingModule } from '@angular/router/testing';
 import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {Auth} from '@angular/fire/auth';
+import { of } from 'rxjs'; // Import 'of'
 
-import {MediaDetailComponent} from './media-detail.component';
+import { MediaDetailComponent } from './media-detail.component';
+
+import { MaterialModule } from '../../common/material.module';
+
+import { NoopAnimationsModule } from '@angular/platform-browser/animations';
+
+import { Firestore } from '@angular/fire/firestore';
 
 describe('MediaDetailComponent', () => {
+
   let component: MediaDetailComponent;
+
   let fixture: ComponentFixture<MediaDetailComponent>;
 
   beforeEach(async () => {
+
     await TestBed.configureTestingModule({
+
       declarations: [MediaDetailComponent],
+
+      imports: [HttpClientTestingModule, RouterTestingModule, MaterialModule, NoopAnimationsModule],
+
+      providers: [
+
+        {
+
+          provide: ActivatedRoute,
+
+          useValue: {
+            // Provide paramMap as an observable
+            paramMap: of({ get: (key: string) => '123' }), // Mock paramMap with 'id' parameter
+            snapshot: {
+
+              paramMap: {
+
+                get: () => '123', // or any other mock value
+
+              },
+
+            },
+
+          },
+
+        },
+        { provide: Auth, useValue: {
+          currentUser: {
+            getIdToken: () => Promise.resolve('mock-id-token'),
+          },
+          signOut: () => Promise.resolve(),
+        }},
+        { provide: Firestore, useValue: {} },
+
+      ],
+
     }).compileComponents();
 
+
+
     fixture = TestBed.createComponent(MediaDetailComponent);
+
     component = fixture.componentInstance;
+
     fixture.detectChanges();
+
   });
+
+
 
   it('should create', () => {
     expect(component).toBeTruthy();

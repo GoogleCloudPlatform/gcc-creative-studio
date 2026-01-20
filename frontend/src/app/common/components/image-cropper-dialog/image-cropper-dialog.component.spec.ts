@@ -14,9 +14,21 @@
  * limitations under the License.
  */
 
+import { MatDialogRef, MAT_DIALOG_DATA } from '@angular/material/dialog';
+import { ImageCropperComponent } from 'ngx-image-cropper';
 import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {AssetTypeEnum} from '../../../admin/source-assets-management/source-asset.model';
+import { of } from 'rxjs';
+import { SourceAssetService } from '../../services/source-asset.service';
 
 import {ImageCropperDialogComponent} from './image-cropper-dialog.component';
+import { HttpClientTestingModule } from '@angular/common/http/testing';
+import { NoopAnimationsModule } from '@angular/platform-browser/animations';
+import { MatDialogModule } from '@angular/material/dialog';
+import { CUSTOM_ELEMENTS_SCHEMA, NO_ERRORS_SCHEMA } from '@angular/core';
+import { FormsModule, ReactiveFormsModule } from '@angular/forms';
+import { MaterialModule } from '../../material.module';
+import { FormGroup, FormControl } from '@angular/forms';
 
 describe('ImageCropperDialogComponent', () => {
   let component: ImageCropperDialogComponent;
@@ -25,10 +37,23 @@ describe('ImageCropperDialogComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [ImageCropperDialogComponent],
+      imports: [ImageCropperComponent, HttpClientTestingModule, NoopAnimationsModule, MaterialModule, MatDialogModule, FormsModule, ReactiveFormsModule],
+      providers: [
+        { provide: MatDialogRef, useValue: {} },
+        { provide: MAT_DIALOG_DATA, useValue: {
+          imageFile: new File([''], 'mock.jpg', { type: 'image/jpeg' }),
+          assetType: AssetTypeEnum.GENERIC_IMAGE,
+          aspectRatios: [{label: '1:1 Square', value: 1 / 1, stringValue: '1:1'}],
+        }},
+        { provide: SourceAssetService, useValue: {
+          uploadAsset: () => of({id: '123', name: 'mock.jpg'}) // Mock uploadAsset to return an observable
+        }}
+      ],
     }).compileComponents();
 
     fixture = TestBed.createComponent(ImageCropperDialogComponent);
     component = fixture.componentInstance;
+
     fixture.detectChanges();
   });
 

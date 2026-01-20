@@ -14,7 +14,10 @@
  * limitations under the License.
  */
 
+import { HttpClientTestingModule } from '@angular/common/http/testing';
 import {ComponentFixture, TestBed} from '@angular/core/testing';
+import { MaterialModule } from '../../common/material.module';
+import { NoopAnimationsModule } from '@angular/platform-browser/animations';
 
 import {UsersManagementComponent} from './users-management.component';
 
@@ -25,6 +28,7 @@ describe('UsersManagementComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [UsersManagementComponent],
+      imports: [HttpClientTestingModule, MaterialModule, NoopAnimationsModule],
     }).compileComponents();
 
     fixture = TestBed.createComponent(UsersManagementComponent);

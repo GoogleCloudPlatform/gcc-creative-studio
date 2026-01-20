@@ -1,0 +1,153 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<div class="workflow-list-container p-4">
+  <!-- Header -->
+  <div class="header mb-6">
+    <!-- Top Row: Title & Buttons -->
+    <div class="flex flex-wrap justify-between items-start gap-4 mb-2">
+      <div class="flex-1 min-w-[200px]">
+        <h1 *ngIf="workflow" class="text-3xl font-semibold break-words">{{ workflow.name }}</h1>
+        <h1 *ngIf="!workflow" class="text-3xl font-semibold">Execution History</h1>
+      </div>
+      
+      <div *ngIf="workflow">
+        <p class="text-neutral-300 mb-2 text-base max-w-4xl">{{ workflow.description }}</p>
+        <div class="flex flex-wrap gap-4 text-xs text-neutral-500 font-mono mt-1">
+            <span>Created: {{ workflow.createdAt | date:'mediumDate' }}</span>
+            <span>Updated: {{ workflow.updatedAt | date:'mediumDate' }}</span>
+            <span class="select-all" title="Click to select ID">Workflow ID: {{ workflow.id }}</span>
+        </div>
+      </div>
+      <div *ngIf="!workflow">
+        <p class="text-sm text-neutral-400" *ngIf="workflowId">Workflow ID: {{ workflowId }}</p>
+      </div>
+
+    </div>
+    
+    <div class="flex flex-wrap items-center gap-2">
+      <button mat-raised-button color="primary" (click)="runWorkflow()" [disabled]="isLoading">
+        <mat-icon class="mr-2">play_arrow</mat-icon>
+        Run Workflow
+      </button>
+      <button mat-raised-button color="primary" (click)="loadExecutions(true)" [disabled]="isLoading">
+        <mat-icon class="mr-2">refresh</mat-icon>
+        Refresh
+      </button>
+      <button mat-raised-button color="primary" [routerLink]="['/workflows/edit', workflowId]">
+        <mat-icon class="mr-2">edit</mat-icon>
+        Open in Editor
+      </button>
+      <button mat-raised-button color="primary" routerLink="/workflows">
+        Go Back
+      </button>
+    </div>
+    
+  </div>
+
+  <!-- Filters -->
+  <div class="mb-4">
+    <mat-form-field appearance="outline" class="w-64">
+      <mat-label>Filter by Status</mat-label>
+      <mat-select [(value)]="selectedStatus" (selectionChange)="onStatusChange()">
+        <mat-option value="ALL">All Statuses</mat-option>
+        <mat-option value="SUCCEEDED">Succeeded</mat-option>
+        <mat-option value="FAILED">Failed</mat-option>
+        <mat-option value="ACTIVE">Active</mat-option>
+      </mat-select>
+    </mat-form-field>
+  </div>
+
+  <!-- Content -->
+  <div class="flex-grow overflow-auto">
+    <!-- Loading State -->
+    <div *ngIf="isLoading && executions.length === 0" class="loading-state">
+      <mat-spinner diameter="50"></mat-spinner>
+    </div>
+
+    <!-- Empty State -->
+    <div *ngIf="!isLoading && executions.length === 0" class="empty-state">
+      <mat-icon class="empty-icon">history</mat-icon>
+      <h3>No executions found</h3>
+      <p>Run the workflow to see execution history here.</p>
+    </div>
+
+    <!-- Data Table -->
+    <div *ngIf="executions.length > 0" class="mat-elevation-z8 rounded-lg overflow-hidden">
+      <table mat-table [dataSource]="executions" class="w-full">
+
+        <!-- Status Column -->
+        <ng-container matColumnDef="status">
+          <th mat-header-cell *matHeaderCellDef> Status </th>
+          <td mat-cell *matCellDef="let exec">
+            <mat-chip [ngClass]="getStatusClass(exec.state)" class="!flex !items-center !justify-center !w-fit">
+              <mat-icon class="!text-sm !w-4 !h-4 mr-1">{{ getStatusIcon(exec.state) }}</mat-icon>
+              {{ exec.state }}
+            </mat-chip>
+          </td>
+        </ng-container>
+
+        <!-- ID Column -->
+        <ng-container matColumnDef="id">
+          <th mat-header-cell *matHeaderCellDef> Execution ID </th>
+          <td mat-cell *matCellDef="let exec" class="font-mono text-xs">
+            <span [title]="exec.id">{{ exec.id | slice:0:8 }}...{{ exec.id | slice:-8 }}</span>
+            <button mat-icon-button class="!w-6 !h-6 ml-2" [cdkCopyToClipboard]="exec.id" matTooltip="Copy ID">
+              <mat-icon class="!text-sm">content_copy</mat-icon>
+            </button>
+          </td>
+        </ng-container>
+
+        <!-- Start Time Column -->
+        <ng-container matColumnDef="startTime">
+          <th mat-header-cell *matHeaderCellDef> Start Time </th>
+          <td mat-cell *matCellDef="let exec">
+            {{ exec.start_time | date:'medium' }}
+          </td>
+        </ng-container>
+
+        <!-- Duration Column -->
+        <ng-container matColumnDef="duration">
+          <th mat-header-cell *matHeaderCellDef> Duration </th>
+          <td mat-cell *matCellDef="let exec">
+            {{ exec.duration ? exec.duration + 's' : '-' }}
+          </td>
+        </ng-container>
+
+        <!-- Actions Column -->
+        <ng-container matColumnDef="actions">
+          <th mat-header-cell *matHeaderCellDef class="text-right"> Actions </th>
+          <td mat-cell *matCellDef="let exec" class="text-right">
+            <button mat-stroked-button color="primary" (click)="openDetails(exec.id)">
+              <mat-icon class="mr-1">visibility</mat-icon>
+              View Details
+            </button>
+          </td>
+        </ng-container>
+
+        <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
+        <tr mat-row *matRowDef="let row; columns: displayedColumns;" class="hover:bg-neutral-700 transition-colors"></tr>
+      </table>
+      
+      <!-- Load More -->
+      <div *ngIf="nextPageToken" class="p-4 flex justify-center border-t border-neutral-700">
+        <button mat-stroked-button (click)="loadMore()" [disabled]="isLoading">
+          Load More
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
