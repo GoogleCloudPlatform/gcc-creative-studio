@@ -101,10 +101,13 @@
     <div class="cropper-container">
       <image-cropper
         [imageFile]="imageFile || undefined"
-        [options]="options"
+        [aspectRatio]="currentAspectRatio"
+        [backgroundColor]="backgroundColor"
+        [containWithinAspectRatio]="
+          imageCropperForm.get('containWithinAspectRatio')?.value
+        "
         [canvasRotation]="canvasRotation"
         [(transform)]="transform"
-        [containWithinAspectRatio]="containWithinAspectRatio"
         format="png"
         (imageCropped)="imageCropped($event)"
       ></image-cropper>
@@ -112,18 +115,18 @@
   </div>
 </mat-dialog-content>
 <mat-dialog-actions align="end">
-  <div class="footer-controls">
+  <form [formGroup]="imageCropperForm" class="footer-controls">
     <label class="text-white">Fill Aspect Ratio</label>
-    <mat-slide-toggle [(ngModel)]="containWithinAspectRatio"></mat-slide-toggle>
-
-    <div class="color-picker">
-      <label class="text-white">Background</label>
-      <input
-        type="color"
-        [ngModel]="backgroundColor"
-        (ngModelChange)="onBackgroundColorChange($event)"
-      />
-    </div>
+    <mat-slide-toggle formControlName="containWithinAspectRatio"></mat-slide-toggle>
+  </form>
+  <div class="color-picker">
+    <label class="text-white">Background</label>
+    <input
+      type="color"
+      [ngModel]="backgroundColor"
+      (ngModelChange)="onBackgroundColorChange($event)"
+      name="backgroundColor"
+    />
   </div>
   <span class="flex-spacer"></span>
   <button mat-stroked-button mat-dialog-close [disabled]="isUploading">

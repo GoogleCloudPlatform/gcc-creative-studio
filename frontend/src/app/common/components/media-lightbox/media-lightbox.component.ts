@@ -31,13 +31,38 @@ import {Clipboard} from '@angular/cdk/clipboard';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {ActivatedRoute, Router} from '@angular/router';
 import {EventEmitter} from '@angular/core';
-import {Location} from '@angular/common';
+import {
+  Location,
+  NgFor,
+  NgIf,
+  NgClass,
+  NgOptimizedImage,
+} from '@angular/common';
+import { MatButtonModule } from '@angular/material/button';
+import { MatIconModule } from '@angular/material/icon';
+import { MatMenuModule } from '@angular/material/menu';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatSliderModule } from '@angular/material/slider';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { handleErrorSnackbar, handleSuccessSnackbar } from '../../../utils/handleMessageSnackbar';
 
 @Component({
   selector: 'app-media-lightbox',
   templateUrl: './media-lightbox.component.html',
   styleUrls: ['./media-lightbox.component.scss'],
+  standalone: true,
+  imports: [
+    NgIf,
+    NgFor,
+    NgClass,
+    NgOptimizedImage,
+    MatIconModule,
+    MatButtonModule,
+    MatTooltipModule,
+    MatMenuModule,
+    MatProgressSpinnerModule,
+    MatSliderModule,
+  ],
 })
 export class MediaLightboxComponent
   implements OnChanges, AfterViewInit, OnDestroy

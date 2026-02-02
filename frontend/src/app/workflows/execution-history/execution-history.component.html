@@ -1,0 +1,153 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<div class="workflow-list-container">
+  <!-- Header -->
+  <div class="header-section">
+    <div class="top-actions-group">
+      <button mat-icon-button routerLink="/workflows" matTooltip="Generic Go Back">
+        <mat-icon>arrow_back</mat-icon>
+      </button>
+    </div>
+    <div class="in-line-wrapper">
+      <div class="title-group">
+        <h1 *ngIf="workflow" class="page-title">{{ workflow.name }}</h1>
+        <h1 *ngIf="!workflow" class="page-title">Execution History</h1>
+        
+        <div class="workflow-meta" *ngIf="workflow">
+          <p class="description">{{ workflow.description || 'No description provided' }}</p>
+          <div class="meta-details">
+            <span>Created: {{ workflow.createdAt | date:'mediumDate' }}</span>
+            <span>Updated: {{ workflow.updatedAt | date:'mediumDate' }}</span>
+            <span class="select-all" title="Click to select ID">ID: {{ workflow.id }}</span>
+          </div>
+        </div>
+      </div>
+      
+      <div class="actions-wrapper">
+        <button
+          mat-flat-button
+          class="btn-glass-primary"
+          (click)="openBatchExecution()"
+          [disabled]="isLoading"
+          style="margin-right: 8px;"
+        >
+            <mat-icon>dataset</mat-icon>
+            Batch
+        </button>
+        <button
+          mat-flat-button
+          class="btn-cta"
+          (click)="runWorkflow()"
+          [disabled]="isLoading"
+        >
+            <mat-icon>play_arrow</mat-icon>
+            Run
+        </button>
+        <button
+          mat-flat-button
+          class="btn-glass-circle"
+          *ngIf="authService.isUserAdmin()"
+          [routerLink]="['/workflows/edit', workflowId]"
+          [queryParams]="{ returnUrl: '/workflows/' + workflowId + '/executions' }"
+          matTooltip="Open Editor">
+            <mat-icon>edit</mat-icon>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Loading Indicator (Initial) -->
+  <div *ngIf="isLoading && executions.length === 0" class="loading-state">
+    <mat-spinner diameter="50" color="accent"></mat-spinner>
+  </div>
+
+  <!-- Executions List (Cards) -->
+  <div class="executions-list" *ngIf="!isLoading || executions.length > 0">
+    
+    <!-- Controls (Filter + Refresh) -->
+    <div class="list-controls">
+        <mat-form-field appearance="outline" class="status-filter no-subscript dense-form-field">
+            <mat-select [(value)]="selectedStatus" (selectionChange)="onStatusChange()" placeholder="Status" panelClass="glass-select-panel">
+                <mat-option value="ALL">All Statuses</mat-option>
+                <mat-option value="SUCCEEDED">Succeeded</mat-option>
+                <mat-option value="FAILED">Failed</mat-option>
+                <mat-option value="ACTIVE">Active</mat-option>
+            </mat-select>
+        </mat-form-field>
+
+        <button mat-icon-button class="refresh-btn" (click)="loadExecutions(true)" [disabled]="isLoading" matTooltip="Refresh">
+            <mat-icon [class.animate-spin]="isLoading">refresh</mat-icon>
+        </button>
+    </div>
+
+    <div *ngFor="let exec of executions" 
+         class="execution-card"
+         (click)="openDetails(exec.id)">
+      
+      <div class="card-content">
+        <!-- Info Left -->
+        <div class="info-group">
+            <div class="status-row">
+                <div class="status-chip" [ngClass]="exec.state | workflowStatus:'class'" matTooltip="{{ exec.state | titlecase }}">
+                    <mat-icon>{{ exec.state | workflowStatus:'icon' }}</mat-icon>
+                </div>
+                <span class="execution-id">{{ exec.id }}</span>
+            </div>
+          
+          <div class="meta-row">
+            <span>
+                <mat-icon class="tiny-icon">calendar_today</mat-icon>
+                {{ exec.start_time | date:'medium' }}
+            </span>
+            <span *ngIf="exec.duration">
+                <mat-icon class="tiny-icon">timer</mat-icon>
+                {{ exec.duration }}s
+            </span>
+          </div>
+        </div>
+
+        <!-- Actions Right -->
+        <div class="actions-group">
+           <button mat-icon-button class="details-btn">
+             <mat-icon>chevron_right</mat-icon>
+           </button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Empty State -->
+    <div *ngIf="!isLoading && executions.length === 0" class="empty-state">
+      <mat-icon>history</mat-icon>
+      <p>No executions found.</p>
+    </div>
+  </div>
+
+  <mat-paginator
+    *ngIf="executions.length > 0"
+    class="!bg-transparent text-gray-400 mt-4"
+    [length]="executions.length" 
+    [pageSize]="20"
+    [hidePageSize]="true"
+    (page)="loadMore()"
+    [disabled]="!nextPageToken">
+  </mat-paginator>
+
+  <!-- Manual Load More button if paginator isn't fitting well or just as simple alternative at bottom -->
+   <div *ngIf="nextPageToken" class="flex justify-center mt-4">
+        <button mat-stroked-button (click)="loadMore()" [disabled]="isLoading">Load More</button>
+   </div>
+</div>

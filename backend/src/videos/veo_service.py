@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 
 
 # --- STANDALONE WORKER FUNCTION ---
-# This function will run in the background process. It is defined outside the class.
+# This function will run in the background thread. It is defined outside the class.
 def _process_video_in_background(
     media_item_id: int,
     request_dto: CreateVeoDto,
@@ -68,7 +68,7 @@ def _process_video_in_background(
 ):  # type: ignore
     """
     This is the long-running worker task. It creates its own service instances
-    because it runs in a completely separate process.
+    because it runs in a separate thread.
     The long-running process that generates video, thumbnails, and updates the
     database record upon completion or failure.
     """

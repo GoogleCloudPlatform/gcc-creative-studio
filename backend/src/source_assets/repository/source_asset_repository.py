@@ -63,13 +63,17 @@ class SourceAssetRepository(BaseRepository[SourceAsset, SourceAssetModel]):
 
         # Apply filters
         if search_dto.mime_type:
-            if search_dto.mime_type.endswith("image/*"):
-                # Handle wildcard prefix search
-                # In SQL, we can use LIKE 'image/%'
-                # But the original code did "!=" "video/mp4" which is weird for "image/*"
-                # Let's assume we want to match "image/%"
+            if search_dto.mime_type == "image/*":
+                # Filter for all image types using SQL LIKE
                 query = query.where(self.model.mime_type.like("image/%"))
+            elif search_dto.mime_type == "video/*":
+                # Filter for all video types
+                query = query.where(self.model.mime_type.like("video/%"))
+            elif search_dto.mime_type == "audio/*":
+                # Filter for all audio types
+                query = query.where(self.model.mime_type.like("audio/%"))
             else:
+                # Exact match for specific mime types like "image/png"
                 query = query.where(self.model.mime_type == search_dto.mime_type)
         
         if target_user_id:

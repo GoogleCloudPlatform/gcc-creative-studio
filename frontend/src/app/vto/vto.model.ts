@@ -26,7 +26,7 @@ export interface VtoInputLink {
 }
 
 export interface VtoRequest {
-  workspaceId: string;
+  workspaceId: number;
   numberOfMedia: number;
   personImage: VtoInputLink;
   topImage?: VtoInputLink;

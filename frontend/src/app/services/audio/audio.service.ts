@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
+import { Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
+import { environment } from '../../../environments/environment';
+import { LanguageEnum, VoiceEnum } from '../../audio/audio.constants';
 import { MediaItem } from '../../common/models/media-item.model';
-import {environment} from '../../../environments/environment';
-import {LanguageEnum, VoiceEnum} from '../../audio/audio.constants';
 
 // 1. Define the Enum to match Backend exactly
 export enum GenerationModelEnum {
@@ -37,7 +37,7 @@ export enum GenerationModelEnum {
 export interface CreateAudioDto {
   model: GenerationModelEnum;
   prompt: string;
-  workspaceId: string; // Angular standard is camelCase, Pydantic 'alias_generator=to_camel' handles this
+  workspaceId: number;
 
   // Lyria Specific
   negativePrompt?: string;

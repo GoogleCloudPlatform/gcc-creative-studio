@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-import {Injectable, OnDestroy} from '@angular/core';
-import {HttpClient} from '@angular/common/http';
+import { HttpClient } from '@angular/common/http';
+import { Injectable, OnDestroy } from '@angular/core';
 import {
   BehaviorSubject,
   combineLatest,
@@ -24,20 +24,18 @@ import {
   Subscription,
 } from 'rxjs';
 import {
-  tap,
   catchError,
-  shareReplay,
-  switchMap,
   debounceTime,
+  shareReplay,
+  switchMap
 } from 'rxjs/operators';
+import { environment } from '../../environments/environment';
 import {
   MediaItem,
-  PaginatedGalleryResponse,
-  JobStatus,
+  PaginatedGalleryResponse
 } from '../common/models/media-item.model';
-import {environment} from '../../environments/environment';
-import {GallerySearchDto} from '../common/models/search.model';
-import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
+import { GallerySearchDto } from '../common/models/search.model';
+import { WorkspaceStateService } from '../services/workspace/workspace-state.service';
 
 @Injectable({
   providedIn: 'root',
@@ -49,7 +47,7 @@ export class GalleryService implements OnDestroy {
   private currentPage = 0;
   private pageSize = 20;
   private allFetchedImages: MediaItem[] = [];
-  private filters$ = new BehaviorSubject<GallerySearchDto>({limit: 20});
+  private filters$ = new BehaviorSubject<GallerySearchDto>({ limit: 20 });
   private dataLoadingSubscription: Subscription;
 
   constructor(
@@ -176,7 +174,7 @@ export class GalleryService implements OnDestroy {
     this.isLoading$.next(false);
   }
 
-  getMedia(id: string): Observable<MediaItem> {
+  getMedia(id: number): Observable<MediaItem> {
     const detailUrl = `${environment.backendURL}/gallery/item/${id}`;
     return this.http.get<MediaItem>(detailUrl);
   }
@@ -185,8 +183,8 @@ export class GalleryService implements OnDestroy {
    * Creates a new template based on a media item.
    * @param mediaItemId The ID of the media item to base the template on.
    */
-  createTemplateFromMediaItem(mediaItemId: string): Observable<{id: string}> {
-    return this.http.post<{id: string}>(
+  createTemplateFromMediaItem(mediaItemId: number): Observable<{ id: string }> {
+    return this.http.post<{ id: string }>(
       `${environment.backendURL}/media-templates/from-media-item/${mediaItemId}`,
       {},
     );

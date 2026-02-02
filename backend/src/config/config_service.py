@@ -41,6 +41,7 @@ class ConfigService(BaseSettings):
     LOCATION: str = "global"
     ENVIRONMENT: str = "development"
     FRONTEND_URL: str = "http://localhost:4200"
+    BACKEND_URL: str = "http://localhost:8080"
     LOG_LEVEL: str = "INFO"
     INIT_VERTEX: bool = True
 
@@ -74,7 +75,7 @@ class ConfigService(BaseSettings):
     VEO_MODEL_ID: str = "veo-2.0-generate-001"
 
     # --- VTO ---
-    VTO_MODEL_ID: str = "virtual-try-on-preview-08-04"
+    VTO_MODEL_ID: str = "virtual-try-on-001"
 
     # --- Lyria ---
     LYRIA_MODEL_VERSION: str = "lyria-002"
@@ -93,6 +94,13 @@ class ConfigService(BaseSettings):
         ""  # The email address to send from (e.g., no-reply@your-domain.com)
     )
     ADMIN_USER_EMAIL: str = "system"
+
+    # --- Workflows ---
+    WORKFLOWS_LOCATION: str = "us-central1"
+    WORKFLOWS_EXECUTOR_URL: str = (
+        "http://localhost:8080"  # This service could be deployed alone in the future
+    )
+    BACKEND_SERVICE_ACCOUNT_EMAIL: str = ""
 
     @model_validator(mode="before")
     @classmethod

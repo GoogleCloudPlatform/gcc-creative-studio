@@ -25,17 +25,20 @@ import {
   OnInit,
   Output,
   ViewChild,
+  Inject,
+  PLATFORM_ID,
 } from '@angular/core';
+import { isPlatformBrowser } from '@angular/common';
 import { MatCheckboxChange } from '@angular/material/checkbox';
 import { MatIconRegistry } from '@angular/material/icon';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { Subscription, fromEvent } from 'rxjs';
 import { debounceTime } from 'rxjs/operators';
 import { MediaItemSelection } from '../../common/components/image-selector/image-selector.component';
+import { MODEL_CONFIGS } from '../../common/config/model-config';
 import { JobStatus, MediaItem } from '../../common/models/media-item.model';
 import { GallerySearchDto } from '../../common/models/search.model';
 import { UserService } from '../../common/services/user.service';
-import { MODEL_CONFIGS } from '../../common/config/model-config';
 import { GalleryService } from '../gallery.service';
 
 @Component({
@@ -50,6 +53,9 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     | 'video/mp4'
     | 'audio/mpeg'
     | 'audio/wav'
+    | 'image/*'
+    | 'video/*'
+    | 'audio/*'
     | null = null;
   @Input() statusFilter: JobStatus | null = JobStatus.COMPLETED;
 
@@ -77,6 +83,8 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   public hoveredVideoId: number | null = null;
   public hoveredAudioId: number | null = null;
 
+  isBrowser: boolean;
+
   constructor(
     private galleryService: GalleryService,
     private sanitizer: DomSanitizer,
@@ -84,7 +92,9 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     private userService: UserService,
     private elementRef: ElementRef,
     private ngZone: NgZone,
+    @Inject(PLATFORM_ID) platformId: Object
   ) {
+    this.isBrowser = isPlatformBrowser(platformId);
     this.matIconRegistry
       .addSvgIcon(
         'mobile-white-gemini-spark-icon',
@@ -135,13 +145,17 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
         this.allImagesLoaded = loaded;
       });
 
-    this.handleResize();
-    this.resizeSubscription = fromEvent(window, 'resize')
-      .pipe(debounceTime(200))
-      .subscribe(() => this.handleResize());
+    if (this.isBrowser) {
+        this.handleResize();
+        this.resizeSubscription = fromEvent(window, 'resize')
+        .pipe(debounceTime(200))
+        .subscribe(() => this.handleResize());
+    }
   }
 
   ngAfterViewInit(): void {
+    if (!this.isBrowser) return;
+
     // This observer's job is to wait until the component's host element is actually
     // visible in the DOM. This is important for components inside lazy-loaded tabs.
     this._hostVisibilityObserver = new IntersectionObserver(([entry]) => {
@@ -156,7 +170,18 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     this._hostVisibilityObserver.observe(this.elementRef.nativeElement);
   }
 
+
   ngOnDestroy(): void {
+    this.stopAudio();
+    if (this.isBrowser) {
+        // Force pause any lingering audio elements to prevent them from playing after component destruction
+        const audios = this.elementRef.nativeElement.querySelectorAll('audio');
+        audios.forEach((a: HTMLAudioElement) => {
+        a.pause();
+        a.src = '';
+        });
+    }
+
     this.imagesSubscription?.unsubscribe();
     this.loadingSubscription?.unsubscribe();
     this.allImagesLoadedSubscription?.unsubscribe();
@@ -251,7 +276,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   public onMouseEnter(media: MediaItem): void {
-    if (media.mimeType === 'video/mp4') this.playVideo(media.id);
+    if (media.mimeType?.startsWith('video/')) this.playVideo(media.id);
 
     // 2. ADD THIS CHECK
     if (media.mimeType?.startsWith('audio/')) this.playAudio(media.id);
@@ -260,7 +285,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   public onMouseLeave(media: MediaItem): void {
-    if (media.mimeType === 'video/mp4') this.stopVideo();
+    if (media.mimeType?.startsWith('video/')) this.stopVideo();
 
     // 3. ADD THIS CHECK
     if (media.mimeType?.startsWith('audio/')) this.stopAudio();

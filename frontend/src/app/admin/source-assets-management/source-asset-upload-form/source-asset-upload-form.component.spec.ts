@@ -14,23 +14,203 @@
  * limitations under the License.
  */
 
-import {ComponentFixture, TestBed} from '@angular/core/testing';
 
-import {SourceAssetUploadFormComponent} from './source-asset-upload-form.component';
+
+
+
+
+
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+
+
+
+import { ReactiveFormsModule } from '@angular/forms';
+
+
+
+import { MatSnackBar } from '@angular/material/snack-bar';
+
+
+
+import { MatDialogModule, MatDialogRef, MAT_DIALOG_DATA } from '@angular/material/dialog';
+
+
+
+import { HttpClientTestingModule } from '@angular/common/http/testing';
+
+
+
+import { MatProgressBarModule } from '@angular/material/progress-bar';
+
+
+
+import { MatSelectModule } from '@angular/material/select';
+
+
+
+import { NoopAnimationsModule } from '@angular/platform-browser/animations';
+
+
+
+
+
+
+
+import { SourceAssetUploadFormComponent } from './source-asset-upload-form.component';
+
+
+
+import { MaterialModule } from '../../../common/material.module';
+
+
+
+import { SourceAssetsService } from '../source-assets.service';
+
+
+
+
+
+
 
 describe('SourceAssetUploadFormComponent', () => {
+
+
+
   let component: SourceAssetUploadFormComponent;
+
+
+
   let fixture: ComponentFixture<SourceAssetUploadFormComponent>;
 
+
+
+
+
+
+
   beforeEach(async () => {
+
+
+
+    const sourceAssetsServiceSpy = jasmine.createSpyObj('SourceAssetsService', ['uploadSourceAsset']);
+
+
+
+    const matSnackBarSpy = jasmine.createSpyObj('MatSnackBar', ['open']);
+
+
+
+
+
+
+
     await TestBed.configureTestingModule({
+
+
+
       declarations: [SourceAssetUploadFormComponent],
+
+
+
+      imports: [
+
+
+
+        HttpClientTestingModule,
+
+
+
+        MaterialModule,
+
+
+
+        NoopAnimationsModule,
+
+
+
+        ReactiveFormsModule,
+
+
+
+        MatProgressBarModule,
+
+
+
+        MatSelectModule,
+
+
+
+        MatDialogModule
+
+
+
+      ],
+
+
+
+      providers: [
+
+
+
+        { provide: MatDialogRef, useValue: {} },
+
+
+
+        { provide: MAT_DIALOG_DATA, useValue: {} },
+
+
+
+        { provide: SourceAssetsService, useValue: sourceAssetsServiceSpy },
+
+
+
+        { provide: MatSnackBar, useValue: matSnackBarSpy }
+
+
+
+      ],
+
+
+
     }).compileComponents();
 
+
+
+
+
+
+
     fixture = TestBed.createComponent(SourceAssetUploadFormComponent);
+
+
+
     component = fixture.componentInstance;
+
+
+
     fixture.detectChanges();
+
+
+
   });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   it('should create', () => {
     expect(component).toBeTruthy();

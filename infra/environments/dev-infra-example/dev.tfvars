@@ -72,4 +72,5 @@ apis_to_enable = [
   "aiplatform.googleapis.com",
   "firestore.googleapis.com",
   "texttospeech.googleapis.com",
+  "workflows.googleapis.com",
 ]

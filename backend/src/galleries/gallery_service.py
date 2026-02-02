@@ -70,7 +70,7 @@ class GalleryService:
         Fetches the source asset document and generates a presigned URL for it.
         """
         asset_doc = await self.source_asset_repo.get_by_id(link.asset_id)
-        
+
         if not asset_doc:
             return None
 
@@ -259,7 +259,7 @@ class GalleryService:
         )
 
     async def get_media_by_id(
-        self, item_id: str, current_user: UserModel
+        self, item_id: int, current_user: UserModel
     ) -> Optional[MediaItemResponse]:
         """
         Retrieves a single media item, performs an authorization check,

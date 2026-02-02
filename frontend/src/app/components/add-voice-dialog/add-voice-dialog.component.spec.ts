@@ -14,9 +14,15 @@
  * limitations under the License.
  */
 
+//import { MatDialogRef, MAT_DIALOG_DATA } from '@angular/material/dialog';
+import { HttpClientTestingModule } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { AddVoiceDialogComponent } from './add-voice-dialog.component';
+import { MaterialModule } from '../../common/material.module';
+import { NoopAnimationsModule } from '@angular/platform-browser/animations';
+import { MatDialogModule, MatDialogRef, MAT_DIALOG_DATA } from '@angular/material/dialog';
+import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 
 describe('AddVoiceDialogComponent', () => {
   let component: AddVoiceDialogComponent;
@@ -24,7 +30,19 @@ describe('AddVoiceDialogComponent', () => {
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      declarations: [AddVoiceDialogComponent]
+      declarations: [AddVoiceDialogComponent],
+      imports: [
+        HttpClientTestingModule,
+        MaterialModule,
+        NoopAnimationsModule,
+        MatDialogModule,
+        ReactiveFormsModule,
+        FormsModule
+      ],
+      providers: [
+        { provide: MatDialogRef, useValue: {} },
+        { provide: MAT_DIALOG_DATA, useValue: {} }
+      ]
     })
     .compileComponents();
 

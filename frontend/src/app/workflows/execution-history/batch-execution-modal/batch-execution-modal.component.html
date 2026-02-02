@@ -1,0 +1,161 @@
+<h2 mat-dialog-title>Batch Execution: {{ workflow.name }}</h2>
+
+<mat-dialog-content>
+    <div class="flex flex-col gap-6" *ngIf="!results.length && !isProcessing">
+        <!-- Upload Section -->
+        <div class="border-2 border-dashed border-neutral-700 bg-neutral-800 rounded-xl p-8 text-center transition-colors hover:border-neutral-500 hover:bg-neutral-700">
+            <input type="file" #fileInput (change)="onFileSelected($event)" accept=".csv" class="hidden" />
+            <div class="flex flex-col items-center gap-2 cursor-pointer" (click)="fileInput.click()">
+                <mat-icon class="text-neutral-400 !w-12 !h-12 text-5xl">upload_file</mat-icon>
+                <p class="text-neutral-300 font-medium text-lg">Upload CSV File</p>
+                <p class="text-neutral-500 text-sm">Headers must match workflow inputs</p>
+                <p *ngIf="csvFile" class="mt-2 text-primary-400 font-semibold">{{ csvFile.name }}</p>
+            </div>
+        </div>
+
+        <!-- Preview Section -->
+        <div *ngIf="parsedItems.length > 0" class="flex flex-col gap-2">
+            <h3 class="text-lg font-semibold mb-3">Preview ({{ parsedItems.length }} rows)</h3>
+            
+            <!-- Validation Summary -->
+            <div *ngIf="parsedItems.length > 0" class="flex flex-col gap-2 mt-2">
+                <div *ngIf="isValid" class="bg-green-500/10 border border-green-500/20 text-green-300 px-3 py-2 rounded text-sm flex items-center gap-2">
+                    <mat-icon class="icon-sm">check_circle</mat-icon>
+                    All required inputs found.
+                </div>
+                <div *ngIf="!isValid" class="bg-red-500/10 border border-red-500/20 text-red-300 px-3 py-2 rounded text-sm flex items-center gap-2">
+                    <mat-icon class="icon-sm">error</mat-icon>
+                    <span>Missing inputs: <span class="font-mono font-bold">{{ missingInputs.join(', ') }}</span></span>
+                </div>
+            </div>
+
+            <div *ngIf="parsedItems.length > 0" class="max-h-[300px] overflow-auto border border-white/10 rounded-lg">
+                <table class="w-full text-sm text-left">
+                    <thead class="text-xs uppercase bg-white/5 sticky top-0 z-10 backdrop-blur-sm">
+                            <th *ngFor="let header of headers" class="px-4 py-3 font-medium text-neutral-400 align-top">
+                                <div class="flex flex-col gap-1.5">
+                                    <span class="text-white">{{ header }}</span>
+                                    
+                                    <!-- Mapped State -->
+                                    <div *ngIf="columnMapping[header]" class="flex items-center gap-1.5 text-green-400">
+                                        <mat-icon class="icon-xs" style="font-size: 16px; width: 16px; height: 16px;">check_circle</mat-icon>
+                                        <span class="text-[11px] font-mono opacity-90">{{ columnMapping[header] }}</span>
+                                    </div>
+
+                                    <!-- Unmapped State -->
+                                    <div *ngIf="!columnMapping[header]" class="flex items-center gap-1.5 text-orange-400/80">
+                                        <mat-icon class="icon-xs" style="font-size: 16px; width: 16px; height: 16px;">help_outline</mat-icon>
+                                        <span class="text-[11px]">No match</span>
+                                    </div>
+                                </div>
+                            </th>
+                    </thead>
+                    <tbody class="divide-y divide-white/5">
+                        <tr *ngFor="let item of parsedItems.slice(0, 5)" class="hover:bg-white/5">
+                            <td *ngFor="let header of headers" class="px-4 py-2 text-neutral-300 truncate max-w-[200px]" 
+                                [class.opacity-50]="!columnMapping[header]">
+                                {{ item[header] }}
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div *ngIf="parsedItems.length > 5" class="px-4 py-2 text-xs text-neutral-500 bg-white/5 border-t border-white/5 text-center">
+                    Showing first 5 of {{ parsedItems.length }} rows
+                </div>
+            </div>
+        </div>
+
+        <!-- Error Section -->
+        <div *ngIf="validationErrors.length > 0" class="rounded-lg bg-red-500/10 border border-red-500/20 p-4">
+            <div class="flex items-start gap-3">
+                <mat-icon class="text-red-400">error_outline</mat-icon>
+                <div class="flex flex-col gap-1">
+                    <p class="text-red-400 font-medium text-sm">Validation Errors</p>
+                    <ul class="list-disc list-inside text-xs text-red-300">
+                        <li *ngFor="let err of validationErrors">{{ err }}</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results Section -->
+    <div class="flex flex-col gap-6" *ngIf="isProcessing || results.length > 0">
+        <!-- Progress Header -->
+        <div *ngIf="isProcessing" class="flex flex-col items-center justify-center py-8 gap-4">
+            <mat-spinner diameter="40" color="primary"></mat-spinner>
+            <span class="text-neutral-300 animate-pulse">Processing Batch...</span>
+        </div>
+
+        <!-- Summary Stats -->
+        <div *ngIf="results.length > 0" class="grid grid-cols-2 gap-4">
+            <div class="rounded-xl bg-blue-500/10 border border-blue-500/20 p-4 flex flex-col items-center">
+                <span class="text-2xl font-bold text-blue-400">{{ successCount }}</span>
+                <span class="text-xs uppercase tracking-wider text-blue-300/70 font-medium">Submitted</span>
+            </div>
+            <div class="rounded-xl bg-red-500/10 border border-red-500/20 p-4 flex flex-col items-center">
+                <span class="text-2xl font-bold text-red-400">{{ failureCount }}</span>
+                <span class="text-xs uppercase tracking-wider text-red-300/70 font-medium">Failed</span>
+            </div>
+        </div>
+
+        <!-- Results List -->
+        <div *ngIf="results.length > 0" class="flex flex-col gap-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+            <div *ngFor="let res of results" 
+                 class="flex items-center gap-3 p-3 rounded-lg border transition-colors"
+                 [ngClass]="{
+                    'bg-blue-500/5 border-blue-500/10': res.status === 'SUCCESS',
+                    'bg-red-500/5 border-red-500/10': res.status === 'FAILED'
+                 }">
+                
+                <div class="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
+                     [ngClass]="{
+                        'bg-blue-500/20': res.status === 'SUCCESS',
+                        'bg-red-500/20': res.status === 'FAILED'
+                     }">
+                    <span class="text-xs font-bold" 
+                          [class.text-blue-400]="res.status === 'SUCCESS'"
+                          [class.text-red-400]="res.status === 'FAILED'">
+                        {{ res.row_index + 1 }}
+                    </span>
+                </div>
+
+                <div class="flex flex-col min-w-0 flex-1">
+                    <div class="flex items-center gap-2">
+                        <span class="text-sm font-medium"
+                              [class.text-blue-300]="res.status === 'SUCCESS'"
+                              [class.text-red-300]="res.status === 'FAILED'">
+                            {{ res.status === 'SUCCESS' ? 'SUBMITTED' : res.status }}
+                        </span>
+                        <span *ngIf="res.execution_id" class="text-xs text-neutral-500 font-mono bg-neutral-900 px-1.5 py-0.5 rounded truncate max-w-[150px]">
+                            {{ res.execution_id }}
+                        </span>
+                    </div>
+                    <p *ngIf="res.error" 
+                       class="text-xs text-red-400 mt-0.5 truncate cursor-help" 
+                       [matTooltip]="res.error"
+                       matTooltipClass="error-tooltip-multiline">
+                        {{ res.error }}
+                    </p>
+                </div>
+
+                <mat-icon *ngIf="res.status === 'SUCCESS'" class="text-blue-500 icon-sm">check_circle</mat-icon>
+                <mat-icon *ngIf="res.status === 'FAILED'" class="text-red-500 icon-sm">error</mat-icon>
+            </div>
+        </div>
+    </div>
+</mat-dialog-content>
+
+<mat-dialog-actions align="end" class="gap-2">
+    <button mat-button (click)="close()" [disabled]="isProcessing">
+        {{ results.length > 0 ? 'Close' : 'Cancel' }}
+    </button>
+    <button mat-flat-button color="primary" 
+            (click)="runBatch()" 
+            [disabled]="!csvFile || parsedItems.length === 0 || isProcessing || !isValid"
+            *ngIf="results.length === 0">
+        <mat-icon *ngIf="!isProcessing">play_arrow</mat-icon>
+        Run Batch
+        <span *ngIf="parsedItems.length" class="ml-1 opacity-80">({{ parsedItems.length }})</span>
+    </button>
+</mat-dialog-actions>
