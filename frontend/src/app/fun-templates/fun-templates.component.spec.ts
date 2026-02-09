@@ -14,23 +14,48 @@
  * limitations under the License.
  */
 
+import { HttpClientTestingModule } from '@angular/common/http/testing';
 import {ComponentFixture, TestBed} from '@angular/core/testing';
 
-import {FunTemplatesComponent} from './fun-templates.component';
+
+
+import { FunTemplatesComponent } from './fun-templates.component';
+
+import { MatIconModule } from '@angular/material/icon';
+
+import { MatIconTestingModule } from '@angular/material/icon/testing';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+
 
 describe('FunTemplatesComponent', () => {
+
   let component: FunTemplatesComponent;
+
   let fixture: ComponentFixture<FunTemplatesComponent>;
 
+
+
   beforeEach(async () => {
+
     await TestBed.configureTestingModule({
+
       declarations: [FunTemplatesComponent],
+
+      imports: [HttpClientTestingModule, MatIconModule, MatIconTestingModule, MatProgressSpinnerModule],
+
     }).compileComponents();
 
+
+
     fixture = TestBed.createComponent(FunTemplatesComponent);
+
     component = fixture.componentInstance;
+
     fixture.detectChanges();
+
   });
+
+
 
   it('should create', () => {
     expect(component).toBeTruthy();

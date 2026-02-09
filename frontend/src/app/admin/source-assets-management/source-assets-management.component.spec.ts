@@ -14,23 +14,98 @@
  * limitations under the License.
  */
 
+import { HttpClientTestingModule } from '@angular/common/http/testing';
 import {ComponentFixture, TestBed} from '@angular/core/testing';
 
-import {SourceAssetsManagementComponent} from './source-assets-management.component';
+
+
+
+
+
+
+import { CUSTOM_ELEMENTS_SCHEMA } from '@angular/core';
+
+
+
+import { SourceAssetsManagementComponent } from './source-assets-management.component';
+
+
+
+import { MaterialModule } from '../../common/material.module';
+
+
+
+import { NoopAnimationsModule } from '@angular/platform-browser/animations';
+
+
+
+
+
+
 
 describe('SourceAssetsManagementComponent', () => {
+
+
+
   let component: SourceAssetsManagementComponent;
+
+
+
   let fixture: ComponentFixture<SourceAssetsManagementComponent>;
 
+
+
+
+
+
+
   beforeEach(async () => {
+
+
+
     await TestBed.configureTestingModule({
+
+
+
       declarations: [SourceAssetsManagementComponent],
+
+
+
+      imports: [HttpClientTestingModule, MaterialModule, NoopAnimationsModule],
+
+
+
+      schemas: [CUSTOM_ELEMENTS_SCHEMA],
+
+
+
     }).compileComponents();
 
+
+
+
+
+
+
     fixture = TestBed.createComponent(SourceAssetsManagementComponent);
+
+
+
     component = fixture.componentInstance;
+
+
+
     fixture.detectChanges();
+
+
+
   });
+
+
+
+
+
+
 
   it('should create', () => {
     expect(component).toBeTruthy();

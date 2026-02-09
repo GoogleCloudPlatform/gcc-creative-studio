@@ -14,23 +14,241 @@
  * limitations under the License.
  */
 
-import {ComponentFixture, TestBed} from '@angular/core/testing';
 
-import {SourceAssetFormComponent} from './source-asset-form.component';
+
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+
+import { ReactiveFormsModule } from '@angular/forms';
+
+import { MatDialogRef, MAT_DIALOG_DATA } from '@angular/material/dialog';
+
+import { HttpClientTestingModule } from '@angular/common/http/testing';
+
+import { MatSelectModule } from '@angular/material/select';
+
+import { NoopAnimationsModule } from '@angular/platform-browser/animations';
+
+
+
+import { SourceAssetFormComponent } from './source-asset-form.component';
+
+import { MaterialModule } from '../../../common/material.module';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 describe('SourceAssetFormComponent', () => {
+
+
+
+
+
+
+
   let component: SourceAssetFormComponent;
+
+
+
+
+
+
+
   let fixture: ComponentFixture<SourceAssetFormComponent>;
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
   beforeEach(async () => {
+
+
+
+
+
+
+
     await TestBed.configureTestingModule({
+
+
+
+
+
+
+
       declarations: [SourceAssetFormComponent],
+
+
+
+
+
+
+
+      imports: [
+
+
+
+
+
+
+
+        ReactiveFormsModule,
+
+
+
+
+
+
+
+        HttpClientTestingModule,
+
+
+
+
+
+
+
+        MaterialModule,
+
+
+
+
+
+
+
+        NoopAnimationsModule,
+
+
+
+
+
+
+
+        MatSelectModule
+
+
+
+
+
+
+
+      ],
+
+
+
+
+
+
+
+      providers: [
+
+
+
+
+
+
+
+        { provide: MatDialogRef, useValue: {} },
+
+
+
+
+
+
+
+        { provide: MAT_DIALOG_DATA, useValue: { asset: {} } }
+
+
+
+
+
+
+
+      ]
+
+
+
+
+
+
+
     }).compileComponents();
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     fixture = TestBed.createComponent(SourceAssetFormComponent);
+
+
+
+
+
+
+
     component = fixture.componentInstance;
+
+
+
+
+
+
+
     fixture.detectChanges();
+
+
+
+
+
+
+
   });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   it('should create', () => {
     expect(component).toBeTruthy();

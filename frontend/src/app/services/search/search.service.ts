@@ -14,27 +14,23 @@
  * limitations under the License.
  */
 
-import {Injectable} from '@angular/core';
-import {HttpClient} from '@angular/common/http';
+import { HttpClient } from '@angular/common/http';
+import { Injectable } from '@angular/core';
+import { MatSnackBar } from '@angular/material/snack-bar';
 import {
   BehaviorSubject,
   catchError,
   EMPTY,
-  finalize,
-  interval,
   map,
   Observable,
-  startWith,
   Subscription,
   switchMap,
-  takeWhile,
   tap,
-  timer,
+  timer
 } from 'rxjs';
-import {environment} from '../../../environments/environment';
-import {ImagenRequest, VeoRequest} from '../../common/models/search.model';
-import {JobStatus, MediaItem} from '../../common/models/media-item.model';
-import {MatSnackBar} from '@angular/material/snack-bar';
+import { environment } from '../../../environments/environment';
+import { JobStatus, MediaItem } from '../../common/models/media-item.model';
+import { ImagenRequest, VeoRequest } from '../../common/models/search.model';
 import {
   handleErrorSnackbar,
   handleSuccessSnackbar,
@@ -49,7 +45,7 @@ export interface ConcatenationInput {
   type: 'media_item' | 'source_asset';
 }
 export interface ConcatenateVideosDto {
-  workspaceId: string;
+  workspaceId: number;
   name: string;
   inputs: ConcatenationInput[];
   aspectRatio: string;
@@ -78,7 +74,7 @@ export class SearchService {
   constructor(
     private http: HttpClient,
     private _snackBar: MatSnackBar,
-  ) {}
+  ) { }
 
   searchImagen(searchRequest: ImagenRequest) {
     const searchURL = `${environment.backendURL}/images/generate-images`;
@@ -121,7 +117,7 @@ export class SearchService {
             } else {
               handleErrorSnackbar(
                 this._snackBar,
-                {message: latestItem.errorMessage || latestItem.error_message},
+                { message: latestItem.errorMessage || latestItem.error_message },
                 `Image generation failed: ${latestItem.errorMessage || latestItem.error_message}`,
               );
             }
@@ -208,7 +204,7 @@ export class SearchService {
             } else {
               handleErrorSnackbar(
                 this._snackBar,
-                {message: latestItem.errorMessage || latestItem.error_message},
+                { message: latestItem.errorMessage || latestItem.error_message },
                 `Video generation failed: ${latestItem.errorMessage || latestItem.error_message}`,
               );
             }
@@ -242,8 +238,8 @@ export class SearchService {
   rewritePrompt(payload: {
     targetType: 'image' | 'video';
     userPrompt: string;
-  }): Observable<{prompt: string}> {
-    return this.http.post<{prompt: string}>(
+  }): Observable<{ prompt: string }> {
+    return this.http.post<{ prompt: string }>(
       `${environment.backendURL}/gemini/rewrite-prompt`,
       payload,
     );
@@ -251,8 +247,8 @@ export class SearchService {
 
   getRandomPrompt(payload: {
     target_type: 'image' | 'video';
-  }): Observable<{prompt: string}> {
-    return this.http.post<{prompt: string}>(
+  }): Observable<{ prompt: string }> {
+    return this.http.post<{ prompt: string }>(
       `${environment.backendURL}/gemini/random-prompt`,
       payload,
     );
@@ -296,7 +292,7 @@ export class SearchService {
             } else {
               handleErrorSnackbar(
                 this._snackBar,
-                {message: latestItem.errorMessage || latestItem.error_message},
+                { message: latestItem.errorMessage || latestItem.error_message },
                 `VTO generation failed: ${latestItem.errorMessage || latestItem.error_message}`,
               );
             }

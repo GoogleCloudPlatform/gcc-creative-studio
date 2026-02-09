@@ -1,0 +1,73 @@
+/* Glassmorphism Styles */
+.glass-panel {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.glass-card {
+  @extend .glass-panel;
+  padding: 16px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  
+  &:hover {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.06) 100%);
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+}
+
+.glass-header {
+    background: rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Override default dialog styles if needed, though panelClass usually handles container */
+:host {
+    display: block;
+    color: #E3E3E3;
+}
+
+h2, h3, h4, label, span, div {
+    font-family: 'Google Sans', sans-serif;
+}
+
+
+/* Status Chips/Colors */
+.status-chip {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    
+    mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+    }
+    
+    &.status-succeeded, &.status-completed { 
+        background-color: rgba(129, 201, 149, 0.15);
+        color: #81c995; 
+    }
+    &.status-failed, &.status-cancelled { 
+        background-color: rgba(242, 139, 130, 0.15);
+        color: #f28b82; 
+    }
+    &.status-active, &.status-running { 
+        background-color: rgba(138, 180, 248, 0.15);
+        color: #8ab4f8; 
+    }
+    &.status-pending { 
+        background-color: rgba(232, 234, 237, 0.1);
+        color: #e8eaed; 
+    }
+    &.status-skipped {
+        background-color: rgba(255, 202, 40, 0.15);
+        color: #ffd54f;
+    }
+}
+

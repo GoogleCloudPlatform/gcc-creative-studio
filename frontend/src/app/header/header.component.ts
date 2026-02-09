@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {Component, OnDestroy} from '@angular/core';
+import {Component, OnDestroy, Inject, PLATFORM_ID} from '@angular/core';
 import {DomSanitizer, SafeResourceUrl} from '@angular/platform-browser';
 import {MatIconRegistry} from '@angular/material/icon';
 import {Router} from '@angular/router';
@@ -26,6 +26,7 @@ import {animate, style, transition, trigger} from '@angular/animations';
 import {BreakpointObserver, Breakpoints} from '@angular/cdk/layout';
 import {Subject} from 'rxjs';
 import {takeUntil} from 'rxjs/operators';
+import {isPlatformBrowser} from '@angular/common';
 
 @Component({
   selector: 'app-header',
@@ -58,6 +59,8 @@ export class HeaderComponent implements OnDestroy {
   private readonly destroy$ = new Subject<void>();
   toolsMenuHovered = false;
   private menuTimeout: any;
+  isBrowser: boolean;
+  isLinkActive: any;
 
   constructor(
     private sanitizer: DomSanitizer,
@@ -66,10 +69,14 @@ export class HeaderComponent implements OnDestroy {
     public userService: UserService,
     public authService: AuthService,
     private breakpointObserver: BreakpointObserver,
+    @Inject(PLATFORM_ID) platformId: Object
   ) {
+    this.isBrowser = isPlatformBrowser(platformId);
     // Initialize menuFixed from localStorage
-    const storedMenuFixed = localStorage.getItem('menuFixed');
-    this.menuFixed = storedMenuFixed === 'true';
+    if (this.isBrowser) {
+        const storedMenuFixed = localStorage.getItem('menuFixed');
+        this.menuFixed = storedMenuFixed === 'true';
+    }
 
     this.matIconRegistry
       .addSvgIcon(
@@ -95,6 +102,10 @@ export class HeaderComponent implements OnDestroy {
       });
   }
 
+  get isAdmin(): boolean {
+    return this.authService.isUserAdmin();
+  }
+
   ngOnDestroy(): void {
     this.destroy$.next();
     this.destroy$.complete();
@@ -112,6 +123,10 @@ export class HeaderComponent implements OnDestroy {
 
   navigate() {
     void this.router.navigateByUrl('/');
+  }
+
+  navigateToAdmin() {
+    void this.router.navigateByUrl('/admin');
   }
 
   toggleMenu() {

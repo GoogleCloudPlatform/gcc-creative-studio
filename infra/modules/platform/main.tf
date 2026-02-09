@@ -59,9 +59,11 @@ locals {
     lookup(var.be_env_vars, "common", {}),
     lookup(var.be_env_vars, var.environment, {}),
     {
-      "CORS_ORIGINS"     = "[\"${local.frontend_url}\"]"
-      "GENMEDIA_BUCKET"  = google_storage_bucket.genmedia.name
-      "SIGNING_SA_EMAIL" = google_service_account.bucket_reader_sa.email
+      "CORS_ORIGINS"           = "[\"${local.frontend_url}\"]"
+      "GENMEDIA_BUCKET"        = google_storage_bucket.genmedia.name
+      "SIGNING_SA_EMAIL"       = google_service_account.bucket_reader_sa.email
+      "BACKEND_URL"            = local.backend_url
+      "WORKFLOWS_EXECUTOR_URL" = "${local.backend_url}/api/workflows-executor"
     }
   )
 }

@@ -354,7 +354,7 @@ class AudioService:
                 # We take the first one because we requested sample_count=1
                 prediction = response.predictions[0]
                 # prediction is a MapComposite, which behaves like a dict
-                audio_b64 = prediction.get("bytesBase64Encoded")
+                audio_b64 = prediction.get("bytesBase64Encoded")  # type: ignore
 
                 if not audio_b64:
                     return None

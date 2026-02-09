@@ -92,7 +92,7 @@ class CreateVeoDto(BaseDto):
         description="Whether to add audio to the generated video.",
     )
     duration_seconds: int = Field(
-        default=1,
+        default=8,
         ge=1,
         le=8,
         description="Duration in seconds for the videos to generate (between 1 and 8 secs).",

@@ -23,7 +23,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.common.base_repository import BaseDocument
 from src.database import Base
-
+from src.users.user_model import User
 
 class WorkspaceRoleEnum(str, Enum):
     """Defines the permissions a user has within a single workspace."""
@@ -69,15 +69,14 @@ class Workspace(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     scope: Mapped[str] = mapped_column(String, default=WorkspaceScopeEnum.PRIVATE.value)
-    
+
     # Relationships
     owner: Mapped["User"] = relationship()
     members: Mapped[List["WorkspaceMemberAssociation"]] = relationship(
-        back_populates="workspace", 
+        back_populates="workspace",
         cascade="all, delete-orphan",
-        lazy="selectin"
+        lazy="selectin",
     )
-
 
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True),
@@ -119,7 +118,7 @@ class WorkspaceModel(BaseDocument):
     Represents a project, team, or folder. Access is controlled by the 'scope'
     and the 'members' list.
     """
-    
+
     id: Optional[int] = None
 
     name: str

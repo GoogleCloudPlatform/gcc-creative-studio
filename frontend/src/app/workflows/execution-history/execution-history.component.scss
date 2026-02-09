@@ -1,0 +1,389 @@
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+:host {
+  display: block;
+  font-family: 'Google Sans', sans-serif;
+  background-color: transparent;
+  color: #E3E3E3;
+}
+
+.workflow-list-container {
+  --max-container-width: 1400px;
+  background-color: transparent;
+  padding: 20px 40px;
+  max-width: var(--max-container-width);
+  margin: 0 auto;
+  margin-top: calc(10vh + 0px);
+  margin-left: max(calc(5vw + 4.5rem), calc(50% - var(--max-container-width) / 2));
+}
+
+/* Header Section */
+.header-section {
+  display: inline-flex;
+  flex-direction: column;
+  width: 100%;
+  gap: 10px;
+  margin-bottom: 16px;
+
+  /* --- ROW 1: Top Actions (Back Button) --- */
+  .top-actions-group {
+    justify-content: flex-start;
+    flex-direction: row;
+    display: flex;
+    gap: 8px;
+    
+    button {
+      color: #e0e0e0;
+      margin-left: -12px; /* Slight optical adjustment */
+    }
+  }
+
+  .in-line-wrapper {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    gap: 16px;
+  }
+
+  .title-group {
+    text-align: left;
+    width: 100%;
+    
+    h1.page-title {
+      font-family: 'Google Sans', sans-serif;
+      font-weight: 400;
+      font-size: 45px;
+      line-height: 52px;
+      margin: 0;
+    }
+
+    .workflow-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-top: 8px;
+
+      .description {
+        font-size: 14px;
+        color: #C4C7C5;
+        margin: 0;
+      }
+
+      .meta-details {
+        display: flex;
+        gap: 16px;
+        font-size: 12px;
+        color: #8E918F;
+        font-family: 'Google Sans Text', sans-serif;
+
+        span {
+            cursor: default;
+        }
+
+        .select-all {
+            user-select: all;
+            cursor: text;
+        }
+      }
+    }
+  }
+
+  .actions-wrapper {
+    display: flex;
+    gap: 12px;
+  }
+}
+
+
+
+
+
+/* Executions List Container */
+.executions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.list-controls {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 0; /* Aligned with top of list */
+}
+
+/* Filter Select Styling Override */
+::ng-deep .status-filter {
+    .mat-mdc-form-field-subscript-wrapper {
+        display: none;
+    }
+    .mat-mdc-text-field-wrapper {
+        background-color: rgba(255, 255, 255, 0.05) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 24px !important;
+        padding: 0 12px;
+        height: 36px;
+        display: flex;
+        align-items: center;
+    }
+    
+    .mdc-notched-outline {
+        display: none !important;
+    }
+
+    .mat-mdc-form-field-infix {
+        padding: 0 !important;
+        min-height: unset !important;
+        border-top: 0 !important;
+    }
+    .mat-mdc-select-value {
+        color: #F8F9FA !important;
+        font-size: 13px;
+    }
+    .mat-mdc-select-arrow {
+        color: #C4C7C5 !important;
+    }
+    /* Remove underline */
+    .mat-mdc-line-ripple { display: none; }
+}
+
+/* Glass Dropdown Panel Styling */
+::ng-deep .glass-select-panel {
+    background: rgba(30, 30, 30, 0.85) !important;
+    backdrop-filter: blur(12px) !important;
+    -webkit-backdrop-filter: blur(12px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    border-radius: 12px !important;
+    margin-top: 8px; /* Slight offset from trigger */
+
+    .mat-mdc-option {
+        color: #e3e3e3 !important;
+        font-family: 'Google Sans', sans-serif !important;
+        font-size: 13px !important;
+        min-height: 40px !important;
+        
+        &:hover:not(.mdc-list-item--disabled) {
+            background-color: rgba(255, 255, 255, 0.08) !important;
+        }
+
+        &.mdc-list-item--selected:not(.mdc-list-item--disabled) {
+            background-color: rgba(255, 255, 255, 0.12) !important;
+            .mdc-list-item__primary-text {
+                color: #ffffff !important;
+                font-weight: 500;
+            }
+        }
+    }
+}
+
+
+/* Refresh Button */
+.refresh-btn {
+  // Independent definition to match previous look or new look:
+  color: #C4C7C5;
+  background: #ffffff0d;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  min-width: 36px;
+    width: 36px;
+    height: 36px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%; 
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  
+  mat-icon {
+      font-size: 18px;
+        width: 18px;
+        height: 18px;
+  }
+  
+  &:hover {
+    color: white;
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+}
+
+
+/* Execution Card */
+.execution-card {
+  height: auto;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  padding: 16px 24px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+
+  &:hover {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.06) 100%);
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+
+  .card-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+  }
+
+  .info-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+
+    .status-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+
+        .execution-id {
+            font-family: 'Google Sans Mono', monospace;
+            font-size: 12px;
+            color: #C4C7C5;
+            background: rgba(255, 255, 255, 0.05);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+    }
+
+    .meta-row {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-size: 12px;
+      color: #8E918F;
+      font-family: 'Google Sans Text', sans-serif;
+      margin-top: 4px;
+
+      span {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      
+      mat-icon.tiny-icon {
+        font-size: 14px;
+        width: 14px;
+        height: 14px;
+      }
+    }
+  }
+
+  .actions-group {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+
+    /* View Details Button as simple text or icon */
+    .details-btn {
+        color: #C4C7C5;
+        &:hover { color: white; }
+    }
+  }
+}
+
+/* Status Chips/Colors */
+.status-chip {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    
+    mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+    }
+    
+    &.status-succeeded, &.status-completed { 
+        background-color: rgba(129, 201, 149, 0.15);
+        color: #81c995; 
+    }
+    &.status-failed, &.status-cancelled { 
+        background-color: rgba(242, 139, 130, 0.15);
+        color: #f28b82; 
+    }
+    &.status-active, &.status-running { 
+        background-color: rgba(138, 180, 248, 0.15);
+        color: #8ab4f8; 
+    }
+    &.status-pending { 
+        background-color: rgba(232, 234, 237, 0.1);
+        color: #e8eaed; 
+    }
+    &.status-skipped {
+        background-color: rgba(255, 202, 40, 0.15);
+        color: #ffd54f;
+    }
+}
+
+
+/* Empty/Loading States */
+.empty-state, .loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 80px 0;
+  color: rgba(255, 255, 255, 0.4);
+
+  mat-icon {
+    font-size: 64px;
+    width: 64px;
+    height: 64px;
+    margin-bottom: 16px;
+    opacity: 0.5;
+  }
+  
+  p {
+    font-size: 16px;
+  }
+}
+
+/* Paginator Customization */
+::ng-deep .mat-mdc-paginator {
+  background: transparent !important;
+  color: rgba(255, 255, 255, 0.6) !important;
+  font-family: 'Google Sans', sans-serif !important;
+  
+  .mat-mdc-paginator-icon {
+    fill: rgba(255, 255, 255, 0.6) !important;
+  }
+  
+  .mat-mdc-select-value {
+    color: rgba(255, 255, 255, 0.8) !important;
+  }
+  
+  .mat-mdc-select-arrow {
+    color: rgba(255, 255, 255, 0.6) !important;
+  }
+
+  .mat-mdc-form-field-outline {
+    color: rgba(255, 255, 255, 0.2) !important;
+  }
+}
+@import "../shared/buttons";

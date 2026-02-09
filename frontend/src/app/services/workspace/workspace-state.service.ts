@@ -14,24 +14,24 @@
  * limitations under the License.
  */
 
-import {Injectable} from '@angular/core';
-import {BehaviorSubject, Observable} from 'rxjs';
+import { Injectable } from '@angular/core';
+import { BehaviorSubject, Observable } from 'rxjs';
 
 @Injectable({
   providedIn: 'root',
 })
 export class WorkspaceStateService {
   private readonly activeWorkspaceIdSubject = new BehaviorSubject<
-    string | null
+    number | null
   >(null);
-  public readonly activeWorkspaceId$: Observable<string | null> =
+  public readonly activeWorkspaceId$: Observable<number | null> =
     this.activeWorkspaceIdSubject.asObservable();
 
-  setActiveWorkspaceId(workspaceId: string | null) {
+  setActiveWorkspaceId(workspaceId: number | null) {
     this.activeWorkspaceIdSubject.next(workspaceId);
   }
 
-  getActiveWorkspaceId(): string | null {
+  getActiveWorkspaceId(): number | null {
     return this.activeWorkspaceIdSubject.getValue();
   }
 }

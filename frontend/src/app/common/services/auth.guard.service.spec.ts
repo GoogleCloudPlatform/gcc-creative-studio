@@ -14,17 +14,47 @@
  * limitations under the License.
  */
 
+import { HttpClientTestingModule } from '@angular/common/http/testing';
+import { RouterTestingModule } from '@angular/router/testing';
 import {TestBed} from '@angular/core/testing';
 
-import {AuthGuardService} from './auth.guard.service';
 
-describe('AuthGaurdService', () => {
+
+import { AuthGuardService } from './auth.guard.service';
+
+import { AuthService } from './auth.service';
+
+
+
+describe('AuthGuardService', () => {
+
   let service: AuthGuardService;
 
+
+
   beforeEach(() => {
-    TestBed.configureTestingModule({});
+
+    const authServiceSpy = jasmine.createSpyObj('AuthService', ['isLoggedIn']);
+
+
+
+    TestBed.configureTestingModule({
+
+      imports: [HttpClientTestingModule, RouterTestingModule],
+
+      providers: [
+
+        { provide: AuthService, useValue: authServiceSpy }
+
+      ],
+
+    });
+
     service = TestBed.inject(AuthGuardService);
+
   });
+
+
 
   it('should be created', () => {
     expect(service).toBeTruthy();

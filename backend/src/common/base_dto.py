@@ -25,10 +25,22 @@ class MimeTypeEnum(str, Enum):
     IMAGE_PNG = "image/png"
     VIDEO_MP4 = "video/mp4"
     AUDIO_WAV = "audio/wav"
+    AUDIO_MPEG = "audio/mpeg"
+    AUDIO_MP3 = "audio/mp3"
+    AUDIO_OGG = "audio/ogg"
+    AUDIO_WEBM = "audio/webm"
+
+
+class WildcardMimeTypeEnum(str, Enum):
+    """Wildcard MIME types for search filtering."""
+
+    IMAGE_WILDCARD = "image/*"
+    VIDEO_WILDCARD = "video/*"
+    AUDIO_WILDCARD = "audio/*"
 
 
 class GenerationModelEnum(str, Enum):
-    """Enum representing the available Imagen generation models."""
+    """Enum representing the available generation models."""
 
     # Image-Specific Models
     IMAGEN_4_001 = "imagen-4.0-generate-001"
@@ -42,11 +54,13 @@ class GenerationModelEnum(str, Enum):
     IMAGEGEN_006 = "imagegeneration@006"
     IMAGEGEN_005 = "imagegeneration@005"
     IMAGEGEN_002 = "imagegeneration@002"
-    GEMINI_2_5_FLASH_IMAGE_PREVIEW = "gemini-2.5-flash-image-preview"
-    GEMINI_3_PRO_IMAGE_PREVIEW = "gemini-3-pro-image-preview"
     GEMINI_2_5_PRO = "gemini-2.5-pro"
     GEMINI_2_5_FLASH = "gemini-2.5-flash"
-    VTO = "virtual-try-on-preview-08-04"
+    GEMINI_2_5_FLASH_IMAGE_PREVIEW = "gemini-2.5-flash-image-preview"
+    GEMINI_3_PRO_PREVIEW = "gemini-3-pro-preview"
+    GEMINI_3_PRO_IMAGE_PREVIEW = "gemini-3-pro-image-preview"
+    GEMINI_3_FLASH_PREVIEW = "gemini-3-flash-preview"
+    VTO = "virtual-try-on-001"
 
     # Video-Specific Models
     VEO_3_1_PREVIEW = "veo-3.1-generate-preview"
@@ -64,6 +78,9 @@ class GenerationModelEnum(str, Enum):
     GEMINI_2_5_FLASH_TTS = "gemini-2.5-flash-tts"
     GEMINI_2_5_FLASH_LITE_PREVIEW_TTS = "gemini-2.5-flash-lite-preview-tts"
     GEMINI_2_5_PRO_TTS = "gemini-2.5-pro-tts"
+
+    # Deprecated models (For old generations only, do not use)
+    _DEPRECATED_VTO = "virtual-try-on-preview-08-04"
 
 
 class AspectRatioEnum(str, Enum):

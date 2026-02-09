@@ -1,0 +1,7 @@
+
+/* Controls Grid - keeps form fit neatly */
+.controls-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr); /* Two columns for settings */
+  gap: 16px;
+}

@@ -61,6 +61,11 @@ $creative-studio-theme: mat.define-theme(
   --color-interactive: 140, 100, 255;
   --circle-size: 90%;
   --blending: hard-light;
+  --gem-sys-color--brand-blue:#3186FF;
+  --gem-sys-color--brand-transition-blue-1:#346BF1;
+  --gem-sys-color--brand-transition-blue-2:#4FA0FF;
+  --Greeting-gradient:linear-gradient(77deg, var(--gem-sys-color--brand-blue) 6.99%, var(--gem-sys-color--brand-transition-blue-1) 45.46%, var(--gem-sys-color--brand-transition-blue-2) 88.2%);
+
 }
 
 // Comment out the line below if you want to use the pre-defined typography utility classes.
@@ -93,6 +98,7 @@ button,
 input,
 optgroup,
 select,
+span,
 textarea {
   font-family: 'Google Sans', Roboto, Arial, 'Helvetica Neue', sans-serif !important;
 }
@@ -437,9 +443,16 @@ app-workspace-switcher .workspace-name {
 
 // Medium devices (tablets, 768px and up)
 @media (min-width: 768px) {
-  html,
-  body {
-    background-color: #2e3031;
+  html {
+    min-height: 100vh;
+    height: auto;
+    background: radial-gradient(ellipse 100% 100% at 50% 0%, #4D4D4D 0%, #161616 100%) !important;
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+    background-size: cover;
+  }
+  body { 
+    background: transparent !important;
   }
   :root {
     --color-bg1: transparent;

@@ -193,3 +193,21 @@ async def delete_source_asset(
             detail="Source asset not found.",
         )
     # On success, a 204 No Content response is automatically returned.
+
+
+@router.get("/{asset_id}", response_model=SourceAssetResponseDto)
+async def get_source_asset(
+    asset_id: int,
+    current_user: UserModel = Depends(get_current_user),
+    service: SourceAssetService = Depends(),
+):
+    """
+    Retrieves a single source asset by its ID.
+    """
+    asset = await service.get_asset_by_id(asset_id, current_user)
+    if not asset:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Source asset not found.",
+        )
+    return asset

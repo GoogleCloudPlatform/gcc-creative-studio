@@ -36,7 +36,7 @@ class WorkspaceAuth:
         workspace_id: int,
         user: UserModel = Depends(get_current_user),
         workspace_repo: WorkspaceRepository = Depends(),
-    ) -> WorkspaceModel:
+    ) -> WorkspaceModel | None:
         """
         The core authorization logic. Checks if a user has rights to a workspace.
 
@@ -55,7 +55,7 @@ class WorkspaceAuth:
         # Authorization checks
         is_admin = UserRoleEnum.ADMIN in user.roles
         is_public = scope == WorkspaceScopeEnum.PUBLIC
-        
+
         if not (is_admin or is_public):
             is_member = await workspace_repo.is_member(workspace_id, user.id)
             if not is_member:

@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
+from typing import Optional, Union
 
 from pydantic import Field
 
-from src.common.base_dto import GenerationModelEnum, MimeTypeEnum
+from src.common.base_dto import GenerationModelEnum, MimeTypeEnum, WildcardMimeTypeEnum
 from src.common.dto.base_search_dto import BaseSearchDto
 from src.common.schema.media_item_model import JobStatusEnum
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
@@ -24,7 +24,7 @@ from src.galleries.dto.gallery_response_dto import MediaItemResponse
 
 class GallerySearchDto(BaseSearchDto):
     user_email: Optional[str] = None
-    mime_type: Optional[MimeTypeEnum] = None
+    mime_type: Optional[Union[MimeTypeEnum, WildcardMimeTypeEnum]] = None
     model: Optional[GenerationModelEnum] = None
     status: Optional[JobStatusEnum] = None
     workspace_id: int = Field(
