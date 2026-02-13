@@ -35,9 +35,18 @@ export class AuthInterceptor implements HttpInterceptor {
     request: HttpRequest<unknown>,
     next: HttpHandler,
   ): Observable<HttpEvent<unknown>> {
+    // Preserve explicitly provided auth headers (e.g. first login sync request).
+    if (request.headers.has('Authorization')) {
+      return next.handle(request);
+    }
+
     // Asynchronously get a valid token. This will use the cache or trigger a silent refresh.
     return this.authService.getValidIdentityPlatformToken$().pipe(
       switchMap(token => {
+        if (!token) {
+          return throwError(() => new Error('Missing authentication token.'));
+        }
+
         // Token was retrieved successfully. Clone the request and add the auth header.
         const authorizedRequest = request.clone({
           setHeaders: {Authorization: `Bearer ${token}`},
