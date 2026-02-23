@@ -240,7 +240,9 @@ export class AuthService {
     // First, check our own session info which is loaded from localStorage.
     // This is synchronous and tells us if we have a valid, non-expired token.
     if (!this.isLoggedIn()) {
-      return of();
+      return throwError(
+        () => new Error('User session is not valid or has expired.'),
+      );
     }
 
     // Fallback case: The Firebase Auth instance is not yet initialized, but we
@@ -260,17 +262,92 @@ export class AuthService {
           console.log('User profile successfully synced with backend.');
         }),
         catchError((error: HttpErrorResponse) => {
-          console.error('Failed to sync user with backend', error);
+          const details = this.extractHttpErrorDetails(error);
+          console.error('Failed to sync user with backend', details);
+
           // This is a critical error, so we should propagate it.
-          return throwError(
-            () =>
-              new Error(
-                error?.error?.detail ||
-                  `Could not synchronize user profile with the server. ${error?.error?.detail}`,
-              ),
-          );
+          return throwError(() => new Error(details.userMessage));
         }),
       );
+  }
+
+  private extractHttpErrorDetails(error: HttpErrorResponse): {
+    userMessage: string;
+    status: number;
+    statusText: string;
+    url: string | null;
+    rawError: unknown;
+  } {
+    const rawError = error?.error;
+    let userMessage = '';
+
+    if (rawError && typeof rawError === 'object') {
+      const payload = rawError as {detail?: unknown; message?: unknown};
+
+      if (typeof payload.detail === 'string' && payload.detail.trim()) {
+        userMessage = payload.detail;
+      } else if (
+        Array.isArray(payload.detail) &&
+        payload.detail.length > 0
+      ) {
+        userMessage = payload.detail
+          .map(item => {
+            if (typeof item === 'string') return item;
+            if (
+              item &&
+              typeof item === 'object' &&
+              'msg' in item &&
+              typeof (item as {msg?: unknown}).msg === 'string'
+            ) {
+              return (item as {msg: string}).msg;
+            }
+            return JSON.stringify(item);
+          })
+          .join('; ');
+      } else if (
+        typeof payload.message === 'string' &&
+        payload.message.trim()
+      ) {
+        userMessage = payload.message;
+      }
+    } else if (typeof rawError === 'string' && rawError.trim()) {
+      try {
+        const parsed = JSON.parse(rawError) as {
+          detail?: unknown;
+          message?: unknown;
+        };
+        if (typeof parsed.detail === 'string' && parsed.detail.trim()) {
+          userMessage = parsed.detail;
+        } else if (
+          typeof parsed.message === 'string' &&
+          parsed.message.trim()
+        ) {
+          userMessage = parsed.message;
+        } else {
+          userMessage = rawError;
+        }
+      } catch {
+        userMessage = rawError;
+      }
+    }
+
+    if (!userMessage) {
+      if (!error.status) {
+        userMessage =
+          'Network error while contacting the server. Check connectivity and browser network policies.';
+      } else {
+        const statusSuffix = error.statusText ? ` ${error.statusText}` : '';
+        userMessage = `Could not synchronize user profile with the server (HTTP ${error.status}${statusSuffix}).`;
+      }
+    }
+
+    return {
+      userMessage,
+      status: error.status,
+      statusText: error.statusText,
+      url: error.url ?? null,
+      rawError,
+    };
   }
 
   async logout(route: string = LOGIN_ROUTE) {

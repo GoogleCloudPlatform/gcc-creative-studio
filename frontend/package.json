@@ -10,6 +10,7 @@
     "build-prd": "ng build --configuration build-prd --aot --output-hashing=all",
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
+    "test:all": "npm run test -- --watch=false --browsers=ChromeHeadless && npm run lint",
     "serve:ssr:creative-studio": "node dist/creative-studio/server/server.mjs",
     "lint": "gts lint",
     "clean": "gts clean",
@@ -17,7 +18,6 @@
     "fix": "gts fix",
     "prepare": "npm run compile",
     "pretest": "npm run compile",
-    "posttest": "npm run lint",
     "format": "prettier --write \"src/**/*.{ts,html,scss,json}\"",
     "check-format": "prettier --check \"src/**/*.{ts,html,scss,json}\""
   },

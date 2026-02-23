@@ -35,7 +35,8 @@ describe('MediaTemplatesManagementComponent', () => {
     );
 
     await TestBed.configureTestingModule({
-      imports: [MediaTemplatesManagementComponent, NoopAnimationsModule],
+      declarations: [MediaTemplatesManagementComponent],
+      imports: [NoopAnimationsModule],
       providers: [
         {provide: MediaTemplatesService, useValue: mockMediaTemplatesService},
       ],
