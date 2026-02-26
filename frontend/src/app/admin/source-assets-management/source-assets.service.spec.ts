@@ -15,14 +15,16 @@
  */
 
 import {TestBed} from '@angular/core/testing';
-
+import {HttpClientTestingModule} from '@angular/common/http/testing';
 import {SourceAssetsService} from './source-assets.service';
 
 describe('SourceAssetsService', () => {
   let service: SourceAssetsService;
 
   beforeEach(() => {
-    TestBed.configureTestingModule({});
+    TestBed.configureTestingModule({
+      imports: [HttpClientTestingModule],
+    });
     service = TestBed.inject(SourceAssetsService);
   });
 

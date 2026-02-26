@@ -15,8 +15,13 @@
  */
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
-
 import {VtoComponent} from './vto.component';
+import {HttpClientTestingModule} from '@angular/common/http/testing';
+import {RouterTestingModule} from '@angular/router/testing';
+import {MatSnackBarModule} from '@angular/material/snack-bar';
+import {MatDialogModule} from '@angular/material/dialog';
+import {MatChipsModule} from '@angular/material/chips';
+import {NO_ERRORS_SCHEMA} from '@angular/core';
 
 describe('VtoComponent', () => {
   let component: VtoComponent;
@@ -25,6 +30,14 @@ describe('VtoComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [VtoComponent],
+      imports: [
+        HttpClientTestingModule,
+        RouterTestingModule,
+        MatSnackBarModule,
+        MatDialogModule,
+        MatChipsModule,
+      ],
+      schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();
 
     fixture = TestBed.createComponent(VtoComponent);

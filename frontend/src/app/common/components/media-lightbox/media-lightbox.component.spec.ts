@@ -15,8 +15,12 @@
  */
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
-
 import {MediaLightboxComponent} from './media-lightbox.component';
+import {ActivatedRoute} from '@angular/router';
+import {of} from 'rxjs';
+import {HttpClientTestingModule} from '@angular/common/http/testing';
+import {RouterTestingModule} from '@angular/router/testing';
+import {NO_ERRORS_SCHEMA} from '@angular/core';
 
 describe('MediaLightboxComponent', () => {
   let component: MediaLightboxComponent;
@@ -25,6 +29,16 @@ describe('MediaLightboxComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [MediaLightboxComponent],
+      imports: [HttpClientTestingModule, RouterTestingModule],
+      providers: [
+        {
+          provide: ActivatedRoute,
+          useValue: {
+            queryParams: of({}),
+          },
+        },
+      ],
+      schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();
 
     fixture = TestBed.createComponent(MediaLightboxComponent);

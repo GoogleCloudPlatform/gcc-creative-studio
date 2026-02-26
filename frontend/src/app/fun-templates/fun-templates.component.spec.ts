@@ -15,8 +15,12 @@
  */
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
-
 import {FunTemplatesComponent} from './fun-templates.component';
+import {HttpClientTestingModule} from '@angular/common/http/testing';
+import {RouterTestingModule} from '@angular/router/testing';
+import {MatSnackBarModule} from '@angular/material/snack-bar';
+import {MatIconModule} from '@angular/material/icon';
+import {NO_ERRORS_SCHEMA} from '@angular/core';
 
 describe('FunTemplatesComponent', () => {
   let component: FunTemplatesComponent;
@@ -25,6 +29,13 @@ describe('FunTemplatesComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [FunTemplatesComponent],
+      imports: [
+        HttpClientTestingModule,
+        RouterTestingModule,
+        MatSnackBarModule,
+        MatIconModule,
+      ],
+      schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();
 
     fixture = TestBed.createComponent(FunTemplatesComponent);

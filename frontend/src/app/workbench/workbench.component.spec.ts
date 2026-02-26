@@ -15,8 +15,11 @@
  */
 
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-
 import { WorkbenchComponent } from './workbench.component';
+import { HttpClientTestingModule } from '@angular/common/http/testing';
+import { RouterTestingModule } from '@angular/router/testing';
+import { MatSnackBarModule } from '@angular/material/snack-bar';
+import { NO_ERRORS_SCHEMA } from '@angular/core';
 
 describe('WorkbenchComponent', () => {
   let component: WorkbenchComponent;
@@ -24,7 +27,9 @@ describe('WorkbenchComponent', () => {
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      declarations: [WorkbenchComponent]
+      declarations: [WorkbenchComponent],
+      imports: [HttpClientTestingModule, RouterTestingModule, MatSnackBarModule],
+      schemas: [NO_ERRORS_SCHEMA],
     })
     .compileComponents();
 

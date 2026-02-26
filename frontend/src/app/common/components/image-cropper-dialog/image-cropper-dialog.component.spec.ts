@@ -15,8 +15,10 @@
  */
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
-
 import {ImageCropperDialogComponent} from './image-cropper-dialog.component';
+import {MatDialogRef, MAT_DIALOG_DATA, MatDialogModule} from '@angular/material/dialog';
+import {HttpClientTestingModule} from '@angular/common/http/testing';
+import {NO_ERRORS_SCHEMA} from '@angular/core';
 
 describe('ImageCropperDialogComponent', () => {
   let component: ImageCropperDialogComponent;
@@ -25,6 +27,15 @@ describe('ImageCropperDialogComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [ImageCropperDialogComponent],
+      imports: [HttpClientTestingModule, MatDialogModule],
+      providers: [
+        {provide: MatDialogRef, useValue: {close: () => {}}},
+        {
+          provide: MAT_DIALOG_DATA,
+          useValue: {file: {type: 'image/png'}},
+        },
+      ],
+      schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();
 
     fixture = TestBed.createComponent(ImageCropperDialogComponent);

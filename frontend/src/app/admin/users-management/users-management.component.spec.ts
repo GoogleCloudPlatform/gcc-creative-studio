@@ -15,8 +15,11 @@
  */
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
-
 import {UsersManagementComponent} from './users-management.component';
+import {HttpClientTestingModule} from '@angular/common/http/testing';
+import {RouterTestingModule} from '@angular/router/testing';
+import {MatSnackBarModule} from '@angular/material/snack-bar';
+import {NO_ERRORS_SCHEMA} from '@angular/core';
 
 describe('UsersManagementComponent', () => {
   let component: UsersManagementComponent;
@@ -25,6 +28,8 @@ describe('UsersManagementComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [UsersManagementComponent],
+      imports: [HttpClientTestingModule, RouterTestingModule, MatSnackBarModule],
+      schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();
 
     fixture = TestBed.createComponent(UsersManagementComponent);

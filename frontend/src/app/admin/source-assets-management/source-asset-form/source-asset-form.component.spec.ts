@@ -15,8 +15,12 @@
  */
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
-
 import {SourceAssetFormComponent} from './source-asset-form.component';
+import {MatDialogRef, MAT_DIALOG_DATA, MatDialogModule} from '@angular/material/dialog';
+import {HttpClientTestingModule} from '@angular/common/http/testing';
+import {ReactiveFormsModule} from '@angular/forms';
+import {MatSnackBarModule} from '@angular/material/snack-bar';
+import {NO_ERRORS_SCHEMA} from '@angular/core';
 
 describe('SourceAssetFormComponent', () => {
   let component: SourceAssetFormComponent;
@@ -25,6 +29,17 @@ describe('SourceAssetFormComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [SourceAssetFormComponent],
+      imports: [
+        HttpClientTestingModule,
+        MatDialogModule,
+        ReactiveFormsModule,
+        MatSnackBarModule,
+      ],
+      providers: [
+        {provide: MatDialogRef, useValue: {close: () => {}}},
+        {provide: MAT_DIALOG_DATA, useValue: {}},
+      ],
+      schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();
 
     fixture = TestBed.createComponent(SourceAssetFormComponent);

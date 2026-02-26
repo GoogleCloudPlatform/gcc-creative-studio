@@ -15,8 +15,12 @@
  */
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
-
 import {AdminLayoutComponent} from './admin-layout.component';
+import {RouterTestingModule} from '@angular/router/testing';
+import {MatSidenavModule} from '@angular/material/sidenav';
+import {MatListModule} from '@angular/material/list';
+import {BrowserAnimationsModule} from '@angular/platform-browser/animations';
+import {NO_ERRORS_SCHEMA} from '@angular/core';
 
 describe('AdminLayoutComponent', () => {
   let component: AdminLayoutComponent;
@@ -25,6 +29,13 @@ describe('AdminLayoutComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [AdminLayoutComponent],
+      imports: [
+        RouterTestingModule,
+        MatSidenavModule,
+        MatListModule,
+        BrowserAnimationsModule,
+      ],
+      schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();
 
     fixture = TestBed.createComponent(AdminLayoutComponent);

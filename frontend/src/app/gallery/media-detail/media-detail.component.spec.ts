@@ -15,8 +15,15 @@
  */
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
-
 import {MediaDetailComponent} from './media-detail.component';
+import {HttpClientTestingModule} from '@angular/common/http/testing';
+import {RouterTestingModule} from '@angular/router/testing';
+import {MatSnackBarModule} from '@angular/material/snack-bar';
+import {MatIconModule} from '@angular/material/icon';
+import {NO_ERRORS_SCHEMA} from '@angular/core';
+import {ActivatedRoute} from '@angular/router';
+import {of} from 'rxjs';
+import {AuthService} from '../../common/services/auth.service';
 
 describe('MediaDetailComponent', () => {
   let component: MediaDetailComponent;
@@ -25,6 +32,29 @@ describe('MediaDetailComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [MediaDetailComponent],
+      imports: [
+        HttpClientTestingModule,
+        RouterTestingModule,
+        MatSnackBarModule,
+        MatIconModule,
+      ],
+      providers: [
+        {
+          provide: ActivatedRoute,
+          useValue: {
+            params: of({id: '1'}),
+            snapshot: {params: {id: '1'}},
+          },
+        },
+        {
+          provide: AuthService,
+          useValue: {
+            user$: of(null),
+            isLoggedIn$: of(false),
+          },
+        },
+      ],
+      schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();
 
     fixture = TestBed.createComponent(MediaDetailComponent);

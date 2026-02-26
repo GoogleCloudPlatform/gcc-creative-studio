@@ -15,8 +15,14 @@
  */
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
-
 import {HeaderComponent} from './header.component';
+import {HttpClientTestingModule} from '@angular/common/http/testing';
+import {RouterTestingModule} from '@angular/router/testing';
+import {MatSnackBarModule} from '@angular/material/snack-bar';
+import {MatMenuModule} from '@angular/material/menu';
+import {NO_ERRORS_SCHEMA} from '@angular/core';
+import {AuthService} from '../common/services/auth.service';
+import {of} from 'rxjs';
 
 describe('HeaderComponent', () => {
   let component: HeaderComponent;
@@ -25,6 +31,23 @@ describe('HeaderComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [HeaderComponent],
+      imports: [
+        HttpClientTestingModule,
+        RouterTestingModule,
+        MatSnackBarModule,
+        MatMenuModule,
+      ],
+      providers: [
+        {
+          provide: AuthService,
+          useValue: {
+            user$: of(null),
+            isLoggedIn$: of(false),
+            isUserAdmin: of(false),
+          },
+        },
+      ],
+      schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();
 
     fixture = TestBed.createComponent(HeaderComponent);

@@ -23,6 +23,7 @@ import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatTableModule } from '@angular/material/table';
 import { MatPaginatorModule } from '@angular/material/paginator';
 import { MatSortModule } from '@angular/material/sort';
+import { NO_ERRORS_SCHEMA } from '@angular/core';
 
 import { MediaTemplatesManagementComponent } from './media-templates-management.component';
 import { MediaTemplatesService } from './media-templates.service';
@@ -53,9 +54,10 @@ describe('MediaTemplatesManagementComponent', () => {
       ],
       providers: [
         { provide: MediaTemplatesService, useValue: mockMediaTemplatesService },
-        { provide: MatDialog, useValue: {} },
-        { provide: MatSnackBar, useValue: {} },
+        { provide: MatDialog, useValue: { open: () => {} } },
+        { provide: MatSnackBar, useValue: { open: () => {} } },
       ],
+      schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();
 
     fixture = TestBed.createComponent(MediaTemplatesManagementComponent);

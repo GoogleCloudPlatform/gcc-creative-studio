@@ -21,8 +21,9 @@ import { GalleryService } from '../gallery.service';
 import { DomSanitizer } from '@angular/platform-browser';
 import { MatIconRegistry } from '@angular/material/icon';
 import { UserService } from '../../common/services/user.service';
-import { ElementRef, NgZone } from '@angular/core';
+import { NO_ERRORS_SCHEMA } from '@angular/core';
 import { MatIconModule } from '@angular/material/icon';
+import { of } from 'rxjs';
 
 describe('MediaGalleryComponent', () => {
   let component: MediaGalleryComponent;
@@ -33,13 +34,29 @@ describe('MediaGalleryComponent', () => {
       declarations: [MediaGalleryComponent],
       imports: [HttpClientTestingModule, MatIconModule],
       providers: [
-        { provide: GalleryService, useValue: {} },
-        { provide: DomSanitizer, useValue: {} },
-        { provide: MatIconRegistry, useValue: {} },
-        { provide: UserService, useValue: {} },
-        { provide: ElementRef, useValue: {} },
-        { provide: NgZone, useValue: {} },
+        {
+          provide: GalleryService,
+          useValue: {
+            getGalleryItems: () => of([]),
+            getGalleryImages: () => of([]),
+          },
+        },
+        {
+          provide: DomSanitizer,
+          useValue: {
+            bypassSecurityTrustResourceUrl: (val: string) => val,
+          },
+        },
+        {
+          provide: MatIconRegistry,
+          useValue: {
+            addSvgIcon: () => {},
+            getNamedSvgIcon: () => of({}),
+          },
+        },
+        { provide: UserService, useValue: { getUser: () => of({}) } },
       ],
+      schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();
 
     fixture = TestBed.createComponent(MediaGalleryComponent);

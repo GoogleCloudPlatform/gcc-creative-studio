@@ -15,8 +15,10 @@
  */
 
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-
 import { AddVoiceDialogComponent } from './add-voice-dialog.component';
+import { MatDialogRef, MAT_DIALOG_DATA, MatDialogModule } from '@angular/material/dialog';
+import { HttpClientTestingModule } from '@angular/common/http/testing';
+import { NO_ERRORS_SCHEMA } from '@angular/core';
 
 describe('AddVoiceDialogComponent', () => {
   let component: AddVoiceDialogComponent;
@@ -24,7 +26,13 @@ describe('AddVoiceDialogComponent', () => {
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      declarations: [AddVoiceDialogComponent]
+      declarations: [AddVoiceDialogComponent],
+      imports: [HttpClientTestingModule, MatDialogModule],
+      providers: [
+        { provide: MatDialogRef, useValue: { close: () => {} } },
+        { provide: MAT_DIALOG_DATA, useValue: {} },
+      ],
+      schemas: [NO_ERRORS_SCHEMA],
     })
     .compileComponents();
 

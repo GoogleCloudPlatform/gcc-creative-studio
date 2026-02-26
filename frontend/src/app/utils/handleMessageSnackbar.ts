@@ -37,7 +37,7 @@ export const handleErrorSnackbar: (
     'Something went wrong';
 
   try {
-    const notificationService = AppInjector.get(NotificationService);
+    const notificationService = AppInjector!.get(NotificationService);
     notificationService.show(
       errorMessage,
       'error',
@@ -56,7 +56,7 @@ export const handleSuccessSnackbar: (
   duration?: number,
 ) => void = (snackBar: MatSnackBar, msg: any, duration?: number) => {
   try {
-    const notificationService = AppInjector.get(NotificationService);
+    const notificationService = AppInjector!.get(NotificationService);
     notificationService.show(
       msg,
       'success',
@@ -75,7 +75,7 @@ export const handleInfoSnackbar: (
   duration?: number,
 ) => void = (snackBar: MatSnackBar, msg: any, duration: number = 10000) => {
   try {
-    const notificationService = AppInjector.get(NotificationService);
+    const notificationService = AppInjector!.get(NotificationService);
     notificationService.show(msg, 'info', undefined, 'info', duration);
   } catch (e) {
     console.error('NotificationService not available', e);

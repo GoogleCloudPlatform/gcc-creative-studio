@@ -15,8 +15,11 @@
  */
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
-
 import {SourceAssetsManagementComponent} from './source-assets-management.component';
+import {HttpClientTestingModule} from '@angular/common/http/testing';
+import {MatDialogModule} from '@angular/material/dialog';
+import {MatSnackBarModule} from '@angular/material/snack-bar';
+import {NO_ERRORS_SCHEMA} from '@angular/core';
 
 describe('SourceAssetsManagementComponent', () => {
   let component: SourceAssetsManagementComponent;
@@ -25,6 +28,8 @@ describe('SourceAssetsManagementComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [SourceAssetsManagementComponent],
+      imports: [HttpClientTestingModule, MatDialogModule, MatSnackBarModule],
+      schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();
 
     fixture = TestBed.createComponent(SourceAssetsManagementComponent);
