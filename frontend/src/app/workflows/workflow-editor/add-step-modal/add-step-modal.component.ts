@@ -65,12 +65,12 @@ export class AddStepModalComponent {
       description: 'Generates a video clip from a prompt or image.',
       icon: 'movie',
     },
-    {
-      type: 'generate_audio',
-      label: 'Generate Audio',
-      description: 'Generates audio (music or speech) from a text prompt.',
-      icon: 'music_note',
-    }
+    // {
+    //   type: 'generate_audio',
+    //   label: 'Generate Audio',
+    //   description: 'Generates audio (music or speech) from a text prompt.',
+    //   icon: 'music_note',
+    // }
   ];
 
   constructor(

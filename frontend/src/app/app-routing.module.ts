@@ -44,7 +44,7 @@ const routes: Routes = [
   {path: 'video', component: VideoComponent, canActivate: [AuthGuardService]},
   {path: 'arena', component: ArenaComponent, canActivate: [AuthGuardService]},
   {path: 'vto', component: VtoComponent, canActivate: [AuthGuardService]},
-  {path: 'audio', component: AudioComponent, canActivate: [AuthGuardService]},
+  // {path: 'audio', component: AudioComponent, canActivate: [AuthGuardService]},
   {path: 'workbench', component:WorkbenchComponent, canActivate: [AuthGuardService]},
   // When a user goes to '/gallery', show the main feed.
   {
