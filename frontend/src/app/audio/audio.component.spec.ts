@@ -43,7 +43,6 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 // Removed MediaLightboxComponent import - using mock instead
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
-import { MatButtonHarness } from '@angular/material/button/testing';
 import { MatDividerModule } from '@angular/material/divider';
 import { LanguageEnum, VoiceEnum } from './audio.constants';
 import { By } from '@angular/platform-browser';
