@@ -308,6 +308,7 @@ describe('AudioComponent', () => {
     });
 
     it('should call audioService with correct params for Gemini TTS', () => {
+    it('should call audioService with correct params for Gemini TTS', fakeAsync(() => {
       audioService.generateAudio.and.returnValue(of(mockMediaItem));
       component.selectedModel = 'gemini-tts';
       component.prompt = 'gemini says hello';
@@ -315,7 +316,8 @@ describe('AudioComponent', () => {
       component.selectedVoice = VoiceEnum.CHARON;
       component.sampleCount = 1;
 
-      const expectedRequest = jasmine.objectContaining({
+      const expectedRequest: CreateAudioDto = {
+        model: GenerationModelEnum.GEMINI_2_5_FLASH_TTS,
         prompt: 'gemini says hello',
         workspaceId: workspaceId,
         negativePrompt: undefined,
@@ -323,11 +325,13 @@ describe('AudioComponent', () => {
         sampleCount: 1,
         languageCode: LanguageEnum.FR_FR,
         voiceName: VoiceEnum.CHARON,
-      });
+      };
 
       component.generate();
       expect(audioService.generateAudio).toHaveBeenCalledWith(expectedRequest);
-    });
+      expect(component.isLoading).toBeFalse();
+      tick(20000);
+    }));
 
     it('should set mediaItem on successful generation and set isLoading to false', fakeAsync(() => {
       audioService.generateAudio.and.returnValue(of(mockMediaItem));
