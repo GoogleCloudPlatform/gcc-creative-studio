@@ -301,25 +301,11 @@ describe('AudioComponent', () => {
         sampleCount: 1,
         languageCode: LanguageEnum.EN_US,
         voiceName: VoiceEnum.PUCK,
-    });
-
-      expect(component.isLoading).toBeTrue();
-      expect(component.mediaItem).toBeNull();
-      expect(component.audioUrl).toBeNull();
-    });
-        workspaceId: workspaceId,
-        negativePrompt: undefined,
-        seed: undefined,
-        sampleCount: 1,
-        languageCode: LanguageEnum.FR_FR,
-        voiceName: VoiceEnum.CHARON,
       };
 
       component.generate();
       expect(audioService.generateAudio).toHaveBeenCalledWith(expectedRequest);
-      expect(component.isLoading).toBeFalse();
-      tick(20000);
-    }));
+    });
 
     it('should set mediaItem on successful generation and set isLoading to false', fakeAsync(() => {
       audioService.generateAudio.and.returnValue(of(mockMediaItem));
