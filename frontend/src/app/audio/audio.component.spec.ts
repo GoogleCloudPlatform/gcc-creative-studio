@@ -30,7 +30,7 @@ import {
   CreateAudioDto,
   GenerationModelEnum,
 } from '../services/audio/audio.service';
-import { of, throwError } from 'rxjs';
+import { of, throwError, Subject } from 'rxjs';
 import { JobStatus, MediaItem } from '../common/models/media-item.model';
 import { WorkspaceStateService } from '../services/workspace/workspace-state.service';
 import { FormsModule } from '@angular/forms';
