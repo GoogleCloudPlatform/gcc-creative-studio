@@ -341,6 +341,8 @@ describe('AudioComponent', () => {
       expect(component.isLoading).toBeFalse();
       expect(component.mediaItem).toEqual(mockMediaItem);
       flush();
+    }));
+
     it('should show error notification on generation failure and set isLoading to false', fakeAsync(() => {
       const error = { message: 'Generation failed' };
       audioService.generateAudio.and.returnValue(throwError(() => error));
