@@ -314,16 +314,17 @@ describe('AudioComponent', () => {
       component.selectedLanguage = LanguageEnum.FR_FR;
       component.selectedVoice = VoiceEnum.CHARON;
       component.sampleCount = 1;
-      expect(audioService.generateAudio).toHaveBeenCalled();
-      expect(component.isLoading).toBeFalse();
-      tick(20000);
-    }));
+
+      const expectedRequest = jasmine.objectContaining({
+        prompt: 'gemini says hello',
+        workspaceId: workspaceId,
         negativePrompt: undefined,
         seed: undefined,
         sampleCount: 1,
         languageCode: LanguageEnum.FR_FR,
         voiceName: VoiceEnum.CHARON,
-      };
+      });
+
       component.generate();
       expect(audioService.generateAudio).toHaveBeenCalledWith(expectedRequest);
     });
