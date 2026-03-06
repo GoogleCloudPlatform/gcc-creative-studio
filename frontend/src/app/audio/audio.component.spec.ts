@@ -430,7 +430,7 @@ describe('AudioComponent', () => {
 
   describe('AddVoiceDialog', () => {
     it('should add a new voice and show snackbar when dialog closes with data', () => {
-      const newVoiceName = 'My Custom Voice';
+    it('should add a new voice and show notification when dialog closes with data', () => {
       const initialVoiceCount = component.voices.length;
       dialog.open.and.returnValue({
         afterClosed: () => of({ name: newVoiceName }),
