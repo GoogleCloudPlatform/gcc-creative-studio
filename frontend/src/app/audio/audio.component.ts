@@ -213,7 +213,7 @@ export class AudioComponent {
         'Please select a workspace first.',
         'error',
         'cross-in-circle-white',
-        20000,
+        undefined,
         20000
       );
       this.isLoading = false;
