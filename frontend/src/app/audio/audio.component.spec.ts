@@ -464,7 +464,7 @@ describe('AudioComponent', () => {
 
       component.openAddVoiceDialog();
       expect(component.voices.length).toBe(initialVoiceCount);
-      expect(snackBar.open).not.toHaveBeenCalled();
+      expect(notificationService.show).not.toHaveBeenCalled();
     });
   });
 
