@@ -307,7 +307,6 @@ describe('AudioComponent', () => {
       expect(audioService.generateAudio).toHaveBeenCalledWith(expectedRequest);
     });
 
-    it('should call audioService with correct params for Gemini TTS', () => {
     it('should call audioService with correct params for Gemini TTS', fakeAsync(() => {
       audioService.generateAudio.and.returnValue(of(mockMediaItem));
       component.selectedModel = 'gemini-tts';
