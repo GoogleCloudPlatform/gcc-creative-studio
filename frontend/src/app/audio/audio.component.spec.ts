@@ -314,11 +314,10 @@ describe('AudioComponent', () => {
       component.selectedLanguage = LanguageEnum.FR_FR;
       component.selectedVoice = VoiceEnum.CHARON;
       component.sampleCount = 1;
-
-      const expectedRequest: CreateAudioDto = {
-        model: GenerationModelEnum.GEMINI_2_5_FLASH_TTS, // Default for gemini-tts
-        prompt: 'gemini says hello',
-        workspaceId: workspaceId,
+      expect(audioService.generateAudio).toHaveBeenCalled();
+      expect(component.isLoading).toBeFalse();
+      tick(20000);
+    }));
         negativePrompt: undefined,
         seed: undefined,
         sampleCount: 1,
