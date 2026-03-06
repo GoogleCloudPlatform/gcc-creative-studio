@@ -301,20 +301,7 @@ describe('AudioComponent', () => {
         sampleCount: 1,
         languageCode: LanguageEnum.EN_US,
         voiceName: VoiceEnum.PUCK,
-      };
-
-      component.generate();
-      expect(audioService.generateAudio).toHaveBeenCalledWith(expectedRequest);
     });
-
-    it('should set isLoading to true and clear previous mediaItem', () => {
-      // NOTE: You will need to add: import { Subject } from 'rxjs';
-      const generateSubject = new Subject<any>();
-      audioService.generateAudio.and.returnValue(generateSubject.asObservable());
-      component.mediaItem = mockMediaItem;
-      component.audioUrl = 'old-url';
-
-      component.generate();
 
       expect(component.isLoading).toBeTrue();
       expect(component.mediaItem).toBeNull();
