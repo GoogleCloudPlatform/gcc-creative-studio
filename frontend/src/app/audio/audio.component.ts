@@ -261,6 +261,7 @@ export class AudioComponent {
           // The Lightbox will handle displaying the first item automatically via inputs
         },
         error: (error: any) => {
+          console.error('Generation failed:', error);
           const errorMessage =
             error?.error?.detail?.[0]?.msg ||
             error?.error?.detail ||
