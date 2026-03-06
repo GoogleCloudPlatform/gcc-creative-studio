@@ -307,17 +307,19 @@ describe('AudioComponent', () => {
       expect(audioService.generateAudio).toHaveBeenCalledWith(expectedRequest);
     });
 
-    it('should call audioService with correct params for Gemini TTS', fakeAsync(() => {
-      audioService.generateAudio.and.returnValue(of(mockMediaItem));
-      component.selectedModel = 'gemini-tts';
-      component.prompt = 'gemini says hello';
-      component.selectedLanguage = LanguageEnum.FR_FR;
-      component.selectedVoice = VoiceEnum.CHARON;
-      component.sampleCount = 1;
+    it('should set isLoading to true and clear previous mediaItem', () => {
+      // NOTE: You will need to add: import { Subject } from 'rxjs';
+      const generateSubject = new Subject<any>();
+      audioService.generateAudio.and.returnValue(generateSubject.asObservable());
+      component.mediaItem = mockMediaItem;
+      component.audioUrl = 'old-url';
 
-      const expectedRequest: CreateAudioDto = {
-        model: GenerationModelEnum.GEMINI_2_5_FLASH_TTS,
-        prompt: 'gemini says hello',
+      component.generate();
+
+      expect(component.isLoading).toBeTrue();
+      expect(component.mediaItem).toBeNull();
+      expect(component.audioUrl).toBeNull();
+    });
         workspaceId: workspaceId,
         negativePrompt: undefined,
         seed: undefined,
