@@ -348,8 +348,9 @@ describe('AudioComponent', () => {
       component.generate();
       tick();
       fixture.detectChanges();
+      expect(audioService.generateAudio).not.toHaveBeenCalled();
       expect(component.isLoading).toBeFalse();
-      expect(notificationService.show).toHaveBeenCalled();
+    });
       tick(20000);
     }));
   });
