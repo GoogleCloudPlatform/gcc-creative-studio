@@ -343,7 +343,7 @@ describe('AudioComponent', () => {
       flush();
     }));
 
-    it('should show error snackbar on generation failure and set isLoading to false', fakeAsync(() => {
+    it('should show error notification on generation failure and set isLoading to false', fakeAsync(() => {
       const error = { message: 'Generation failed' };
       audioService.generateAudio.and.returnValue(throwError(() => error));
       component.generate();
