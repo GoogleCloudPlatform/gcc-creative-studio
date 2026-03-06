@@ -286,7 +286,7 @@ describe('AudioComponent', () => {
 
       expect(audioService.generateAudio).toHaveBeenCalledWith(expectedRequest);
     });
-
+    it('should show error notification if no workspace is selected', () => {
     it('should call audioService with correct params for Chirp', () => {
       audioService.generateAudio.and.returnValue(of(mockMediaItem));
       component.selectedModel = 'chirp';
