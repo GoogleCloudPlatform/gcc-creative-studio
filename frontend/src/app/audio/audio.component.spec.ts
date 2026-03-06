@@ -55,6 +55,7 @@ import { MatMenuModule } from '@angular/material/menu';
 // Removed NgOptimizedImage and IMAGE_LOADER
 import { CommonModule } from '@angular/common'; // Needed for *ngIf in mock template
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 
 
 // Define a mock MediaLightboxComponent
