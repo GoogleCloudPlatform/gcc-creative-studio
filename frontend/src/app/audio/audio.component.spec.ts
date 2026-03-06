@@ -23,7 +23,6 @@ import {
 import { Component, Input, Output, EventEmitter } from '@angular/core';
 import { AudioComponent } from './audio.component';
 import { HttpClientTestingModule } from '@angular/common/http/testing';
-import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { NoopAnimationsModule } from '@angular/platform-browser/animations';
 import {
