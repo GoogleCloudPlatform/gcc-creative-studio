@@ -423,7 +423,7 @@ export class VtoComponent implements OnInit, AfterViewInit {
   tryOn() {
     const selectedModel = this.firstFormGroup.get('model')?.value;
     if (!selectedModel) {
-      console.error('No model selected.');
+      handleErrorSnackbar(this._snackBar, { message: 'No model selected.' }, 'Virtual Try-On');
       return;
     }
 
