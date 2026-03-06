@@ -262,10 +262,10 @@ export class AudioComponent {
         },
         error: (error: any) => {
           const errorMessage =
-          error?.error?.detail?.[0]?.msg ||
-          error?.error?.detail ||
-          error?.message ||
-          'Something went wrong';
+            error?.error?.detail?.[0]?.msg ||
+            error?.error?.detail ||
+            error?.message ||
+            'Something went wrong';
           this.notificationService.show(
             errorMessage,
             'error',
