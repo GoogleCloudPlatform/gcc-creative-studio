@@ -250,7 +250,7 @@ describe('AudioComponent', () => {
       expect(component.mediaItem).toEqual(mockMediaItem);
     }));
 
-      it('should show error notification if no workspace is selected', () => {
+    it('should show error notification if no workspace is selected', () => {
       workspaceStateService.getActiveWorkspaceId.and.returnValue(null);
       component.generate();
       expect(notificationService.show).toHaveBeenCalledWith(
