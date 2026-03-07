@@ -259,6 +259,7 @@ describe('AudioComponent', () => {
         undefined,
         20000,
       );
+      expect(component.isLoading).toBeFalse();
       expect(audioService.generateAudio).not.toHaveBeenCalled();
     });
 
