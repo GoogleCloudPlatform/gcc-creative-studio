@@ -328,6 +328,13 @@ describe('AudioComponent', () => {
       fixture.detectChanges();
       expect(audioService.generateAudio).toHaveBeenCalled();
       expect(component.isLoading).toBeFalse();
+      expect(notificationService.show).toHaveBeenCalledWith(
+        'Generation failed',
+        'error',
+        'cross-in-circle-white',
+        undefined,
+        20000,
+      );
       tick(20000);
     }));
   });
