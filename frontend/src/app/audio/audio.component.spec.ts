@@ -237,11 +237,16 @@ describe('AudioComponent', () => {
       workspaceStateService.getActiveWorkspaceId.and.returnValue(workspaceId);
     });
 
-    it('should set isLoading to true and clear previous mediaItem', fakeAsync(() => {
+    it('should set isLoading to true and clear previous mediaItem and audioUrl', fakeAsync(() => {
       audioService.generateAudio.and.returnValue(of(mockMediaItem));
       component.mediaItem = mockMediaItem;
+      component.audioUrl = 'previous-url';
 
       component.generate();
+
+      expect(component.isLoading).toBeTrue();
+      expect(component.mediaItem).toBeNull();
+      expect(component.audioUrl).toBeNull();
 
       tick();
       
