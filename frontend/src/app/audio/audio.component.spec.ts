@@ -181,7 +181,6 @@ describe('AudioComponent', () => {
         MatDividerModule,
         MatMenuModule,
         MatTooltipModule,
-        MockMediaLightboxComponent, // Mock is here, in imports as it's standalone
       ],
       providers: [
         { provide: AudioService, useValue: audioServiceSpy },
