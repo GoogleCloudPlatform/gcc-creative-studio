@@ -136,7 +136,6 @@ describe('AudioComponent', () => {
   let fixture: ComponentFixture<AudioComponent>;
   let audioService: jasmine.SpyObj<AudioService>;
   let workspaceStateService: jasmine.SpyObj<WorkspaceStateService>;
-  let snackBar: jasmine.SpyObj<MatSnackBar>;
   let dialog: jasmine.SpyObj<MatDialog>;
   let loader: HarnessLoader;
   let notificationService: jasmine.SpyObj<NotificationService>;
