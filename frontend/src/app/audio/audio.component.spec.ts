@@ -405,7 +405,10 @@ describe('AudioComponent', () => {
         expect(component.voices.length).toBe(initialVoiceCount + 1);
         expect(notificationService.show).toHaveBeenCalledWith(
           'Voice cloned successfully!',
-          'success',
+      expect(component.openAddVoiceDialog).toHaveBeenCalled();
+    });
+  });
+
           undefined,
           'check_small'
         );
