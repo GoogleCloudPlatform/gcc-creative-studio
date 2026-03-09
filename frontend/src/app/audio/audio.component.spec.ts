@@ -174,11 +174,10 @@ describe('AudioComponent', () => {
         },
         { provide: NotificationService, useValue: notificationServiceSpy },
       ],
-    })
+    }).compileComponents();
+
+    fixture = TestBed.createComponent(AudioComponent);
     component = fixture.componentInstance;
-    component = fixture.componentInstance;
-    })
-    .compileComponents();
     dialog = TestBed.inject(MatDialog) as jasmine.SpyObj<MatDialog>;
     notificationService = TestBed.inject(
       NotificationService,
