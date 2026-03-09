@@ -141,12 +141,12 @@ describe('AudioComponent', () => {
   let notificationService: jasmine.SpyObj<NotificationService>;
   let snackBar: jasmine.SpyObj<MatSnackBar>;
 
-  const mockMediaItem: MediaItem = {
-    presignedThumbnailUrls: [],
-    ]);
+  const mockMediaItem = {
     presignedThumbnailUrls: [],
     gcsUris: [],
     prompt: '',
+  } as unknown as MediaItem;
+
   beforeEach(async () => {
     const audioServiceSpy = jasmine.createSpyObj('AudioService', [
       'generateAudio',
