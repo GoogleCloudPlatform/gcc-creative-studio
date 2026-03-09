@@ -423,13 +423,11 @@ describe('AudioComponent', () => {
       const initialVoiceCount = component.voices.length;
       dialog.open.and.returnValue({
         afterClosed: () => of({ name: newVoiceName }),
-      } as any);
-
-      component.openAddVoiceDialog();
-
-      expect(dialog.open).toHaveBeenCalledWith(AddVoiceDialogComponent, {
-        width: '500px',
-      });
+      expect(notificationService.show).toHaveBeenCalledWith(
+        'Voice cloned successfully!',
+        'success',
+        'check_small'
+      );
       expect(component.voices.length).toBe(initialVoiceCount + 1);
       expect(component.voices[0].name).toBe(newVoiceName);
       expect(component.voices[0].type).toBe('custom');
