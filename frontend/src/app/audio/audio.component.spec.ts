@@ -387,8 +387,6 @@ describe('AudioComponent', () => {
       const event = { value: 'add-new-voice' } as MatSelectChange;
       component.onVoiceSelectionChange(event);
       expect(component.openAddVoiceDialog).toHaveBeenCalled();
-  describe('AddVoiceDialog', () => {
-      expect(component.openAddVoiceDialog).toHaveBeenCalled();
     });
   });
 
