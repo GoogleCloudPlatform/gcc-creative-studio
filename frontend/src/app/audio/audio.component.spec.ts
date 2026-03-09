@@ -169,7 +169,6 @@ describe('AudioComponent', () => {
         HttpClientTestingModule,
         MatSnackBarModule,
         MatDialogModule,
-        NoopAnimationsModule,
         FormsModule,
         { provide: WorkspaceStateService, useValue: workspaceStateServiceSpy },
         { provide: MatDialog, useValue: dialogSpy },
