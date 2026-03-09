@@ -410,6 +410,8 @@ describe('AudioComponent', () => {
         'check_small'
       );
     });
+
+    it('should not add a new voice when dialog closes without data', () => {
       const initialVoiceCount = component.voices.length;
       dialog.open.and.returnValue({
         afterClosed: () => of(null),
