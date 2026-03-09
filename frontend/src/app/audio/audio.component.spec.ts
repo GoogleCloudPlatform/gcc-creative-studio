@@ -175,9 +175,7 @@ describe('AudioComponent', () => {
         { provide: NotificationService, useValue: notificationServiceSpy },
       ],
     })
-    .compileComponents();
-    })
-    .compileComponents();
+      .compileComponents();
     setAppInjector(TestBed.inject(Injector));
     fixture = TestBed.createComponent(AudioComponent);
     component = fixture.componentInstance;
