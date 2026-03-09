@@ -420,11 +420,6 @@ describe('AudioComponent', () => {
       const initialVoiceCount = component.voices.length;
       dialog.open.and.returnValue({
         afterClosed: () => of({ name: newVoiceName }),
-      expect(notificationService.show).toHaveBeenCalledWith(
-        'Voice cloned successfully!',
-        'success',
-      dialog.open.and.returnValue({
-        afterClosed: () => of({ name: newVoiceName }),
       } as any);
 
       component.openAddVoiceDialog();
@@ -438,10 +433,16 @@ describe('AudioComponent', () => {
         'success',
         'check_small'
       );
+    });
+
+    it('should not add a voice when dialog closes without data', () => {
+      const initialVoiceCount = component.voices.length;
+      dialog.open.and.returnValue({
         afterClosed: () => of(null),
       } as any);
 
       component.openAddVoiceDialog();
+
       expect(component.voices.length).toBe(initialVoiceCount);
       expect(notificationService.show).not.toHaveBeenCalled();
     });
