@@ -168,15 +168,14 @@ describe('AudioComponent', () => {
       imports: [
         HttpClientTestingModule,
         MatSnackBarModule,
-        MatDialogModule,
-        FormsModule,
-        { provide: WorkspaceStateService, useValue: workspaceStateServiceSpy },
-        { provide: MatDialog, useValue: dialogSpy },
-        MatSelectModule,
-        MatIconModule,
-        MatProgressSpinnerModule,
-        MatDividerModule,
-        MatTooltipModule,
+      providers: [
+        { provide: AudioService, useValue: audioServiceSpy },
+        {
+          provide: ActivatedRoute,
+          useValue: { snapshot: { queryParamMap: { get: () => null } } },
+        },
+        { provide: NotificationService, useValue: notificationServiceSpy },
+      ],
       ],
       providers: [
     workspaceStateService = TestBed.inject(
