@@ -147,21 +147,27 @@ describe('AudioComponent', () => {
     presignedThumbnailUrls: [],
     gcsUris: [],
     prompt: '',
-  };
-
   beforeEach(async () => {
     const audioServiceSpy = jasmine.createSpyObj('AudioService', [
+      'generateAudio',
     ]);
     const workspaceStateServiceSpy = jasmine.createSpyObj(
       'WorkspaceStateService',
       ['getActiveWorkspaceId'],
     );
+    const notificationServiceSpy = jasmine.createSpyObj(
+      'NotificationService',
+      ['show'],
+    );
+
+    await TestBed.configureTestingModule({
       imports: [
         HttpClientTestingModule,
         MatSnackBarModule,
       ],
       providers: [
         { provide: AudioService, useValue: audioServiceSpy },
+        { provide: WorkspaceStateService, useValue: workspaceStateServiceSpy },
         {
           provide: ActivatedRoute,
           useValue: { snapshot: { queryParamMap: { get: () => null } } },
@@ -169,12 +175,7 @@ describe('AudioComponent', () => {
         { provide: NotificationService, useValue: notificationServiceSpy },
       ],
     })
-    ) as jasmine.SpyObj<WorkspaceStateService>;
-    dialog = TestBed.inject(MatDialog) as jasmine.SpyObj<MatDialog>;
-          useValue: { snapshot: { queryParamMap: { get: () => null } } },
-        },
-        { provide: NotificationService, useValue: notificationServiceSpy },
-      ],
+    .compileComponents();
     })
     .compileComponents();
     setAppInjector(TestBed.inject(Injector));
