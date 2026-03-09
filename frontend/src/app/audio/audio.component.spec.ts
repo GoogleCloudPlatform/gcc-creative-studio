@@ -403,17 +403,16 @@ describe('AudioComponent', () => {
         afterClosed: () => of({ name: newVoiceName }),
       } as any);
 
-      component.openAddVoiceDialog();
+        component.openAddVoiceDialog();
 
-    });
-        'check_small'
-      );
-    });
+        expect(component.voices.length).toBe(initialVoiceCount + 1);
+        expect(notificationService.show).toHaveBeenCalledWith(
           'Voice cloned successfully!',
           'success',
+          undefined,
           'check_small'
         );
-    });
+      });
 
     it('should not add a voice when dialog closes without data', () => {
       const initialVoiceCount = component.voices.length;
