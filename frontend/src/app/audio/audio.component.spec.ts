@@ -139,6 +139,7 @@ describe('AudioComponent', () => {
   let dialog: jasmine.SpyObj<MatDialog>;
   let loader: HarnessLoader;
   let notificationService: jasmine.SpyObj<NotificationService>;
+  let snackBar: jasmine.SpyObj<MatSnackBar>;
 
   const mockMediaItem: MediaItem = {
     id: 123,
