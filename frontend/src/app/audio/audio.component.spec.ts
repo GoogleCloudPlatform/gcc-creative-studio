@@ -176,7 +176,6 @@ describe('AudioComponent', () => {
         MatIconModule,
         MatProgressSpinnerModule,
         MatDividerModule,
-        MatMenuModule,
         MatTooltipModule,
       ],
       providers: [
