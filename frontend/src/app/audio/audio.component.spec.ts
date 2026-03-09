@@ -144,8 +144,9 @@ describe('AudioComponent', () => {
   const mockMediaItem: MediaItem = {
     id: 123,
     status: JobStatus.COMPLETED,
-    originalPrompt: 'test prompt',
-    presignedUrls: ['data:audio/mp3;base64,AAAA'],
+    const audioServiceSpy = jasmine.createSpyObj('AudioService', [
+      'generateAudio',
+    ]);
     presignedThumbnailUrls: [],
     gcsUris: [],
     prompt: '',
