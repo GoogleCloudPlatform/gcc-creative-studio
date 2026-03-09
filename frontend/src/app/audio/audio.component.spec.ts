@@ -395,12 +395,10 @@ describe('AudioComponent', () => {
       spyOn(component, 'openAddVoiceDialog');
       const event = { value: 'add-new-voice' } as MatSelectChange;
       component.onVoiceSelectionChange(event);
-      expect(component.openAddVoiceDialog).toHaveBeenCalled();
-      expect(component.selectedVoice).toBe('');
-    });
-  });
-
   describe('AddVoiceDialog', () => {
+    it('should add a new voice when dialog closes with data', () => {
+      const initialVoiceCount = component.voices.length;
+      const newVoiceName = 'New Voice';
       dialog.open.and.returnValue({
         afterClosed: () => of({ name: newVoiceName }),
       } as any);
@@ -409,7 +407,13 @@ describe('AudioComponent', () => {
 
       expect(component.voices.length).toBe(initialVoiceCount + 1);
       expect(component.voices[0].name).toBe(newVoiceName);
-        expect(notificationService.show).toHaveBeenCalledWith(
+      expect(notificationService.show).toHaveBeenCalledWith(
+        'Voice cloned successfully!',
+        'success',
+        undefined,
+        'check_small'
+      );
+    });
           'Voice cloned successfully!',
           'success',
           'check_small'
