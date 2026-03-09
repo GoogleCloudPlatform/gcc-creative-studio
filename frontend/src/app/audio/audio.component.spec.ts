@@ -142,10 +142,7 @@ describe('AudioComponent', () => {
   let snackBar: jasmine.SpyObj<MatSnackBar>;
 
   const mockMediaItem: MediaItem = {
-    id: 123,
-    status: JobStatus.COMPLETED,
-    const audioServiceSpy = jasmine.createSpyObj('AudioService', [
-      'generateAudio',
+    presignedThumbnailUrls: [],
     ]);
     presignedThumbnailUrls: [],
     gcsUris: [],
