@@ -185,7 +185,6 @@ describe('AudioComponent', () => {
       providers: [
         { provide: AudioService, useValue: audioServiceSpy },
         { provide: WorkspaceStateService, useValue: workspaceStateServiceSpy },
-        { provide: MatSnackBar, useValue: snackBarSpy },
         { provide: MatDialog, useValue: dialogSpy },
         {
           provide: ActivatedRoute,
