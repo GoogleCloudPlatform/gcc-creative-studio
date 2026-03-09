@@ -565,6 +565,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   updateAssetDuration(id: string, duration: number) {
     this.assets.update(items => items.map(i => i.id === id ? {...i, duration} : i));
     this.timelineClips.update(clips => clips.map(clip => clip.assetId === id ? { ...clip, duration } : clip));
+    this.refreshTimelineLayout();
   }
 
   onThumbnailError(asset: MediaAsset) {
@@ -572,6 +573,23 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     this.assets.update(items => items.map(i => i.id === asset.id ? {...i, thumbnail: undefined} : i));
   }
 
+    refreshTimelineLayout() {
+      this.timelineClips.update(clips => {
+          const vClips = clips.filter(c => c.trackIndex === 0);
+          const otherClips = clips.filter(c => c.trackIndex !== 0);
+
+          const layoutTrack = (trackClips: TimelineClip[]) => {
+            let currentTime = 0;
+            return trackClips.map(clip => {
+                const newClip = { ...clip, startTime: currentTime };
+                currentTime += clip.duration;
+                return newClip;
+            });
+          };
+
+          return [...layoutTrack(vClips), ...otherClips];
+      });
+  }
 
 
   getAssetThumbnail(id: string): string | undefined {
@@ -636,6 +654,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     }
 
     this.timelineClips.update(prev => [...prev, ...clipsToAdd]);
+    this.refreshTimelineLayout();
   }
 
   deleteAsset(asset: MediaAsset, event: Event) {
@@ -655,6 +674,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
             this.selectedClipId.set(null);
         }
     }
+    this.refreshTimelineLayout();
   }
 
   private findAvailableAudioTrack(startTime: number, duration: number): number {
@@ -708,6 +728,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     if (!id) return;
     this.timelineClips.update(prev => prev.filter(c => c.id !== id));
     this.selectedClipId.set(null);
+    this.refreshTimelineLayout();
   }
 
   // --- Split Logic ---
@@ -745,6 +766,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     });
 
     this.selectedClipId.set(clip2.id);
+    this.refreshTimelineLayout();
   }
 
   // --- Logic: Playback Loop ---
@@ -955,6 +977,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
     onTrimEnd() {
       if (this.trimState && this.trimState.active) {
+        this.refreshTimelineLayout();
         this.trimState = null;
       }
     }
