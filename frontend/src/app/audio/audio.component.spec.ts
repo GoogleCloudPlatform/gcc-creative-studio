@@ -158,7 +158,6 @@ describe('AudioComponent', () => {
       'WorkspaceStateService',
       ['getActiveWorkspaceId'],
     );
-    const snackBarSpy = jasmine.createSpyObj('MatSnackBar', ['open']);
     const dialogSpy = jasmine.createSpyObj('MatDialog', ['open']);
     const notificationServiceSpy = jasmine.createSpyObj('NotificationService', [
       'show',
