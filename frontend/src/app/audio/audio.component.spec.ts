@@ -384,9 +384,7 @@ describe('AudioComponent', () => {
 
   describe('Voice Selection', () => {
     it('onVoiceSelectionChange should update selectedVoice', () => {
-      component.onVoiceSelectionChange(event);
-      expect(component.openAddVoiceDialog).toHaveBeenCalled();
-    });
+      const event = { value: VoiceEnum.FENRIR } as MatSelectChange;
       component.onVoiceSelectionChange(event);
       expect(component.selectedVoice).toBe(VoiceEnum.FENRIR);
     });
@@ -395,6 +393,7 @@ describe('AudioComponent', () => {
       spyOn(component, 'openAddVoiceDialog');
       const event = { value: 'add-new-voice' } as MatSelectChange;
       component.onVoiceSelectionChange(event);
+      expect(component.openAddVoiceDialog).toHaveBeenCalled();
   describe('AddVoiceDialog', () => {
     it('should add a new voice when dialog closes with data', () => {
       const initialVoiceCount = component.voices.length;
