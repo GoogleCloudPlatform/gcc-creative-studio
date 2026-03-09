@@ -183,11 +183,10 @@ describe('AudioComponent', () => {
         MatTooltipModule,
       ],
       providers: [
-        { provide: AudioService, useValue: audioServiceSpy },
-        { provide: WorkspaceStateService, useValue: workspaceStateServiceSpy },
-        { provide: MatDialog, useValue: dialogSpy },
-        {
-          provide: ActivatedRoute,
+    workspaceStateService = TestBed.inject(
+      WorkspaceStateService,
+    ) as jasmine.SpyObj<WorkspaceStateService>;
+    dialog = TestBed.inject(MatDialog) as jasmine.SpyObj<MatDialog>;
           useValue: { snapshot: { queryParamMap: { get: () => null } } },
         },
         { provide: NotificationService, useValue: notificationServiceSpy },
