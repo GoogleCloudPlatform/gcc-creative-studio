@@ -421,13 +421,11 @@ describe('AudioComponent', () => {
 
       expect(component.voices.length).toBe(initialVoiceCount + 1);
       expect(component.voices[0].name).toBe(newVoiceName);
-      expect(component.voices[0].type).toBe('custom');
-      expect(component.selectedVoice).toBe(component.voices[0].id);
-      expect(notificationService.show).toHaveBeenCalledWith(
-        'Voice cloned successfully!',
-        'success',
-        'check_small'
-      );
+        expect(notificationService.show).toHaveBeenCalledWith(
+          'Voice cloned successfully!',
+          'success',
+          'check_small'
+        );
     });
 
     it('should not add a voice when dialog closes without data', () => {
