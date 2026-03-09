@@ -190,7 +190,6 @@ describe('AudioComponent', () => {
       ],
     })
     .compileComponents();
-
     setAppInjector(TestBed.inject(Injector));
     fixture = TestBed.createComponent(AudioComponent);
     component = fixture.componentInstance;
