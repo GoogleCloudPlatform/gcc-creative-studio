@@ -153,7 +153,6 @@ describe('AudioComponent', () => {
 
   beforeEach(async () => {
     const audioServiceSpy = jasmine.createSpyObj('AudioService', [
-      'generateAudio',
     ]);
     const workspaceStateServiceSpy = jasmine.createSpyObj(
       'WorkspaceStateService',
