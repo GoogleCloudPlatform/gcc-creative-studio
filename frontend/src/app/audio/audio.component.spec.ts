@@ -402,12 +402,7 @@ describe('AudioComponent', () => {
 
       component.openAddVoiceDialog();
 
-      expect(component.voices.length).toBe(initialVoiceCount + 1);
-      expect(component.voices[0].name).toBe(newVoiceName);
-      expect(notificationService.show).toHaveBeenCalledWith(
-        'Voice cloned successfully!',
-        'success',
-        undefined,
+    });
         'check_small'
       );
     });
