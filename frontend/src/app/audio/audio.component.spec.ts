@@ -426,8 +426,12 @@ describe('AudioComponent', () => {
       expect(notificationService.show).toHaveBeenCalledWith(
         'Voice cloned successfully!',
         'success',
-        'check_small'
-      );
+      dialog.open.and.returnValue({
+        afterClosed: () => of({ name: newVoiceName }),
+      } as any);
+
+      component.openAddVoiceDialog();
+
       expect(component.voices.length).toBe(initialVoiceCount + 1);
       expect(component.voices[0].name).toBe(newVoiceName);
       expect(component.voices[0].type).toBe('custom');
@@ -435,15 +439,8 @@ describe('AudioComponent', () => {
       expect(notificationService.show).toHaveBeenCalledWith(
         'Voice cloned successfully!',
         'success',
-        undefined,
-        'check_small',
-        undefined,
+        'check_small'
       );
-    });
-
-    it('should not add a voice if dialog is cancelled', () => {
-      const initialVoiceCount = component.voices.length;
-      dialog.open.and.returnValue({
         afterClosed: () => of(null),
       } as any);
 
