@@ -179,10 +179,8 @@ describe('AudioComponent', () => {
     setAppInjector(TestBed.inject(Injector));
     fixture = TestBed.createComponent(AudioComponent);
     component = fixture.componentInstance;
-    audioService = TestBed.inject(AudioService) as jasmine.SpyObj<AudioService>;
-    workspaceStateService = TestBed.inject(
-      WorkspaceStateService,
-    ) as jasmine.SpyObj<WorkspaceStateService>;
+    })
+    .compileComponents();
     dialog = TestBed.inject(MatDialog) as jasmine.SpyObj<MatDialog>;
     notificationService = TestBed.inject(
       NotificationService,
