@@ -200,7 +200,6 @@ describe('AudioComponent', () => {
     workspaceStateService = TestBed.inject(
       WorkspaceStateService,
     ) as jasmine.SpyObj<WorkspaceStateService>;
-    snackBar = TestBed.inject(MatSnackBar) as jasmine.SpyObj<MatSnackBar>;
     dialog = TestBed.inject(MatDialog) as jasmine.SpyObj<MatDialog>;
     notificationService = TestBed.inject(
       NotificationService,
