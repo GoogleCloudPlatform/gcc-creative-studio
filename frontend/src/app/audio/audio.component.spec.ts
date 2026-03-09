@@ -383,7 +383,9 @@ describe('AudioComponent', () => {
 
   describe('Voice Selection', () => {
     it('onVoiceSelectionChange should update selectedVoice', () => {
-      const event = { value: VoiceEnum.FENRIR } as MatSelectChange;
+      component.onVoiceSelectionChange(event);
+      expect(component.openAddVoiceDialog).toHaveBeenCalled();
+    });
       component.onVoiceSelectionChange(event);
       expect(component.selectedVoice).toBe(VoiceEnum.FENRIR);
     });
