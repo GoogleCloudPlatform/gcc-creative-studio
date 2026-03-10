@@ -853,7 +853,7 @@
                   <div class="glass-toolbar" [class.is-disabled]="clip?.trackIndex !== 0">
                     <div  class="inline-block" >
                       <!-- Eye Button (Clip-level visibility) -->
-                        @let visibilityBoolean = selectedClip()?.trackIndex == 0 && clip?.isHidden;
+                        @let visibilityBoolean = clip?.trackIndex === 0 && clip?.isHidden;
                         <button mat-button  class="glass-toolbar-btn" (click)="toggleVisibility(clip?.id)" [style.backgroundColor]="visibilityBoolean ? '#E3E3E3!important' : null" title="Toggle Visibility">
                           @if (visibilityBoolean) {
                             <mat-icon svgIcon="visibility-off-icon"></mat-icon>
