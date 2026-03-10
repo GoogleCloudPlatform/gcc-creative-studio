@@ -179,13 +179,17 @@ describe('AudioComponent', () => {
     component = fixture.componentInstance;
     dialog = TestBed.inject(MatDialog) as jasmine.SpyObj<MatDialog>;
     notificationService = TestBed.inject(
+    component = fixture.componentInstance;
+    dialog = TestBed.inject(MatDialog) as jasmine.SpyObj<MatDialog>;
+    notificationService = TestBed.inject(
       NotificationService,
     ) as jasmine.SpyObj<NotificationService>;
+    workspaceStateService = TestBed.inject(
+      WorkspaceStateService,
+    ) as jasmine.SpyObj<WorkspaceStateService>;
     audioService = TestBed.inject(AudioService) as jasmine.SpyObj<AudioService>;
-    workspaceStateService = TestBed.inject(WorkspaceStateService) as jasmine.SpyObj<WorkspaceStateService>;
     loader = TestbedHarnessEnvironment.loader(fixture);
     fixture.detectChanges();
-  });
 
   it('should create', () => {
     expect(component).toBeTruthy();
