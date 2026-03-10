@@ -179,6 +179,8 @@ describe('AudioComponent', () => {
     notificationService = TestBed.inject(
       NotificationService,
     ) as jasmine.SpyObj<NotificationService>;
+    audioService = TestBed.inject(AudioService) as jasmine.SpyObj<AudioService>;
+    workspaceStateService = TestBed.inject(WorkspaceStateService) as jasmine.SpyObj<WorkspaceStateService>;
     loader = TestbedHarnessEnvironment.loader(fixture);
     fixture.detectChanges();
   });
