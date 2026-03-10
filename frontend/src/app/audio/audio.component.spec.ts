@@ -136,9 +136,7 @@ class MockMediaLightboxComponent {
   let loader: HarnessLoader;
   let notificationService: jasmine.SpyObj<NotificationService>;
   let audioService: jasmine.SpyObj<AudioService>;
-  let notificationService: jasmine.SpyObj<NotificationService>;
   let snackBar: jasmine.SpyObj<MatSnackBar>;
-  let audioService: jasmine.SpyObj<AudioService>;
 
   const mockMediaItem = {
     presignedThumbnailUrls: [],
