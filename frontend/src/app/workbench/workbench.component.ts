@@ -307,7 +307,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       const curTime = this.currentTime();
 
       // Video Sync
-      if (vid && vClip&&!vClip.isHidden) {
+      if (vid && vClip && !vClip.isHidden) {
         const fileTime = (curTime - vClip.startTime) + vClip.offset;
         if (Math.abs(vid.currentTime - fileTime) > 0.5) vid.currentTime = fileTime;
         if (this.isPlaying() && vid.paused) vid.play().catch(e => console.error('[VideoSync] Play failed', e));
