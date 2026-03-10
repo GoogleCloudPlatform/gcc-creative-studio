@@ -189,10 +189,6 @@ describe('AudioComponent', () => {
     loader = TestbedHarnessEnvironment.loader(fixture);
     fixture.detectChanges();
   });
-    ) as jasmine.SpyObj<WorkspaceStateService>;
-    audioService = TestBed.inject(AudioService) as jasmine.SpyObj<AudioService>;
-    loader = TestbedHarnessEnvironment.loader(fixture);
-    fixture.detectChanges();
 
   it('should create', () => {
     expect(component).toBeTruthy();
