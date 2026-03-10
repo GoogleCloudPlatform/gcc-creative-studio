@@ -1116,8 +1116,4 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   getSequence(length: number): number[] {
     return [...Array(Math.floor(length)).keys()].map(i => i + 1);
   }
-
-  hideCurrentVideo(){
-
-  }
 }
