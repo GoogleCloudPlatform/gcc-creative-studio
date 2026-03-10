@@ -129,13 +129,13 @@ class MockMediaLightboxComponent {
     return undefined;
   }
 }
-
-describe('AudioComponent', () => {
   let component: AudioComponent;
   let fixture: ComponentFixture<AudioComponent>;
   let workspaceStateService: jasmine.SpyObj<WorkspaceStateService>;
   let dialog: jasmine.SpyObj<MatDialog>;
   let loader: HarnessLoader;
+  let notificationService: jasmine.SpyObj<NotificationService>;
+  let audioService: jasmine.SpyObj<AudioService>;
   let notificationService: jasmine.SpyObj<NotificationService>;
   let snackBar: jasmine.SpyObj<MatSnackBar>;
   let audioService: jasmine.SpyObj<AudioService>;
