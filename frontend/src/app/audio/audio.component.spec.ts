@@ -151,10 +151,9 @@ describe('AudioComponent', () => {
     ]);
     const workspaceStateServiceSpy = jasmine.createSpyObj(
       'WorkspaceStateService',
-      ['getActiveWorkspaceId'],
-    );
-    const notificationServiceSpy = jasmine.createSpyObj(
-      'NotificationService',
+      imports: [
+        HttpClientTestingModule,
+      ],
       ['show'],
     );
 
