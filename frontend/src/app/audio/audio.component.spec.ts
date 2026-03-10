@@ -143,7 +143,7 @@ describe('AudioComponent', () => {
     presignedThumbnailUrls: [],
     gcsUris: [],
     prompt: '',
-  } as unknown as MediaItem;
+  beforeEach(async () => {
     const audioServiceSpy = jasmine.createSpyObj('AudioService', [
       'generateAudio',
     ]);
@@ -183,6 +183,11 @@ describe('AudioComponent', () => {
     ) as jasmine.SpyObj<NotificationService>;
     workspaceStateService = TestBed.inject(
       WorkspaceStateService,
+    ) as jasmine.SpyObj<WorkspaceStateService>;
+    audioService = TestBed.inject(AudioService) as jasmine.SpyObj<AudioService>;
+    loader = TestbedHarnessEnvironment.loader(fixture);
+    fixture.detectChanges();
+  });
     ) as jasmine.SpyObj<WorkspaceStateService>;
     audioService = TestBed.inject(AudioService) as jasmine.SpyObj<AudioService>;
     loader = TestbedHarnessEnvironment.loader(fixture);
