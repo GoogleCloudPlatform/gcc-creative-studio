@@ -33,10 +33,6 @@ import {
 import { of, throwError, Subject } from 'rxjs';
 import { JobStatus, MediaItem } from '../common/models/media-item.model';
 import { WorkspaceStateService } from '../services/workspace/workspace-state.service';
-import { FormsModule } from '@angular/forms';
-import { MatButtonToggleModule } from '@angular/material/button-toggle';
-import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatInputModule } from '@angular/material/input';
 import { MatSelectChange, MatSelectModule } from '@angular/material/select';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
