@@ -45,11 +45,7 @@ import { By } from '@angular/platform-browser';
 import { AddVoiceDialogComponent } from '../components/add-voice-dialog/add-voice-dialog.component';
 import { ActivatedRoute } from '@angular/router';
 import { NotificationService } from '../common/services/notification.service';
-import { AppInjector, setAppInjector } from '../app-injector';
-import { Injector } from '@angular/core';
-import { MatMenuModule } from '@angular/material/menu';
 import { CommonModule } from '@angular/common'; // Needed for *ngIf in mock template
-import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 
 
 // Define a mock MediaLightboxComponent
