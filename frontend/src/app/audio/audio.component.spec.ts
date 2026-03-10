@@ -151,12 +151,13 @@ class MockMediaLightboxComponent {
     const workspaceStateServiceSpy = jasmine.createSpyObj(
       'WorkspaceStateService',
       ['getActiveWorkspaceId']
+    const workspaceStateServiceSpy = jasmine.createSpyObj(
+      'WorkspaceStateService',
+      ['getActiveWorkspaceId']
     );
     const notificationServiceSpy = jasmine.createSpyObj(
       'NotificationService',
       ['show']
-    );
-      ['show'],
     );
 
     await TestBed.configureTestingModule({
