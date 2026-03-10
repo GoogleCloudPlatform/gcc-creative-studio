@@ -144,16 +144,17 @@ describe('AudioComponent', () => {
     gcsUris: [],
     prompt: '',
   } as unknown as MediaItem;
-
-  beforeEach(async () => {
     const audioServiceSpy = jasmine.createSpyObj('AudioService', [
       'generateAudio',
     ]);
     const workspaceStateServiceSpy = jasmine.createSpyObj(
       'WorkspaceStateService',
-      imports: [
-        HttpClientTestingModule,
-      ],
+      ['getActiveWorkspaceId']
+    );
+    const notificationServiceSpy = jasmine.createSpyObj(
+      'NotificationService',
+      ['show']
+    );
       ['show'],
     );
 
