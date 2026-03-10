@@ -129,6 +129,7 @@ class MockMediaLightboxComponent {
     return undefined;
   }
 }
+describe('AudioComponent', () => {
   let component: AudioComponent;
   let fixture: ComponentFixture<AudioComponent>;
   let workspaceStateService: jasmine.SpyObj<WorkspaceStateService>;
