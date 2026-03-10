@@ -52,7 +52,6 @@ import { NotificationService } from '../common/services/notification.service';
 import { AppInjector, setAppInjector } from '../app-injector';
 import { Injector } from '@angular/core';
 import { MatMenuModule } from '@angular/material/menu';
-// Removed NgOptimizedImage and IMAGE_LOADER
 import { CommonModule } from '@angular/common'; // Needed for *ngIf in mock template
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 
