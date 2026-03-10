@@ -13,10 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 import { Component, ElementRef, ViewChild } from '@angular/core';
 import { AudioService, CreateAudioDto, GenerationModelEnum } from '../services/audio/audio.service';
-import { MatSnackBar } from '@angular/material/snack-bar';
 import { MatDialog } from '@angular/material/dialog';
 import { MatSelectChange } from '@angular/material/select';
 import { finalize } from 'rxjs';
@@ -26,7 +24,7 @@ import { MediaItem } from '../common/models/media-item.model';
 import { AddVoiceDialogComponent } from '../components/add-voice-dialog/add-voice-dialog.component';
 import { MatIconRegistry } from '@angular/material/icon';
 import {LanguageEnum, VoiceEnum} from './audio.constants';
-import { handleErrorSnackbar, handleSuccessSnackbar } from '../utils/handleMessageSnackbar';
+import { NotificationService } from '../common/services/notification.service';
 
 // UI Helper type
 type UiModelType = 'lyria' | 'chirp' | 'gemini-tts';
@@ -157,11 +155,11 @@ export class AudioComponent {
 
   constructor(
     private audioService: AudioService,
-    private snackBar: MatSnackBar,
     private workspaceStateService: WorkspaceStateService,
     private dialog: MatDialog,
     private sanitizer: DomSanitizer,
     public matIconRegistry: MatIconRegistry,
+    private notificationService: NotificationService,
   ) {
     this.matIconRegistry.addSvgIcon(
       'white-gemini-spark-icon',
@@ -199,7 +197,7 @@ export class AudioComponent {
         };
         this.voices = [newVoice, ...this.voices];
         this.selectedVoice = newVoice.id;
-        handleSuccessSnackbar(this.snackBar, 'Voice cloned successfully!');
+        this.notificationService.show('Voice cloned successfully!', 'success', undefined, 'check_small');
       }
     });
   }
@@ -207,10 +205,18 @@ export class AudioComponent {
   generate() {
     this.isLoading = true;
     this.mediaItem = null; // Clear previous result
+    this.audioUrl = null;
 
     const activeWorkspaceId = this.workspaceStateService.getActiveWorkspaceId();
     if (!activeWorkspaceId) {
-      handleErrorSnackbar(this.snackBar, { message: 'Please select a workspace first.' }, 'Workspace');
+      this.notificationService.show(
+        'Please select a workspace first.',
+        'error',
+        'cross-in-circle-white',
+        undefined,
+        20000
+      );
+      this.isLoading = false;
       return;
     }
 
@@ -246,9 +252,6 @@ export class AudioComponent {
           : undefined,
     };
 
-    this.isLoading = true;
-    this.audioUrl = null;
-
     this.audioService
       .generateAudio(request)
       .pipe(finalize(() => (this.isLoading = false)))
@@ -258,8 +261,19 @@ export class AudioComponent {
           // The Lightbox will handle displaying the first item automatically via inputs
         },
         error: (error: any) => {
-          handleErrorSnackbar(this.snackBar, error, 'Generation');
           console.error('Generation failed:', error);
+          const errorMessage =
+            error?.error?.detail?.[0]?.msg ||
+            error?.error?.detail ||
+            error?.message ||
+            'Something went wrong';
+          this.notificationService.show(
+            errorMessage,
+            'error',
+            'cross-in-circle-white',
+            undefined,
+            20000,
+          );
         },
       });
   }
