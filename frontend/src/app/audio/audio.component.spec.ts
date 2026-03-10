@@ -177,9 +177,6 @@ class MockMediaLightboxComponent {
     component = fixture.componentInstance;
     dialog = TestBed.inject(MatDialog) as jasmine.SpyObj<MatDialog>;
     notificationService = TestBed.inject(
-    component = fixture.componentInstance;
-    dialog = TestBed.inject(MatDialog) as jasmine.SpyObj<MatDialog>;
-    notificationService = TestBed.inject(
       NotificationService,
     ) as jasmine.SpyObj<NotificationService>;
     workspaceStateService = TestBed.inject(
