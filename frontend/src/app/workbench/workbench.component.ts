@@ -734,9 +734,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   // --- Split Logic ---
   canSplit(): boolean {
     const clip = this.selectedClip();
-    const id = clip?.id;
-    if (!clip || clip.isLocked) return false;
-    if (!id) return false;
+    if (!clip || clip.isLocked || !id) return false;
     if (!clip) return false;
     const time = this.currentTime();
     return time > clip.startTime + 0.1 && time < clip.startTime + clip.duration - 0.1;
