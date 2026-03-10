@@ -155,10 +155,12 @@ class MockMediaLightboxComponent {
       ['show']
     );
 
+    const dialogSpy = jasmine.createSpyObj('MatDialog', ['open']);
+
     await TestBed.configureTestingModule({
       imports: [
         HttpClientTestingModule,
-        MatSnackBarModule,
+        MatIconModule,
       ],
       providers: [
         { provide: AudioService, useValue: audioServiceSpy },
@@ -168,6 +170,7 @@ class MockMediaLightboxComponent {
           useValue: { snapshot: { queryParamMap: { get: () => null } } },
         },
         { provide: NotificationService, useValue: notificationServiceSpy },
+        { provide: MatDialog, useValue: dialogSpy },
       ],
     }).compileComponents();
 
