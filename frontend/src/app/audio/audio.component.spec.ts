@@ -130,10 +130,15 @@ describe('AudioComponent', () => {
 
   let audioService: jasmine.SpyObj<AudioService>;
 
-  const mockMediaItem = {
+  const mockMediaItem: MediaItem = {
+    id: 1,
     presignedThumbnailUrls: [],
     gcsUris: [],
     prompt: '',
+    presignedUrls: [],
+    mimeType: 'audio/mpeg',
+    originalPrompt: '',
+    status: JobStatus.COMPLETED,
   };
 
   beforeEach(async () => {
