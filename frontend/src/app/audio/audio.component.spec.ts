@@ -36,6 +36,11 @@ import { WorkspaceStateService } from '../services/workspace/workspace-state.ser
 import { MatSelectChange, MatSelectModule } from '@angular/material/select';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatButtonToggleModule } from '@angular/material/button-toggle';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatInputModule } from '@angular/material/input';
+import { MatButtonModule } from '@angular/material/button';
+import { FormsModule } from '@angular/forms';
 // Removed MediaLightboxComponent import - using mock instead
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
@@ -157,9 +162,21 @@ describe('AudioComponent', () => {
     const dialogSpy = jasmine.createSpyObj('MatDialog', ['open']);
 
     await TestBed.configureTestingModule({
+      declarations: [AudioComponent],
       imports: [
         HttpClientTestingModule,
         MatIconModule,
+        CommonModule,
+        FormsModule,
+        MatButtonToggleModule,
+        MatDividerModule,
+        MatFormFieldModule,
+        MatInputModule,
+        MatSelectModule,
+        MatProgressSpinnerModule,
+        MatButtonModule,
+        NoopAnimationsModule,
+        MockMediaLightboxComponent,
       ],
       providers: [
         { provide: AudioService, useValue: audioServiceSpy },
@@ -211,7 +228,8 @@ describe('AudioComponent', () => {
     });
 
     it('should set isLoading to true and clear previous mediaItem and audioUrl', fakeAsync(() => {
-      audioService.generateAudio.and.returnValue(of(mockMediaItem));
+      const audioSubject = new Subject<MediaItem>();
+      audioService.generateAudio.and.returnValue(audioSubject.asObservable());
       component.mediaItem = mockMediaItem;
       component.audioUrl = 'previous-url';
 
@@ -221,6 +239,8 @@ describe('AudioComponent', () => {
       expect(component.mediaItem).toBeNull();
       expect(component.audioUrl).toBeNull();
 
+      audioSubject.next(mockMediaItem);
+      audioSubject.complete();
       tick();
       
       expect(component.isLoading).toBeFalse();
