@@ -103,6 +103,7 @@ export interface MediaItem {
   rawData?: Record<string, any>;
   workspaceId?: number;
   errorMessage?: string;
+  adkSessionId?: string;
 }
 
 /**

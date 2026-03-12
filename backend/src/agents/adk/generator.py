@@ -99,7 +99,10 @@ class MediaGeneratorADK(BaseAgent):
         prompt = state.get("enhanced_prompt") or state.get("original_prompt")
         media_type = state.get("media_type", "IMAGE")
         workspace_id = state.get("workspace_id")
-        user: UserModel = state.get("current_user")
+        user_data = state.get("current_user")
+        user = user_data
+        if isinstance(user_data, dict):
+            user = UserModel(**user_data)
 
         
         # Check if we received instructions directly (Agent-as-a-Tool pattern)
@@ -238,11 +241,13 @@ class MediaGeneratorADK(BaseAgent):
                         if repo:
                             await repo.update(media_response.id, {
                                 "original_prompt": original,
-                                "rewritten_prompt": prompt
+                                "rewritten_prompt": prompt,
+                                "adk_session_id": ctx.session.id
                             })
-                            logger.info(f"[{self.name}] Updated MediaItem {media_response.id} with prompt lineage.")
+                            logger.info(f"[{self.name}] Updated MediaItem {media_response.id} with prompt lineage and session ID.")
                     except Exception as e:
                         logger.error(f"[{self.name}] Failed to update prompt lineage: {e}")
+
 
                 state["generated_assets"] = [{
                     "id": media_response.id,

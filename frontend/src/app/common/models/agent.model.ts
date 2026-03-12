@@ -52,4 +52,6 @@ export interface AgentGenerationResponse {
   originalPrompt: string;
   enhancedPrompt: string;
   generatedAssets: AgentGeneratedAsset[];
+  sessionId: string;
 }
+

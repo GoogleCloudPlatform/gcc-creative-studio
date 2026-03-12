@@ -70,6 +70,9 @@ export class SearchService {
   public activeImageJob$ = this.activeImageJob.asObservable();
   private imagePollingSubscription: Subscription | null = null;
 
+  private isGeneratingSubject = new BehaviorSubject<boolean>(false);
+  public isGenerating$ = this.isGeneratingSubject.asObservable();
+
   // Persisted prompts
   imagePrompt = '';
   videoPrompt = '';
@@ -110,6 +113,7 @@ export class SearchService {
     const searchURL = `${environment.backendURL}/images/generate-images`;
     return this.http.post<MediaItem>(searchURL, searchRequest).pipe(
       tap(initialItem => {
+        this.setIsGenerating(true);
         this.activeImageJob.next(initialItem);
         localStorage.setItem(ACTIVE_IMAGE_JOB_KEY, initialItem.id.toString());
         this.startImagenPolling(initialItem.id);
@@ -119,6 +123,10 @@ export class SearchService {
 
   clearActiveImageJob() {
     this.activeImageJob.next(null);
+  }
+
+  setIsGenerating(value: boolean) {
+    this.isGeneratingSubject.next(value);
   }
 
   /**
@@ -143,6 +151,7 @@ export class SearchService {
       )
       .subscribe({
         next: (item) => {
+          this.setIsGenerating(true);
           this.activeImageJob.next(item);
           localStorage.setItem(ACTIVE_IMAGE_JOB_KEY, mediaId.toString());
           // Start polling after successful fetch

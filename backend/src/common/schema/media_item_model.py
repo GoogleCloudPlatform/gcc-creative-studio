@@ -185,6 +185,9 @@ class MediaItem(Base):
     # Debugging
     raw_data: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
+    # Agentic fields
+    adk_session_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
     created_from_template_id: Mapped[Optional[int]] = mapped_column(ForeignKey("media_templates.id"), nullable=True)
 
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -202,6 +205,14 @@ class MediaItem(Base):
 
 class MediaItemModel(BaseDocument):
     """Represents a single media item in the library for Firestore storage and retrieval."""
+
+    # Pydantic v2 configuration for this model
+    model_config = ConfigDict(
+        use_enum_values=True,
+        populate_by_name=True,
+        from_attributes=True,
+        alias_generator=to_camel,
+    )
 
     id: Optional[int] = None
 
@@ -279,6 +290,12 @@ class MediaItemModel(BaseDocument):
 
     # Debugging field
     raw_data: Optional[Dict] = Field(default_factory=dict)
+
+    # Agentic fields
+    adk_session_id: Optional[str] = Field(
+        default=None,
+        description="The ID of the ADK session that triggered this creation."
+    )
 
     # Track if a MediaItem was created from a template
     created_from_template_id: Optional[int] = Field(

@@ -1,75 +1,87 @@
 import { Injectable, NgZone } from '@angular/core';
-import { Observable, Subject } from 'rxjs';
-import { HttpClient } from '@angular/common/http';
+import { Observable, Subject, interval, Subscription, BehaviorSubject } from 'rxjs';
+import { HttpClient, HttpParams } from '@angular/common/http';
 import { environment } from '../../environments/environment';
 import { AuthService } from '../common/services/auth.service';
+import { exhaustMap, tap, catchError } from 'rxjs/operators';
 
 export interface AdkEvent {
   author: string;
   content: {
     parts: { text: string }[];
   };
-  // Add other fields as needed based on backend Event model
+  timestamp?: number;
 }
 
 @Injectable({
   providedIn: 'root'
 })
 export class AgentEventService {
-  private eventSource: EventSource | null = null;
   private eventSubject = new Subject<AdkEvent>();
+  private statusSubject = new BehaviorSubject<string | null>(null);
+  public status$ = this.statusSubject.asObservable();
+  
+  private pollingSubscription: Subscription | null = null;
+  private lastTimestamp = 0;
+  private seenEventIds = new Set<string>();
 
   constructor(
+    private http: HttpClient,
     private authService: AuthService,
     private zone: NgZone
   ) { }
 
   /**
-   * Connects to the SSE stream.
+   * Starts polling for events for a specific session.
    */
-  connect(): void {
-    if (this.eventSource) {
-      return; // Already connected
+  startPolling(sessionId: string): void {
+    if (this.pollingSubscription) {
+      this.pollingSubscription.unsubscribe();
     }
 
-    // We need to get the token
-    this.authService.getValidFirebaseToken$().subscribe({
-      next: (token: string) => {
-        if (!token) {
-          console.error('AgentEventService: No token received.');
-          return;
+    this.lastTimestamp = 0;
+    this.seenEventIds.clear();
+
+    console.log(`Starting polling for agent session: ${sessionId}`);
+
+    // Poll every 3 seconds
+    this.pollingSubscription = interval(3000).pipe(
+      exhaustMap(() => {
+        let params = new HttpParams();
+        if (this.lastTimestamp > 0) {
+          params = params.set('after_timestamp', this.lastTimestamp.toString());
         }
 
-        // Construct URL with query param for auth
-        // Note: backendURL usually includes /api, check environment.ts
-        // environment.backendURL is 'http://localhost:8080/api'
-        const url = `${environment.backendURL}/agents/events/stream?token=${token}`;
+        const url = `${environment.backendURL}/agents/sessions/${sessionId}/history`;
+        return this.http.get<any[]>(url, { params }).pipe(
+          catchError(err => {
+            console.error('Error polling agent events:', err);
+            return [];
+          })
+        );
+      })
+    ).subscribe(events => {
+      this.zone.run(() => {
+        this.processEvents(events);
+      });
+    });
+  }
 
-        console.log('Connecting to Agent Event Stream:', url);
-        this.eventSource = new EventSource(url);
+  private processEvents(events: any[]): void {
+    if (!events || events.length === 0) return;
 
-        this.eventSource.onmessage = (event) => {
-          this.zone.run(() => {
-            try {
-              console.log('SSE Event received:', event.data);
-              const parsed = JSON.parse(event.data);
-              this.eventSubject.next(parsed);
-            } catch (e) {
-              console.error('Error parsing SSE event:', e);
-            }
-          });
-        };
-
-        this.eventSource.onerror = (error) => {
-          this.zone.run(() => {
-            console.error('SSE Error:', error);
-            // Handle reconnection or error state
-            this.disconnect();
-          });
-        };
-      },
-      error: (err) => {
-        console.error('AgentEventService: Failed to get valid token for stream connection.', err);
+    events.forEach(event => {
+      // Use a combination of author, text and timestamp for deduplication if needed
+      // Though 'after_timestamp' should handle most of it.
+      const eventKey = `${event.author}-${event.timestamp}-${event.content?.parts?.[0]?.text}`;
+      
+      if (!this.seenEventIds.has(eventKey)) {
+        this.seenEventIds.add(eventKey);
+        this.eventSubject.next(event);
+        
+        if (event.timestamp && event.timestamp > this.lastTimestamp) {
+          this.lastTimestamp = event.timestamp;
+        }
       }
     });
   }
@@ -78,10 +90,27 @@ export class AgentEventService {
     return this.eventSubject.asObservable();
   }
 
-  disconnect(): void {
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = null;
+  stopPolling(): void {
+    if (this.pollingSubscription) {
+      this.pollingSubscription.unsubscribe();
+      this.pollingSubscription = null;
     }
   }
+
+  /**
+   * Legacy connect method - now deprecated. 
+   * In a real app, we might want to poll 'recent' sessions if no ID is provided.
+   */
+  connect(): void {
+    console.warn('AgentEventService: connect() is deprecated. Use startPolling(sessionId) instead.');
+  }
+
+  disconnect(): void {
+    this.stopPolling();
+  }
+
+  updateStatus(status: string | null): void {
+    this.statusSubject.next(status);
+  }
 }
+

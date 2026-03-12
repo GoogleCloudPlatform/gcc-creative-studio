@@ -32,7 +32,7 @@ import { MatIconRegistry } from '@angular/material/icon';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { NavigationExtras, Router } from '@angular/router';
-import { finalize, Observable } from 'rxjs';
+import { finalize, Observable, take } from 'rxjs';
 import { AssetTypeEnum } from '../admin/source-assets-management/source-asset.model';
 import { ImageCropperDialogComponent } from '../common/components/image-cropper-dialog/image-cropper-dialog.component';
 import {
@@ -110,6 +110,8 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
 
   // --- Negative Prompt Chips ---
   negativePhrases: string[] = [];
+
+  private currentPollingSessionId: string | null = null;
 
   // --- Dropdown Options ---
   generationModels: GenerationModelConfig[] = MODEL_CONFIGS.filter(m => m.type === 'IMAGE');
@@ -308,19 +310,42 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     }
 
     this.activeWorkspaceId$ = this.workspaceStateService.activeWorkspaceId$;
+    
+    // Sync with persistent service state
+    this.service.isGenerating$.subscribe(val => this.isImageGenerating = val);
+    this.agentEventService.status$.subscribe(val => this.agentStatus = val);
 
     // Subscribe to the active image job to update the UI
     this.service.activeImageJob$.subscribe(job => {
       if (job) {
         this.processSearchResults(job);
-        if (job.status === 'completed' || job.status === 'failed') {
-          this.isImageGenerating = false;
-          this.agentStatus = null;
+        
+        const isFinalStatus = job.status === 'completed' || job.status === 'failed';
+        
+        if (isFinalStatus) {
+          // If we are NOT using brand guidelines, we can finish now.
+          // If we ARE using guidelines, we wait for the Validator to send its final event
+          // (which is handled in the agentEventService subscription).
+          if (!this.searchRequest.useBrandGuidelines || job.status === 'failed') {
+            this.service.setIsGenerating(false);
+            this.agentEventService.updateStatus(null);
+            this.agentEventService.stopPolling();
+            // We DO NOT clearActiveImageJob here, keeping it just like the 'normal' flow
+          } else {
+            // We keep isImageGenerating = true so the "Validating..." overlay stays up.
+            // SearchService automatically stops polling its internal timer when status is 'completed'.
+            // We DO NOT clearActiveImageJob yet because we need the 'job' data for display.
+          }
         } else {
-          this.isImageGenerating = true;
+          this.service.setIsGenerating(true);
           // If we have an active job but no status text (e.g. after refresh), set a default
           if (!this.agentStatus) {
-            this.agentStatus = 'Resuming generation...';
+            this.agentEventService.updateStatus('Resuming generation...');
+          }
+          // Resume polling if session ID is present and NOT ALREADY POLLING
+          if (job.adkSessionId && this.currentPollingSessionId !== job.adkSessionId) {
+            this.currentPollingSessionId = job.adkSessionId;
+            this.agentEventService.startPolling(job.adkSessionId);
           }
         }
       }
@@ -397,46 +422,74 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
       this.service.imagePrompt = state.prompt;
     });
 
-    // Subscribe to ADK Agent Events for Realtime Updates
-    this.agentEventService.connect();
+    // Subscribe to ADK Agent Events for Realtime Updates (Subscription set up below)
     this.agentEventService.getEvents().subscribe((event: AdkEvent) => {
       this.zone.run(() => {
         // console.log('Processing Agent Event:', event); // Debug log
 
         const text = event.content?.parts?.[0]?.text;
+        let parsedText: any = null;
+        if (text && (text.startsWith('{') || text.startsWith('['))) {
+           try {
+             parsedText = JSON.parse(text);
+           } catch(e) {
+             // Not JSON, ignore
+           }
+        }
 
         // Pattern Matching for Job ID
-        if (text && text.includes("Captured Long Running Job ID:")) {
+        // Note: We check for both legacy "Captured" text and native ADK "Generation started" text
+        if (text && (text.includes("Captured Long Running Job ID:") || text.includes("Generation started. Job ID:"))) {
           // Extract ID
           const parts = text.split("Job ID:");
           const jobIdStr = parts[1]?.trim();
           const jobId = parseInt(jobIdStr, 10);
           if (!isNaN(jobId)) {
-            console.log("Frontend detected Job ID from Agent Event:", jobId);
+            console.log(`[Diagnostic] Frontend detected Job ID ${jobId} from agent event (${event.author})`);
             // Start tracking this job via the existing SearchService polling mechanism
             this.service.trackImageGeneration(jobId);
-            this.isImageGenerating = true;
+            this.service.setIsGenerating(true);
           }
-        }
-
-        if (event.author === 'BrandingEnforcer' || event.author === 'BrandingEnforcerADK') {
-          this.agentStatus = "Consulting Brand Guidelines...";
-
-          // Check if this is the final output event containing the enhanced prompt
-          if (text && text.includes('enhanced_prompt')) {
-            this.agentStatus = "Optimizing Prompt with Brand Guidelines...";
+        } else if (event.author === 'BrandingEnforcer' || event.author === 'BrandingEnforcerADK') {
+          this.agentEventService.updateStatus("Enforcing brand guidelines...");
+          if (parsedText && parsedText.enhanced_prompt) {
+            this.searchRequest.prompt = parsedText.enhanced_prompt;
           }
         } else if (event.author === 'MediaGenerator' || event.author === 'MediaGeneratorADK') {
-          this.agentStatus = "Generating high-fidelity media...";
+          this.agentEventService.updateStatus("Generating high-fidelity media...");
         } else if (event.author === 'Validator' || event.author === 'ValidatorADK') {
-          this.agentStatus = "Validating assets against guidelines...";
-        } else {
-          // Fallback for other agents or default state
-          // If we have a specific message, show it, otherwise keep previous or default
-          if (text) {
-          // Optional: Show raw text if it's short, otherwise generic
-            // this.agentStatus = text;
+          if (parsedText && typeof parsedText.is_compliant !== 'undefined') {
+             console.log('[Diagnostic] Validator completion detected:', parsedText);
+             this.agentEventService.updateStatus(`Validation Complete: ${parsedText.reasoning || (parsedText.is_compliant ? 'Compliant' : 'Issues found')}`);
+             
+             // Hide overlay immediately and refresh results
+             this.service.setIsGenerating(false);
+             this.agentEventService.updateStatus(null);
+             this.agentEventService.stopPolling();
+
+             // FINAL SYNC: Fetch the fully updated MediaItem (with critique and raw_data)
+             this.service.activeImageJob$.pipe(take(1)).subscribe((job: MediaItem | null) => {
+               if (job) {
+                 console.log(`[Diagnostic] Performing final sync for job ${job.id}`);
+                 this.service.getImagenMediaItem(job.id).subscribe(finalItem => {
+                   console.log('[Diagnostic] Final item data:', finalItem);
+                   this.processSearchResults(finalItem);
+                 });
+               }
+             });
+          } else {
+             this.agentEventService.updateStatus("Validating assets against guidelines...");
           }
+        } else if (event.author === 'JobPoller' || event.author === 'JobPollerADK') {
+          this.agentEventService.updateStatus(text || "Waiting for media to be ready...");
+        } else if (event.author === 'System') {
+           if (text && text.includes("failed")) {
+              console.error('[Diagnostic] Agent system failure:', text);
+              this.agentEventService.updateStatus("Error: " + text);
+              setTimeout(() => {
+                 this.service.setIsGenerating(false);
+              }, 3000);
+           }
         }
       });
     });
@@ -586,8 +639,11 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     window.open(url, '_blank');
   }
 
-  private processSearchResults(searchResponse: MediaItem) {
-    this.imagenDocuments = searchResponse;
+  private processSearchResults(item: MediaItem) {
+    console.log('[Diagnostic] processSearchResults called with item:', item);
+    console.log(`[Diagnostic] Item ${item.id} status: ${item.status}, presignedUrls count: ${item.presignedUrls?.length || 0}`);
+    
+    this.imagenDocuments = item;
 
     const hasImagenResults =
       (this.imagenDocuments?.presignedUrls?.length || 0) > 0;
@@ -785,8 +841,10 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
         reference_image_uri: this.referenceImages[0]?.gcsUri
       };
 
-      this.isImageGenerating = true;
+      this.service.setIsGenerating(true);
+      this.agentEventService.updateStatus("Starting agentic flow...");
       this.imagenDocuments = null;
+      this.currentPollingSessionId = null;
 
       this.agentService.generateMedia(agentRequest)
         .pipe(finalize(() => {
@@ -794,22 +852,23 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
         }))
         .subscribe({
           next: (response) => {
-            this.agentStatus = 'Agent started...';
+            this.agentEventService.updateStatus('Agent started...');
 
             // If response is immediate (synchronous flow), handle it
             if (response.generatedAssets && response.generatedAssets.length > 0) {
               this.handleGenerationSuccess(response.generatedAssets[0].id, response.enhancedPrompt);
             } else {
-              // Async Flow: We wait for events.
-              this.agentStatus = 'Agent processing in background...';
-              // We don't have a Job ID yet from the HTTP response in the new flow?
-              // The HTTP response has session_id.
-              // We rely on the Event Stream to tell us when generation starts/completes.
+              // Async Flow: We wait for events via polling.
+              this.agentEventService.updateStatus('Agent processing in background...');
+              
+              if (response.sessionId) {
+                this.agentEventService.startPolling(response.sessionId);
+              }
             }
           },
           error: (error) => {
-            this.isImageGenerating = false;
-            this.agentStatus = null;
+            this.service.setIsGenerating(false);
+            this.agentEventService.updateStatus(null);
             handleErrorSnackbar(this._snackBar, error, 'Agent Generation');
           }
         });
@@ -831,7 +890,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
       workspaceId: activeWorkspaceId ?? undefined,
     };
 
-    this.isImageGenerating = true;
+    this.service.setIsGenerating(true);
     this.imagenDocuments = null;
 
     this.service

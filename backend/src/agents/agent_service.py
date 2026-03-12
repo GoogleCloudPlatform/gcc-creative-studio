@@ -6,7 +6,6 @@ from fastapi import Depends, BackgroundTasks
 
 # ADK Imports
 from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
 from google.adk.agents import SequentialAgent
 from google.adk.events.event import Event
 from google.genai import types
@@ -23,6 +22,8 @@ from src.images.imagen_service import ImagenService
 from src.users.user_model import UserModel
 from src.audios.audio_constants import VoiceEnum, LanguageEnum
 from src.common.schema.media_item_model import JobStatusEnum
+from src.database import get_conn_string, get_connection # Import helpers
+from src.config.config_service import config_service
 
 # New ADK Agents
 from src.agents.adk.enforcer import BrandingEnforcerADK
@@ -33,6 +34,7 @@ from src.multimodal.gemini_service import GeminiService
 from src.brand_guidelines.repository.brand_guideline_repository import BrandGuidelineRepository
 from src.common.event_bus import get_event_bus, EventBus
 from src.common.concurrency import get_global_executor
+from google.adk.sessions import DatabaseSessionService # Use persistent service
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +62,18 @@ class AgentService:
             executor=executor
         )
         
-        self.session_service = InMemorySessionService()
+        # Use persistent DatabaseSessionService instead of InMemorySessionService
+        # This allows polling from any instance in a horizontally scaled environment
+        db_url = get_conn_string()
+        engine_kwargs = {}
+        
+        # Use Cloud SQL Connector if configured
+        if config_service.INSTANCE_CONNECTION_NAME and not config_service.USE_CLOUD_SQL_AUTH_PROXY:
+            engine_kwargs["async_creator"] = get_connection
+            
+        self.session_service = DatabaseSessionService(db_url=db_url, **engine_kwargs)
         self.event_bus = get_event_bus()
+
 
     async def generate_compliant_media(
         self, 
@@ -75,7 +87,8 @@ class AgentService:
         logger.info(f"Starting ADK agentic generation for user {current_user.email} - Type: {request.media_type}")
         
         # 1. Setup Session State
-        session_id = f"sess_{request.workspace_id}_{current_user.email}_{id(request)}"
+        import time
+        session_id = f"sess_{request.workspace_id}_{current_user.email}_{int(time.time() * 1000)}"
         state = {
             "original_prompt": request.prompt,
             "workspace_id": str(request.workspace_id),
@@ -91,7 +104,8 @@ class AgentService:
                 "voice_name": request.voice_name
             },
             "user_reference_image_uri": request.reference_image_uri,
-            "reference_image_uris": [] # Will be populated by Enforcer if applicable
+            "reference_image_uris": [], # Will be populated by Enforcer if applicable
+            "current_user": current_user.model_dump(mode='json') if hasattr(current_user, "model_dump") else current_user
         }
         
         # We start the background task
@@ -150,33 +164,12 @@ class AgentService:
                 
                 trigger_msg = types.Content(role="user", parts=[types.Part(text=start_instruction)])
                 
+                # Run the pipeline. The Runner automatically saves events to session_service.
+                # The frontend polls the history endpoint to see these events.
                 async for event in pipeline_runner.run_async(user_id=user_id, session_id=session_id, new_message=trigger_msg):
                     logger.info(f"[Pipeline Event] {event.author}: {event}")
-                    
-                    # Publish relevant events to frontend
-                    if event.content and event.content.parts:
-                         text = event.content.parts[0].text
-                         if text:
-                             # 1. Pass through the original event
-                             await self.event_bus.publish(f"user_{user_id}", event)
-                             
-                             # 2. Check for Job ID signal from MediaGenerator to unblock Frontend
-                             # Format: "Generation started. Job ID: <id>"
-                             if "Generation started. Job ID:" in text:
-                                try:
-                                    job_id_str = text.split("Job ID:")[-1].strip()
-                                    if job_id_str.isdigit():
-                                        # Emit the legacy System event that the frontend expects
-                                        sys_event = Event(
-                                            author="System",
-                                            content=types.Content(
-                                                parts=[types.Part(text=f"Captured Long Running Job ID: {job_id_str}")]
-                                            )
-                                        )
-                                        await self.event_bus.publish(f"user_{user_id}", sys_event)
-                                        logger.info(f"Published legacy System event for Job ID: {job_id_str}")
-                                except Exception as e:
-                                    logger.warning(f"Failed to parse Job ID for legacy event: {e}")
+                    # We no longer need to manually publish to event_bus here as 
+                    # DatabaseSessionService handles persistence for polling.
 
             except Exception as e:
                 logger.error(f"Background ADK Pipeline Failed: {e}", exc_info=True)
