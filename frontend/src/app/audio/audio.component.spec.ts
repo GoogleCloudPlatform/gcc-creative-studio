@@ -23,8 +23,7 @@ import {
 import { Component, Input, Output, EventEmitter } from '@angular/core';
 import { AudioComponent } from './audio.component';
 import { HttpClientTestingModule } from '@angular/common/http/testing';
-import { MatDialog, MatDialogModule } from '@angular/material/dialog';
-import { NoopAnimationsModule } from '@angular/platform-browser/animations';
+import { MatDialog } from '@angular/material/dialog';
 import {
   AudioService,
   CreateAudioDto,
@@ -33,10 +32,8 @@ import {
 import { of, throwError, Subject } from 'rxjs';
 import { JobStatus, MediaItem } from '../common/models/media-item.model';
 import { WorkspaceStateService } from '../services/workspace/workspace-state.service';
-import { MatSelectChange, MatSelectModule } from '@angular/material/select';
+import { MatSelectChange } from '@angular/material/select';
 import { MatIconModule } from '@angular/material/icon';
-import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
-import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatButtonModule } from '@angular/material/button';
@@ -44,10 +41,8 @@ import { FormsModule } from '@angular/forms';
 // Removed MediaLightboxComponent import - using mock instead
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
-import { MatDividerModule } from '@angular/material/divider';
 import { LanguageEnum, VoiceEnum } from './audio.constants';
 import { By } from '@angular/platform-browser';
-import { AddVoiceDialogComponent } from '../components/add-voice-dialog/add-voice-dialog.component';
 import { ActivatedRoute } from '@angular/router';
 import { NotificationService } from '../common/services/notification.service';
 import { CommonModule } from '@angular/common'; // Needed for *ngIf in mock template
@@ -168,14 +163,9 @@ describe('AudioComponent', () => {
         MatIconModule,
         CommonModule,
         FormsModule,
-        MatButtonToggleModule,
-        MatDividerModule,
         MatFormFieldModule,
         MatInputModule,
-        MatSelectModule,
-        MatProgressSpinnerModule,
         MatButtonModule,
-        NoopAnimationsModule,
         MockMediaLightboxComponent,
       ],
       providers: [
