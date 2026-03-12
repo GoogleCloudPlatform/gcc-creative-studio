@@ -322,7 +322,6 @@ describe('AudioComponent', () => {
         undefined,
         20000,
       );
-      tick(20000);
     }));
   });
 
