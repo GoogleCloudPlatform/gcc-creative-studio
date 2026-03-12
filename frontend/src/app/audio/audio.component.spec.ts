@@ -151,6 +151,8 @@ describe('AudioComponent', () => {
 
     await TestBed.configureTestingModule({
       declarations: [AudioComponent],
+    await TestBed.configureTestingModule({
+      declarations: [AudioComponent],
       imports: [
         HttpClientTestingModule,
         MatIconModule,
