@@ -55,7 +55,7 @@ import { CommonModule } from '@angular/common'; // Needed for *ngIf in mock temp
   imports: [CommonModule] // CommonModule for *ngIf
 })
 class MockMediaLightboxComponent {
-  @Input() mediaItem: any; // Use 'any' for simplicity in mock
+  @Input() mediaItem: MediaItem | null = null; // Use appropriate type for mock
   @Input() initialIndex = 0;
   @Input() showSeeMoreInfoButton = false;
   @Input() showShareButton = true;
