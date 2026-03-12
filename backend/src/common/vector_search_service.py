@@ -34,7 +34,7 @@ class VectorSearchService:
     def __init__(self):
         self.cfg = config_service
         self.project_id = self.cfg.PROJECT_ID
-        self.location = "us-central1" # defaulting to us-central1 as seen in config
+        self.location = "us-central1"
         
         aiplatform.init(project=self.project_id, location=self.location)
 
@@ -229,7 +229,7 @@ class VectorSearchService:
         """
 
         # Determine model
-        model_name = "text-embedding-004"
+        model_name = "text-embedding-005"
         if isinstance(content, list) or model_type == "multimodal":
              model_name = "multimodal-embedding-001"
              

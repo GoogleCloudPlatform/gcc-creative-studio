@@ -50,17 +50,25 @@ class EventBus:
         Yields SSE-formatted events for a session.
         """
         queue = self.subscribe(session_id)
+        
+        # 1. Send initial byte to avoid 'first byte timeout' from proxies/GFE
+        # This starts the response headers and initial body chunk.
+        yield ": ok\n\n"
+
         try:
             while True:
-                event = await queue.get()
-                # Format as SSE
-                # We can dump the event to JSON
-                # Using model_dump_json() if available locally or via Pydantic
-                
-                # ADK Events are Pydantic models (usually)
-                data = event.model_dump_json() if hasattr(event, "model_dump_json") else str(event)
-                
-                yield f"data: {data}\n\n"
+                try:
+                    # 2. Wait for event with a timeout for heartbeat
+                    # If no event happens within 15s, we send a keep-alive comment.
+                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    
+                    # Format as SSE
+                    # ADK Events are Pydantic models (usually)
+                    data = event.model_dump_json() if hasattr(event, "model_dump_json") else str(event)
+                    yield f"data: {data}\n\n"
+                except asyncio.TimeoutError:
+                    # 3. Send heartbeat to keep connection alive
+                    yield ": keep-alive\n\n"
         except asyncio.CancelledError:
             logger.info(f"Stream cancelled for session {session_id}")
         finally:

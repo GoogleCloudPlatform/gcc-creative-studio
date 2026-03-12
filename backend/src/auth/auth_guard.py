@@ -92,11 +92,11 @@ async def get_current_user(
         picture = decoded_token.get("picture", "")
         token_info_hd = decoded_token.get("hd")
 
-        # Restrict by particular organizations if it's a closed environment
         if not email:
+            logger.error(f"[get_current_user] Missing email in decoded token. Payload: {decoded_token}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Forbidden: User identity could not be confirmed from token.",
+                detail="Forbidden: User identity could not be confirmed from token (missing email).",
             )
 
         # If ALLOWED_ORGS is configured, check the user's organization.
@@ -155,16 +155,23 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid authentication token: {e}",
         )
+    except ValueError as e:
+        logger.error(f"[get_current_user - ValueError]: {e}")
+        logger.error(f"[get_current_user] Configured GOOGLE_TOKEN_AUDIENCE: {config_service.GOOGLE_TOKEN_AUDIENCE}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Token verification failed: {e}. Check if GOOGLE_TOKEN_AUDIENCE is correct.",
+        )
     except HTTPException as e:
-        logger.error(f"[get_current_user - Exception]: {e}")
+        logger.error(f"[get_current_user - HTTPException]: {e.status_code} - {e.detail}")
         raise e
     except Exception as e:
-        logger.error(f"[get_current_user - Exception]: {e}")
+        logger.error(f"[get_current_user - Exception]: {e}", exc_info=True)
         raise HTTPException(
             status_code=getattr(
                 e, "status_code", status.HTTP_500_INTERNAL_SERVER_ERROR
             ),
-            detail=f"An unexpected error occurred during authentication: {e}",
+            detail=f"An unexpected error occurred during authentication: {str(e)}",
         )
 
 
