@@ -259,6 +259,7 @@ describe('AudioComponent', () => {
 
       expect(audioService.generateAudio).toHaveBeenCalledWith(expectedRequest);
     });
+
     it('should call audioService with correct params for Chirp', () => {
       audioService.generateAudio.and.returnValue(of(mockMediaItem));
       component.selectedModel = 'chirp';
@@ -313,7 +314,6 @@ describe('AudioComponent', () => {
 
   describe('Audio Player', () => {
     let audioEl: HTMLAudioElement;
-
     beforeEach(() => {
       // Create a dummy audio player element for testing
       const audioPlayerElement = document.createElement('audio');
