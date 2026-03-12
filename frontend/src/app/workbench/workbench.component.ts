@@ -128,12 +128,13 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   // derived signals for active source logic
   activeVideoClip = computed(() => {
     const time = this.currentTime();
-    return this.videoClips().find(c => time >= c.startTime && time < c.startTime + c.duration);
+    // Find the clip at current time, but skip hidden clips
+    return this.videoClips().find(c => time >= c.startTime && time < c.startTime + c.duration && !c.isHidden);
   });
 
   activeAudioClips = computed(() => {
     const time = this.currentTime();
-    return this.audioTracks().map(track => track.find(c => time >= c.startTime && time < c.startTime + c.duration));
+    return this.audioTracks().map(track => track.find(c => time >= c.startTime && time < c.startTime + c.duration && !c.isHidden));
   });
 
   activeVideoSrc = computed(() => {
@@ -787,7 +788,21 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           if (!this.isPlaying()) return;
           const dt = (now - lastTime) / 1000; 
           lastTime = now;
-          const nextTime = this.currentTime() + dt;
+          let nextTime = this.currentTime() + dt;
+          
+          // Check if we're in a hidden clip and skip to the next visible one
+          const hiddenClip = this.videoClips().find(c => nextTime >= c.startTime && nextTime < c.startTime + c.duration && c.isHidden);
+          if (hiddenClip) {
+              // Jump to the end of the hidden clip
+              const nextClips = this.videoClips().filter(c => c.startTime >= hiddenClip.startTime + hiddenClip.duration && !c.isHidden);
+              if (nextClips.length > 0) {
+                  // Jump to the next visible clip
+                  nextTime = nextClips[0].startTime;
+              } else {
+                  // No more visible clips, end playback
+                  nextTime = this.totalDuration();
+              }
+          }
           
           // 1. Auto Scroll Logic
           if (this.timelineContainer?.nativeElement) {
