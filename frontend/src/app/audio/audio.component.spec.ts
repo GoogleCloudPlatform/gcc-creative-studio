@@ -34,11 +34,6 @@ import { JobStatus, MediaItem } from '../common/models/media-item.model';
 import { WorkspaceStateService } from '../services/workspace/workspace-state.service';
 import { MatSelectChange } from '@angular/material/select';
 import { MatIconModule } from '@angular/material/icon';
-// import { MatFormFieldModule } from '@angular/material/form-field';
-// import { MatInputModule } from '@angular/material/input';
-// import { MatButtonModule } from '@angular/material/button';
-// import { FormsModule } from '@angular/forms';
-// Removed MediaLightboxComponent import - using mock instead
 import { LanguageEnum, VoiceEnum } from './audio.constants';
 import { By } from '@angular/platform-browser';
 import { ActivatedRoute } from '@angular/router';
@@ -160,11 +155,6 @@ describe('AudioComponent', () => {
         HttpClientTestingModule,
         MatIconModule,
         MockMediaLightboxComponent,
-        // CommonModule,
-        // FormsModule,
-        // MatFormFieldModule,
-        // MatInputModule,
-        // MatButtonModule,
       ],
       providers: [
         { provide: AudioService, useValue: audioServiceSpy },
