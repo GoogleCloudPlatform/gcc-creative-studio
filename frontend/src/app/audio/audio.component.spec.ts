@@ -39,8 +39,8 @@ import { MatInputModule } from '@angular/material/input';
 import { MatButtonModule } from '@angular/material/button';
 import { FormsModule } from '@angular/forms';
 // Removed MediaLightboxComponent import - using mock instead
-import { HarnessLoader } from '@angular/cdk/testing';
-import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
+//import { HarnessLoader } from '@angular/cdk/testing';
+// { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { LanguageEnum, VoiceEnum } from './audio.constants';
 import { By } from '@angular/platform-browser';
 import { ActivatedRoute } from '@angular/router';
@@ -125,7 +125,7 @@ describe('AudioComponent', () => {
   let fixture: ComponentFixture<AudioComponent>;
   let workspaceStateService: jasmine.SpyObj<WorkspaceStateService>;
   let dialog: jasmine.SpyObj<MatDialog>;
-  let loader: HarnessLoader;
+  //let loader: HarnessLoader;
   let notificationService: jasmine.SpyObj<NotificationService>;
 
   let audioService: jasmine.SpyObj<AudioService>;
@@ -190,7 +190,7 @@ describe('AudioComponent', () => {
       WorkspaceStateService,
     ) as jasmine.SpyObj<WorkspaceStateService>;
     audioService = TestBed.inject(AudioService) as jasmine.SpyObj<AudioService>;
-    loader = TestbedHarnessEnvironment.loader(fixture);
+    //loader = TestbedHarnessEnvironment.loader(fixture);
     fixture.detectChanges();
   });
 
@@ -232,7 +232,6 @@ describe('AudioComponent', () => {
       audioSubject.next(mockMediaItem);
       audioSubject.complete();
       tick();
-      
       expect(component.isLoading).toBeFalse();
       expect(component.mediaItem).toEqual(mockMediaItem);
     }));
