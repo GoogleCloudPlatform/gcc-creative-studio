@@ -895,10 +895,10 @@
                 <mat-icon
                   svgIcon="sound-sensing-icon"
                   class="!w-6 !h-6"
+                ></mat-icon>
                     @let volumeBoolean = selectedClip()?.trackIndex == 1 && clip?.isHidden;
                 <div class="glass-toolbar" [class.is-disabled]="selectedClip()?.trackIndex !== 1">
                   <div class="inline-block">
-                    @let volumeBoolean = selectedClip()?.trackIndex == 1&& clip?.isHidden;
                     <button mat-button  class="glass-toolbar-btn" (click)="toggleVisibility(clip?.id)" [style.backgroundColor]="volumeBoolean ? '#E3E3E3!important' : null" title="Toggle Visibility">
                           @if (volumeBoolean) {
                             <mat-icon svgIcon="volume-off-icon"></mat-icon>
