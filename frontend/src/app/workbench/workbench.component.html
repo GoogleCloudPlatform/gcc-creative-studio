@@ -23,6 +23,7 @@
   <div
     class="main-app-container"
     (mousemove)="onTrimMove($event); onDragMove($event); onScrubMove($event)"
+    (mouseleave)="onDragEnd(); onTrimEnd(); onScrubEnd()"
     (mouseup)="onTrimEnd(); onDragEnd(); onScrubEnd()"
   >
     <!-- Top Workspace (2 Columns) -->
@@ -782,7 +783,7 @@
               >
                 <mat-icon>zoom_out</mat-icon>
                 <mat-slider
-                  min="10"
+                  min="4"
                   max="100"
                   step="5"
                   class="glass-slider py-2"
@@ -848,15 +849,28 @@
                     svgIcon="movie-shallow-icon"
                     class="!w-6 !h-6"
                   ></mat-icon>
-                  <div class="glass-toolbar">
-                    <div matTooltip="coming soon!" class="inline-block">
-                        <button mat-button disabled class="glass-toolbar-btn">
-                        <mat-icon svgIcon="eye-icon"></mat-icon>
+                  @let clip = selectedClip();
+                  <div class="glass-toolbar" [class.is-disabled]="clip?.trackIndex !== 0">
+                    <div  class="inline-block" >
+                      <!-- Eye Button (Clip-level visibility) -->
+                        @let visibilityBoolean = clip?.trackIndex === 0 && clip?.isHidden;
+                        <button mat-button  class="glass-toolbar-btn" (click)="toggleVisibility(clip?.id)" [style.backgroundColor]="visibilityBoolean ? '#E3E3E3!important' : null" title="Toggle Visibility">
+                          @if (visibilityBoolean) {
+                            <mat-icon svgIcon="visibility-off-icon"></mat-icon>
+                          } @else {
+                            <mat-icon svgIcon="eye-icon"></mat-icon>
+                          }
                         </button>
                     </div>
-                    <div matTooltip="coming soon!" class="inline-block">
-                        <button mat-button disabled class="glass-toolbar-btn">
-                        <mat-icon svgIcon="lock-icon"></mat-icon>
+                    <div class="inline-block">
+                      <!-- Lock Button (Clip-level locking) -->
+                        @let vidLockBoolean = selectedClip()?.trackIndex == 0 && clip?.isLocked;
+                        <button mat-button  class="glass-toolbar-btn" (click)="toggleLock(clip?.id)" [style.backgroundColor]="vidLockBoolean ? '#B3261E!important' : null" title="Lock/Unlock Clip">
+                           @if (vidLockBoolean) {
+                              <mat-icon svgIcon="lock-icon"></mat-icon>
+                            } @else {
+                              <mat-icon svgIcon="lock-open-right-icon"></mat-icon>
+                            }
                         </button>
                     </div>
                   </div>
@@ -882,15 +896,27 @@
                   svgIcon="sound-sensing-icon"
                   class="!w-6 !h-6"
                 ></mat-icon>
-                <div class="glass-toolbar">
-                  <div matTooltip="coming soon!" class="inline-block">
-                    <button mat-button disabled class="glass-toolbar-btn">
-                      <mat-icon svgIcon="lock-icon"></mat-icon>
+                    @let volumeBoolean = selectedClip()?.trackIndex == 1 && clip?.isHidden;
+                <div class="glass-toolbar" [class.is-disabled]="selectedClip()?.trackIndex !== 1">
+                  <div class="inline-block">
+                    <button mat-button  class="glass-toolbar-btn" (click)="toggleVisibility(clip?.id)" [style.backgroundColor]="volumeBoolean ? '#E3E3E3!important' : null" title="Toggle Visibility">
+                          @if (volumeBoolean) {
+                            <mat-icon svgIcon="volume-off-icon"></mat-icon>
+                          } @else {
+                            <mat-icon svgIcon="volume-off-icon" [style.color]="'#000000!important'"></mat-icon>
+                          }
                     </button>
                   </div>
-                  <div matTooltip="coming soon!" class="inline-block">
-                    <button mat-button disabled class="glass-toolbar-btn">
-                      <mat-icon svgIcon="volume-off-icon"></mat-icon>
+                  <div class="inline-block">
+                    @let audLockBoolean = selectedClip()?.trackIndex == 1 && clip?.isLocked;
+                    <button mat-button  class="glass-toolbar-btn">
+                      <button mat-button  class="glass-toolbar-btn" (click)="toggleLock(clip?.id)" [style.backgroundColor]="audLockBoolean ? '#B3261E!important' : null" title="Lock/Unlock Clip">
+                           @if (audLockBoolean) {
+                              <mat-icon svgIcon="lock-icon"></mat-icon>
+                            } @else {
+                              <mat-icon svgIcon="lock-open-right-icon"></mat-icon>
+                            }
+                        </button>
                     </button>
                   </div>
                 </div>
@@ -940,10 +966,16 @@
                         selectedClipId() === clip.id,
                       'border-white/10 bg-[#2a2a2c] hover:border-white/30':
                         selectedClipId() !== clip.id,
+                        'cursor-grab active:cursor-grabbing hover:scale-[1.01] hover:border-white/30': !clip.isLocked,
+                        'cursor-not-allowed': clip.isLocked,
+                        'opacity-30 grayscale': clip.isHidden
                     }"
                     [style.left.px]="clip.startTime * pixelsPerSecond"
                     [style.width.px]="clip.duration * pixelsPerSecond"
                   >
+                   <!-- Locked Pattern Overlay -->
+                  <div *ngIf="clip.isLocked" class="absolute inset-0 bg-[repeating-linear-gradient(45deg,transparent,transparent_5px,rgba(0,0,0,0.5)_5px,rgba(0,0,0,0.5)_10px)] z-50 pointer-events-none"></div>
+
                     <!-- Thumbnail Strip (when thumbnail available) -->
                     <div
                       *ngIf="getAssetThumbnail(clip.assetId)"

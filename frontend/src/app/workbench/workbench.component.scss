@@ -120,6 +120,12 @@
    padding:8px
 }
 
+.glass-toolbar.is-disabled {
+  opacity: 0.5;
+  pointer-events: none; /* This actually stops clicks/hover effects */
+  cursor: not-allowed;
+}
+
 ::ng-deep .icon-btn.active mat-icon {
    color: #444746 !important;
 }
