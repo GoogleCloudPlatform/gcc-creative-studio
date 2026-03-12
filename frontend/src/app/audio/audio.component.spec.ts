@@ -70,11 +70,11 @@ class MockMediaLightboxComponent {
   }>();
   @Output() sendToVtoClicked = new EventEmitter<number>();
   @Output() extendWithAiClicked = new EventEmitter<{
-    mediaItem: any;
+    mediaItem: MediaItem | null;
     selectedIndex: number;
   }>();
   @Output() concatenateClicked = new EventEmitter<{
-    mediaItem: any;
+    mediaItem: MediaItem | null;
     selectedIndex: number;
   }>();
 
