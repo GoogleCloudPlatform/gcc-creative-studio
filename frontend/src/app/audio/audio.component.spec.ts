@@ -40,7 +40,6 @@ import { ActivatedRoute } from '@angular/router';
 import { NotificationService } from '../common/services/notification.service';
 import { CommonModule } from '@angular/common'; // Needed for *ngIf in mock template
 
-
 // Define a mock MediaLightboxComponent
 @Component({
   selector: 'app-media-lightbox',
