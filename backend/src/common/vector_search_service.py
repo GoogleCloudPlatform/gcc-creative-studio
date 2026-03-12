@@ -41,15 +41,18 @@ class VectorSearchService:
     def _get_index_endpoint(self) -> matching_engine_index_endpoint.MatchingEngineIndexEndpoint:
         """Retrieves the Index Endpoint object."""
         return matching_engine_index_endpoint.MatchingEngineIndexEndpoint(
-            index_endpoint_name=self.cfg.VECTOR_SEARCH_INDEX_ENDPOINT_ID
+            # index_endpoint_name=self.cfg.VECTOR_SEARCH_INDEX_ENDPOINT_ID
+            index_endpoint_name="projects/orca-479911/locations/us-central1/indexEndpoints/4526410095600336896" 
         )
 
     def _get_deployed_index_id(self, index_type: str) -> str:
         """Resolves the deployed index ID based on type ('text' or 'image')."""
         if index_type == "text":
-            return self.cfg.VECTOR_SEARCH_DEPLOYED_TEXT_INDEX_ID
+            # return self.cfg.VECTOR_SEARCH_DEPLOYED_TEXT_INDEX_ID
+            return "creative_studio_deployed_index_text"
         elif index_type == "image":
-            return self.cfg.VECTOR_SEARCH_DEPLOYED_IMAGE_INDEX_ID
+            # return self.cfg.VECTOR_SEARCH_DEPLOYED_IMAGE_INDEX_ID
+            return "creative_studio_deployed_index_image"
         else:
             raise ValueError(f"Invalid index_type: {index_type}. Must be 'text' or 'image'.")
 
