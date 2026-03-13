@@ -36,7 +36,6 @@ import { MatSelectChange } from '@angular/material/select';
 import { MatIconModule } from '@angular/material/icon';
 import { LanguageEnum, VoiceEnum } from './audio.constants';
 import { By } from '@angular/platform-browser';
-import { ActivatedRoute } from '@angular/router';
 import { NotificationService } from '../common/services/notification.service';
 import { CommonModule } from '@angular/common'; // Needed for *ngIf in mock template
 
@@ -158,10 +157,6 @@ describe('AudioComponent', () => {
       providers: [
         { provide: AudioService, useValue: audioServiceSpy },
         { provide: WorkspaceStateService, useValue: workspaceStateServiceSpy },
-        {
-          provide: ActivatedRoute,
-          useValue: { snapshot: { queryParamMap: { get: () => null } } },
-        },
         { provide: NotificationService, useValue: notificationServiceSpy },
         { provide: MatDialog, useValue: dialogSpy },
       ],
