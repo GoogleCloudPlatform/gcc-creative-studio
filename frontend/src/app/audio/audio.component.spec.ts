@@ -230,7 +230,7 @@ describe('AudioComponent', () => {
         'error',
         'cross-in-circle-white',
         undefined,
-        20000,
+        5000,
       );
       expect(component.isLoading).toBeFalse();
       expect(audioService.generateAudio).not.toHaveBeenCalled();
