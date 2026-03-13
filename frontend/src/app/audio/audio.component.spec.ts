@@ -307,7 +307,7 @@ describe('AudioComponent', () => {
         'error',
         'cross-in-circle-white',
         undefined,
-        20000,
+        5000,
       );
     }));
   });
