@@ -363,7 +363,30 @@ describe('AudioComponent', () => {
       expect(component.progressValue).toBe(0);
       expect(component.currentTime).toBe('0:00');
     });
-  });
+
+    it('should extract and show backend validation error messages on generation failure', fakeAsync(() => {
+      const error = {
+        error: {
+          detail: [{ msg: 'Backend validation error' }]
+        }
+      };
+      audioService.generateAudio.and.returnValue(throwError(() => error));
+      component.generate();
+      tick();
+      fixture.detectChanges();
+      
+      expect(audioService.generateAudio).toHaveBeenCalled();
+      expect(component.isLoading).toBeFalse();
+      expect(notificationService.show).toHaveBeenCalledWith(
+        'Backend validation error',
+        'error',
+        'cross-in-circle-white',
+        undefined,
+        20000,
+      );
+      tick(20000);
+    }));
+  });// Note: The above tests for the audio player are basic and can be expanded to cover more edge cases and interactions.
 
   describe('Voice Selection', () => {
     it('onVoiceSelectionChange should update selectedVoice', () => {
