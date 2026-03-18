@@ -384,7 +384,6 @@ describe('AudioComponent', () => {
         undefined,
         5000,
       );
-      tick(5000);
     }));
   });
   // Note: The above tests for the audio player are basic and can be expanded to cover more edge cases and interactions.
