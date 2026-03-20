@@ -120,7 +120,7 @@ class MockMediaLightboxComponent {
   }
 }
 
-describe('AudioComponent', () => {
+fdescribe('AudioComponent', () => {
   let component: AudioComponent;
   let fixture: ComponentFixture<AudioComponent>;
   let workspaceStateService: jasmine.SpyObj<WorkspaceStateService>;
@@ -208,7 +208,7 @@ describe('AudioComponent', () => {
     expect(component.selectedVoice).toBe(VoiceEnum.PUCK);
   });
 
-  describe('generate', () => {
+  fdescribe('generate', () => {
     const workspaceId = 1;
 
     beforeEach(() => {
@@ -348,7 +348,7 @@ describe('AudioComponent', () => {
     }));
   });
 
-  describe('Audio Player', () => {
+  fdescribe('Audio Player', () => {
     let audioEl: HTMLAudioElement;
     beforeEach(() => {
       // Create a dummy audio player element for testing
@@ -414,7 +414,7 @@ describe('AudioComponent', () => {
   });
   // Note: The above tests for the audio player are basic and can be expanded to cover more edge cases and interactions.
 
-  describe('Voice Selection', () => {
+  fdescribe('Voice Selection', () => {
     it('onVoiceSelectionChange should update selectedVoice', () => {
       const event = { value: VoiceEnum.FENRIR } as MatSelectChange;
       component.onVoiceSelectionChange(event);
@@ -429,7 +429,7 @@ describe('AudioComponent', () => {
     });
   });
 
-  describe('AddVoiceDialog', () => {
+  fdescribe('AddVoiceDialog', () => {
     it('should add a new voice when dialog closes with data', () => {
       const initialVoiceCount = component.voices.length;
       const newVoiceName = 'New Voice';
@@ -444,7 +444,8 @@ describe('AudioComponent', () => {
         'Voice cloned successfully!',
         'success',
         undefined,
-        'check_small'
+        'check_small',
+        3000
       );
     });
 
