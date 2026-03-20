@@ -32,8 +32,16 @@ import {
 import { of, throwError, Subject } from 'rxjs';
 import { JobStatus, MediaItem } from '../common/models/media-item.model';
 import { WorkspaceStateService } from '../services/workspace/workspace-state.service';
-import { MatSelectChange } from '@angular/material/select';
+import { MatSelectChange, MatSelectModule } from '@angular/material/select';
 import { MatIconModule } from '@angular/material/icon';
+import { MatButtonToggleModule } from '@angular/material/button-toggle';
+import { MatDividerModule } from '@angular/material/divider';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatInputModule } from '@angular/material/input';
+import { MatButtonModule } from '@angular/material/button';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { FormsModule } from '@angular/forms';
+import { NoopAnimationsModule } from '@angular/platform-browser/animations';
 import { LanguageEnum, VoiceEnum } from './audio.constants';
 import { By } from '@angular/platform-browser';
 import { NotificationService } from '../common/services/notification.service';
@@ -153,6 +161,15 @@ describe('AudioComponent', () => {
         HttpClientTestingModule,
         MatIconModule,
         MockMediaLightboxComponent,
+        MatButtonToggleModule,
+        MatDividerModule,
+        MatFormFieldModule,
+        MatInputModule,
+        MatSelectModule,
+        MatButtonModule,
+        MatProgressSpinnerModule,
+        FormsModule,
+        NoopAnimationsModule,
       ],
       providers: [
         { provide: AudioService, useValue: audioServiceSpy },
@@ -304,6 +321,30 @@ describe('AudioComponent', () => {
         undefined,
         5000,
       );
+      flush();
+    }));
+
+    it('should extract and show backend validation error messages on generation failure', fakeAsync(() => {
+      const error = {
+        error: {
+          detail: [{ msg: 'Backend validation error' }]
+        }
+      };
+      audioService.generateAudio.and.returnValue(throwError(() => error));
+      component.generate();
+      tick();
+      fixture.detectChanges();
+
+      expect(audioService.generateAudio).toHaveBeenCalled();
+      expect(component.isLoading).toBeFalse();
+      expect(notificationService.show).toHaveBeenCalledWith(
+        'Backend validation error',
+        'error',
+        'cross-in-circle-white',
+        undefined,
+        5000,
+      );
+      flush();
     }));
   });
 
@@ -318,6 +359,13 @@ describe('AudioComponent', () => {
       audioEl = component.audioPlayerRef.nativeElement;
       spyOn(audioEl, 'play');
       spyOn(audioEl, 'pause');
+    });
+
+    it('togglePlay should call play() when paused', () => {
+      Object.defineProperty(audioEl, 'paused', { value: true });
+      component.togglePlay();
+      expect(audioEl.play).toHaveBeenCalled();
+      expect(component.isPlaying).toBeTrue();
     });
 
     it('togglePlay should call play() when paused', () => {
@@ -363,28 +411,6 @@ describe('AudioComponent', () => {
       expect(component.progressValue).toBe(0);
       expect(component.currentTime).toBe('0:00');
     });
-
-    it('should extract and show backend validation error messages on generation failure', fakeAsync(() => {
-      const error = {
-        error: {
-          detail: [{ msg: 'Backend validation error' }]
-        }
-      };
-      audioService.generateAudio.and.returnValue(throwError(() => error));
-      component.generate();
-      tick();
-      fixture.detectChanges();
-      
-      expect(audioService.generateAudio).toHaveBeenCalled();
-      expect(component.isLoading).toBeFalse();
-      expect(notificationService.show).toHaveBeenCalledWith(
-        'Backend validation error',
-        'error',
-        'cross-in-circle-white',
-        undefined,
-        5000,
-      );
-    }));
   });
   // Note: The above tests for the audio player are basic and can be expanded to cover more edge cases and interactions.
 
