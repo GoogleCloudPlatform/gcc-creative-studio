@@ -324,6 +324,22 @@ fdescribe('AudioComponent', () => {
       flush();
     }));
 
+    it('should show error notification using FastAPI detail message on generation failure', fakeAsync(() => {
+      const error = { error: { detail: [{ msg: 'FastAPI error message' }] } };
+      audioService.generateAudio.and.returnValue(throwError(() => error));
+      component.generate();
+      tick();
+      fixture.detectChanges();
+      expect(component.isLoading).toBeFalse();
+      expect(notificationService.show).toHaveBeenCalledWith(
+        'FastAPI error message',
+        'error',
+        'cross-in-circle-white',
+        undefined,
+        20000,
+      );
+    }));
+
     it('should extract and show backend validation error messages on generation failure', fakeAsync(() => {
       const error = {
         error: {
