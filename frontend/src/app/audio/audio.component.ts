@@ -203,10 +203,6 @@ export class AudioComponent {
   }
 
   generate() {
-    this.isLoading = true;
-    this.mediaItem = null; // Clear previous result
-    this.audioUrl = null;
-
     const activeWorkspaceId = this.workspaceStateService.getActiveWorkspaceId();
     if (!activeWorkspaceId) {
       this.notificationService.show(
@@ -219,6 +215,10 @@ export class AudioComponent {
       this.isLoading = false;
       return;
     }
+
+     this.isLoading = true;
+    this.mediaItem = null; // Clear previous result
+    this.audioUrl = null;
 
     // 1. Determine specific backend model based on UI selection
     let backendModel: GenerationModelEnum;
