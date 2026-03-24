@@ -19,7 +19,6 @@ import {
   CreateAudioDto,
   GenerationModelEnum,
 } from '../services/audio/audio.service';
-import {MatSnackBar} from '@angular/material/snack-bar';
 import {MatDialog} from '@angular/material/dialog';
 import {MatSelectChange} from '@angular/material/select';
 import {finalize} from 'rxjs';
@@ -162,7 +161,6 @@ export class AudioComponent {
 
   constructor(
     private audioService: AudioService,
-    private snackBar: MatSnackBar,
     private workspaceStateService: WorkspaceStateService,
     private dialog: MatDialog,
     private sanitizer: DomSanitizer,
