@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 import {Component, ElementRef, Inject, ViewChild} from '@angular/core';
 import {
   AudioService,
@@ -31,10 +30,7 @@ import {AddVoiceDialogComponent} from '../components/add-voice-dialog/add-voice-
 import {MatIconRegistry} from '@angular/material/icon';
 import {LanguageEnum, VoiceEnum} from './audio.constants';
 import {GalleryService} from '../gallery/gallery.service';
-import {
-  handleErrorSnackbar,
-  handleSuccessSnackbar,
-} from '../utils/handleMessageSnackbar';
+import {NotificationService} from '../common/services/notification.service';
 
 // UI Helper type
 type UiModelType = 'lyria' | 'chirp' | 'gemini-tts';
@@ -162,7 +158,7 @@ export class AudioComponent {
     {id: VoiceEnum.ZEPHYR, name: 'Zephyr (Female)', type: 'preset'},
     {id: VoiceEnum.ZUBENELGENUBI, name: 'Zubenelgenubi (Male)', type: 'preset'},
   ];
-  private path = '../../assets/images';
+   private path = '../../assets/images';
 
   constructor(
     private audioService: AudioService,
@@ -171,8 +167,9 @@ export class AudioComponent {
     private dialog: MatDialog,
     private sanitizer: DomSanitizer,
     public matIconRegistry: MatIconRegistry,
-    @Inject(GalleryService)
+     @Inject(GalleryService)
     private galleryService: GalleryService,
+    private notificationService: NotificationService,
   ) {
     this.matIconRegistry.addSvgIcon(
       'white-gemini-spark-icon',
@@ -208,24 +205,28 @@ export class AudioComponent {
         };
         this.voices = [newVoice, ...this.voices];
         this.selectedVoice = newVoice.id;
-        handleSuccessSnackbar(this.snackBar, 'Voice cloned successfully!');
+        this.notificationService.show('Voice cloned successfully!', 'success', undefined, 'check_small',3000);
       }
     });
   }
 
   generate() {
-    this.isLoading = true;
-    this.mediaItem = null; // Clear previous result
-
     const activeWorkspaceId = this.workspaceStateService.getActiveWorkspaceId();
     if (!activeWorkspaceId) {
-      handleErrorSnackbar(
-        this.snackBar,
-        {message: 'Please select a workspace first.'},
-        'Workspace',
+      this.notificationService.show(
+        'Please select a workspace first.',
+        'error',
+        'cross-in-circle-white',
+        undefined,
+        5000,
       );
+      this.isLoading = false;
       return;
     }
+
+    this.isLoading = true;
+    this.mediaItem = null; // Clear previous result
+    this.audioUrl = null;
 
     // 1. Determine specific backend model based on UI selection
     let backendModel: GenerationModelEnum;
@@ -259,9 +260,6 @@ export class AudioComponent {
           : undefined,
     };
 
-    this.isLoading = true;
-    this.audioUrl = null;
-
     this.audioService
       .generateAudio(request)
       .pipe(finalize(() => (this.isLoading = false)))
@@ -271,8 +269,19 @@ export class AudioComponent {
           // The Lightbox will handle displaying the first item automatically via inputs
         },
         error: (error: any) => {
-          handleErrorSnackbar(this.snackBar, error, 'Generation');
           console.error('Generation failed:', error);
+          const errorMessage =
+            error?.error?.detail?.[0]?.msg ||
+            error?.error?.detail ||
+            error?.message ||
+            'Something went wrong';
+          this.notificationService.show(
+            errorMessage,
+            'error',
+            'cross-in-circle-white',
+            undefined,
+            5000,
+          );
         },
       });
   }
@@ -281,7 +290,7 @@ export class AudioComponent {
   togglePlay() {
     const audio = this.audioPlayerRef.nativeElement;
     if (audio.paused) {
-      void audio.play();
+      audio.play();
       this.isPlaying = true;
     } else {
       audio.pause();
@@ -322,7 +331,6 @@ export class AudioComponent {
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   }
-
   deleteGeneratedMedia() {
     if (!this.mediaItem?.id) return;
 
@@ -338,11 +346,23 @@ export class AudioComponent {
       .bulkDelete([{id: this.mediaItem.id, type: 'media_item'}], workspaceId)
       .subscribe({
         next: () => {
-          handleSuccessSnackbar(this.snackBar, 'Audio deleted successfully');
+          this.notificationService.show(
+            'Audio deleted successfully',
+            'success',
+            undefined,
+            'check_small',
+            5000
+          );
           this.mediaItem = null;
         },
         error: err => {
-          handleErrorSnackbar(this.snackBar, err, 'Delete result');
+        this.notificationService.show(
+        'Delete result',
+        'error',
+        'cross-in-circle-white',
+        undefined,
+        5000,
+      );
         },
       });
   }
