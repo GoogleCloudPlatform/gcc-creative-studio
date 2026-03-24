@@ -330,6 +330,7 @@ export class AudioComponent {
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   }
+  
   deleteGeneratedMedia() {
     if (!this.mediaItem?.id) return;
 
