@@ -361,7 +361,7 @@ export class AudioComponent {
             'cross-in-circle-white',
             undefined,
             5000,
-            );
+          );
         },
       });
   }
