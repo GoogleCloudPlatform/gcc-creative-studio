@@ -384,13 +384,6 @@ describe('AudioComponent', () => {
       expect(component.isPlaying).toBeTrue();
     });
 
-    it('togglePlay should call play() when paused', () => {
-      Object.defineProperty(audioEl, 'paused', { value: true });
-      component.togglePlay();
-      expect(audioEl.play).toHaveBeenCalled();
-      expect(component.isPlaying).toBeTrue();
-    });
-
     it('togglePlay should call pause() when playing', () => {
       Object.defineProperty(audioEl, 'paused', { value: false });
       component.togglePlay();
