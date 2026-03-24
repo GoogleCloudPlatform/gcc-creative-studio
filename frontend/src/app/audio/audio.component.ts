@@ -355,13 +355,13 @@ export class AudioComponent {
           this.mediaItem = null;
         },
         error: err => {
-        this.notificationService.show(
-        'Delete result',
-        'error',
-        'cross-in-circle-white',
-        undefined,
-        5000,
-      );
+          this.notificationService.show(
+            'Failed to delete audio',
+            'error',
+            'cross-in-circle-white',
+            undefined,
+            5000,
+            );
         },
       });
   }
