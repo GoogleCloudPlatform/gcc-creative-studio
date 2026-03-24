@@ -167,7 +167,7 @@ export class AudioComponent {
     private dialog: MatDialog,
     private sanitizer: DomSanitizer,
     public matIconRegistry: MatIconRegistry,
-     @Inject(GalleryService)
+    @Inject(GalleryService)
     private galleryService: GalleryService,
     private notificationService: NotificationService,
   ) {
