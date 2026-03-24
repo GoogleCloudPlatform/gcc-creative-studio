@@ -223,7 +223,6 @@ export class AudioComponent {
       );
       return;
     }
-
     this.isLoading = true;
     this.mediaItem = null; // Clear previous result
     this.audioUrl = null;
