@@ -289,7 +289,7 @@ export class AudioComponent {
   togglePlay() {
     const audio = this.audioPlayerRef.nativeElement;
     if (audio.paused) {
-      audio.play();
+      void audio.play();
       this.isPlaying = true;
     } else {
       audio.pause();
