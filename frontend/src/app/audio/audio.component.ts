@@ -205,7 +205,7 @@ export class AudioComponent {
         };
         this.voices = [newVoice, ...this.voices];
         this.selectedVoice = newVoice.id;
-        this.notificationService.show('Voice cloned successfully!', 'success', undefined, 'check_small',3000);
+        this.notificationService.show('Voice cloned successfully!', 'success', undefined, 'check_small', 3000);
       }
     });
   }
