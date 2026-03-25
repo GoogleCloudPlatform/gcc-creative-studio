@@ -352,7 +352,7 @@ export class AudioComponent {
           );
           this.mediaItem = null;
         },
-         error: (error: any) => {
+        error: (error: any) => {
           console.error('Failed to delete audio:', error);
           const errorMessage =
             error?.error?.detail?.[0]?.msg ||
