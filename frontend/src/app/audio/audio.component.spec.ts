@@ -279,6 +279,13 @@ describe('AudioComponent', () => {
       component.selectedLanguage = LanguageEnum.EN_US;
       component.selectedVoice = VoiceEnum.PUCK;
       component.sampleCount = 1;
+      expect(notificationService.show).toHaveBeenCalledWith(
+        'FastAPI error message',
+        'error',
+        'cross-in-circle-white',
+        undefined,
+        20000,
+      );
 
       const expectedRequest: CreateAudioDto = {
         model: GenerationModelEnum.CHIRP_3,
