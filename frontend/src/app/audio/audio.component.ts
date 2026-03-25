@@ -355,8 +355,8 @@ export class AudioComponent {
         error: (error: any) => {
           console.error('Failed to delete audio:', error);
           const errorMessage =
-            error?.error?.detail?.[0]?.msg ||
-            error?.error?.detail ||
+            (typeof error?.error?.detail?.[0]?.msg === 'string' ? error.error.detail[0].msg : null) ||
+            (typeof error?.error?.detail === 'string' ? error.error.detail : null) ||
             error?.message ||
             'Failed to delete audio';
           this.notificationService.show(
