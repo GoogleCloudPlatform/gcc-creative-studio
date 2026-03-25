@@ -267,8 +267,8 @@ export class AudioComponent {
         error: (error: any) => {
           console.error('Generation failed:', error);
           const errorMessage =
-            error?.error?.detail?.[0]?.msg ||
-            error?.error?.detail ||
+            (typeof error?.error?.detail?.[0]?.msg === 'string' ? error.error.detail[0].msg : null) ||
+            (typeof error?.error?.detail === 'string' ? error.error.detail : null) ||
             error?.message ||
             'Something went wrong';
           this.notificationService.show(
