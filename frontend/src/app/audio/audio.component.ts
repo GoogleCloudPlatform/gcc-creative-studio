@@ -210,7 +210,6 @@ export class AudioComponent {
 
   generate() {
     const activeWorkspaceId = this.workspaceStateService.getActiveWorkspaceId();
-    this.isLoading = false;
     if (!activeWorkspaceId) {
       this.notificationService.show(
         'Please select a workspace first.',
