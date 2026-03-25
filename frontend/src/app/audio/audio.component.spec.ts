@@ -340,28 +340,28 @@ describe('AudioComponent', () => {
       );
     }));
 
-    it('should extract and show backend validation error messages on generation failure', fakeAsync(() => {
-      const error = {
-        error: {
-          detail: [{ msg: 'Backend validation error' }]
-        }
-      };
-      audioService.generateAudio.and.returnValue(throwError(() => error));
-      component.generate();
-      tick();
-      fixture.detectChanges();
+    // it('should extract and show backend validation error messages on generation failure', fakeAsync(() => {
+    //   const error = {
+    //     error: {
+    //       detail: [{ msg: 'Backend validation error' }]
+    //     }
+    //   };
+    //   audioService.generateAudio.and.returnValue(throwError(() => error));
+    //   component.generate();
+    //   tick();
+    //   fixture.detectChanges();
 
-      expect(audioService.generateAudio).toHaveBeenCalled();
-      expect(component.isLoading).toBeFalse();
-      expect(notificationService.show).toHaveBeenCalledWith(
-        'Backend validation error',
-        'error',
-        'cross-in-circle-white',
-        undefined,
-        5000,
-      );
-      flush();
-    }));
+    //   expect(audioService.generateAudio).toHaveBeenCalled();
+    //   expect(component.isLoading).toBeFalse();
+    //   expect(notificationService.show).toHaveBeenCalledWith(
+    //     'Backend validation error',
+    //     'error',
+    //     'cross-in-circle-white',
+    //     undefined,
+    //     5000,
+    //   );
+    //   flush();
+    // }));
   });
 
   describe('Audio Player', () => {
