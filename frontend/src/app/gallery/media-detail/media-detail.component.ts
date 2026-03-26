@@ -16,7 +16,6 @@
 
 import {Component, OnDestroy} from '@angular/core';
 import {MatSnackBar} from '@angular/material/snack-bar';
-import {MatDialog} from '@angular/material/dialog';
 import {DomSanitizer, SafeHtml} from '@angular/platform-browser';
 import {ActivatedRoute, NavigationExtras, Router} from '@angular/router';
 import {first, Subscription} from 'rxjs';
@@ -35,7 +34,6 @@ import {
   handleSuccessSnackbar,
 } from '../../utils/handleMessageSnackbar';
 import {GalleryService} from '../gallery.service';
-import {ConfirmationDialogComponent} from '../../common/components/confirmation-dialog/confirmation-dialog.component';
 import {WorkspaceStateService} from '../../services/workspace/workspace-state.service';
 
 @Component({
@@ -67,7 +65,7 @@ export class MediaDetailComponent implements OnDestroy {
         label: 'Status',
         value: this.mediaItem.status
           ? this.mediaItem.status.toUpperCase()
-          : null,
+          : 'UNKNOWN',
         type: 'status',
       },
       {label: 'Mime Type', value: this.mediaItem.mimeType, type: 'text'},
@@ -154,7 +152,6 @@ export class MediaDetailComponent implements OnDestroy {
     private authService: AuthService,
     private sanitizer: DomSanitizer,
     private workspaceStateService: WorkspaceStateService,
-    public dialog: MatDialog,
   ) {
     // Check if user is admin
     this.isAdmin = this.authService.isUserAdmin() ?? false;
@@ -362,50 +359,6 @@ export class MediaDetailComponent implements OnDestroy {
     void this.router.navigate(['/video'], navigationExtras);
   }
 
-  handleEditWithOmni(event: {mediaItem: any; selectedIndex: number}): void {
-    if (!this.mediaItem) {
-      return;
-    }
-
-    const index = event.selectedIndex;
-    const mime = this.mediaItem.mimeType || '';
-    const isAudio = mime.startsWith('audio/');
-
-    const remixState: any = {
-      parentMediaItemId: this.mediaItem.id,
-      parentMediaIndex: index,
-      generationModel: 'gemini-omni',
-      isOmniMode: true,
-    };
-
-    if (isAudio) {
-      remixState.referenceAudio = {
-        id: this.mediaItem.id,
-        type: this.mediaItem.itemType || 'media_item',
-        index: index,
-        name:
-          this.mediaItem.originalPrompt || `Audio Input ${this.mediaItem.id}`,
-      };
-    } else {
-      remixState.referenceVideo = {
-        id: this.mediaItem.id,
-        type: this.mediaItem.itemType || 'media_item',
-        index: index,
-        name:
-          this.mediaItem.originalPrompt || `Video Input ${this.mediaItem.id}`,
-        previewUrl:
-          this.mediaItem.presignedThumbnailUrls?.[index] ||
-          this.mediaItem.presignedUrls?.[index] ||
-          '',
-      };
-    }
-
-    const navigationExtras: NavigationExtras = {
-      state: {remixState},
-    };
-    void this.router.navigate(['/video'], navigationExtras);
-  }
-
   sendToVto(index: number): void {
     if (!this.mediaItem) {
       return;
@@ -444,7 +397,7 @@ export class MediaDetailComponent implements OnDestroy {
       // Since it's a video, we can use the thumbnail as a preview.
       startImagePreviewUrl:
         this.mediaItem.presignedThumbnailUrls?.[event.selectedIndex],
-      generationModel: 'veo-3.1-generate-001', // Switch to Veo 3.1 for video input
+      generationModel: 'veo-2.0-generate-001', // Switch to Veo 2 for video input
     };
 
     const navigationExtras: NavigationExtras = {
@@ -523,48 +476,29 @@ export class MediaDetailComponent implements OnDestroy {
     return this.sanitizer.bypassSecurityTrustHtml(html);
   }
 
-  public onTagsChanged(tags: any[]): void {
-    if (this.mediaItem) {
-      this.fetchMediaDetails(
-        this.mediaItem.id,
-        this.mediaItem.itemType === 'source_asset',
-      );
-    }
-  }
-
   public deleteCurrentMedia(): void {
     if (!this.mediaItem?.id) return;
 
     const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
     if (workspaceId === null) return;
 
-    const dialogRef = this.dialog.open(ConfirmationDialogComponent, {
-      data: {
-        title: 'Delete Media',
-        message: 'Are you sure you want to delete this media item?',
-      },
-    });
-
-    dialogRef.afterClosed().subscribe(result => {
-      if (result) {
-        this.galleryService
-          .bulkDelete(
-            [{id: this.mediaItem!.id, type: this.mediaItem!.itemType}],
-            workspaceId,
-          )
-          .subscribe({
-            next: () => {
-              handleSuccessSnackbar(
-                this._snackBar,
-                'Media deleted successfully',
-              );
-              void this.router.navigate(['/gallery']);
-            },
-            error: err => {
-              handleErrorSnackbar(this._snackBar, err, 'Delete media');
-            },
-          });
-      }
-    });
+    const confirmDelete = confirm(
+      'Are you sure you want to delete this media item?',
+    );
+    if (!confirmDelete) return;
+    this.galleryService
+      .bulkDelete(
+        [{id: this.mediaItem.id, type: this.mediaItem.itemType}],
+        workspaceId,
+      )
+      .subscribe({
+        next: () => {
+          handleSuccessSnackbar(this._snackBar, 'Media deleted successfully');
+          void this.router.navigate(['/gallery']);
+        },
+        error: err => {
+          handleErrorSnackbar(this._snackBar, err, 'Delete media');
+        },
+      });
   }
 }

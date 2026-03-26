@@ -15,23 +15,350 @@
  */
 
 :host {
-  // Increase specificity to override default Material styles for mat-tab labels.
-  // This makes the tab labels lighter and more readable against the dark background.
-  ::ng-deep .mat-mdc-tab-group .mat-mdc-tab .mdc-tab__text-label,
-  ::ng-deep .mat-expansion-panel-header-title {
-    color: white;
-    font-weight: normal;
+  display: block;
+  font-family: 'Outfit', sans-serif;
+  color: #E3E3E3;
+  width: 100%;
+  min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+
+  .media-detail-page-container {
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    z-index: 10;
+    
+    // Workbench-inspired margins and layout
+    --max-container-width: 1400px;
+    background: rgba(15, 15, 18, 0.4);
+    backdrop-filter: blur(20px);
+    border-radius: 32px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 40px 100px rgba(0, 0, 0, 0.4);
+    overflow: hidden;
+    
+    max-width: var(--max-container-width);
+    height: 85vh;
+    margin-top: calc(10vh + 0px);
+    margin-left: max(calc(5vw + 4.5rem), calc(50% - var(--max-container-width) / 2));
+    margin-bottom: 5vh;
   }
 
-  // Make the active tab label fully white and bold for emphasis.
-  ::ng-deep
-    .mat-mdc-tab-group
-    .mat-mdc-tab.mdc-tab--active
-    .mdc-tab__text-label {
-    color: #2d7cef;
+  /* --- TOOLBAR --- */
+  .detail-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.5rem 2.5rem;
+    background: rgba(0, 0, 0, 0.2);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+
+    .toolbar-left {
+        display: flex;
+        align-items: center;
+        gap: 1.5rem;
+
+        .back-button {
+            color: #fff;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 50%;
+            transition: all 0.2s ease;
+            
+            &:hover {
+                background: rgba(255, 255, 255, 0.15);
+                transform: translateX(-2px);
+            }
+        }
+
+        .title-group {
+            h1 {
+                font-size: 1.5rem;
+                font-weight: 600;
+                margin: 0;
+                letter-spacing: -0.02em;
+            }
+            .breadcrumb {
+                font-size: 0.75rem;
+                color: rgba(255, 255, 255, 0.5);
+                text-transform: uppercase;
+                letter-spacing: 0.1em;
+            }
+        }
+    }
+
+    .toolbar-right {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
   }
 
-  ::ng-deep .mat-mdc-chip-action-label {
-    color: white !important;
+  /* --- MAIN CONTENT (SPLIT VIEW) --- */
+  .main-content {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    gap: 0;
   }
+
+  .preview-stage {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem;
+    position: relative;
+    overflow: hidden;
+
+    .media-wrapper {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        z-index: 2;
+
+        app-media-lightbox {
+            width: 100%;
+            height: 100%;
+            max-width: 90%;
+            max-height: 90%;
+            filter: drop-shadow(0 20px 50px rgba(0, 0, 0, 0.5));
+        }
+    }
+  }
+
+  .side-panel {
+    width: 420px;
+    background: rgba(15, 15, 18, 0.6);
+    backdrop-filter: blur(40px);
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    padding: 2rem;
+    gap: 1.5rem;
+
+    &::-webkit-scrollbar {
+        width: 4px;
+    }
+    &::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 10px;
+    }
+
+    section {
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            color: rgba(255, 255, 255, 0.5);
+            text-transform: uppercase;
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+
+            mat-icon {
+                font-size: 16px;
+                width: 16px;
+                height: 16px;
+            }
+        }
+
+        .property-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 1.25rem;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 1.25rem;
+            margin-bottom: 1rem;
+            transition: border-color 0.2s ease;
+
+            &:hover {
+                border-color: rgba(255, 255, 255, 0.2);
+            }
+
+            .prop-row {
+                display: flex;
+                flex-wrap: wrap;
+                justify-content: space-between;
+                align-items: flex-start;
+                padding: 0.5rem 0;
+                gap: 0.5rem;
+
+                &:not(:last-child) {
+                    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+                }
+
+                .label {
+                    color: rgba(255, 255, 255, 0.4);
+                    font-size: 0.85rem;
+                    white-space: nowrap;
+                }
+
+                .value {
+                    color: rgba(255, 255, 255, 0.9);
+                    font-size: 0.85rem;
+                    text-align: right;
+                    word-break: break-all;
+                }
+
+                .value-link {
+                    color: #4285f4;
+                    text-decoration: none;
+                    &:hover { text-decoration: underline; }
+                }
+            }
+        }
+
+        .prompt-preview {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 1rem;
+            padding: 1rem;
+            font-size: 0.85rem;
+            line-height: 1.5;
+            color: rgba(255, 255, 255, 0.7);
+            width: 100%;
+            
+            &.mini {
+                max-height: 60px;
+                overflow-y: auto;
+                font-family: 'Roboto Mono', monospace;
+                font-size: 0.75rem;
+                padding: 0.75rem;
+
+                &::-webkit-scrollbar {
+                    width: 3px;
+                }
+                &::-webkit-scrollbar-thumb {
+                    background: rgba(255, 255, 255, 0.1);
+                    border-radius: 10px;
+                }
+            }
+        }
+
+        .source-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+            gap: 10px;
+
+            .source-item {
+                aspect-ratio: 1;
+                border-radius: 0.75rem;
+                overflow: hidden;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                transition: transform 0.2s ease;
+                cursor: pointer;
+
+                &:hover {
+                    transform: scale(1.05);
+                    border-color: #4285f4;
+                }
+
+                img {
+                    width: 100%;
+                    height: 100%;
+                    object-fit: cover;
+                }
+            }
+        }
+    }
+  }
+
+  /* --- LOADING STATE --- */
+  .detail-loader {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 2rem;
+    position: relative;
+    z-index: 100;
+  }
+}
+
+/* Material overrides */
+::ng-deep {
+    .side-panel {
+        .mat-mdc-chip-set { padding: 4px 0; border: none; }
+        .mat-mdc-standard-chip {
+            background-color: rgba(255, 255, 255, 0.05) !important;
+            border: 1px solid rgba(255, 255, 255, 0.1) !important;
+            .mdc-evolution-chip__text-label { color: rgba(255, 255, 255, 0.8) !important; font-size: 0.75rem; }
+
+            &.status-chip-completed, &.status-chip-failed, &.status-chip-pending {
+                .mdc-evolution-chip__action--primary::before {
+                    border-width: 0 !important;
+                }
+            }
+
+            &.status-chip-completed {
+                background-color: rgba(74, 222, 128, 0.2) !important;
+                border: 1px solid rgba(74, 222, 128, 0.4) !important;
+                outline: none !important;
+                box-shadow: none !important;
+                .mdc-evolution-chip__text-label { color: rgb(74, 222, 128) !important; font-weight: bold; }
+            }
+            &.status-chip-failed {
+                background-color: rgba(248, 113, 113, 0.2) !important;
+                border: 1px solid rgba(248, 113, 113, 0.4) !important;
+                outline: none !important;
+                box-shadow: none !important;
+                .mdc-evolution-chip__text-label { color: rgb(248, 113, 113) !important; font-weight: bold; }
+            }
+            &.status-chip-pending {
+                background-color: rgba(96, 165, 250, 0.2) !important;
+                border: 1px solid rgba(96, 165, 250, 0.4) !important;
+                outline: none !important;
+                box-shadow: none !important;
+                .mdc-evolution-chip__text-label { color: rgb(96, 165, 250) !important; font-weight: bold; }
+            }
+        }
+
+        .mat-mdc-tab-header {
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            margin-bottom: 1rem;
+            --mdc-tab-indicator-active-indicator-color: #fff;
+        }
+        .mdc-tab {
+            background-color: transparent !important;
+            min-width: unset;
+            padding: 0 16px;
+        }
+        .mdc-tab__text-label {
+            color: rgba(255, 255, 255, 0.6) !important;
+            font-family: 'Outfit', sans-serif !important;
+        }
+        .mdc-tab--active .mdc-tab__text-label {
+            color: #fff !important;
+        }
+
+        .custom-expansion {
+            background: rgba(255, 255, 255, 0.05) !important;
+            border-radius: 1.25rem !important;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: none !important;
+            color: #fff;
+            
+            .mat-expansion-panel-header {
+                font-family: 'Outfit', sans-serif;
+                font-size: 0.85rem;
+                color: rgba(255, 255, 255, 0.9);
+                padding: 0 1.25rem;
+                &:hover { background: rgba(255, 255, 255, 0.02) !important; }
+            }
+            .mat-expansion-indicator::after {
+                color: rgba(255, 255, 255, 0.5);
+            }
+        }
+        .custom-accordion {
+            .mat-expansion-panel {
+                margin-bottom: 0.5rem;
+            }
+        }
+    }
 }
