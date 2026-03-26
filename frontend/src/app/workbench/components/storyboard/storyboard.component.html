@@ -1,0 +1,132 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<div class="storyboard-container">
+  <!-- Top Navigation Bar -->
+  <header class="sb-header">
+    <div class="sb-tabs">
+      <button 
+        class="sb-tab" 
+        [class.active]="activeTab() === 'characters'" 
+        (click)="setActiveTab('characters')"
+      >
+        <mat-icon class="sb-icon-sm">face</mat-icon>
+        Characters
+      </button>
+      <button 
+        class="sb-tab" 
+        [class.active]="activeTab() === 'scenes'" 
+        (click)="setActiveTab('scenes')"
+      >
+        <mat-icon class="sb-icon-sm">movie</mat-icon>
+        Scenes
+      </button>
+    </div>
+
+    <div class="sb-draft-select">
+      <span>Draft 1</span>
+      <mat-icon class="sb-icon-sm">expand_more</mat-icon>
+    </div>
+
+    <button class="sb-btn-primary">
+      <mat-icon class="sb-icon-sm">add</mat-icon> Add Scene
+    </button>
+  </header>
+
+  <!-- Main Horizontal Container -->
+  <main class="sb-main-scroll">
+    @for (scene of scenes(); track scene.id) {
+      <div class="sb-scene-card">
+        
+        <!-- Scene Header -->
+        <div class="sb-scene-header">
+          <div class="sb-scene-title-group">
+            <mat-icon class="sb-drag-handle">drag_indicator</mat-icon>
+            <h2>{{ scene.title }}</h2>
+            <button class="sb-icon-btn"><mat-icon class="sb-icon-sm">edit</mat-icon></button>
+          </div>
+
+          <div class="sb-scene-mode-toggle">
+            <button class="sb-mode-btn active">
+              <mat-icon class="sb-icon-sm">view_carousel</mat-icon> Storyboard
+            </button>
+            <button class="sb-mode-btn">
+              <mat-icon class="sb-icon-sm">description</mat-icon> Script
+            </button>
+          </div>
+
+          <button class="sb-btn-glow">
+            <mat-icon class="sb-icon-sm">auto_awesome</mat-icon> Generate Video
+          </button>
+        </div>
+
+        <!-- Shots Container -->
+        <div class="sb-shots-list">
+          @for (shot of scene.shots; track shot.id; let i = $index) {
+            <div class="sb-shot-card">
+              <div 
+                class="sb-shot-thumb" 
+                [style.background-image]="'url(' + shot.imageUrl + ')'"
+              >
+                <div class="sb-shot-badge">
+                  <mat-icon class="sb-drag-handle-sm">drag_indicator</mat-icon>
+                  <span>{{ i + 1 }}</span>
+                </div>
+              </div>
+
+              <div class="sb-shot-content">
+                <div class="sb-character-chips">
+                  @for (char of shot.characters; track char.id) {
+                    <div class="sb-chip">
+                      <img [src]="char.avatar" class="sb-avatar" alt="Avatar">
+                      <span class="sb-chip-name">{{ char.name }}</span>
+                    </div>
+                  }
+                </div>
+                
+                <textarea 
+                  class="sb-shot-desc" 
+                  [(ngModel)]="shot.description"
+                  placeholder="Shot description"
+                ></textarea>
+              </div>
+            </div>
+          }
+
+          <!-- Add Shot Card (Appears at the end) -->
+          <div class="sb-add-shot-card">
+            <div class="sb-add-shot-content">
+              <mat-icon class="sb-movie-icon">movie_creation</mat-icon>
+              <h3>Add Shot</h3>
+              <p>Add an additional shot to this scene</p>
+            </div>
+            <div class="sb-add-shot-footer">
+              <div class="sb-add-circle">
+                <mat-icon>add</mat-icon>
+              </div>
+            </div>
+          </div>
+          
+        </div>
+      </div>
+    }
+    
+    <!-- Next Scene Arrow (Visual indicator from Mockup) -->
+    <div class="sb-next-indicator">
+      <mat-icon>chevron_right</mat-icon>
+    </div>
+  </main>
+</div>

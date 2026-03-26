@@ -88,52 +88,63 @@ export class AgentChatService {
         body: JSON.stringify(body),
       });
 
-      if (!response.body) {
-        if (callbacks.onError) callbacks.onError(new Error('No response body'));
+      if (!response.ok) {
+        if (callbacks.onError)
+          callbacks.onError(new Error('Failed to start chat session'));
         return;
       }
 
-      const reader = response.body.getReader();
-      // eslint-disable-next-line n/no-unsupported-features/node-builtins
-      const decoder = new TextDecoder();
-      let buffer = '';
+      // Start Event Polling Loop
+      const pollUrl = `${this.apiUrl}/sessions/${sessionId}/poll`;
+      const pollInterval = setInterval(async () => {
+        try {
+          const pollToken = await firstValueFrom(
+            this.authService.getValidIdentityPlatformToken$(),
+          );
 
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const {value, done} = await reader.read();
-        if (done) {
-          if (callbacks.onClose) callbacks.onClose();
-          break;
-        }
+          const pollResp = await fetch(pollUrl, {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${pollToken}`,
+              'Content-Type': 'application/json',
+            },
+          });
 
-        const chunk = decoder.decode(value, {stream: true});
-        buffer += chunk;
+          if (!pollResp.ok) {
+            console.warn('Poll failed with status', pollResp.status);
+            return;
+          }
 
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.substring(6);
-            if (data.trim() === '[DONE]') {
-              if (callbacks.onClose) callbacks.onClose();
-              return;
-            }
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed.error) {
-                if (callbacks.onError)
-                  callbacks.onError(new Error(parsed.error));
-                return;
+          const pollData = await pollResp.json();
+          if (pollData && pollData.events) {
+            for (const line of pollData.events) {
+              if (line.startsWith('data: ')) {
+                const data = line.substring(6);
+                if (data.trim() === '[DONE]') {
+                  if (callbacks.onClose) callbacks.onClose();
+                  clearInterval(pollInterval);
+                  return;
+                }
+                try {
+                  const parsed = JSON.parse(data);
+                  if (parsed.error) {
+                    if (callbacks.onError)
+                      callbacks.onError(new Error(parsed.error));
+                    clearInterval(pollInterval);
+                    return;
+                  }
+                  if (callbacks.onMessage) callbacks.onMessage(parsed);
+                } catch (e) {
+                  console.error('Error parsing polled SSE data:', e, data);
+                  // We do not close the stream on a single parse error from Izumi
+                }
               }
-              if (callbacks.onMessage) callbacks.onMessage(parsed);
-            } catch (e) {
-              console.error('Error parsing SSE data:', e);
-              if (callbacks.onError) callbacks.onError(e);
             }
           }
+        } catch (pollErr) {
+          console.error('Polling tick failed:', pollErr);
         }
-      }
+      }, 2500);
     } catch (error) {
       if (callbacks.onError) callbacks.onError(error);
     }

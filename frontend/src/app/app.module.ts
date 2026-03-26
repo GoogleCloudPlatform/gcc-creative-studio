@@ -109,6 +109,7 @@ import {WorkflowEditorComponent} from './workflows/workflow-editor/workflow-edit
 import {WorkflowListComponent} from './workflows/workflow-list/workflow-list.component';
 import {WorkflowStatusPipe} from './workflows/workflow-status.pipe';
 import {UpscaleComponent} from './upscale/upscale.component';
+import {StoryboardComponent} from './workbench/components/storyboard/storyboard.component';
 
 @NgModule({
   declarations: [
@@ -187,6 +188,7 @@ import {UpscaleComponent} from './upscale/upscale.component';
     MatPaginatorModule,
     ClipboardModule,
     WorkflowStatusPipe,
+    StoryboardComponent,
   ],
   providers: [
     provideClientHydration(),

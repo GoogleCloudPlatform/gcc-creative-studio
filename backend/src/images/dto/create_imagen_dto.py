@@ -108,6 +108,10 @@ class CreateImagenDto(BaseDto):
         default="4K",
         description="Resolution of the generated image.",
     )
+    file_name: str | None = Field(
+        default=None,
+        description="Optional name for the generated file, used for reference in subsequent turns.",
+    )
 
     @field_validator("prompt")
     def prompt_must_not_be_empty(cls, value: str) -> str:

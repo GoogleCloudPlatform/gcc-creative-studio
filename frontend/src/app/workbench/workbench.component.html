@@ -440,8 +440,15 @@
       <div
         class="glass-bg-effect flex-1 max-w-[80rem] min-h-[500px] flex flex-col items-center justify-center rounded-xl overflow-hidden rounded-[48px]"
       >
+        <!-- Storyboard View (Agent Active) -->
+        <app-storyboard
+          *ngIf="activeToolButton() === 'agent'"
+          class="w-full h-full"
+        ></app-storyboard>
+
         <!-- Video Player (Flexible Size) -->
         <div
+          *ngIf="activeToolButton() !== 'agent'"
           class="relative w-full flex-1 flex items-center justify-center group bg-black/20 rounded-lg overflow-hidden"
         >
           <!-- Placeholder when no video (Empty State) -->

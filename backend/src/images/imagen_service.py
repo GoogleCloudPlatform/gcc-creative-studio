@@ -518,7 +518,7 @@ def gemini_generate_image(
             )
             response: types.GenerateContentResponse = (
                 vertexai_client.models.generate_content(
-                    model=model,
+                    model=model.value,
                     contents=contents,
                     config=generate_content_config,
                 )
@@ -1511,6 +1511,7 @@ class ImagenService:
             negative_prompt=request_dto.negative_prompt,
             google_search=request_dto.google_search,
             resolution=request_dto.resolution,
+            comment=request_dto.file_name,
             gcs_uris=[],
         )
 

@@ -19,6 +19,13 @@
   font-family: 'Google Sans', sans-serif;
   background-color: transparent;
   color: #E3E3E3;
+
+  app-storyboard {
+    width: 100%;
+    height: 100%;
+    display: block;
+    overflow: hidden;
+  }
 }
 
 .workbench-container {

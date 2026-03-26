@@ -19,10 +19,13 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.auth_guard import RoleChecker, get_current_user
+from src.database import get_db
 from src.users.user_model import UserModel
 from src.workspaces.workspace_service import WorkspaceService
+from src.agents.agent_chat_event_model import AgentChatEvent
 
 router = APIRouter(
     prefix="/api/agent",
@@ -124,8 +127,9 @@ async def chat(
     request: Request,
     current_user: UserModel = Depends(get_current_user),
     workspace_service: WorkspaceService = Depends(),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Send a message to Izumi agent and stream the response."""
+    """Start generation task for the Izumi agent."""
     user_id = str(current_user.id)
     url = f"{IZUMI_AGENT_URL}/run_sse"
 
@@ -158,30 +162,118 @@ async def chat(
                         "text"
                     ] += f"\n\n[System Note: Use Workspace ID {workspace_id_final} for any tool calls that require a workspace_id]"
 
+    session_id = body.get("sessionId")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="Missing sessionId")
+
     headers = {
         "Authorization": request.headers.get("Authorization") or "",
         "Content-Type": "application/json",
     }
 
-    async def generate():
-        try:
-            async with httpx.AsyncClient() as client:
-                async with client.stream(
-                    "POST", url, json=body, headers=headers, timeout=60.0
-                ) as response:
-                    if response.status_code != 200:
-                        logger.error(
-                            f"Izumi agent returned error: {response.status_code}"
-                        )
-                        yield f'data: {{"error": "Izumi agent error: {response.status_code}"}}\n\n'
-                        return
-                    async for line in response.aiter_lines():
-                        if line:
-                            yield f"{line}\n"
-                        else:
-                            yield "\n"
-        except Exception as e:
-            logger.error(f"Error streaming from Izumi: {e}")
-            yield f'data: {{"error": "Internal error streaming from agent"}}\n\n'
+    # Internal background task function
+    async def process_stream():
+        import json
+        from src.database import async_session_local
 
-    return StreamingResponse(generate(), media_type="text/event-stream")
+        async with async_session_local() as db_session:
+            try:
+                # Add a 10-minute timeout for the stream to account for long media generation
+                async with httpx.AsyncClient() as client:
+                    async with client.stream(
+                        "POST", url, json=body, headers=headers, timeout=600.0
+                    ) as response:
+                        if response.status_code != 200:
+                            logger.error(
+                                f"Izumi agent returned error: {response.status_code}"
+                            )
+                            evt = AgentChatEvent(
+                                user_id=user_id,
+                                session_id=session_id,
+                                payload={
+                                    "raw": f'data: {{"error": "Izumi agent error: {response.status_code}"}}\n\n'
+                                },
+                            )
+                            db_session.add(evt)
+                            await db_session.commit()
+                            return
+
+                        async for line in response.aiter_lines():
+                            evt = AgentChatEvent(
+                                user_id=user_id,
+                                session_id=session_id,
+                                payload=(
+                                    {"raw": f"{line}\n"}
+                                    if line
+                                    else {"raw": "\n"}
+                                ),
+                            )
+                            db_session.add(evt)
+                            await db_session.commit()
+
+            except httpx.ReadTimeout:
+                logger.error("Timeout streaming from Izumi")
+                evt = AgentChatEvent(
+                    user_id=user_id,
+                    session_id=session_id,
+                    payload={
+                        "raw": f'data: {{"error": "Timeout generating media"}}\n\n'
+                    },
+                )
+                db_session.add(evt)
+                await db_session.commit()
+            except Exception as e:
+                logger.error(f"Error streaming from Izumi: {e}")
+                evt = AgentChatEvent(
+                    user_id=user_id,
+                    session_id=session_id,
+                    payload={
+                        "raw": f'data: {{"error": "Internal error streaming from agent"}}\n\n'
+                    },
+                )
+                db_session.add(evt)
+                await db_session.commit()
+
+    # Trigger background task and return immediately
+    import asyncio
+
+    asyncio.create_task(process_stream())
+
+    return {"status": "processing"}
+
+
+@router.get("/sessions/{session_id}/poll")
+async def poll_session_events(
+    session_id: str,
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retrieve all pending stream chunks for a chat session queue and mark them as consumed."""
+    from sqlalchemy import select, delete
+
+    user_id = str(current_user.id)
+
+    # Select all pending events chronologically
+    stmt = (
+        select(AgentChatEvent)
+        .where(
+            AgentChatEvent.session_id == session_id,
+            AgentChatEvent.user_id == user_id,
+        )
+        .order_by(AgentChatEvent.id.asc())
+    )
+    result = await db.execute(stmt)
+    events = result.scalars().all()
+
+    if not events:
+        return {"events": []}
+
+    extracted_events = [evt.payload["raw"] for evt in events]
+
+    # Delete the fetched events cleanly from the queue
+    event_ids = [evt.id for evt in events]
+    delete_stmt = delete(AgentChatEvent).where(AgentChatEvent.id.in_(event_ids))
+    await db.execute(delete_stmt)
+    await db.commit()
+
+    return {"events": extracted_events}

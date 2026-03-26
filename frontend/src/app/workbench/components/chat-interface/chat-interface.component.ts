@@ -237,7 +237,18 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
 
   viewAsset(assetId: string) {
     if (typeof window !== 'undefined') {
-      window.open(`/gallery/${assetId}`, '_blank');
+      let route = `/gallery/${assetId}`;
+      if (assetId.indexOf(':') !== -1) {
+        const parts = assetId.split(':');
+        const type = parts[0];
+        const id = parts[1];
+        if (type === 'source_asset') {
+          route = `/asset-detail/${id}`;
+        } else if (type === 'media_item') {
+          route = `/gallery/${id}`;
+        }
+      }
+      window.open(route, '_blank');
     }
   }
 
