@@ -425,15 +425,17 @@ describe('AudioComponent', () => {
   describe('AddVoiceDialog', () => {
     it('should add a new voice when dialog closes with data', () => {
       const initialVoiceCount = component.voices.length;
-      
+
       // Define the mock result
       const newVoiceName = 'New Voice';
       const mockDialogRef = {
-        afterClosed: () => of({ name: newVoiceName })
-      } as MatDialogRef<any>; // Cast the mock, not the call
-      
+        afterClosed: () => of({name: newVoiceName}),
+      } as MatDialogRef<any>;
+
       // Use it in your spy
       dialog.open.and.returnValue(mockDialogRef);
+
+      component.openAddVoiceDialog();
 
       expect(component.voices.length).toBe(initialVoiceCount + 1);
       expect(notificationService.show).toHaveBeenCalledWith(
@@ -441,15 +443,17 @@ describe('AudioComponent', () => {
         'success',
         undefined,
         'check_small',
-        3000
+        3000,
       );
     });
 
     it('should not add a new voice when dialog closes without data', () => {
       const initialVoiceCount = component.voices.length;
-      dialog.open.and.returnValue({
+      const mockDialogRef = {
         afterClosed: () => of(null),
-      } as any);
+      } as MatDialogRef<any>;
+
+      dialog.open.and.returnValue(mockDialogRef);
 
       component.openAddVoiceDialog();
 
