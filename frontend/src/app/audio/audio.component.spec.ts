@@ -23,7 +23,7 @@ import {
 import { Component, Input, Output, EventEmitter } from '@angular/core';
 import { AudioComponent } from './audio.component';
 import { HttpClientTestingModule } from '@angular/common/http/testing';
-import { MatDialog } from '@angular/material/dialog';
+import { MatDialog, MatDialogRef } from '@angular/material/dialog';
 import {
   AudioService,
   CreateAudioDto,
@@ -425,12 +425,15 @@ describe('AudioComponent', () => {
   describe('AddVoiceDialog', () => {
     it('should add a new voice when dialog closes with data', () => {
       const initialVoiceCount = component.voices.length;
+      
+      // Define the mock result
       const newVoiceName = 'New Voice';
-      dialog.open.and.returnValue({
-        afterClosed: () => of({ name: newVoiceName }),
-      } as any);
-
-      component.openAddVoiceDialog();
+      const mockDialogRef = {
+        afterClosed: () => of({ name: newVoiceName })
+      } as MatDialogRef<any>; // Cast the mock, not the call
+      
+      // Use it in your spy
+      dialog.open.and.returnValue(mockDialogRef);
 
       expect(component.voices.length).toBe(initialVoiceCount + 1);
       expect(notificationService.show).toHaveBeenCalledWith(
