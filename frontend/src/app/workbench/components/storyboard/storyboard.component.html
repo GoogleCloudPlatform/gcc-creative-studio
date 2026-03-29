@@ -41,15 +41,29 @@
       <mat-icon class="sb-icon-sm">expand_more</mat-icon>
     </div>
 
-    <button class="sb-btn-primary">
-      <mat-icon class="sb-icon-sm">add</mat-icon> Add Scene
-    </button>
+    <div class="flex gap-2 ml-auto">
+      <button class="sb-btn-primary">
+        <mat-icon class="sb-icon-sm">add</mat-icon> Add Scene
+      </button>
+      <button class="sb-btn-glow" (click)="onGenerateVideo()" [disabled]="isGenerating()">
+        <mat-icon class="sb-icon-sm">auto_awesome</mat-icon> Generate Video
+      </button>
+    </div>
   </header>
 
   <!-- Main Horizontal Container -->
   <main class="sb-main-scroll">
-    @for (scene of scenes(); track scene.id) {
-      <div class="sb-scene-card">
+    <div *ngIf="isGenerating()" class="flex h-full w-full items-center justify-center flex-col gap-4">
+      <div class="animate-pulse bg-indigo-500/20 p-6 rounded-full">
+        <mat-icon class="text-indigo-400 text-6xl animate-spin" style="height: 64px; width: 64px; font-size: 64px;">autorenew</mat-icon>
+      </div>
+      <h3 class="text-2xl text-white font-semibold">Generating Your Narrative...</h3>
+      <p class="text-gray-400 text-center max-w-md">Our AI Director is analyzing your brief, creating scene compositions, and writing the scripts.</p>
+    </div>
+    
+    <ng-container *ngIf="!isGenerating()">
+      @for (scene of scenes(); track scene.id) {
+        <div class="sb-scene-card">
         
         <!-- Scene Header -->
         <div class="sb-scene-header">
@@ -67,10 +81,6 @@
               <mat-icon class="sb-icon-sm">description</mat-icon> Script
             </button>
           </div>
-
-          <button class="sb-btn-glow">
-            <mat-icon class="sb-icon-sm">auto_awesome</mat-icon> Generate Video
-          </button>
         </div>
 
         <!-- Shots Container -->
@@ -128,5 +138,6 @@
     <div class="sb-next-indicator">
       <mat-icon>chevron_right</mat-icon>
     </div>
+    </ng-container>
   </main>
 </div>

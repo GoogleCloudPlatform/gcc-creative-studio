@@ -14,7 +14,7 @@
 """Controller for proxying requests to the Izumi GenMedia Agent."""
 
 import logging
-from typing import Any
+from typing import Any, List
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -26,6 +26,12 @@ from src.database import get_db
 from src.users.user_model import UserModel
 from src.workspaces.workspace_service import WorkspaceService
 from src.agents.agent_chat_event_model import AgentChatEvent
+from src.agents.agent_dtos import (
+    ChatRequestDto,
+    ChatResponseDto,
+    PollEventsResponseDto,
+    SessionResponseDto,
+)
 
 router = APIRouter(
     prefix="/api/agent",
@@ -38,11 +44,13 @@ IZUMI_AGENT_URL = "http://izumi-agent:8080"
 APP_NAME = "creative_toolbox"
 
 
-@router.get("/sessions")
-async def get_sessions(current_user: UserModel = Depends(get_current_user)):
+@router.get("/sessions", response_model=List[SessionResponseDto])
+async def get_sessions(
+    appName: str = APP_NAME, current_user: UserModel = Depends(get_current_user)
+):
     """List chat sessions for the current user from Izumi agent."""
     user_id = str(current_user.id)
-    url = f"{IZUMI_AGENT_URL}/apps/{APP_NAME}/users/{user_id}/sessions"
+    url = f"{IZUMI_AGENT_URL}/apps/{appName}/users/{user_id}/sessions"
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(url)
@@ -58,11 +66,13 @@ async def get_sessions(current_user: UserModel = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/sessions")
-async def create_session(current_user: UserModel = Depends(get_current_user)):
+@router.post("/sessions", response_model=SessionResponseDto)
+async def create_session(
+    appName: str = APP_NAME, current_user: UserModel = Depends(get_current_user)
+):
     """Create a new chat session in Izumi agent."""
     user_id = str(current_user.id)
-    url = f"{IZUMI_AGENT_URL}/apps/{APP_NAME}/users/{user_id}/sessions"
+    url = f"{IZUMI_AGENT_URL}/apps/{appName}/users/{user_id}/sessions"
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(url, json={})
@@ -78,13 +88,15 @@ async def create_session(current_user: UserModel = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/sessions/{session_id}")
+@router.get("/sessions/{session_id}", response_model=SessionResponseDto)
 async def get_session_messages(
-    session_id: str, current_user: UserModel = Depends(get_current_user)
+    session_id: str,
+    appName: str = APP_NAME,
+    current_user: UserModel = Depends(get_current_user),
 ):
     """Get messages for a specific session from Izumi agent."""
     user_id = str(current_user.id)
-    url = f"{IZUMI_AGENT_URL}/apps/{APP_NAME}/users/{user_id}/sessions/{session_id}"
+    url = f"{IZUMI_AGENT_URL}/apps/{appName}/users/{user_id}/sessions/{session_id}"
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(url)
@@ -100,13 +112,15 @@ async def get_session_messages(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/sessions/{session_id}")
+@router.delete("/sessions/{session_id}", response_model=Any)
 async def delete_session(
-    session_id: str, current_user: UserModel = Depends(get_current_user)
+    session_id: str,
+    appName: str = APP_NAME,
+    current_user: UserModel = Depends(get_current_user),
 ):
     """Deletes a specific session from Izumi agent."""
     user_id = str(current_user.id)
-    url = f"{IZUMI_AGENT_URL}/apps/{APP_NAME}/users/{user_id}/sessions/{session_id}"
+    url = f"{IZUMI_AGENT_URL}/apps/{appName}/users/{user_id}/sessions/{session_id}"
     try:
         async with httpx.AsyncClient() as client:
             response = await client.delete(url)
@@ -122,8 +136,9 @@ async def delete_session(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/chat")
+@router.post("/chat", response_model=ChatResponseDto)
 async def chat(
+    payload: ChatRequestDto,
     request: Request,
     current_user: UserModel = Depends(get_current_user),
     workspace_service: WorkspaceService = Depends(),
@@ -133,14 +148,13 @@ async def chat(
     user_id = str(current_user.id)
     url = f"{IZUMI_AGENT_URL}/run_sse"
 
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    # Convert strict Pydantic DTO to dict, excluding unset values
+    body = payload.model_dump(exclude_unset=True)
 
-    # Enforce correct userId and appName
+    # Enforce correct userId and allow dynamic appName
     body["userId"] = user_id
-    body["appName"] = APP_NAME
+    if "appName" not in body:
+        body["appName"] = APP_NAME
 
     # Fetch fallback workspace if not passed
     if "workspaceId" not in body or body["workspaceId"] is None:
@@ -151,16 +165,59 @@ async def chat(
             body["workspaceId"] = workspaces[0].id
 
     workspace_id_final = body.get("workspaceId")
-    if workspace_id_final:
-        # Prompt Injection to make model aware of Workspace ID
-        if "newMessage" in body:
-            new_msg = body["newMessage"]
-            if "parts" in new_msg and new_msg["parts"]:
-                part = new_msg["parts"][0]
-                if isinstance(part, dict) and "text" in part:
-                    part[
-                        "text"
-                    ] += f"\n\n[System Note: Use Workspace ID {workspace_id_final} for any tool calls that require a workspace_id]"
+
+    if "newMessage" in body:
+        new_msg = body["newMessage"]
+        if "parts" in new_msg and new_msg["parts"]:
+            sanitized_parts = []
+            attached_assets = []
+
+            for p in new_msg["parts"]:
+                if not isinstance(p, dict):
+                    sanitized_parts.append(p)
+                    continue
+
+                # Extract and remove UI-specific asset fields to prevent 422 errors
+                s_asset_id = p.pop("sourceAssetId", None)
+                s_media = p.pop("sourceMediaItem", None)
+
+                if s_asset_id is not None:
+                    attached_assets.append(f"source_asset:{s_asset_id}")
+                if s_media is not None:
+                    media_id = s_media.get("mediaItemId")
+                    attached_assets.append(f"media_item:{media_id}")
+
+                if p:
+                    sanitized_parts.append(p)
+
+            injections = []
+            if workspace_id_final:
+                injections.append(
+                    f"Use Workspace ID {workspace_id_final} for any tool calls that require a workspace_id"
+                )
+
+            if attached_assets:
+                asset_list = "\n".join([f"- {aid}" for aid in attached_assets])
+                injections.append(
+                    f"The user has attached the following reference assets:\n{asset_list}\nUse the load_asset_and_save_as_artifact tool to load them if needed."
+                )
+
+            if injections:
+                injection_str = (
+                    "\n\n[System Note:\n" + "\n".join(injections) + "\n]"
+                )
+
+                # Find the first text part, or add one
+                text_part_found = False
+                for p in sanitized_parts:
+                    if "text" in p:
+                        p["text"] += injection_str
+                        text_part_found = True
+                        break
+                if not text_part_found:
+                    sanitized_parts.append({"text": injection_str})
+
+            new_msg["parts"] = sanitized_parts
 
     session_id = body.get("sessionId")
     if not session_id:
@@ -211,6 +268,15 @@ async def chat(
                             db_session.add(evt)
                             await db_session.commit()
 
+                        # Signal the frontend that the stream is complete
+                        done_evt = AgentChatEvent(
+                            user_id=user_id,
+                            session_id=session_id,
+                            payload={"raw": "data: [DONE]\n\n"},
+                        )
+                        db_session.add(done_evt)
+                        await db_session.commit()
+
             except httpx.ReadTimeout:
                 logger.error("Timeout streaming from Izumi")
                 evt = AgentChatEvent(
@@ -242,7 +308,7 @@ async def chat(
     return {"status": "processing"}
 
 
-@router.get("/sessions/{session_id}/poll")
+@router.get("/sessions/{session_id}/poll", response_model=PollEventsResponseDto)
 async def poll_session_events(
     session_id: str,
     current_user: UserModel = Depends(get_current_user),
@@ -266,7 +332,7 @@ async def poll_session_events(
     events = result.scalars().all()
 
     if not events:
-        return {"events": []}
+        return PollEventsResponseDto(events=[])
 
     extracted_events = [evt.payload["raw"] for evt in events]
 
@@ -276,4 +342,4 @@ async def poll_session_events(
     await db.execute(delete_stmt)
     await db.commit()
 
-    return {"events": extracted_events}
+    return PollEventsResponseDto(events=extracted_events)

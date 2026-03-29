@@ -22,8 +22,14 @@
     </button>
   </div>
 
+  <!-- Agent Selector -->
+  <div class="mb-2 relative z-20">
+    <studio-dropdown [options]="availableAgents" [value]="currentAgent" (valueChange)="onAgentChange($event)"
+      placeholder="Select an Agent" size="small" class="w-full"></studio-dropdown>
+  </div>
+
   <!-- Session Selector -->
-  <div class="mb-4 flex items-center gap-2" *ngIf="sessions().length > 0">
+  <div class="mb-4 flex items-center gap-2 relative z-10" *ngIf="sessions().length > 0">
     <studio-dropdown
       [options]="dropdownOptions()"
       [value]="currentSessionId"
@@ -45,6 +51,11 @@
   <!-- Chat Messages -->
   <div class="flex-1 overflow-y-auto flex flex-col gap-3 p-2 custom-scrollbar" #chatContainer>
     <div *ngFor="let msg of chatMessages()" [class]="msg.sender === 'user' ? 'chat-bubble user' : 'chat-bubble agent'">
+      <!-- Display user attached images -->
+      <div *ngIf="msg.sender === 'user' && msg.images?.length > 0" class="flex gap-2 mb-2 flex-wrap">
+        <img *ngFor="let img of msg.images" [src]="getAssetUrl(img)"
+          class="w-20 h-20 object-cover rounded-md border border-gray-600 shadow" />
+      </div>
       <div class="chat-text text-sm" (click)="onMessageClick($event)">
         <!-- Text or Markdown -->
         <markdown *ngIf="msg.text" [data]="msg.text"></markdown>
@@ -52,14 +63,25 @@
         <!-- Structured Media Frame -->
         <div *ngIf="msg.asset" (click)="viewAsset(msg.asset.id)" class="asset-preview mt-2 border border-gray-700 rounded-lg overflow-hidden bg-gray-900 cursor-pointer">
           <img *ngIf="msg.asset.type === 'image'" [src]="msg.asset.url" class="w-full h-auto object-cover max-h-60" />
-          <video *ngIf="msg.asset.type === 'video'" [src]="msg.asset.url" controls class="w-full h-auto max-h-60"></video>
-          <audio *ngIf="msg.asset.type === 'audio'" [src]="msg.asset.url" controls class="w-full mt-2"></audio>
+          <video *ngIf="msg.asset.type === 'video'" [src]="msg.asset.url" controls class="w-full h-auto max-h-60"
+            (click)="$event.stopPropagation()"></video>
+          <audio *ngIf="msg.asset.type === 'audio'" [src]="msg.asset.url" controls class="w-full mt-2"
+            (click)="$event.stopPropagation()"></audio>
           
           <div class="p-2 border-t border-gray-700 bg-gray-800 flex justify-between items-center text-xs">
             <span class="text-gray-300 truncate">{{ msg.asset.filename }}</span>
             <span class="text-blue-400 hover:underline">View Asset</span>
           </div>
         </div>
+<!-- Storyboard Loaded Box -->
+<div *ngIf="msg.storyboard" class="mt-2 p-3 bg-gray-800 border border-indigo-500 rounded-lg flex items-center gap-3">
+  <mat-icon class="text-indigo-400">auto_awesome_motion</mat-icon>
+  <div class="flex flex-col">
+    <span class="text-sm font-medium text-white">Storyboard Ready</span>
+    <span class="text-xs text-indigo-300">Generated {{ msg.storyboard.scenes?.length || 0 }} scenes</span>
+  </div>
+</div>
+
       </div>
       <div class="chat-time text-[9px] text-gray-500 mt-1 text-right">{{ msg.timestamp | date:'shortTime' }}</div>
     </div>
@@ -70,8 +92,24 @@
     </div>
   </div>
 
+  <!-- Selected Images Preview -->
+  <div *ngIf="selectedImages().length > 0" class="flex gap-2 pt-4 px-2 overflow-x-auto pb-2">
+    <div *ngFor="let img of selectedImages(); let i = index" class="relative group shrink-0">
+      <img [src]="getAssetUrl(img)" class="w-16 h-16 object-cover rounded-lg !border !border-gray-600" />
+      <button
+        class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center shadow-lg hover:bg-red-600"
+        (click)="removeSelectedImage(i)">
+        <mat-icon class="!w-4 !h-4 text-[16px] leading-4">close</mat-icon>
+      </button>
+    </div>
+  </div>
+
   <!-- Chat Input -->
-  <div class="mt-4 flex gap-2 items-center">
+  <div class="mt-2 flex gap-2 items-center">
+    <button mat-icon-button (click)="openImageSelector()" class="text-gray-400 hover:text-white transition-colors"
+      matTooltip="Attach Reference Images">
+      <mat-icon>image</mat-icon>
+    </button>
     <input
       #chatInput
       type="text"

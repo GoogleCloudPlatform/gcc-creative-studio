@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-import {Injectable, inject} from '@angular/core';
+import {Injectable, inject, signal} from '@angular/core';
 import {HttpClient} from '@angular/common/http';
-import {Observable, firstValueFrom} from 'rxjs';
+import {Observable, firstValueFrom, Subject} from 'rxjs';
 import {environment} from '../../../environments/environment';
 import {AuthService} from '../../common/services/auth.service';
 
@@ -24,6 +24,29 @@ export interface SSECallbacks<T> {
   onClose?: () => void;
   onMessage?: (data: T) => void;
   onError?: (error: unknown) => void;
+}
+
+export interface ChatMessagePart {
+  text?: string;
+  sourceAssetId?: number;
+  sourceMediaItem?: {
+    mediaItemId: number;
+    mediaIndex: number;
+    role: string;
+  };
+}
+
+export interface ChatMessage {
+  role: string;
+  parts: ChatMessagePart[];
+}
+
+export interface ChatRequestDto {
+  sessionId: string;
+  appName?: string;
+  workspaceId?: number | null;
+  newMessage?: ChatMessage;
+  streaming?: boolean;
 }
 
 @Injectable({
@@ -34,40 +57,68 @@ export class AgentChatService {
   private http = inject(HttpClient);
   private authService = inject(AuthService);
 
+  // Global parsed storyboard
+  currentStoryboard = signal<any>(null);
+
+  // Agent Selection State
+  activeAgent = signal<string>('creative_toolbox');
+  isGeneratingStoryboard = signal<boolean>(false);
+
+  // Triggers video generation from the Storyboard component
+  generateVideoRequest$ = new Subject<void>();
+
+  // Broadcasts a fully generated video asset from the chat processor
+  videoGenerated$ = new Subject<any>();
+
   getSessions(): Observable<any> {
-    return this.http.get(`${this.apiUrl}/sessions`);
+    return this.http.get(
+      `${this.apiUrl}/sessions?appName=${this.activeAgent()}`,
+    );
   }
 
   createSession(): Observable<any> {
-    return this.http.post(`${this.apiUrl}/sessions`, {});
+    return this.http.post(
+      `${this.apiUrl}/sessions?appName=${this.activeAgent()}`,
+      {},
+    );
   }
 
   getMessages(sessionId: string): Observable<any> {
-    return this.http.get(`${this.apiUrl}/sessions/${sessionId}`);
+    return this.http.get(
+      `${this.apiUrl}/sessions/${sessionId}?appName=${this.activeAgent()}`,
+    );
   }
 
   deleteSession(sessionId: string): Observable<any> {
-    return this.http.delete(`${this.apiUrl}/sessions/${sessionId}`);
+    return this.http.delete(
+      `${this.apiUrl}/sessions/${sessionId}?appName=${this.activeAgent()}`,
+    );
   }
 
   generateTitle(text: string): Observable<any> {
-    return this.http.post(`${environment.backendURL}/gemini/generate-title`, {
-      text,
-    });
+    return this.http.post(
+      `${environment.backendURL}/gemini/generate-title?appName=${this.activeAgent()}`,
+      {
+        text,
+      },
+    );
   }
 
   async sendMessage(
     sessionId: string,
-    message: string,
+    message: string | ChatMessagePart[],
     workspaceId: number | null,
     callbacks: SSECallbacks<any>,
   ): Promise<void> {
     const url = `${this.apiUrl}/chat`;
-    const body = {
+
+    // Construct payload using strictly-typed DTO matching the backend
+    const body: ChatRequestDto = {
       sessionId: sessionId,
+      appName: this.activeAgent(),
       newMessage: {
         role: 'user',
-        parts: [{text: message}],
+        parts: Array.isArray(message) ? message : [{text: message}],
       },
       streaming: true,
       workspaceId: workspaceId,

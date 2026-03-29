@@ -14,10 +14,18 @@
  * limitations under the License.
  */
 
-import {Component, ChangeDetectionStrategy, signal} from '@angular/core';
+import {
+  Component,
+  ChangeDetectionStrategy,
+  signal,
+  inject,
+  effect,
+  computed,
+} from '@angular/core';
 import {CommonModule} from '@angular/common';
 import {FormsModule} from '@angular/forms';
 import {MatIconModule} from '@angular/material/icon';
+import {AgentChatService} from '../../services/agent-chat.service';
 
 // --- Data Models ---
 export interface Character {
@@ -48,84 +56,71 @@ export interface Scene {
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class StoryboardComponent {
+  private agentChatService = inject(AgentChatService);
+
   // Navigation State
   activeTab = signal<'characters' | 'scenes'>('scenes');
 
-  // Mock Data
-  scenes = signal<Scene[]>([
-    {
-      id: 'scene-1',
-      title: 'Scene 1',
-      shots: [
-        {
-          id: 'shot-1-1',
-          imageUrl:
-            'https://images.unsplash.com/photo-1549429487-782a21eebdb0?auto=format&fit=crop&q=80&w=400',
-          characters: [
+  // Dynamic Data
+  scenes = signal<Scene[]>([]);
+  isGenerating = computed(() => this.agentChatService.isGeneratingStoryboard());
+
+  constructor() {
+    effect(
+      () => {
+        const sb = this.agentChatService.currentStoryboard();
+        if (sb && sb.scenes && sb.scenes.length > 0) {
+          const parsedScenes = sb.scenes.map((s: any, idx: number) => {
+            return {
+              id: `scene-${idx + 1}`,
+              title: s.topic || `Scene ${idx + 1}`,
+              shots: [
+                {
+                  id: `shot-${idx + 1}-1`,
+                  // Use generated asset URL if available, otherwise fallback to placeholder
+                  imageUrl:
+                    s.first_frame_prompt?.generated_asset_url ||
+                    'https://images.unsplash.com/photo-1579353977828-2a4eab540b9a?w=400',
+                  characters: [],
+                  description:
+                    s.video_prompt?.description ||
+                    s.first_frame_prompt?.description ||
+                    'No description provided',
+                },
+              ],
+            };
+          });
+          this.scenes.set(parsedScenes);
+        } else {
+          // Default Welcome View
+          this.scenes.set([
             {
-              id: 'c1',
-              name: 'Ned',
-              avatar: 'https://ui-avatars.com/api/?name=Ned&background=random',
+              id: 'scene-welcome',
+              title: 'Welcome to Ads X Storyboarding',
+              shots: [
+                {
+                  id: 'shot-welcome-1',
+                  imageUrl:
+                    'https://images.unsplash.com/photo-1549429487-782a21eebdb0?auto=format&fit=crop&q=80&w=400',
+                  characters: [],
+                  description:
+                    'Ask the Ads X Agent to generate a storyboard template for you, and it will build out scenes here dynamically!',
+                },
+              ],
             },
-          ],
-          description: 'Close up of hand holding watch',
-        },
-        {
-          id: 'shot-1-2',
-          imageUrl:
-            'https://images.unsplash.com/photo-1544256718-3bcf237f3974?auto=format&fit=crop&q=80&w=400',
-          characters: [
-            {
-              id: 'c1',
-              name: 'Ned',
-              avatar: 'https://ui-avatars.com/api/?name=Ned&background=random',
-            },
-          ],
-          description: 'Close up of reaction looking at watch',
-        },
-        {
-          id: 'shot-1-3',
-          imageUrl:
-            'https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&q=80&w=400',
-          characters: [
-            {
-              id: 'c1',
-              name: 'Ned',
-              avatar: 'https://ui-avatars.com/api/?name=Ned&background=random',
-            },
-          ],
-          description: 'Pan out keeping focus on character admiring watch',
-        },
-      ],
-    },
-    {
-      id: 'scene-2',
-      title: 'Scene 2',
-      shots: [
-        {
-          id: 'shot-2-1',
-          imageUrl:
-            'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=400',
-          characters: [
-            {
-              id: 'c2',
-              name: 'Charles',
-              avatar:
-                'https://ui-avatars.com/api/?name=Charles&background=random',
-            },
-            {
-              id: 'c1',
-              name: 'Ned',
-              avatar: 'https://ui-avatars.com/api/?name=Ned&background=random',
-            },
-          ],
-          description: 'Cuts in line and questions ability of watch',
-        },
-      ],
-    },
-  ]);
+          ]);
+        }
+      },
+      {allowSignalWrites: true},
+    );
+  }
 
   setActiveTab(tab: 'characters' | 'scenes') {
     this.activeTab.set(tab);
+  }
+
+  onGenerateVideo() {
+    // Notify the Agent Chat Service that the user requested video generation
+    this.agentChatService.generateVideoRequest$.next();
   }
 }

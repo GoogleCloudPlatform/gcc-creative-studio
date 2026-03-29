@@ -37,6 +37,12 @@ import {MarkdownModule} from 'ngx-markdown';
 
 import {ConfirmationDialogComponent} from '../../../common/components/confirmation-dialog/confirmation-dialog.component';
 import {MatDialog} from '@angular/material/dialog';
+import {
+  ImageSelectorComponent,
+  MediaItemSelection,
+} from '../../../common/components/image-selector/image-selector.component';
+import {SourceAssetResponseDto} from '../../../common/services/source-asset.service';
+import {environment} from '../../../../environments/environment';
 
 interface DropdownOption {
   value: string;
@@ -57,8 +63,19 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   sessions = signal<any[]>([]);
   topics = signal<{[key: string]: any}>({});
   chatMessages = signal<any[]>([]);
+  selectedImages = signal<(SourceAssetResponseDto | MediaItemSelection)[]>([]);
   isTyping = signal<boolean>(false);
   currentSessionId: string | null = null;
+
+  availableAgents: DropdownOption[] = [
+    {label: 'Creative Toolbox', value: 'creative_toolbox'},
+    {label: 'Ads X Agent', value: 'ads_x_template'},
+  ];
+
+  get currentAgent(): string {
+    return this.agentChatService.activeAgent();
+  }
+
   isBrowser = true;
   private shouldScrollToBottom = true;
 
@@ -97,6 +114,13 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     this.isBrowser = typeof window !== 'undefined';
     this.initializeAgentChat();
     this.loadChatSessions();
+
+    // Listen for cross-component triggers
+    this.agentChatService.generateVideoRequest$.subscribe(() => {
+      this.sendChatMessage(
+        "Please generate the final video matching this storyboard's approved layout.",
+      );
+    });
   }
 
   ngAfterViewChecked() {
@@ -155,6 +179,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
             const parts = content.parts || [];
             let text = '';
             let assetMetadata = null;
+            let storyboardMetadata = null;
 
             for (const part of parts) {
               if (part.text) {
@@ -162,18 +187,17 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                 if (partText.includes('[System Note:')) {
                   partText = partText.split('[System Note:')[0].trim();
                 }
-                text += partText;
-
-                try {
-                  const parsed = JSON.parse(partText);
-                  if (parsed.asset) {
-                    assetMetadata = parsed.asset;
-                    // Optionally clear text of the JSON block
-                    text = text.replace(partText, '').trim();
-                  }
-                } catch (e) {
-                  // eslint-disable-next-line no-empty
+                const extraction = this.parseAndExtractJSONs(partText);
+                if (extraction.assets.length > 0) {
+                  assetMetadata = extraction.assets[0];
                 }
+                if (extraction.storyboards.length > 0) {
+                  storyboardMetadata = extraction.storyboards[0];
+                  this.agentChatService.currentStoryboard.set(
+                    storyboardMetadata,
+                  );
+                }
+                text += extraction.cleanText;
               }
 
               if (part.functionResponse?.response?.result) {
@@ -183,6 +207,15 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                   );
                   if (result.asset) {
                     assetMetadata = result.asset;
+                    if (result.asset.type === 'video') {
+                      this.agentChatService.videoGenerated$.next(result.asset);
+                    }
+                  } else {
+                    const extracted = this.extractStoryboardData(result);
+                    if (extracted) {
+                      storyboardMetadata = extracted;
+                      this.agentChatService.currentStoryboard.set(extracted);
+                    }
                   }
                 } catch (e) {
                   // eslint-disable-next-line no-empty
@@ -194,12 +227,13 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
               sender: role === 'user' ? 'user' : 'agent',
               text: text,
               asset: assetMetadata,
+              storyboard: storyboardMetadata,
               timestamp: m.timestamp
                 ? new Date(m.timestamp * 1000)
                 : new Date(),
             };
           })
-          .filter((msg: any) => msg.text || msg.asset);
+          .filter((msg: any) => msg.text || msg.asset || msg.storyboard);
 
         this.chatMessages.set(mappedMessages);
         this.isTyping.set(false);
@@ -272,6 +306,14 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     }
   }
 
+  onAgentChange(agentValue: string) {
+    this.agentChatService.activeAgent.set(agentValue);
+    this.currentSessionId = null;
+    this.chatMessages.set([]);
+    this.sessions.set([]);
+    this.loadChatSessions();
+  }
+
   deleteChat() {
     if (!this.currentSessionId) return;
 
@@ -313,15 +355,18 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   }
 
   sendChatMessage(text: string) {
-    if (!text || !text.trim()) return;
+    if ((!text || !text.trim()) && this.selectedImages().length === 0) return;
     if (!this.currentSessionId) {
       console.error('No active session');
       return;
     }
 
+    const currentImages = this.selectedImages();
+
     const userMessage = {
       sender: 'user',
       text: text,
+      images: currentImages, // Store locally to show in UI
       timestamp: new Date(),
     };
     this.chatMessages.update(msgs => [...msgs, userMessage]);
@@ -344,6 +389,9 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       });
     }
     this.isTyping.set(true);
+    if (this.currentAgent === 'ads_x_template') {
+      this.agentChatService.isGeneratingStoryboard.set(true);
+    }
     this.shouldScrollToBottom = true;
 
     let agentMessageIndex = -1;
@@ -407,11 +455,43 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                     } else {
                       msgs[agentMessageIndex].asset = result.asset;
                     }
+
+                    // Broadcast newly generated asset to the main Workbench
+                    this.agentChatService.videoGenerated$.next(result.asset);
+
                     return [...msgs];
                   });
 
                   if (wasNearBottom) {
                     this.shouldScrollToBottom = true;
+                  }
+                } else {
+                  const extracted = this.extractStoryboardData(result);
+                  if (extracted) {
+                    this.isTyping.set(false);
+                    this.agentChatService.isGeneratingStoryboard.set(false);
+                    const sb = extracted;
+                    this.agentChatService.currentStoryboard.set(sb);
+                    const wasNearBottom = this.isNearBottom();
+
+                    this.chatMessages.update(msgs => {
+                      if (agentMessageIndex === -1) {
+                        msgs.push({
+                          sender: 'agent',
+                          text: '',
+                          storyboard: sb,
+                          timestamp: new Date(),
+                        });
+                        agentMessageIndex = msgs.length - 1;
+                      } else {
+                        msgs[agentMessageIndex].storyboard = sb;
+                      }
+                      return [...msgs];
+                    });
+
+                    if (wasNearBottom) {
+                      this.shouldScrollToBottom = true;
+                    }
                   }
                 }
               } catch (e) {
@@ -424,22 +504,33 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       onError: err => {
         console.error('SSE Error:', err);
         this.isTyping.set(false);
+        this.agentChatService.isGeneratingStoryboard.set(false);
       },
       onClose: () => {
         this.isTyping.set(false);
+        this.agentChatService.isGeneratingStoryboard.set(false);
         if (agentMessageIndex !== -1) {
           const currentMsgs = this.chatMessages();
           const msg = currentMsgs[agentMessageIndex];
           if (msg && msg.text) {
-            try {
-              const parsed = JSON.parse(msg.text);
-              if (parsed.asset) {
-                currentMsgs[agentMessageIndex].asset = parsed.asset;
-                currentMsgs[agentMessageIndex].text = ''; // Clear text like history
-                this.chatMessages.set([...currentMsgs]);
-              }
-            } catch (e) {
-              // Not standalone JSON, keep text
+            const extraction = this.parseAndExtractJSONs(msg.text);
+            if (extraction.assets.length > 0) {
+              currentMsgs[agentMessageIndex].asset = extraction.assets[0];
+              currentMsgs[agentMessageIndex].text = extraction.cleanText;
+              // Broadcast newly generated asset to the main Workbench
+              this.agentChatService.videoGenerated$.next(extraction.assets[0]);
+            }
+            if (extraction.storyboards.length > 0) {
+              const sb = extraction.storyboards[0];
+              currentMsgs[agentMessageIndex].storyboard = sb;
+              this.agentChatService.currentStoryboard.set(sb);
+              currentMsgs[agentMessageIndex].text = extraction.cleanText;
+            }
+            if (
+              extraction.assets.length > 0 ||
+              extraction.storyboards.length > 0
+            ) {
+              this.chatMessages.set([...currentMsgs]);
             }
           }
         }
@@ -448,12 +539,30 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
 
     const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
 
+    const partsParams: any[] = [];
+    if (text && text.trim()) partsParams.push({text});
+    for (const img of this.selectedImages()) {
+      if ('mediaItem' in img) {
+        partsParams.push({
+          sourceMediaItem: {
+            mediaItemId: img.mediaItem.id,
+            mediaIndex: img.selectedIndex || 0,
+            role: 'input',
+          },
+        });
+      } else {
+        partsParams.push({sourceAssetId: img.id});
+      }
+    }
+
     void this.agentChatService.sendMessage(
       this.currentSessionId!,
-      text,
+      partsParams.length > 0 ? partsParams : text,
       workspaceId,
       callbacks,
     );
+
+    this.selectedImages.set([]);
   }
 
   private isNearBottom(): boolean {
@@ -492,6 +601,187 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
         event.preventDefault();
         window.open(url, '_blank');
       }
+    }
+  }
+
+  private extractStoryboardData(parsed: any): any {
+    if (!parsed || typeof parsed !== 'object') return null;
+
+    // Check current level
+    if (parsed.scenes && Array.isArray(parsed.scenes)) {
+      return parsed;
+    }
+
+    // Check specific known wrappers to prevent deep search overhead if possible
+    if (parsed.storyboard?.scenes && Array.isArray(parsed.storyboard.scenes)) {
+      return parsed.storyboard;
+    }
+    if (
+      parsed.storyboard_agent_templated_response?.scenes &&
+      Array.isArray(parsed.storyboard_agent_templated_response.scenes)
+    ) {
+      return parsed.storyboard_agent_templated_response;
+    }
+
+    // Otherwise recursive search up to a certain depth to prevent stack overflows
+    return this.deepSearchScenes(parsed, 5);
+  }
+
+  private deepSearchScenes(obj: any, depth: number): any {
+    if (depth === 0 || !obj || typeof obj !== 'object') return null;
+
+    if (obj.scenes && Array.isArray(obj.scenes)) {
+      return obj;
+    }
+
+    for (const key of Object.keys(obj)) {
+      const result = this.deepSearchScenes(obj[key], depth - 1);
+      if (result) return result;
+    }
+    return null;
+  }
+
+  private parseAndExtractJSONs(text: string): {
+    assets: any[];
+    storyboards: any[];
+    cleanText: string;
+  } {
+    const cleanText = text;
+    const assets: any[] = [];
+    const storyboards: any[] = [];
+
+    if (!text.includes('{') || !text.includes('}')) {
+      return {assets, storyboards, cleanText};
+    }
+
+    const codeBlockRegex = /```(?:json)?\s*([\s\S]*?)\s*```/g;
+    let match;
+    let modifiedText = text;
+
+    while ((match = codeBlockRegex.exec(text)) !== null) {
+      const innerText = match[1];
+      try {
+        const parsed = JSON.parse(innerText);
+        if (parsed.asset) {
+          assets.push(parsed.asset);
+          modifiedText = modifiedText.replace(match[0], '').trim();
+        } else {
+          const sb = this.extractStoryboardData(parsed);
+          if (sb) {
+            storyboards.push(sb);
+            modifiedText = modifiedText.replace(match[0], '').trim();
+          }
+        }
+      } catch (e) {
+        // Ignore parse error inside block
+      }
+    }
+
+    if (assets.length === 0 && storyboards.length === 0) {
+      try {
+        const raw = modifiedText.trim();
+        const parsed = JSON.parse(raw);
+        if (parsed.asset) {
+          assets.push(parsed.asset);
+          modifiedText = '';
+        } else {
+          const sb = this.extractStoryboardData(parsed);
+          if (sb) {
+            storyboards.push(sb);
+            modifiedText = '';
+          }
+        }
+      } catch (e) {
+        try {
+          const firstBrace = modifiedText.indexOf('{');
+          const lastBrace = modifiedText.lastIndexOf('}');
+          if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+            const possibleJson = modifiedText.substring(
+              firstBrace,
+              lastBrace + 1,
+            );
+            const parsed = JSON.parse(possibleJson);
+            if (parsed.asset) {
+              assets.push(parsed.asset);
+              modifiedText = modifiedText.replace(possibleJson, '').trim();
+            } else {
+              const sb = this.extractStoryboardData(parsed);
+              if (sb) {
+                storyboards.push(sb);
+                modifiedText = modifiedText.replace(possibleJson, '').trim();
+              }
+            }
+          }
+        } catch (ex) {
+          // Could not find any valid pure JSON
+        }
+      }
+    }
+
+    return {assets, storyboards, cleanText: modifiedText};
+  }
+
+  // --- Image Selector Methods ---
+
+  openImageSelector() {
+    const dialogRef = this.dialog.open(ImageSelectorComponent, {
+      width: '90vw',
+      height: '80vh',
+      maxWidth: '90vw',
+      data: {
+        mimeType: 'image/*',
+        multiSelect: true,
+        maxSelection: 10 - this.selectedImages().length,
+      },
+      panelClass: 'image-selector-dialog',
+    });
+
+    dialogRef
+      .afterClosed()
+      .subscribe(
+        (
+          result:
+            | SourceAssetResponseDto
+            | MediaItemSelection
+            | Array<SourceAssetResponseDto | MediaItemSelection>
+            | undefined,
+        ) => {
+          if (!result) return;
+
+          const results = Array.isArray(result) ? result : [result];
+          this.selectedImages.update(current => {
+            return [...current, ...results];
+          });
+        },
+      );
+  }
+
+  removeSelectedImage(index: number) {
+    this.selectedImages.update(current => {
+      const newImages = [...current];
+      newImages.splice(index, 1);
+      return newImages;
+    });
+  }
+
+  getAssetUrl(img: SourceAssetResponseDto | MediaItemSelection): string {
+    if ('mediaItem' in img) {
+      // It's a MediaItemSelection from the unified gallery
+      const selection = img as MediaItemSelection;
+      const index = selection.selectedIndex || 0;
+      if (selection.mediaItem.presignedThumbnailUrls?.length) {
+        return selection.mediaItem.presignedThumbnailUrls[index];
+      }
+      if (selection.mediaItem.presignedUrls?.length) {
+        return selection.mediaItem.presignedUrls[index];
+      }
+      return '';
+    } else {
+      // It's a SourceAssetResponseDto
+      const asset = img as SourceAssetResponseDto;
+      if (asset.presignedThumbnailUrl) return asset.presignedThumbnailUrl;
+      if (asset.presignedUrl) return asset.presignedUrl;
+      return `${environment.backendURL}/assets/source-assets/${asset.id}/download`;
     }
   }
 }

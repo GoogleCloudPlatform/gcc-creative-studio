@@ -44,6 +44,7 @@ import {
 import {SourceAssetResponseDto} from '../common/services/source-asset.service';
 // --- Interfaces ---
 import {WorkbenchService, TimelineRequest, Clip} from './workbench.service';
+import {AgentChatService} from './services/agent-chat.service';
 
 interface MediaAsset {
   id: string;
@@ -177,6 +178,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   // Services
   private sanitizer = inject(DomSanitizer);
   private workbenchService = inject(WorkbenchService);
+  private agentChatService = inject(AgentChatService);
 
   isDownloading = signal(false);
 
@@ -343,7 +345,30 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   // Signal to track audio element changes
   audioElementsChanged = signal<number>(0);
 
-  ngOnInit() {}
+  private chatSub?: any;
+
+  ngOnInit() {
+    this.chatSub = this.agentChatService.videoGenerated$.subscribe(
+      assetData => {
+        // 1. Convert the parsed JSON asset properties into a Workbench MediaAsset payload
+        // `processCloudMediaResult` takes a `SourceAssetResponseDto` interface shape
+        this.processCloudMediaResult({
+          presignedUrl: assetData.fileUri || assetData.url || assetData.uri,
+          originalFilename:
+            assetData.filename || assetData.name || 'Agent Generated Video',
+          mimeType: 'video/mp4',
+          presignedThumbnailUrl:
+            assetData.thumbnail ||
+            assetData.fileUri ||
+            assetData.url ||
+            assetData.uri,
+        } as SourceAssetResponseDto);
+
+        // 2. Clear Active Right Sidebar Tool
+        this.activeToolButton.set(null);
+      },
+    );
+  }
 
   ngAfterViewInit() {
     this.bgAudios.changes.subscribe(() => {
@@ -353,6 +378,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     if (this.animationFrameId) cancelAnimationFrame(this.animationFrameId);
+    if (this.chatSub) this.chatSub.unsubscribe();
   }
 
   // --- Logic: File Handling ---
