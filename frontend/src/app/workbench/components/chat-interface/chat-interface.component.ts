@@ -43,6 +43,8 @@ import {
 } from '../../../common/components/image-selector/image-selector.component';
 import {SourceAssetResponseDto} from '../../../common/services/source-asset.service';
 import {environment} from '../../../../environments/environment';
+import {MatSnackBar} from '@angular/material/snack-bar';
+import {handleErrorSnackbar} from '../../../utils/handleMessageSnackbar';
 
 interface DropdownOption {
   value: string;
@@ -59,6 +61,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   private agentChatService = inject(AgentChatService);
   private workspaceStateService = inject(WorkspaceStateService);
   private dialog = inject(MatDialog);
+  private snackBar = inject(MatSnackBar);
 
   sessions = signal<any[]>([]);
   topics = signal<{[key: string]: any}>({});
@@ -78,6 +81,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
 
   isBrowser = true;
   private shouldScrollToBottom = true;
+  autoScrollEnabled = true;
 
   @ViewChild('chatContainer') private chatContainer!: ElementRef;
 
@@ -124,7 +128,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   }
 
   ngAfterViewChecked() {
-    if (this.shouldScrollToBottom) {
+    if (this.shouldScrollToBottom || this.autoScrollEnabled) {
       this.scrollToBottom();
       this.shouldScrollToBottom = false;
     }
@@ -180,7 +184,6 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
             let text = '';
             let assetMetadata = null;
             let storyboardMetadata = null;
-
             for (const part of parts) {
               if (part.text) {
                 let partText = part.text;
@@ -197,9 +200,13 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                     storyboardMetadata,
                   );
                 }
+                if (extraction.timelines && extraction.timelines.length > 0) {
+                  this.agentChatService.videoGenerated$.next(
+                    extraction.timelines[0],
+                  );
+                }
                 text += extraction.cleanText;
               }
-
               if (part.functionResponse?.response?.result) {
                 try {
                   const result = JSON.parse(
@@ -210,6 +217,9 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                     if (result.asset.type === 'video') {
                       this.agentChatService.videoGenerated$.next(result.asset);
                     }
+                  } else if (result.clips && result.assets) {
+                    // Handle VideoTimeline sequence
+                    this.agentChatService.videoGenerated$.next(result);
                   } else {
                     const extracted = this.extractStoryboardData(result);
                     if (extracted) {
@@ -222,7 +232,6 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                 }
               }
             }
-
             return {
               sender: role === 'user' ? 'user' : 'agent',
               text: text,
@@ -234,11 +243,9 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
             };
           })
           .filter((msg: any) => msg.text || msg.asset || msg.storyboard);
-
         this.chatMessages.set(mappedMessages);
         this.isTyping.set(false);
         this.shouldScrollToBottom = true;
-
         if (mappedMessages.length === 0) {
           this.addWelcomeMessage();
         }
@@ -249,7 +256,6 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       },
     });
   }
-
   addWelcomeMessage() {
     const welcomeMessage = {
       sender: 'agent',
@@ -268,7 +274,6 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       return msgs;
     });
   }
-
   viewAsset(assetId: string) {
     if (typeof window !== 'undefined') {
       let route = `/gallery/${assetId}`;
@@ -285,7 +290,6 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       window.open(route, '_blank');
     }
   }
-
   startNewChat() {
     this.agentChatService.createSession().subscribe({
       next: (session: any) => {
@@ -298,14 +302,12 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       error: err => console.error('Error starting new chat:', err),
     });
   }
-
   onSessionChange(sessionId: string) {
     if (sessionId && sessionId !== this.currentSessionId) {
       this.currentSessionId = sessionId;
       this.loadChatMessages(sessionId);
     }
   }
-
   onAgentChange(agentValue: string) {
     this.agentChatService.activeAgent.set(agentValue);
     this.currentSessionId = null;
@@ -313,17 +315,14 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     this.sessions.set([]);
     this.loadChatSessions();
   }
-
   deleteChat() {
     if (!this.currentSessionId) return;
-
     const dialogRef = this.dialog.open(ConfirmationDialogComponent, {
       data: {
         title: 'Delete Chat',
         message: 'Are you sure you want to delete this conversation?',
       },
     });
-
     dialogRef.afterClosed().subscribe(result => {
       if (result) {
         this.agentChatService.deleteSession(this.currentSessionId!).subscribe({
@@ -340,7 +339,6 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
             });
             this.currentSessionId = null;
             this.chatMessages.set([]);
-
             if (this.sessions().length > 0) {
               this.currentSessionId = this.sessions()[0].id;
               this.loadChatMessages(this.currentSessionId!);
@@ -353,16 +351,13 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       }
     });
   }
-
   sendChatMessage(text: string) {
     if ((!text || !text.trim()) && this.selectedImages().length === 0) return;
     if (!this.currentSessionId) {
       console.error('No active session');
       return;
     }
-
     const currentImages = this.selectedImages();
-
     const userMessage = {
       sender: 'user',
       text: text,
@@ -370,9 +365,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       timestamp: new Date(),
     };
     this.chatMessages.update(msgs => [...msgs, userMessage]);
-
     const hasNoTopic = !this.topics()[this.currentSessionId!];
-
     if (hasNoTopic) {
       this.agentChatService.generateTitle(text).subscribe({
         next: (response: any) => {
@@ -393,9 +386,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       this.agentChatService.isGeneratingStoryboard.set(true);
     }
     this.shouldScrollToBottom = true;
-
     let agentMessageIndex = -1;
-
     const callbacks: SSECallbacks<any> = {
       onMessage: (data: any) => {
         if (data.content && data.content.parts) {
@@ -404,7 +395,6 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
               const textChunk = part.text;
               this.isTyping.set(false);
               const wasNearBottom = this.isNearBottom();
-
               this.chatMessages.update(msgs => {
                 if (agentMessageIndex === -1) {
                   msgs.push({
@@ -419,7 +409,6 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                   } else {
                     msgs[agentMessageIndex].text = textChunk;
                   }
-
                   if (msgs[agentMessageIndex].text.includes('[System Note:')) {
                     msgs[agentMessageIndex].text = msgs[agentMessageIndex].text
                       .split('[System Note:')[0]
@@ -428,12 +417,10 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                 }
                 return [...msgs];
               });
-
               if (wasNearBottom) {
                 this.shouldScrollToBottom = true;
               }
             }
-
             if (part.functionResponse?.response?.result) {
               try {
                 const result = JSON.parse(
@@ -442,7 +429,6 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                 if (result.asset) {
                   this.isTyping.set(false);
                   const wasNearBottom = this.isNearBottom();
-
                   this.chatMessages.update(msgs => {
                     if (agentMessageIndex === -1) {
                       msgs.push({
@@ -455,13 +441,10 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                     } else {
                       msgs[agentMessageIndex].asset = result.asset;
                     }
-
                     // Broadcast newly generated asset to the main Workbench
                     this.agentChatService.videoGenerated$.next(result.asset);
-
                     return [...msgs];
                   });
-
                   if (wasNearBottom) {
                     this.shouldScrollToBottom = true;
                   }
@@ -473,7 +456,6 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                     const sb = extracted;
                     this.agentChatService.currentStoryboard.set(sb);
                     const wasNearBottom = this.isNearBottom();
-
                     this.chatMessages.update(msgs => {
                       if (agentMessageIndex === -1) {
                         msgs.push({
@@ -488,7 +470,6 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                       }
                       return [...msgs];
                     });
-
                     if (wasNearBottom) {
                       this.shouldScrollToBottom = true;
                     }
@@ -505,6 +486,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
         console.error('SSE Error:', err);
         this.isTyping.set(false);
         this.agentChatService.isGeneratingStoryboard.set(false);
+        handleErrorSnackbar(this.snackBar, err, 'Storyboard Generation');
       },
       onClose: () => {
         this.isTyping.set(false);
@@ -517,8 +499,12 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
             if (extraction.assets.length > 0) {
               currentMsgs[agentMessageIndex].asset = extraction.assets[0];
               currentMsgs[agentMessageIndex].text = extraction.cleanText;
-              // Broadcast newly generated asset to the main Workbench
-              this.agentChatService.videoGenerated$.next(extraction.assets[0]);
+              // Broadcast newly generated asset to the main Workbench ONLY if it's a video
+              if (extraction.assets[0].type === 'video') {
+                this.agentChatService.videoGenerated$.next(
+                  extraction.assets[0],
+                );
+              }
             }
             if (extraction.storyboards.length > 0) {
               const sb = extraction.storyboards[0];
@@ -536,9 +522,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
         }
       },
     };
-
     const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
-
     const partsParams: any[] = [];
     if (text && text.trim()) partsParams.push({text});
     for (const img of this.selectedImages()) {
@@ -554,17 +538,22 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
         partsParams.push({sourceAssetId: img.id});
       }
     }
-
     void this.agentChatService.sendMessage(
       this.currentSessionId!,
       partsParams.length > 0 ? partsParams : text,
       workspaceId,
       callbacks,
     );
-
     this.selectedImages.set([]);
   }
-
+  onScroll() {
+    if (!this.chatContainer) return;
+    const element = this.chatContainer.nativeElement;
+    // If user is within 50px of bottom, consider it "at bottom" and enable autoscroll
+    const atBottom =
+      element.scrollHeight - element.scrollTop <= element.clientHeight + 50;
+    this.autoScrollEnabled = atBottom;
+  }
   private isNearBottom(): boolean {
     if (!this.chatContainer) return false;
     const {scrollTop, scrollHeight, clientHeight} =
@@ -606,12 +595,10 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
 
   private extractStoryboardData(parsed: any): any {
     if (!parsed || typeof parsed !== 'object') return null;
-
     // Check current level
     if (parsed.scenes && Array.isArray(parsed.scenes)) {
       return parsed;
     }
-
     // Check specific known wrappers to prevent deep search overhead if possible
     if (parsed.storyboard?.scenes && Array.isArray(parsed.storyboard.scenes)) {
       return parsed.storyboard;
@@ -622,18 +609,14 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     ) {
       return parsed.storyboard_agent_templated_response;
     }
-
     // Otherwise recursive search up to a certain depth to prevent stack overflows
     return this.deepSearchScenes(parsed, 5);
   }
-
   private deepSearchScenes(obj: any, depth: number): any {
     if (depth === 0 || !obj || typeof obj !== 'object') return null;
-
     if (obj.scenes && Array.isArray(obj.scenes)) {
       return obj;
     }
-
     for (const key of Object.keys(obj)) {
       const result = this.deepSearchScenes(obj[key], depth - 1);
       if (result) return result;
@@ -644,14 +627,17 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   private parseAndExtractJSONs(text: string): {
     assets: any[];
     storyboards: any[];
+    timelines: any[];
+
     cleanText: string;
   } {
     const cleanText = text;
     const assets: any[] = [];
     const storyboards: any[] = [];
+    const timelines: any[] = [];
 
     if (!text.includes('{') || !text.includes('}')) {
-      return {assets, storyboards, cleanText};
+      return {assets, storyboards, timelines, cleanText};
     }
 
     const codeBlockRegex = /```(?:json)?\s*([\s\S]*?)\s*```/g;
@@ -665,6 +651,9 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
         if (parsed.asset) {
           assets.push(parsed.asset);
           modifiedText = modifiedText.replace(match[0], '').trim();
+        } else if (parsed.clips && parsed.assets) {
+          timelines.push(parsed);
+          modifiedText = modifiedText.replace(match[0], '').trim();
         } else {
           const sb = this.extractStoryboardData(parsed);
           if (sb) {
@@ -677,14 +666,21 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       }
     }
 
-    if (assets.length === 0 && storyboards.length === 0) {
+    if (
+      assets.length === 0 &&
+      storyboards.length === 0 &&
+      timelines.length === 0
+    ) {
       try {
         const raw = modifiedText.trim();
         const parsed = JSON.parse(raw);
         if (parsed.asset) {
           assets.push(parsed.asset);
           modifiedText = '';
-        } else {
+          modifiedText = '';
+        } else if (parsed.clips && parsed.assets) {
+          timelines.push(parsed);
+          modifiedText = '';
           const sb = this.extractStoryboardData(parsed);
           if (sb) {
             storyboards.push(sb);
@@ -704,6 +700,9 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
             if (parsed.asset) {
               assets.push(parsed.asset);
               modifiedText = modifiedText.replace(possibleJson, '').trim();
+            } else if (parsed.clips && parsed.assets) {
+              timelines.push(parsed);
+              modifiedText = modifiedText.replace(possibleJson, '').trim();
             } else {
               const sb = this.extractStoryboardData(parsed);
               if (sb) {
@@ -718,7 +717,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       }
     }
 
-    return {assets, storyboards, cleanText: modifiedText};
+    return {assets, storyboards, timelines, cleanText: modifiedText};
   }
 
   // --- Image Selector Methods ---

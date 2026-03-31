@@ -164,49 +164,39 @@ async def chat(
         if workspaces:
             body["workspaceId"] = workspaces[0].id
 
-    workspace_id_final = body.get("workspaceId")
-
     if "newMessage" in body:
         new_msg = body["newMessage"]
         if "parts" in new_msg and new_msg["parts"]:
             sanitized_parts = []
             attached_assets = []
-
             for p in new_msg["parts"]:
                 if not isinstance(p, dict):
                     sanitized_parts.append(p)
                     continue
-
                 # Extract and remove UI-specific asset fields to prevent 422 errors
                 s_asset_id = p.pop("sourceAssetId", None)
                 s_media = p.pop("sourceMediaItem", None)
-
                 if s_asset_id is not None:
                     attached_assets.append(f"source_asset:{s_asset_id}")
                 if s_media is not None:
                     media_id = s_media.get("mediaItemId")
                     attached_assets.append(f"media_item:{media_id}")
-
                 if p:
                     sanitized_parts.append(p)
-
             injections = []
             if workspace_id_final:
                 injections.append(
                     f"Use Workspace ID {workspace_id_final} for any tool calls that require a workspace_id"
                 )
-
             if attached_assets:
                 asset_list = "\n".join([f"- {aid}" for aid in attached_assets])
                 injections.append(
                     f"The user has attached the following reference assets:\n{asset_list}\nUse the load_asset_and_save_as_artifact tool to load them if needed."
                 )
-
             if injections:
                 injection_str = (
                     "\n\n[System Note:\n" + "\n".join(injections) + "\n]"
                 )
-
                 # Find the first text part, or add one
                 text_part_found = False
                 for p in sanitized_parts:
@@ -216,7 +206,6 @@ async def chat(
                         break
                 if not text_part_found:
                     sanitized_parts.append({"text": injection_str})
-
             new_msg["parts"] = sanitized_parts
 
     session_id = body.get("sessionId")

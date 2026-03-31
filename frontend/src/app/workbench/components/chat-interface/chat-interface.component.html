@@ -49,7 +49,7 @@
   </div>
 
   <!-- Chat Messages -->
-  <div class="flex-1 overflow-y-auto flex flex-col gap-3 p-2 custom-scrollbar" #chatContainer>
+  <div class="flex-1 overflow-y-auto flex flex-col gap-3 p-2 custom-scrollbar" #chatContainer (scroll)="onScroll()">
     <div *ngFor="let msg of chatMessages()" [class]="msg.sender === 'user' ? 'chat-bubble user' : 'chat-bubble agent'">
       <!-- Display user attached images -->
       <div *ngIf="msg.sender === 'user' && msg.images?.length > 0" class="flex gap-2 mb-2 flex-wrap">
@@ -83,7 +83,9 @@
 </div>
 
       </div>
-      <div class="chat-time text-[9px] text-gray-500 mt-1 text-right">{{ msg.timestamp | date:'shortTime' }}</div>
+      <div class="chat-time text-[9px] mt-1 text-right"
+        [ngClass]="{'text-white': msg.sender === 'user', 'text-gray-500': msg.sender !== 'user'}">{{ msg.timestamp |
+        date:'shortTime' }}</div>
     </div>
     <div *ngIf="isTyping()" class="chat-bubble agent">
       <div class="typing-indicator">

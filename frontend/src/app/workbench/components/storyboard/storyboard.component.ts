@@ -25,7 +25,17 @@ import {
 import {CommonModule} from '@angular/common';
 import {FormsModule} from '@angular/forms';
 import {MatIconModule} from '@angular/material/icon';
+import {
+  DragDropModule,
+  CdkDragDrop,
+  moveItemInArray,
+} from '@angular/cdk/drag-drop';
 import {AgentChatService} from '../../services/agent-chat.service';
+import {MatDialog} from '@angular/material/dialog';
+import {
+  ImageSelectorComponent,
+  MediaItemSelection,
+} from '../../../common/components/image-selector/image-selector.component';
 
 // --- Data Models ---
 export interface Character {
@@ -45,27 +55,40 @@ export interface Scene {
   id: string;
   title: string;
   shots: Shot[];
+  isEditingTitle?: boolean;
 }
 
 @Component({
   selector: 'app-storyboard',
   standalone: true,
-  imports: [CommonModule, FormsModule, MatIconModule],
+  imports: [CommonModule, FormsModule, MatIconModule, DragDropModule],
   templateUrl: './storyboard.component.html',
   styleUrls: ['./storyboard.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class StoryboardComponent {
   private agentChatService = inject(AgentChatService);
+  private dialog = inject(MatDialog);
 
   // Navigation State
   activeTab = signal<'characters' | 'scenes'>('scenes');
 
   // Dynamic Data
   scenes = signal<Scene[]>([]);
-  isGenerating = computed(() => this.agentChatService.isGeneratingStoryboard());
+  isGeneratingStoryboard = computed(() =>
+    this.agentChatService.isGeneratingStoryboard(),
+  );
+  isGeneratingVideo = signal<boolean>(false);
+  isGenerating = computed(
+    () => this.isGeneratingStoryboard() || this.isGeneratingVideo(),
+  );
 
   constructor() {
+    // Reset video generation state when video is completed
+    this.agentChatService.videoGenerated$.subscribe(() => {
+      this.isGeneratingVideo.set(false);
+    });
+
     effect(
       () => {
         const sb = this.agentChatService.currentStoryboard();
@@ -80,7 +103,8 @@ export class StoryboardComponent {
                   // Use generated asset URL if available, otherwise fallback to placeholder
                   imageUrl:
                     s.first_frame_prompt?.generated_asset_url ||
-                    'https://images.unsplash.com/photo-1579353977828-2a4eab540b9a?w=400',
+                    'assets/images/storyboard-default.png',
+                  assetId: s.first_frame_prompt?.asset_id,
                   characters: [],
                   description:
                     s.video_prompt?.description ||
@@ -100,8 +124,7 @@ export class StoryboardComponent {
               shots: [
                 {
                   id: 'shot-welcome-1',
-                  imageUrl:
-                    'https://images.unsplash.com/photo-1549429487-782a21eebdb0?auto=format&fit=crop&q=80&w=400',
+                  imageUrl: 'assets/images/storyboard-default.png',
                   characters: [],
                   description:
                     'Ask the Ads X Agent to generate a storyboard template for you, and it will build out scenes here dynamically!',
@@ -119,8 +142,119 @@ export class StoryboardComponent {
     this.activeTab.set(tab);
   }
 
+  onAddScene() {
+    const currentScenes = this.scenes();
+    const newIdx = currentScenes.length + 1;
+    const newScene: Scene = {
+      id: `scene-${newIdx}`,
+      title: `New Scene ${newIdx}`,
+      shots: [
+        {
+          id: `shot-${newIdx}-1`,
+          imageUrl: 'assets/images/storyboard-default.png',
+          characters: [],
+          description: 'New scene description',
+        },
+      ],
+    };
+    this.scenes.set([...currentScenes, newScene]);
+  }
+  toggleEditTitle(scene: Scene) {
+    scene.isEditingTitle = !scene.isEditingTitle;
+    this.scenes.update(s => [...s]);
+  }
+  stopEditTitle(scene: Scene) {
+    scene.isEditingTitle = false;
+    this.scenes.update(s => [...s]);
+  }
+  onDeleteScene(scene: Scene) {
+    const currentScenes = this.scenes();
+    const updatedScenes = currentScenes.filter(s => s.id !== scene.id);
+    if (updatedScenes.length === 0) {
+      this.scenes.set([
+        {
+          id: 'scene-welcome',
+          title: 'Welcome to Ads X Storyboarding',
+          shots: [
+            {
+              id: 'shot-welcome-1',
+              imageUrl: 'assets/images/storyboard-default.png',
+              characters: [],
+              description:
+                'Ask the Ads X Agent to generate a storyboard template for you, and it will build out scenes here dynamically!',
+            },
+          ],
+        },
+      ]);
+    } else {
+      this.scenes.set(updatedScenes);
+    }
+  }
+  onDrop(event: CdkDragDrop<Scene[]>) {
+    const currentScenes = this.scenes();
+    const updatedScenes = [...currentScenes];
+    moveItemInArray(updatedScenes, event.previousIndex, event.currentIndex);
+    this.scenes.set(updatedScenes);
+  }
   onGenerateVideo() {
+    this.isGeneratingVideo.set(true);
     // Notify the Agent Chat Service that the user requested video generation
     this.agentChatService.generateVideoRequest$.next();
+  }
+  onOpenAssetDetail(shot: any) {
+    if (shot.assetId) {
+      let route = `/gallery/${shot.assetId}`;
+      if (shot.assetId.indexOf(':') !== -1) {
+        const parts = shot.assetId.split(':');
+        const type = parts[0];
+        const id = parts[1];
+        if (type === 'source_asset') {
+          route = `/asset-detail/${id}`;
+        } else if (type === 'media_item') {
+          route = `/gallery/${id}`;
+        }
+      }
+      window.open(route, '_blank');
+    } else if (
+      shot.imageUrl &&
+      shot.imageUrl !== 'assets/images/storyboard-default.png'
+    ) {
+      window.open(shot.imageUrl, '_blank');
+    }
+  }
+  onEditImage(scene: any, shot: any, event: MouseEvent) {
+    event.stopPropagation(); // Prevent opening in new tab
+    const dialogRef = this.dialog.open(ImageSelectorComponent, {
+      width: '90vw',
+      height: '80vh',
+      maxWidth: '90vw',
+      data: {
+        mimeType: 'image/*',
+        showFooter: true,
+        maxSelection: 1,
+      },
+      panelClass: 'image-selector-dialog',
+    });
+    dialogRef.afterClosed().subscribe((result: any) => {
+      if (result) {
+        let newUrl = '';
+        if ('mediaItem' in result) {
+          const selection = result as MediaItemSelection;
+          const selectedIndex = selection.selectedIndex || 0;
+          newUrl = selection.mediaItem.presignedUrls?.[selectedIndex] || '';
+          shot.assetId = `media_item:${selection.mediaItem.id}`;
+        } else if ('presignedUrl' in result) {
+          newUrl = result.presignedUrl || '';
+          if ('id' in result) {
+            shot.assetId = `source_asset:${result.id}`;
+          }
+        }
+        if (newUrl) {
+          // Update the specific shot's imageUrl directly!
+          shot.imageUrl = newUrl;
+          this.scenes.update(scenes => [...scenes]); // Trigger reactivity
+        }
+      }
+    });
   }
 }

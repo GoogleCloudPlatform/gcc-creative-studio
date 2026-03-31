@@ -297,7 +297,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         const fileTime = curTime - vClip.startTime + vClip.offset;
         if (Math.abs(vid.currentTime - fileTime) > 0.5)
           vid.currentTime = fileTime;
-        if (this.isPlaying() && vid.paused)
+        if (this.isPlaying() && vid.paused && vid.readyState >= 3)
           vid.play().catch(e => console.error('[VideoSync] Play failed', e));
         if (!this.isPlaying() && !vid.paused) vid.pause();
       } else if (vid) {
@@ -349,23 +349,56 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   ngOnInit() {
     this.chatSub = this.agentChatService.videoGenerated$.subscribe(
-      assetData => {
-        // 1. Convert the parsed JSON asset properties into a Workbench MediaAsset payload
-        // `processCloudMediaResult` takes a `SourceAssetResponseDto` interface shape
-        this.processCloudMediaResult({
-          presignedUrl: assetData.fileUri || assetData.url || assetData.uri,
-          originalFilename:
-            assetData.filename || assetData.name || 'Agent Generated Video',
-          mimeType: 'video/mp4',
-          presignedThumbnailUrl:
-            assetData.thumbnail ||
-            assetData.fileUri ||
-            assetData.url ||
-            assetData.uri,
-        } as SourceAssetResponseDto);
-
-        // 2. Clear Active Right Sidebar Tool
-        this.activeToolButton.set(null);
+      (data: any) => {
+        if (!data) return;
+        if (data.clips && data.assets) {
+          // Handle VideoTimeline
+          const timeline = data as {assets: any[]; clips: any[]};
+          const idMap = new Map<string, string>(); // Map backend ID to frontend ID
+          // 1. Process and add assets
+          timeline.assets.forEach(asset => {
+            const newAsset = this.processCloudMediaResult({
+              presignedUrl: asset.url,
+              originalFilename: asset.name,
+              mimeType: 'video/mp4',
+              presignedThumbnailUrl: asset.thumbnail || asset.url,
+            } as SourceAssetResponseDto);
+            if (newAsset) {
+              idMap.set(asset.id, newAsset.id);
+            }
+          });
+          // 2. Process and add clips
+          const newClips: TimelineClip[] = timeline.clips.map(clip => ({
+            id: Math.random().toString(36).substr(2, 9),
+            assetId: idMap.get(clip.assetId) || clip.assetId,
+            startTime: clip.startTime,
+            duration: clip.duration,
+            offset: clip.offset,
+            trackIndex: clip.trackIndex,
+            color: clip.color || '#3b82f6',
+          }));
+          this.timelineClips.update(prev => [...prev, ...newClips]);
+          this.refreshTimelineLayout();
+        } else {
+          // Handle single asset (legacy or other)
+          const assetData = data;
+          const newAsset = this.processCloudMediaResult({
+            presignedUrl: assetData.fileUri || assetData.url || assetData.uri,
+            originalFilename:
+              assetData.filename || assetData.name || 'Agent Generated Video',
+            mimeType: 'video/mp4',
+            presignedThumbnailUrl:
+              assetData.thumbnail ||
+              assetData.fileUri ||
+              assetData.url ||
+              assetData.uri,
+          } as SourceAssetResponseDto);
+          if (newAsset) {
+            this.addToTimeline(newAsset);
+          }
+        }
+        // 3. Clear Active Right Sidebar Tool (Removed to keep agent open!)
+        // this.activeToolButton.set(null);
       },
     );
   }
@@ -443,7 +476,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   private processCloudMediaResult(
     result: MediaItemSelection | SourceAssetResponseDto,
-  ) {
+  ): MediaAsset | undefined {
     const isGalleryItem = 'mediaItem' in result;
 
     let url: string;
@@ -497,6 +530,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     } else {
       this.extractAudioMetadataFromUrl(newAsset);
     }
+
+    return newAsset;
   }
 
   private extractVideoMetadataFromUrl(asset: MediaAsset) {

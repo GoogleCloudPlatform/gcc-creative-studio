@@ -15,16 +15,21 @@
 -->
 
 <div class="workbench-container">
-  <!-- Beta Label -->
-  <div matTooltip="This is currenty under development, it does not save content so use at your own risk, make sure to download your work before you leave this page!" class="beta-label">
-    BETA
-  </div>
   <!-- Main App Container (Dark Theme) -->
   <div
     class="main-app-container"
     (mousemove)="onTrimMove($event); onDragMove($event); onScrubMove($event)"
     (mouseup)="onTrimEnd(); onDragEnd(); onScrubEnd()"
   >
+      <!-- Beta Label Row -->
+      <div class="flex justify-end w-full">
+        <div
+          matTooltip="This is currenty under development, it does not save content so use at your own risk, make sure to download your work before you leave this page!"
+          class="beta-label">
+          BETA
+        </div>
+      </div>
+
     <!-- Top Workspace (2 Columns) -->
     <div class="flex flex-row justify-center items-center gap-6">
       <!-- COL 1: Assets Panel -->
@@ -819,7 +824,7 @@
 
                   <!-- Handle Circle -->
                   <div
-                    class="w-3 h-3 -ml-[0.375rem] bg-white rounded-full -mt-1.5 shadow-[0_0_10px_rgba(255,255,255,0.5)] pointer-events-none relative z-[102]"
+                    class="w-3 h-3 -ml-[0.275rem] bg-white rounded-full -mt-1.5 shadow-[0_0_10px_rgba(255,255,255,0.5)] pointer-events-none relative z-[102]"
                   ></div>
                   <!-- <div
                                                                                                                                                                                     class="absolute bottom-2 left-2 bg-[#2a2a2c] text-[9px] px-1.5 py-0.5 rounded text-white border border-white/10 whitespace-nowrap z-50">

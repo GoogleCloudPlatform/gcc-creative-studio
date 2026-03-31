@@ -13,29 +13,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 // Placeholder Variables
 $font-family: 'Inter', system-ui, -apple-system, sans-serif;
-
 $bg-body: #1F1F1F;
 $bg-surface: #262626;
 $bg-card: #2C2C2C;
 $bg-shot: #333333;
 $bg-interactive: #3A3A3A;
 $bg-glow: rgba(94, 153, 255, 0.2);
-
 $border-color: rgba(255, 255, 255, 0.1);
 $border-light: rgba(255, 255, 255, 0.15);
 $glow-color: #5E99FF;
-
 $text-primary: #FFFFFF;
 $text-secondary: #AAAAAA;
-
 $border-radius-lg: 16px;
 $border-radius-md: 12px;
 $border-radius-sm: 8px;
 $border-radius-pill: 99px;
-
 :host {
   display: block;
   width: 100%;
@@ -46,11 +40,9 @@ $border-radius-pill: 99px;
   overflow: hidden;
   box-sizing: border-box;
 }
-
 * {
   box-sizing: border-box;
 }
-
 .storyboard-container {
   display: flex;
   flex-direction: column;
@@ -58,14 +50,12 @@ $border-radius-pill: 99px;
   padding: 24px;
   gap: 24px;
 }
-
 // Top Navigation Bar
 .sb-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
-
 .sb-tabs {
   display: flex;
   background-color: rgba(255, 255, 255, 0.05);
@@ -73,7 +63,6 @@ $border-radius-pill: 99px;
   padding: 4px;
   border: 1px solid $border-color;
 }
-
 .sb-tab {
   background: transparent;
   color: $text-secondary;
@@ -87,17 +76,18 @@ $border-radius-pill: 99px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
-
+  &[disabled] {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
   &.active {
     background-color: rgba(255, 255, 255, 0.1);
     color: $text-primary;
   }
-
   &:hover:not(.active) {
     color: $text-primary;
   }
 }
-
 .sb-draft-select {
   display: flex;
   align-items: center;
@@ -109,7 +99,6 @@ $border-radius-pill: 99px;
   font-size: 14px;
   cursor: pointer;
 }
-
 .sb-btn-primary {
   display: flex;
   align-items: center;
@@ -123,12 +112,10 @@ $border-radius-pill: 99px;
   font-size: 14px;
   cursor: pointer;
   transition: opacity 0.2s ease;
-
   &:hover {
     opacity: 0.9;
   }
 }
-
 // Main Container
 .sb-main-scroll {
   display: flex;
@@ -137,17 +124,14 @@ $border-radius-pill: 99px;
   overflow-y: hidden;
   padding-bottom: 24px;
   flex: 1;
-
   &::-webkit-scrollbar {
     height: 8px;
   }
-
   &::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.2);
     border-radius: $border-radius-pill;
   }
 }
-
 // Scene Card
 .sb-scene-card {
   display: flex;
@@ -160,7 +144,6 @@ $border-radius-pill: 99px;
   flex-shrink: 0;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
 }
-
 // Scene Header
 .sb-scene-header {
   display: flex;
@@ -169,24 +152,20 @@ $border-radius-pill: 99px;
   margin-bottom: 20px;
   gap: 32px;
 }
-
 .sb-scene-title-group {
   display: flex;
   align-items: center;
   gap: 12px;
-
   h2 {
     margin: 0;
     font-size: 24px;
     font-weight: 600;
   }
 }
-
 .sb-drag-handle {
   color: $text-secondary;
   cursor: grab;
 }
-
 .sb-icon-btn {
   background: rgba(255, 255, 255, 0.1);
   border: none;
@@ -198,20 +177,17 @@ $border-radius-pill: 99px;
   justify-content: center;
   color: $text-secondary;
   cursor: pointer;
-
   &:hover {
     background: rgba(255, 255, 255, 0.2);
     color: $text-primary;
   }
 }
-
 .sb-scene-mode-toggle {
   display: flex;
   background-color: $bg-card;
   border-radius: $border-radius-pill;
   padding: 4px;
 }
-
 .sb-mode-btn {
   background: transparent;
   border: none;
@@ -223,13 +199,11 @@ $border-radius-pill: 99px;
   font-size: 13px;
   border-radius: $border-radius-pill;
   cursor: pointer;
-
   &.active {
     background: rgba(255, 255, 255, 0.2);
     color: $text-primary;
   }
 }
-
 .sb-btn-glow {
   background: rgba(94, 153, 255, 0.15);
   border: 1px solid rgba(94, 153, 255, 0.4);
@@ -243,20 +217,17 @@ $border-radius-pill: 99px;
   cursor: pointer;
   box-shadow: 0 0 16px $bg-glow;
   transition: all 0.2s ease;
-
   &:hover {
     box-shadow: 0 0 24px rgba(94, 153, 255, 0.4);
     background: rgba(94, 153, 255, 0.25);
   }
 }
-
 // Shots List & Card
 .sb-shots-list {
   display: flex;
   gap: 16px;
   height: 100%;
 }
-
 .sb-shot-card {
   width: 250px;
   height: 100%;
@@ -267,14 +238,32 @@ $border-radius-pill: 99px;
   border-radius: $border-radius-md;
   overflow: hidden;
 }
-
 .sb-shot-thumb {
   height: 140px;
   background-size: cover;
   background-position: center;
   position: relative;
 }
-
+.sb-edit-shot-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  border: none;
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  
+  &:hover {
+    background: rgba(0, 0, 0, 0.7);
+  }
+}
 .sb-shot-badge {
   position: absolute;
   top: 8px;
@@ -289,14 +278,12 @@ $border-radius-pill: 99px;
   font-size: 12px;
   color: white;
 }
-
 .sb-drag-handle-sm {
   font-size: 14px;
   width: 14px;
   height: 14px;
   opacity: 0.7;
 }
-
 .sb-shot-content {
   padding: 12px;
   display: flex;
@@ -304,13 +291,11 @@ $border-radius-pill: 99px;
   flex: 1;
   gap: 8px;
 }
-
 .sb-character-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
-
 .sb-chip {
   display: flex;
   align-items: center;
@@ -321,29 +306,29 @@ $border-radius-pill: 99px;
   padding: 4px 8px 4px 4px;
   font-size: 12px;
 }
-
 .sb-avatar {
   width: 16px;
   height: 16px;
   border-radius: 50%;
 }
-
 .sb-shot-desc {
   flex: 1;
   background: transparent;
   border: none;
   color: $text-secondary;
-  font-size: 13px;
+  font-size: 16px;
   line-height: 1.5;
   resize: none;
   font-family: inherit;
+  min-height: 150px;
+    max-height: 300px;
+    overflow-y: auto;
   
   &:focus {
     outline: none;
     color: $text-primary;
   }
 }
-
 // Add Shot Card
 .sb-add-shot-card {
   width: 240px;
@@ -358,12 +343,24 @@ $border-radius-pill: 99px;
   justify-content: center;
   align-items: center;
   position: relative;
-
-  &:hover {
+  &:hover:not(.opacity-50) {
     border-color: $border-light;
   }
+&.opacity-50 {
+  background-color: rgba(0, 0, 0, 0.2);
+  border-color: rgba(255, 255, 255, 0.05);
+  cursor: not-allowed;
+  .sb-movie-icon,
+  h3,
+  p {
+    color: rgba(255, 255, 255, 0.3);
+  }
+  .sb-add-circle {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(0, 0, 0, 0.3);
+  }
 }
-
+}
 .sb-add-shot-content {
   display: flex;
   flex-direction: column;
@@ -371,28 +368,24 @@ $border-radius-pill: 99px;
   text-align: center;
   color: $text-secondary;
   padding: 24px;
-
   h3 {
     margin: 12px 0 4px;
     font-size: 16px;
     font-weight: 500;
     color: $text-primary;
   }
-
   p {
     margin: 0;
     font-size: 12px;
     line-height: 1.4;
   }
 }
-
 .sb-movie-icon {
   font-size: 32px;
   width: 32px;
   height: 32px;
   opacity: 0.5;
 }
-
 .sb-add-shot-footer {
   position: absolute;
   bottom: 0;
@@ -401,7 +394,6 @@ $border-radius-pill: 99px;
   justify-content: center;
   transform: translateY(50%);
 }
-
 .sb-add-circle {
   background: $text-primary;
   color: #000;
@@ -413,7 +405,6 @@ $border-radius-pill: 99px;
   justify-content: center;
   box-shadow: 0 4px 8px rgba(0,0,0,0.2);
 }
-
 .sb-next-indicator {
   display: flex;
   align-items: center;
@@ -421,7 +412,6 @@ $border-radius-pill: 99px;
   padding: 0 16px;
   color: $text-secondary;
 }
-
 // Utilities
 .sb-icon-sm {
   font-size: 20px;
