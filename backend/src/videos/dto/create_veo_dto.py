@@ -58,7 +58,7 @@ class CreateVeoDto(BaseDto):
         ge=1, description="The ID of the workspace for this generation."
     )
     generation_model: GenerationModelEnum = Field(
-        default=GenerationModelEnum.VEO_3_1_PREVIEW,
+        default=GenerationModelEnum.VEO_3_1,
         description="Model used for image generation.",
     )
     aspect_ratio: AspectRatioEnum = Field(
@@ -171,11 +171,11 @@ class CreateVeoDto(BaseDto):
             # Enforce model compatibility for any reference image usage
             if (
                 model != GenerationModelEnum.VEO_2_GENERATE_EXP
-                and model != GenerationModelEnum.VEO_3_1_PREVIEW
+                and model != GenerationModelEnum.VEO_3_1
             ):
                 raise ValueError(
                     "Reference images are only supported by the "
-                    f"'{GenerationModelEnum.VEO_3_1_PREVIEW.value}' model."
+                    f"'{GenerationModelEnum.VEO_3_1.value}' model."
                 )
 
             # Check for other conflicting fields from the main DTO
@@ -216,7 +216,7 @@ class CreateVeoDto(BaseDto):
     ) -> GenerationModelEnum:
         """Ensures that only supported generation models for video are used."""
         valid_video_ratios = [
-            GenerationModelEnum.VEO_3_1_PREVIEW,
+            GenerationModelEnum.VEO_3_1,
             GenerationModelEnum.VEO_3_FAST,
             GenerationModelEnum.VEO_3_QUALITY,
             GenerationModelEnum.VEO_3_FAST_PREVIEW,
