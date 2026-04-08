@@ -1,0 +1,73 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+resource "random_id" "db_name_suffix" {
+  byte_length = 4
+}
+
+resource "google_sql_database_instance" "default" {
+  name             = "creative-studio-db-${random_id.db_name_suffix.hex}"
+  database_version = var.database_version
+  region           = var.region
+  project          = var.project_id
+
+  settings {
+    tier              = var.tier
+    disk_size         = var.disk_size
+    disk_type         = var.disk_type
+    disk_autoresize   = var.disk_autoresize
+    availability_type = var.availability_type
+
+    # Dynamic block for database flags, defaulting to IAM authentication enabled
+    dynamic "database_flags" {
+      for_each = merge(
+        { "cloudsql.iam_authentication" = "on" },
+        var.database_flags
+      )
+      content {
+        name  = database_flags.key
+        value = database_flags.value
+      }
+    }
+
+    ip_configuration {
+      ipv4_enabled    = false
+      private_network = var.vpc_network_id
+    }
+
+    backup_configuration {
+      enabled                        = var.backup_enabled
+      point_in_time_recovery_enabled = var.point_in_time_recovery_enabled
+    }
+
+    insights_config {
+      query_insights_enabled = var.query_insights_enabled
+    }
+  }
+  
+  deletion_protection = var.deletion_protection
+}
+
+resource "google_sql_database" "default" {
+  name     = var.db_name
+  instance = google_sql_database_instance.default.name
+  project  = var.project_id
+}
+
+resource "google_sql_user" "default" {
+  name     = var.db_user
+  instance = google_sql_database_instance.default.name
+  password = var.db_password
+  project  = var.project_id
+}

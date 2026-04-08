@@ -1,0 +1,25 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+output "secrets" {
+  description = "A map of the created secret resources, keyed by their secret_id."
+  value = {
+    for secret in google_secret_manager_secret.this : secret.secret_id => secret
+  }
+}
+
+output "secret_names" {
+  description = "The list of secret names created."
+  value       = var.secret_names
+}
