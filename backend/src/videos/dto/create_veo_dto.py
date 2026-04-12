@@ -43,6 +43,13 @@ class ReferenceImageDto(BaseDto):
     )
 
 
+class AssetReferenceDto(BaseDto):
+    id: int = Field(description="The ID of the asset.")
+    type: str = Field(
+        description="The type of asset: 'source_asset' or 'media_item'."
+    )
+
+
 class CreateVeoDto(BaseDto):
     """The refactored request model. Defaults are defined here to make the API
     contract explicit and self-documenting.
@@ -98,17 +105,17 @@ class CreateVeoDto(BaseDto):
         le=8,
         description="Duration in seconds for the videos to generate (between 1 and 8 secs).",
     )
-    start_image_asset_id: int | None = Field(
+    start_image_asset_id: AssetReferenceDto | None = Field(
         default=None,
-        description="The ID of the SourceAsset to use as the starting image.",
+        description="Object containing ID and type of asset to use as the starting image.",
     )
-    end_image_asset_id: int | None = Field(
+    end_image_asset_id: AssetReferenceDto | None = Field(
         default=None,
-        description="The ID of the SourceAsset to use as the ending image.",
+        description="Object containing ID and type of asset to use as the ending image.",
     )
-    source_video_asset_id: int | None = Field(
+    source_video_asset_id: AssetReferenceDto | None = Field(
         default=None,
-        description="The ID of the SourceAsset to use as the source video.",
+        description="Object containing ID and type of asset to use as the source video.",
     )
     source_media_items: list[SourceMediaItemLink] | None = Field(
         default=None,

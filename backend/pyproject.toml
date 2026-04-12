@@ -19,6 +19,7 @@ description = "GenMedia Creative Studio"
 authors = [
     {name = "Mauro Cominotti", email = "maurocominotti@google.com"},
     {name = "Nacho Villaluenga", email = "nachov@google.com"},
+    {name = "Tomasz Świtoń", email = "switon@google.com"},
     {name = "San Srinivasan", email = "sansrinivasan@google.com"},
 ]
 readme = "README.md"
@@ -30,7 +31,7 @@ dependencies = [
     "fastapi-utilities==0.3.0",
     "firebase-admin>=6.9.0",
     "google-cloud-aiplatform>=1.119.0",
-    "google-genai>=2.8.0",
+    "google-genai>=1.52.0",
     "mediapy>=1.2.4",
     "numpy>=2.3.3",
     "pandas>=2.3.3",

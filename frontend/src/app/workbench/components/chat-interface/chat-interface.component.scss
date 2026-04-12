@@ -90,3 +90,11 @@
     transform: scale(1.0);
   }
 }
+
+textarea {
+  &::-webkit-scrollbar {
+    display: none;
+  }
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}

@@ -30,12 +30,12 @@
 
 .workbench-container {
    position: relative;
-   --max-container-width: 1400px;
+   --max-container-width: 1600px;
    background-color: transparent;
    padding: 20px 40px;
    max-width: var(--max-container-width);
    margin: 0 auto;
-   margin-top: calc(10vh + 0px);
+   margin-top: calc(5vh + 0px);
    margin-left: max(calc(5vw + 4.5rem), calc(50% - var(--max-container-width) / 2));
 }
 
@@ -128,17 +128,17 @@
    display: flex;
    flex-direction: column;
    padding: 24px;
-   min-width: 20rem;
-   max-width: 24rem;
-   min-height: 500px;
-   max-height: 600px;
+   min-width: 24rem;
+      max-width: 30rem;
+      min-height: 650px;
+      max-height: 800px;
    border-radius: 12px;
-   overflow-y: scroll;
+   overflow-y: auto;
    scroll-behavior: smooth;
 
    &.no-scroll {
       overflow-y: hidden;
-      height: 600px;
+      height: 800px;
    }
 }
 

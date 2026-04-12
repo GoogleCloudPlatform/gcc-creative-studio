@@ -107,20 +107,51 @@
   </div>
 
   <!-- Chat Input -->
-  <div class="mt-2 flex gap-2 items-center">
-    <button mat-icon-button (click)="openImageSelector()" class="text-gray-400 hover:text-white transition-colors"
-      matTooltip="Attach Reference Images">
-      <mat-icon>image</mat-icon>
-    </button>
-    <input
-      #chatInput
-      type="text"
-      placeholder="Ask Izumi..."
-      class="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
-      (keyup.enter)="sendChatMessage(chatInput.value); chatInput.value = ''"
-    />
-    <studio-button variant="primary" size="medium" shape="circle" (click)="sendChatMessage(chatInput.value); chatInput.value = ''">
-      <mat-icon class="!w-5 !h-5">send</mat-icon>
-    </studio-button>
+  <div class="mt-2 flex flex-col gap-2">
+    <div class="flex gap-2 items-end bg-gray-800 border border-gray-700 rounded-2xl px-3 py-2 focus-within:border-blue-500">
+      <button (click)="openImageSelector()" class="p-1.5 hover:bg-neutral-700 rounded-lg text-gray-400 hover:text-white flex items-center justify-center flex-shrink-0 h-8 w-8 transition-colors"
+        matTooltip="Attach Reference Images">
+        <mat-icon class="!text-[18px] !w-[18px] !h-[18px] flex items-center justify-center leading-none">image</mat-icon>
+      </button>
+      
+      <textarea
+        #chatInput
+        placeholder="Ask Izumi..."
+        class="flex-1 bg-transparent text-sm text-white focus:outline-none resize-none max-h-48 overflow-y-auto py-1 px-1 leading-relaxed"
+        rows="1"
+        [ngModel]="chatInputValue()"
+        (input)="onInputResize($event)"
+        (keydown)="onKeyDown($event)"
+      ></textarea>
+      
+      <button (click)="toggleInputExpand()" class="p-1.5 hover:bg-neutral-700 rounded-lg text-gray-400 hover:text-white flex items-center justify-center flex-shrink-0 h-8 w-8 transition-colors" matTooltip="Expand input">
+        <mat-icon class="!text-[18px] !w-[18px] !h-[18px] flex items-center justify-center leading-none">open_in_full</mat-icon>
+      </button>
+      
+      <studio-button variant="primary" size="medium" shape="circle" class="flex-shrink-0 flex items-center justify-center" (click)="submitChat()">
+        <mat-icon class="!w-5 !h-5 flex items-center justify-center">send</mat-icon>
+      </studio-button>
+    </div>
   </div>
+
+  <!-- Glassmorphic Expanded Popup Template (occupies the full independent screen via MatDialog) -->
+  <ng-template #expandDialog>
+    <div class="bg-neutral-900 rounded-3xl p-6 flex flex-col h-[60vh] min-w-[400px] max-w-[900px] shadow-2xl animate-fadeIn">
+      <div class="flex justify-between items-center mb-4">
+        <h5 class="text-lg font-semibold text-white flex items-center gap-2">
+          <mat-icon class="text-blue-400">auto_awesome</mat-icon> Ask Izumi
+        </h5>
+        <button mat-icon-button (click)="toggleInputExpand()" class="text-gray-400 hover:text-white" matTooltip="Minimize">
+          <mat-icon>close_fullscreen</mat-icon>
+        </button>
+      </div>
+      <textarea
+        placeholder="Ask Izumi..."
+        class="flex-1 bg-transparent text-xl text-neutral-200 placeholder:text-neutral-600 resize-none focus:outline-none py-2 overflow-y-auto leading-relaxed custom-scrollbar"
+        [ngModel]="chatInputValue()"
+        (ngModelChange)="chatInputValue.set($event)"
+      ></textarea>
+
+    </div>
+  </ng-template>
 </div>

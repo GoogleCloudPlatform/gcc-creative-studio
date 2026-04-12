@@ -32,6 +32,7 @@ import {WorkflowListComponent} from './workflows/workflow-list/workflow-list.com
 import {WorkbenchComponent} from './workbench/workbench.component';
 import {UpscaleComponent} from './upscale/upscale.component';
 import {UserRolesEnum} from './common/models/user.model';
+import {ProjectsComponent} from './projects/projects.component';
 
 const routes: Routes = [
   {path: 'login', component: LoginComponent},
@@ -47,6 +48,11 @@ const routes: Routes = [
   {
     path: 'workbench',
     component: WorkbenchComponent,
+    canActivate: [AuthGuardService],
+  },
+  {
+    path: 'projects',
+    component: ProjectsComponent,
     canActivate: [AuthGuardService],
   },
   // When a user goes to '/gallery', show the main feed.

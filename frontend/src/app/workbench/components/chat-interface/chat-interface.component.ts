@@ -23,12 +23,14 @@ import {
   ViewChild,
   ElementRef,
   AfterViewChecked,
+  TemplateRef,
 } from '@angular/core';
 import {
   AgentChatService,
   SSECallbacks,
 } from '../../services/agent-chat.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
+import {StoryboardService} from '../../../services/storyboard/storyboard.service';
 import {CommonModule} from '@angular/common';
 import {FormsModule} from '@angular/forms';
 import {MatIconModule} from '@angular/material/icon';
@@ -62,6 +64,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   private workspaceStateService = inject(WorkspaceStateService);
   private dialog = inject(MatDialog);
   private snackBar = inject(MatSnackBar);
+  private storyboardService = inject(StoryboardService);
 
   sessions = signal<any[]>([]);
   topics = signal<{[key: string]: any}>({});
@@ -69,6 +72,9 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   selectedImages = signal<(SourceAssetResponseDto | MediaItemSelection)[]>([]);
   isTyping = signal<boolean>(false);
   currentSessionId: string | null = null;
+
+  chatInputValue = signal<string>('');
+  isInputExpanded = signal<boolean>(false);
 
   availableAgents: DropdownOption[] = [
     {label: 'Creative Toolbox', value: 'creative_toolbox'},
@@ -84,6 +90,8 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   autoScrollEnabled = true;
 
   @ViewChild('chatContainer') private chatContainer!: ElementRef;
+  @ViewChild('expandDialog') expandDialog!: TemplateRef<any>;
+  private dialogRef: any = null;
 
   dropdownOptions = computed<DropdownOption[]>(() => {
     const currentTopics = this.topics();
@@ -448,6 +456,24 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                   if (wasNearBottom) {
                     this.shouldScrollToBottom = true;
                   }
+                } else if (result.storyboard_id) {
+                  this.isTyping.set(false);
+                  this.agentChatService.isGeneratingStoryboard.set(false);
+                  this.storyboardService
+                    .getStoryboard(result.storyboard_id)
+                    .subscribe({
+                      next: storyboard => {
+                        this.agentChatService.currentStoryboard.set(storyboard);
+                      },
+                      error: err => {
+                        console.error('Failed to fetch storyboard:', err);
+                        handleErrorSnackbar(
+                          this.snackBar,
+                          err,
+                          'Fetch Storyboard',
+                        );
+                      },
+                    });
                 } else {
                   const extracted = this.extractStoryboardData(result);
                   if (extracted) {
@@ -782,5 +808,62 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       if (asset.presignedUrl) return asset.presignedUrl;
       return `${environment.backendURL}/assets/source-assets/${asset.id}/download`;
     }
+  }
+
+  toggleInputExpand() {
+    if (this.isInputExpanded()) {
+      this.isInputExpanded.set(false);
+      if (this.dialogRef) {
+        this.dialogRef.close();
+        this.dialogRef = null;
+      }
+    } else {
+      this.isInputExpanded.set(true);
+      this.dialogRef = this.dialog.open(this.expandDialog, {
+        width: '60vw',
+        maxWidth: '900px',
+        panelClass: 'custom-glass-dialog',
+        disableClose: false,
+      });
+      this.dialogRef.afterClosed().subscribe(() => {
+        this.isInputExpanded.set(false);
+        this.dialogRef = null;
+      });
+    }
+  }
+
+  onInputResize(event: Event) {
+    const element = event.target as HTMLTextAreaElement;
+    this.chatInputValue.set(element.value);
+    element.style.height = 'auto';
+    element.style.height = `${element.scrollHeight}px`;
+  }
+
+  onKeyDown(event: KeyboardEvent) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      this.submitChat();
+    }
+  }
+
+  submitChat() {
+    const val = this.chatInputValue();
+    if ((!val || !val.trim()) && this.selectedImages().length === 0) return;
+    this.sendChatMessage(val);
+    this.chatInputValue.set('');
+
+    if (this.dialogRef) {
+      this.dialogRef.close();
+    }
+
+    // Reset height of textarea in base input area
+    setTimeout(() => {
+      const textarea = document.querySelector(
+        'textarea[placeholder="Ask Izumi..."]',
+      ) as HTMLTextAreaElement;
+      if (textarea) {
+        textarea.style.height = 'auto';
+      }
+    }, 0);
   }
 }

@@ -184,6 +184,7 @@ async def chat(
                 if p:
                     sanitized_parts.append(p)
             injections = []
+            workspace_id_final = body.get("workspaceId")
             if workspace_id_final:
                 injections.append(
                     f"Use Workspace ID {workspace_id_final} for any tool calls that require a workspace_id"

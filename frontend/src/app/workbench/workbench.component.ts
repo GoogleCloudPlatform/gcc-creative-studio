@@ -31,6 +31,8 @@ import {
 } from '@angular/core';
 import {isPlatformBrowser} from '@angular/common';
 import {MatIconRegistry} from '@angular/material/icon';
+import {ActivatedRoute} from '@angular/router';
+import {ProjectService} from '../services/project/project.service';
 import {
   DomSanitizer,
   SafeResourceUrl,
@@ -179,6 +181,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   private sanitizer = inject(DomSanitizer);
   private workbenchService = inject(WorkbenchService);
   private agentChatService = inject(AgentChatService);
+  private route = inject(ActivatedRoute);
+  private projectService = inject(ProjectService);
 
   isDownloading = signal(false);
 
@@ -348,59 +352,81 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   private chatSub?: any;
 
   ngOnInit() {
+    this.route.queryParams.subscribe(params => {
+      const projectId = params['projectId'];
+      if (projectId) {
+        this.loadProjectData(projectId);
+      }
+    });
+
     this.chatSub = this.agentChatService.videoGenerated$.subscribe(
       (data: any) => {
         if (!data) return;
-        if (data.clips && data.assets) {
-          // Handle VideoTimeline
-          const timeline = data as {assets: any[]; clips: any[]};
-          const idMap = new Map<string, string>(); // Map backend ID to frontend ID
-          // 1. Process and add assets
-          timeline.assets.forEach(asset => {
-            const newAsset = this.processCloudMediaResult({
-              presignedUrl: asset.url,
-              originalFilename: asset.name,
-              mimeType: 'video/mp4',
-              presignedThumbnailUrl: asset.thumbnail || asset.url,
-            } as SourceAssetResponseDto);
-            if (newAsset) {
-              idMap.set(asset.id, newAsset.id);
-            }
-          });
-          // 2. Process and add clips
-          const newClips: TimelineClip[] = timeline.clips.map(clip => ({
-            id: Math.random().toString(36).substr(2, 9),
-            assetId: idMap.get(clip.assetId) || clip.assetId,
-            startTime: clip.startTime,
-            duration: clip.duration,
-            offset: clip.offset,
-            trackIndex: clip.trackIndex,
-            color: clip.color || '#3b82f6',
-          }));
-          this.timelineClips.update(prev => [...prev, ...newClips]);
-          this.refreshTimelineLayout();
-        } else {
-          // Handle single asset (legacy or other)
-          const assetData = data;
-          const newAsset = this.processCloudMediaResult({
-            presignedUrl: assetData.fileUri || assetData.url || assetData.uri,
-            originalFilename:
-              assetData.filename || assetData.name || 'Agent Generated Video',
-            mimeType: 'video/mp4',
-            presignedThumbnailUrl:
-              assetData.thumbnail ||
-              assetData.fileUri ||
-              assetData.url ||
-              assetData.uri,
-          } as SourceAssetResponseDto);
-          if (newAsset) {
-            this.addToTimeline(newAsset);
-          }
-        }
-        // 3. Clear Active Right Sidebar Tool (Removed to keep agent open!)
-        // this.activeToolButton.set(null);
+        this.processGeneratedData(data);
       },
     );
+  }
+
+  loadProjectData(projectId: number) {
+    this.projectService.getProject(projectId).subscribe({
+      next: project => {
+        if (project.timeline && project.timeline.data) {
+          this.processGeneratedData(project.timeline.data);
+        } else if (project.storyboard && project.storyboard.data) {
+          console.log('Loaded storyboard data', project.storyboard.data);
+        }
+      },
+      error: err => console.error('Failed to load project data', err),
+    });
+  }
+
+  processGeneratedData(data: any) {
+    if (data.clips && data.assets) {
+      // Handle VideoTimeline
+      const timeline = data as {assets: any[]; clips: any[]};
+      const idMap = new Map<string, string>(); // Map backend ID to frontend ID
+      // 1. Process and add assets
+      timeline.assets.forEach(asset => {
+        const newAsset = this.processCloudMediaResult({
+          presignedUrl: asset.url,
+          originalFilename: asset.name,
+          mimeType: 'video/mp4',
+          presignedThumbnailUrl: asset.thumbnail || asset.url,
+        } as SourceAssetResponseDto);
+        if (newAsset) {
+          idMap.set(asset.id, newAsset.id);
+        }
+      });
+      // 2. Process and add clips
+      const newClips: TimelineClip[] = timeline.clips.map(clip => ({
+        id: Math.random().toString(36).substr(2, 9),
+        assetId: idMap.get(clip.assetId) || clip.assetId,
+        startTime: clip.startTime,
+        duration: clip.duration,
+        offset: clip.offset,
+        trackIndex: clip.trackIndex,
+        color: clip.color || '#3b82f6',
+      }));
+      this.timelineClips.update(prev => [...prev, ...newClips]);
+      this.refreshTimelineLayout();
+    } else {
+      // Handle single asset (legacy or other)
+      const assetData = data;
+      const newAsset = this.processCloudMediaResult({
+        presignedUrl: assetData.fileUri || assetData.url || assetData.uri,
+        originalFilename:
+          assetData.filename || assetData.name || 'Agent Generated Video',
+        mimeType: 'video/mp4',
+        presignedThumbnailUrl:
+          assetData.thumbnail ||
+          assetData.fileUri ||
+          assetData.url ||
+          assetData.uri,
+      } as SourceAssetResponseDto);
+      if (newAsset) {
+        this.addToTimeline(newAsset);
+      }
+    }
   }
 
   ngAfterViewInit() {

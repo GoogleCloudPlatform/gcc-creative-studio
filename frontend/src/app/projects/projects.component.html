@@ -1,0 +1,30 @@
+<div class="projects-container">
+  <h2>Projects</h2>
+  
+  <button mat-raised-button color="primary" (click)="createProject()">Create Project</button>
+
+  <div *ngIf="isLoading" class="loading-spinner">
+    <mat-spinner></mat-spinner>
+  </div>
+
+  <div *ngIf="!isLoading && projects.length === 0" class="no-projects">
+    <p>No projects found for this workspace.</p>
+  </div>
+
+  <div *ngIf="!isLoading && projects.length > 0" class="projects-list">
+    <mat-card *ngFor="let project of projects" (click)="goToWorkbench(project.id)" class="project-card">
+      <mat-card-header>
+        <mat-card-title>{{ project.name }}</mat-card-title>
+        <mat-card-subtitle>Created: {{ project.created_at | date }}</mat-card-subtitle>
+      </mat-card-header>
+      <mat-card-content>
+        <p *ngIf="project.storyboard">Storyboard: Available</p>
+        <p *ngIf="project.canvas">Canvas: Available</p>
+        <p *ngIf="project.timeline">Timeline: Available</p>
+      </mat-card-content>
+      <mat-card-actions>
+        <button mat-button color="warn" (click)="deleteProject(project.id, $event)">Delete</button>
+      </mat-card-actions>
+    </mat-card>
+  </div>
+</div>
