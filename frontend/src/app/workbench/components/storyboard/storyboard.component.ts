@@ -31,6 +31,7 @@ import {
   moveItemInArray,
 } from '@angular/cdk/drag-drop';
 import {AgentChatService} from '../../services/agent-chat.service';
+import {StoryboardService} from '../../../services/storyboard/storyboard.service';
 import {MatDialog} from '@angular/material/dialog';
 import {
   ImageSelectorComponent,
@@ -49,6 +50,7 @@ export interface Shot {
   imageUrl: string;
   characters: Character[];
   description: string;
+  assetId?: string;
 }
 
 export interface Scene {
@@ -69,6 +71,7 @@ export interface Scene {
 export class StoryboardComponent {
   private agentChatService = inject(AgentChatService);
   private dialog = inject(MatDialog);
+  private storyboardService = inject(StoryboardService);
 
   // Navigation State
   activeTab = signal<'characters' | 'scenes'>('scenes');
@@ -100,13 +103,16 @@ export class StoryboardComponent {
               shots: [
                 {
                   id: `shot-${idx + 1}-1`,
-                  // Use generated asset URL if available, otherwise fallback to placeholder
+                  // Use generated asset URL if available, otherwise fallback to old structure or placeholder
                   imageUrl:
+                    s.first_frame_generated_url ||
                     s.first_frame_prompt?.generated_asset_url ||
                     'assets/images/storyboard-default.png',
-                  assetId: s.first_frame_prompt?.asset_id,
+                  assetId: s.first_frame_prompt?.asset_id || s.first_frame_media_item_id,
                   characters: [],
                   description:
+                    s.video_description ||
+                    s.first_frame_description ||
                     s.video_prompt?.description ||
                     s.first_frame_prompt?.description ||
                     'No description provided',
@@ -166,6 +172,7 @@ export class StoryboardComponent {
   stopEditTitle(scene: Scene) {
     scene.isEditingTitle = false;
     this.scenes.update(s => [...s]);
+    this.updateStoryboard();
   }
   onDeleteScene(scene: Scene) {
     const currentScenes = this.scenes();
@@ -253,8 +260,83 @@ export class StoryboardComponent {
           // Update the specific shot's imageUrl directly!
           shot.imageUrl = newUrl;
           this.scenes.update(scenes => [...scenes]); // Trigger reactivity
+          this.updateStoryboard();
         }
       }
     });
+  }
+
+  updateStoryboard() {
+    const sb = this.agentChatService.currentStoryboard() as any;
+    console.log('updateStoryboard called. currentStoryboard:', sb);
+    if (!sb || !sb.id) {
+      console.warn('Cannot update storyboard: missing storyboard or id');
+      return;
+    }
+    
+    const currentScenes = this.scenes();
+    console.log('currentScenes in component:', currentScenes);
+    const scenesForBackend = currentScenes.map((scene, idx) => {
+      const shot = scene.shots[0]; // We only support 1 shot per scene for now
+      
+      // Try to keep existing data from the original scene if available
+      const originalScene = sb.scenes && sb.scenes[idx] ? sb.scenes[idx] : {};
+      
+      return {
+        topic: scene.title,
+        duration_seconds: originalScene.duration_seconds || 4.0,
+        first_frame_prompt: {
+          description: shot.description,
+          generated_url: shot.imageUrl,
+          media_item_id: shot.assetId ? this.parseAssetId(shot.assetId, 'media_item') : originalScene.first_frame_media_item_id,
+          source_asset_id: shot.assetId ? this.parseAssetId(shot.assetId, 'source_asset') : originalScene.first_frame_source_asset_id,
+        },
+        video_prompt: {
+          description: shot.description,
+          duration_seconds: originalScene.video_duration_seconds || 4.0,
+          generated_url: originalScene.video_generated_url,
+          media_item_id: originalScene.video_media_item_id,
+          source_asset_id: originalScene.video_source_asset_id
+        },
+        voiceover_prompt: {
+          text: originalScene.voiceover_text,
+          gender: originalScene.voiceover_gender,
+          description: originalScene.voiceover_description,
+          media_item_id: originalScene.voiceover_media_item_id,
+          source_asset_id: originalScene.voiceover_source_asset_id
+        },
+        transition_hints: {
+          type: originalScene.transition_type,
+          duration: originalScene.transition_duration
+        },
+        audio_ambient_description: originalScene.audio_ambient_description,
+        audio_sfx_description: originalScene.audio_sfx_description
+      };
+    });
+
+    const updateData = {
+      scenes: scenesForBackend
+    };
+
+    this.storyboardService.updateStoryboard(sb.id, updateData).subscribe({
+      next: (res: any) => console.log('Storyboard updated successfully', res),
+      error: (err: any) => console.error('Error updating storyboard', err)
+    });
+  }
+
+  private parseAssetId(assetId: any, type: 'media_item' | 'source_asset'): number | null {
+    if (!assetId) return null;
+    
+    if (typeof assetId === 'number') {
+      return type === 'media_item' ? assetId : null;
+    }
+    
+    const assetIdStr = String(assetId);
+    const parts = assetIdStr.split(':');
+    if (parts.length === 2 && parts[0] === type) {
+      const id = parseInt(parts[1], 10);
+      return isNaN(id) ? null : id;
+    }
+    return null;
   }
 }

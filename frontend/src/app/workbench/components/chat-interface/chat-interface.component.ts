@@ -69,6 +69,9 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   sessions = signal<any[]>([]);
   topics = signal<{[key: string]: any}>({});
   chatMessages = signal<any[]>([]);
+  filteredChatMessages = computed(() => {
+    return this.chatMessages().filter(msg => !msg.isHidden);
+  });
   selectedImages = signal<(SourceAssetResponseDto | MediaItemSelection)[]>([]);
   isTyping = signal<boolean>(false);
   currentSessionId: string | null = null;
@@ -181,6 +184,22 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
 
   loadChatMessages(sessionId: string) {
     this.isTyping.set(true);
+
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    if (workspaceId) {
+      this.storyboardService
+        .getStoryboardForSession(workspaceId, sessionId)
+        .subscribe({
+          next: storyboards => {
+            if (storyboards && storyboards.length > 0) {
+              this.agentChatService.currentStoryboard.set(storyboards[0]);
+            }
+          },
+          error: err =>
+            console.error('Failed to fetch storyboard for session:', err),
+        });
+    }
+
     this.agentChatService.getMessages(sessionId).subscribe({
       next: (response: any) => {
         const messages = response.events || [];
@@ -198,22 +217,8 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                 if (partText.includes('[System Note:')) {
                   partText = partText.split('[System Note:')[0].trim();
                 }
-                const extraction = this.parseAndExtractJSONs(partText);
-                if (extraction.assets.length > 0) {
-                  assetMetadata = extraction.assets[0];
-                }
-                if (extraction.storyboards.length > 0) {
-                  storyboardMetadata = extraction.storyboards[0];
-                  this.agentChatService.currentStoryboard.set(
-                    storyboardMetadata,
-                  );
-                }
-                if (extraction.timelines && extraction.timelines.length > 0) {
-                  this.agentChatService.videoGenerated$.next(
-                    extraction.timelines[0],
-                  );
-                }
-                text += extraction.cleanText;
+                text += partText;
+                this.checkForStoryboardId(partText);
               }
               if (part.functionResponse?.response?.result) {
                 try {
@@ -240,17 +245,30 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                 }
               }
             }
+            const currentText = text.trim();
+            let isHidden = false;
+            if (currentText.startsWith('{') && currentText.endsWith('}')) {
+              try {
+                const parsed = JSON.parse(currentText);
+                if (parsed.campaign_brief || parsed.scenes || parsed.template_name) {
+                  isHidden = true;
+                }
+              } catch (e) {
+                // Not valid JSON
+              }
+            }
             return {
               sender: role === 'user' ? 'user' : 'agent',
               text: text,
               asset: assetMetadata,
               storyboard: storyboardMetadata,
+              isHidden: isHidden,
               timestamp: m.timestamp
                 ? new Date(m.timestamp * 1000)
                 : new Date(),
             };
           })
-          .filter((msg: any) => msg.text || msg.asset || msg.storyboard);
+          .filter((msg: any) => msg.text || msg.asset || msg.storyboard || msg.isHidden);
         this.chatMessages.set(mappedMessages);
         this.isTyping.set(false);
         this.shouldScrollToBottom = true;
@@ -423,6 +441,20 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                       .trim();
                   }
                 }
+                
+                // Check for JSON
+                const currentText = msgs[agentMessageIndex].text.trim();
+                if (currentText.startsWith('{')) {
+                  try {
+                    const parsed = JSON.parse(currentText);
+                    if (parsed.campaign_brief || parsed.scenes || parsed.template_name) {
+                      msgs[agentMessageIndex].isHidden = true;
+                    }
+                  } catch (e) {
+                    // Not complete JSON yet
+                  }
+                }
+                
                 return [...msgs];
               });
               if (wasNearBottom) {
@@ -538,6 +570,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
               this.agentChatService.currentStoryboard.set(sb);
               currentMsgs[agentMessageIndex].text = extraction.cleanText;
             }
+            this.checkForStoryboardId(msg.text);
             if (
               extraction.assets.length > 0 ||
               extraction.storyboards.length > 0
@@ -744,6 +777,23 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     }
 
     return {assets, storyboards, timelines, cleanText: modifiedText};
+  }
+
+  private checkForStoryboardId(text: string) {
+    const idMatch = text.match(/\[ID:\s*([^\]]+)\]/);
+    if (idMatch) {
+      const storyboardId = idMatch[1];
+      const numericId = storyboardId.split('_').pop();
+      if (numericId) {
+        const id = parseInt(numericId, 10);
+        if (!isNaN(id)) {
+          this.storyboardService.getStoryboard(id).subscribe({
+            next: sb => this.agentChatService.currentStoryboard.set(sb),
+            error: err => console.error('Failed to fetch storyboard:', err),
+          });
+        }
+      }
+    }
   }
 
   // --- Image Selector Methods ---

@@ -1,3 +1,17 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """simplify schema to storyboard focus
 
 Revision ID: ae0287db1562
@@ -12,38 +26,87 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'ae0287db1562'
-down_revision: Union[str, Sequence[str], None] = ('6fe30cbfe2c2', '5ec709cf70e9')
+revision: str = "ae0287db1562"
+down_revision: Union[str, Sequence[str], None] = (
+    "6fe30cbfe2c2",
+    "5ec709cf70e9",
+)
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
     # Alter kept tables
-    op.add_column('storyboards', sa.Column('user_id', sa.Integer(), nullable=False))
-    op.add_column('storyboards', sa.Column('workspace_id', sa.Integer(), nullable=False))
-    op.create_foreign_key('storyboards_workspace_id_fkey', 'storyboards', 'workspaces', ['workspace_id'], ['id'])
-    op.create_foreign_key('storyboards_user_id_fkey', 'storyboards', 'users', ['user_id'], ['id'])
-    op.drop_column('storyboards', 'project_id')
-    
-    op.add_column('timelines', sa.Column('storyboard_id', sa.Integer(), nullable=False))
-    op.create_foreign_key('timelines_storyboard_id_fkey', 'timelines', 'storyboards', ['storyboard_id'], ['id'])
-    op.drop_column('timelines', 'project_id')
+    op.add_column(
+        "storyboards", sa.Column("user_id", sa.Integer(), nullable=False)
+    )
+    op.add_column(
+        "storyboards", sa.Column("workspace_id", sa.Integer(), nullable=False)
+    )
+    op.create_foreign_key(
+        "storyboards_workspace_id_fkey",
+        "storyboards",
+        "workspaces",
+        ["workspace_id"],
+        ["id"],
+    )
+    op.create_foreign_key(
+        "storyboards_user_id_fkey", "storyboards", "users", ["user_id"], ["id"]
+    )
+    op.drop_column("storyboards", "project_id")
 
+    op.add_column(
+        "timelines", sa.Column("storyboard_id", sa.Integer(), nullable=False)
+    )
+    op.create_foreign_key(
+        "timelines_storyboard_id_fkey",
+        "timelines",
+        "storyboards",
+        ["storyboard_id"],
+        ["id"],
+    )
+    op.drop_column("timelines", "project_id")
 
 
 def downgrade() -> None:
     # Restore timelines columns and constraints
-    op.add_column('timelines', sa.Column('project_id', sa.INTEGER(), autoincrement=False, nullable=False))
-    op.drop_constraint('timelines_storyboard_id_fkey', 'timelines', type_='foreignkey')
-    op.create_foreign_key('timelines_project_id_fkey', 'timelines', 'projects', ['project_id'], ['id'])
-    op.drop_column('timelines', 'storyboard_id')
+    op.add_column(
+        "timelines",
+        sa.Column(
+            "project_id", sa.INTEGER(), autoincrement=False, nullable=False
+        ),
+    )
+    op.drop_constraint(
+        "timelines_storyboard_id_fkey", "timelines", type_="foreignkey"
+    )
+    op.create_foreign_key(
+        "timelines_project_id_fkey",
+        "timelines",
+        "projects",
+        ["project_id"],
+        ["id"],
+    )
+    op.drop_column("timelines", "storyboard_id")
 
     # Restore storyboards columns and constraints
-    op.add_column('storyboards', sa.Column('project_id', sa.INTEGER(), autoincrement=False, nullable=False))
-    op.drop_constraint('storyboards_workspace_id_fkey', 'storyboards', type_='foreignkey')
-    op.drop_constraint('storyboards_user_id_fkey', 'storyboards', type_='foreignkey')
-    op.create_foreign_key('storyboards_project_id_fkey', 'storyboards', 'projects', ['project_id'], ['id'])
-    op.drop_column('storyboards', 'workspace_id')
-    op.drop_column('storyboards', 'user_id')
-
+    op.add_column(
+        "storyboards",
+        sa.Column(
+            "project_id", sa.INTEGER(), autoincrement=False, nullable=False
+        ),
+    )
+    op.drop_constraint(
+        "storyboards_workspace_id_fkey", "storyboards", type_="foreignkey"
+    )
+    op.drop_constraint(
+        "storyboards_user_id_fkey", "storyboards", type_="foreignkey"
+    )
+    op.create_foreign_key(
+        "storyboards_project_id_fkey",
+        "storyboards",
+        "projects",
+        ["project_id"],
+        ["id"],
+    )
+    op.drop_column("storyboards", "workspace_id")
+    op.drop_column("storyboards", "user_id")

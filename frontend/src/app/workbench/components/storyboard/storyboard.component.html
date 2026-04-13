@@ -111,6 +111,7 @@
                 <textarea 
                   class="sb-shot-desc" 
                   [(ngModel)]="shot.description"
+                  (blur)="updateStoryboard()"
                   placeholder="Shot description"
                 ></textarea>
               </div>

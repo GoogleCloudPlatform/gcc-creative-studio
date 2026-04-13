@@ -1,13 +1,29 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
-import { Router } from '@angular/router';
-import { WorkspaceStateService } from '../services/workspace/workspace-state.service';
-import { ProjectService } from '../services/project/project.service';
-import { Subscription } from 'rxjs';
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import {Component, OnInit, OnDestroy} from '@angular/core';
+import {Router} from '@angular/router';
+import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
+import {ProjectService} from '../services/project/project.service';
+import {Subscription} from 'rxjs';
 
 @Component({
   selector: 'app-projects',
   templateUrl: './projects.component.html',
-  styleUrl: './projects.component.scss'
+  styleUrl: './projects.component.scss',
 })
 export class ProjectsComponent implements OnInit, OnDestroy {
   projects: any[] = [];
@@ -18,7 +34,7 @@ export class ProjectsComponent implements OnInit, OnDestroy {
   constructor(
     private projectService: ProjectService,
     private router: Router,
-    private workspaceStateService: WorkspaceStateService
+    private workspaceStateService: WorkspaceStateService,
   ) {}
 
   ngOnInit(): void {
@@ -28,7 +44,7 @@ export class ProjectsComponent implements OnInit, OnDestroy {
         if (id) {
           this.loadProjects(id);
         }
-      })
+      }),
     );
   }
 
@@ -38,33 +54,33 @@ export class ProjectsComponent implements OnInit, OnDestroy {
 
   loadProjects(workspaceId: number): void {
     this.isLoading = true;
-    this.projectService.getProjects(workspaceId)
-      .subscribe({
-        next: (data) => {
-          this.projects = data;
-          this.isLoading = false;
-        },
-        error: (err) => {
-          console.error('Failed to load projects', err);
-          this.isLoading = false;
-        }
-      });
+    this.projectService.getProjects(workspaceId).subscribe({
+      next: data => {
+        this.projects = data;
+        this.isLoading = false;
+      },
+      error: err => {
+        console.error('Failed to load projects', err);
+        this.isLoading = false;
+      },
+    });
   }
 
   goToWorkbench(projectId: number): void {
-    this.router.navigate(['/workbench'], { queryParams: { projectId: projectId } });
+    this.router.navigate(['/workbench'], {queryParams: {projectId: projectId}});
   }
 
   createProject(): void {
     if (!this.activeWorkspaceId) return;
     const name = prompt('Enter project name:');
     if (name) {
-      this.projectService.createProject(name, this.activeWorkspaceId)
+      this.projectService
+        .createProject(name, this.activeWorkspaceId)
         .subscribe({
-          next: (project) => {
+          next: project => {
             this.projects.push(project);
           },
-          error: (err) => console.error('Failed to create project', err)
+          error: err => console.error('Failed to create project', err),
         });
     }
   }
@@ -72,13 +88,12 @@ export class ProjectsComponent implements OnInit, OnDestroy {
   deleteProject(projectId: number, event: Event): void {
     event.stopPropagation(); // Prevent navigating to workbench
     if (confirm('Are you sure you want to delete this project?')) {
-      this.projectService.deleteProject(projectId)
-        .subscribe({
-          next: () => {
-            this.projects = this.projects.filter(p => p.id !== projectId);
-          },
-          error: (err) => console.error('Failed to delete project', err)
-        });
+      this.projectService.deleteProject(projectId).subscribe({
+        next: () => {
+          this.projects = this.projects.filter(p => p.id !== projectId);
+        },
+        error: err => console.error('Failed to delete project', err),
+      });
     }
   }
 }

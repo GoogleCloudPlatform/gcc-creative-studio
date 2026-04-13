@@ -164,6 +164,10 @@ async def chat(
         if workspaces:
             body["workspaceId"] = workspaces[0].id
 
+    session_id = body.get("sessionId")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="Missing sessionId")
+
     if "newMessage" in body:
         new_msg = body["newMessage"]
         if "parts" in new_msg and new_msg["parts"]:
@@ -189,6 +193,10 @@ async def chat(
                 injections.append(
                     f"Use Workspace ID {workspace_id_final} for any tool calls that require a workspace_id"
                 )
+            if session_id:
+                injections.append(
+                    f"Use Session ID {session_id} for any tool calls that require a session_id"
+                )
             if attached_assets:
                 asset_list = "\n".join([f"- {aid}" for aid in attached_assets])
                 injections.append(
@@ -208,10 +216,6 @@ async def chat(
                 if not text_part_found:
                     sanitized_parts.append({"text": injection_str})
             new_msg["parts"] = sanitized_parts
-
-    session_id = body.get("sessionId")
-    if not session_id:
-        raise HTTPException(status_code=400, detail="Missing sessionId")
 
     headers = {
         "Authorization": request.headers.get("Authorization") or "",
@@ -245,18 +249,87 @@ async def chat(
                             await db_session.commit()
                             return
 
-                        async for line in response.aiter_lines():
+                        async def emit_line(l: str):
                             evt = AgentChatEvent(
                                 user_id=user_id,
                                 session_id=session_id,
                                 payload=(
-                                    {"raw": f"{line}\n"}
-                                    if line
-                                    else {"raw": "\n"}
+                                    {"raw": f"{l}\n"} if l else {"raw": "\n"}
                                 ),
                             )
                             db_session.add(evt)
                             await db_session.commit()
+
+                        buffered_originals = []
+                        text_buffer = ""
+                        domain_keys = {
+                            "campaign_brief",
+                            "scenes",
+                            "timeline",
+                            "clips",
+                            "template_name",
+                        }
+
+                        async for line in response.aiter_lines():
+                            stripped_line = line.strip()
+                            effective_line = stripped_line
+                            if stripped_line.startswith("data:"):
+                                effective_line = stripped_line[5:].strip()
+
+                            try:
+                                # Parse the SSE event JSON
+                                event_data = json.loads(effective_line)
+                                if isinstance(event_data, dict):
+                                    # Extract text from the event
+                                    parts = event_data.get("content", {}).get("parts", [])
+                                    text_chunk = ""
+                                    for p in parts:
+                                        if isinstance(p, dict) and "text" in p:
+                                            text_chunk += p["text"]
+                                        elif isinstance(p, str):
+                                            text_chunk += p
+
+                                    # Check if we should be buffering
+                                    if text_chunk.strip().startswith("{") or text_buffer:
+                                        logger.info(f"Buffering text chunk: {text_chunk}")
+                                        text_buffer += text_chunk
+                                        buffered_originals.append(line)
+
+                                        try:
+                                            # Try to parse the accumulated text
+                                            data = json.loads(text_buffer.strip())
+                                            logger.info(f"Successfully parsed JSON from text buffer!")
+                                            if isinstance(data, dict) and any(
+                                                k in data for k in domain_keys
+                                            ):
+                                                logger.info("Detected domain model JSON in text buffer! Skipping.")
+                                                text_buffer = ""
+                                                buffered_originals = []
+                                                continue
+                                            else:
+                                                logger.info("Parsed JSON is not a domain model. Emitting buffered lines.")
+                                                for ol in buffered_originals:
+                                                    await emit_line(ol)
+                                                text_buffer = ""
+                                                buffered_originals = []
+                                                continue
+                                        except json.JSONDecodeError:
+                                            # Not complete JSON yet, keep buffering
+                                            logger.info("Text buffer not complete JSON yet, continue buffering...")
+                                            continue
+                            except json.JSONDecodeError:
+                                # Line is not valid JSON (maybe it's just text or heartbeat)
+                                pass
+
+                            # Normal line processing if not buffering
+                            if not text_buffer:
+                                await emit_line(line)
+
+                        # Emit any remaining buffered lines if stream ended
+                        if buffered_originals:
+                            logger.info("Stream ended, flushing remaining buffer.")
+                            for ol in buffered_originals:
+                                await emit_line(ol)
 
                         # Signal the frontend that the stream is complete
                         done_evt = AgentChatEvent(
