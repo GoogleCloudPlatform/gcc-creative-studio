@@ -584,6 +584,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                   }
                 } else if (result.clips && result.assets) {
                   this.isTyping.set(false);
+                  this.agentChatService.isGeneratingStoryboard.set(false);
                   this.agentChatService.videoGenerated$.next(result);
                 } else if (result.storyboard_id) {
                   this.isTyping.set(false);

@@ -204,11 +204,7 @@ export class AgentChatService {
         }
       }, 2500);
 
-      const videoSub = this.videoGenerated$.subscribe(() => {
-        console.log('Stopping poll because video was generated.');
-        clearInterval(pollInterval);
-        videoSub.unsubscribe();
-      });
+
     } catch (error) {
       if (callbacks.onError) callbacks.onError(error);
     }
