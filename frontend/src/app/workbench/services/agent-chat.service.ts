@@ -61,7 +61,7 @@ export class AgentChatService {
   currentStoryboard = signal<any>(null);
 
   // Agent Selection State
-  activeAgent = signal<string>('creative_toolbox');
+  activeAgent = signal<string>('ads_x_template');
   isGeneratingStoryboard = signal<boolean>(false);
 
   // Triggers video generation from the Storyboard component

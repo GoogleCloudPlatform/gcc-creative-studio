@@ -22,11 +22,12 @@
     </button>
   </div>
 
-  <!-- Agent Selector -->
+  <!-- Agent Selector (Hidden for now)
   <div class="mb-2 relative z-20">
     <studio-dropdown [options]="availableAgents" [value]="currentAgent" (valueChange)="onAgentChange($event)"
       placeholder="Select an Agent" size="small" class="w-full"></studio-dropdown>
   </div>
+  -->
 
   <!-- Session Selector -->
   <div class="mb-4 flex items-center gap-2 relative z-10" *ngIf="sessions().length > 0">
