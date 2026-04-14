@@ -186,8 +186,15 @@ export class AgentChatService {
                   }
                   if (callbacks.onMessage) callbacks.onMessage(parsed);
                 } catch (e) {
-                  console.error('Error parsing polled SSE data:', e, data);
-                  // We do not close the stream on a single parse error from Izumi
+                  console.warn('Polled data is not JSON, treating as text:', data);
+                  // Treat as text chunk
+                  if (callbacks.onMessage) {
+                    callbacks.onMessage({
+                      content: {
+                        parts: [{ text: data }]
+                      }
+                    });
+                  }
                 }
               }
             }
@@ -196,6 +203,12 @@ export class AgentChatService {
           console.error('Polling tick failed:', pollErr);
         }
       }, 2500);
+
+      const videoSub = this.videoGenerated$.subscribe(() => {
+        console.log('Stopping poll because video was generated.');
+        clearInterval(pollInterval);
+        videoSub.unsubscribe();
+      });
     } catch (error) {
       if (callbacks.onError) callbacks.onError(error);
     }

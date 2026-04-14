@@ -197,6 +197,14 @@ class VideoClip(Base):
 
     timeline: Mapped["Timeline"] = relationship(back_populates="video_clips")
 
+    @property
+    def presigned_url(self) -> str | None:
+        return getattr(self, "_presigned_url", None)
+
+    @presigned_url.setter
+    def presigned_url(self, value: str | None):
+        self._presigned_url = value
+
 
 class AudioClip(Base):
     __tablename__ = "audio_clips"

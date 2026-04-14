@@ -74,6 +74,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   });
   selectedImages = signal<(SourceAssetResponseDto | MediaItemSelection)[]>([]);
   isTyping = signal<boolean>(false);
+  isLoadingHistory = signal<boolean>(false);
   currentSessionId: string | null = null;
 
   chatInputValue = signal<string>('');
@@ -132,9 +133,16 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
 
     // Listen for cross-component triggers
     this.agentChatService.generateVideoRequest$.subscribe(() => {
-      this.sendChatMessage(
-        "Please generate the final video matching this storyboard's approved layout.",
-      );
+      const sb = this.agentChatService.currentStoryboard();
+      if (sb && sb.id) {
+        this.sendChatMessage(
+          `Please generate the final video for storyboard ID ${sb.id}.`,
+        );
+      } else {
+        this.sendChatMessage(
+          "Please generate the final video matching this storyboard's approved layout.",
+        );
+      }
     });
   }
 
@@ -164,7 +172,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   }
 
   loadChatSessions() {
-    this.isTyping.set(true);
+    this.isLoadingHistory.set(true);
     this.agentChatService.getSessions().subscribe({
       next: (sessions: any[]) => {
         this.sessions.set(sessions || []);
@@ -177,13 +185,14 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       },
       error: err => {
         console.error('Error fetching sessions:', err);
+        this.isLoadingHistory.set(false);
         this.startNewChat();
       },
     });
   }
 
   loadChatMessages(sessionId: string) {
-    this.isTyping.set(true);
+    this.isLoadingHistory.set(true);
 
     const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
     if (workspaceId) {
@@ -250,7 +259,11 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
             if (currentText.startsWith('{') && currentText.endsWith('}')) {
               try {
                 const parsed = JSON.parse(currentText);
-                if (parsed.campaign_brief || parsed.scenes || parsed.template_name) {
+                if (
+                  parsed.campaign_brief ||
+                  parsed.scenes ||
+                  parsed.template_name
+                ) {
                   isHidden = true;
                 }
               } catch (e) {
@@ -268,9 +281,12 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                 : new Date(),
             };
           })
-          .filter((msg: any) => msg.text || msg.asset || msg.storyboard || msg.isHidden);
+          .filter(
+            (msg: any) =>
+              msg.text || msg.asset || msg.storyboard || msg.isHidden,
+          );
         this.chatMessages.set(mappedMessages);
-        this.isTyping.set(false);
+        this.isLoadingHistory.set(false);
         this.shouldScrollToBottom = true;
         if (mappedMessages.length === 0) {
           this.addWelcomeMessage();
@@ -278,7 +294,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       },
       error: err => {
         console.error('Error loading messages:', err);
-        this.isTyping.set(false);
+        this.isLoadingHistory.set(false);
       },
     });
   }
@@ -413,6 +429,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     }
     this.shouldScrollToBottom = true;
     let agentMessageIndex = -1;
+    let isInJsonBlock = false;
     const callbacks: SSECallbacks<any> = {
       onMessage: (data: any) => {
         if (data.content && data.content.parts) {
@@ -421,40 +438,115 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
               const textChunk = part.text;
               this.isTyping.set(false);
               const wasNearBottom = this.isNearBottom();
+              const jsonStartIndex = textChunk.indexOf('{\n');
+              
               this.chatMessages.update(msgs => {
-                if (agentMessageIndex === -1) {
+                if (jsonStartIndex !== -1) {
+                  isInJsonBlock = true;
+                  const textPart = textChunk.substring(0, jsonStartIndex);
+                  const jsonPart = textChunk.substring(jsonStartIndex);
+                  
+                  // Handle text part if not empty
+                  if (textPart.trim()) {
+                    if (agentMessageIndex === -1 || msgs[agentMessageIndex].asset) {
+                      msgs.push({
+                        sender: 'agent',
+                        text: textPart,
+                        timestamp: new Date(),
+                      });
+                      agentMessageIndex = msgs.length - 1;
+                    } else {
+                      if (data.partial) {
+                        msgs[agentMessageIndex].text += textPart;
+                      } else {
+                        msgs[agentMessageIndex].text = textPart;
+                      }
+                    }
+                  }
+                  
+                  // Create a NEW hidden message for JSON data
                   msgs.push({
                     sender: 'agent',
-                    text: textChunk,
+                    text: jsonPart,
+                    isHidden: true,
                     timestamp: new Date(),
                   });
-                  agentMessageIndex = msgs.length - 1;
-                } else {
-                  if (data.partial) {
-                    msgs[agentMessageIndex].text += textChunk;
-                  } else {
-                    msgs[agentMessageIndex].text = textChunk;
+                  
+                  if (jsonPart.includes('}')) {
+                    isInJsonBlock = false;
                   }
-                  if (msgs[agentMessageIndex].text.includes('[System Note:')) {
+                  
+                  return [...msgs];
+                  
+                } else if (isInJsonBlock) {
+                  // Append to last hidden message
+                  let lastHiddenIndex = -1;
+                  for (let i = msgs.length - 1; i >= 0; i--) {
+                    if (msgs[i].isHidden) {
+                      lastHiddenIndex = i;
+                      break;
+                    }
+                  }
+                  
+                  if (lastHiddenIndex !== -1) {
+                    msgs[lastHiddenIndex].text += textChunk;
+                  } else {
+                    msgs.push({
+                      sender: 'agent',
+                      text: textChunk,
+                      isHidden: true,
+                      timestamp: new Date(),
+                    });
+                  }
+                  
+                  if (textChunk.includes('}')) {
+                    isInJsonBlock = false;
+                  }
+                  
+                  return [...msgs];
+                  
+                } else {
+                  const isJsonChunk = textChunk.trim().startsWith('{') || 
+                                      textChunk.includes('"scenes"') || 
+                                      textChunk.includes('"campaign_brief"') || 
+                                      textChunk.includes('"template_name"') ||
+                                      textChunk.includes('"campaign_name"') ||
+                                      textChunk.includes('"session_id"') ||
+                                      textChunk.includes('"workspace_id"') ||
+                                      textChunk.includes('Campaign Name:') ||
+                                      textChunk.includes('Strategic Context');
+                  
+                  if (isJsonChunk) {
+                    isInJsonBlock = true;
+                    msgs.push({
+                      sender: 'agent',
+                      text: textChunk,
+                      isHidden: true,
+                      timestamp: new Date(),
+                    });
+                    if (textChunk.includes('}')) {
+                      isInJsonBlock = false;
+                    }
+                  } else if (agentMessageIndex === -1 || msgs[agentMessageIndex].asset) {
+                    msgs.push({
+                      sender: 'agent',
+                      text: textChunk,
+                      timestamp: new Date(),
+                    });
+                    agentMessageIndex = msgs.length - 1;
+                  } else {
+                    if (data.partial) {
+                      msgs[agentMessageIndex].text += textChunk;
+                    } else {
+                      msgs[agentMessageIndex].text = textChunk;
+                    }
+                    if (msgs[agentMessageIndex].text.includes('[System Note:')) {
                     msgs[agentMessageIndex].text = msgs[agentMessageIndex].text
                       .split('[System Note:')[0]
                       .trim();
                   }
                 }
-                
-                // Check for JSON
-                const currentText = msgs[agentMessageIndex].text.trim();
-                if (currentText.startsWith('{')) {
-                  try {
-                    const parsed = JSON.parse(currentText);
-                    if (parsed.campaign_brief || parsed.scenes || parsed.template_name) {
-                      msgs[agentMessageIndex].isHidden = true;
-                    }
-                  } catch (e) {
-                    // Not complete JSON yet
-                  }
                 }
-                
                 return [...msgs];
               });
               if (wasNearBottom) {
@@ -481,13 +573,18 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                     } else {
                       msgs[agentMessageIndex].asset = result.asset;
                     }
-                    // Broadcast newly generated asset to the main Workbench
-                    this.agentChatService.videoGenerated$.next(result.asset);
+                    // Broadcast newly generated asset to the main Workbench ONLY if it's a video
+                    if (result.asset.type === 'video') {
+                      this.agentChatService.videoGenerated$.next(result.asset);
+                    }
                     return [...msgs];
                   });
                   if (wasNearBottom) {
                     this.shouldScrollToBottom = true;
                   }
+                } else if (result.clips && result.assets) {
+                  this.isTyping.set(false);
+                  this.agentChatService.videoGenerated$.next(result);
                 } else if (result.storyboard_id) {
                   this.isTyping.set(false);
                   this.agentChatService.isGeneratingStoryboard.set(false);

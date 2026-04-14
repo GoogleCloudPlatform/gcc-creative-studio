@@ -87,6 +87,9 @@
         [ngClass]="{'text-white': msg.sender === 'user', 'text-gray-500': msg.sender !== 'user'}">{{ msg.timestamp |
         date:'shortTime' }}</div>
     </div>
+    <div *ngIf="isLoadingHistory()" class="chat-bubble agent">
+      <div class="text-sm text-gray-400">Loading history...</div>
+    </div>
     <div *ngIf="isTyping()" class="chat-bubble agent">
       <div class="typing-indicator">
         <span></span><span></span><span></span>

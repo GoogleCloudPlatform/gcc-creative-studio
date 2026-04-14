@@ -138,9 +138,6 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
                     first_frame_source_asset_id=scene_data.get(
                         "first_frame_prompt", {}
                     ).get("source_asset_id"),
-                    first_frame_generated_url=scene_data.get(
-                        "first_frame_prompt", {}
-                    ).get("generated_url"),
                     video_description=scene_data.get("video_prompt", {}).get(
                         "description"
                     ),

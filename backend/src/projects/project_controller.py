@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, status
 from src.auth.auth_guard import get_current_user
 from src.users.user_model import UserModel
 from src.projects.project_repository import StoryboardRepository
+from src.images.repository.media_item_repository import MediaRepository
+from src.auth.iam_signer_credentials_service import IamSignerCredentials
 from src.projects.dto.project_dto import (
     StoryboardCreate,
     StoryboardUpdate,
@@ -51,6 +54,8 @@ async def get_storyboard(
     storyboard_id: int,
     current_user: UserModel = Depends(get_current_user),
     storyboard_repo: StoryboardRepository = Depends(),
+    media_repo: MediaRepository = Depends(),
+    iam_signer_credentials: IamSignerCredentials = Depends(),
 ):
     storyboard = await storyboard_repo.get_by_id_with_details(storyboard_id)
     if not storyboard:
@@ -59,6 +64,33 @@ async def get_storyboard(
         raise HTTPException(
             status_code=403, detail="Not authorized to access this storyboard"
         )
+
+    # Enrich scenes with presigned URLs for first frame if available
+    for scene in storyboard.scenes:
+        if scene.first_frame_media_item_id:
+            media_item = await media_repo.get_by_id(
+                scene.first_frame_media_item_id
+            )
+            if media_item and media_item.gcs_uris:
+                gcs_uri = media_item.gcs_uris[0]
+                # Using asyncio.to_thread since generate_presigned_url is likely sync
+                presigned_url = await asyncio.to_thread(
+                    iam_signer_credentials.generate_presigned_url, gcs_uri
+                )
+                scene.first_frame_generated_url = presigned_url
+
+    # Enrich timeline video clips with presigned URLs if available
+    if storyboard.timeline:
+        for clip in storyboard.timeline.video_clips:
+            if clip.media_item_id:
+                media_item = await media_repo.get_by_id(clip.media_item_id)
+                if media_item and media_item.gcs_uris:
+                    gcs_uri = media_item.gcs_uris[0]
+                    presigned_url = await asyncio.to_thread(
+                        iam_signer_credentials.generate_presigned_url, gcs_uri
+                    )
+                    clip.presigned_url = presigned_url
+
     return storyboard
 
 

@@ -35,13 +35,21 @@ def fixture_mock_user_service():
     return service
 
 
+@pytest.fixture(name="mock_request")
+def fixture_mock_request():
+    class MockRequest:
+        def __init__(self, headers=None):
+            self.headers = headers or {}
+    return MockRequest()
+
+
 class TestGetCurrentUser:
     """Tests for get_current_user dependency."""
 
     @pytest.mark.anyio
     @patch("src.auth.auth_guard.auth.verify_id_token")
     async def test_get_current_user_local_success(
-        self, mock_verify, mock_user_service
+        self, mock_verify, mock_user_service, mock_request
     ):
         # Setup: Local environment
         config_service.ENVIRONMENT = "local"
@@ -56,6 +64,7 @@ class TestGetCurrentUser:
         }
 
         user = await get_current_user(
+            request=mock_request,
             token="valid_token",
             user_service=mock_user_service,
         )
@@ -71,14 +80,16 @@ class TestGetCurrentUser:
     @pytest.mark.anyio
     @patch("src.auth.auth_guard.auth.verify_id_token")
     async def test_get_current_user_no_email(
-        self, mock_verify, mock_user_service
+        self, mock_verify, mock_user_service, mock_request
     ):
         config_service.ENVIRONMENT = "local"
         mock_verify.return_value = {"name": "Test User"}  # Missing email
 
         with pytest.raises(HTTPException) as exc_info:
             await get_current_user(
-                token="valid_token", user_service=mock_user_service
+                request=mock_request,
+                token="valid_token",
+                user_service=mock_user_service,
             )
 
         assert exc_info.value.status_code == 403
@@ -87,9 +98,7 @@ class TestGetCurrentUser:
     @pytest.mark.anyio
     @patch("src.auth.auth_guard.auth.verify_id_token")
     async def test_get_current_user_allowed_orgs_fail(
-        self,
-        mock_verify,
-        mock_user_service,
+        self, mock_verify, mock_user_service, mock_request
     ):
         config_service.ENVIRONMENT = "local"
         config_service.ALLOWED_ORGS_STR = "allowed.com"
@@ -102,7 +111,9 @@ class TestGetCurrentUser:
 
         with pytest.raises(HTTPException) as exc_info:
             await get_current_user(
-                token="valid_token", user_service=mock_user_service
+                request=mock_request,
+                token="valid_token",
+                user_service=mock_user_service,
             )
 
         assert exc_info.value.status_code == 401

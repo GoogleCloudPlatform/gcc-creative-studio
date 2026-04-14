@@ -84,6 +84,12 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     'gallery' | 'audio' | 'stories' | 'edit' | 'agent' | null
   >(null);
 
+  // Double buffering signals
+  activeVideoPlayer = signal<'A' | 'B'>('A');
+  videoASrc = signal<SafeUrl | string>('');
+  videoBSrc = signal<SafeUrl | string>('');
+  lastClipId: string | null = null;
+
   // Simple tab between video/audio assets (UX only)
   activeTab = signal<'video' | 'audio'>('video');
 
@@ -143,6 +149,18 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     );
   });
 
+  nextVideoClip = computed(() => {
+    const time = this.currentTime();
+    const clips = this.videoClips();
+    const currentIndex = clips.findIndex(
+      c => time >= c.startTime && time < c.startTime + c.duration,
+    );
+    if (currentIndex >= 0 && currentIndex < clips.length - 1) {
+      return clips[currentIndex + 1];
+    }
+    return null;
+  });
+
   activeAudioClips = computed(() => {
     const time = this.currentTime();
     return this.audioTracks().map(track =>
@@ -172,7 +190,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   animationFrameId: any;
 
   // View Children
-  @ViewChild('mainVideo') mainVideo!: ElementRef<HTMLVideoElement>;
+  @ViewChild('videoA') videoA!: ElementRef<HTMLVideoElement>;
+  @ViewChild('videoB') videoB!: ElementRef<HTMLVideoElement>;
   @ViewChildren('bgAudio') bgAudios!: QueryList<ElementRef<HTMLAudioElement>>;
   @ViewChild('timelineContainer')
   timelineContainer!: ElementRef<HTMLDivElement>;
@@ -288,11 +307,50 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         this.setPath(`${this.path}/web-stories.svg`),
       );
 
+    // Effect to manage double buffering sources
+    effect(
+      () => {
+        const currentClip = this.activeVideoClip();
+        const nextClip = this.nextVideoClip();
+
+        if (currentClip && currentClip.id !== this.lastClipId) {
+          this.lastClipId = currentClip.id;
+          this.activeVideoPlayer.update(p => (p === 'A' ? 'B' : 'A'));
+        }
+
+        const currentAsset = currentClip
+          ? this.assets().find(a => a.id === currentClip.assetId)
+          : null;
+        const nextAsset = nextClip
+          ? this.assets().find(a => a.id === nextClip.assetId)
+          : null;
+
+        const currentPlayer = this.activeVideoPlayer();
+
+        if (currentPlayer === 'A') {
+          if (currentAsset) this.videoASrc.set(currentAsset.safeUrl);
+          if (nextAsset) this.videoBSrc.set(nextAsset.safeUrl);
+        } else {
+          if (currentAsset) this.videoBSrc.set(currentAsset.safeUrl);
+          if (nextAsset) this.videoASrc.set(nextAsset.safeUrl);
+        }
+      },
+      {allowSignalWrites: true},
+    );
+
     // Setup an effect to handle video seeking/sync when active clip changes or time jumps
     effect(() => {
       if (!this.isBrowser) return;
 
-      const vid = this.mainVideo?.nativeElement;
+      const currentPlayer = this.activeVideoPlayer();
+      const vid =
+        currentPlayer === 'A'
+          ? this.videoA?.nativeElement
+          : this.videoB?.nativeElement;
+      const inactiveVid =
+        currentPlayer === 'A'
+          ? this.videoB?.nativeElement
+          : this.videoA?.nativeElement;
       const vClip = this.activeVideoClip();
       const curTime = this.currentTime();
 
@@ -302,10 +360,21 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         if (Math.abs(vid.currentTime - fileTime) > 0.5)
           vid.currentTime = fileTime;
         if (this.isPlaying() && vid.paused && vid.readyState >= 3)
-          vid.play().catch(e => console.error('[VideoSync] Play failed', e));
+          vid
+            .play()
+            .catch((e: any) => console.error('[VideoSync] Play failed', e));
         if (!this.isPlaying() && !vid.paused) vid.pause();
+
+        // Make sure inactive player is paused
+        if (inactiveVid && !inactiveVid.paused) inactiveVid.pause();
       } else if (vid) {
         vid.pause();
+      }
+
+      // If no clip, pause both
+      if (!vClip) {
+        if (this.videoA?.nativeElement) this.videoA.nativeElement.pause();
+        if (this.videoB?.nativeElement) this.videoB.nativeElement.pause();
       }
 
       // Audio Sync (Multi-track)
@@ -407,7 +476,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         trackIndex: clip.trackIndex,
         color: clip.color || '#3b82f6',
       }));
-      this.timelineClips.update(prev => [...prev, ...newClips]);
+      this.timelineClips.set(newClips);
       this.refreshTimelineLayout();
     } else {
       // Handle single asset (legacy or other)

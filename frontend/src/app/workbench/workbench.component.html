@@ -455,6 +455,7 @@
         <div
           *ngIf="activeToolButton() !== 'agent'"
           class="relative w-full flex-1 flex items-center justify-center group bg-black/20 rounded-lg overflow-hidden"
+          style="max-height: 60vh;"
         >
           <!-- Placeholder when no video (Empty State) -->
           <div
@@ -525,14 +526,22 @@
 
           <!-- The Video Element -->
           <video
-            #mainVideo
+            #videoA
             class="max-w-full max-h-full object-contain shadow-2xl rounded-lg"
-            [class.hidden]="!activeVideoClip()"
+            [class.hidden]="activeVideoPlayer() !== 'A' || !activeVideoClip()"
             [style.filter]="videoFilter()"
-            [src]="activeVideoSrc()"
+            [src]="videoASrc()"
             [muted]="true"
             (loadedmetadata)="onMetadataLoaded()"
-            (ended)="onVideoEnded()"
+          ></video>
+          <video
+            #videoB
+            class="max-w-full max-h-full object-contain shadow-2xl rounded-lg"
+            [class.hidden]="activeVideoPlayer() !== 'B' || !activeVideoClip()"
+            [style.filter]="videoFilter()"
+            [src]="videoBSrc()"
+            [muted]="true"
+            (loadedmetadata)="onMetadataLoaded()"
           ></video>
 
           <!-- Hidden Audio (Multi-track) -->
