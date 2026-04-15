@@ -55,7 +55,7 @@ dependencies = [
 dev = [
     "ruff>=0.12.4",
     "black>=25.1.0",
-    "pytest>=8.4.1",
+    "pytest>=9.0.3",
     "pytest-cov",
     "pytest-watch",
     "pytest-asyncio>=0.23.5",
