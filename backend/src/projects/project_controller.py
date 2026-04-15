@@ -129,15 +129,18 @@ async def update_storyboard(
 
     if (
         storyboard_update.scenes is not None
+        or storyboard_update.bg_music_description is not None
         or storyboard_update.timeline_data is not None
     ):
+        storyboard_data = {}
+        if storyboard_update.scenes is not None:
+            storyboard_data["scenes"] = storyboard_update.scenes
+        if storyboard_update.bg_music_description is not None:
+            storyboard_data["background_music_prompt"] = {"description": storyboard_update.bg_music_description}
+            
         updated_storyboard = await storyboard_repo.update_storyboard_data(
             storyboard_id=storyboard_id,
-            storyboard_data=(
-                {"scenes": storyboard_update.scenes}
-                if storyboard_update.scenes
-                else None
-            ),
+            storyboard_data=storyboard_data if storyboard_data else None,
             timeline_data=storyboard_update.timeline_data,
         )
         return updated_storyboard
