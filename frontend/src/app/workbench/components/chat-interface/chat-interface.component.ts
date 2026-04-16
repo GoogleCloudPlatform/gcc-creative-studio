@@ -202,6 +202,8 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
           next: storyboards => {
             if (storyboards && storyboards.length > 0) {
               this.agentChatService.currentStoryboard.set(storyboards[0]);
+            } else {
+              this.agentChatService.currentStoryboard.set(null);
             }
           },
           error: err =>
@@ -338,6 +340,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
         this.sessions.update(s => [session, ...s]);
         this.currentSessionId = session.id;
         this.chatMessages.set([]);
+        this.agentChatService.currentStoryboard.set(null);
         this.addWelcomeMessage();
         this.shouldScrollToBottom = true;
       },

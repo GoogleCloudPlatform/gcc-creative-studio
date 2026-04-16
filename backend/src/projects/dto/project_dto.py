@@ -80,6 +80,7 @@ class AudioClipDTO(BaseModel):
     trim_offset: float
     trim_duration: Optional[float] = None
     volume: float
+    presigned_url: Optional[str] = None
 
 
 # Timeline DTO

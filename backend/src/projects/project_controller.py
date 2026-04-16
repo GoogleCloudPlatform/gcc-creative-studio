@@ -79,9 +79,19 @@ async def get_storyboard(
                 )
                 scene.first_frame_generated_url = presigned_url
 
-    # Enrich timeline video clips with presigned URLs if available
+    # Enrich timeline video and audio clips with presigned URLs if available
     if storyboard.timeline:
         for clip in storyboard.timeline.video_clips:
+            if clip.media_item_id:
+                media_item = await media_repo.get_by_id(clip.media_item_id)
+                if media_item and media_item.gcs_uris:
+                    gcs_uri = media_item.gcs_uris[0]
+                    presigned_url = await asyncio.to_thread(
+                        iam_signer_credentials.generate_presigned_url, gcs_uri
+                    )
+                    clip.presigned_url = presigned_url
+                    
+        for clip in storyboard.timeline.audio_clips:
             if clip.media_item_id:
                 media_item = await media_repo.get_by_id(clip.media_item_id)
                 if media_item and media_item.gcs_uris:
@@ -125,6 +135,11 @@ async def update_storyboard(
     if storyboard_update.template_name is not None:
         await storyboard_repo.update(
             storyboard_id, {"template_name": storyboard_update.template_name}
+        )
+
+    if storyboard_update.bg_music_asset_id is not None:
+        await storyboard_repo.update(
+            storyboard_id, {"bg_music_asset_id": storyboard_update.bg_music_asset_id}
         )
 
     if (
