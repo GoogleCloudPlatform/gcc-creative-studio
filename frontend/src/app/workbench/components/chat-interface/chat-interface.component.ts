@@ -680,6 +680,21 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
               this.agentChatService.currentStoryboard.set(sb);
               currentMsgs[agentMessageIndex].text = extraction.cleanText;
             }
+            if (msg.text.includes('Your final video has been generated!')) {
+              const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+              if (workspaceId && this.currentSessionId) {
+                this.storyboardService
+                  .getStoryboardForSession(workspaceId, this.currentSessionId)
+                  .subscribe({
+                    next: storyboards => {
+                      if (storyboards && storyboards.length > 0) {
+                        this.agentChatService.currentStoryboard.set(storyboards[0]);
+                      }
+                    },
+                    error: err => console.error('Failed to fetch storyboard after video generation:', err),
+                  });
+              }
+            }
             this.checkForStoryboardId(msg.text);
             if (
               extraction.assets.length > 0 ||

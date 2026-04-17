@@ -228,6 +228,10 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           storyboard.timeline,
         );
         this.processGeneratedData(storyboard.timeline);
+      } else {
+        console.log('No storyboard or timeline found, clearing timeline clips.');
+        this.timelineClips.set([]);
+        this.selectedClipId.set(null);
       }
     }, { allowSignalWrites: true });
 
