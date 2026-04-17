@@ -32,6 +32,54 @@ router = APIRouter(
 )
 
 
+async def _enrich_storyboard(
+    storyboard: StoryboardResponse,
+    media_repo: MediaRepository,
+    iam_signer_credentials: IamSignerCredentials,
+):
+    """Enriches a storyboard with presigned URLs."""
+    for scene in storyboard.scenes:
+        if scene.first_frame_media_item_id:
+            media_item = await media_repo.get_by_id(
+                scene.first_frame_media_item_id
+            )
+            if media_item and media_item.gcs_uris:
+                gcs_uri = media_item.gcs_uris[0]
+                presigned_url = await asyncio.to_thread(
+                    iam_signer_credentials.generate_presigned_url, gcs_uri
+                )
+                scene.first_frame_generated_url = presigned_url
+
+    if storyboard.timeline:
+        for clip in storyboard.timeline.video_clips:
+            if clip.media_item_id:
+                media_item = await media_repo.get_by_id(clip.media_item_id)
+                if media_item and media_item.gcs_uris:
+                    gcs_uri = media_item.gcs_uris[0]
+                    presigned_url = await asyncio.to_thread(
+                        iam_signer_credentials.generate_presigned_url, gcs_uri
+                    )
+                    clip.presigned_url = presigned_url
+
+                    if media_item.thumbnail_uris:
+                        thumb_gcs_uri = media_item.thumbnail_uris[0]
+                        presigned_thumb_url = await asyncio.to_thread(
+                            iam_signer_credentials.generate_presigned_url,
+                            thumb_gcs_uri,
+                        )
+                        clip.presigned_thumbnail_url = presigned_thumb_url
+
+        for clip in storyboard.timeline.audio_clips:
+            if clip.media_item_id:
+                media_item = await media_repo.get_by_id(clip.media_item_id)
+                if media_item and media_item.gcs_uris:
+                    gcs_uri = media_item.gcs_uris[0]
+                    presigned_url = await asyncio.to_thread(
+                        iam_signer_credentials.generate_presigned_url, gcs_uri
+                    )
+                    clip.presigned_url = presigned_url
+
+
 @router.post(
     "/",
     response_model=StoryboardCreateResponse,
@@ -65,41 +113,7 @@ async def get_storyboard(
             status_code=403, detail="Not authorized to access this storyboard"
         )
 
-    # Enrich scenes with presigned URLs for first frame if available
-    for scene in storyboard.scenes:
-        if scene.first_frame_media_item_id:
-            media_item = await media_repo.get_by_id(
-                scene.first_frame_media_item_id
-            )
-            if media_item and media_item.gcs_uris:
-                gcs_uri = media_item.gcs_uris[0]
-                # Using asyncio.to_thread since generate_presigned_url is likely sync
-                presigned_url = await asyncio.to_thread(
-                    iam_signer_credentials.generate_presigned_url, gcs_uri
-                )
-                scene.first_frame_generated_url = presigned_url
-
-    # Enrich timeline video and audio clips with presigned URLs if available
-    if storyboard.timeline:
-        for clip in storyboard.timeline.video_clips:
-            if clip.media_item_id:
-                media_item = await media_repo.get_by_id(clip.media_item_id)
-                if media_item and media_item.gcs_uris:
-                    gcs_uri = media_item.gcs_uris[0]
-                    presigned_url = await asyncio.to_thread(
-                        iam_signer_credentials.generate_presigned_url, gcs_uri
-                    )
-                    clip.presigned_url = presigned_url
-                    
-        for clip in storyboard.timeline.audio_clips:
-            if clip.media_item_id:
-                media_item = await media_repo.get_by_id(clip.media_item_id)
-                if media_item and media_item.gcs_uris:
-                    gcs_uri = media_item.gcs_uris[0]
-                    presigned_url = await asyncio.to_thread(
-                        iam_signer_credentials.generate_presigned_url, gcs_uri
-                    )
-                    clip.presigned_url = presigned_url
+    await _enrich_storyboard(storyboard, media_repo, iam_signer_credentials)
 
     return storyboard
 
@@ -110,10 +124,14 @@ async def list_storyboards(
     session_id: str | None = None,
     current_user: UserModel = Depends(get_current_user),
     storyboard_repo: StoryboardRepository = Depends(),
+    media_repo: MediaRepository = Depends(),
+    iam_signer_credentials: IamSignerCredentials = Depends(),
 ):
     storyboards = await storyboard_repo.find_by_workspace(
         workspace_id, session_id
     )
+    for sb in storyboards:
+        await _enrich_storyboard(sb, media_repo, iam_signer_credentials)
     return storyboards
 
 
@@ -139,7 +157,8 @@ async def update_storyboard(
 
     if storyboard_update.bg_music_asset_id is not None:
         await storyboard_repo.update(
-            storyboard_id, {"bg_music_asset_id": storyboard_update.bg_music_asset_id}
+            storyboard_id,
+            {"bg_music_asset_id": storyboard_update.bg_music_asset_id},
         )
 
     if (
@@ -151,8 +170,10 @@ async def update_storyboard(
         if storyboard_update.scenes is not None:
             storyboard_data["scenes"] = storyboard_update.scenes
         if storyboard_update.bg_music_description is not None:
-            storyboard_data["background_music_prompt"] = {"description": storyboard_update.bg_music_description}
-            
+            storyboard_data["background_music_prompt"] = {
+                "description": storyboard_update.bg_music_description
+            }
+
         updated_storyboard = await storyboard_repo.update_storyboard_data(
             storyboard_id=storyboard_id,
             storyboard_data=storyboard_data if storyboard_data else None,

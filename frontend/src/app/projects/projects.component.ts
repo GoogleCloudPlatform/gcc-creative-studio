@@ -75,7 +75,10 @@ export class ProjectsComponent implements OnInit, OnDestroy {
     const name = prompt('Enter project name:');
     if (name) {
       this.projectService
-        .createProject(name, this.activeWorkspaceId)
+        .createProject({
+          workspace_id: this.activeWorkspaceId,
+          template_name: name,
+        })
         .subscribe({
           next: project => {
             this.projects.push(project);

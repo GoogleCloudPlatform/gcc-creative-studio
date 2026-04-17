@@ -186,13 +186,16 @@ export class AgentChatService {
                   }
                   if (callbacks.onMessage) callbacks.onMessage(parsed);
                 } catch (e) {
-                  console.warn('Polled data is not JSON, treating as text:', data);
+                  console.warn(
+                    'Polled data is not JSON, treating as text:',
+                    data,
+                  );
                   // Treat as text chunk
                   if (callbacks.onMessage) {
                     callbacks.onMessage({
                       content: {
-                        parts: [{ text: data }]
-                      }
+                        parts: [{text: data}],
+                      },
                     });
                   }
                 }
@@ -203,8 +206,6 @@ export class AgentChatService {
           console.error('Polling tick failed:', pollErr);
         }
       }, 2500);
-
-
     } catch (error) {
       if (callbacks.onError) callbacks.onError(error);
     }

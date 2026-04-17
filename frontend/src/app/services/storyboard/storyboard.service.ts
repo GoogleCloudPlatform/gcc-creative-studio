@@ -18,6 +18,10 @@ import {Injectable, inject} from '@angular/core';
 import {HttpClient} from '@angular/common/http';
 import {Observable} from 'rxjs';
 import {environment} from '../../../environments/environment';
+import {
+  StoryboardResponse,
+  StoryboardUpdate,
+} from '../../common/models/storyboard.model';
 
 @Injectable({
   providedIn: 'root',
@@ -26,19 +30,25 @@ export class StoryboardService {
   private http = inject(HttpClient);
   private apiUrl = `${environment.backendURL}/storyboards`;
 
-  getStoryboard(storyboardId: number): Observable<any> {
-    return this.http.get<any>(`${this.apiUrl}/${storyboardId}`);
+  getStoryboard(storyboardId: number): Observable<StoryboardResponse> {
+    return this.http.get<StoryboardResponse>(`${this.apiUrl}/${storyboardId}`);
   }
 
   getStoryboardForSession(
     workspaceId: number,
     sessionId: string,
-  ): Observable<any[]> {
+  ): Observable<StoryboardResponse[]> {
     const url = `${this.apiUrl}?workspace_id=${workspaceId}&session_id=${sessionId}`;
-    return this.http.get<any[]>(url);
+    return this.http.get<StoryboardResponse[]>(url);
   }
 
-  updateStoryboard(storyboardId: number, updateData: any): Observable<any> {
-    return this.http.put<any>(`${this.apiUrl}/${storyboardId}`, updateData);
+  updateStoryboard(
+    storyboardId: number,
+    updateData: StoryboardUpdate,
+  ): Observable<StoryboardResponse> {
+    return this.http.put<StoryboardResponse>(
+      `${this.apiUrl}/${storyboardId}`,
+      updateData,
+    );
   }
 }

@@ -40,6 +40,7 @@ def fixture_mock_request():
     class MockRequest:
         def __init__(self, headers=None):
             self.headers = headers or {}
+
     return MockRequest()
 
 

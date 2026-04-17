@@ -68,6 +68,7 @@ class VideoClipDTO(BaseModel):
     volume: float
     speed: float
     presigned_url: Optional[str] = None
+    presigned_thumbnail_url: Optional[str] = None
 
 
 class AudioClipDTO(BaseModel):

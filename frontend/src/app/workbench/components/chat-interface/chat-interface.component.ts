@@ -442,16 +442,19 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
               this.isTyping.set(false);
               const wasNearBottom = this.isNearBottom();
               const jsonStartIndex = textChunk.indexOf('{\n');
-              
+
               this.chatMessages.update(msgs => {
                 if (jsonStartIndex !== -1) {
                   isInJsonBlock = true;
                   const textPart = textChunk.substring(0, jsonStartIndex);
                   const jsonPart = textChunk.substring(jsonStartIndex);
-                  
+
                   // Handle text part if not empty
                   if (textPart.trim()) {
-                    if (agentMessageIndex === -1 || msgs[agentMessageIndex].asset) {
+                    if (
+                      agentMessageIndex === -1 ||
+                      msgs[agentMessageIndex].asset
+                    ) {
                       msgs.push({
                         sender: 'agent',
                         text: textPart,
@@ -466,7 +469,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                       }
                     }
                   }
-                  
+
                   // Create a NEW hidden message for JSON data
                   msgs.push({
                     sender: 'agent',
@@ -474,13 +477,12 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                     isHidden: true,
                     timestamp: new Date(),
                   });
-                  
+
                   if (jsonPart.includes('}')) {
                     isInJsonBlock = false;
                   }
-                  
+
                   return [...msgs];
-                  
                 } else if (isInJsonBlock) {
                   // Append to last hidden message
                   let lastHiddenIndex = -1;
@@ -490,7 +492,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                       break;
                     }
                   }
-                  
+
                   if (lastHiddenIndex !== -1) {
                     msgs[lastHiddenIndex].text += textChunk;
                   } else {
@@ -501,24 +503,24 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                       timestamp: new Date(),
                     });
                   }
-                  
+
                   if (textChunk.includes('}')) {
                     isInJsonBlock = false;
                   }
-                  
+
                   return [...msgs];
-                  
                 } else {
-                  const isJsonChunk = textChunk.trim().startsWith('{') || 
-                                      textChunk.includes('"scenes"') || 
-                                      textChunk.includes('"campaign_brief"') || 
-                                      textChunk.includes('"template_name"') ||
-                                      textChunk.includes('"campaign_name"') ||
-                                      textChunk.includes('"session_id"') ||
-                                      textChunk.includes('"workspace_id"') ||
-                                      textChunk.includes('Campaign Name:') ||
-                                      textChunk.includes('Strategic Context');
-                  
+                  const isJsonChunk =
+                    textChunk.trim().startsWith('{') ||
+                    textChunk.includes('"scenes"') ||
+                    textChunk.includes('"campaign_brief"') ||
+                    textChunk.includes('"template_name"') ||
+                    textChunk.includes('"campaign_name"') ||
+                    textChunk.includes('"session_id"') ||
+                    textChunk.includes('"workspace_id"') ||
+                    textChunk.includes('Campaign Name:') ||
+                    textChunk.includes('Strategic Context');
+
                   if (isJsonChunk) {
                     isInJsonBlock = true;
                     msgs.push({
@@ -530,7 +532,10 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                     if (textChunk.includes('}')) {
                       isInJsonBlock = false;
                     }
-                  } else if (agentMessageIndex === -1 || msgs[agentMessageIndex].asset) {
+                  } else if (
+                    agentMessageIndex === -1 ||
+                    msgs[agentMessageIndex].asset
+                  ) {
                     msgs.push({
                       sender: 'agent',
                       text: textChunk,
@@ -543,12 +548,16 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                     } else {
                       msgs[agentMessageIndex].text = textChunk;
                     }
-                    if (msgs[agentMessageIndex].text.includes('[System Note:')) {
-                    msgs[agentMessageIndex].text = msgs[agentMessageIndex].text
-                      .split('[System Note:')[0]
-                      .trim();
+                    if (
+                      msgs[agentMessageIndex].text.includes('[System Note:')
+                    ) {
+                      msgs[agentMessageIndex].text = msgs[
+                        agentMessageIndex
+                      ].text
+                        .split('[System Note:')[0]
+                        .trim();
+                    }
                   }
-                }
                 }
                 return [...msgs];
               });

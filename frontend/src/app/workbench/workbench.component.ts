@@ -31,8 +31,6 @@ import {
 } from '@angular/core';
 import {isPlatformBrowser} from '@angular/common';
 import {MatIconRegistry} from '@angular/material/icon';
-import {ActivatedRoute} from '@angular/router';
-import {ProjectService} from '../services/project/project.service';
 import {
   DomSanitizer,
   SafeResourceUrl,
@@ -46,7 +44,14 @@ import {
 import {SourceAssetResponseDto} from '../common/services/source-asset.service';
 // --- Interfaces ---
 import {WorkbenchService, TimelineRequest, Clip} from './workbench.service';
+import {StoryboardService} from '../services/storyboard/storyboard.service';
 import {AgentChatService} from './services/agent-chat.service';
+import {
+  TimelineDTO,
+  VideoClipDTO,
+  AudioClipDTO,
+} from '../common/models/storyboard.model';
+import {ActivatedRoute} from '@angular/router';
 
 interface MediaAsset {
   id: string;
@@ -83,12 +88,6 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   activeToolButton = signal<
     'gallery' | 'audio' | 'stories' | 'edit' | 'agent' | null
   >(null);
-
-  // Double buffering signals
-  activeVideoPlayer = signal<'A' | 'B'>('A');
-  videoASrc = signal<SafeUrl | string>('');
-  videoBSrc = signal<SafeUrl | string>('');
-  lastClipId: string | null = null;
 
   // Simple tab between video/audio assets (UX only)
   activeTab = signal<'video' | 'audio'>('video');
@@ -149,18 +148,6 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     );
   });
 
-  nextVideoClip = computed(() => {
-    const time = this.currentTime();
-    const clips = this.videoClips();
-    const currentIndex = clips.findIndex(
-      c => time >= c.startTime && time < c.startTime + c.duration,
-    );
-    if (currentIndex >= 0 && currentIndex < clips.length - 1) {
-      return clips[currentIndex + 1];
-    }
-    return null;
-  });
-
   activeAudioClips = computed(() => {
     const time = this.currentTime();
     return this.audioTracks().map(track =>
@@ -190,8 +177,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   animationFrameId: any;
 
   // View Children
-  @ViewChild('videoA') videoA!: ElementRef<HTMLVideoElement>;
-  @ViewChild('videoB') videoB!: ElementRef<HTMLVideoElement>;
+  @ViewChild('mainVideo') mainVideo!: ElementRef<HTMLVideoElement>;
   @ViewChildren('bgAudio') bgAudios!: QueryList<ElementRef<HTMLAudioElement>>;
   @ViewChild('timelineContainer')
   timelineContainer!: ElementRef<HTMLDivElement>;
@@ -201,7 +187,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   private workbenchService = inject(WorkbenchService);
   private agentChatService = inject(AgentChatService);
   private route = inject(ActivatedRoute);
-  private projectService = inject(ProjectService);
+  private storyboardService = inject(StoryboardService);
 
   isDownloading = signal(false);
 
@@ -232,6 +218,19 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     @Inject(PLATFORM_ID) platformId: Object,
   ) {
     this.isBrowser = isPlatformBrowser(platformId);
+
+    // Setup an effect to handle storyboard loading from signal
+    effect(() => {
+      const storyboard = this.agentChatService.currentStoryboard();
+      if (storyboard && storyboard.timeline) {
+        console.log(
+          'Loading timeline from AgentChatService signal:',
+          storyboard.timeline,
+        );
+        this.processGeneratedData(storyboard.timeline);
+      }
+    }, { allowSignalWrites: true });
+
     this.matIconRegistry
       .addSvgIcon(
         'white-gemini-spark-icon',
@@ -307,50 +306,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         this.setPath(`${this.path}/web-stories.svg`),
       );
 
-    // Effect to manage double buffering sources
-    effect(
-      () => {
-        const currentClip = this.activeVideoClip();
-        const nextClip = this.nextVideoClip();
-
-        if (currentClip && currentClip.id !== this.lastClipId) {
-          this.lastClipId = currentClip.id;
-          this.activeVideoPlayer.update(p => (p === 'A' ? 'B' : 'A'));
-        }
-
-        const currentAsset = currentClip
-          ? this.assets().find(a => a.id === currentClip.assetId)
-          : null;
-        const nextAsset = nextClip
-          ? this.assets().find(a => a.id === nextClip.assetId)
-          : null;
-
-        const currentPlayer = this.activeVideoPlayer();
-
-        if (currentPlayer === 'A') {
-          if (currentAsset) this.videoASrc.set(currentAsset.safeUrl);
-          if (nextAsset) this.videoBSrc.set(nextAsset.safeUrl);
-        } else {
-          if (currentAsset) this.videoBSrc.set(currentAsset.safeUrl);
-          if (nextAsset) this.videoASrc.set(nextAsset.safeUrl);
-        }
-      },
-      {allowSignalWrites: true},
-    );
-
     // Setup an effect to handle video seeking/sync when active clip changes or time jumps
     effect(() => {
       if (!this.isBrowser) return;
 
-      const currentPlayer = this.activeVideoPlayer();
-      const vid =
-        currentPlayer === 'A'
-          ? this.videoA?.nativeElement
-          : this.videoB?.nativeElement;
-      const inactiveVid =
-        currentPlayer === 'A'
-          ? this.videoB?.nativeElement
-          : this.videoA?.nativeElement;
+      const vid = this.mainVideo?.nativeElement;
       const vClip = this.activeVideoClip();
       const curTime = this.currentTime();
 
@@ -359,22 +319,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         const fileTime = curTime - vClip.startTime + vClip.offset;
         if (Math.abs(vid.currentTime - fileTime) > 0.5)
           vid.currentTime = fileTime;
-        if (this.isPlaying() && vid.paused && vid.readyState >= 3)
-          vid
-            .play()
-            .catch((e: any) => console.error('[VideoSync] Play failed', e));
+        if (this.isPlaying() && vid.paused)
+          vid.play().catch(e => console.error('[VideoSync] Play failed', e));
         if (!this.isPlaying() && !vid.paused) vid.pause();
-
-        // Make sure inactive player is paused
-        if (inactiveVid && !inactiveVid.paused) inactiveVid.pause();
       } else if (vid) {
         vid.pause();
-      }
-
-      // If no clip, pause both
-      if (!vClip) {
-        if (this.videoA?.nativeElement) this.videoA.nativeElement.pause();
-        if (this.videoB?.nativeElement) this.videoB.nativeElement.pause();
       }
 
       // Audio Sync (Multi-track)
@@ -418,84 +367,20 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   // Signal to track audio element changes
   audioElementsChanged = signal<number>(0);
 
-  private chatSub?: any;
-
   ngOnInit() {
     this.route.queryParams.subscribe(params => {
-      const projectId = params['projectId'];
-      if (projectId) {
-        this.loadProjectData(projectId);
+      const storyboardId = params['storyboardId'];
+      if (storyboardId) {
+        console.log('Loading storyboard from route param:', storyboardId);
+        this.storyboardService
+          .getStoryboard(Number(storyboardId))
+          .subscribe(res => {
+            if (res.timeline) {
+              this.processGeneratedData(res.timeline);
+            }
+          });
       }
     });
-
-    this.chatSub = this.agentChatService.videoGenerated$.subscribe(
-      (data: any) => {
-        if (!data) return;
-        this.processGeneratedData(data);
-      },
-    );
-  }
-
-  loadProjectData(projectId: number) {
-    this.projectService.getProject(projectId).subscribe({
-      next: project => {
-        if (project.timeline && project.timeline.data) {
-          this.processGeneratedData(project.timeline.data);
-        } else if (project.storyboard && project.storyboard.data) {
-          console.log('Loaded storyboard data', project.storyboard.data);
-        }
-      },
-      error: err => console.error('Failed to load project data', err),
-    });
-  }
-
-  processGeneratedData(data: any) {
-    if (data.clips && data.assets) {
-      // Handle VideoTimeline
-      const timeline = data as {assets: any[]; clips: any[]};
-      const idMap = new Map<string, string>(); // Map backend ID to frontend ID
-      // 1. Process and add assets
-      timeline.assets.forEach(asset => {
-        const newAsset = this.processCloudMediaResult({
-          presignedUrl: asset.url,
-          originalFilename: asset.name,
-          mimeType: 'video/mp4',
-          presignedThumbnailUrl: asset.thumbnail || asset.url,
-        } as SourceAssetResponseDto);
-        if (newAsset) {
-          idMap.set(asset.id, newAsset.id);
-        }
-      });
-      // 2. Process and add clips
-      const newClips: TimelineClip[] = timeline.clips.map(clip => ({
-        id: Math.random().toString(36).substr(2, 9),
-        assetId: idMap.get(clip.assetId) || clip.assetId,
-        startTime: clip.startTime,
-        duration: clip.duration,
-        offset: clip.offset,
-        trackIndex: clip.trackIndex,
-        color: clip.color || '#3b82f6',
-      }));
-      this.timelineClips.set(newClips);
-      this.refreshTimelineLayout();
-    } else {
-      // Handle single asset (legacy or other)
-      const assetData = data;
-      const newAsset = this.processCloudMediaResult({
-        presignedUrl: assetData.fileUri || assetData.url || assetData.uri,
-        originalFilename:
-          assetData.filename || assetData.name || 'Agent Generated Video',
-        mimeType: 'video/mp4',
-        presignedThumbnailUrl:
-          assetData.thumbnail ||
-          assetData.fileUri ||
-          assetData.url ||
-          assetData.uri,
-      } as SourceAssetResponseDto);
-      if (newAsset) {
-        this.addToTimeline(newAsset);
-      }
-    }
   }
 
   ngAfterViewInit() {
@@ -506,7 +391,6 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     if (this.animationFrameId) cancelAnimationFrame(this.animationFrameId);
-    if (this.chatSub) this.chatSub.unsubscribe();
   }
 
   // --- Logic: File Handling ---
@@ -571,7 +455,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   private processCloudMediaResult(
     result: MediaItemSelection | SourceAssetResponseDto,
-  ): MediaAsset | undefined {
+  ) {
     const isGalleryItem = 'mediaItem' in result;
 
     let url: string;
@@ -625,8 +509,6 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     } else {
       this.extractAudioMetadataFromUrl(newAsset);
     }
-
-    return newAsset;
   }
 
   private extractVideoMetadataFromUrl(asset: MediaAsset) {
@@ -751,6 +633,88 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
       return [...layoutTrack(vClips), ...otherClips];
     });
+  }
+
+  processGeneratedData(data: TimelineDTO) {
+    console.log('processGeneratedData called with:', data);
+    const newClips: TimelineClip[] = [];
+
+    // Handle Video Clips
+    let currentVideoTime = 0;
+    if (data.video_clips) {
+      data.video_clips.forEach((clip: VideoClipDTO) => {
+        const assetId = String(
+          clip.media_item_id || clip.source_asset_id || '',
+        );
+
+        // Populate assets signal so lookup works
+        const existingAsset = this.assets().find(a => a.id === assetId);
+        if (!existingAsset && clip.presigned_url) {
+          this.assets.update(prev => [
+            ...prev,
+            {
+              id: assetId,
+              name: 'Clip ' + assetId,
+              type: 'video',
+              url: clip.presigned_url!,
+              safeUrl: this.sanitizer.bypassSecurityTrustUrl(clip.presigned_url!),
+              duration: clip.trim_duration || 5,
+              thumbnail: clip.presigned_thumbnail_url,
+            },
+          ]);
+        }
+
+        newClips.push({
+          id: Math.random().toString(36).substr(2, 9),
+          assetId: assetId,
+          startTime: currentVideoTime,
+          duration: clip.trim_duration || 5,
+          offset: clip.trim_offset || 0,
+          trackIndex: 0,
+          color: '#3b82f6',
+        });
+        currentVideoTime += clip.trim_duration || 5;
+      });
+    }
+
+    // Handle Audio Clips
+    if (data.audio_clips) {
+      data.audio_clips.forEach((clip: AudioClipDTO) => {
+        const assetId = clip.presigned_url || '';
+
+        // Populate assets signal
+        const existingAsset = this.assets().find(a => a.id === assetId);
+        if (!existingAsset && clip.presigned_url) {
+          this.assets.update(prev => [
+            ...prev,
+            {
+              id: assetId,
+              name: 'Audio ' + assetId,
+              type: 'audio',
+              url: clip.presigned_url!,
+              safeUrl: this.sanitizer.bypassSecurityTrustUrl(
+                clip.presigned_url!,
+              ),
+              duration: clip.trim_duration || 5,
+            },
+          ]);
+        }
+
+        newClips.push({
+          id: Math.random().toString(36).substr(2, 9),
+          assetId: assetId,
+          startTime: clip.start_offset || 0,
+          duration: clip.trim_duration || 5,
+          offset: clip.trim_offset || 0,
+          trackIndex: 1, // Audio track
+          color: '#10b981',
+        });
+      });
+    }
+
+    console.log('Setting timelineClips to:', newClips);
+    this.timelineClips.set(newClips);
+    this.refreshTimelineLayout();
   }
 
   getAssetThumbnail(id: string): string | undefined {

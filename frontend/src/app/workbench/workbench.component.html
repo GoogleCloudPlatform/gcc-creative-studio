@@ -15,12 +15,6 @@
 -->
 
 <div class="workbench-container">
-  <!-- Main App Container (Dark Theme) -->
-  <div
-    class="main-app-container"
-    (mousemove)="onTrimMove($event); onDragMove($event); onScrubMove($event)"
-    (mouseup)="onTrimEnd(); onDragEnd(); onScrubEnd()"
-  >
       <!-- Beta Label Row -->
       <div class="flex justify-end w-full">
         <div
@@ -29,7 +23,12 @@
           BETA
         </div>
       </div>
-
+  <!-- Main App Container (Dark Theme) -->
+  <div
+    class="main-app-container"
+    (mousemove)="onTrimMove($event); onDragMove($event); onScrubMove($event)"
+    (mouseup)="onTrimEnd(); onDragEnd(); onScrubEnd()"
+  >
     <!-- Top Workspace (2 Columns) -->
     <div class="flex flex-row justify-center items-center gap-6">
       <!-- COL 1: Assets Panel -->
@@ -444,6 +443,7 @@
       <!-- COL 3: Preview Area -->
       <div
         class="glass-bg-effect flex-1 max-w-[80rem] min-h-[500px] flex flex-col items-center justify-center rounded-xl overflow-hidden rounded-[48px]"
+        style="height: 55vh;"
       >
         <!-- Storyboard View (Agent Active) -->
         <app-storyboard
@@ -455,7 +455,7 @@
         <div
           *ngIf="activeToolButton() !== 'agent'"
           class="relative w-full flex-1 flex items-center justify-center group bg-black/20 rounded-lg overflow-hidden"
-          style="max-height: 60vh;"
+          style="height: 55vh;"
         >
           <!-- Placeholder when no video (Empty State) -->
           <div
@@ -526,22 +526,14 @@
 
           <!-- The Video Element -->
           <video
-            #videoA
+            #mainVideo
             class="max-w-full max-h-full object-contain shadow-2xl rounded-lg"
-            [class.hidden]="activeVideoPlayer() !== 'A' || !activeVideoClip()"
+            [class.hidden]="!activeVideoClip()"
             [style.filter]="videoFilter()"
-            [src]="videoASrc()"
+            [src]="activeVideoSrc()"
             [muted]="true"
             (loadedmetadata)="onMetadataLoaded()"
-          ></video>
-          <video
-            #videoB
-            class="max-w-full max-h-full object-contain shadow-2xl rounded-lg"
-            [class.hidden]="activeVideoPlayer() !== 'B' || !activeVideoClip()"
-            [style.filter]="videoFilter()"
-            [src]="videoBSrc()"
-            [muted]="true"
-            (loadedmetadata)="onMetadataLoaded()"
+            (ended)="onVideoEnded()"
           ></video>
 
           <!-- Hidden Audio (Multi-track) -->
