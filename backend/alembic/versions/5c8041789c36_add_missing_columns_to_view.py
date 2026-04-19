@@ -67,7 +67,13 @@ def upgrade() -> None:
             'source_assets', mi.source_assets,
             'source_media_items', mi.source_media_items,
             'is_video', (mi.mime_type like 'video%'),
-            'is_audio', (mi.mime_type like 'audio%')
+            'is_audio', (mi.mime_type like 'audio%'),
+            'tags', (
+                SELECT jsonb_agg(jsonb_build_object('id', t.id, 'name', t.name, 'color', t.color, 'workspace_id', t.workspace_id))
+                FROM media_item_tags mit
+                JOIN tags t ON mit.tag_id = t.id
+                WHERE mit.media_item_id = mi.id
+            )
         ) AS metadata
     FROM media_items mi
     LEFT JOIN workspaces w ON mi.workspace_id = w.id
@@ -96,7 +102,13 @@ def upgrade() -> None:
             'aspect_ratio', sa.aspect_ratio,
             'asset_type', sa.asset_type,
             'is_video', (sa.mime_type like 'video%'),
-            'is_audio', (sa.mime_type like 'audio%')
+            'is_audio', (sa.mime_type like 'audio%'),
+            'tags', (
+                SELECT jsonb_agg(jsonb_build_object('id', t.id, 'name', t.name, 'color', t.color, 'workspace_id', t.workspace_id))
+                FROM source_asset_tags sat
+                JOIN tags t ON sat.tag_id = t.id
+                WHERE sat.source_asset_id = sa.id
+            )
         ) AS metadata
     FROM source_assets sa
     LEFT JOIN workspaces w ON sa.workspace_id = w.id
@@ -136,7 +148,13 @@ def downgrade() -> None:
             'source_assets', mi.source_assets,
             'source_media_items', mi.source_media_items,
             'is_video', (mi.mime_type like 'video%'),
-            'is_audio', (mi.mime_type like 'audio%')
+            'is_audio', (mi.mime_type like 'audio%'),
+            'tags', (
+                SELECT jsonb_agg(jsonb_build_object('id', t.id, 'name', t.name, 'color', t.color, 'workspace_id', t.workspace_id))
+                FROM media_item_tags mit
+                JOIN tags t ON mit.tag_id = t.id
+                WHERE mit.media_item_id = mi.id
+            )
         ) AS metadata
     FROM media_items mi
     UNION ALL
@@ -161,9 +179,15 @@ def downgrade() -> None:
             'asset_type', sa.asset_type,
             'user_email', u.email,
             'is_video', (sa.mime_type like 'video%'),
-            'is_audio', (sa.mime_type like 'audio%')
+            'is_audio', (sa.mime_type like 'audio%'),
+            'tags', (
+                SELECT jsonb_agg(jsonb_build_object('id', t.id, 'name', t.name, 'color', t.color, 'workspace_id', t.workspace_id))
+                FROM source_asset_tags sat
+                JOIN tags t ON sat.tag_id = t.id
+                WHERE sat.source_asset_id = sa.id
+            )
         ) AS metadata
     FROM source_assets sa
     JOIN users u ON sa.user_id = u.id;
-    """
+    """,
     )
