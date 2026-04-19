@@ -25,6 +25,7 @@ from src.auth.auth_guard import RoleChecker, get_current_user
 from src.database import get_db
 from src.users.user_model import UserModel
 from src.workspaces.workspace_service import WorkspaceService
+from src.config.config_service import config_service
 from src.agents.agent_chat_event_model import AgentChatEvent
 from src.agents.agent_dtos import (
     ChatRequestDto,
@@ -40,7 +41,7 @@ router = APIRouter(
 
 logger = logging.getLogger(__name__)
 
-IZUMI_AGENT_URL = "http://izumi-agent:8080"
+IZUMI_AGENT_URL = config_service.IZUMI_AGENT_URL
 APP_NAME = "creative_toolbox"
 
 
