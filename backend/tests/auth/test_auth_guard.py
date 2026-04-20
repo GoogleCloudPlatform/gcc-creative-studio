@@ -118,7 +118,10 @@ class TestGetCurrentUser:
             )
 
         assert exc_info.value.status_code == 401
-        assert "not part of an allowed organization" in exc_info.value.detail
+        assert (
+            "User is not authorized to access this application."
+            in exc_info.value.detail
+        )
 
 
 class TestRoleChecker:

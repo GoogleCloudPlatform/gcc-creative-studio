@@ -19,6 +19,7 @@ import {Router} from '@angular/router';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
 import {ProjectService} from '../services/project/project.service';
 import {Subscription} from 'rxjs';
+import {StoryboardResponse} from '../common/models/storyboard.model';
 
 @Component({
   selector: 'app-projects',
@@ -26,7 +27,7 @@ import {Subscription} from 'rxjs';
   styleUrl: './projects.component.scss',
 })
 export class ProjectsComponent implements OnInit, OnDestroy {
-  projects: any[] = [];
+  projects: StoryboardResponse[] = [];
   isLoading = false;
   activeWorkspaceId: number | null = null;
   private subscription: Subscription = new Subscription();
@@ -67,7 +68,9 @@ export class ProjectsComponent implements OnInit, OnDestroy {
   }
 
   goToWorkbench(projectId: number): void {
-    this.router.navigate(['/workbench'], {queryParams: {projectId: projectId}});
+    void this.router.navigate(['/workbench'], {
+      queryParams: {projectId: projectId},
+    });
   }
 
   createProject(): void {
@@ -81,7 +84,7 @@ export class ProjectsComponent implements OnInit, OnDestroy {
         })
         .subscribe({
           next: project => {
-            this.projects.push(project);
+            this.projects.push({...project, scenes: []});
           },
           error: err => console.error('Failed to create project', err),
         });
