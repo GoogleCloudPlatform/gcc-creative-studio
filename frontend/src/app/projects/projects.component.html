@@ -30,12 +30,9 @@
   <div *ngIf="!isLoading && projects.length > 0" class="projects-list">
     <mat-card *ngFor="let project of projects" (click)="goToWorkbench(project.id)" class="project-card">
       <mat-card-header>
-        <mat-card-title>{{ project.name }}</mat-card-title>
-        <mat-card-subtitle>Created: {{ project.created_at | date }}</mat-card-subtitle>
+        <mat-card-title>{{ project.template_name }}</mat-card-title>
       </mat-card-header>
       <mat-card-content>
-        <p *ngIf="project.storyboard">Storyboard: Available</p>
-        <p *ngIf="project.canvas">Canvas: Available</p>
         <p *ngIf="project.timeline">Timeline: Available</p>
       </mat-card-content>
       <mat-card-actions>
