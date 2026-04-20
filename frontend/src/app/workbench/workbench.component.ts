@@ -220,20 +220,25 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     this.isBrowser = isPlatformBrowser(platformId);
 
     // Setup an effect to handle storyboard loading from signal
-    effect(() => {
-      const storyboard = this.agentChatService.currentStoryboard();
-      if (storyboard && storyboard.timeline) {
-        console.log(
-          'Loading timeline from AgentChatService signal:',
-          storyboard.timeline,
-        );
-        this.processGeneratedData(storyboard.timeline);
-      } else {
-        console.log('No storyboard or timeline found, clearing timeline clips.');
-        this.timelineClips.set([]);
-        this.selectedClipId.set(null);
-      }
-    }, { allowSignalWrites: true });
+    effect(
+      () => {
+        const storyboard = this.agentChatService.currentStoryboard();
+        if (storyboard && storyboard.timeline) {
+          console.log(
+            'Loading timeline from AgentChatService signal:',
+            storyboard.timeline,
+          );
+          this.processGeneratedData(storyboard.timeline);
+        } else {
+          console.log(
+            'No storyboard or timeline found, clearing timeline clips.',
+          );
+          this.timelineClips.set([]);
+          this.selectedClipId.set(null);
+        }
+      },
+      {allowSignalWrites: true},
+    );
 
     this.matIconRegistry
       .addSvgIcon(
@@ -661,7 +666,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
               name: 'Clip ' + assetId,
               type: 'video',
               url: clip.presigned_url!,
-              safeUrl: this.sanitizer.bypassSecurityTrustUrl(clip.presigned_url!),
+              safeUrl: this.sanitizer.bypassSecurityTrustUrl(
+                clip.presigned_url!,
+              ),
               duration: clip.trim_duration || 5,
               thumbnail: clip.presigned_thumbnail_url,
             },

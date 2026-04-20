@@ -110,19 +110,25 @@ async def get_current_user(
                 ),
             )
 
-        # If ALLOWED_ORGS is configured, check the user's organization.
-        if config_service.ALLOWED_ORGS:
-            if (
-                not token_info_hd
-                or token_info_hd not in config_service.ALLOWED_ORGS
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail=(
-                        f"User from '{token_info_hd}' is not part of an "
-                        "allowed organization."
-                    ),
-                )
+        # Check if user is allowed by email or organization
+        is_allowed = False
+
+        if config_service.ALLOWED_EMAILS:
+            if email in config_service.ALLOWED_EMAILS:
+                is_allowed = True
+
+        if not is_allowed and config_service.ALLOWED_ORGS:
+            if token_info_hd and token_info_hd in config_service.ALLOWED_ORGS:
+                is_allowed = True
+
+        # If at least one restriction is configured and user is not allowed, reject.
+        if (
+            config_service.ALLOWED_EMAILS or config_service.ALLOWED_ORGS
+        ) and not is_allowed:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User is not authorized to access this application.",
+            )
 
         # Just-In-Time (JIT) User Provisioning:
         # Create a user profile in our database on their first API call.
