@@ -50,7 +50,7 @@
   </div>
 
   <!-- Chat Messages -->
-  <div class="flex-1 overflow-y-auto flex flex-col gap-3 p-2 custom-scrollbar" #chatContainer (scroll)="onScroll()">
+  <div class="flex-1 overflow-y-auto flex flex-col gap-3 p-2 custom-scrollbar" #chatContainer>
     <div *ngFor="let msg of filteredChatMessages()" [class]="msg.sender === 'user' ? 'chat-bubble user' : 'chat-bubble agent'">
       <!-- Display user attached images -->
       <div *ngIf="msg.sender === 'user' && msg.images?.length > 0" class="flex gap-2 mb-2 flex-wrap">
