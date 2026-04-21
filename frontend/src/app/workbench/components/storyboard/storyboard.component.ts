@@ -35,6 +35,7 @@ import {
 import {AgentChatService} from '../../services/agent-chat.service';
 import {StoryboardService} from '../../../services/storyboard/storyboard.service';
 import {MatDialog} from '@angular/material/dialog';
+import {trigger, style, animate, transition} from '@angular/animations';
 import {
   ImageSelectorComponent,
   MediaItemSelection,
@@ -69,6 +70,17 @@ export interface Scene {
   templateUrl: './storyboard.component.html',
   styleUrls: ['./storyboard.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  animations: [
+    trigger('messageAnimation', [
+      transition('* => *', [
+        style({opacity: 0, transform: 'translateY(10px)'}),
+        animate(
+          '300ms ease-out',
+          style({opacity: 1, transform: 'translateY(0)'}),
+        ),
+      ]),
+    ]),
+  ],
 })
 export class StoryboardComponent {
   private agentChatService = inject(AgentChatService);
@@ -89,6 +101,32 @@ export class StoryboardComponent {
   );
   showSeeVideoBtn = signal<boolean>(false);
 
+  // Loading Messages
+  private readonly storyboardMessages = [
+    'Izumi is sketching out your vision... matching tones, and drafting the perfect hook.',
+    'Translating your brief into pure creative gold. Finding the best angles for your brand.',
+    'Casting virtual actors and scouting digital locations... your narrative is coming to life.',
+    'Brewing some virtual coffee for the AI Director. Your storyboard is incoming!',
+    'Fun Fact: The very first TV commercial aired in 1941 and cost just $9. Izumi is making yours look like a million bucks.',
+    "Joke: Why did the marketer break up with the calendar? Too few dates! (Don't worry, Izumi's timeline is perfectly planned)",
+    'Joke: Why do copywriters always feel cold? Because they are surrounded by drafts! (Izumi is warming yours up right now)',
+  ];
+
+  private readonly videoMessages = [
+    'Stitching it all together... ensuring every frame transitions like butter.',
+    'Rendering pixels, applying color grading, and adding that final sprinkle of digital magic.',
+    'Syncing the audio, locking the frames, and preparing your campaign for launch.',
+    'Polishing the visuals until they shine. Your masterpiece is almost ready for the spotlight.',
+    'Fun Fact: 90% of information transmitted to the brain is visual. Izumi is making sure your ad is absolutely unforgettable.',
+    'Joke: Why did the video editor go to therapy? To work on their transition issues! (Izumi’s cuts, however, are flawless)',
+    'Joke: How do videographers communicate? Through cutting remarks and flashy transitions! (Rendering your final cut now...)',
+  ];
+
+  loadingMessage = signal<string>(
+    'Our AI Director is analyzing your brief, creating scene compositions, and writing the scripts.',
+  );
+  private loadingMessageInterval: any;
+
   @Output() closeAgentView = new EventEmitter<void>();
 
   constructor() {
@@ -97,6 +135,34 @@ export class StoryboardComponent {
       this.isGeneratingVideo.set(false);
       this.showSeeVideoBtn.set(true);
     });
+
+    effect(
+      () => {
+        const generating = this.isGenerating();
+        const generatingVideo = this.isGeneratingVideo();
+
+        if (generating) {
+          if (!this.loadingMessageInterval) {
+            this.loadingMessageInterval = setInterval(() => {
+              const messages = generatingVideo
+                ? this.videoMessages
+                : this.storyboardMessages;
+              const randomIndex = Math.floor(Math.random() * messages.length);
+              this.loadingMessage.set(messages[randomIndex]);
+            }, 5000);
+          }
+        } else {
+          if (this.loadingMessageInterval) {
+            clearInterval(this.loadingMessageInterval);
+            this.loadingMessageInterval = null;
+          }
+          this.loadingMessage.set(
+            'Our AI Director is analyzing your brief, creating scene compositions, and writing the scripts.',
+          );
+        }
+      },
+      {allowSignalWrites: true},
+    );
 
     effect(
       () => {

@@ -60,7 +60,7 @@
       <h3 class="text-2xl text-white font-semibold">
         {{ isGeneratingVideo() ? 'Stitching all together and generating your final video' : 'Generating Your Narrative...' }}
       </h3>
-      <p class="text-gray-400 text-center max-w-md">Our AI Director is analyzing your brief, creating scene compositions, and writing the scripts.</p>
+      <p [@messageAnimation]="loadingMessage()" class="text-gray-400 text-center max-w-md">{{ loadingMessage() }}</p>
     </div>
     
     <ng-container *ngIf="!isGenerating()">
