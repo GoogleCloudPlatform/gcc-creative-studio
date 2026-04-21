@@ -449,6 +449,7 @@
         <app-storyboard
           *ngIf="activeToolButton() === 'agent'"
           class="w-full h-full"
+          (closeAgentView)="onCloseAgentView()"
         ></app-storyboard>
 
         <!-- Video Player (Flexible Size) -->

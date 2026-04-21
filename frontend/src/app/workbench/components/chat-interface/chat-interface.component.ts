@@ -679,7 +679,11 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
               this.agentChatService.currentStoryboard.set(sb);
               currentMsgs[agentMessageIndex].text = extraction.cleanText;
             }
-            if (msg.text.includes('Your final video has been generated!')) {
+            if (
+              (msg.text.includes('final video') &&
+                msg.text.includes('generated successfully')) ||
+              msg.text.includes('Creative Studio workbench')
+            ) {
               const workspaceId =
                 this.workspaceStateService.getActiveWorkspaceId();
               if (workspaceId && this.currentSessionId) {
@@ -691,6 +695,8 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                         this.agentChatService.currentStoryboard.set(
                           storyboards[0],
                         );
+                        // Notify that video is generated
+                        this.agentChatService.videoGenerated$.next(true);
                       }
                     },
                     error: err =>

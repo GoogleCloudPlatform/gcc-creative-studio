@@ -222,6 +222,24 @@ $border-radius-pill: 99px;
     background: rgba(94, 153, 255, 0.25);
   }
 }
+.sb-btn-glow-gold {
+  background: rgba(255, 193, 7, 0.15);
+  border: 1px solid rgba(255, 193, 7, 0.4);
+  color: #FFE082;
+  border-radius: $border-radius-pill;
+  padding: 10px 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 0 16px rgba(255, 193, 7, 0.2);
+  transition: all 0.2s ease;
+  &:hover {
+    box-shadow: 0 0 24px rgba(255, 193, 7, 0.4);
+    background: rgba(255, 193, 7, 0.25);
+  }
+}
 // Shots List & Card
 .sb-shots-list {
   display: flex;

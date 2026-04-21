@@ -376,6 +376,10 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   // Signal to track audio element changes
   audioElementsChanged = signal<number>(0);
 
+  onCloseAgentView() {
+    this.activeToolButton.set(null);
+  }
+
   ngOnInit() {
     this.route.queryParams.subscribe(params => {
       const storyboardId = params['storyboardId'];

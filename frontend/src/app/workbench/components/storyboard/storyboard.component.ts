@@ -21,6 +21,8 @@ import {
   inject,
   effect,
   computed,
+  Output,
+  EventEmitter,
 } from '@angular/core';
 import {CommonModule} from '@angular/common';
 import {FormsModule} from '@angular/forms';
@@ -85,46 +87,72 @@ export class StoryboardComponent {
   isGenerating = computed(
     () => this.isGeneratingStoryboard() || this.isGeneratingVideo(),
   );
+  showSeeVideoBtn = signal<boolean>(false);
+
+  @Output() closeAgentView = new EventEmitter<void>();
 
   constructor() {
     // Reset video generation state when video is completed
     this.agentChatService.videoGenerated$.subscribe(() => {
       this.isGeneratingVideo.set(false);
+      this.showSeeVideoBtn.set(true);
     });
 
     effect(
       () => {
         const sb = this.agentChatService.currentStoryboard();
-        if (sb && sb.scenes && sb.scenes.length > 0) {
-          const parsedScenes = sb.scenes.map((s: any, idx: number) => {
-            return {
-              id: `scene-${idx + 1}`,
-              title: s.topic || `Scene ${idx + 1}`,
-              shots: [
-                {
-                  id: `shot-${idx + 1}-1`,
-                  // Use generated asset URL if available, otherwise fallback to old structure or placeholder
-                  imageUrl:
-                    s.first_frame_generated_url ||
-                    s.first_frame_prompt?.generated_asset_url ||
-                    'assets/images/storyboard-default.png',
-                  assetId:
-                    s.first_frame_prompt?.asset_id ||
-                    s.first_frame_media_item_id,
-                  characters: [],
-                  description:
-                    s.video_description ||
-                    s.first_frame_description ||
-                    s.video_prompt?.description ||
-                    s.first_frame_prompt?.description ||
-                    'No description provided',
-                },
-              ],
-            };
-          });
-          this.scenes.set(parsedScenes);
+        if (sb) {
+          if (sb.timeline) {
+            this.showSeeVideoBtn.set(true);
+          }
+          if (sb.scenes && sb.scenes.length > 0) {
+            const parsedScenes = sb.scenes.map((s: any, idx: number) => {
+              return {
+                id: `scene-${idx + 1}`,
+                title: s.topic || `Scene ${idx + 1}`,
+                shots: [
+                  {
+                    id: `shot-${idx + 1}-1`,
+                    // Use generated asset URL if available, otherwise fallback to old structure or placeholder
+                    imageUrl:
+                      s.first_frame_generated_url ||
+                      s.first_frame_prompt?.generated_asset_url ||
+                      'assets/images/storyboard-default.png',
+                    assetId:
+                      s.first_frame_prompt?.asset_id ||
+                      s.first_frame_media_item_id,
+                    characters: [],
+                    description:
+                      s.video_description ||
+                      s.first_frame_description ||
+                      s.video_prompt?.description ||
+                      s.first_frame_prompt?.description ||
+                      'No description provided',
+                  },
+                ],
+              };
+            });
+            this.scenes.set(parsedScenes);
+          } else {
+            // Default Welcome View
+            this.scenes.set([
+              {
+                id: 'scene-welcome',
+                title: 'Welcome to Ads X Storyboarding',
+                shots: [
+                  {
+                    id: 'shot-welcome-1',
+                    imageUrl: 'assets/images/storyboard-default.png',
+                    characters: [],
+                    description:
+                      'Ask the Ads X Agent to generate a storyboard template for you, and it will build out scenes here dynamically!',
+                  },
+                ],
+              },
+            ]);
+          }
         } else {
-          // Default Welcome View
+          // Default Welcome View when no storyboard is loaded
           this.scenes.set([
             {
               id: 'scene-welcome',
@@ -140,6 +168,7 @@ export class StoryboardComponent {
               ],
             },
           ]);
+          this.showSeeVideoBtn.set(false);
         }
       },
       {allowSignalWrites: true},
@@ -209,6 +238,9 @@ export class StoryboardComponent {
     this.isGeneratingVideo.set(true);
     // Notify the Agent Chat Service that the user requested video generation
     this.agentChatService.generateVideoRequest$.next();
+  }
+  onSeeVideoGenerated() {
+    this.closeAgentView.emit();
   }
   onOpenAssetDetail(shot: any) {
     if (shot.assetId) {
