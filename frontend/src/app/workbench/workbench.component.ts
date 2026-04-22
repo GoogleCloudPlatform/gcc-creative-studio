@@ -715,13 +715,40 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           ]);
         }
 
+        // Find available track among newClips
+        const startTime = clip.start_offset || 0;
+        const duration = clip.trim_duration || 5;
+        const allAudioClips = newClips.filter(c => c.trackIndex > 0);
+        let targetTrack = 1;
+        let found = false;
+        while (!found) {
+          const trackClips = allAudioClips.filter(
+            c => c.trackIndex === targetTrack,
+          );
+          const hasOverlap = trackClips.some(c => {
+            return (
+              (startTime >= c.startTime &&
+                startTime < c.startTime + c.duration) ||
+              (startTime + duration > c.startTime &&
+                startTime + duration <= c.startTime + c.duration) ||
+              (startTime <= c.startTime &&
+                startTime + duration >= c.startTime + c.duration)
+            );
+          });
+          if (!hasOverlap) {
+            found = true;
+          } else {
+            targetTrack++;
+          }
+        }
+
         newClips.push({
           id: Math.random().toString(36).substr(2, 9),
           assetId: assetId,
-          startTime: clip.start_offset || 0,
-          duration: clip.trim_duration || 5,
+          startTime: startTime,
+          duration: duration,
           offset: clip.trim_offset || 0,
-          trackIndex: 1, // Audio track
+          trackIndex: targetTrack,
           color: '#10b981',
         });
       });

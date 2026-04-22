@@ -46,6 +46,30 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
         await self.db.refresh(db_item)
         return StoryboardCreateResponse.model_validate(db_item)
 
+    async def update(
+        self,
+        item_id: int,
+        update_data: dict,
+    ) -> StoryboardResponse | None:
+        """Overrides update to avoid lazy loading issues."""
+        query = select(self.model).where(self.model.id == item_id)
+        result = await self.db.execute(query)
+        db_item = result.scalar_one_or_none()
+        if not db_item:
+            return None
+
+        for key, value in update_data.items():
+            if hasattr(db_item, key):
+                setattr(db_item, key, value)
+
+        if hasattr(db_item, "updated_at"):
+            import datetime
+
+            db_item.updated_at = datetime.datetime.now(datetime.UTC)
+
+        await self.db.commit()
+        return await self.get_by_id_with_details(item_id)
+
     async def get_by_id_with_details(
         self, storyboard_id: int
     ) -> StoryboardResponse | None:
@@ -205,9 +229,7 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
                 new_clip = AudioClip(
                     media_item_id=clip_data.get("media_item_id"),
                     source_asset_id=clip_data.get("source_asset_id"),
-                    start_offset=clip_data.get("start_at", {}).get(
-                        "offset", 0.0
-                    ),
+                    start_offset=clip_data.get("start_offset", 0.0),
                     trim_offset=clip_data.get("trim", {}).get("offset", 0.0),
                     trim_duration=clip_data.get("trim", {}).get("duration"),
                     volume=clip_data.get("volume", 1.0),

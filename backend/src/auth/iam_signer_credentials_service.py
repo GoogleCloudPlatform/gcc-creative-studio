@@ -83,7 +83,7 @@ class IamSignerCredentials(credentials.Signing):
     def generate_presigned_url(
         self,
         gcs_uri: str | None,
-        expiration_hours: int = 1,
+        expiration_hours: int = 72,
     ) -> str:
         """Generates a v4 presigned URL for a GCS object.
 
@@ -145,7 +145,7 @@ class IamSignerCredentials(credentials.Signing):
         destination_blob_name: str,
         content_type: str,
         bucket_name: str,
-        expiration_hours: int = 1,
+        expiration_hours: int = 72,
     ) -> tuple[str | None, str | None]:
         """Generates a v4 signed URL for a client-side **UPLOAD (PUT)**.
 
