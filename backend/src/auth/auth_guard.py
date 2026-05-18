@@ -17,7 +17,7 @@
 import asyncio
 import logging
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from firebase_admin import auth
 
@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 async def get_current_user(
+    request: Request,
     token: str = Depends(oauth2_scheme),
     user_service: UserService = Depends(UserService),
 ) -> UserModel:
@@ -55,8 +56,27 @@ async def get_current_user(
     5. Returns a Pydantic model with the user's data.
     """
     try:
+        user_auth_header = request.headers.get("X-User-Authorization")
+        if user_auth_header:
+            token = user_auth_header.replace("Bearer ", "").replace("bearer ", "").strip()
+
         decoded_token = {}
-        if config_service.ENVIRONMENT == "local":
+        if token.startswith("ya29."):
+            # --- Verify Google OAuth Access Token (Agent Engine) ---
+            logger.info("Verifying Google OAuth Access Token...")
+            import requests
+            response = await asyncio.to_thread(
+                requests.get,
+                f"https://oauth2.googleapis.com/tokeninfo?access_token={token}",
+                timeout=10,
+            )
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=f"Invalid Google access token: {response.text}",
+                )
+            decoded_token = response.json()
+        elif config_service.ENVIRONMENT == "local":
             # --- Local: Use Firebase Auth ---
             # Verifies the token using the standard Firebase Admin SDK method.
             logger.info("Verifying token using Firebase Admin SDK...")
