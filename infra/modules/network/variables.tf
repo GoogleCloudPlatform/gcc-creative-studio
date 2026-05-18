@@ -12,14 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-variable "project_id" {}
-variable "region" {}
-variable "db_name" { default = "creative_studio" }
-variable "db_user" { default = "studio_user" }
-variable "db_password" { sensitive = true }
-
-variable "vpc_network_id" {
+variable "project_id" {
   type        = string
-  description = "The ID of the VPC network where the private IP will be allocated."
+  description = "The GCP Project ID."
 }
 
+variable "region" {
+  type        = string
+  description = "The region to deploy GKE and network resources."
+}
+
+variable "environment" {
+  type        = string
+  description = "The deployment environment (e.g., dev, prod)."
+}
