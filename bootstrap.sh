@@ -793,7 +793,6 @@ main() {
         "populate_oauth_secrets"
         "update_oauth_client"
         "update_secrets"
-        "seed_data"
         "trigger_builds" 
     )
     for i in "${!steps_to_run[@]}"; do
