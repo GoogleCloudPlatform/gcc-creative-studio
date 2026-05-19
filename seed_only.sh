@@ -93,7 +93,7 @@ fi
 
 info "Setting up Python virtual environment..."
 VENV_DIR="backend/.venv"
-uv venv "$VENV_DIR" --python python3 --clear
+uv venv "$VENV_DIR" --python 3.12 --clear
 
 info "Installing dependencies from pyproject.toml..."
 uv pip install --python "$VENV_DIR/bin/python" -e backend
