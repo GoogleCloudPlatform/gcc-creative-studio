@@ -92,7 +92,7 @@ if ! command -v uv >/dev/null; then
 fi
 
 info "Setting up Python virtual environment..."
-VENV_DIR="backend/.venv"
+VENV_DIR="$(pwd)/backend/.venv"
 uv venv "$VENV_DIR" --python 3.12 --clear
 
 info "Installing dependencies from pyproject.toml..."
