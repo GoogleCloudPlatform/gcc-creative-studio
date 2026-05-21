@@ -119,7 +119,7 @@
             <!-- Delete Button (Hover) -->
             <button
               (click)="deleteAsset(asset, $event)"
-              class="absolute top-2 right-2 bg-red-500/80 hover:bg-red-600 rounded-full p-1.5 opacity-0 group-hover:opacity-100 transition-all hover:scale-110 shadow-lg"
+              class="absolute top-2 right-2 flex bg-red-500/80 hover:bg-red-600 rounded-full p-1.5 opacity-0 group-hover:opacity-100 transition-all hover:scale-110 shadow-lg"
               title="Delete Asset"
             >
               <mat-icon
@@ -132,7 +132,7 @@
 
         <!-- Bottom Tabs (Video / Audio filter) -->
         <div class="mt-4 flex gap-2 justify-center">
-          <studio-button variant="primary" size="medium" [shape]="(activeTab() !== 'video') ? 'circle' : 'pill'"
+          <studio-button variant="primary" size="small" [shape]="(activeTab() !== 'video') ? 'circle' : 'pill'"
             mat-button
             (click)="activeTab.set('video')"
             
@@ -145,7 +145,7 @@
               >Videos</span
             >
           </studio-button>
-          <studio-button variant="primary" size="medium" [shape]="(activeTab() !== 'audio') ? 'circle' : 'pill'"
+          <studio-button variant="primary" size="small" [shape]="(activeTab() !== 'audio') ? 'circle' : 'pill'"
             mat-button
             (click)="activeTab.set('audio')"
             
@@ -159,7 +159,7 @@
             >
           </studio-button>
           <div matTooltip="Drive coming soon!" class="inline-block">
-            <studio-button variant="primary" size="medium" shape="circle"
+            <studio-button variant="primary" size="small" shape="circle"
               mat-button
               [disabled]="true"
               
@@ -171,7 +171,7 @@
             </studio-button>
           </div>
           <!-- Functional Upload Button -->
-          <studio-button variant="primary" size="medium" shape="circle"
+          <studio-button variant="primary" size="small" shape="circle"
             mat-button
             (click)="openMediaSelector()"
             
@@ -574,15 +574,15 @@
     </div>
 
     <!-- Bottom Timeline (Floating) -->
-    <div class="p-6 flex flex-col overflow-hidden relative z-10">
+    <div class="pt-4 flex flex-col overflow-hidden relative z-10">
       <div
         class="flex flex-col overflow-hidden relative max-w-[108rem] w-[100%] mx-auto"
       >
         <!-- Timeline Header / Toolbar -->
         <div class="flex flex-row align-items-start">
-          <div class="h-16 w-[20rem] flex items-center justify-start gap-4">
-            <div class="flex gap-3 p-2">
-              <studio-button variant="primary" size="medium" [shape]="(activeToolButton() !== 'gallery') ? 'circle' : 'pill'"
+          <div class="h-16 w-[18rem] flex items-center justify-start gap-4">
+            <div class="flex gap-2">
+              <studio-button variant="primary" size="small" [shape]="(activeToolButton() !== 'gallery') ? 'circle' : 'pill'"
                 mat-button
                 (click)="toggleToolButton('gallery')"
                 
@@ -600,7 +600,7 @@
               </studio-button>
               
               <div matTooltip="Audio coming soon!" class="inline-block">
-                <studio-button variant="primary" size="medium" shape="circle"
+                <studio-button variant="primary" size="small" shape="circle"
                   mat-button
                   [disabled]="true"
                   
@@ -613,7 +613,7 @@
               </div>
 
               <div matTooltip="Stories coming soon!" class="inline-block">
-                <studio-button variant="primary" size="medium" shape="circle"
+                <studio-button variant="primary" size="small" shape="circle"
                   mat-button
                   [disabled]="true"
                   
@@ -626,7 +626,7 @@
               </div>
 
               <div matTooltip="Edit coming soon!" class="inline-block">
-                <studio-button variant="primary" size="medium" shape="circle"
+                <studio-button variant="primary" size="small" shape="circle"
                   mat-button
                   [disabled]="true"
                   
@@ -635,7 +635,7 @@
                 </studio-button>
               </div>
 
-              <studio-button variant="primary" size="medium" [shape]="(activeToolButton() !== 'agent') ? 'circle' : 'pill'"
+              <studio-button variant="primary" size="small" [shape]="(activeToolButton() !== 'agent') ? 'circle' : 'pill'"
                 mat-button
                 (click)="toggleToolButton('agent')"
                 matTooltip="Izumi Agent"
@@ -654,11 +654,11 @@
           </div>
 
           <div
-            class="flex flex-row w-[calc(100%-20rem)] items-center gap-1 mt-[0.5rem]"
+            class="flex flex-row w-[calc(100%-18rem)] items-center gap-2 mt-[0.5rem] !pl-2"
           >
             <!-- Time Ruler -->
             <div
-              class="glass-bg-effect h-[36px] ml-12 p-2 overflow-x-hidden w-full sticky top-0 z-10 rounded-3xl backdrop-blur-[7.5px]"
+              class="glass-bg-effect h-[32px] !pl-2 p-2 overflow-x-hidden w-full sticky top-0 z-10 rounded-3xl backdrop-blur-[7.5px]"
             >
               <div class="relative h-full" [style.width.px]="timelineWidth()">
                 <!-- Major ticks with labels (every second) -->
@@ -689,7 +689,7 @@
             <div class="flex flex-row gap-2 items-center ml-auto">
               <!-- Zoom Slider -->
               <div
-                class="zoom-slider flex flex-row items-center gap-1 rounded-3xl px-4 h-[36px]"
+                class="zoom-slider flex flex-row items-center gap-1 rounded-3xl px-4 h-[32px]"
               >
                 <mat-icon>zoom_out</mat-icon>
                 <studio-slider
@@ -704,7 +704,7 @@
               <!-- <input type="range" [(ngModel)]="pixelsPerSecond" min="5" max="100" step="5"
                                                                                                                                                                     class="w-20 h-1 bg-gray-700 rounded-full appearance-none cursor-pointer accent-gray-400"> -->
               <!-- Split Button -->
-              <studio-button variant="primary" size="medium" shape="circle"
+              <studio-button variant="primary" size="small" shape="circle"
                 mat-button
                 (click)="splitSelectedClip()"
                 [disabled]="!canSplit()"
@@ -713,7 +713,7 @@
               >
                 <mat-icon class="!w-5 !h-5">content_cut</mat-icon>
               </studio-button>
-              <studio-button variant="primary" size="medium" shape="circle"
+              <studio-button variant="primary" size="small" shape="circle"
                 mat-button
                 (click)="deleteSelectedClip()"
                 [disabled]="!selectedClipId()"
@@ -743,7 +743,7 @@
           <div class="w-full flex-1 flex">
             <!-- Left Track Controls -->
             <div
-              class="w-[16rem] flex flex-col align-items-center justify-evenly z-20 relative"
+              class="w-[18rem] flex flex-col align-items-center justify-evenly z-20 relative"
             >
               <!-- Video Control -->
               <div class="flex flex-row items-center justify-between">
@@ -768,6 +768,7 @@
                   </studio-toolbar>
                 </div>
                 <studio-button variant="primary" size="large" shape="circle"
+                  class="pr-2"
                   mat-button
                   (click)="togglePlay()"
                   
@@ -810,7 +811,7 @@
               (mousedown)="onTimelineMouseDown($event)"
             >
               <div
-                class="relative max-w-[calc(100%-20rem)] h-full"
+                class="relative max-w-[calc(100%-18rem)] h-full"
                 [style.width.px]="timelineWidth()"
               >
                 <!-- Playhead -->

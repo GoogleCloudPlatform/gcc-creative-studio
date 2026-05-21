@@ -452,7 +452,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       data: {
         mimeType: mimeType,
         showFooter: true,
-        maxSelection: 1,
+        maxSelection: 10,
+        multiSelect: true
       },
       panelClass: 'image-selector-dialog',
     });
@@ -461,7 +462,14 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       .afterClosed()
       .subscribe((result: MediaItemSelection | SourceAssetResponseDto) => {
         if (result) {
-          this.processCloudMediaResult(result);
+          // Normalize to an array: if it's already an array, use it; 
+          // if it's a single object, wrap it in an array.
+          const results = Array.isArray(result) ? result : [result];
+
+          // Process each result individually
+          results.forEach(res => {
+            this.processCloudMediaResult(res);
+          });
         }
       });
   }
