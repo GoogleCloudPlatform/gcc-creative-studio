@@ -836,7 +836,7 @@
                 </div>
 
                 <!-- VIDEO TRACK (draggable clips) -->
-                <div class="h-14 mt-2 relative w-full">
+                <div class="h-20 mt-2 relative w-full">
                   <div
                     *ngFor="let clip of videoClips()"
                     (mousedown)="startDrag($event, clip)"
@@ -848,15 +848,15 @@
                       'border-white/10 bg-[#2a2a2c] hover:border-white/30':
                         selectedClipId() !== clip.id,
                     }"
-                    [style.left.px]="clip.startTime * pixelsPerSecond"
-                    [style.width.px]="clip.duration * pixelsPerSecond"
+                    [style.left.px]="(clip.startTime * pixelsPerSecond) + 2"
+                    [style.width.px]="(clip.duration * pixelsPerSecond) - 4"
                   >
                     <!-- Thumbnail Strip (when thumbnail available) -->
                     <div
                       *ngIf="getAssetThumbnail(clip.assetId)"
                       class="absolute inset-0 flex opacity-50 group-hover:opacity-70 transition-opacity pointer-events-none grayscale group-hover:grayscale-0 overflow-hidden"
                     >
-                      <ng-container *ngFor="let i of [1, 2, 3, 4, 5]">
+                      <ng-container *ngFor="let i of getThumbnailsSequence(clip.duration)">
                         <img
                           [src]="getAssetThumbnail(clip.assetId)"
                           class="h-full object-cover w-20 flex-shrink-0"
@@ -899,15 +899,15 @@
                     *ngFor="let clip of track"
                     (mousedown)="startDrag($event, clip)"
                     (click)="selectClip(clip.id, $event)"
-                    class="absolute top-2 bottom-2 rounded-lg cursor-pointer overflow-hidden border flex items-center justify-center"
+                    class="absolute top-2 bottom-2 rounded-lg cursor-pointer overflow-hidden flex items-center justify-center"
                     [ngClass]="{
                       'border-emerald-500 ring-2 ring-emerald-500/50 shadow-xl shadow-emerald-500/40 z-30':
                         selectedClipId() === clip.id,
-                      'border-white/5 hover:border-white/20':
+                      'hover:border-white/20':
                         selectedClipId() !== clip.id,
                     }"
-                    [style.left.px]="clip.startTime * pixelsPerSecond"
-                    [style.width.px]="clip.duration * pixelsPerSecond"
+                    [style.left.px]="(clip.startTime * pixelsPerSecond) + 2"
+                    [style.width.px]="(clip.duration * pixelsPerSecond) - 4"
                   >
                     <!-- Waveform Graphic -->
                     <div
