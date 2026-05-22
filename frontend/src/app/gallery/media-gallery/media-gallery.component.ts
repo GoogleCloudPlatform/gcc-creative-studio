@@ -58,7 +58,6 @@ import {ConfirmationDialogComponent} from '../../common/components/confirmation-
   selector: 'app-media-gallery',
   templateUrl: './media-gallery.component.html',
   styleUrl: './media-gallery.component.scss',
-  providers: [GalleryService],
   animations: [
     trigger('fadeSlideInOut', [
       transition(':enter', [
@@ -256,6 +255,20 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     this.isAdmin = userDetails?.roles?.includes(UserRolesEnum.ADMIN) || false;
 
     this.mediaTypeFilter = this.filterByType || '';
+
+    // restore last filters
+    const savedFilters = this.galleryService.currentFilters;
+    if (savedFilters) {
+      this.queryFilter = savedFilters.query || savedFilters.userEmail || '';
+      this.startDateFilter = savedFilters.startDate ? new Date(savedFilters.startDate) : null;
+      this.endDateFilter = savedFilters.endDate ? new Date(savedFilters.endDate) : null;
+      this.mediaTypeFilter = savedFilters.mimeType || '';
+      this.generationModelFilter = savedFilters.model || '';
+      this.assetTypeFilter = savedFilters.itemType || '';
+      this.tagsFilter = savedFilters.tags || [];
+      this.onlyMyMedia = savedFilters.userEmail === userDetails?.email;
+    }
+
     this.searchTerm(); // Set initial filters
     this.loadingSubscription = this.galleryService.isLoading$.subscribe(
       loading => {

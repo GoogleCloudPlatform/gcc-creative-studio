@@ -375,4 +375,8 @@ export class GalleryService implements OnDestroy {
     const url = `${environment.backendURL}/gallery/items/${id}/restore?item_type=${itemType}`;
     return this.http.post(url, {});
   }
+
+  get currentFilters(): GallerySearchDto | null {
+    return this.filters$.value;
+  }
 }
