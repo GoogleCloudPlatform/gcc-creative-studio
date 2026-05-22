@@ -269,7 +269,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
       this.onlyMyMedia = savedFilters.userEmail === userDetails?.email;
     }
 
-    this.searchTerm(); // Set initial filters
+    this.searchTerm(); // Initial search with stored filters
     this.loadingSubscription = this.galleryService.isLoading$.subscribe(
       loading => {
         this.isLoading = loading;
