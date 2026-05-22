@@ -1317,4 +1317,10 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   getSequence(length: number): number[] {
     return [...Array(Math.floor(length)).keys()].map(i => i + 1);
   }
+
+  getThumbnailsSequence(duration: number): number[] {
+    // add thumbnails dinamically
+    const count = Math.ceil((duration * this.pixelsPerSecond) / 80);
+    return this.getSequence(count);
+  }
 }
