@@ -34,6 +34,7 @@ export interface TimelineRequest {
   output_format?: string;
   width?: number;
   height?: number;
+  hide_video?: boolean;
 }
 
 @Injectable({
