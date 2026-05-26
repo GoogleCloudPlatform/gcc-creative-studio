@@ -21,12 +21,12 @@ import {GalleryService} from '../gallery.service';
 import {DomSanitizer} from '@angular/platform-browser';
 import {MatIconRegistry} from '@angular/material/icon';
 import {UserService} from '../../common/services/user.service';
-import { ElementRef, NgZone, NO_ERRORS_SCHEMA } from '@angular/core';
+import {ElementRef, NgZone, NO_ERRORS_SCHEMA} from '@angular/core';
 import {MatIconModule} from '@angular/material/icon';
-import { of } from 'rxjs';
-import { WorkspaceStateService } from '../../services/workspace/workspace-state.service';
-import { TagsService } from '../../common/services/tags.service';
-import { NoopAnimationsModule } from '@angular/platform-browser/animations';
+import {of} from 'rxjs';
+import {WorkspaceStateService} from '../../services/workspace/workspace-state.service';
+import {TagsService} from '../../common/services/tags.service';
+import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 
 describe('MediaGalleryComponent', () => {
   let component: MediaGalleryComponent;
@@ -44,12 +44,12 @@ describe('MediaGalleryComponent', () => {
             isLoading$: of(false),
             images$: of([]),
             allImagesLoaded: of(true),
-            searchTerm: () => { },
+            searchTerm: () => {},
             currentFilters: null,
-            setFilters: () => { },
-            bulkDelete: () => of({ deleted_count: 1 }),
+            setFilters: () => {},
+            bulkDelete: () => of({deleted_count: 1}),
             bulkDownload: () => of(new Blob()),
-            bulkCopy: () => of({})
+            bulkCopy: () => of({}),
           },
         },
         {
@@ -64,7 +64,10 @@ describe('MediaGalleryComponent', () => {
         {
           provide: UserService,
           useValue: {
-            getUserDetails: () => ({ email: 'test@google.com', roles: ['ADMIN'] }),
+            getUserDetails: () => ({
+              email: 'test@google.com',
+              roles: ['ADMIN'],
+            }),
           },
         },
         {
@@ -77,12 +80,15 @@ describe('MediaGalleryComponent', () => {
         {
           provide: TagsService,
           useValue: {
-            getTags: () => of({ data: [] }),
+            getTags: () => of({data: []}),
             deleteTag: () => of(null),
             bulkAssign: () => of(null),
           },
         },
-        { provide: ElementRef, useValue: { nativeElement: { querySelectorAll: () => [] } } },
+        {
+          provide: ElementRef,
+          useValue: {nativeElement: {querySelectorAll: () => []}},
+        },
       ],
     }).compileComponents();
 
@@ -119,8 +125,12 @@ describe('MediaGalleryComponent', () => {
       expect(component.assetTypeFilter).toBe('media_item');
       expect(component.tagsFilter).toEqual(['tag1', 'tag2']);
       expect(component.onlyMyMedia).toBeTrue();
-      expect(component.startDateFilter).toEqual(new Date('2026-01-01T00:00:00.000Z'));
-      expect(component.endDateFilter).toEqual(new Date('2026-01-02T00:00:00.000Z'));
+      expect(component.startDateFilter).toEqual(
+        new Date('2026-01-01T00:00:00.000Z'),
+      );
+      expect(component.endDateFilter).toEqual(
+        new Date('2026-01-02T00:00:00.000Z'),
+      );
     });
 
     it('should restore userEmail as query when query is missing', () => {

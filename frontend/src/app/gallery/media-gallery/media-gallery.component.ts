@@ -260,8 +260,12 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     const savedFilters = this.galleryService.currentFilters;
     if (savedFilters) {
       this.queryFilter = savedFilters.query || savedFilters.userEmail || '';
-      this.startDateFilter = savedFilters.startDate ? new Date(savedFilters.startDate) : null;
-      this.endDateFilter = savedFilters.endDate ? new Date(savedFilters.endDate) : null;
+      this.startDateFilter = savedFilters.startDate
+        ? new Date(savedFilters.startDate)
+        : null;
+      this.endDateFilter = savedFilters.endDate
+        ? new Date(savedFilters.endDate)
+        : null;
       this.mediaTypeFilter = savedFilters.mimeType || '';
       this.generationModelFilter = savedFilters.model || '';
       this.assetTypeFilter = savedFilters.itemType || '';
