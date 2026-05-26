@@ -91,6 +91,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   isVideoHidden = signal<boolean>(false);
   lockedTracks = signal<Set<number>>(new Set());
   mutedTracks = signal<Set<number>>(new Set());
+  scrollOffset = signal<number>(0);
 
   // Simple tab between video/audio assets (UX only)
   activeTab = signal<'video' | 'audio'>('video');
@@ -182,8 +183,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   // View Children
   @ViewChild('mainVideo') mainVideo!: ElementRef<HTMLVideoElement>;
   @ViewChildren('bgAudio') bgAudios!: QueryList<ElementRef<HTMLAudioElement>>;
-  @ViewChild('timelineContainer')
-  timelineContainer!: ElementRef<HTMLDivElement>;
+  @ViewChild('rulerContainer') rulerContainer!: ElementRef<HTMLDivElement>;
+  @ViewChild('timelineContainer') timelineContainer!: ElementRef<HTMLDivElement>;
 
   // Services
   private sanitizer = inject(DomSanitizer);
@@ -1362,5 +1363,15 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     // add thumbnails dinamically
     const count = Math.ceil((duration * this.pixelsPerSecond) / 80);
     return this.getSequence(count);
+  }
+
+  onTimelineScroll() {
+    if (this.timelineContainer) {
+      this.scrollOffset.set(this.timelineContainer.nativeElement.scrollLeft);
+    }
+    if (this.rulerContainer && this.timelineContainer) {
+      // Sync the ruler scroll with the timeline scroll
+      this.rulerContainer.nativeElement.scrollLeft = this.timelineContainer.nativeElement.scrollLeft;
+    }
   }
 }
