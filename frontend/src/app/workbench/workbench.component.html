@@ -530,6 +530,7 @@
             #mainVideo
             class="max-w-full max-h-full object-contain shadow-2xl rounded-lg"
             [class.hidden]="!activeVideoClip()"
+            [class.invisible]="isVideoHidden()"
             [style.filter]="videoFilter()"
             [src]="activeVideoSrc()"
             [muted]="true"
@@ -538,8 +539,8 @@
           ></video>
 
           <!-- Hidden Audio (Multi-track) -->
-          <ng-container *ngFor="let src of activeAudioSrcs()">
-            <audio #bgAudio [src]="src"></audio>
+          <ng-container *ngFor="let src of activeAudioSrcs(); let i = index">
+            <audio #bgAudio [src]="src" [muted]="isTrackMuted(i + 1)"></audio>
           </ng-container>
 
           <!-- Playback Controls Overlay (Hover) -->
@@ -755,15 +756,16 @@
                     class="!w-6 !h-6"
                   ></mat-icon>
                   <studio-toolbar>
-                    <div matTooltip="coming soon!" class="inline-block">
-                        <studio-toolbar-button [disabled]="true">
-                        <mat-icon svgIcon="eye-icon"></mat-icon>
+                    <div class="inline-block">
+                      <studio-toolbar-button (click)="toggleVideoVisibility()">
+                        <mat-icon svgIcon="eye-icon" [class.opacity-50]="isVideoHidden()"></mat-icon>
                         </studio-toolbar-button>
                     </div>
-                    <div matTooltip="coming soon!" class="inline-block">
-                        <studio-toolbar-button [disabled]="true">
-                        <mat-icon svgIcon="lock-icon"></mat-icon>
-                        </studio-toolbar-button>
+                    <div class="inline-block">
+                      <studio-toolbar-button (click)="toggleTrackLock(0)">
+                        <mat-icon *ngIf="!isTrackLocked(0)">lock_open</mat-icon>
+                        <mat-icon *ngIf="isTrackLocked(0)" class="opacity-50">lock</mat-icon>
+                      </studio-toolbar-button>
                     </div>
                   </studio-toolbar>
                 </div>
@@ -790,14 +792,16 @@
                   class="!w-6 !h-6"
                 ></mat-icon>
                 <studio-toolbar>
-                  <div matTooltip="coming soon!" class="inline-block">
-                    <studio-toolbar-button [disabled]="true">
-                      <mat-icon svgIcon="lock-icon"></mat-icon>
+                  <div class="inline-block">
+                    <studio-toolbar-button (click)="toggleTrackLock(i + 1)">
+                      <mat-icon *ngIf="!isTrackLocked(i + 1)">lock_open</mat-icon>
+                      <mat-icon *ngIf="isTrackLocked(i + 1)" class="opacity-50">lock</mat-icon>
                     </studio-toolbar-button>
                   </div>
-                  <div matTooltip="coming soon!" class="inline-block">
-                    <studio-toolbar-button [disabled]="true">
-                      <mat-icon svgIcon="volume-off-icon"></mat-icon>
+                  <div class="inline-block">
+                    <studio-toolbar-button (click)="toggleTrackMute(i + 1)">
+                      <mat-icon *ngIf="!isTrackMuted(i + 1)">volume_up</mat-icon>
+                      <mat-icon *ngIf="isTrackMuted(i + 1)" svgIcon="volume-off-icon" class="opacity-50"></mat-icon>
                     </studio-toolbar-button>
                   </div>
                 </studio-toolbar>

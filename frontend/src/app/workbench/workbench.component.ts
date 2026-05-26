@@ -88,6 +88,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   activeToolButton = signal<
     'gallery' | 'audio' | 'stories' | 'edit' | 'agent' | null
   >(null);
+  isVideoHidden = signal<boolean>(false);
+  lockedTracks = signal<Set<number>>(new Set());
+  mutedTracks = signal<Set<number>>(new Set());
 
   // Simple tab between video/audio assets (UX only)
   activeTab = signal<'video' | 'audio'>('video');
@@ -378,6 +381,36 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   onCloseAgentView() {
     this.activeToolButton.set(null);
+  }
+
+  toggleVideoVisibility() {
+    this.isVideoHidden.update(v => !v);
+  }
+
+  toggleTrackLock(trackIndex: number) {
+    this.lockedTracks.update(prev => {
+      const next = new Set(prev);
+      if (next.has(trackIndex)) next.delete(trackIndex);
+      else next.add(trackIndex);
+      return next;
+    });
+  }
+
+  toggleTrackMute(trackIndex: number) {
+    this.mutedTracks.update(prev => {
+      const next = new Set(prev);
+      if (next.has(trackIndex)) next.delete(trackIndex);
+      else next.add(trackIndex);
+      return next;
+    });
+  }
+
+  isTrackLocked(trackIndex: number): boolean {
+    return this.lockedTracks().has(trackIndex);
+  }
+
+  isTrackMuted(trackIndex: number): boolean {
+    return this.mutedTracks().has(trackIndex);
   }
 
   ngOnInit() {
@@ -887,6 +920,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   // Start dragging a clip horizontally on the timeline
   startDrag(event: MouseEvent, clip: TimelineClip) {
+    if (this.isTrackLocked(clip.trackIndex)) return;
     event.stopPropagation();
     event.preventDefault();
     this.selectClip(clip.id, event);
@@ -901,6 +935,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   selectClip(id: string, event: MouseEvent) {
     event.stopPropagation();
+    const clip = this.timelineClips().find(c => c.id === id);
+    if (clip && this.isTrackLocked(clip.trackIndex)) return;
     this.selectedClipId.set(id);
   }
 
@@ -1010,21 +1046,24 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     this.isDownloading.set(true);
 
     // Map timeline clips to request format
-    const requestClips: Clip[] = this.timelineClips().map(clip => {
-      const asset = this.assets().find(a => a.id === clip.assetId);
-      return {
-        assetId: clip.assetId,
-        url: asset?.url || '',
-        startTime: clip.startTime,
-        duration: clip.duration,
-        offset: clip.offset,
-        trackIndex: clip.trackIndex,
-        type: clip.trackIndex === 0 ? 'video' : 'audio',
-      };
-    });
+    const requestClips: Clip[] = this.timelineClips()
+      .filter(clip => !this.isTrackMuted(clip.trackIndex))
+      .map(clip => {
+        const asset = this.assets().find(a => a.id === clip.assetId);
+        return {
+          assetId: clip.assetId,
+          url: asset?.url || '',
+          startTime: clip.startTime,
+          duration: clip.duration,
+          offset: clip.offset,
+          trackIndex: clip.trackIndex,
+          type: clip.trackIndex === 0 ? 'video' : 'audio',
+        };
+      });
 
     const request: TimelineRequest = {
       clips: requestClips,
+      hide_video: this.isVideoHidden(),
     };
 
     this.workbenchService.renderVideo(request).subscribe({
@@ -1108,6 +1147,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   // --- Trimming Logic ---
   startTrim(event: MouseEvent, clip: TimelineClip, type: 'start' | 'end') {
+    if (this.isTrackLocked(clip.trackIndex)) return;
     event.stopPropagation();
     event.preventDefault();
     this.trimState = {

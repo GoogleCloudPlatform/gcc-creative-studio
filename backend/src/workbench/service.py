@@ -122,7 +122,7 @@ class WorkbenchService:
 
                 # Video (Trim + SETPTS)
                 v_label = f"[v{i}_trim]"
-                if info["has_video"]:
+                if info["has_video"] and not request.hide_video:
                     filter_chains.append(
                         f"[{input_idx}:v]trim=start={clip.offset}:duration={clip.duration},setpts=PTS-STARTPTS{v_label}",
                     )
