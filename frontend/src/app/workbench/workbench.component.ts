@@ -23,6 +23,7 @@ import {
   QueryList,
   ElementRef,
   OnDestroy,
+  HostListener,
   effect,
   inject,
   OnInit,
@@ -92,6 +93,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   lockedTracks = signal<Set<number>>(new Set());
   mutedTracks = signal<Set<number>>(new Set());
   scrollOffset = signal<number>(0);
+  currentScroll = signal<number>(0);
+  containerWidthSignal = signal<number>(0);
+  isPausing = false;
 
   // Simple tab between video/audio assets (UX only)
   activeTab = signal<'video' | 'audio'>('video');
@@ -100,7 +104,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   exposureVal = 100;
   contrastVal = 100;
   saturateVal = 100;
-  pixelsPerSecond = 15; // Default reduced from 30 to 15
+  pixelsPerSecond = signal<number>(15); // Default reduced from 30 to 15
 
   // Computed Values
   videoClips = computed(() =>
@@ -141,7 +145,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   timelineWidth = computed(() => {
     // Ensure timeline is at least screen width or longer based on content
-    return Math.max(this.totalDuration() * this.pixelsPerSecond + 800, 800);
+    return this.totalDuration() * this.pixelsPerSecond() + this.containerWidthSignal();
   });
 
   // derived signals for active source logic
@@ -185,6 +189,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   @ViewChildren('bgAudio') bgAudios!: QueryList<ElementRef<HTMLAudioElement>>;
   @ViewChild('rulerContainer') rulerContainer!: ElementRef<HTMLDivElement>;
   @ViewChild('timelineContainer') timelineContainer!: ElementRef<HTMLDivElement>;
+  @ViewChild('dummyScrollContainer') dummyScrollContainer!: ElementRef<HTMLDivElement>;
 
   // Services
   private sanitizer = inject(DomSanitizer);
@@ -434,6 +439,18 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     this.bgAudios.changes.subscribe(() => {
       this.audioElementsChanged.update(v => v + 1);
     });
+
+    // Set initial container width for timeline
+    if (this.timelineContainer?.nativeElement) {
+      this.containerWidthSignal.set(this.timelineContainer.nativeElement.clientWidth);
+    }
+  }
+
+  @HostListener('window:resize')
+  onResize() {
+    if (this.timelineContainer?.nativeElement) {
+      this.containerWidthSignal.set(this.timelineContainer.nativeElement.clientWidth);
+    }
   }
 
   ngOnDestroy() {
@@ -994,15 +1011,25 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   togglePlay() {
     if (!this.isBrowser) return;
-    this.isPlaying.set(!this.isPlaying());
+
     if (this.isPlaying()) {
-      this.runGameLoop();
-    } else {
+      // Pausing
+      const lastScroll = this.scrollOffset();
+      this.isPlaying.set(false);
       cancelAnimationFrame(this.animationFrameId);
+
+      if (this.dummyScrollContainer?.nativeElement) {
+        this.dummyScrollContainer.nativeElement.scrollLeft = lastScroll;
+      }
+    } else {
+      // Playing
+      this.isPlaying.set(true);
+      this.runGameLoop();
     }
   }
 
   runGameLoop() {
+    console.log(333, this.isBrowser, this.scrollOffset());
     if (!this.isBrowser) return;
     let lastTime = performance.now();
     const loop = (now: number) => {
@@ -1013,22 +1040,42 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
       // 1. Auto Scroll Logic
       if (this.timelineContainer?.nativeElement) {
+        console.log(444, "inside loop");
         const container = this.timelineContainer.nativeElement;
-        const playheadPos = nextTime * this.pixelsPerSecond;
+        const playheadPos = nextTime * this.pixelsPerSecond();
         const containerWidth = container.clientWidth;
         const scrollLeft = container.scrollLeft;
 
-        // If playhead goes past 80% of visible area, scroll forward
-        if (playheadPos > scrollLeft + containerWidth * 0.8) {
-          // Smoothly jump scroll to keep playhead at 20%
-          container.scrollLeft = playheadPos - containerWidth * 0.2;
+        // Center the playhead after it reaches the middle of the screen (50%)
+        const centerPoint = containerWidth * 0.5;
+        if (playheadPos > centerPoint) {
+          const newScrollLeft = playheadPos - centerPoint;
+          this.scrollOffset.set(newScrollLeft);
+
+          if (this.dummyScrollContainer?.nativeElement) {
+            this.dummyScrollContainer.nativeElement.scrollLeft = newScrollLeft;
+          }
+          if (this.rulerContainer?.nativeElement) {
+            this.rulerContainer.nativeElement.scrollLeft = newScrollLeft;
+          }
         }
       }
 
       if (nextTime >= this.totalDuration()) {
-        this.currentTime.set(this.totalDuration());
+        this.currentTime.set(0);
+        this.scrollOffset.set(0);
+        if (this.timelineContainer?.nativeElement) {
+          this.timelineContainer.nativeElement.scrollLeft = 0;
+        }
+        if (this.rulerContainer?.nativeElement) {
+          this.rulerContainer.nativeElement.scrollLeft = 0;
+        }
+        if (this.dummyScrollContainer?.nativeElement) {
+          this.dummyScrollContainer.nativeElement.scrollLeft = 0;
+        }
         this.isPlaying.set(false);
       } else {
+        console.log(777, "inside loop");
         this.currentTime.set(nextTime);
         this.animationFrameId = requestAnimationFrame(loop);
       }
@@ -1103,19 +1150,47 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       initialTime: this.currentTime(),
     };
     this.isPlaying.set(false);
+
+    // Center the view on the playhead
+    if (this.timelineContainer?.nativeElement) {
+      const containerWidth = this.timelineContainer.nativeElement.clientWidth;
+      const playheadPos = this.currentTime() * this.pixelsPerSecond();
+      const newScrollLeft = Math.max(0, playheadPos - containerWidth * 0.5);
+      this.scrollOffset.set(newScrollLeft);
+      if (this.dummyScrollContainer?.nativeElement) {
+        this.dummyScrollContainer.nativeElement.scrollLeft = newScrollLeft;
+      }
+    }
   }
 
   onScrubMove(event: MouseEvent) {
     if (!this.scrubState?.active) return;
 
     const deltaX = event.clientX - this.scrubState.startX;
-    const deltaTime = deltaX / this.pixelsPerSecond;
+    const deltaTime = deltaX / this.pixelsPerSecond();
     const newTime = Math.max(
       0,
       Math.min(this.scrubState.initialTime + deltaTime, this.totalDuration()),
     );
 
     this.currentTime.set(newTime);
+
+    // Auto-scroll logic for scrubbing
+    if (this.timelineContainer?.nativeElement) {
+      const container = this.timelineContainer.nativeElement;
+      const playheadPos = newTime * this.pixelsPerSecond();
+      const containerWidth = container.clientWidth;
+      const scrollLeft = this.scrollOffset();
+
+      // Scroll forward if playhead goes off screen right
+      if (playheadPos > scrollLeft + containerWidth) {
+        this.scrollOffset.set(playheadPos - containerWidth);
+      }
+      // Scroll backward if playhead goes off screen left
+      else if (playheadPos < scrollLeft) {
+        this.scrollOffset.set(playheadPos);
+      }
+    }
   }
 
   onScrubEnd() {
@@ -1139,8 +1214,19 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       clickX = event.clientX - rect.left + currentTarget.scrollLeft;
     }
 
-    const time = Math.max(0, clickX / this.pixelsPerSecond);
+    const time = Math.max(0, clickX / this.pixelsPerSecond());
     this.currentTime.set(time);
+
+    // Center the view on the clicked time
+    if (this.timelineContainer?.nativeElement) {
+      const containerWidth = this.timelineContainer.nativeElement.clientWidth;
+      const playheadPos = time * this.pixelsPerSecond();
+      const newScrollLeft = Math.max(0, playheadPos - containerWidth * 0.5);
+      this.scrollOffset.set(newScrollLeft);
+      if (this.dummyScrollContainer?.nativeElement) {
+        this.dummyScrollContainer.nativeElement.scrollLeft = newScrollLeft;
+      }
+    }
 
     this.onScrubStart(event);
     this.selectedClipId.set(null);
@@ -1167,7 +1253,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     if (!this.trimState || !this.trimState.active) return;
 
     const deltaX = event.clientX - this.trimState.startX;
-    const deltaTime = deltaX / this.pixelsPerSecond;
+    const deltaTime = deltaX / this.pixelsPerSecond();
     const {clipId, type, initialDur, initialOffset} = this.trimState;
 
     const clip = this.timelineClips().find(c => c.id === clipId);
@@ -1218,12 +1304,12 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     if (!this.dragState || !this.dragState.active) return;
 
     const deltaX = event.clientX - this.dragState.startX;
-    const deltaTime = deltaX / this.pixelsPerSecond;
+    const deltaTime = deltaX / this.pixelsPerSecond();
     let newStartTime = this.dragState.initialStartTime + deltaTime;
     if (newStartTime < 0) newStartTime = 0;
 
     // Snap to start or current playhead for nicer UX
-    const snapThreshold = 10 / this.pixelsPerSecond;
+    const snapThreshold = 10 / this.pixelsPerSecond();
     if (Math.abs(newStartTime) < snapThreshold) {
       newStartTime = 0;
     } else if (Math.abs(newStartTime - this.currentTime()) < snapThreshold) {
@@ -1352,7 +1438,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   getRandomHeight(seed: number) {
     // deterministic pseudo random for waveform vis
-    return 40 + (Math.sin(seed) * 30 + 30);
+    return 30 + (Math.sin(seed) * 40 + 30);
   }
 
   getSequence(length: number): number[] {
@@ -1361,17 +1447,15 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   getThumbnailsSequence(duration: number): number[] {
     // add thumbnails dinamically
-    const count = Math.ceil((duration * this.pixelsPerSecond) / 80);
+    const count = Math.ceil((duration * this.pixelsPerSecond()) / 80);
     return this.getSequence(count);
   }
 
-  onTimelineScroll() {
-    if (this.timelineContainer) {
-      this.scrollOffset.set(this.timelineContainer.nativeElement.scrollLeft);
-    }
-    if (this.rulerContainer && this.timelineContainer) {
-      // Sync the ruler scroll with the timeline scroll
-      this.rulerContainer.nativeElement.scrollLeft = this.timelineContainer.nativeElement.scrollLeft;
+  onDummyScroll(event: Event) {
+    const target = event.target as HTMLElement;
+    this.scrollOffset.set(target.scrollLeft);
+    if (this.rulerContainer?.nativeElement) {
+      this.rulerContainer.nativeElement.scrollLeft = target.scrollLeft;
     }
   }
 }

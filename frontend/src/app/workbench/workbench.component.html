@@ -580,9 +580,9 @@
         class="flex flex-col overflow-hidden relative max-w-[108rem] w-[100%] mx-auto"
       >
         <!-- Global Playhead -->
-        <div *ngIf="(currentTime() * pixelsPerSecond) >= scrollOffset()"
+        <div *ngIf="(currentTime() * pixelsPerSecond()) >= scrollOffset()"
           class="absolute top-0 bottom-1 w-px bg-white pointer-events-none !z-[100]"
-          [style.left]="'calc(19rem + ' + (currentTime() * pixelsPerSecond - scrollOffset()) + 'px)'">
+          [style.left]="'calc(20rem + ' + (currentTime() * pixelsPerSecond() - scrollOffset()) + 'px)'">
           <!-- Transparent Hit Box for Dragging -->
           <div
             class="absolute top-0 bottom-0 w-6 -left-3 cursor-grab active:cursor-grabbing pointer-events-auto z-[101] hover:bg-white/5 transition-colors"
@@ -673,12 +673,12 @@
           </div>
 
           <div
-            class="flex flex-row w-[calc(100%-18rem)] items-center gap-2 mt-[0.5rem] !pl-2"
+            class="flex flex-row w-[calc(100%-18rem)] items-center gap-2 mt-[0.5rem] !pl-4"
           >
             <!-- Time Ruler -->
             <div
               #rulerContainer
-              class="glass-bg-effect h-[32px] !pl-2 p-2 overflow-x-hidden w-full sticky top-0 z-10 rounded-3xl backdrop-blur-[7.5px]"
+              class="glass-bg-effect h-[32px] !pl-4 p-2 overflow-x-hidden w-full sticky top-0 z-10 rounded-3xl backdrop-blur-[7.5px]"
             >
               <div class="relative h-full" [style.width.px]="timelineWidth()">
                 <!-- Major ticks with labels (every second) -->
@@ -686,7 +686,7 @@
                   <!-- Major tick line (every 10 seconds) or minor tick (every 2 seconds) -->
                   <div
                     class="absolute top-0 flex items-center"
-                    [style.left.px]="tick * pixelsPerSecond"
+                    [style.left.px]="tick * pixelsPerSecond()"
                   >
                     <div
                       *ngIf="isMajorTick(tick)"
@@ -716,7 +716,8 @@
                   [min]="10"
                   [max]="100"
                   [step]="5"
-                  [(value)]="pixelsPerSecond"
+                  [value]="pixelsPerSecond()"
+                  (valueChange)="pixelsPerSecond.set($event)"
                   class="w-[150px]"
                 ></studio-slider>
                 <mat-icon>zoom_in</mat-icon>
@@ -724,7 +725,7 @@
               <!-- <input type="range" [(ngModel)]="pixelsPerSecond" min="5" max="100" step="5"
                                                                                                                                                                     class="w-20 h-1 bg-gray-700 rounded-full appearance-none cursor-pointer accent-gray-400"> -->
               <!-- Split Button -->
-              <studio-button variant="primary" size="small" shape="circle"
+              <!-- <studio-button variant="primary" size="small" shape="circle"
                 mat-button
                 (click)="splitSelectedClip()"
                 [disabled]="!canSplit()"
@@ -740,7 +741,7 @@
                 
               >
                 <mat-icon class="!w-5 !h-5">delete</mat-icon>
-              </studio-button>
+              </studio-button> -->
             </div>
           </div>
         </div>
@@ -748,7 +749,6 @@
         <!-- Tracks Area -->
         <div
           class="glass-bg-effect min-h-[12rem] max-w-[108rem] w-[100%] flex-1 flex flex-col items-end p-2 rounded-2xl backdrop-blur-[50px] relative"
-          #timelineContainer
         >
           <studio-button variant="cta" size="small" 
             mat-raised-button
@@ -827,16 +827,13 @@
               </div>
             </div>
 
-            <!-- Main Scrollable Timeline -->
-            <div
-              #timelineContainer
-              class="flex-1 overflow-x-auto relative !pl-2"
-              (scroll)="onTimelineScroll()"
-              (mousedown)="onTimelineMouseDown($event)"
-            >
+            <div class="flex-1 flex flex-col w-[calc(100%-18rem)]">
+              <!-- Main Scrollable Timeline -->
+              <div #timelineContainer class="relative !pl-4 overflow-hidden" (mousedown)="onTimelineMouseDown($event)">
               <div
-                class="relative max-w-[calc(100%-18rem)] h-full"
+                class="relative h-full"
                 [style.width.px]="timelineWidth()"
+                [style.transform]="'translateX(-' + scrollOffset() + 'px)'"
               >
 
 
@@ -853,8 +850,8 @@
                       'border-white/10 bg-[#2a2a2c] hover:border-white/30':
                         selectedClipId() !== clip.id,
                     }"
-                    [style.left.px]="(clip.startTime * pixelsPerSecond) + 2"
-                    [style.width.px]="(clip.duration * pixelsPerSecond) - 4"
+                    [style.left.px]="(clip.startTime * pixelsPerSecond()) + 2"
+                    [style.width.px]="(clip.duration * pixelsPerSecond()) - 4"
                   >
                     <!-- Thumbnail Strip (when thumbnail available) -->
                     <div
@@ -911,8 +908,8 @@
                       'hover:border-white/20':
                         selectedClipId() !== clip.id,
                     }"
-                    [style.left.px]="(clip.startTime * pixelsPerSecond) + 2"
-                    [style.width.px]="(clip.duration * pixelsPerSecond) - 4"
+                    [style.left.px]="(clip.startTime * pixelsPerSecond()) + 2"
+                    [style.width.px]="(clip.duration * pixelsPerSecond()) - 4"
                   >
                     <!-- Waveform Graphic -->
                     <div
@@ -921,7 +918,7 @@
                       <div
                         *ngFor="
                           let i of getSequence(
-                            (clip.duration * pixelsPerSecond) / 10
+                            (clip.duration * pixelsPerSecond()) / 10
                           )
                         "
                         class="flex-1 rounded-[180px] bg-gradient-to-r from-[rgba(30,220,136,0.75)] to-[rgba(37,165,163,0.75)]"
@@ -940,6 +937,13 @@
                 </div>
               </div>
             </div>
+          </div>
+          <!-- Dummy Scrollbar -->
+          <div *ngIf="(totalDuration() * pixelsPerSecond()) > containerWidthSignal()" #dummyScrollContainer
+            class="absolute bottom-0 right-0 w-[calc(100%-18rem)] h-6 overflow-x-auto !pl-4 z-20 custom-scrollbar"
+            (scroll)="onDummyScroll($event)">
+            <div [style.width.px]="timelineWidth()" class="h-px"></div>
+          </div>
           </div>
           <!-- Timer -->
           <!-- Timer -->
