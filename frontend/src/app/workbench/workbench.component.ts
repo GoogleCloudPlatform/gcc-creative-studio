@@ -145,7 +145,10 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   timelineWidth = computed(() => {
     // Ensure timeline is at least screen width or longer based on content
-    return this.totalDuration() * this.pixelsPerSecond() + this.containerWidthSignal();
+    return (
+      this.totalDuration() * this.pixelsPerSecond() +
+      this.containerWidthSignal()
+    );
   });
 
   // derived signals for active source logic
@@ -188,8 +191,10 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   @ViewChild('mainVideo') mainVideo!: ElementRef<HTMLVideoElement>;
   @ViewChildren('bgAudio') bgAudios!: QueryList<ElementRef<HTMLAudioElement>>;
   @ViewChild('rulerContainer') rulerContainer!: ElementRef<HTMLDivElement>;
-  @ViewChild('timelineContainer') timelineContainer!: ElementRef<HTMLDivElement>;
-  @ViewChild('dummyScrollContainer') dummyScrollContainer!: ElementRef<HTMLDivElement>;
+  @ViewChild('timelineContainer')
+  timelineContainer!: ElementRef<HTMLDivElement>;
+  @ViewChild('dummyScrollContainer')
+  dummyScrollContainer!: ElementRef<HTMLDivElement>;
 
   // Services
   private sanitizer = inject(DomSanitizer);
@@ -442,14 +447,18 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
     // Set initial container width for timeline
     if (this.timelineContainer?.nativeElement) {
-      this.containerWidthSignal.set(this.timelineContainer.nativeElement.clientWidth);
+      this.containerWidthSignal.set(
+        this.timelineContainer.nativeElement.clientWidth,
+      );
     }
   }
 
   @HostListener('window:resize')
   onResize() {
     if (this.timelineContainer?.nativeElement) {
-      this.containerWidthSignal.set(this.timelineContainer.nativeElement.clientWidth);
+      this.containerWidthSignal.set(
+        this.timelineContainer.nativeElement.clientWidth,
+      );
     }
   }
 
@@ -504,7 +513,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         mimeType: mimeType,
         showFooter: true,
         maxSelection: 10,
-        multiSelect: true
+        multiSelect: true,
       },
       panelClass: 'image-selector-dialog',
     });
@@ -513,7 +522,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       .afterClosed()
       .subscribe((result: MediaItemSelection | SourceAssetResponseDto) => {
         if (result) {
-          // Normalize to an array: if it's already an array, use it; 
+          // Normalize to an array: if it's already an array, use it;
           // if it's a single object, wrap it in an array.
           const results = Array.isArray(result) ? result : [result];
 
@@ -1040,7 +1049,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
       // 1. Auto Scroll Logic
       if (this.timelineContainer?.nativeElement) {
-        console.log(444, "inside loop");
+        console.log(444, 'inside loop');
         const container = this.timelineContainer.nativeElement;
         const playheadPos = nextTime * this.pixelsPerSecond();
         const containerWidth = container.clientWidth;
@@ -1075,7 +1084,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         }
         this.isPlaying.set(false);
       } else {
-        console.log(777, "inside loop");
+        console.log(777, 'inside loop');
         this.currentTime.set(nextTime);
         this.animationFrameId = requestAnimationFrame(loop);
       }
