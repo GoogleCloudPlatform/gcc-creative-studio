@@ -111,6 +111,7 @@ import {WorkflowListComponent} from './workflows/workflow-list/workflow-list.com
 import {WorkflowStatusPipe} from './workflows/workflow-status.pipe';
 import {UpscaleComponent} from './upscale/upscale.component';
 import {StoryboardComponent} from './workbench/components/storyboard/storyboard.component';
+import {TimeRulerComponent} from './workbench/components/time-ruler/time-ruler.component';
 
 @NgModule({
   declarations: [
@@ -191,6 +192,7 @@ import {StoryboardComponent} from './workbench/components/storyboard/storyboard.
     ClipboardModule,
     WorkflowStatusPipe,
     StoryboardComponent,
+    TimeRulerComponent,
   ],
   providers: [
     provideClientHydration(),
