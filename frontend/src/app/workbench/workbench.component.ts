@@ -120,6 +120,12 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     );
   });
 
+  selectedClipIndex = computed(() => {
+    const id = this.timelineState.selectedClipId();
+    if (!id) return -1;
+    return this.timelineState.videoClips().findIndex(c => c.id === id);
+  });
+
   activeVideoSrc = computed(() => {
     const clip = this.timelineState.activeVideoClip();
     if (!clip) return '';
