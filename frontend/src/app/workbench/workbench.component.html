@@ -812,18 +812,31 @@
                 <!-- VIDEO TRACK (draggable clips) -->
                 <div class="h-20 mt-2 relative w-full">
                   <div
-                    *ngFor="let clip of timelineState.videoClips()"
+                    *ngFor="let clip of timelineState.videoClips(); let idx = index"
                     (mousedown)="startDrag($event, clip)"
                     (click)="selectClip(clip.id, $event)"
-                    class="absolute top-1 bottom-1 rounded-xl cursor-pointer overflow-hidden border flex items-center group"
+                    class="absolute top-1 bottom-1 rounded-xl cursor-pointer border flex items-center group transition-transform duration-200"
                     [ngClass]="{
-                      'border-blue-500 ring-2 ring-blue-500/50 shadow-xl shadow-blue-500/40 z-30':
+                      'border-blue-500 ring-2 ring-blue-500/50 shadow-md shadow-blue-500/20 z-30':
                         timelineState.selectedClipId() === clip.id,
                       'border-white/10 bg-[#2a2a2c] hover:border-white/30':
                         timelineState.selectedClipId() !== clip.id,
                     }"
                     [style.left.px]="(clip.startTime * timelineState.pixelsPerSecond()) + 2"
                     [style.width.px]="(clip.duration * timelineState.pixelsPerSecond()) - 4"
+                    [style.transform]="
+                      selectedClipIndex() === -1 ? 'none' :
+                      idx === selectedClipIndex() ? 'scale(1.1)' :
+                      (idx === selectedClipIndex() - 1 || idx === selectedClipIndex() + 1) ? 'scale(0.95, 1)' :
+                      'scale(1, 0.95)'
+                    "
+                    [style.transformOrigin]="
+                      selectedClipIndex() === -1 ? 'center' :
+                      idx === selectedClipIndex() ? 'center' :
+                      idx === selectedClipIndex() - 1 ? 'left' :
+                      idx === selectedClipIndex() + 1 ? 'right' :
+                      'center'
+                    "
                   >
                     <!-- Thumbnail Strip (when thumbnail available) -->
                     <div
@@ -856,10 +869,12 @@
 
                     <!-- Trim Handles -->
                     <div
-                      class="absolute left-0 top-0 bottom-0 w-1.5 bg-white/40 cursor-ew-resize"
+                      *ngIf="timelineState.selectedClipId() === clip.id"
+                      class="absolute left-0 top-[35%] bottom-[35%] w-2 bg-white/80 cursor-ew-resize rounded-full transform -translate-x-1/2"
                     ></div>
                     <div
-                      class="absolute right-0 top-0 bottom-0 w-1.5 bg-white/40 cursor-ew-resize"
+                      *ngIf="timelineState.selectedClipId() === clip.id"
+                      class="absolute right-0 top-[35%] bottom-[35%] w-2 bg-white/80 cursor-ew-resize rounded-full transform translate-x-1/2"
                     ></div>
                   </div>
                 </div>
