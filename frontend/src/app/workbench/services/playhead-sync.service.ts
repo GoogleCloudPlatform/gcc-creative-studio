@@ -14,45 +14,86 @@
  * limitations under the License.
  */
 
-import {Injectable, inject, signal, effect} from '@angular/core';
-import {TimelineStateService} from './timeline-state.service';
-import {TimeRulerComponent} from '../components/time-ruler/time-ruler.component';
+import { Injectable, inject, signal, effect } from '@angular/core';
+import { TimelineStateService, TimelineClip } from './timeline-state.service';
+import { TimeRulerComponent } from '../components/time-ruler/time-ruler.component';
 
 @Injectable({
-  providedIn: 'root',
+  providedIn: 'root'
 })
 export class PlayheadSyncService {
   private timelineState = inject(TimelineStateService);
 
   private elements = signal<{
-    video: HTMLVideoElement;
+    videoA: HTMLVideoElement;
+    videoB: HTMLVideoElement;
     audios: HTMLAudioElement[];
     timeline: HTMLDivElement;
     dummyScroll: HTMLDivElement;
     timeRuler: TimeRulerComponent;
   } | null>(null);
 
-  private animationFrameId: any;
+  private animationFrameId: number | undefined;
+  private activeVideoElement: 'A' | 'B' = 'A';
+  private loadedClips = new Map<'A' | 'B', string>(); // map element to clipId
 
   constructor() {
     effect(() => {
       const els = this.elements();
       if (!els) return;
 
-      const vid = els.video;
-      const vClip = this.timelineState.activeVideoClip();
       const curTime = this.timelineState.currentTime();
+      const isPlaying = this.timelineState.isPlaying();
 
-      // Video Sync
-      if (vid && vClip) {
-        const fileTime = curTime - vClip.startTime + vClip.offset;
-        if (Math.abs(vid.currentTime - fileTime) > 0.5)
-          vid.currentTime = fileTime;
-        if (this.timelineState.isPlaying() && vid.paused)
-          vid.play().catch(e => console.error('[VideoSync] Play failed', e));
-        if (!this.timelineState.isPlaying() && !vid.paused) vid.pause();
-      } else if (vid) {
-        vid.pause();
+      const currentClip = this.timelineState.activeVideoClip();
+      const nextClip = this.getNextVideoClip();
+
+      if (currentClip) {
+        // 1. Manage Active Element
+        if (this.loadedClips.get('A') === currentClip.id) {
+          this.activeVideoElement = 'A';
+        } else if (this.loadedClips.get('B') === currentClip.id) {
+          this.activeVideoElement = 'B';
+        } else {
+          // Not loaded in either! Load it in the INACTIVE one!
+          const inactiveEl = this.activeVideoElement === 'A' ? 'B' : 'A';
+          this.loadClipInElement(inactiveEl, currentClip);
+          this.activeVideoElement = inactiveEl;
+        }
+
+        const activeEl = this.activeVideoElement === 'A' ? els.videoA : els.videoB;
+        const inactiveEl = this.activeVideoElement === 'A' ? els.videoB : els.videoA;
+
+        // 2. Show/Hide Videos (using opacity for smoother transitions)
+        if (activeEl) activeEl.style.opacity = '1';
+        if (inactiveEl) inactiveEl.style.opacity = '0';
+
+        // 3. Sync and Play Active Video
+        if (activeEl) {
+          const fileTime = curTime - currentClip.startTime + currentClip.offset;
+          if (Math.abs(activeEl.currentTime - fileTime) > 0.5) {
+            activeEl.currentTime = fileTime;
+          }
+
+          if (isPlaying && activeEl.paused) {
+            activeEl.play().catch(e => console.error('[VideoSync] Play failed', e));
+          }
+          if (!isPlaying && !activeEl.paused) {
+            activeEl.pause();
+          }
+        }
+
+        // 4. Preload Next Clip in Inactive Element
+        if (nextClip) {
+          const inactiveKey = this.activeVideoElement === 'A' ? 'B' : 'A';
+          if (this.loadedClips.get(inactiveKey) !== nextClip.id) {
+            this.loadClipInElement(inactiveKey, nextClip);
+          }
+        }
+      } else {
+        // No active clip, hide both
+        if (els.videoA) els.videoA.style.opacity = '0';
+        if (els.videoB) els.videoB.style.opacity = '0';
       }
 
       // Audio Sync (Multi-track)
@@ -69,10 +110,10 @@ export class PlayheadSyncService {
               aud.currentTime = fileTime;
             }
 
-            if (this.timelineState.isPlaying() && aud.paused) {
+            if (isPlaying && aud.paused) {
               aud.play().catch(e => console.error('Audio play failed', e));
             }
-            if (!this.timelineState.isPlaying() && !aud.paused) {
+            if (!isPlaying && !aud.paused) {
               aud.pause();
             }
           } else if (aud) {
@@ -85,8 +126,36 @@ export class PlayheadSyncService {
     });
   }
 
+  private getNextVideoClip(): TimelineClip | undefined {
+    const currentClip = this.timelineState.activeVideoClip();
+    const clips = this.timelineState.videoClips();
+
+    if (!currentClip) {
+      return clips[0]; // Preload first clip if none active
+    }
+
+    const index = clips.findIndex(c => c.id === currentClip.id);
+    return clips[index + 1];
+  }
+
+  private loadClipInElement(el: 'A' | 'B', clip: TimelineClip) {
+    const els = this.elements();
+    if (!els) return;
+
+    const videoEl = el === 'A' ? els.videoA : els.videoB;
+    if (!videoEl) return;
+
+    const asset = this.timelineState.assets().find(a => a.id === clip.assetId);
+    if (asset) {
+      videoEl.src = asset.url;
+      videoEl.load(); // Force browser to start loading!
+    }
+    this.loadedClips.set(el, clip.id);
+  }
+
   registerElements(elements: {
-    video: HTMLVideoElement;
+    videoA: HTMLVideoElement;
+    videoB: HTMLVideoElement;
     audios: HTMLAudioElement[];
     timeline: HTMLDivElement;
     dummyScroll: HTMLDivElement;
@@ -113,7 +182,7 @@ export class PlayheadSyncService {
       lastTime = now;
       const nextTime = this.timelineState.currentTime() + dt;
 
-      const {timeline, dummyScroll, timeRuler} = els;
+      const { timeline, dummyScroll, timeRuler } = els;
 
       // Auto Scroll Logic
       if (timeline) {

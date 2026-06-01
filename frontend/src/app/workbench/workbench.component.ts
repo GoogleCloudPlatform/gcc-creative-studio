@@ -48,10 +48,7 @@ import {WorkbenchService, TimelineRequest, Clip} from './workbench.service';
 import {StoryboardService} from '../services/storyboard/storyboard.service';
 import {AgentChatService} from './services/agent-chat.service';
 import { TimeRulerComponent } from './components/time-ruler/time-ruler.component';
-import {
-  TimelineStateService,
-  TimelineClip,
-} from './services/timeline-state.service';
+import { TimelineStateService, TimelineClip, MediaAsset } from './services/timeline-state.service';
 import { PlayheadSyncService } from './services/playhead-sync.service';
 import {
   TimelineDTO,
@@ -60,15 +57,6 @@ import {
 } from '../common/models/storyboard.model';
 import {ActivatedRoute} from '@angular/router';
 
-interface MediaAsset {
-  id: string;
-  name: string;
-  type: 'video' | 'audio';
-  url: string;
-  safeUrl: SafeUrl;
-  duration: number; // in seconds
-  thumbnail?: string;
-}
 
 @Component({
   selector: 'app-workbench',
@@ -77,7 +65,7 @@ interface MediaAsset {
 })
 export class WorkbenchComponent implements OnInit, OnDestroy {
   // Signals for State
-  assets = signal<MediaAsset[]>([]);
+
 
   activeToolButton = signal<
     'gallery' | 'audio' | 'stories' | 'edit' | 'agent' | null
@@ -101,7 +89,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   // Filtered assets list based on active tab
   filteredAssets = computed(() => {
     const tab = this.activeTab();
-    return this.assets().filter(a => a.type === tab);
+    return this.timelineState.assets().filter(a => a.type === tab);
   });
 
   videoTrackEnd = computed(() => {
@@ -129,14 +117,14 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   activeVideoSrc = computed(() => {
     const clip = this.timelineState.activeVideoClip();
     if (!clip) return '';
-    const asset = this.assets().find(a => a.id === clip.assetId);
+    const asset = this.timelineState.assets().find(a => a.id === clip.assetId);
     return asset ? asset.safeUrl : '';
   });
 
   activeAudioSrcs = computed(() => {
     return this.timelineState.activeAudioClips().map(clip => {
       if (!clip) return '';
-      const asset = this.assets().find(a => a.id === clip.assetId);
+      const asset = this.timelineState.assets().find(a => a.id === clip.assetId);
       return asset ? asset.safeUrl : '';
     });
   });
@@ -146,7 +134,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   });
 
   // View Children
-  @ViewChild('mainVideo') mainVideo!: ElementRef<HTMLVideoElement>;
+  @ViewChild('videoA') videoA!: ElementRef<HTMLVideoElement>;
+  @ViewChild('videoB') videoB!: ElementRef<HTMLVideoElement>;
   @ViewChildren('bgAudio') bgAudios!: QueryList<ElementRef<HTMLAudioElement>>;
   @ViewChild(TimeRulerComponent) timeRuler!: TimeRulerComponent;
   @ViewChild('timelineContainer')
@@ -367,7 +356,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   private registerPlaybackElements() {
     this.playbackService.registerElements({
-      video: this.mainVideo?.nativeElement,
+      videoA: this.videoA?.nativeElement,
+      videoB: this.videoB?.nativeElement,
       audios: this.bgAudios?.toArray().map(e => e.nativeElement) || [],
       timeline: this.timelineContainer?.nativeElement,
       dummyScroll: this.dummyScrollContainer?.nativeElement,
@@ -411,7 +401,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         duration: 0,
       };
 
-      this.assets.update(prev => [...prev, asset]);
+      this.timelineState.assets.update(prev => [...prev, asset]);
 
       if (isVideo) {
         this.extractVideoMetadata(asset, file);
@@ -503,7 +493,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       thumbnail,
     };
 
-    this.assets.update(prev => [...prev, newAsset]);
+    this.timelineState.assets.update(prev => [...prev, newAsset]);
 
     // Extract duration from the cloud media
     if (type === 'video') {
@@ -531,7 +521,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         if (ctx) {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const thumbUrl = canvas.toDataURL('image/jpeg');
-          this.assets.update(items =>
+          this.timelineState.assets.update(items =>
             items.map(i =>
               i.id === asset.id ? {...i, thumbnail: thumbUrl} : i,
             ),
@@ -584,7 +574,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       if (ctx) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const thumbUrl = canvas.toDataURL('image/jpeg');
-        this.assets.update(items =>
+        this.timelineState.assets.update(items =>
           items.map(i => (i.id === asset.id ? {...i, thumbnail: thumbUrl} : i)),
         );
       }
@@ -603,7 +593,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   }
 
   updateAssetDuration(id: string, duration: number) {
-    this.assets.update(items =>
+    this.timelineState.assets.update(items =>
       items.map(i => (i.id === id ? {...i, duration} : i)),
     );
     this.timelineState.timelineClips.update(clips =>
@@ -614,7 +604,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   onThumbnailError(asset: MediaAsset) {
     // Clear the thumbnail if it fails to load, so the placeholder icon shows
-    this.assets.update(items =>
+    this.timelineState.assets.update(items =>
       items.map(i => (i.id === asset.id ? {...i, thumbnail: undefined} : i)),
     );
   }
@@ -650,9 +640,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         );
 
         // Populate assets signal so lookup works
-        const existingAsset = this.assets().find(a => a.id === assetId);
+        const existingAsset = this.timelineState.assets().find(a => a.id === assetId);
         if (!existingAsset && clip.presigned_url) {
-          this.assets.update(prev => [
+          this.timelineState.assets.update(prev => [
             ...prev,
             {
               id: assetId,
@@ -687,9 +677,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         const assetId = clip.presigned_url || '';
 
         // Populate assets signal
-        const existingAsset = this.assets().find(a => a.id === assetId);
+        const existingAsset = this.timelineState.assets().find(a => a.id === assetId);
         if (!existingAsset && clip.presigned_url) {
-          this.assets.update(prev => [
+          this.timelineState.assets.update(prev => [
             ...prev,
             {
               id: assetId,
@@ -749,15 +739,15 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   }
 
   getAssetThumbnail(id: string): string | undefined {
-    return this.assets().find(a => a.id === id)?.thumbnail;
+    return this.timelineState.assets().find(a => a.id === id)?.thumbnail;
   }
 
   getAssetName(id: string): string {
-    return this.assets().find(a => a.id === id)?.name || 'Clip';
+    return this.timelineState.assets().find(a => a.id === id)?.name || 'Clip';
   }
 
   isAssetVideo(id: string): boolean {
-    return this.assets().find(a => a.id === id)?.type === 'video';
+    return this.timelineState.assets().find(a => a.id === id)?.type === 'video';
   }
 
   // --- Logic: Timeline ---
@@ -827,7 +817,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     event.stopPropagation();
 
     // Remove from assets list
-    this.assets.update(prev => prev.filter(a => a.id !== asset.id));
+    this.timelineState.assets.update(prev => prev.filter(a => a.id !== asset.id));
 
     // Remove any clips associated with this asset from the timeline
     this.timelineState.timelineClips.update(prev =>
@@ -982,7 +972,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       .timelineClips()
       .filter(clip => !this.isTrackMuted(clip.trackIndex))
       .map(clip => {
-        const asset = this.assets().find(a => a.id === clip.assetId);
+        const asset = this.timelineState.assets().find(a => a.id === clip.assetId);
         return {
           assetId: clip.assetId,
           url: asset?.url || '',
@@ -1145,7 +1135,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
     const clip = this.timelineState.timelineClips().find(c => c.id === clipId);
     if (!clip) return;
-    const asset = this.assets().find(a => a.id === clip.assetId);
+    const asset = this.timelineState.assets().find(a => a.id === clip.assetId);
     const maxDuration = asset ? asset.duration : 9999;
 
     this.timelineState.timelineClips.update(clips =>

@@ -15,6 +15,7 @@
  */
 
 import {Injectable, signal, computed} from '@angular/core';
+import { SafeResourceUrl } from '@angular/platform-browser';
 
 export interface TimelineClip {
   id: string;
@@ -26,11 +27,22 @@ export interface TimelineClip {
   color: string;
 }
 
+export interface MediaAsset {
+  id: string;
+  name: string;
+  type: 'video' | 'audio';
+  url: string;
+  safeUrl: SafeResourceUrl;
+  duration: number;
+  thumbnail?: string;
+}
+
 @Injectable({
   providedIn: 'root',
 })
 export class TimelineStateService {
   // Signals for State
+  assets = signal<MediaAsset[]>([]);
   currentTime = signal<number>(0);
   isPlaying = signal<boolean>(false);
   pixelsPerSecond = signal<number>(15);
