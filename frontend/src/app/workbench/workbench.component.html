@@ -526,16 +526,22 @@
           </div>
 
           <!-- The Video Element -->
+          <!-- Video Elements (Double Buffering) -->
           <video
-            #mainVideo
-            class="max-w-full max-h-full object-contain shadow-2xl rounded-lg"
+            #videoA
+            class="max-w-full max-h-full object-contain shadow-2xl rounded-lg absolute transition-opacity duration-200"
             [class.hidden]="!timelineState.activeVideoClip()"
             [class.invisible]="isVideoHidden()"
             [style.filter]="videoFilter()"
-            [src]="activeVideoSrc()"
             [muted]="true"
-            (loadedmetadata)="onMetadataLoaded()"
-            (ended)="onVideoEnded()"
+          ></video>
+          <video
+            #videoB
+            class="max-w-full max-h-full object-contain shadow-2xl rounded-lg absolute transition-opacity duration-200"
+            [class.hidden]="!timelineState.activeVideoClip()"
+            [class.invisible]="isVideoHidden()"
+            [style.filter]="videoFilter()"
+            [muted]="true"
           ></video>
 
           <!-- Hidden Audio (Multi-track) -->
