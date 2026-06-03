@@ -139,11 +139,11 @@ def _process_vto_in_background(
                         ] = []  # type: ignore
                         source_assets: list[SourceAssetLink] = []
 
-                        async def get_gcs_uri_from_input(
+                        async def get_bytes_from_input(
                             vto_input: VtoInputLink,
                             role: AssetRoleEnum,
-                        ) -> str:
-                            """Helper to get GCS URI from either source asset or
+                        ) -> bytes:
+                            """Helper to get bytes from either source asset or
                             media item."""
                             if vto_input.source_asset_id:
                                 asset = await source_asset_repo.get_by_id(
@@ -159,9 +159,8 @@ def _process_vto_in_background(
                                         asset_id=asset.id, role=role
                                     ),
                                 )
-                                return asset.gcs_uri
-
-                            if vto_input.source_media_item:
+                                gcs_uri = asset.gcs_uri
+                            elif vto_input.source_media_item:
                                 media_item_link = vto_input.source_media_item
                                 parent_item = await media_repo.get_by_id(
                                     media_item_link.media_item_id,
@@ -190,14 +189,19 @@ def _process_vto_in_background(
                                         role=role,
                                     ),
                                 )
-                                return parent_item.gcs_uris[
+                                gcs_uri = parent_item.gcs_uris[
                                     media_item_link.media_index
                                 ]
+                            else:
+                                raise ValueError("Invalid VTO input provided.")
 
-                            raise ValueError("Invalid VTO input provided.")
+                            img_bytes = gcs_service.download_bytes_from_gcs(gcs_uri)
+                            if not img_bytes:
+                                raise ValueError(f"Failed to download bytes from GCS: {gcs_uri}")
+                            return img_bytes
 
                         # --- Set up the iterative VTO process ---
-                        current_person_gcs_uri = await get_gcs_uri_from_input(
+                        current_person_bytes = await get_bytes_from_input(
                             request_dto.person_image,
                             AssetRoleEnum.VTO_PERSON,
                         )
@@ -226,16 +230,16 @@ def _process_vto_in_background(
                             active_garments
                         ):
                             if garment_input:
-                                garment_gcs_uri = await get_gcs_uri_from_input(
+                                garment_bytes = await get_bytes_from_input(
                                     garment_input,
                                     role,
                                 )
                                 person_image_part = types.Image(
-                                    gcs_uri=current_person_gcs_uri,
+                                    image_bytes=current_person_bytes,
                                 )
                                 product_image_part = types.ProductImage(
                                     product_image=types.Image(
-                                        gcs_uri=garment_gcs_uri
+                                        image_bytes=garment_bytes
                                     ),
                                 )
 
@@ -256,7 +260,6 @@ def _process_vto_in_background(
                                         product_images=[product_image_part],
                                     ),
                                     config=types.RecontextImageConfig(
-                                        output_gcs_uri=gcs_output_directory,
                                         number_of_images=(
                                             request_dto.number_of_media
                                         ),
@@ -268,11 +271,12 @@ def _process_vto_in_background(
                                 elif (
                                     response.generated_images
                                     and response.generated_images[0].image
+                                    and response.generated_images[0].image.image_bytes
                                 ):
-                                    current_person_gcs_uri = (
+                                    current_person_bytes = (
                                         response.generated_images[
                                             0
-                                        ].image.gcs_uri
+                                        ].image.image_bytes
                                     )
 
                         if not final_response:
@@ -294,21 +298,39 @@ def _process_vto_in_background(
                         valid_generated_images = [
                             img
                             for img in all_generated_images
-                            if img.image and img.image.gcs_uri
+                            if img.image and img.image.image_bytes
                         ]
+                        if not valid_generated_images:
+                            raise ValueError(
+                                "No valid images returned from VTO process."
+                            )
+
                         mime_type: MimeTypeEnum = (
                             MimeTypeEnum.IMAGE_PNG
-                            if valid_generated_images[0].image
-                            and valid_generated_images[0].image.mime_type
+                            if valid_generated_images[0].image.mime_type
                             == MimeTypeEnum.IMAGE_PNG
                             else MimeTypeEnum.IMAGE_JPEG
                         )
 
-                        permanent_gcs_uris = [
-                            img.image.gcs_uri
-                            for img in valid_generated_images
-                            if img.image and img.image.gcs_uri
-                        ]
+                        # Save final images to GCS and get permanent URIs
+                        permanent_gcs_uris = []
+                        for img in valid_generated_images:
+                            import uuid
+                            ext = "png" if mime_type == MimeTypeEnum.IMAGE_PNG else "jpg"
+                            file_name = f"{str(uuid.uuid4())}.{ext}"
+                            gcs_uri = gcs_service.store_to_gcs(
+                                folder=cfg.IMAGEN_RECONTEXT_SUBFOLDER,
+                                file_name=file_name,
+                                mime_type=mime_type.value,
+                                contents=img.image.image_bytes,
+                                decode=False,
+                                bucket_name=cfg.IMAGE_BUCKET,
+                            )
+                            if gcs_uri:
+                                permanent_gcs_uris.append(gcs_uri)
+
+                        if not permanent_gcs_uris:
+                            raise ValueError("Failed to save generated images to GCS.")
 
                         # Generate thumbnails
                         thumbnail_uris = []
@@ -322,12 +344,6 @@ def _process_vto_in_background(
                                 thumbnail_uris.append(thumb_uri)
                             else:
                                 thumbnail_uris.append(uri)
-
-                        # Generate presigned URLs
-                        presigned_urls = [
-                            iam_signer_credentials.generate_presigned_url(uri)
-                            for uri in permanent_gcs_uris
-                        ]
 
                         end_time = time.monotonic()
                         generation_time = end_time - start_time
