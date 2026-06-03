@@ -76,7 +76,7 @@ step_2() {
     gcloud compute routers nats create temp-nat \
         --router="temp-router" \
         --region="us-central1" \
-        --nat-custom-subnet-ip-ranges="cs-subnet-development" \
+        --nat-all-subnet-ip-ranges \
         --auto-allocate-nat-external-ips \
         --project="$PROJECT_ID"
 
@@ -124,7 +124,7 @@ step_3() {
         --command="
             set -e
             echo '=== Inside VM: Waiting for Git to install ==='
-            for i in {1..30}; do
+            for i in {1..60}; do
                 if command -v git >/dev/null 2>&1; then
                     break
                 fi
