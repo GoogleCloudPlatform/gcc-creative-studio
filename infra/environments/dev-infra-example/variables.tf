@@ -122,6 +122,7 @@ variable "apis_to_enable" {
     "iam.googleapis.com",              # Required for IAM management
     "cloudbuild.googleapis.com",       # Required for Cloud Build
     "artifactregistry.googleapis.com", # Required for Artifact Registry
-    "run.googleapis.com"               # Required for Cloud Run
+    "run.googleapis.com",               # Required for Cloud Run
+    "servicenetworking.googleapis.com"  # Required for Private Services Access
   ]
 }

@@ -131,7 +131,7 @@ async def get_connection():
         user=config_service.DB_USER,
         password=config_service.DB_PASS,
         db=config_service.DB_NAME,
-        ip_type=IPTypes.PUBLIC,  # Adjust if using Private IP
+        ip_type=IPTypes.PRIVATE if config_service.DB_IP_TYPE == "PRIVATE" else IPTypes.PUBLIC,
     )
 
     return conn
@@ -196,7 +196,7 @@ class WorkerDatabase:
                     user=config_service.DB_USER,
                     password=config_service.DB_PASS,
                     db=config_service.DB_NAME,
-                    ip_type=IPTypes.PUBLIC,
+                    ip_type=IPTypes.PRIVATE if config_service.DB_IP_TYPE == "PRIVATE" else IPTypes.PUBLIC,
                 )
 
             self.engine = create_async_engine(

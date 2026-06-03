@@ -21,6 +21,7 @@ frontend_custom_audiences = ["YOUR_OAUTH_WEB_CLIENT_ID_HERE", "YOUR_GCP_PROJECT_
 be_env_vars = {
   common = {
     LOG_LEVEL = "INFO"
+    DB_IP_TYPE = "PRIVATE"
   }
   development = {
     ENVIRONMENT  = "development"
@@ -71,4 +72,5 @@ apis_to_enable = [
   "firestore.googleapis.com",
   "texttospeech.googleapis.com",
   "workflows.googleapis.com",
+  "servicenetworking.googleapis.com",
 ]
