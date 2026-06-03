@@ -45,29 +45,9 @@ async def get_current_user(
     provisioning flow. Supports standard token or internal agent key auth.
     """
     try:
-        # 1. Check for Internal Agent Key
-        internal_key = request.headers.get("X-Internal-Agent-Auth")
-        requested_user_id = request.headers.get("X-User-ID")
-
-        if (
-            internal_key
-            and config_service.INTERNAL_AGENT_SECRET
-            and internal_key == config_service.INTERNAL_AGENT_SECRET
-        ):
-            if requested_user_id:
-                user = await user_service.user_repo.get_by_id(
-                    int(requested_user_id)
-                )
-                if user:
-                    return user
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Internal User not found",
-                )
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Missing X-User-ID header",
-            )
+        user_auth_header = request.headers.get("X-User-Authorization")
+        if user_auth_header:
+            token = user_auth_header.replace("Bearer ", "").replace("bearer ", "").strip()
 
         # 2. Fall back to Token verification
         if not token:
@@ -75,9 +55,24 @@ async def get_current_user(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Missing authentication token.",
             )
-
+            
         decoded_token = {}
-        if config_service.ENVIRONMENT == "local":
+        if token.startswith("ya29."):
+            # --- Verify Google OAuth Access Token (Agent Engine) ---
+            logger.info("Verifying Google OAuth Access Token...")
+            import requests
+            response = await asyncio.to_thread(
+                requests.get,
+                f"https://oauth2.googleapis.com/tokeninfo?access_token={token}",
+                timeout=10,
+            )
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=f"Invalid Google access token: {response.text}",
+                )
+            decoded_token = response.json()
+        elif config_service.ENVIRONMENT == "local":
             # --- Local: Use Firebase Auth ---
             # Verifies the token using the standard Firebase Admin SDK method.
             logger.info("Verifying token using Firebase Admin SDK...")

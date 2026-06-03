@@ -71,6 +71,11 @@ class CreateAudioDto(BaseDto):
         description="The specific voice ID. For Gemini, must be a valid GeminiVoiceEnum value.",
     )
 
+    file_name: str | None = Field(
+        default=None,
+        description="Optional name for the generated media.",
+    )
+
     @field_validator("model")
     def validate_audio_model(
         cls, value: GenerationModelEnum

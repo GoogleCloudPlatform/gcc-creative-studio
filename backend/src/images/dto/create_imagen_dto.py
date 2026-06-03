@@ -110,7 +110,7 @@ class CreateImagenDto(BaseDto):
     )
     file_name: str | None = Field(
         default=None,
-        description="Optional name for the generated file, used for reference in subsequent turns.",
+        description="Optional name for the generated media.",
     )
 
     @field_validator("prompt")

@@ -404,6 +404,7 @@ class AudioService:
             language_code=request_dto.language_code,
             seed=request_dto.seed,
             gcs_uris=[],
+            comment=request_dto.file_name,
         )
         saved_item = await self.media_repo.create(media_post_to_save)
 
