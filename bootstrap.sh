@@ -384,7 +384,7 @@ setup_repo() {
     export REPO_ROOT
     success "Project root successfully set to: $REPO_ROOT"
 
-    GITHUB_REPO_OWNER=$(git remote get-url origin | sed -n 's/.*github.com\/\(.*\)\/.*/\1/p')
+    GITHUB_REPO_OWNER=$(git remote get-url origin | sed -n 's/.*github.com[:\/]\([^\/]*\)\/.*/\1/p')
     GITHUB_REPO_NAME=$REPO_CLONE_DIR
 
     info "Detected GitHub owner: $GITHUB_REPO_OWNER"
