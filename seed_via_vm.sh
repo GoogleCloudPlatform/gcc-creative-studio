@@ -42,17 +42,20 @@ step_1() {
     # 2. Cloud SQL Client
     gcloud projects add-iam-policy-binding "$PROJECT_ID" \
         --role="roles/cloudsql.client" \
-        --member="serviceAccount:$COMPUTE_SA" --quiet
+        --member="serviceAccount:$COMPUTE_SA" \
+        --condition=None --quiet
 
     # 3. Cloud SQL Viewer
     gcloud projects add-iam-policy-binding "$PROJECT_ID" \
         --role="roles/cloudsql.viewer" \
-        --member="serviceAccount:$COMPUTE_SA" --quiet
+        --member="serviceAccount:$COMPUTE_SA" \
+        --condition=None --quiet
 
     # 4. GCS Object Admin
     gcloud projects add-iam-policy-binding "$PROJECT_ID" \
         --role="roles/storage.objectAdmin" \
-        --member="serviceAccount:$COMPUTE_SA" --quiet
+        --member="serviceAccount:$COMPUTE_SA" \
+        --condition=None --quiet
 
     success "Permissions granted to default Compute SA."
 }
