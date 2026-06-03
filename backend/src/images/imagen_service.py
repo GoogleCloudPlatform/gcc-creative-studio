@@ -319,12 +319,12 @@ def _process_vto_in_background(
                             ext = "png" if mime_type == MimeTypeEnum.IMAGE_PNG else "jpg"
                             file_name = f"{str(uuid.uuid4())}.{ext}"
                             gcs_uri = gcs_service.store_to_gcs(
-                                folder=cfg.IMAGEN_RECONTEXT_SUBFOLDER,
+                                folder=f"images/{cfg.IMAGEN_RECONTEXT_SUBFOLDER}",
                                 file_name=file_name,
                                 mime_type=mime_type.value,
                                 contents=img.image.image_bytes,
                                 decode=False,
-                                bucket_name=cfg.IMAGE_BUCKET,
+                                bucket_name=cfg.GENMEDIA_BUCKET,
                             )
                             if gcs_uri:
                                 permanent_gcs_uris.append(gcs_uri)
