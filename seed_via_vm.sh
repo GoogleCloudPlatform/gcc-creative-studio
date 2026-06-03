@@ -106,7 +106,6 @@ step_3() {
         --shielded-secure-boot \
         --shielded-vtpm \
         --shielded-integrity-monitoring \
-        --metadata="startup-script=sudo apt-get update && sudo apt-get install -y git" \
         --project="$PROJECT_ID"
 
     success "VM created successfully."
@@ -123,19 +122,8 @@ step_3() {
         --project="$PROJECT_ID" \
         --command="
             set -e
-            echo '=== Inside VM: Waiting for Git to install ==='
-            for i in {1..60}; do
-                if command -v git >/dev/null 2>&1; then
-                    break
-                fi
-                echo -n '.'
-                sleep 2
-            done
-            if ! command -v git >/dev/null 2>&1; then
-                echo 'Git installation timed out!'
-                exit 1
-            fi
-            echo 'Git is ready!'
+            echo '=== Inside VM: Installing Git ==='
+            sudo apt-get update && sudo apt-get install -y git
             echo '=== Inside VM: Cloning Repository ==='
             git clone -b DRS-compliance https://github.com/PKAgarwal157/gcc-creative-studio.git ~/gcc-creative-studio
             cd ~/gcc-creative-studio
