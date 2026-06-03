@@ -123,6 +123,19 @@ step_3() {
         --project="$PROJECT_ID" \
         --command="
             set -e
+            echo '=== Inside VM: Waiting for Git to install ==='
+            for i in {1..30}; do
+                if command -v git >/dev/null 2>&1; then
+                    break
+                fi
+                echo -n '.'
+                sleep 2
+            done
+            if ! command -v git >/dev/null 2>&1; then
+                echo 'Git installation timed out!'
+                exit 1
+            fi
+            echo 'Git is ready!'
             echo '=== Inside VM: Cloning Repository ==='
             git clone -b DRS-compliance https://github.com/PKAgarwal157/gcc-creative-studio.git ~/gcc-creative-studio
             cd ~/gcc-creative-studio
