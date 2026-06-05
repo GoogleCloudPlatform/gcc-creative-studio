@@ -23,7 +23,7 @@ import {
 import {PlayheadSyncService} from './playhead-sync.service';
 import {TimelineStateService} from './timeline-state.service';
 import {Component} from '@angular/core';
-import { TimeRulerComponent } from '../components/time-ruler/time-ruler.component';
+import {TimeRulerComponent} from '../components/time-ruler/time-ruler.component';
 
 @Component({
   template: '',
@@ -49,7 +49,11 @@ describe('PlayheadSyncService', () => {
 
     const originalError = console.error;
     spyOn(console, 'error').and.callFake((...args) => {
-      if (args[0] && typeof args[0] === 'string' && args[0].includes('[VideoSync] Play failed')) {
+      if (
+        args[0] &&
+        typeof args[0] === 'string' &&
+        args[0].includes('[VideoSync] Play failed')
+      ) {
         return;
       }
       originalError.apply(console, args);
@@ -63,7 +67,10 @@ describe('PlayheadSyncService', () => {
   });
 
   it('should register elements and update in loop', fakeAsync(() => {
-    const mockRuler = jasmine.createSpyObj<TimeRulerComponent>('TimeRulerComponent', ['setScrollLeft']);
+    const mockRuler = jasmine.createSpyObj<TimeRulerComponent>(
+      'TimeRulerComponent',
+      ['setScrollLeft'],
+    );
     const mockElements = {
       videoA: document.createElement('video'),
       videoB: document.createElement('video'),
@@ -109,7 +116,10 @@ describe('PlayheadSyncService', () => {
       audios: [],
       timeline: document.createElement('div'),
       dummyScroll: document.createElement('div'),
-      timeRuler: jasmine.createSpyObj<TimeRulerComponent>('TimeRulerComponent', ['setScrollLeft']),
+      timeRuler: jasmine.createSpyObj<TimeRulerComponent>(
+        'TimeRulerComponent',
+        ['setScrollLeft'],
+      ),
     };
 
     const mockClip = {
@@ -129,7 +139,10 @@ describe('PlayheadSyncService', () => {
     stateService.isPlaying.set(true);
     fixture.detectChanges(); // Trigger effects again!
 
-    expect((mockVideoA.play as jasmine.Spy).calls.any() || (mockVideoB.play as jasmine.Spy).calls.any()).toBeTrue();
+    expect(
+      (mockVideoA.play as jasmine.Spy).calls.any() ||
+        (mockVideoB.play as jasmine.Spy).calls.any(),
+    ).toBeTrue();
   }));
 
   it('should pause video in effect when isPlaying is false', fakeAsync(() => {
@@ -144,7 +157,10 @@ describe('PlayheadSyncService', () => {
       audios: [],
       timeline: document.createElement('div'),
       dummyScroll: document.createElement('div'),
-      timeRuler: jasmine.createSpyObj<TimeRulerComponent>('TimeRulerComponent', ['setScrollLeft']),
+      timeRuler: jasmine.createSpyObj<TimeRulerComponent>(
+        'TimeRulerComponent',
+        ['setScrollLeft'],
+      ),
     };
 
     const mockClip = {
@@ -168,13 +184,22 @@ describe('PlayheadSyncService', () => {
     (mockVideoB.pause as jasmine.Spy).calls.reset();
 
     // Mock paused to be false on both (simulating that it was playing)
-    Object.defineProperty(mockVideoA, 'paused', { get: () => false, configurable: true });
-    Object.defineProperty(mockVideoB, 'paused', { get: () => false, configurable: true });
+    Object.defineProperty(mockVideoA, 'paused', {
+      get: () => false,
+      configurable: true,
+    });
+    Object.defineProperty(mockVideoB, 'paused', {
+      get: () => false,
+      configurable: true,
+    });
 
     // Now pause
     stateService.isPlaying.set(false);
     fixture.detectChanges();
 
-    expect((mockVideoA.pause as jasmine.Spy).calls.any() || (mockVideoB.pause as jasmine.Spy).calls.any()).toBeTrue();
+    expect(
+      (mockVideoA.pause as jasmine.Spy).calls.any() ||
+        (mockVideoB.pause as jasmine.Spy).calls.any(),
+    ).toBeTrue();
   }));
 });

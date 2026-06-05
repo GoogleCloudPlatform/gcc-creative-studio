@@ -14,18 +14,21 @@
  * limitations under the License.
  */
 
-import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { WorkbenchComponent } from './workbench.component';
-import { HttpClientTestingModule } from '@angular/common/http/testing';
-import { RouterTestingModule } from '@angular/router/testing';
-import { MatDialogModule } from '@angular/material/dialog';
-import { signal, CUSTOM_ELEMENTS_SCHEMA } from '@angular/core';
-import { Subject, of } from 'rxjs';
-import { AgentChatService } from './services/agent-chat.service';
-import { TimelineStateService, MediaAsset } from './services/timeline-state.service';
+import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {WorkbenchComponent} from './workbench.component';
+import {HttpClientTestingModule} from '@angular/common/http/testing';
+import {RouterTestingModule} from '@angular/router/testing';
+import {MatDialogModule} from '@angular/material/dialog';
+import {signal, CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
+import {Subject, of} from 'rxjs';
+import {AgentChatService} from './services/agent-chat.service';
+import {
+  TimelineStateService,
+  MediaAsset,
+} from './services/timeline-state.service';
 
-import { TimelineDTO } from '../common/models/storyboard.model';
-import { MediaItemSelection } from '../common/components/image-selector/image-selector.component';
+import {TimelineDTO} from '../common/models/storyboard.model';
+import {MediaItemSelection} from '../common/components/image-selector/image-selector.component';
 
 describe('WorkbenchComponent', () => {
   let component: WorkbenchComponent;
@@ -33,20 +36,14 @@ describe('WorkbenchComponent', () => {
 
   beforeEach(async () => {
     const mockAgentChatService = {
-      currentStoryboard: signal(null)
+      currentStoryboard: signal(null),
     };
 
     await TestBed.configureTestingModule({
       declarations: [WorkbenchComponent],
-      imports: [
-        HttpClientTestingModule,
-        RouterTestingModule,
-        MatDialogModule
-      ],
-      providers: [
-        { provide: AgentChatService, useValue: mockAgentChatService }
-      ],
-      schemas: [CUSTOM_ELEMENTS_SCHEMA]
+      imports: [HttpClientTestingModule, RouterTestingModule, MatDialogModule],
+      providers: [{provide: AgentChatService, useValue: mockAgentChatService}],
+      schemas: [CUSTOM_ELEMENTS_SCHEMA],
     }).compileComponents();
 
     fixture = TestBed.createComponent(WorkbenchComponent);
@@ -66,7 +63,14 @@ describe('WorkbenchComponent', () => {
 
   it('should add asset to timeline', () => {
     const stateService = TestBed.inject(TimelineStateService);
-    const asset: MediaAsset = { id: 'a1', name: 'Test', type: 'video', url: 'test.mp4', safeUrl: '', duration: 10 };
+    const asset: MediaAsset = {
+      id: 'a1',
+      name: 'Test',
+      type: 'video',
+      url: 'test.mp4',
+      safeUrl: '',
+      duration: 10,
+    };
 
     component.addToTimeline(asset);
 
@@ -77,7 +81,15 @@ describe('WorkbenchComponent', () => {
 
   it('should delete selected clip', () => {
     const stateService = TestBed.inject(TimelineStateService);
-    const clip = { id: 'clip1', assetId: 'a1', startTime: 0, duration: 10, offset: 0, trackIndex: 0, color: 'red' };
+    const clip = {
+      id: 'clip1',
+      assetId: 'a1',
+      startTime: 0,
+      duration: 10,
+      offset: 0,
+      trackIndex: 0,
+      color: 'red',
+    };
     stateService.timelineClips.set([clip]);
     stateService.selectedClipId.set('clip1');
 
@@ -89,7 +101,15 @@ describe('WorkbenchComponent', () => {
 
   it('should split selected clip', () => {
     const stateService = TestBed.inject(TimelineStateService);
-    const clip = { id: 'clip1', assetId: 'a1', startTime: 0, duration: 10, offset: 0, trackIndex: 0, color: 'red' };
+    const clip = {
+      id: 'clip1',
+      assetId: 'a1',
+      startTime: 0,
+      duration: 10,
+      offset: 0,
+      trackIndex: 0,
+      color: 'red',
+    };
     stateService.timelineClips.set([clip]);
     stateService.selectedClipId.set('clip1');
     stateService.currentTime.set(5);
@@ -111,8 +131,8 @@ describe('WorkbenchComponent', () => {
     const stateService = TestBed.inject(TimelineStateService);
     spyOn(window.URL, 'createObjectURL').and.returnValue('blob:test');
 
-    const file = new File([''], 'test.mp4', { type: 'video/mp4' });
-    const event = { target: { files: [file] } } as unknown as Event;
+    const file = new File([''], 'test.mp4', {type: 'video/mp4'});
+    const event = {target: {files: [file]}} as unknown as Event;
 
     component.onFileSelected(event);
 
@@ -140,9 +160,9 @@ describe('WorkbenchComponent', () => {
         mimeType: 'video/mp4',
         presignedUrls: ['test.mp4'],
         presignedThumbnailUrls: ['thumb.jpg'],
-        gcsUris: []
+        gcsUris: [],
       },
-      selectedIndex: 0
+      selectedIndex: 0,
     };
 
     component['processCloudMediaResult'](mockResult as MediaItemSelection);
@@ -156,11 +176,11 @@ describe('WorkbenchComponent', () => {
     const stateService = TestBed.inject(TimelineStateService);
     const mockData = {
       video_clips: [
-        { media_item_id: 1, presigned_url: 'video1.mp4', trim_duration: 5 }
+        {media_item_id: 1, presigned_url: 'video1.mp4', trim_duration: 5},
       ],
       audio_clips: [
-        { presigned_url: 'audio1.mp3', trim_duration: 10, start_offset: 0 }
-      ]
+        {presigned_url: 'audio1.mp3', trim_duration: 10, start_offset: 0},
+      ],
     };
 
     component.processGeneratedData(mockData as TimelineDTO);
@@ -184,15 +204,33 @@ describe('WorkbenchComponent', () => {
       stateService = TestBed.inject(TimelineStateService);
 
       mockVideo = {
-        preload: '', crossOrigin: '', src: '', onloadedmetadata: null, onseeked: null, duration: 20, currentTime: 0
+        preload: '',
+        crossOrigin: '',
+        src: '',
+        onloadedmetadata: null,
+        onseeked: null,
+        duration: 20,
+        currentTime: 0,
       };
       mockAudio = {
-        crossOrigin: '', muted: false, volume: 1, autoplay: true, src: '', onloadedmetadata: null, onerror: null, duration: 15
+        crossOrigin: '',
+        muted: false,
+        volume: 1,
+        autoplay: true,
+        src: '',
+        onloadedmetadata: null,
+        onerror: null,
+        duration: 15,
       };
       mockCanvas = {
-        width: 0, height: 0,
-        getContext: jasmine.createSpy('getContext').and.returnValue({ drawImage: jasmine.createSpy('drawImage') }),
-        toDataURL: jasmine.createSpy('toDataURL').and.returnValue('data:image/jpeg;base64,test')
+        width: 0,
+        height: 0,
+        getContext: jasmine
+          .createSpy('getContext')
+          .and.returnValue({drawImage: jasmine.createSpy('drawImage')}),
+        toDataURL: jasmine
+          .createSpy('toDataURL')
+          .and.returnValue('data:image/jpeg;base64,test'),
       };
 
       spyOn(document, 'createElement').and.callFake((tagName: string) => {
@@ -204,7 +242,14 @@ describe('WorkbenchComponent', () => {
     });
 
     it('should update duration on video loadedmetadata', () => {
-      const asset: MediaAsset = { id: 'a1', name: 'Test', type: 'video', url: 'test.mp4', safeUrl: '', duration: 0 };
+      const asset: MediaAsset = {
+        id: 'a1',
+        name: 'Test',
+        type: 'video',
+        url: 'test.mp4',
+        safeUrl: '',
+        duration: 0,
+      };
       stateService.assets.set([asset]);
 
       component['extractVideoMetadataFromUrl'](asset);
@@ -215,7 +260,14 @@ describe('WorkbenchComponent', () => {
     });
 
     it('should update thumbnail on video seeked', () => {
-      const asset: MediaAsset = { id: 'a1', name: 'Test', type: 'video', url: 'test.mp4', safeUrl: '', duration: 20 };
+      const asset: MediaAsset = {
+        id: 'a1',
+        name: 'Test',
+        type: 'video',
+        url: 'test.mp4',
+        safeUrl: '',
+        duration: 20,
+      };
       stateService.assets.set([asset]);
 
       component['extractVideoMetadataFromUrl'](asset);
@@ -226,7 +278,14 @@ describe('WorkbenchComponent', () => {
     });
 
     it('should update duration on audio loadedmetadata', () => {
-      const asset: MediaAsset = { id: 'a1', name: 'Test', type: 'audio', url: 'test.mp3', safeUrl: '', duration: 0 };
+      const asset: MediaAsset = {
+        id: 'a1',
+        name: 'Test',
+        type: 'audio',
+        url: 'test.mp3',
+        safeUrl: '',
+        duration: 0,
+      };
       stateService.assets.set([asset]);
 
       component['extractAudioMetadataFromUrl'](asset);
@@ -237,7 +296,14 @@ describe('WorkbenchComponent', () => {
     });
 
     it('should fallback duration on audio error', () => {
-      const asset: MediaAsset = { id: 'a1', name: 'Test', type: 'audio', url: 'test.mp3', safeUrl: '', duration: 0 };
+      const asset: MediaAsset = {
+        id: 'a1',
+        name: 'Test',
+        type: 'audio',
+        url: 'test.mp3',
+        safeUrl: '',
+        duration: 0,
+      };
       stateService.assets.set([asset]);
 
       component['extractAudioMetadataFromUrl'](asset);
@@ -248,7 +314,14 @@ describe('WorkbenchComponent', () => {
     });
 
     it('should extract video metadata', () => {
-      const asset: MediaAsset = { id: 'a1', name: 'Test', type: 'video', url: 'test.mp4', safeUrl: '', duration: 0 };
+      const asset: MediaAsset = {
+        id: 'a1',
+        name: 'Test',
+        type: 'video',
+        url: 'test.mp4',
+        safeUrl: '',
+        duration: 0,
+      };
       stateService.assets.set([asset]);
 
       component.extractVideoMetadata(asset, new File([''], 'test.mp4'));
@@ -265,7 +338,14 @@ describe('WorkbenchComponent', () => {
     });
 
     it('should extract audio metadata', () => {
-      const asset: MediaAsset = { id: 'a1', name: 'Test', type: 'audio', url: 'test.mp3', safeUrl: '', duration: 0 };
+      const asset: MediaAsset = {
+        id: 'a1',
+        name: 'Test',
+        type: 'audio',
+        url: 'test.mp3',
+        safeUrl: '',
+        duration: 0,
+      };
       stateService.assets.set([asset]);
 
       component.extractAudioMetadata(asset);

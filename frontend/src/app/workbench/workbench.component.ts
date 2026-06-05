@@ -47,16 +47,19 @@ import {SourceAssetResponseDto} from '../common/services/source-asset.service';
 import {WorkbenchService, TimelineRequest, Clip} from './workbench.service';
 import {StoryboardService} from '../services/storyboard/storyboard.service';
 import {AgentChatService} from './services/agent-chat.service';
-import { TimeRulerComponent } from './components/time-ruler/time-ruler.component';
-import { TimelineStateService, TimelineClip, MediaAsset } from './services/timeline-state.service';
-import { PlayheadSyncService } from './services/playhead-sync.service';
+import {TimeRulerComponent} from './components/time-ruler/time-ruler.component';
+import {
+  TimelineStateService,
+  TimelineClip,
+  MediaAsset,
+} from './services/timeline-state.service';
+import {PlayheadSyncService} from './services/playhead-sync.service';
 import {
   TimelineDTO,
   VideoClipDTO,
   AudioClipDTO,
 } from '../common/models/storyboard.model';
 import {ActivatedRoute} from '@angular/router';
-
 
 @Component({
   selector: 'app-workbench',
@@ -65,7 +68,6 @@ import {ActivatedRoute} from '@angular/router';
 })
 export class WorkbenchComponent implements OnInit, OnDestroy {
   // Signals for State
-
 
   activeToolButton = signal<
     'gallery' | 'audio' | 'stories' | 'edit' | 'agent' | null
@@ -103,7 +105,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     // Ensure timeline is at least screen width or longer based on content
     return (
       this.timelineState.totalDuration() *
-      this.timelineState.pixelsPerSecond() +
+        this.timelineState.pixelsPerSecond() +
       this.containerWidthSignal()
     );
   });
@@ -124,7 +126,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   activeAudioSrcs = computed(() => {
     return this.timelineState.activeAudioClips().map(clip => {
       if (!clip) return '';
-      const asset = this.timelineState.assets().find(a => a.id === clip.assetId);
+      const asset = this.timelineState
+        .assets()
+        .find(a => a.id === clip.assetId);
       return asset ? asset.safeUrl : '';
     });
   });
@@ -276,7 +280,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       .addSvgIcon(
         'web-stories-icon',
         this.setPath(`${this.path}/web-stories.svg`),
-    );
+      );
   }
 
   private path = '../../../assets/images';
@@ -640,7 +644,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         );
 
         // Populate assets signal so lookup works
-        const existingAsset = this.timelineState.assets().find(a => a.id === assetId);
+        const existingAsset = this.timelineState
+          .assets()
+          .find(a => a.id === assetId);
         if (!existingAsset && clip.presigned_url) {
           this.timelineState.assets.update(prev => [
             ...prev,
@@ -677,7 +683,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         const assetId = clip.presigned_url || '';
 
         // Populate assets signal
-        const existingAsset = this.timelineState.assets().find(a => a.id === assetId);
+        const existingAsset = this.timelineState
+          .assets()
+          .find(a => a.id === assetId);
         if (!existingAsset && clip.presigned_url) {
           this.timelineState.assets.update(prev => [
             ...prev,
@@ -817,7 +825,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     event.stopPropagation();
 
     // Remove from assets list
-    this.timelineState.assets.update(prev => prev.filter(a => a.id !== asset.id));
+    this.timelineState.assets.update(prev =>
+      prev.filter(a => a.id !== asset.id),
+    );
 
     // Remove any clips associated with this asset from the timeline
     this.timelineState.timelineClips.update(prev =>
@@ -972,7 +982,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       .timelineClips()
       .filter(clip => !this.isTrackMuted(clip.trackIndex))
       .map(clip => {
-        const asset = this.timelineState.assets().find(a => a.id === clip.assetId);
+        const asset = this.timelineState
+          .assets()
+          .find(a => a.id === clip.assetId);
         return {
           assetId: clip.assetId,
           url: asset?.url || '',
