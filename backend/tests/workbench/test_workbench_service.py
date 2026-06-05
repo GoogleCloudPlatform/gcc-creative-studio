@@ -174,6 +174,7 @@ async def test_render_timeline_ffmpeg_failure(service):
             with pytest.raises(RuntimeError, match="FFmpeg failed"):
                 await service.render_timeline(request)
 
+
 @pytest.mark.anyio
 async def test_render_timeline_success_hide_video(service):
     # 1. Setup TimelineRequest with 1 video clip and hide_video=True

@@ -15,7 +15,7 @@
  */
 
 import {Injectable, signal, computed} from '@angular/core';
-import { SafeResourceUrl } from '@angular/platform-browser';
+import {SafeResourceUrl} from '@angular/platform-browser';
 
 export interface TimelineClip {
   id: string;

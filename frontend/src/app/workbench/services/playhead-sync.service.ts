@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-import { Injectable, inject, signal, effect } from '@angular/core';
-import { TimelineStateService, TimelineClip } from './timeline-state.service';
-import { TimeRulerComponent } from '../components/time-ruler/time-ruler.component';
+import {Injectable, inject, signal, effect} from '@angular/core';
+import {TimelineStateService, TimelineClip} from './timeline-state.service';
+import {TimeRulerComponent} from '../components/time-ruler/time-ruler.component';
 
 @Injectable({
-  providedIn: 'root'
+  providedIn: 'root',
 })
 export class PlayheadSyncService {
   private timelineState = inject(TimelineStateService);
@@ -61,8 +61,10 @@ export class PlayheadSyncService {
           this.activeVideoElement = inactiveEl;
         }
 
-        const activeEl = this.activeVideoElement === 'A' ? els.videoA : els.videoB;
-        const inactiveEl = this.activeVideoElement === 'A' ? els.videoB : els.videoA;
+        const activeEl =
+          this.activeVideoElement === 'A' ? els.videoA : els.videoB;
+        const inactiveEl =
+          this.activeVideoElement === 'A' ? els.videoB : els.videoA;
 
         // 2. Show/Hide Videos (using opacity for smoother transitions)
         if (activeEl) activeEl.style.opacity = '1';
@@ -76,7 +78,9 @@ export class PlayheadSyncService {
           }
 
           if (isPlaying && activeEl.paused) {
-            activeEl.play().catch(e => console.error('[VideoSync] Play failed', e));
+            activeEl
+              .play()
+              .catch(e => console.error('[VideoSync] Play failed', e));
           }
           if (!isPlaying && !activeEl.paused) {
             activeEl.pause();
@@ -182,7 +186,7 @@ export class PlayheadSyncService {
       lastTime = now;
       const nextTime = this.timelineState.currentTime() + dt;
 
-      const { timeline, dummyScroll, timeRuler } = els;
+      const {timeline, dummyScroll, timeRuler} = els;
 
       // Auto Scroll Logic
       if (timeline) {
