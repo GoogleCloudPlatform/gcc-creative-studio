@@ -619,8 +619,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       const otherClips = clips.filter(c => c.trackIndex !== 0);
 
       const layoutTrack = (trackClips: TimelineClip[]) => {
+        const sorted = [...trackClips].sort(
+          (a, b) => a.startTime - b.startTime,
+        );
         let currentTime = 0;
-        return trackClips.map(clip => {
+        return sorted.map(clip => {
           const newClip = {...clip, startTime: currentTime};
           currentTime += clip.duration;
           return newClip;
