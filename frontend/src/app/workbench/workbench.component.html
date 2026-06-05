@@ -119,7 +119,7 @@
             <!-- Delete Button (Hover) -->
             <button
               (click)="deleteAsset(asset, $event)"
-              class="absolute top-2 right-2 bg-red-500/80 hover:bg-red-600 rounded-full p-1.5 opacity-0 group-hover:opacity-100 transition-all hover:scale-110 shadow-lg"
+              class="absolute top-2 right-2 flex bg-red-500/80 hover:bg-red-600 rounded-full p-1.5 opacity-0 group-hover:opacity-100 transition-all hover:scale-110 shadow-lg"
               title="Delete Asset"
             >
               <mat-icon
@@ -132,7 +132,7 @@
 
         <!-- Bottom Tabs (Video / Audio filter) -->
         <div class="mt-4 flex gap-2 justify-center">
-          <studio-button variant="primary" size="medium" [shape]="(activeTab() !== 'video') ? 'circle' : 'pill'"
+          <studio-button variant="primary" size="small" [shape]="(activeTab() !== 'video') ? 'circle' : 'pill'"
             mat-button
             (click)="activeTab.set('video')"
             
@@ -145,7 +145,7 @@
               >Videos</span
             >
           </studio-button>
-          <studio-button variant="primary" size="medium" [shape]="(activeTab() !== 'audio') ? 'circle' : 'pill'"
+          <studio-button variant="primary" size="small" [shape]="(activeTab() !== 'audio') ? 'circle' : 'pill'"
             mat-button
             (click)="activeTab.set('audio')"
             
@@ -159,7 +159,7 @@
             >
           </studio-button>
           <div matTooltip="Drive coming soon!" class="inline-block">
-            <studio-button variant="primary" size="medium" shape="circle"
+            <studio-button variant="primary" size="small" shape="circle"
               mat-button
               [disabled]="true"
               
@@ -171,7 +171,7 @@
             </studio-button>
           </div>
           <!-- Functional Upload Button -->
-          <studio-button variant="primary" size="medium" shape="circle"
+          <studio-button variant="primary" size="small" shape="circle"
             mat-button
             (click)="openMediaSelector()"
             
@@ -460,7 +460,7 @@
         >
           <!-- Placeholder when no video (Empty State) -->
           <div
-            [class.hidden]="activeVideoClip()"
+            [class.hidden]="timelineState.activeVideoClip()"
             class="absolute inset-0 h-full flex flex-col items-center justify-center text-white/80 pointer-events-none select-none z-10 w-full h-full"
           >
             <!-- Text for Tablet and beyond -->
@@ -526,29 +526,36 @@
           </div>
 
           <!-- The Video Element -->
+          <!-- Video Elements (Double Buffering) -->
           <video
-            #mainVideo
-            class="max-w-full max-h-full object-contain shadow-2xl rounded-lg"
-            [class.hidden]="!activeVideoClip()"
+            #videoA
+            class="max-w-full max-h-full object-contain shadow-2xl rounded-lg absolute transition-opacity duration-200"
+            [class.hidden]="!timelineState.activeVideoClip()"
+            [class.invisible]="isVideoHidden()"
             [style.filter]="videoFilter()"
-            [src]="activeVideoSrc()"
             [muted]="true"
-            (loadedmetadata)="onMetadataLoaded()"
-            (ended)="onVideoEnded()"
+          ></video>
+          <video
+            #videoB
+            class="max-w-full max-h-full object-contain shadow-2xl rounded-lg absolute transition-opacity duration-200"
+            [class.hidden]="!timelineState.activeVideoClip()"
+            [class.invisible]="isVideoHidden()"
+            [style.filter]="videoFilter()"
+            [muted]="true"
           ></video>
 
           <!-- Hidden Audio (Multi-track) -->
-          <ng-container *ngFor="let src of activeAudioSrcs()">
-            <audio #bgAudio [src]="src"></audio>
+          <ng-container *ngFor="let src of activeAudioSrcs(); let i = index">
+            <audio #bgAudio [src]="src" [muted]="isTrackMuted(i + 1)"></audio>
           </ng-container>
 
           <!-- Playback Controls Overlay (Hover) -->
           <div
-            [class.hidden]="!activeVideoClip()"
+            [class.hidden]="!timelineState.activeVideoClip()"
             class="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20"
           >
             <div
-              *ngIf="!isPlaying()"
+              *ngIf="!timelineState.isPlaying()"
               class="w-16 h-16 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center cursor-pointer pointer-events-auto shadow-lg ring-1 ring-white/20"
               (click)="togglePlay()"
             >
@@ -567,22 +574,40 @@
         <!-- Time Display Pill -->
         <!-- <div
                                                                                     class="absolute bottom-6 px-4 py-1.5 text-white/90 z-20 bg-gradient-to-b from-zinc-500/50 to-neutral-700/20 rounded-3xl shadow-[2px_2px_12px_0px_rgba(0,0,0,0.10)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-[10px]">
-                                                                                    {{ formatTime(currentTime()) }} <span class="text-gray-600 mx-1">/</span> {{
-                                                                                    formatTime(totalDuration()) }}
+                                                                                    {{ formatTime(timelineState.currentTime()) }} <span class="text-gray-600 mx-1">/</span> {{
+                                                                                    formatTime(timelineState.totalDuration()) }}
                                                                                 </div> -->
       </div>
     </div>
 
     <!-- Bottom Timeline (Floating) -->
-    <div class="p-6 flex flex-col overflow-hidden relative z-10">
+    <div class="pt-4 flex flex-col overflow-hidden relative z-10">
       <div
         class="flex flex-col overflow-hidden relative max-w-[108rem] w-[100%] mx-auto"
       >
+        <!-- Global Playhead -->
+        <div *ngIf="(timelineState.currentTime() * timelineState.pixelsPerSecond()) >= timelineState.scrollOffset()"
+          class="absolute top-0 bottom-1 w-px bg-white pointer-events-none !z-[100]"
+          [style.left]="'calc(20rem + ' + (timelineState.currentTime() * timelineState.pixelsPerSecond() - timelineState.scrollOffset()) + 'px)'">
+          <!-- Transparent Hit Box for Dragging -->
+          <div
+            class="absolute top-0 bottom-0 w-6 -left-3 cursor-grab active:cursor-grabbing pointer-events-auto z-[101] hover:bg-white/5 transition-colors"
+            (mousedown)="onScrubStart($event)"></div>
+        
+          <!-- Handle Circle -->
+          <div class="w-3 h-3 -ml-[5.5px] bg-white rounded-full pointer-events-none relative z-[102]">
+          </div>
+        
+          <!-- Handle Triangle -->
+          <div class="w-3 h-3 -ml-[5.5px] bg-white pointer-events-none absolute bottom-0 z-[102]"
+            style="clip-path: polygon(50% 0%, 0% 100%, 100% 100%);">
+          </div>
+        </div>
         <!-- Timeline Header / Toolbar -->
         <div class="flex flex-row align-items-start">
-          <div class="h-16 w-[20rem] flex items-center justify-start gap-4">
-            <div class="flex gap-3 p-2">
-              <studio-button variant="primary" size="medium" [shape]="(activeToolButton() !== 'gallery') ? 'circle' : 'pill'"
+          <div class="h-16 w-[18rem] flex items-center justify-start gap-4">
+            <div class="flex gap-2">
+              <studio-button variant="primary" size="small" [shape]="(activeToolButton() !== 'gallery') ? 'circle' : 'pill'"
                 mat-button
                 (click)="toggleToolButton('gallery')"
                 
@@ -600,7 +625,7 @@
               </studio-button>
               
               <div matTooltip="Audio coming soon!" class="inline-block">
-                <studio-button variant="primary" size="medium" shape="circle"
+                <studio-button variant="primary" size="small" shape="circle"
                   mat-button
                   [disabled]="true"
                   
@@ -613,7 +638,7 @@
               </div>
 
               <div matTooltip="Stories coming soon!" class="inline-block">
-                <studio-button variant="primary" size="medium" shape="circle"
+                <studio-button variant="primary" size="small" shape="circle"
                   mat-button
                   [disabled]="true"
                   
@@ -626,7 +651,7 @@
               </div>
 
               <div matTooltip="Edit coming soon!" class="inline-block">
-                <studio-button variant="primary" size="medium" shape="circle"
+                <studio-button variant="primary" size="small" shape="circle"
                   mat-button
                   [disabled]="true"
                   
@@ -635,7 +660,7 @@
                 </studio-button>
               </div>
 
-              <studio-button variant="primary" size="medium" [shape]="(activeToolButton() !== 'agent') ? 'circle' : 'pill'"
+              <studio-button variant="primary" size="small" [shape]="(activeToolButton() !== 'agent') ? 'circle' : 'pill'"
                 mat-button
                 (click)="toggleToolButton('agent')"
                 matTooltip="Izumi Agent"
@@ -654,49 +679,23 @@
           </div>
 
           <div
-            class="flex flex-row w-[calc(100%-20rem)] items-center gap-1 mt-[0.5rem]"
+            class="flex flex-row w-[calc(100%-18rem)] items-center gap-2 mt-[0.5rem] !pl-4"
           >
-            <!-- Time Ruler -->
-            <div
-              class="glass-bg-effect h-[36px] ml-12 p-2 overflow-x-hidden w-full sticky top-0 z-10 rounded-3xl backdrop-blur-[7.5px]"
-            >
-              <div class="relative h-full" [style.width.px]="timelineWidth()">
-                <!-- Major ticks with labels (every second) -->
-                <ng-container *ngFor="let tick of timeRulerTicks()">
-                  <!-- Major tick line (every 10 seconds) or minor tick (every 2 seconds) -->
-                  <div
-                    class="absolute top-0 flex items-center"
-                    [style.left.px]="tick * pixelsPerSecond"
-                  >
-                    <div
-                      *ngIf="isMajorTick(tick)"
-                      class="w-1 h-4 bg-white rounded-b-2xl"
-                    ></div>
-                    <div
-                      *ngIf="!isMajorTick(tick)"
-                      class="w-0.5 h-2 bg-white/60 rounded-b-2xl"
-                    ></div>
-                    <span
-                      *ngIf="isMajorTick(tick)"
-                      class="text-[10px] font-semibold text-white/90 ml-1"
-                      >{{ formatTimeRuler(tick) }}</span
-                    >
-                  </div>
-                </ng-container>
-              </div>
-            </div>
+            <app-time-ruler class="flex-1 min-w-0" [totalDuration]="timelineState.totalDuration()" [pixelsPerSecond]="timelineState.pixelsPerSecond()"
+              [scrollOffset]="timelineState.scrollOffset()" [timelineWidth]="timelineWidth()"></app-time-ruler>
 
             <div class="flex flex-row gap-2 items-center ml-auto">
               <!-- Zoom Slider -->
               <div
-                class="zoom-slider flex flex-row items-center gap-1 rounded-3xl px-4 h-[36px]"
+                class="zoom-slider flex flex-row items-center gap-1 rounded-3xl px-4 h-[32px]"
               >
                 <mat-icon>zoom_out</mat-icon>
                 <studio-slider
                   [min]="10"
                   [max]="100"
                   [step]="5"
-                  [(value)]="pixelsPerSecond"
+                  [value]="timelineState.pixelsPerSecond()"
+                  (valueChange)="timelineState.pixelsPerSecond.set($event)"
                   class="w-[150px]"
                 ></studio-slider>
                 <mat-icon>zoom_in</mat-icon>
@@ -704,7 +703,7 @@
               <!-- <input type="range" [(ngModel)]="pixelsPerSecond" min="5" max="100" step="5"
                                                                                                                                                                     class="w-20 h-1 bg-gray-700 rounded-full appearance-none cursor-pointer accent-gray-400"> -->
               <!-- Split Button -->
-              <studio-button variant="primary" size="medium" shape="circle"
+              <!-- <studio-button variant="primary" size="small" shape="circle"
                 mat-button
                 (click)="splitSelectedClip()"
                 [disabled]="!canSplit()"
@@ -713,14 +712,14 @@
               >
                 <mat-icon class="!w-5 !h-5">content_cut</mat-icon>
               </studio-button>
-              <studio-button variant="primary" size="medium" shape="circle"
+              <studio-button variant="primary" size="small" shape="circle"
                 mat-button
                 (click)="deleteSelectedClip()"
-                [disabled]="!selectedClipId()"
+                [disabled]="!timelineState.selectedClipId()"
                 
               >
                 <mat-icon class="!w-5 !h-5">delete</mat-icon>
-              </studio-button>
+              </studio-button> -->
             </div>
           </div>
         </div>
@@ -728,13 +727,12 @@
         <!-- Tracks Area -->
         <div
           class="glass-bg-effect min-h-[12rem] max-w-[108rem] w-[100%] flex-1 flex flex-col items-end p-2 rounded-2xl backdrop-blur-[50px] relative"
-          #timelineContainer
         >
           <studio-button variant="cta" size="small" 
             mat-raised-button
             
             (click)="downloadVideo()"
-            [disabled]="timelineClips().length === 0 || isDownloading()"
+            [disabled]="timelineState.timelineClips().length === 0 || isDownloading()"
           >
             <mat-icon *ngIf="!isDownloading()">download</mat-icon>
             <mat-icon *ngIf="isDownloading()" class="animate-spin">sync</mat-icon>
@@ -743,7 +741,7 @@
           <div class="w-full flex-1 flex">
             <!-- Left Track Controls -->
             <div
-              class="w-[16rem] flex flex-col align-items-center justify-evenly z-20 relative"
+              class="w-[18rem] flex flex-col align-items-center justify-evenly z-20 relative"
             >
               <!-- Video Control -->
               <div class="flex flex-row items-center justify-between">
@@ -755,33 +753,35 @@
                     class="!w-6 !h-6"
                   ></mat-icon>
                   <studio-toolbar>
-                    <div matTooltip="coming soon!" class="inline-block">
-                        <studio-toolbar-button [disabled]="true">
-                        <mat-icon svgIcon="eye-icon"></mat-icon>
+                    <div class="inline-block">
+                      <studio-toolbar-button (click)="toggleVideoVisibility()">
+                        <mat-icon svgIcon="eye-icon" [class.opacity-50]="isVideoHidden()"></mat-icon>
                         </studio-toolbar-button>
                     </div>
-                    <div matTooltip="coming soon!" class="inline-block">
-                        <studio-toolbar-button [disabled]="true">
-                        <mat-icon svgIcon="lock-icon"></mat-icon>
-                        </studio-toolbar-button>
+                    <div class="inline-block">
+                      <studio-toolbar-button (click)="toggleTrackLock(0)">
+                        <mat-icon *ngIf="!isTrackLocked(0)">lock_open</mat-icon>
+                        <mat-icon *ngIf="isTrackLocked(0)" class="opacity-50">lock</mat-icon>
+                      </studio-toolbar-button>
                     </div>
                   </studio-toolbar>
                 </div>
                 <studio-button variant="primary" size="large" shape="circle"
+                  class="pr-2"
                   mat-button
                   (click)="togglePlay()"
                   
                 >
                   <mat-icon
-                    *ngIf="!isPlaying()"
+                    *ngIf="!timelineState.isPlaying()"
                     svgIcon="play-arrow-icon"
                   ></mat-icon>
-                  <mat-icon *ngIf="isPlaying()">pause</mat-icon>
+                  <mat-icon *ngIf="timelineState.isPlaying()">pause</mat-icon>
                 </studio-button>
               </div>
               <!-- Audio Control (Dynamic) -->
               <div
-                *ngFor="let track of audioTracks(); let i = index"
+                *ngFor="let track of timelineState.audioTracks(); let i = index"
                 class="h-14 flex items-center px-3 gap-6 mt-2"
               >
                 <mat-icon
@@ -789,73 +789,67 @@
                   class="!w-6 !h-6"
                 ></mat-icon>
                 <studio-toolbar>
-                  <div matTooltip="coming soon!" class="inline-block">
-                    <studio-toolbar-button [disabled]="true">
-                      <mat-icon svgIcon="lock-icon"></mat-icon>
+                  <div class="inline-block">
+                    <studio-toolbar-button (click)="toggleTrackLock(i + 1)">
+                      <mat-icon *ngIf="!isTrackLocked(i + 1)">lock_open</mat-icon>
+                      <mat-icon *ngIf="isTrackLocked(i + 1)" class="opacity-50">lock</mat-icon>
                     </studio-toolbar-button>
                   </div>
-                  <div matTooltip="coming soon!" class="inline-block">
-                    <studio-toolbar-button [disabled]="true">
-                      <mat-icon svgIcon="volume-off-icon"></mat-icon>
+                  <div class="inline-block">
+                    <studio-toolbar-button (click)="toggleTrackMute(i + 1)">
+                      <mat-icon *ngIf="!isTrackMuted(i + 1)">volume_up</mat-icon>
+                      <mat-icon *ngIf="isTrackMuted(i + 1)" svgIcon="volume-off-icon" class="opacity-50"></mat-icon>
                     </studio-toolbar-button>
                   </div>
                 </studio-toolbar>
               </div>
             </div>
 
-            <!-- Main Scrollable Timeline -->
-            <div
-              #timelineContainer
-              class="flex-1 overflow-x-auto overflow-y-hidden relative !pl-2"
-              (mousedown)="onTimelineMouseDown($event)"
-            >
+            <div class="flex-1 flex flex-col w-[calc(100%-18rem)]">
+              <!-- Main Scrollable Timeline -->
+              <div #timelineContainer class="relative !pl-4 overflow-hidden" (mousedown)="onTimelineMouseDown($event)">
               <div
-                class="relative max-w-[calc(100%-20rem)] h-full"
+                class="relative h-full"
                 [style.width.px]="timelineWidth()"
+                [style.transform]="'translateX(-' + timelineState.scrollOffset() + 'px)'"
               >
-                <!-- Playhead -->
-                <div
-                  class="absolute top-0 bottom-0 w-px bg-white pointer-events-none !z-[100]"
-                  [style.left.px]="currentTime() * pixelsPerSecond"
-                >
-                  <!-- Transparent Hit Box for Dragging -->
-                  <div
-                    class="absolute top-0 bottom-0 w-6 -left-3 cursor-grab active:cursor-grabbing pointer-events-auto z-[101] hover:bg-white/5 transition-colors"
-                    (mousedown)="onScrubStart($event)"
-                  ></div>
 
-                  <!-- Handle Circle -->
-                  <div
-                    class="w-3 h-3 -ml-[0.275rem] bg-white rounded-full -mt-1.5 shadow-[0_0_10px_rgba(255,255,255,0.5)] pointer-events-none relative z-[102]"
-                  ></div>
-                  <!-- <div
-                                                                                                                                                                                    class="absolute bottom-2 left-2 bg-[#2a2a2c] text-[9px] px-1.5 py-0.5 rounded text-white border border-white/10 whitespace-nowrap z-50">
-                                                                                                                                                                                    {{formatTime(currentTime())}}
-                                                                                                                                                                                </div> -->
-                </div>
 
                 <!-- VIDEO TRACK (draggable clips) -->
-                <div class="h-14 mt-2 relative w-full">
+                <div class="h-20 mt-2 relative w-full">
                   <div
-                    *ngFor="let clip of videoClips()"
+                    *ngFor="let clip of timelineState.videoClips(); let idx = index"
                     (mousedown)="startDrag($event, clip)"
                     (click)="selectClip(clip.id, $event)"
-                    class="absolute top-1 bottom-1 rounded-xl cursor-pointer overflow-hidden border flex items-center group"
+                    class="absolute top-1 bottom-1 rounded-xl cursor-pointer border flex items-center group transition-transform duration-200"
                     [ngClass]="{
-                      'border-blue-500 ring-2 ring-blue-500/50 shadow-xl shadow-blue-500/40 z-30':
-                        selectedClipId() === clip.id,
+                      'border-blue-500 ring-2 ring-blue-500/50 shadow-md shadow-blue-500/20 z-30':
+                        timelineState.selectedClipId() === clip.id,
                       'border-white/10 bg-[#2a2a2c] hover:border-white/30':
-                        selectedClipId() !== clip.id,
+                        timelineState.selectedClipId() !== clip.id,
                     }"
-                    [style.left.px]="clip.startTime * pixelsPerSecond"
-                    [style.width.px]="clip.duration * pixelsPerSecond"
+                    [style.left.px]="(clip.startTime * timelineState.pixelsPerSecond()) + 2"
+                    [style.width.px]="(clip.duration * timelineState.pixelsPerSecond()) - 4"
+                    [style.transform]="
+                      selectedClipIndex() === -1 ? 'none' :
+                      idx === selectedClipIndex() ? 'scale(1.1)' :
+                      (idx === selectedClipIndex() - 1 || idx === selectedClipIndex() + 1) ? 'scale(0.95, 1)' :
+                      'scale(1, 0.95)'
+                    "
+                    [style.transformOrigin]="
+                      selectedClipIndex() === -1 ? 'center' :
+                      idx === selectedClipIndex() ? 'center' :
+                      idx === selectedClipIndex() - 1 ? 'left' :
+                      idx === selectedClipIndex() + 1 ? 'right' :
+                      'center'
+                    "
                   >
                     <!-- Thumbnail Strip (when thumbnail available) -->
                     <div
                       *ngIf="getAssetThumbnail(clip.assetId)"
                       class="absolute inset-0 flex opacity-50 group-hover:opacity-70 transition-opacity pointer-events-none grayscale group-hover:grayscale-0 overflow-hidden"
                     >
-                      <ng-container *ngFor="let i of [1, 2, 3, 4, 5]">
+                      <ng-container *ngFor="let i of getThumbnailsSequence(clip.duration)">
                         <img
                           [src]="getAssetThumbnail(clip.assetId)"
                           class="h-full object-cover w-20 flex-shrink-0"
@@ -881,32 +875,34 @@
 
                     <!-- Trim Handles -->
                     <div
-                      class="absolute left-0 top-0 bottom-0 w-1.5 bg-white/40 cursor-ew-resize"
+                      *ngIf="timelineState.selectedClipId() === clip.id"
+                      class="absolute left-0 top-[35%] bottom-[35%] w-2 bg-white/80 cursor-ew-resize rounded-full transform -translate-x-1/2"
                     ></div>
                     <div
-                      class="absolute right-0 top-0 bottom-0 w-1.5 bg-white/40 cursor-ew-resize"
+                      *ngIf="timelineState.selectedClipId() === clip.id"
+                      class="absolute right-0 top-[35%] bottom-[35%] w-2 bg-white/80 cursor-ew-resize rounded-full transform translate-x-1/2"
                     ></div>
                   </div>
                 </div>
 
                 <!-- AUDIO TRACKS (draggable clips) -->
                 <div
-                  *ngFor="let track of audioTracks(); let i = index"
+                  *ngFor="let track of timelineState.audioTracks(); let i = index"
                   class="h-14 mt-2 relative w-full"
                 >
                   <div
                     *ngFor="let clip of track"
                     (mousedown)="startDrag($event, clip)"
                     (click)="selectClip(clip.id, $event)"
-                    class="absolute top-2 bottom-2 rounded-lg cursor-pointer overflow-hidden border flex items-center justify-center"
+                    class="absolute top-2 bottom-2 rounded-lg cursor-pointer overflow-hidden flex items-center justify-center"
                     [ngClass]="{
                       'border-emerald-500 ring-2 ring-emerald-500/50 shadow-xl shadow-emerald-500/40 z-30':
-                        selectedClipId() === clip.id,
-                      'border-white/5 hover:border-white/20':
-                        selectedClipId() !== clip.id,
+                        timelineState.selectedClipId() === clip.id,
+                      'hover:border-white/20':
+                        timelineState.selectedClipId() !== clip.id,
                     }"
-                    [style.left.px]="clip.startTime * pixelsPerSecond"
-                    [style.width.px]="clip.duration * pixelsPerSecond"
+                    [style.left.px]="(clip.startTime * timelineState.pixelsPerSecond()) + 2"
+                    [style.width.px]="(clip.duration * timelineState.pixelsPerSecond()) - 4"
                   >
                     <!-- Waveform Graphic -->
                     <div
@@ -915,7 +911,7 @@
                       <div
                         *ngFor="
                           let i of getSequence(
-                            (clip.duration * pixelsPerSecond) / 10
+                            (clip.duration * timelineState.pixelsPerSecond()) / 10
                           )
                         "
                         class="flex-1 rounded-[180px] bg-gradient-to-r from-[rgba(30,220,136,0.75)] to-[rgba(37,165,163,0.75)]"
@@ -935,15 +931,22 @@
               </div>
             </div>
           </div>
+          <!-- Dummy Scrollbar -->
+          <div *ngIf="(timelineState.totalDuration() * timelineState.pixelsPerSecond()) > containerWidthSignal()" #dummyScrollContainer
+            class="absolute bottom-0 right-0 w-[calc(100%-18rem)] h-6 overflow-x-auto !pl-4 z-20 custom-scrollbar"
+            (scroll)="onDummyScroll($event)">
+            <div [style.width.px]="timelineWidth()" class="h-px"></div>
+          </div>
+          </div>
           <!-- Timer -->
           <!-- Timer -->
           <div class="absolute bottom-2 right-2 w-max z-20">
             <span class="text-sky-300 text-sm"
-              >{{ formatTime(currentTime()) }}
+              >{{ formatTime(timelineState.currentTime()) }}
             </span>
             <span class="text-white/90 mx-1">|</span>
             <span class="text-white/90 text-sm">{{
-              formatTime(totalDuration())
+              formatTime(timelineState.totalDuration())
             }}</span>
           </div>
         </div>

@@ -23,6 +23,7 @@ import {
   QueryList,
   ElementRef,
   OnDestroy,
+  HostListener,
   effect,
   inject,
   OnInit,
@@ -46,32 +47,19 @@ import {SourceAssetResponseDto} from '../common/services/source-asset.service';
 import {WorkbenchService, TimelineRequest, Clip} from './workbench.service';
 import {StoryboardService} from '../services/storyboard/storyboard.service';
 import {AgentChatService} from './services/agent-chat.service';
+import {TimeRulerComponent} from './components/time-ruler/time-ruler.component';
+import {
+  TimelineStateService,
+  TimelineClip,
+  MediaAsset,
+} from './services/timeline-state.service';
+import {PlayheadSyncService} from './services/playhead-sync.service';
 import {
   TimelineDTO,
   VideoClipDTO,
   AudioClipDTO,
 } from '../common/models/storyboard.model';
 import {ActivatedRoute} from '@angular/router';
-
-interface MediaAsset {
-  id: string;
-  name: string;
-  type: 'video' | 'audio';
-  url: string;
-  safeUrl: SafeUrl;
-  duration: number; // in seconds
-  thumbnail?: string;
-}
-
-interface TimelineClip {
-  id: string;
-  assetId: string;
-  startTime: number; // absolute time on timeline
-  duration: number; // duration of this specific clip (could be trimmed later)
-  offset: number; // offset into the original source file
-  trackIndex: number; // 0 for video, 1 for audio
-  color: string;
-}
 
 @Component({
   selector: 'app-workbench',
@@ -80,14 +68,17 @@ interface TimelineClip {
 })
 export class WorkbenchComponent implements OnInit, OnDestroy {
   // Signals for State
-  assets = signal<MediaAsset[]>([]);
-  timelineClips = signal<TimelineClip[]>([]);
-  currentTime = signal<number>(0);
-  isPlaying = signal<boolean>(false);
-  selectedClipId = signal<string | null>(null);
+
   activeToolButton = signal<
     'gallery' | 'audio' | 'stories' | 'edit' | 'agent' | null
   >(null);
+  isVideoHidden = signal<boolean>(false);
+  lockedTracks = signal<Set<number>>(new Set());
+  mutedTracks = signal<Set<number>>(new Set());
+
+  currentScroll = signal<number>(0);
+  containerWidthSignal = signal<number>(0);
+  isPausing = false;
 
   // Simple tab between video/audio assets (UX only)
   activeTab = signal<'video' | 'audio'>('video');
@@ -96,76 +87,48 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   exposureVal = 100;
   contrastVal = 100;
   saturateVal = 100;
-  pixelsPerSecond = 15; // Default reduced from 30 to 15
-
-  // Computed Values
-  videoClips = computed(() =>
-    this.timelineClips()
-      .filter(c => c.trackIndex === 0)
-      .sort((a, b) => a.startTime - b.startTime),
-  );
-
-  // Group audio clips by track index
-  audioTracks = computed(() => {
-    const clips = this.timelineClips().filter(c => c.trackIndex > 0);
-    if (clips.length === 0) return [[]]; // Always return at least one empty track
-    const maxTrack = Math.max(...clips.map(c => c.trackIndex), 1);
-    const tracks: TimelineClip[][] = [];
-    for (let i = 1; i <= maxTrack; i++) {
-      tracks.push(clips.filter(c => c.trackIndex === i));
-    }
-    return tracks;
-  });
 
   // Filtered assets list based on active tab
   filteredAssets = computed(() => {
     const tab = this.activeTab();
-    return this.assets().filter(a => a.type === tab);
+    return this.timelineState.assets().filter(a => a.type === tab);
   });
 
   videoTrackEnd = computed(() => {
-    const clips = this.videoClips();
+    const clips = this.timelineState.videoClips();
     return clips.length > 0
       ? Math.max(...clips.map(c => c.startTime + c.duration))
       : 0;
   });
 
-  totalDuration = computed(() => {
-    if (this.timelineClips().length === 0) return 0;
-    return Math.max(...this.timelineClips().map(c => c.startTime + c.duration));
-  });
-
   timelineWidth = computed(() => {
     // Ensure timeline is at least screen width or longer based on content
-    return Math.max(this.totalDuration() * this.pixelsPerSecond + 800, 800);
-  });
-
-  // derived signals for active source logic
-  activeVideoClip = computed(() => {
-    const time = this.currentTime();
-    return this.videoClips().find(
-      c => time >= c.startTime && time < c.startTime + c.duration,
+    return (
+      this.timelineState.totalDuration() *
+        this.timelineState.pixelsPerSecond() +
+      this.containerWidthSignal()
     );
   });
 
-  activeAudioClips = computed(() => {
-    const time = this.currentTime();
-    return this.audioTracks().map(track =>
-      track.find(c => time >= c.startTime && time < c.startTime + c.duration),
-    );
+  selectedClipIndex = computed(() => {
+    const id = this.timelineState.selectedClipId();
+    if (!id) return -1;
+    return this.timelineState.videoClips().findIndex(c => c.id === id);
   });
 
   activeVideoSrc = computed(() => {
-    const clip = this.activeVideoClip();
+    const clip = this.timelineState.activeVideoClip();
     if (!clip) return '';
-    const asset = this.assets().find(a => a.id === clip.assetId);
+    const asset = this.timelineState.assets().find(a => a.id === clip.assetId);
     return asset ? asset.safeUrl : '';
   });
 
   activeAudioSrcs = computed(() => {
-    return this.activeAudioClips().map(clip => {
+    return this.timelineState.activeAudioClips().map(clip => {
       if (!clip) return '';
-      const asset = this.assets().find(a => a.id === clip.assetId);
+      const asset = this.timelineState
+        .assets()
+        .find(a => a.id === clip.assetId);
       return asset ? asset.safeUrl : '';
     });
   });
@@ -174,18 +137,22 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     return `brightness(${this.exposureVal}%) contrast(${this.contrastVal}%) saturate(${this.saturateVal}%)`;
   });
 
-  animationFrameId: any;
-
   // View Children
-  @ViewChild('mainVideo') mainVideo!: ElementRef<HTMLVideoElement>;
+  @ViewChild('videoA') videoA!: ElementRef<HTMLVideoElement>;
+  @ViewChild('videoB') videoB!: ElementRef<HTMLVideoElement>;
   @ViewChildren('bgAudio') bgAudios!: QueryList<ElementRef<HTMLAudioElement>>;
+  @ViewChild(TimeRulerComponent) timeRuler!: TimeRulerComponent;
   @ViewChild('timelineContainer')
   timelineContainer!: ElementRef<HTMLDivElement>;
+  @ViewChild('dummyScrollContainer')
+  dummyScrollContainer!: ElementRef<HTMLDivElement>;
 
   // Services
   private sanitizer = inject(DomSanitizer);
   private workbenchService = inject(WorkbenchService);
   private agentChatService = inject(AgentChatService);
+  protected timelineState = inject(TimelineStateService);
+  protected playbackService = inject(PlayheadSyncService);
   private route = inject(ActivatedRoute);
   private storyboardService = inject(StoryboardService);
 
@@ -233,8 +200,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           console.log(
             'No storyboard or timeline found, clearing timeline clips.',
           );
-          this.timelineClips.set([]);
-          this.selectedClipId.set(null);
+          this.timelineState.timelineClips.set([]);
+          this.timelineState.selectedClipId.set(null);
         }
       },
       {allowSignalWrites: true},
@@ -314,57 +281,6 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         'web-stories-icon',
         this.setPath(`${this.path}/web-stories.svg`),
       );
-
-    // Setup an effect to handle video seeking/sync when active clip changes or time jumps
-    effect(() => {
-      if (!this.isBrowser) return;
-
-      const vid = this.mainVideo?.nativeElement;
-      const vClip = this.activeVideoClip();
-      const curTime = this.currentTime();
-
-      // Video Sync
-      if (vid && vClip) {
-        const fileTime = curTime - vClip.startTime + vClip.offset;
-        if (Math.abs(vid.currentTime - fileTime) > 0.5)
-          vid.currentTime = fileTime;
-        if (this.isPlaying() && vid.paused)
-          vid.play().catch(e => console.error('[VideoSync] Play failed', e));
-        if (!this.isPlaying() && !vid.paused) vid.pause();
-      } else if (vid) {
-        vid.pause();
-      }
-
-      // Audio Sync (Multi-track)
-      const _ = this.audioElementsChanged(); // Dependency
-      const audioElements = this.bgAudios?.toArray();
-      const activeAClips = this.activeAudioClips();
-
-      if (audioElements) {
-        audioElements.forEach((audioRef, index) => {
-          const aud = audioRef.nativeElement;
-          const aClip = activeAClips[index];
-
-          if (aud && aClip) {
-            const fileTime = curTime - aClip.startTime + aClip.offset;
-            if (Math.abs(aud.currentTime - fileTime) > 0.5) {
-              aud.currentTime = fileTime;
-            }
-
-            if (this.isPlaying() && aud.paused) {
-              aud.play().catch(e => console.error('Audio play failed', e));
-            }
-            if (!this.isPlaying() && !aud.paused) {
-              aud.pause();
-            }
-          } else if (aud) {
-            if (!aud.paused) {
-              aud.pause();
-            }
-          }
-        });
-      }
-    });
   }
 
   private path = '../../../assets/images';
@@ -378,6 +294,36 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   onCloseAgentView() {
     this.activeToolButton.set(null);
+  }
+
+  toggleVideoVisibility() {
+    this.isVideoHidden.update(v => !v);
+  }
+
+  toggleTrackLock(trackIndex: number) {
+    this.lockedTracks.update(prev => {
+      const next = new Set(prev);
+      if (next.has(trackIndex)) next.delete(trackIndex);
+      else next.add(trackIndex);
+      return next;
+    });
+  }
+
+  toggleTrackMute(trackIndex: number) {
+    this.mutedTracks.update(prev => {
+      const next = new Set(prev);
+      if (next.has(trackIndex)) next.delete(trackIndex);
+      else next.add(trackIndex);
+      return next;
+    });
+  }
+
+  isTrackLocked(trackIndex: number): boolean {
+    return this.lockedTracks().has(trackIndex);
+  }
+
+  isTrackMuted(trackIndex: number): boolean {
+    return this.mutedTracks().has(trackIndex);
   }
 
   ngOnInit() {
@@ -399,15 +345,44 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   ngAfterViewInit() {
     this.bgAudios.changes.subscribe(() => {
       this.audioElementsChanged.update(v => v + 1);
+      this.registerPlaybackElements();
+    });
+
+    // Set initial container width for timeline
+    if (this.timelineContainer?.nativeElement) {
+      this.containerWidthSignal.set(
+        this.timelineContainer.nativeElement.clientWidth,
+      );
+    }
+
+    this.registerPlaybackElements();
+  }
+
+  private registerPlaybackElements() {
+    this.playbackService.registerElements({
+      videoA: this.videoA?.nativeElement,
+      videoB: this.videoB?.nativeElement,
+      audios: this.bgAudios?.toArray().map(e => e.nativeElement) || [],
+      timeline: this.timelineContainer?.nativeElement,
+      dummyScroll: this.dummyScrollContainer?.nativeElement,
+      timeRuler: this.timeRuler,
     });
   }
 
+  @HostListener('window:resize')
+  onResize() {
+    if (this.timelineContainer?.nativeElement) {
+      this.containerWidthSignal.set(
+        this.timelineContainer.nativeElement.clientWidth,
+      );
+    }
+  }
+
   ngOnDestroy() {
-    if (this.animationFrameId) cancelAnimationFrame(this.animationFrameId);
+    this.playbackService.stopLoop();
   }
 
   // --- Logic: File Handling ---
-
   onFileSelected(event: Event) {
     const input = event.target as HTMLInputElement;
     if (!input.files) return;
@@ -430,7 +405,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         duration: 0,
       };
 
-      this.assets.update(prev => [...prev, asset]);
+      this.timelineState.assets.update(prev => [...prev, asset]);
 
       if (isVideo) {
         this.extractVideoMetadata(asset, file);
@@ -452,7 +427,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       data: {
         mimeType: mimeType,
         showFooter: true,
-        maxSelection: 1,
+        maxSelection: 10,
+        multiSelect: true,
       },
       panelClass: 'image-selector-dialog',
     });
@@ -461,7 +437,14 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       .afterClosed()
       .subscribe((result: MediaItemSelection | SourceAssetResponseDto) => {
         if (result) {
-          this.processCloudMediaResult(result);
+          // Normalize to an array: if it's already an array, use it;
+          // if it's a single object, wrap it in an array.
+          const results = Array.isArray(result) ? result : [result];
+
+          // Process each result individually
+          results.forEach(res => {
+            this.processCloudMediaResult(res);
+          });
         }
       });
   }
@@ -514,7 +497,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       thumbnail,
     };
 
-    this.assets.update(prev => [...prev, newAsset]);
+    this.timelineState.assets.update(prev => [...prev, newAsset]);
 
     // Extract duration from the cloud media
     if (type === 'video') {
@@ -542,7 +525,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         if (ctx) {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const thumbUrl = canvas.toDataURL('image/jpeg');
-          this.assets.update(items =>
+          this.timelineState.assets.update(items =>
             items.map(i =>
               i.id === asset.id ? {...i, thumbnail: thumbUrl} : i,
             ),
@@ -595,7 +578,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       if (ctx) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const thumbUrl = canvas.toDataURL('image/jpeg');
-        this.assets.update(items =>
+        this.timelineState.assets.update(items =>
           items.map(i => (i.id === asset.id ? {...i, thumbnail: thumbUrl} : i)),
         );
       }
@@ -614,10 +597,10 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   }
 
   updateAssetDuration(id: string, duration: number) {
-    this.assets.update(items =>
+    this.timelineState.assets.update(items =>
       items.map(i => (i.id === id ? {...i, duration} : i)),
     );
-    this.timelineClips.update(clips =>
+    this.timelineState.timelineClips.update(clips =>
       clips.map(clip => (clip.assetId === id ? {...clip, duration} : clip)),
     );
     this.refreshTimelineLayout();
@@ -625,13 +608,13 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   onThumbnailError(asset: MediaAsset) {
     // Clear the thumbnail if it fails to load, so the placeholder icon shows
-    this.assets.update(items =>
+    this.timelineState.assets.update(items =>
       items.map(i => (i.id === asset.id ? {...i, thumbnail: undefined} : i)),
     );
   }
 
   refreshTimelineLayout() {
-    this.timelineClips.update(clips => {
+    this.timelineState.timelineClips.update(clips => {
       const vClips = clips.filter(c => c.trackIndex === 0);
       const otherClips = clips.filter(c => c.trackIndex !== 0);
 
@@ -661,9 +644,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         );
 
         // Populate assets signal so lookup works
-        const existingAsset = this.assets().find(a => a.id === assetId);
+        const existingAsset = this.timelineState
+          .assets()
+          .find(a => a.id === assetId);
         if (!existingAsset && clip.presigned_url) {
-          this.assets.update(prev => [
+          this.timelineState.assets.update(prev => [
             ...prev,
             {
               id: assetId,
@@ -698,9 +683,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         const assetId = clip.presigned_url || '';
 
         // Populate assets signal
-        const existingAsset = this.assets().find(a => a.id === assetId);
+        const existingAsset = this.timelineState
+          .assets()
+          .find(a => a.id === assetId);
         if (!existingAsset && clip.presigned_url) {
-          this.assets.update(prev => [
+          this.timelineState.assets.update(prev => [
             ...prev,
             {
               id: assetId,
@@ -755,20 +742,20 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     }
 
     console.log('Setting timelineClips to:', newClips);
-    this.timelineClips.set(newClips);
+    this.timelineState.timelineClips.set(newClips);
     this.refreshTimelineLayout();
   }
 
   getAssetThumbnail(id: string): string | undefined {
-    return this.assets().find(a => a.id === id)?.thumbnail;
+    return this.timelineState.assets().find(a => a.id === id)?.thumbnail;
   }
 
   getAssetName(id: string): string {
-    return this.assets().find(a => a.id === id)?.name || 'Clip';
+    return this.timelineState.assets().find(a => a.id === id)?.name || 'Clip';
   }
 
   isAssetVideo(id: string): boolean {
-    return this.assets().find(a => a.id === id)?.type === 'video';
+    return this.timelineState.assets().find(a => a.id === id)?.type === 'video';
   }
 
   // --- Logic: Timeline ---
@@ -779,7 +766,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
     if (asset.type === 'video') {
       // Magnetic Video: Always add to the end of the video track
-      const vClips = this.timelineClips().filter(c => c.trackIndex === 0);
+      const vClips = this.timelineState
+        .timelineClips()
+        .filter(c => c.trackIndex === 0);
       const vStartTime =
         vClips.length > 0
           ? Math.max(...vClips.map(c => c.startTime + c.duration))
@@ -811,7 +800,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       });
     } else {
       // Smart Audio: Add at playhead, find first available track
-      const playhead = this.currentTime();
+      const playhead = this.timelineState.currentTime();
       const targetTrack = this.findAvailableAudioTrack(
         playhead,
         asset.duration,
@@ -828,7 +817,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       });
     }
 
-    this.timelineClips.update(prev => [...prev, ...clipsToAdd]);
+    this.timelineState.timelineClips.update(prev => [...prev, ...clipsToAdd]);
     this.refreshTimelineLayout();
   }
 
@@ -836,17 +825,23 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     event.stopPropagation();
 
     // Remove from assets list
-    this.assets.update(prev => prev.filter(a => a.id !== asset.id));
+    this.timelineState.assets.update(prev =>
+      prev.filter(a => a.id !== asset.id),
+    );
 
     // Remove any clips associated with this asset from the timeline
-    this.timelineClips.update(prev => prev.filter(c => c.assetId !== asset.id));
+    this.timelineState.timelineClips.update(prev =>
+      prev.filter(c => c.assetId !== asset.id),
+    );
 
     // Clear selection if it was a clip of this asset
-    const selectedId = this.selectedClipId();
+    const selectedId = this.timelineState.selectedClipId();
     if (selectedId) {
-      const stillExists = this.timelineClips().some(c => c.id === selectedId);
+      const stillExists = this.timelineState
+        .timelineClips()
+        .some(c => c.id === selectedId);
       if (!stillExists) {
-        this.selectedClipId.set(null);
+        this.timelineState.selectedClipId.set(null);
       }
     }
 
@@ -854,7 +849,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   }
 
   private findAvailableAudioTrack(startTime: number, duration: number): number {
-    const allAudioClips = this.timelineClips().filter(c => c.trackIndex > 0);
+    const allAudioClips = this.timelineState
+      .timelineClips()
+      .filter(c => c.trackIndex > 0);
     let targetTrack = 1;
     let placed = false;
 
@@ -879,6 +876,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   // Start dragging a clip horizontally on the timeline
   startDrag(event: MouseEvent, clip: TimelineClip) {
+    if (this.isTrackLocked(clip.trackIndex)) return;
     event.stopPropagation();
     event.preventDefault();
     this.selectClip(clip.id, event);
@@ -888,29 +886,33 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       startX: event.clientX,
       initialStartTime: clip.startTime,
     };
-    this.isPlaying.set(false);
+    this.timelineState.isPlaying.set(false);
   }
 
   selectClip(id: string, event: MouseEvent) {
     event.stopPropagation();
-    this.selectedClipId.set(id);
+    const clip = this.timelineState.timelineClips().find(c => c.id === id);
+    if (clip && this.isTrackLocked(clip.trackIndex)) return;
+    this.timelineState.selectedClipId.set(id);
   }
 
   deleteSelectedClip() {
-    const id = this.selectedClipId();
+    const id = this.timelineState.selectedClipId();
     if (!id) return;
-    this.timelineClips.update(prev => prev.filter(c => c.id !== id));
-    this.selectedClipId.set(null);
+    this.timelineState.timelineClips.update(prev =>
+      prev.filter(c => c.id !== id),
+    );
+    this.timelineState.selectedClipId.set(null);
     this.refreshTimelineLayout();
   }
 
   // --- Split Logic ---
   canSplit(): boolean {
-    const id = this.selectedClipId();
+    const id = this.timelineState.selectedClipId();
     if (!id) return false;
-    const clip = this.timelineClips().find(c => c.id === id);
+    const clip = this.timelineState.timelineClips().find(c => c.id === id);
     if (!clip) return false;
-    const time = this.currentTime();
+    const time = this.timelineState.currentTime();
     return (
       time > clip.startTime + 0.1 && time < clip.startTime + clip.duration - 0.1
     );
@@ -918,9 +920,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   splitSelectedClip(): void {
     if (!this.canSplit()) return;
-    const id = this.selectedClipId();
-    const clip = this.timelineClips().find(c => c.id === id)!;
-    const splitPoint = this.currentTime() - clip.startTime;
+    const id = this.timelineState.selectedClipId();
+    const clip = this.timelineState.timelineClips().find(c => c.id === id)!;
+    const splitPoint = this.timelineState.currentTime() - clip.startTime;
 
     const clip1Duration = splitPoint;
     const clip2Duration = clip.duration - splitPoint;
@@ -934,61 +936,34 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       startTime: clip.startTime + splitPoint,
     };
 
-    this.timelineClips.update(prev => {
+    this.timelineState.timelineClips.update(prev => {
       const updated = prev.map(c =>
         c.id === id ? {...c, duration: clip1Duration} : c,
       );
       return [...updated, clip2];
     });
 
-    this.selectedClipId.set(clip2.id);
+    this.timelineState.selectedClipId.set(clip2.id);
     this.refreshTimelineLayout();
   }
 
-  // --- Logic: Playback Loop ---
-
   togglePlay() {
     if (!this.isBrowser) return;
-    this.isPlaying.set(!this.isPlaying());
-    if (this.isPlaying()) {
-      this.runGameLoop();
+
+    if (this.timelineState.isPlaying()) {
+      // Pausing
+      const lastScroll = this.timelineState.scrollOffset();
+      this.timelineState.isPlaying.set(false);
+      this.playbackService.stopLoop();
+
+      if (this.dummyScrollContainer?.nativeElement) {
+        this.dummyScrollContainer.nativeElement.scrollLeft = lastScroll;
+      }
     } else {
-      cancelAnimationFrame(this.animationFrameId);
+      // Playing
+      this.timelineState.isPlaying.set(true);
+      this.playbackService.runGameLoop();
     }
-  }
-
-  runGameLoop() {
-    if (!this.isBrowser) return;
-    let lastTime = performance.now();
-    const loop = (now: number) => {
-      if (!this.isPlaying()) return;
-      const dt = (now - lastTime) / 1000;
-      lastTime = now;
-      const nextTime = this.currentTime() + dt;
-
-      // 1. Auto Scroll Logic
-      if (this.timelineContainer?.nativeElement) {
-        const container = this.timelineContainer.nativeElement;
-        const playheadPos = nextTime * this.pixelsPerSecond;
-        const containerWidth = container.clientWidth;
-        const scrollLeft = container.scrollLeft;
-
-        // If playhead goes past 80% of visible area, scroll forward
-        if (playheadPos > scrollLeft + containerWidth * 0.8) {
-          // Smoothly jump scroll to keep playhead at 20%
-          container.scrollLeft = playheadPos - containerWidth * 0.2;
-        }
-      }
-
-      if (nextTime >= this.totalDuration()) {
-        this.currentTime.set(this.totalDuration());
-        this.isPlaying.set(false);
-      } else {
-        this.currentTime.set(nextTime);
-        this.animationFrameId = requestAnimationFrame(loop);
-      }
-    };
-    this.animationFrameId = requestAnimationFrame(loop);
   }
 
   onVideoEnded() {}
@@ -997,26 +972,33 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   // --- Download / Render ---
   downloadVideo() {
     // Only allow download if there are clips and not already downloading
-    if (this.timelineClips().length === 0 || this.isDownloading()) return;
+    if (this.timelineState.timelineClips().length === 0 || this.isDownloading())
+      return;
 
     this.isDownloading.set(true);
 
     // Map timeline clips to request format
-    const requestClips: Clip[] = this.timelineClips().map(clip => {
-      const asset = this.assets().find(a => a.id === clip.assetId);
-      return {
-        assetId: clip.assetId,
-        url: asset?.url || '',
-        startTime: clip.startTime,
-        duration: clip.duration,
-        offset: clip.offset,
-        trackIndex: clip.trackIndex,
-        type: clip.trackIndex === 0 ? 'video' : 'audio',
-      };
-    });
+    const requestClips: Clip[] = this.timelineState
+      .timelineClips()
+      .filter(clip => !this.isTrackMuted(clip.trackIndex))
+      .map(clip => {
+        const asset = this.timelineState
+          .assets()
+          .find(a => a.id === clip.assetId);
+        return {
+          assetId: clip.assetId,
+          url: asset?.url || '',
+          startTime: clip.startTime,
+          duration: clip.duration,
+          offset: clip.offset,
+          trackIndex: clip.trackIndex,
+          type: clip.trackIndex === 0 ? 'video' : 'audio',
+        };
+      });
 
     const request: TimelineRequest = {
       clips: requestClips,
+      hide_video: this.isVideoHidden(),
     };
 
     this.workbenchService.renderVideo(request).subscribe({
@@ -1039,8 +1021,6 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     });
   }
 
-  // --- Interaction ---
-
   // Scrubbing State
   scrubState: {active: boolean; startX: number; initialTime: number} | null =
     null;
@@ -1052,22 +1032,54 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     this.scrubState = {
       active: true,
       startX: event.clientX,
-      initialTime: this.currentTime(),
+      initialTime: this.timelineState.currentTime(),
     };
-    this.isPlaying.set(false);
+    this.timelineState.isPlaying.set(false);
+
+    // Center the view on the playhead
+    if (this.timelineContainer?.nativeElement) {
+      const containerWidth = this.timelineContainer.nativeElement.clientWidth;
+      const playheadPos =
+        this.timelineState.currentTime() * this.timelineState.pixelsPerSecond();
+      const newScrollLeft = Math.max(0, playheadPos - containerWidth * 0.5);
+      this.timelineState.scrollOffset.set(newScrollLeft);
+      if (this.dummyScrollContainer?.nativeElement) {
+        this.dummyScrollContainer.nativeElement.scrollLeft = newScrollLeft;
+      }
+    }
   }
 
   onScrubMove(event: MouseEvent) {
     if (!this.scrubState?.active) return;
 
     const deltaX = event.clientX - this.scrubState.startX;
-    const deltaTime = deltaX / this.pixelsPerSecond;
+    const deltaTime = deltaX / this.timelineState.pixelsPerSecond();
     const newTime = Math.max(
       0,
-      Math.min(this.scrubState.initialTime + deltaTime, this.totalDuration()),
+      Math.min(
+        this.scrubState.initialTime + deltaTime,
+        this.timelineState.totalDuration(),
+      ),
     );
 
-    this.currentTime.set(newTime);
+    this.timelineState.currentTime.set(newTime);
+
+    // Auto-scroll logic for scrubbing
+    if (this.timelineContainer?.nativeElement) {
+      const container = this.timelineContainer.nativeElement;
+      const playheadPos = newTime * this.timelineState.pixelsPerSecond();
+      const containerWidth = container.clientWidth;
+      const scrollLeft = this.timelineState.scrollOffset();
+
+      // Scroll forward if playhead goes off screen right
+      if (playheadPos > scrollLeft + containerWidth) {
+        this.timelineState.scrollOffset.set(playheadPos - containerWidth);
+      }
+      // Scroll backward if playhead goes off screen left
+      else if (playheadPos < scrollLeft) {
+        this.timelineState.scrollOffset.set(playheadPos);
+      }
+    }
   }
 
   onScrubEnd() {
@@ -1091,15 +1103,27 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       clickX = event.clientX - rect.left + currentTarget.scrollLeft;
     }
 
-    const time = Math.max(0, clickX / this.pixelsPerSecond);
-    this.currentTime.set(time);
+    const time = Math.max(0, clickX / this.timelineState.pixelsPerSecond());
+    this.timelineState.currentTime.set(time);
+
+    // Center the view on the clicked time
+    if (this.timelineContainer?.nativeElement) {
+      const containerWidth = this.timelineContainer.nativeElement.clientWidth;
+      const playheadPos = time * this.timelineState.pixelsPerSecond();
+      const newScrollLeft = Math.max(0, playheadPos - containerWidth * 0.5);
+      this.timelineState.scrollOffset.set(newScrollLeft);
+      if (this.dummyScrollContainer?.nativeElement) {
+        this.dummyScrollContainer.nativeElement.scrollLeft = newScrollLeft;
+      }
+    }
 
     this.onScrubStart(event);
-    this.selectedClipId.set(null);
+    this.timelineState.selectedClipId.set(null);
   }
 
   // --- Trimming Logic ---
   startTrim(event: MouseEvent, clip: TimelineClip, type: 'start' | 'end') {
+    if (this.isTrackLocked(clip.trackIndex)) return;
     event.stopPropagation();
     event.preventDefault();
     this.trimState = {
@@ -1111,22 +1135,22 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       initialDur: clip.duration,
       initialOffset: clip.offset,
     };
-    this.isPlaying.set(false);
+    this.timelineState.isPlaying.set(false);
   }
 
   onTrimMove(event: MouseEvent) {
     if (!this.trimState || !this.trimState.active) return;
 
     const deltaX = event.clientX - this.trimState.startX;
-    const deltaTime = deltaX / this.pixelsPerSecond;
+    const deltaTime = deltaX / this.timelineState.pixelsPerSecond();
     const {clipId, type, initialDur, initialOffset} = this.trimState;
 
-    const clip = this.timelineClips().find(c => c.id === clipId);
+    const clip = this.timelineState.timelineClips().find(c => c.id === clipId);
     if (!clip) return;
-    const asset = this.assets().find(a => a.id === clip.assetId);
+    const asset = this.timelineState.assets().find(a => a.id === clip.assetId);
     const maxDuration = asset ? asset.duration : 9999;
 
-    this.timelineClips.update(clips =>
+    this.timelineState.timelineClips.update(clips =>
       clips.map(c => {
         if (c.id !== clipId) return c;
 
@@ -1169,20 +1193,22 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     if (!this.dragState || !this.dragState.active) return;
 
     const deltaX = event.clientX - this.dragState.startX;
-    const deltaTime = deltaX / this.pixelsPerSecond;
+    const deltaTime = deltaX / this.timelineState.pixelsPerSecond();
     let newStartTime = this.dragState.initialStartTime + deltaTime;
     if (newStartTime < 0) newStartTime = 0;
 
     // Snap to start or current playhead for nicer UX
-    const snapThreshold = 10 / this.pixelsPerSecond;
+    const snapThreshold = 10 / this.timelineState.pixelsPerSecond();
     if (Math.abs(newStartTime) < snapThreshold) {
       newStartTime = 0;
-    } else if (Math.abs(newStartTime - this.currentTime()) < snapThreshold) {
-      newStartTime = this.currentTime();
+    } else if (
+      Math.abs(newStartTime - this.timelineState.currentTime()) < snapThreshold
+    ) {
+      newStartTime = this.timelineState.currentTime();
     }
 
     const clipId = this.dragState.clipId;
-    this.timelineClips.update(clips =>
+    this.timelineState.timelineClips.update(clips =>
       clips.map(c => (c.id === clipId ? {...c, startTime: newStartTime} : c)),
     );
   }
@@ -1197,7 +1223,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   // Move-aside overlap resolution on the same track
   private resolveOverlaps(movedClipId: string) {
-    const allClips = this.timelineClips();
+    const allClips = this.timelineState.timelineClips();
     const movedClip = allClips.find(c => c.id === movedClipId);
     if (!movedClip) return;
 
@@ -1217,7 +1243,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       });
 
       // Update state
-      this.timelineClips.update(prev => {
+      this.timelineState.timelineClips.update(prev => {
         const others = prev.filter(c => c.trackIndex !== 0);
         return [...others, ...newVideoClips];
       });
@@ -1249,7 +1275,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       }
 
       // Update the clip with the new track index
-      this.timelineClips.update(prev =>
+      this.timelineState.timelineClips.update(prev =>
         prev.map(c =>
           c.id === movedClipId ? {...c, trackIndex: targetTrack} : c,
         ),
@@ -1258,12 +1284,6 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   }
 
   // --- Utilities ---
-  formatTimeRuler(seconds: number): string {
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  }
-
   formatTime(seconds: number): string {
     const fps = 30; // Assuming 30 frames per second
     const totalFrames = Math.floor(seconds * fps);
@@ -1274,17 +1294,6 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     const f = totalFrames % fps;
 
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}:${f.toString().padStart(2, '0')}`;
-  }
-
-  timeRulerTicks(): number[] {
-    const duration = Math.max(this.totalDuration(), 60);
-    const ticks = [];
-    for (let i = 0; i <= duration; i += 2) ticks.push(i);
-    return ticks;
-  }
-
-  isMajorTick(tick: number): boolean {
-    return tick % 10 === 0;
   }
 
   toggleToolButton(
@@ -1303,10 +1312,24 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   getRandomHeight(seed: number) {
     // deterministic pseudo random for waveform vis
-    return 40 + (Math.sin(seed) * 30 + 30);
+    return 30 + (Math.sin(seed) * 40 + 30);
   }
 
   getSequence(length: number): number[] {
     return [...Array(Math.floor(length)).keys()].map(i => i + 1);
+  }
+
+  getThumbnailsSequence(duration: number): number[] {
+    // add thumbnails dinamically
+    const count = Math.ceil(
+      (duration * this.timelineState.pixelsPerSecond()) / 80,
+    );
+    return this.getSequence(count);
+  }
+
+  onDummyScroll(event: Event) {
+    const target = event.target as HTMLElement;
+    this.timelineState.scrollOffset.set(target.scrollLeft);
+    this.timeRuler.setScrollLeft(target.scrollLeft);
   }
 }

@@ -40,3 +40,4 @@ class TimelineRequest(BaseModel):
     output_format: str = "mp4"
     width: int | None = 1920
     height: int | None = 1080
+    hide_video: bool = False

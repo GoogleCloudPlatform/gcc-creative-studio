@@ -173,3 +173,53 @@ async def test_render_timeline_ffmpeg_failure(service):
 
             with pytest.raises(RuntimeError, match="FFmpeg failed"):
                 await service.render_timeline(request)
+
+
+@pytest.mark.anyio
+async def test_render_timeline_success_hide_video(service):
+    # 1. Setup TimelineRequest with 1 video clip and hide_video=True
+    clip = Clip(
+        assetId="1",
+        url="http://example.com/video.mp4",
+        startTime=0.0,
+        duration=5.0,
+        offset=0.0,
+        trackIndex=0,
+        type="video",
+    )
+    request = TimelineRequest(clips=[clip], hide_video=True)
+
+    # 2. Patch downloads and subprocesses
+    with patch(
+        "src.workbench.service.urllib.request.urlretrieve"
+    ) as mock_download:
+        with patch("src.workbench.service.subprocess.run") as mock_run:
+            # First call is for ffprobe
+            mock_process_ffprobe = MagicMock()
+            mock_process_ffprobe.returncode = 0
+            mock_process_ffprobe.stdout = b'{"streams": [{"codec_type": "video"}, {"codec_type": "audio"}]}'
+
+            # Second call is for ffmpeg
+            mock_process_ffmpeg = MagicMock()
+            mock_process_ffmpeg.returncode = 0
+            mock_process_ffmpeg.stdout = b""
+            mock_process_ffmpeg.stderr = b""
+
+            mock_run.side_effect = [mock_process_ffprobe, mock_process_ffmpeg]
+
+            output_path, temp_dir = await service.render_timeline(request)
+
+            assert output_path.endswith("output.mp4")
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+
+            assert mock_download.called
+            assert mock_run.call_count == 2
+
+            # Verify that the color filter was used instead of trim
+            args, _ = mock_run.call_args_list[1]
+            cmd = args[0]
+            filter_idx = cmd.index("-filter_complex")
+            filter_str = cmd[filter_idx + 1]
+            assert "color=s=1280x720" in filter_str
+            assert "[0:v]trim=" not in filter_str
