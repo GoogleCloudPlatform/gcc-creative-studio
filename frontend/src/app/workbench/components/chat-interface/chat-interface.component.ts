@@ -176,7 +176,12 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       next: (sessions: any[]) => {
         this.sessions.set(sessions || []);
         if (sessions && sessions.length > 0) {
-          this.currentSessionId = sessions[0].id;
+          const preselected = this.agentChatService.selectedSessionId();
+          if (preselected && sessions.some(s => s.id === preselected)) {
+            this.currentSessionId = preselected;
+          } else {
+            this.currentSessionId = sessions[0].id;
+          }
           this.loadChatMessages(this.currentSessionId!);
         } else {
           this.startNewChat();
@@ -193,22 +198,23 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   loadChatMessages(sessionId: string) {
     this.isLoadingHistory.set(true);
 
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
-    if (workspaceId) {
-      this.storyboardService
-        .getStoryboardForSession(workspaceId, sessionId)
-        .subscribe({
-          next: storyboards => {
-            if (storyboards && storyboards.length > 0) {
-              this.agentChatService.currentStoryboard.set(storyboards[0]);
-            } else {
-              this.agentChatService.currentStoryboard.set(null);
-            }
-          },
-          error: err =>
-            console.error('Failed to fetch storyboard for session:', err),
-        });
-    }
+    this.workspaceStateService.activeWorkspaceId$.subscribe(workspaceId => {
+      if (workspaceId) {
+        this.storyboardService
+          .getStoryboardForSession(workspaceId, sessionId)
+          .subscribe({
+            next: storyboards => {
+              if (storyboards && storyboards.length > 0) {
+                this.agentChatService.currentStoryboard.set(storyboards[0]);
+              } else {
+                this.agentChatService.currentStoryboard.set(null);
+              }
+            },
+            error: err =>
+              console.error('Failed to fetch storyboard for session:', err),
+          });
+      }
+    });
 
     this.agentChatService.getMessages(sessionId).subscribe({
       next: (response: any) => {
@@ -415,11 +421,16 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
         next: (response: any) => {
           this.saveSessionTopic(
             this.currentSessionId!,
-            response.title,
-            response.summary,
+            "response.title",
+            "response.summary",
           );
         },
         error: err => {
+          this.saveSessionTopic(
+            this.currentSessionId!,
+            "response.title",
+            "response.summary",
+          );
           console.error('Error generating title:', err);
           this.saveSessionTopic(this.currentSessionId!, text);
         },
@@ -520,7 +531,11 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                     textChunk.includes('Campaign Name:') ||
                     textChunk.includes('Strategic Context');
 
-                  if (isJsonChunk) {
+                  const isWelcomeMessage =
+                    textChunk.includes('Path A: Bespoke Creative') ||
+                    textChunk.includes('Path B: Use a Professional Template');
+
+                  if (isJsonChunk && !isWelcomeMessage) {
                     isInJsonBlock = true;
                     msgs.push({
                       sender: 'agent',

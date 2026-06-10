@@ -60,6 +60,9 @@ export class AgentChatService {
   // Global parsed storyboard
   currentStoryboard = signal<any>(null);
 
+  // Selected session ID from route query params
+  selectedSessionId = signal<string | null>(null);
+
   // Agent Selection State
   activeAgent = signal<string>('ads_x_template');
   isGeneratingStoryboard = signal<boolean>(false);
