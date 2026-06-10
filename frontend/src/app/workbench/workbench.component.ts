@@ -60,6 +60,7 @@ import {
   AudioClipDTO,
 } from '../common/models/storyboard.model';
 import {ActivatedRoute} from '@angular/router';
+import { WorkspaceStateService } from '../services/workspace/workspace-state.service';
 
 @Component({
   selector: 'app-workbench',
@@ -155,6 +156,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   protected playbackService = inject(PlayheadSyncService);
   private route = inject(ActivatedRoute);
   private storyboardService = inject(StoryboardService);
+  private workspaceStateService = inject(WorkspaceStateService);
 
   isDownloading = signal(false);
 
@@ -329,11 +331,40 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   ngOnInit() {
     this.route.queryParams.subscribe(params => {
       const storyboardId = params['storyboardId'];
-      if (storyboardId) {
-        console.log('Loading storyboard from route param:', storyboardId);
+      const workbenchId = params['workbenchId'];
+      const sessionId = params['sessionId'];
+
+      if (sessionId) {
+        this.agentChatService.selectedSessionId.set(sessionId);
+
+        // If no explicit storyboardId or workbenchId is provided, fetch storyboard associated with this session
+        if (!storyboardId && !workbenchId) {
+          this.workspaceStateService.activeWorkspaceId$.subscribe(workspaceId => {
+            if (workspaceId) {
+              this.storyboardService
+                .getStoryboardForSession(workspaceId, sessionId)
+                .subscribe(storyboards => {
+                  if (storyboards && storyboards.length > 0) {
+                    const res = storyboards[0];
+                    console.log('Successfully preloaded storyboard for session:', res.id);
+                    this.agentChatService.currentStoryboard.set(res);
+                    if (res.timeline) {
+                      this.processGeneratedData(res.timeline);
+                    }
+                  }
+                });
+            }
+          });
+        }
+      }
+
+      const idToLoad = storyboardId || workbenchId;
+      if (idToLoad) {
+        console.log('Loading storyboard/project from route param:', idToLoad);
         this.storyboardService
-          .getStoryboard(Number(storyboardId))
+          .getStoryboard(Number(idToLoad))
           .subscribe(res => {
+            this.agentChatService.currentStoryboard.set(res);
             if (res.timeline) {
               this.processGeneratedData(res.timeline);
             }
