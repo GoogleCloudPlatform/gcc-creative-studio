@@ -38,6 +38,7 @@ declare const google: any;
 const FIREBASE_SESSION_KEY = 'firebase_session';
 const USER_DETAILS = 'USER_DETAILS';
 const LOGIN_ROUTE = '/login';
+const INITIAL_HASH = typeof window !== 'undefined' ? window.location.hash : '';
 
 interface FirebaseSession {
   token: string;
@@ -210,7 +211,7 @@ export class AuthService {
     await this.msalInstance.initialize();
 
     try {
-      const result = await this.msalInstance.handleRedirectPromise();
+      const result = await this.msalInstance.handleRedirectPromise(INITIAL_HASH || undefined);
       if (result) {
         const idToken = result.idToken;
         const payload = JSON.parse(atob(idToken.split('.')[1]));
