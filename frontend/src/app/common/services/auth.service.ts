@@ -211,7 +211,10 @@ export class AuthService {
     await this.msalInstance.initialize();
 
     try {
-      const result = await this.msalInstance.handleRedirectPromise(INITIAL_HASH || undefined);
+      if (INITIAL_HASH && !window.location.hash) {
+        window.location.hash = INITIAL_HASH;
+      }
+      const result = await this.msalInstance.handleRedirectPromise();
       if (result) {
         const idToken = result.idToken;
         const payload = JSON.parse(atob(idToken.split('.')[1]));
