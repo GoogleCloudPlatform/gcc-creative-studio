@@ -205,8 +205,7 @@ export class AuthService {
       auth: {
         clientId: environment.ENTRA_CLIENT_ID,
         authority: `https://login.microsoftonline.com/${environment.ENTRA_TENANT_ID}/v2.0`,
-        redirectUri: window.location.origin,
-        navigateToLoginRequestUrl: false
+        redirectUri: window.location.origin
       },
       cache: {
         cacheLocation: 'localStorage',
