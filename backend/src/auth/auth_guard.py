@@ -17,7 +17,7 @@
 import asyncio
 import logging
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from firebase_admin import auth
 
@@ -35,10 +35,36 @@ from src.users.user_service import UserService
 # Initialize the service once to be used by dependencies.
 # user_service = UserService()  <-- REMOVED
 
-# This scheme will require the client to send a token in the Authorization
+import fastapi.security.utils
+
+class CustomOAuth2PasswordBearer(OAuth2PasswordBearer):
+    async def __call__(self, request: Request) -> str | None:
+        authorization = request.headers.get("X-Custom-Auth") or request.headers.get("Authorization")
+        if not authorization:
+            if self.auto_error:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Not authenticated",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            else:
+                return None
+        scheme, param = fastapi.security.utils.get_authorization_scheme_param(authorization)
+        if not authorization or scheme.lower() != "bearer":
+            if self.auto_error:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid authentication credentials",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            else:
+                return None
+        return param
+
+# This scheme will require the client to send a token in the X-Custom-Auth or Authorization
 # header. It tells FastAPI how to find the token but doesn't validate it
 # itself.
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+oauth2_scheme = CustomOAuth2PasswordBearer(tokenUrl="token")
 
 
 logger = logging.getLogger(__name__)

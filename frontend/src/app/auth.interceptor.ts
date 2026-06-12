@@ -40,7 +40,10 @@ export class AuthInterceptor implements HttpInterceptor {
       switchMap(token => {
         // Token was retrieved successfully. Clone the request and add the auth header.
         const authorizedRequest = request.clone({
-          setHeaders: {Authorization: `Bearer ${token}`},
+          setHeaders: {
+            Authorization: `Bearer ${token}`,
+            'X-Custom-Auth': `Bearer ${token}`,
+          },
         });
         return next.handle(authorizedRequest);
       }),
