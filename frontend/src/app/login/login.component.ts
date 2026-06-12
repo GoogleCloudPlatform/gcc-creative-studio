@@ -61,6 +61,7 @@ export class LoginComponent {
   ngOnInit(): void {
     this.debugLogs.push(`INIT | isEntraAuth: ${this.isEntraAuth}`);
     this.debugLogs.push(`INIT | ENTRA_CLIENT_ID: ${environment.ENTRA_CLIENT_ID}`);
+    this.debugLogs.push(`INIT | Captured Hash: ${typeof window !== 'undefined' && (window as any).INITIAL_HASH ? 'YES' : 'NO'}`);
     
     const msalError = localStorage.getItem('MSAL_DEBUG_ERROR');
     if (msalError) {
