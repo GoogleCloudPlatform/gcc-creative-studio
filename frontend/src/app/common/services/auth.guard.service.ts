@@ -46,11 +46,7 @@ export class AuthGuardService implements CanActivate {
   async canActivate(
     route: ActivatedRouteSnapshot,
     state: RouterStateSnapshot,
-  ):
-    | Observable<boolean | UrlTree>
-    | Promise<boolean | UrlTree>
-    | boolean
-    | UrlTree {
+  ): Promise<boolean | UrlTree> {
     if (!isPlatformBrowser(this.platformId)) {
       // --- SERVER SIDE ---
       // Allow navigation to render the basic app shell.
