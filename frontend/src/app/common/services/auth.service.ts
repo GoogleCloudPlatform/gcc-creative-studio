@@ -39,6 +39,9 @@ const FIREBASE_SESSION_KEY = 'firebase_session';
 const USER_DETAILS = 'USER_DETAILS';
 const LOGIN_ROUTE = '/login';
 const INITIAL_HASH = typeof window !== 'undefined' ? window.location.hash : '';
+if (typeof window !== 'undefined') {
+  (window as any).INITIAL_HASH = INITIAL_HASH;
+}
 
 interface FirebaseSession {
   token: string;
@@ -205,7 +208,8 @@ export class AuthService {
       auth: {
         clientId: environment.ENTRA_CLIENT_ID,
         authority: `https://login.microsoftonline.com/${environment.ENTRA_TENANT_ID}/v2.0`,
-        redirectUri: window.location.origin
+        redirectUri: window.location.origin,
+        navigateToLoginRequestUrl: false
       },
       cache: {
         cacheLocation: 'localStorage',
