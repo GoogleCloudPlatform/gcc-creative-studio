@@ -193,7 +193,6 @@ export class AuthService {
         },
         cache: {
           cacheLocation: 'localStorage',
-          storeAuthStateInCookie: isPlatformBrowser(this.platformId) ? true : false,
         }
       };
       this.msalInstance = new PublicClientApplication(msalConfig);
