@@ -26,7 +26,7 @@ import {
   signInWithPopup,
   UserCredential,
 } from '@angular/fire/auth';
-import {Observable, from, throwError, of} from 'rxjs';
+import {Observable, from, throwError, of, firstValueFrom, EMPTY} from 'rxjs';
 import {catchError, tap, map, switchMap} from 'rxjs/operators';
 import { PublicClientApplication, Configuration, AuthenticationResult } from '@azure/msal-browser';
 import {isPlatformBrowser} from '@angular/common';
@@ -69,6 +69,9 @@ export class AuthService {
       prompt: 'select_account',
     });
     this.loadSessionFromStorage();
+    if (isPlatformBrowser(this.platformId)) {
+      this.getMsalInstance();
+    }
   }
 
   /**
@@ -197,31 +200,38 @@ export class AuthService {
       };
       this.msalInstance = new PublicClientApplication(msalConfig);
       await this.msalInstance.initialize();
+
+      try {
+        const result = await this.msalInstance.handleRedirectPromise();
+        if (result) {
+          const idToken = result.idToken;
+          const payload = JSON.parse(atob(idToken.split('.')[1]));
+          
+          this.firebaseIdToken = idToken;
+          this.firebaseTokenExpiry = payload.exp * 1000;
+
+          const session: FirebaseSession = {
+            token: idToken,
+            expiry: this.firebaseTokenExpiry,
+          };
+          localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
+
+          await firstValueFrom(this.syncUserWithBackend$(idToken));
+          await this.settingsService.loadSettings();
+          // After successfully processing redirect, navigate to home
+          this.router.navigate([LOGIN_ROUTE]).then(() => this.router.navigate(['/']));
+        }
+      } catch (error) {
+         console.error('Error handling MSAL redirect:', error);
+      }
     }
     return this.msalInstance;
   }
 
   signInWithMicrosoftEntra(): Observable<string> {
     return from(this.getMsalInstance()).pipe(
-      switchMap(msal => from(msal.loginPopup({ scopes: ['User.Read'] }))),
-      switchMap((result: AuthenticationResult) => {
-        const idToken = result.idToken;
-        const payload = JSON.parse(atob(idToken.split('.')[1]));
-        
-        this.firebaseIdToken = idToken;
-        this.firebaseTokenExpiry = payload.exp * 1000;
-
-        const session: FirebaseSession = {
-          token: idToken,
-          expiry: this.firebaseTokenExpiry,
-        };
-        localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
-
-        return this.syncUserWithBackend$(idToken).pipe(
-          switchMap(() => from(this.settingsService.loadSettings())),
-          map(() => idToken)
-        );
-      }),
+      switchMap(msal => from(msal.loginRedirect({ scopes: ['User.Read'] }))),
+      switchMap(() => EMPTY),
       catchError(error => {
          console.error('Error during MSAL login:', error);
          return throwError(() => error);
