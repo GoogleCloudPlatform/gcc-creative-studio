@@ -42,7 +42,7 @@ export class LoginComponent {
   invalidLogin = false;
   errorMessage = '';
   isBrowser: boolean;
-  isEntraAuth = !!environment.ENTRA_CLIENT_ID;
+  isEntraAuth = !!environment.ENTRA_CLIENT_ID && environment.ENTRA_CLIENT_ID !== 'ENTRA_CLIENT_ID_PLACEHOLDER';
 
   constructor(
     private authService: AuthService,

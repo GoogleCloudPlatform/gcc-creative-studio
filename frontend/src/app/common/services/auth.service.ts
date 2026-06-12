@@ -59,6 +59,10 @@ export class AuthService {
   private firebaseTokenExpiry: number | null = null; // To store token expiration time (in ms)
   private msalInstance: PublicClientApplication | null = null;
 
+  get isEntraAuth(): boolean {
+    return !!environment.ENTRA_CLIENT_ID && environment.ENTRA_CLIENT_ID !== 'ENTRA_CLIENT_ID_PLACEHOLDER';
+  }
+
   constructor(
     private router: Router,
     private httpClient: HttpClient,
@@ -70,7 +74,7 @@ export class AuthService {
       prompt: 'select_account',
     });
     this.loadSessionFromStorage();
-    if (isPlatformBrowser(this.platformId)) {
+    if (isPlatformBrowser(this.platformId) && this.isEntraAuth) {
       this.getMsalInstance();
     }
   }
