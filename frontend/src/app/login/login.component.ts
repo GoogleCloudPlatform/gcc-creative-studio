@@ -42,6 +42,7 @@ export class LoginComponent {
   invalidLogin = false;
   errorMessage = '';
   isBrowser: boolean;
+  isEntraAuth = !!environment.ENTRA_CLIENT_ID;
 
   constructor(
     private authService: AuthService,
@@ -57,6 +58,38 @@ export class LoginComponent {
   }
 
   ngOnInit(): void {}
+
+  login() {
+    if (this.isEntraAuth) {
+      this.loginWithMicrosoft();
+    } else {
+      this.loginWithGoogle();
+    }
+  }
+
+  loginWithMicrosoft() {
+    this.loader = true;
+    this.invalidLogin = false;
+    this.errorMessage = '';
+
+    this.authService.signInWithMicrosoftEntra().subscribe({
+      next: (token: string) => {
+        this.ngZone.run(() => {
+          this.loader = false;
+          void this.router.navigate([HOME_ROUTE]);
+        });
+      },
+      error: error => {
+        this.loader = false;
+        console.error('Microsoft Login Process Error:', error);
+        this.handleLoginError(
+          error || {
+            message: 'An unexpected error occurred during sign-in. Please try again.',
+          },
+        );
+      },
+    });
+  }
 
   loginWithGoogle() {
     this.loader = true;

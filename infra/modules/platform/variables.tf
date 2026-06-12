@@ -87,3 +87,15 @@ variable "backend_runtime_secrets" {
   description = "Secrets to mount in the backend container at runtime."
   default     = {}
 }
+
+variable "entra_client_id" {
+  type        = string
+  description = "Microsoft Entra Client ID for alternative authentication."
+  default     = ""
+}
+
+variable "entra_tenant_id" {
+  type        = string
+  description = "Microsoft Entra Tenant ID for alternative authentication."
+  default     = ""
+}

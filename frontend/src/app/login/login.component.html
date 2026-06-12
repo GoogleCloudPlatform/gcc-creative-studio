@@ -41,10 +41,10 @@
     <button
       mat-raised-button
       color="primary"
-      (click)="loginWithGoogle()"
+      (click)="login()"
       class="w-full max-w-xs h-12 text-lg"
     >
-      Login with Google
+      {{ isEntraAuth ? 'Login with Microsoft' : 'Login with Google' }}
     </button>
     <mat-spinner class="mt-5" [diameter]="50" *ngIf="this.loader"></mat-spinner>
   </div>
@@ -69,15 +69,15 @@
       </mat-card-header>
       <mat-card-content class="flex flex-col items-center">
         <p class="register-text mb-4">
-          Single Sign on with your Google Account
+          Single Sign on with your {{ isEntraAuth ? 'Microsoft' : 'Google' }} Account
         </p>
         <button
           mat-raised-button
           color="primary"
-          (click)="loginWithGoogle()"
+          (click)="login()"
           class="w-full h-12 text-lg login-btn"
         >
-          Login with Google
+          {{ isEntraAuth ? 'Login with Microsoft' : 'Login with Google' }}
         </button>
         <mat-spinner
           class="mt-5 m-auto"

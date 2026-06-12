@@ -30,6 +30,8 @@ steps:
         # Inject into Angular app (environment.prod.ts)
         sed -i "s|BACKEND_URL_PLACEHOLDER|$${_BACKEND_URL}/api|g" src/environments/environment.prod.ts
         sed -i "s|GOOGLE_CLIENT_ID_PLACEHOLDER|$${GOOGLE_CLIENT_ID}|g" src/environments/environment.prod.ts
+        sed -i "s|ENTRA_CLIENT_ID_PLACEHOLDER|$${_ENTRA_CLIENT_ID}|g" src/environments/environment.prod.ts
+        sed -i "s|ENTRA_TENANT_ID_PLACEHOLDER|$${_ENTRA_TENANT_ID}|g" src/environments/environment.prod.ts
         # Inject Firebase config
         sed -i "s|FIREBASE_API_KEY_PLACEHOLDER|$${FIREBASE_API_KEY}|g" src/environments/environment.prod.ts
         sed -i "s|FIREBASE_AUTH_DOMAIN_PLACEHOLDER|$${FIREBASE_AUTH_DOMAIN}|g" src/environments/environment.prod.ts
@@ -48,6 +50,8 @@ steps:
       - '_FE_SERVICE_NAME=${_FE_SERVICE_NAME}'
       - '_BACKEND_SERVICE_ID=${_BACKEND_SERVICE_ID}'
       - '_FIREBASE_SITE_ID=${_FIREBASE_SITE_ID}'
+      - '_ENTRA_CLIENT_ID=${_ENTRA_CLIENT_ID}'
+      - '_ENTRA_TENANT_ID=${_ENTRA_TENANT_ID}'
     secretEnv:
       - FIREBASE_API_KEY
       - FIREBASE_AUTH_DOMAIN

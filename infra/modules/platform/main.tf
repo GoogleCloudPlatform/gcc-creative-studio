@@ -64,6 +64,8 @@ locals {
       "SIGNING_SA_EMAIL"       = google_service_account.bucket_reader_sa.email
       "BACKEND_URL"            = local.backend_url
       "WORKFLOWS_EXECUTOR_URL" = "${local.backend_url}/api/workflows-executor"
+      "ENTRA_CLIENT_ID"        = var.entra_client_id
+      "ENTRA_TENANT_ID"        = var.entra_tenant_id
     }
   )
 }
@@ -163,6 +165,8 @@ module "frontend_service" {
       _BACKEND_SERVICE_ID  = var.backend_service_name
       _FIREBASE_PROJECT_ID = var.gcp_project_id
       _FIREBASE_SITE_ID    = var.firebase_site_id != "" ? var.firebase_site_id : var.gcp_project_id
+      _ENTRA_CLIENT_ID     = var.entra_client_id
+      _ENTRA_TENANT_ID     = var.entra_tenant_id
     }
   )
 }

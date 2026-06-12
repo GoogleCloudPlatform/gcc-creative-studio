@@ -1,4 +1,4 @@
-gcp_project_id = "YOUR_GCP_PROJECT_ID"
+gcp_project_id = "gcpvto4"
 gcp_region     = "us-central1"
 environment    = "development"
 
@@ -72,3 +72,6 @@ apis_to_enable = [
   "texttospeech.googleapis.com",
   "workflows.googleapis.com",
 ]
+
+entra_client_id = "6829b912-a054-4036-86a8-f5c3329cd41e"
+entra_tenant_id = "af731eba-c788-490b-b38f-41a97b164253"

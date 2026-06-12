@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-terraform {
-  backend "gcs" {
-    bucket = "cstudio-infra-example-cstudio-dev-tfstate"
-    prefix = "infra/dev/state"
-  }
-}
+# terraform {
+#   backend "gcs" {
+#     bucket = "cstudio-infra-example-cstudio-dev-tfstate"
+#     prefix = "infra/dev/state"
+#   }
+# }
