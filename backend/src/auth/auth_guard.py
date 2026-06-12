@@ -21,6 +21,9 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from firebase_admin import auth
 
+import jwt
+from jwt import PyJWKClient
+
 # --- Google Auth for Identity Platform ---
 from google.auth.transport import requests as google_auth_requests
 from google.oauth2 import id_token
@@ -54,13 +57,36 @@ async def get_current_user(
     4. If the user is new, creates their document ("Just-In-Time Provisioning").
     5. Returns a Pydantic model with the user's data.
     """
+    email = None
     try:
         decoded_token = {}
-        if config_service.ENVIRONMENT == "local":
+        if config_service.ENTRA_CLIENT_ID:
+            # --- Microsoft Entra ID ---
+            logger.info("Verifying token using Microsoft Entra ID...")
+            jwks_url = f"https://login.microsoftonline.com/{config_service.ENTRA_TENANT_ID}/discovery/v2.0/keys"
+            jwks_client = PyJWKClient(jwks_url)
+            signing_key = await asyncio.to_thread(jwks_client.get_signing_key_from_jwt, token)
+            decoded_token = await asyncio.to_thread(
+                jwt.decode,
+                token,
+                signing_key.key,
+                algorithms=["RS256"],
+                audience=config_service.ENTRA_CLIENT_ID,
+                issuer=f"https://login.microsoftonline.com/{config_service.ENTRA_TENANT_ID}/v2.0"
+            )
+            email = decoded_token.get("preferred_username") or decoded_token.get("email")
+            name = decoded_token.get("name")
+            picture = ""
+            token_info_hd = None
+        elif config_service.ENVIRONMENT == "local":
             # --- Local: Use Firebase Auth ---
             # Verifies the token using the standard Firebase Admin SDK method.
             logger.info("Verifying token using Firebase Admin SDK...")
             decoded_token = await asyncio.to_thread(auth.verify_id_token, token)
+            email = decoded_token.get("email")
+            name = decoded_token.get("name")
+            picture = decoded_token.get("picture", "")
+            token_info_hd = decoded_token.get("hd")
         else:
             # --- Development/Production: Use Google Identity Platform
             # (OIDC) ---
@@ -73,11 +99,10 @@ async def get_current_user(
                 google_auth_requests.Request(),
                 audience=google_token_audience,
             )
-
-        email = decoded_token.get("email")
-        name = decoded_token.get("name")
-        picture = decoded_token.get("picture", "")
-        token_info_hd = decoded_token.get("hd")
+            email = decoded_token.get("email")
+            name = decoded_token.get("name")
+            picture = decoded_token.get("picture", "")
+            token_info_hd = decoded_token.get("hd")
 
         # Restrict by particular organizations if it's a closed environment
         if not email:
@@ -127,17 +152,17 @@ async def get_current_user(
 
         return user_doc
 
-    except auth.ExpiredIdTokenError as exc:
+    except (auth.ExpiredIdTokenError, jwt.ExpiredSignatureError) as exc:
         logger.error(
-            "[get_current_user - auth.ExpiredIdTokenError] for %s", email
+            "[get_current_user - ExpiredIdTokenError] for %s", email
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication token has expired.",
         ) from exc
-    except auth.InvalidIdTokenError as e:
+    except (auth.InvalidIdTokenError, jwt.InvalidTokenError, jwt.PyJWKError) as e:
         logger.error(
-            "[get_current_user - auth.InvalidIdTokenError] for %s: %s",
+            "[get_current_user - InvalidIdTokenError] for %s: %s",
             email,
             e,
         )

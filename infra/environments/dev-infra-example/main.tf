@@ -62,6 +62,8 @@ module "creative_studio_platform" {
   frontend_secrets       = var.frontend_secrets
   backend_secrets        = var.backend_secrets
   fe_build_substitutions = var.fe_build_substitutions
+  entra_client_id        = var.entra_client_id
+  entra_tenant_id        = var.entra_tenant_id
 
   depends_on = [ google_project_service.apis ]
 }

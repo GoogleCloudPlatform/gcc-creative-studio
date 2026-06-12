@@ -139,6 +139,6 @@ To maintain a pristine codebase, AI Agents **MUST** follow these rules:
 10. **Seniority**: Act as a Senior Software Engineer with 10+ years of experience in software development.
 11. **Code Review**: Always review the code before finishing execution, if it fails, fix it and run the pre-commit hook again.
 12. **Security**: Always review the code for security vulnerabilities and fix them if found.
-13. **Isolation**: Always work in isolation, do not modify files outside the scope of the task. Work with docker containers, do not run any gcloud commands locally nor modify any cloud resources.
+13. **Isolation**: Always work in isolation, do not modify files outside the scope of the task. Work with docker containers, do not run any gcloud commands locally nor modify any cloud resources without permission.
 
 ---

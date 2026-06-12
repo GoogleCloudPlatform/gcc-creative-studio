@@ -125,3 +125,15 @@ variable "apis_to_enable" {
     "run.googleapis.com"               # Required for Cloud Run
   ]
 }
+
+variable "entra_client_id" {
+  type        = string
+  description = "Microsoft Entra Client ID for alternative authentication."
+  default     = ""
+}
+
+variable "entra_tenant_id" {
+  type        = string
+  description = "Microsoft Entra Tenant ID for alternative authentication."
+  default     = ""
+}

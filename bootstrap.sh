@@ -213,14 +213,15 @@ check_prerequisites() {
         else fail "Please install jq and run this script again.";
 		fi
     fi
+    export PATH="$PWD/node_modules/.bin:$PATH"
     if ! command -v firebase &> /dev/null; then
         warn "Firebase CLI ('firebase-tools') is not installed. It is required for automation."
         prompt "Would you like to try and install it now via npm? (y/n)"; read -r REPLY < /dev/tty
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             if ! command -v npm &> /dev/null; then fail "npm is required to install firebase-tools. Please install Node.js and npm first."; fi
-            info "Installing firebase-tools globally..."; sudo npm install -g firebase-tools
+            info "Installing firebase-tools locally..."; npm install firebase-tools
         else
-            fail "Please install firebase-tools (npm install -g firebase-tools) and run this script again."
+            fail "Please install firebase-tools (npm install firebase-tools) and run this script again."
         fi
     fi
     check_and_install_uv
@@ -473,7 +474,10 @@ handle_manual_steps() {
 
     # --- Automate .tfvars placeholder replacement ---
     info "\nConfiguring OAuth Client ID and Project ID in .tfvars file..."
-    if [ -z "$AUTO_OAUTH_CLIENT_ID" ]; then
+    if grep -q 'entra_client_id.*="[^"]' "$TFVARS_FILE_PATH"; then
+        info "Entra Auth detected in .tfvars. Skipping Google OAuth Client ID prompt."
+        AUTO_OAUTH_CLIENT_ID="not-used-for-entra"
+    elif [ -z "$AUTO_OAUTH_CLIENT_ID" ]; then
         warn "The OAuth Client ID is required for the .tfvars file."
         echo "1. Open this URL in your browser to find your OAuth Client ID:"
         echo -e "   ${C_YELLOW}https://console.cloud.google.com/apis/credentials?project=${GCP_PROJECT_ID}${C_RESET}"
@@ -534,7 +538,10 @@ populate_oauth_secrets() {
     # The client ID is the one NOT associated with the API key.
     AUTO_OAUTH_CLIENT_ID=$(echo "$API_RESPONSE" | jq -r '.oauthClientId')
 
-    if [ -z "$AUTO_OAUTH_CLIENT_ID" ] || [ "$AUTO_OAUTH_CLIENT_ID" == "null" ]; then
+    if grep -q 'entra_client_id.*="[^"]' "$TFVARS_FILE_PATH"; then
+        info "Entra Auth detected. Setting dummy OAuth Client ID."
+        AUTO_OAUTH_CLIENT_ID="not-used-for-entra"
+    elif [ -z "$AUTO_OAUTH_CLIENT_ID" ] || [ "$AUTO_OAUTH_CLIENT_ID" == "null" ]; then
         warn "Could not automatically find the OAuth Client ID via API."
         info "Please perform the following manual steps:"
         echo "1. Open this URL in your browser to find your OAuth Client ID:"
@@ -594,7 +601,7 @@ setup_db_secrets() {
 run_terraform() {
     step 10 "Deploying Infrastructure with Terraform";
 	TFVARS_FILE_PATH="$REPO_ROOT/infra/environments/$ENV_NAME/$ENV_NAME.tfvars"; info "Navigating to $REPO_ROOT/infra/environments/$ENV_NAME..."; cd "$REPO_ROOT/infra/environments/$ENV_NAME"
-    info "Initializing Terraform..."; terraform init -reconfigure
+    info "Initializing Terraform..."; terraform init -migrate-state -force-copy
     info "Planning Terraform changes..."; terraform plan -var-file="$TFVARS_FILE_PATH"
     prompt "\nTerraform is ready to apply the changes. This will create the infrastructure, including empty secret shells."; prompt "Do you want to proceed with 'terraform apply'? (y/n)"; read -r REPLY < /dev/tty
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then warn "Apply cancelled."; return; fi

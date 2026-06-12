@@ -28,6 +28,7 @@ import {
 } from '@angular/fire/auth';
 import {Observable, from, throwError, of} from 'rxjs';
 import {catchError, tap, map, switchMap} from 'rxjs/operators';
+import { PublicClientApplication, Configuration, AuthenticationResult } from '@azure/msal-browser';
 import {isPlatformBrowser} from '@angular/common';
 import {SettingsService} from '../../services/settings.service';
 
@@ -55,6 +56,7 @@ export class AuthService {
   private currentOAuthAccessToken: string | null = null;
   private firebaseIdToken: string | null = null; // To store the Firebase token for the test
   private firebaseTokenExpiry: number | null = null; // To store token expiration time (in ms)
+  private msalInstance: PublicClientApplication | null = null;
 
   constructor(
     private router: Router,
@@ -178,6 +180,53 @@ export class AuthService {
           map(() => idToken), // Pass the token along for the final result.
         );
       }),
+    );
+  }
+
+  async getMsalInstance(): Promise<PublicClientApplication> {
+    if (!this.msalInstance) {
+      const msalConfig: Configuration = {
+        auth: {
+          clientId: environment.ENTRA_CLIENT_ID,
+          authority: `https://login.microsoftonline.com/${environment.ENTRA_TENANT_ID}/v2.0`,
+          redirectUri: window.location.origin
+        },
+        cache: {
+          cacheLocation: 'localStorage',
+          storeAuthStateInCookie: isPlatformBrowser(this.platformId) ? true : false,
+        }
+      };
+      this.msalInstance = new PublicClientApplication(msalConfig);
+      await this.msalInstance.initialize();
+    }
+    return this.msalInstance;
+  }
+
+  signInWithMicrosoftEntra(): Observable<string> {
+    return from(this.getMsalInstance()).pipe(
+      switchMap(msal => from(msal.loginPopup({ scopes: ['User.Read'] }))),
+      switchMap((result: AuthenticationResult) => {
+        const idToken = result.idToken;
+        const payload = JSON.parse(atob(idToken.split('.')[1]));
+        
+        this.firebaseIdToken = idToken;
+        this.firebaseTokenExpiry = payload.exp * 1000;
+
+        const session: FirebaseSession = {
+          token: idToken,
+          expiry: this.firebaseTokenExpiry,
+        };
+        localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
+
+        return this.syncUserWithBackend$(idToken).pipe(
+          switchMap(() => from(this.settingsService.loadSettings())),
+          map(() => idToken)
+        );
+      }),
+      catchError(error => {
+         console.error('Error during MSAL login:', error);
+         return throwError(() => error);
+      })
     );
   }
 

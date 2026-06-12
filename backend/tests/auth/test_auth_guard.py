@@ -69,6 +69,48 @@ class TestGetCurrentUser:
         )
 
     @pytest.mark.anyio
+    @patch("src.auth.auth_guard.PyJWKClient")
+    @patch("src.auth.auth_guard.jwt.decode")
+    async def test_get_current_user_entra_success(
+        self, mock_jwt_decode, mock_pyjwkclient, mock_user_service
+    ):
+        from unittest.mock import MagicMock
+        # Setup: Entra environment
+        config_service.ENTRA_CLIENT_ID = "test-entra-client-id"
+        config_service.ENTRA_TENANT_ID = "test-entra-tenant-id"
+        config_service.ALLOWED_ORGS_STR = ""
+
+        # Mock PyJWKClient and its method
+        mock_jwks_client_instance = MagicMock()
+        mock_pyjwkclient.return_value = mock_jwks_client_instance
+        
+        mock_signing_key = MagicMock()
+        mock_signing_key.key = "mock-key"
+        mock_jwks_client_instance.get_signing_key_from_jwt.return_value = mock_signing_key
+
+        mock_jwt_decode.return_value = {
+            "preferred_username": "entra_test@example.com",
+            "name": "Entra Test User",
+            "oid": "12345678-1234-1234-1234-123456789012"
+        }
+
+        user = await get_current_user(
+            token="valid_entra_token",
+            user_service=mock_user_service,
+        )
+
+        assert user.email == "test@example.com"
+        mock_user_service.create_user_if_not_exists.assert_called_once_with(
+            email="entra_test@example.com",
+            name="Entra Test User",
+            picture="",
+        )
+        
+        # Reset config
+        config_service.ENTRA_CLIENT_ID = ""
+        config_service.ENTRA_TENANT_ID = ""
+
+    @pytest.mark.anyio
     @patch("src.auth.auth_guard.auth.verify_id_token")
     async def test_get_current_user_no_email(
         self, mock_verify, mock_user_service

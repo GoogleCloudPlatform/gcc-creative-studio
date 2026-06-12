@@ -72,3 +72,6 @@ apis_to_enable = [
   "texttospeech.googleapis.com",
   "workflows.googleapis.com",
 ]
+
+entra_client_id = "YOUR_ENTRA_CLIENT_ID"
+entra_tenant_id = "YOUR_ENTRA_TENANT_ID"

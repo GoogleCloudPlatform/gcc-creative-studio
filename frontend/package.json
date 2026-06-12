@@ -36,6 +36,9 @@
     "@angular/platform-server": "^18.2.1",
     "@angular/router": "^18.2.1",
     "@angular/ssr": "^18.1.2",
+    "@azure/msal-angular": "^5.2.7",
+    "@azure/msal-browser": "^5.13.0",
+    "d3": "^7.9.0",
     "express": "^4.18.2",
     "file-saver": "^2.0.5",
     "ngx-image-cropper": "^9.1.5",
@@ -46,14 +49,13 @@
     "rxjs": "~7.8.0",
     "tailwindcss": "^3.4.17",
     "tslib": "^2.3.0",
-    "zone.js": "~0.14.3",
-    "d3": "^7.9.0"
+    "zone.js": "~0.14.3"
   },
   "devDependencies": {
     "@angular-devkit/build-angular": "^18.2.1",
-    "@types/d3": "^7.4.3",
     "@angular/cli": "^18.2.1",
     "@angular/compiler-cli": "^18.2.1",
+    "@types/d3": "^7.4.3",
     "@types/express": "^4.17.17",
     "@types/file-saver": "^2.0.7",
     "@types/jasmine": "~5.1.0",
