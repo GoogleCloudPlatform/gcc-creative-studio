@@ -210,7 +210,7 @@ export class AuthService {
         authority: `https://login.microsoftonline.com/${environment.ENTRA_TENANT_ID}/v2.0`,
         redirectUri: window.location.origin,
         navigateToLoginRequestUrl: false
-      },
+      } as any,
       cache: {
         cacheLocation: 'localStorage',
       }
