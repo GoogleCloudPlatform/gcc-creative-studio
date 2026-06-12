@@ -41,6 +41,7 @@ from src.projects.project_repository import StoryboardRepository
 from src.images.repository.media_item_repository import MediaRepository
 from src.auth.iam_signer_credentials_service import IamSignerCredentials
 from src.projects.project_controller import _enrich_storyboard
+from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
 router = APIRouter(
     prefix="/api/agent",
@@ -114,7 +115,8 @@ async def get_sessions(
         if token:
             state[agent_config["token_key"]] = token
 
-        sessions_data = remote_agent.list_sessions(user_id=user_id, state=state)
+        # sessions_data = remote_agent.list_sessions(user_id=user_id, state=state)
+        sessions_data = remote_agent.list_sessions(user_id=user_id)
 
         sessions_list = []
         if isinstance(sessions_data, dict):
@@ -184,7 +186,8 @@ async def create_session(
         if token:
             state[agent_config["token_key"]] = token
 
-        session = remote_agent.create_session(user_id=user_id, state=state)
+        # session = remote_agent.create_session(user_id=user_id, state=state)
+        session = remote_agent.create_session(user_id=user_id)
 
         session_dict = session if isinstance(session, dict) else {}
         return SessionResponseDto(
@@ -209,15 +212,23 @@ async def get_session_detail(
     storyboard_repo: StoryboardRepository = Depends(),
     media_repo: MediaRepository = Depends(),
     iam_signer_credentials: IamSignerCredentials = Depends(),
+    workspace_auth: WorkspaceAuth = Depends(),
 ):
     """Retrieve session messages (from Vertex AI) and associated storyboard (from DB) in a single request."""
     user_id = str(current_user.id)
     storyboard = None
     resolved_session_id = session_id
 
+    await workspace_auth.authorize(
+        workspace_id=workspace_id,
+        user=current_user,
+    )
+
     # 1. Retrieve and enrich storyboard if storyboard_id is provided
     if storyboard_id is not None:
-        storyboard = await storyboard_repo.get_by_id_with_details(storyboard_id)
+        storyboard = await storyboard_repo.get_by_id_with_details(
+            storyboard_id
+        )  # move this to service
         if not storyboard:
             raise HTTPException(status_code=404, detail="Storyboard not found")
         if storyboard.user_id != current_user.id:
@@ -265,18 +276,21 @@ async def get_session_detail(
                 state[agent_config["token_key"]] = token
 
             try:
+                # session = remote_agent.get_session(
+                #     session_id=resolved_session_id, user_id=user_id, state=state
+                # )
                 session = remote_agent.get_session(
-                    # session_id=resolved_session_id, user_id=user_id
-                    session_id=resolved_session_id, user_id=user_id, state=state
+                    session_id=resolved_session_id, user_id=user_id
                 )
             except Exception as inner_e:
                 if "Session not found" in str(inner_e):
                     logger.warning(
                         f"Session {resolved_session_id} not found on Vertex AI. Re-creating dynamic session."
                     )
-                    session = remote_agent.create_session(
-                        user_id=user_id, state=state
-                    )
+                    # session = remote_agent.create_session(
+                    #     user_id=user_id, state=state
+                    # )
+                    session = remote_agent.create_session(user_id=user_id)
                     new_session_id = (
                         session.get("id") if isinstance(session, dict) else None
                     )
@@ -355,8 +369,11 @@ async def get_session_messages(
         if token:
             state[agent_config["token_key"]] = token
 
+        # session = remote_agent.get_session(
+        #     session_id=session_id, user_id=user_id, state=state
+        # )
         session = remote_agent.get_session(
-            session_id=session_id, user_id=user_id, state=state
+            session_id=session_id, user_id=user_id
         )
 
         session_dict = session if isinstance(session, dict) else {}
@@ -416,9 +433,10 @@ async def delete_session(
         if token:
             state[agent_config["token_key"]] = token
 
-        remote_agent.delete_session(
-            session_id=session_id, user_id=user_id, state=state
-        )
+        # remote_agent.delete_session(
+        #     session_id=session_id, user_id=user_id, state=state
+        # )
+        remote_agent.delete_session(session_id=session_id, user_id=user_id)
         return {"status": "success"}
     except Exception as e:
         logger.error(f"Unexpected error deleting session: {e}", exc_info=True)
@@ -602,8 +620,6 @@ async def chat(
                     "session_id": session_id,
                     "workspace_id": body.get("workspaceId"),
                 }
-                if token:
-                    agent_input[agent_config["token_key"]] = token
 
                 # Build request payload without run_config since appName/workspaceId are not permitted
                 request = aip_types.StreamQueryReasoningEngineRequest(
