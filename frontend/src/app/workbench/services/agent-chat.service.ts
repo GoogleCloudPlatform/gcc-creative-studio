@@ -86,6 +86,21 @@ export class AgentChatService {
     );
   }
 
+  getSessionDetail(
+    workspaceId: number,
+    sessionId?: string,
+    storyboardId?: number,
+  ): Observable<any> {
+    let params = `workspace_id=${workspaceId}`;
+    if (sessionId) {
+      params += `&session_id=${sessionId}`;
+    }
+    if (storyboardId) {
+      params += `&storyboard_id=${storyboardId}`;
+    }
+    return this.http.get(`${this.apiUrl}/sessions/detail?${params}`);
+  }
+
   getMessages(sessionId: string): Observable<any> {
     return this.http.get(
       `${this.apiUrl}/sessions/${sessionId}?appName=${this.activeAgent()}`,

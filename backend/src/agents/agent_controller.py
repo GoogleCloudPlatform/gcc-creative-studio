@@ -35,7 +35,12 @@ from src.agents.agent_dtos import (
     ChatResponseDto,
     PollEventsResponseDto,
     SessionResponseDto,
+    SessionDetailResponseDto,
 )
+from src.projects.project_repository import StoryboardRepository
+from src.images.repository.media_item_repository import MediaRepository
+from src.auth.iam_signer_credentials_service import IamSignerCredentials
+from src.projects.project_controller import _enrich_storyboard
 
 router = APIRouter(
     prefix="/api/agent",
@@ -47,14 +52,32 @@ logger = logging.getLogger(__name__)
 # Initialize Vertex AI SDK
 vertexai.init(project=config_service.PROJECT_ID, location="us-central1")
 
-AGENT_NAME = "projects/464814743320/locations/us-central1/reasoningEngines/7053967975287619584"
+AGENT_REASONING_ENGINES = {
+    "ads_x_template": {
+        "resource_name": config_service.AGENT_ENGINE_RESOURCE_NAME,
+        "token_key": config_service.AGENT_ENGINE_USER_AUTH_TOKEN_KEY,
+    }
+}
+
+
+def _get_agent_config(appName: str) -> dict:
+    default_config = {
+        "resource_name": config_service.AGENT_ENGINE_RESOURCE_NAME,
+        "token_key": config_service.AGENT_ENGINE_USER_AUTH_TOKEN_KEY,
+    }
+    return AGENT_REASONING_ENGINES.get(appName, default_config)
+
+
 IZUMI_AGENT_URL = config_service.IZUMI_AGENT_URL
-APP_NAME = "creative_toolbox"
+APP_NAME = "ads_x_template"
 
 
 @router.get("/sessions", response_model=List[SessionResponseDto])
 async def get_sessions(
-    appName: str = APP_NAME, current_user: UserModel = Depends(get_current_user)
+    request: Request,
+    workspace_id: int | None = None,
+    appName: str = APP_NAME,
+    current_user: UserModel = Depends(get_current_user),
 ):
     """List chat sessions for the current user from Vertex AI Agent Engines."""
     user_id = str(current_user.id)
@@ -75,9 +98,24 @@ async def get_sessions(
     #     raise HTTPException(status_code=500, detail=str(e))
     # --------------------------------------------
     try:
-        remote_agent = reasoning_engines.ReasoningEngine(AGENT_NAME)
-        sessions_data = remote_agent.list_sessions(user_id=user_id)
-        
+        agent_config = _get_agent_config(appName)
+        remote_agent = reasoning_engines.ReasoningEngine(
+            agent_config["resource_name"]
+        )
+
+        auth_header = request.headers.get("Authorization")
+        token = None
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+
+        state = {}
+        if workspace_id is not None:
+            state["workspace_id"] = str(workspace_id)
+        if token:
+            state[agent_config["token_key"]] = token
+
+        sessions_data = remote_agent.list_sessions(user_id=user_id, state=state)
+
         sessions_list = []
         if isinstance(sessions_data, dict):
             sessions_list = sessions_data.get("sessions", [])
@@ -89,12 +127,13 @@ async def get_sessions(
             s_dict = s if isinstance(s, dict) else {}
             res_sessions.append(
                 SessionResponseDto(
-                    id=s_dict.get("id") or s_dict.get("name", "").split("/")[-1],
+                    id=s_dict.get("id")
+                    or s_dict.get("name", "").split("/")[-1],
                     appName=appName,
                     userId=user_id,
                     state=s_dict.get("state", {}),
                     lastUpdateTime=s_dict.get("lastUpdateTime"),
-                    events=s_dict.get("events", [])
+                    events=s_dict.get("events", []),
                 )
             )
         return res_sessions
@@ -105,7 +144,10 @@ async def get_sessions(
 
 @router.post("/sessions", response_model=SessionResponseDto)
 async def create_session(
-    appName: str = APP_NAME, current_user: UserModel = Depends(get_current_user)
+    request: Request,
+    workspace_id: int | None = None,
+    appName: str = APP_NAME,
+    current_user: UserModel = Depends(get_current_user),
 ):
     """Create a new chat session in Vertex AI Agent Engines."""
     user_id = str(current_user.id)
@@ -126,24 +168,155 @@ async def create_session(
     #     raise HTTPException(status_code=500, detail=str(e))
     # --------------------------------------------
     try:
-        remote_agent = reasoning_engines.ReasoningEngine(AGENT_NAME)
-        session = remote_agent.create_session(user_id=user_id, state={})
-        
+        agent_config = _get_agent_config(appName)
+        remote_agent = reasoning_engines.ReasoningEngine(
+            agent_config["resource_name"]
+        )
+
+        auth_header = request.headers.get("Authorization")
+        token = None
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+
+        state = {}
+        if workspace_id is not None:
+            state["workspace_id"] = str(workspace_id)
+        if token:
+            state[agent_config["token_key"]] = token
+
+        session = remote_agent.create_session(user_id=user_id, state=state)
+
         session_dict = session if isinstance(session, dict) else {}
         return SessionResponseDto(
             id=session_dict.get("id"),
             appName=appName,
             userId=user_id,
-            state=session_dict.get("state", {})
+            state=session_dict.get("state", {}),
         )
     except Exception as e:
         logger.error(f"Unexpected error creating session: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/sessions/detail", response_model=SessionDetailResponseDto)
+async def get_session_detail(
+    workspace_id: int,
+    request: Request,
+    session_id: str | None = None,
+    storyboard_id: int | None = None,
+    appName: str = APP_NAME,
+    current_user: UserModel = Depends(get_current_user),
+    storyboard_repo: StoryboardRepository = Depends(),
+    media_repo: MediaRepository = Depends(),
+    iam_signer_credentials: IamSignerCredentials = Depends(),
+):
+    """Retrieve session messages (from Vertex AI) and associated storyboard (from DB) in a single request."""
+    user_id = str(current_user.id)
+    storyboard = None
+    resolved_session_id = session_id
+
+    # 1. Retrieve and enrich storyboard if storyboard_id is provided
+    if storyboard_id is not None:
+        storyboard = await storyboard_repo.get_by_id_with_details(storyboard_id)
+        if not storyboard:
+            raise HTTPException(status_code=404, detail="Storyboard not found")
+        if storyboard.user_id != current_user.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Not authorized to access this storyboard",
+            )
+        await _enrich_storyboard(storyboard, media_repo, iam_signer_credentials)
+        if storyboard.session_id:
+            resolved_session_id = storyboard.session_id
+
+    # 2. Retrieve storyboard by workspace & session_id if storyboard_id was not provided
+    elif resolved_session_id is not None:
+        storyboards = await storyboard_repo.find_by_workspace(
+            workspace_id=workspace_id
+        )
+        if storyboards:
+            # Filter manually by session_id in the resolved workspace list
+            for sb in storyboards:
+                if sb.session_id == resolved_session_id:
+                    storyboard = sb
+                    await _enrich_storyboard(
+                        storyboard, media_repo, iam_signer_credentials
+                    )
+                    break
+
+    # 3. Retrieve session messages from Vertex AI if we have a session_id
+    session_dto = None
+    if resolved_session_id is not None:
+        try:
+            agent_config = _get_agent_config(appName)
+            remote_agent = reasoning_engines.ReasoningEngine(
+                agent_config["resource_name"]
+            )
+
+            auth_header = request.headers.get("Authorization")
+            token = None
+            if auth_header and auth_header.startswith("Bearer "):
+                token = auth_header.split(" ")[1]
+
+            state = {}
+            if workspace_id is not None:
+                state["workspace_id"] = str(workspace_id)
+            if token:
+                state[agent_config["token_key"]] = token
+
+            try:
+                session = remote_agent.get_session(
+                    # session_id=resolved_session_id, user_id=user_id
+                    session_id=resolved_session_id, user_id=user_id, state=state
+                )
+            except Exception as inner_e:
+                if "Session not found" in str(inner_e):
+                    logger.warning(
+                        f"Session {resolved_session_id} not found on Vertex AI. Re-creating dynamic session."
+                    )
+                    session = remote_agent.create_session(
+                        user_id=user_id, state=state
+                    )
+                    new_session_id = (
+                        session.get("id") if isinstance(session, dict) else None
+                    )
+                    if storyboard and new_session_id:
+                        await storyboard_repo.update(
+                            storyboard.id, {"session_id": new_session_id}
+                        )
+                        storyboard.session_id = new_session_id
+                else:
+                    raise inner_e
+
+            session_dict = session if isinstance(session, dict) else {}
+            session_dto = SessionResponseDto(
+                id=session_dict.get("id"),
+                appName=appName,
+                userId=user_id,
+                lastUpdateTime=session_dict.get("lastUpdateTime"),
+                state=session_dict.get("state", {}),
+                events=session_dict.get("events", []),
+            )
+        except Exception as e:
+            logger.error(
+                f"Unexpected error fetching session {resolved_session_id} details: {e}",
+                exc_info=True,
+            )
+
+    if storyboard is None and resolved_session_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Either session_id or storyboard_id must be provided to query details.",
+        )
+
+    return SessionDetailResponseDto(session=session_dto, storyboard=storyboard)
+
+
 @router.get("/sessions/{session_id}", response_model=SessionResponseDto)
 async def get_session_messages(
     session_id: str,
+    request: Request,
+    workspace_id: int | None = None,
     appName: str = APP_NAME,
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -166,9 +339,26 @@ async def get_session_messages(
     #     raise HTTPException(status_code=500, detail=str(e))
     # --------------------------------------------
     try:
-        remote_agent = reasoning_engines.ReasoningEngine(AGENT_NAME)
-        session = remote_agent.get_session(session_id=session_id, user_id=user_id)
-        
+        agent_config = _get_agent_config(appName)
+        remote_agent = reasoning_engines.ReasoningEngine(
+            agent_config["resource_name"]
+        )
+
+        auth_header = request.headers.get("Authorization")
+        token = None
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+
+        state = {}
+        if workspace_id is not None:
+            state["workspace_id"] = str(workspace_id)
+        if token:
+            state[agent_config["token_key"]] = token
+
+        session = remote_agent.get_session(
+            session_id=session_id, user_id=user_id, state=state
+        )
+
         session_dict = session if isinstance(session, dict) else {}
         return SessionResponseDto(
             id=session_dict.get("id"),
@@ -176,7 +366,7 @@ async def get_session_messages(
             userId=user_id,
             lastUpdateTime=session_dict.get("lastUpdateTime"),
             state=session_dict.get("state", {}),
-            events=session_dict.get("events", [])
+            events=session_dict.get("events", []),
         )
     except Exception as e:
         logger.error(f"Unexpected error fetching messages: {e}", exc_info=True)
@@ -186,6 +376,8 @@ async def get_session_messages(
 @router.delete("/sessions/{session_id}", response_model=Any)
 async def delete_session(
     session_id: str,
+    request: Request,
+    workspace_id: int | None = None,
     appName: str = APP_NAME,
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -208,8 +400,25 @@ async def delete_session(
     #     raise HTTPException(status_code=500, detail=str(e))
     # --------------------------------------------
     try:
-        remote_agent = reasoning_engines.ReasoningEngine(AGENT_NAME)
-        remote_agent.delete_session(session_id=session_id, user_id=user_id)
+        agent_config = _get_agent_config(appName)
+        remote_agent = reasoning_engines.ReasoningEngine(
+            agent_config["resource_name"]
+        )
+
+        auth_header = request.headers.get("Authorization")
+        token = None
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+
+        state = {}
+        if workspace_id is not None:
+            state["workspace_id"] = str(workspace_id)
+        if token:
+            state[agent_config["token_key"]] = token
+
+        remote_agent.delete_session(
+            session_id=session_id, user_id=user_id, state=state
+        )
         return {"status": "success"}
     except Exception as e:
         logger.error(f"Unexpected error deleting session: {e}", exc_info=True)
@@ -226,6 +435,11 @@ async def chat(
 ):
     """Start generation task for the Izumi agent."""
     user_id = str(current_user.id)
+    auth_header = request.headers.get("Authorization")
+    token = None
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+
     url = f"{IZUMI_AGENT_URL}/run_sse"
 
     # Convert strict Pydantic DTO to dict, excluding unset values
@@ -377,28 +591,38 @@ async def chat(
             #     await db_session.commit()
             # --------------------------------------------
             try:
-                remote_agent = reasoning_engines.ReasoningEngine(AGENT_NAME)
-                
+                agent_config = _get_agent_config(body.get("appName"))
+                remote_agent = reasoning_engines.ReasoningEngine(
+                    agent_config["resource_name"]
+                )
+
+                agent_input = {
+                    "message": body.get("newMessage"),
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "workspace_id": body.get("workspaceId"),
+                }
+                if token:
+                    agent_input[agent_config["token_key"]] = token
+
                 # Build request payload without run_config since appName/workspaceId are not permitted
                 request = aip_types.StreamQueryReasoningEngineRequest(
                     name=remote_agent.resource_name,
                     class_method="stream_query",
-                    input={
-                        "message": body.get("newMessage"),
-                        "user_id": user_id,
-                        "session_id": session_id
-                    }
+                    input=agent_input,
                 )
-                
+
                 # Fetch stream from Vertex AI client
-                response_stream = remote_agent.execution_api_client.stream_query_reasoning_engine(request=request)
-                
+                response_stream = remote_agent.execution_api_client.stream_query_reasoning_engine(
+                    request=request
+                )
+
                 while True:
                     # Fetch next chunk with None sentinel to avoid StopIteration thread issues
                     chunk = await asyncio.to_thread(next, response_stream, None)
                     if chunk is None:
                         break
-                    
+
                     if hasattr(chunk, "data") and chunk.data:
                         data_str = chunk.data.decode("utf-8")
                         evt = AgentChatEvent(
@@ -419,7 +643,9 @@ async def chat(
                 await db_session.commit()
 
             except Exception as e:
-                logger.error(f"Error streaming from Vertex AI: {e}", exc_info=True)
+                logger.error(
+                    f"Error streaming from Vertex AI: {e}", exc_info=True
+                )
                 evt = AgentChatEvent(
                     user_id=user_id,
                     session_id=session_id,

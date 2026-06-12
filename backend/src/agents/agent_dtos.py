@@ -54,7 +54,7 @@ class ChatRequestDto(BaseModel):
     """Payload for starting an agent chat interaction."""
 
     sessionId: str
-    appName: Optional[str] = "creative_toolbox"
+    appName: Optional[str] = "ads_x_template"
     workspaceId: Optional[int] = None
     newMessage: Optional[ChatMessage] = None
     streaming: Optional[bool] = False
@@ -88,3 +88,11 @@ class SessionResponseDto(BaseModel):
 class ProxyResponseDto(BaseModel):
     status: Optional[str] = None
     details: Optional[Any] = None
+
+
+from src.projects.dto.project_dto import StoryboardResponse
+
+
+class SessionDetailResponseDto(BaseModel):
+    session: Optional[SessionResponseDto] = None
+    storyboard: Optional[StoryboardResponse] = None

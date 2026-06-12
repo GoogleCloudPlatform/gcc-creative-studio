@@ -20,6 +20,7 @@ import {
   signal,
   computed,
   inject,
+  effect,
   ViewChild,
   ElementRef,
   AfterViewChecked,
@@ -31,6 +32,8 @@ import {
 } from '../../services/agent-chat.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
 import {StoryboardService} from '../../../services/storyboard/storyboard.service';
+import {ActivatedRoute} from '@angular/router';
+import {combineLatest} from 'rxjs';
 import {CommonModule} from '@angular/common';
 import {FormsModule} from '@angular/forms';
 import {MatIconModule} from '@angular/material/icon';
@@ -65,6 +68,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   private dialog = inject(MatDialog);
   private snackBar = inject(MatSnackBar);
   private storyboardService = inject(StoryboardService);
+  private route = inject(ActivatedRoute);
 
   sessions = signal<any[]>([]);
   topics = signal<{[key: string]: any}>({});
@@ -76,6 +80,25 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   isTyping = signal<boolean>(false);
   isLoadingHistory = signal<boolean>(false);
   currentSessionId: string | null = null;
+
+  private sessionSelectorEffect = effect(() => {
+    const sessionId = this.agentChatService.selectedSessionId();
+    if (sessionId && sessionId !== this.currentSessionId) {
+      this.currentSessionId = sessionId;
+      this.loadChatMessages(sessionId);
+    }
+  });
+
+  private storyboardSessionSyncEffect = effect(() => {
+    const sb = this.agentChatService.currentStoryboard();
+    if (
+      sb &&
+      sb.session_id &&
+      sb.session_id !== this.agentChatService.selectedSessionId()
+    ) {
+      this.agentChatService.selectedSessionId.set(sb.session_id);
+    }
+  });
 
   chatInputValue = signal<string>('');
   isInputExpanded = signal<boolean>(false);
@@ -172,138 +195,175 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
 
   loadChatSessions() {
     this.isLoadingHistory.set(true);
-    this.agentChatService.getSessions().subscribe({
-      next: (sessions: any[]) => {
-        this.sessions.set(sessions || []);
-        if (sessions && sessions.length > 0) {
-          const preselected = this.agentChatService.selectedSessionId();
-          if (preselected && sessions.some(s => s.id === preselected)) {
-            this.currentSessionId = preselected;
-          } else {
-            this.currentSessionId = sessions[0].id;
-          }
-          this.loadChatMessages(this.currentSessionId!);
-        } else {
-          this.startNewChat();
-        }
-      },
-      error: err => {
-        console.error('Error fetching sessions:', err);
-        this.isLoadingHistory.set(false);
-        this.startNewChat();
-      },
+
+    combineLatest([
+      this.route.queryParams,
+      this.workspaceStateService.activeWorkspaceId$,
+    ]).subscribe(([params, workspaceId]) => {
+      if (!workspaceId) return;
+
+      const storyboardId = params['storyboardId'];
+      const sessionId = params['sessionId'];
+
+      if (sessionId || storyboardId) {
+        this.agentChatService
+          .getSessionDetail(
+            workspaceId,
+            sessionId || undefined,
+            storyboardId ? Number(storyboardId) : undefined,
+          )
+          .subscribe({
+            next: (res: any) => {
+              if (res.storyboard) {
+                this.agentChatService.currentStoryboard.set(res.storyboard);
+              }
+              if (res.session) {
+                this.currentSessionId = res.session.id;
+                this.agentChatService.selectedSessionId.set(res.session.id);
+
+                const messages = res.session.events || [];
+                const mappedMessages = this.mapEventsToMessages(messages);
+                this.chatMessages.set(mappedMessages);
+              } else {
+                this.startNewChat();
+              }
+              this.isLoadingHistory.set(false);
+            },
+            error: err => {
+              console.error('Failed to preload workspace state:', err);
+              this.isLoadingHistory.set(false);
+              this.startNewChat();
+            },
+          });
+      } else {
+        this.agentChatService.getSessions().subscribe({
+          next: (sessions: any[]) => {
+            this.sessions.set(sessions || []);
+            if (sessions && sessions.length > 0) {
+              this.currentSessionId = sessions[0].id;
+              this.agentChatService.selectedSessionId.set(sessions[0].id);
+              this.loadChatMessages(this.currentSessionId!);
+            } else {
+              this.startNewChat();
+            }
+          },
+          error: err => {
+            console.error('Error fetching sessions:', err);
+            this.isLoadingHistory.set(false);
+            this.startNewChat();
+          },
+        });
+      }
     });
   }
 
   loadChatMessages(sessionId: string) {
     this.isLoadingHistory.set(true);
 
+    const storyboardId = this.route.snapshot.queryParams['storyboardId'];
+
     this.workspaceStateService.activeWorkspaceId$.subscribe(workspaceId => {
       if (workspaceId) {
-        this.storyboardService
-          .getStoryboardForSession(workspaceId, sessionId)
+        this.agentChatService
+          .getSessionDetail(
+            workspaceId,
+            sessionId,
+            storyboardId ? Number(storyboardId) : undefined,
+          )
           .subscribe({
-            next: storyboards => {
-              if (storyboards && storyboards.length > 0) {
-                this.agentChatService.currentStoryboard.set(storyboards[0]);
+            next: (res: any) => {
+              if (res.storyboard) {
+                this.agentChatService.currentStoryboard.set(res.storyboard);
               } else {
                 this.agentChatService.currentStoryboard.set(null);
               }
+
+              const messages = (res.session && res.session.events) || [];
+              const mappedMessages = this.mapEventsToMessages(messages);
+              this.chatMessages.set(mappedMessages);
+              this.isLoadingHistory.set(false);
+              this.shouldScrollToBottom = true;
+              if (mappedMessages.length === 0) {
+                this.addWelcomeMessage();
+              }
             },
-            error: err =>
-              console.error('Failed to fetch storyboard for session:', err),
+            error: err => {
+              console.error('Error loading session details:', err);
+              this.isLoadingHistory.set(false);
+            },
           });
       }
     });
+  }
 
-    this.agentChatService.getMessages(sessionId).subscribe({
-      next: (response: any) => {
-        const messages = response.events || [];
-        const mappedMessages = messages
-          .map((m: any) => {
-            const content = m.content || {};
-            const role = content.role || m.author;
-            const parts = content.parts || [];
-            let text = '';
-            let assetMetadata = null;
-            let storyboardMetadata = null;
-            for (const part of parts) {
-              if (part.text) {
-                let partText = part.text;
-                if (partText.includes('[System Note:')) {
-                  partText = partText.split('[System Note:')[0].trim();
-                }
-                text += partText;
-                this.checkForStoryboardId(partText);
-              }
-              if (part.functionResponse?.response?.result) {
-                try {
-                  const result = JSON.parse(
-                    part.functionResponse.response.result,
-                  );
-                  if (result.asset) {
-                    assetMetadata = result.asset;
-                    if (result.asset.type === 'video') {
-                      this.agentChatService.videoGenerated$.next(result.asset);
-                    }
-                  } else if (result.clips && result.assets) {
-                    // Handle VideoTimeline sequence
-                    this.agentChatService.videoGenerated$.next(result);
-                  } else {
-                    const extracted = this.extractStoryboardData(result);
-                    if (extracted) {
-                      storyboardMetadata = extracted;
-                      this.agentChatService.currentStoryboard.set(extracted);
-                    }
-                  }
-                } catch (e) {
-                  // eslint-disable-next-line no-empty
-                }
-              }
+  private mapEventsToMessages(messages: any[]): any[] {
+    return messages
+      .map((m: any) => {
+        const content = m.content || {};
+        const role = content.role || m.author;
+        const parts = content.parts || [];
+        let text = '';
+        let assetMetadata = null;
+        let storyboardMetadata = null;
+        for (const part of parts) {
+          if (part.text) {
+            let partText = part.text;
+            if (partText.includes('[System Note:')) {
+              partText = partText.split('[System Note:')[0].trim();
             }
-            const currentText = text.trim();
-            let isHidden = false;
-            if (currentText.startsWith('{') && currentText.endsWith('}')) {
-              try {
-                const parsed = JSON.parse(currentText);
-                if (
-                  parsed.campaign_brief ||
-                  parsed.scenes ||
-                  parsed.template_name
-                ) {
-                  isHidden = true;
+            text += partText;
+            this.checkForStoryboardId(partText);
+          }
+          if (part.functionResponse?.response?.result) {
+            try {
+              const result = JSON.parse(part.functionResponse.response.result);
+              if (result.asset) {
+                assetMetadata = result.asset;
+                if (result.asset.type === 'video') {
+                  this.agentChatService.videoGenerated$.next(result.asset);
                 }
-              } catch (e) {
-                // Not valid JSON
+              } else if (result.clips && result.assets) {
+                this.agentChatService.videoGenerated$.next(result);
+              } else {
+                const extracted = this.extractStoryboardData(result);
+                if (extracted) {
+                  storyboardMetadata = extracted;
+                  this.agentChatService.currentStoryboard.set(extracted);
+                }
               }
+            } catch (e) {
+              // eslint-disable-next-line no-empty
             }
-            return {
-              sender: role === 'user' ? 'user' : 'agent',
-              text: text,
-              asset: assetMetadata,
-              storyboard: storyboardMetadata,
-              isHidden: isHidden,
-              timestamp: m.timestamp
-                ? new Date(m.timestamp * 1000)
-                : new Date(),
-            };
-          })
-          .filter(
-            (msg: any) =>
-              msg.text || msg.asset || msg.storyboard || msg.isHidden,
-          );
-        this.chatMessages.set(mappedMessages);
-        this.isLoadingHistory.set(false);
-        this.shouldScrollToBottom = true;
-        if (mappedMessages.length === 0) {
-          this.addWelcomeMessage();
+          }
         }
-      },
-      error: err => {
-        console.error('Error loading messages:', err);
-        this.isLoadingHistory.set(false);
-      },
-    });
+        const currentText = text.trim();
+        let isHidden = false;
+        if (currentText.startsWith('{') && currentText.endsWith('}')) {
+          try {
+            const parsed = JSON.parse(currentText);
+            if (
+              parsed.campaign_brief ||
+              parsed.scenes ||
+              parsed.template_name
+            ) {
+              isHidden = true;
+            }
+          } catch (e) {
+            // Not valid JSON
+          }
+        }
+        return {
+          sender: role === 'user' ? 'user' : 'agent',
+          text: text,
+          asset: assetMetadata,
+          storyboard: storyboardMetadata,
+          isHidden: isHidden,
+          timestamp: m.timestamp ? new Date(m.timestamp * 1000) : new Date(),
+        };
+      })
+      .filter(
+        (msg: any) => msg.text || msg.asset || msg.storyboard || msg.isHidden,
+      );
   }
   addWelcomeMessage() {
     const welcomeMessage = {
@@ -421,16 +481,11 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
         next: (response: any) => {
           this.saveSessionTopic(
             this.currentSessionId!,
-            "response.title",
-            "response.summary",
+            response.title,
+            response.summary,
           );
         },
         error: err => {
-          this.saveSessionTopic(
-            this.currentSessionId!,
-            "response.title",
-            "response.summary",
-          );
           console.error('Error generating title:', err);
           this.saveSessionTopic(this.currentSessionId!, text);
         },
