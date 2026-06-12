@@ -45,7 +45,7 @@ import {
 import {SourceAssetResponseDto} from '../common/services/source-asset.service';
 // --- Interfaces ---
 import {WorkbenchService, TimelineRequest, Clip} from './workbench.service';
-import {StoryboardService} from '../services/storyboard/storyboard.service';
+
 import {AgentChatService} from './services/agent-chat.service';
 import {TimeRulerComponent} from './components/time-ruler/time-ruler.component';
 import {
@@ -155,7 +155,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   protected timelineState = inject(TimelineStateService);
   protected playbackService = inject(PlayheadSyncService);
   private route = inject(ActivatedRoute);
-  private storyboardService = inject(StoryboardService);
+
   private workspaceStateService = inject(WorkspaceStateService);
 
   isDownloading = signal(false);

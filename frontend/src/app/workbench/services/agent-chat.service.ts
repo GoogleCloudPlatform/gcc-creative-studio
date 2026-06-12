@@ -101,12 +101,6 @@ export class AgentChatService {
     return this.http.get(`${this.apiUrl}/sessions/detail?${params}`);
   }
 
-  getMessages(sessionId: string): Observable<any> {
-    return this.http.get(
-      `${this.apiUrl}/sessions/${sessionId}?appName=${this.activeAgent()}`,
-    );
-  }
-
   deleteSession(sessionId: string): Observable<any> {
     return this.http.delete(
       `${this.apiUrl}/sessions/${sessionId}?appName=${this.activeAgent()}`,

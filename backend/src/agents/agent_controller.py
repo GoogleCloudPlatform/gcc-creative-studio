@@ -51,7 +51,10 @@ router = APIRouter(
 logger = logging.getLogger(__name__)
 
 # Initialize Vertex AI SDK
-vertexai.init(project=config_service.PROJECT_ID, location="us-central1")
+vertexai.init(
+    project=config_service.PROJECT_ID,
+    location=config_service.WORKFLOWS_LOCATION,
+)
 
 AGENT_REASONING_ENGINES = {
     "ads_x_template": {
@@ -82,22 +85,6 @@ async def get_sessions(
 ):
     """List chat sessions for the current user from Vertex AI Agent Engines."""
     user_id = str(current_user.id)
-    # --- Old HTTP Proxy Code (Commented out) ---
-    # url = f"{IZUMI_AGENT_URL}/apps/{appName}/users/{user_id}/sessions"
-    # try:
-    #     async with httpx.AsyncClient() as client:
-    #         response = await client.get(url)
-    #         response.raise_for_status()
-    #         return response.json()
-    # except httpx.HTTPStatusError as e:
-    #     logger.error(f"Error fetching sessions from Izumi: {e}")
-    #     raise HTTPException(
-    #         status_code=e.response.status_code, detail=e.response.text
-    #     )
-    # except Exception as e:
-    #     logger.error(f"Unexpected error fetching sessions: {e}")
-    #     raise HTTPException(status_code=500, detail=str(e))
-    # --------------------------------------------
     try:
         agent_config = _get_agent_config(appName)
         remote_agent = reasoning_engines.ReasoningEngine(
@@ -153,22 +140,6 @@ async def create_session(
 ):
     """Create a new chat session in Vertex AI Agent Engines."""
     user_id = str(current_user.id)
-    # --- Old HTTP Proxy Code (Commented out) ---
-    # url = f"{IZUMI_AGENT_URL}/apps/{appName}/users/{user_id}/sessions"
-    # try:
-    #     async with httpx.AsyncClient() as client:
-    #         response = await client.post(url, json={})
-    #         response.raise_for_status()
-    #         return response.json()
-    # except httpx.HTTPStatusError as e:
-    #     logger.error(f"Error creating session in Izumi: {e}")
-    #     raise HTTPException(
-    #         status_code=e.response.status_code, detail=e.response.text
-    #     )
-    # except Exception as e:
-    #     logger.error(f"Unexpected error creating session: {e}")
-    #     raise HTTPException(status_code=500, detail=str(e))
-    # --------------------------------------------
     try:
         agent_config = _get_agent_config(appName)
         remote_agent = reasoning_engines.ReasoningEngine(
@@ -226,9 +197,16 @@ async def get_session_detail(
 
     # 1. Retrieve and enrich storyboard if storyboard_id is provided
     if storyboard_id is not None:
-        storyboard = await storyboard_repo.get_by_id_with_details(
-            storyboard_id
-        )  # move this to service
+        try:
+            storyboard = await storyboard_repo.get_by_id_with_details(
+                storyboard_id
+            )  # move this to service
+        except Exception as e:
+            logger.error(f"Error retrieving storyboard {storyboard_id}: {e}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid storyboard ID: {storyboard_id}. The value is out of range for the database integer type.",
+            )
         if not storyboard:
             raise HTTPException(status_code=404, detail="Storyboard not found")
         if storyboard.user_id != current_user.id:
@@ -336,22 +314,6 @@ async def get_session_messages(
 ):
     """Get messages for a specific session from Vertex AI Agent Engines."""
     user_id = str(current_user.id)
-    # --- Old HTTP Proxy Code (Commented out) ---
-    # url = f"{IZUMI_AGENT_URL}/apps/{appName}/users/{user_id}/sessions/{session_id}"
-    # try:
-    #     async with httpx.AsyncClient() as client:
-    #         response = await client.get(url)
-    #         response.raise_for_status()
-    #         return response.json()
-    # except httpx.HTTPStatusError as e:
-    #     logger.error(f"Error fetching messages from Izumi: {e}")
-    #     raise HTTPException(
-    #         status_code=e.response.status_code, detail=e.response.text
-    #     )
-    # except Exception as e:
-    #     logger.error(f"Unexpected error fetching messages: {e}")
-    #     raise HTTPException(status_code=500, detail=str(e))
-    # --------------------------------------------
     try:
         agent_config = _get_agent_config(appName)
         remote_agent = reasoning_engines.ReasoningEngine(
@@ -400,22 +362,7 @@ async def delete_session(
 ):
     """Deletes a specific session from Vertex AI Agent Engines."""
     user_id = str(current_user.id)
-    # --- Old HTTP Proxy Code (Commented out) ---
-    # url = f"{IZUMI_AGENT_URL}/apps/{appName}/users/{user_id}/sessions/{session_id}"
-    # try:
-    #     async with httpx.AsyncClient() as client:
-    #         response = await client.delete(url)
-    #         response.raise_for_status()
-    #         return response.json()
-    # except httpx.HTTPStatusError as e:
-    #     logger.error(f"Error deleting session from Izumi: {e}")
-    #     raise HTTPException(
-    #         status_code=e.response.status_code, detail=e.response.text
-    #     )
-    # except Exception as e:
-    #     logger.error(f"Unexpected error deleting session: {e}")
-    #     raise HTTPException(status_code=500, detail=str(e))
-    # --------------------------------------------
+
     try:
         agent_config = _get_agent_config(appName)
         remote_agent = reasoning_engines.ReasoningEngine(
@@ -529,85 +476,11 @@ async def chat(
                     sanitized_parts.append({"text": injection_str})
             new_msg["parts"] = sanitized_parts
 
-    # --- Old HTTP Proxy Code (Commented out) ---
-    # headers = {
-    #     "Authorization": request.headers.get("Authorization") or "",
-    #     "Content-Type": "application/json",
-    # }
-    # --------------------------------------------
-
     # Internal background task function
     async def process_stream():
         from src.database import async_session_local
 
         async with async_session_local() as db_session:
-            # --- Old HTTP Proxy Code (Commented out) ---
-            # try:
-            #     async with httpx.AsyncClient() as client:
-            #         async with client.stream(
-            #             "POST", url, json=body, headers=headers, timeout=600.0
-            #         ) as response:
-            #             if response.status_code != 200:
-            #                 logger.error(
-            #                     f"Izumi agent returned error: {response.status_code}"
-            #                 )
-            #                 evt = AgentChatEvent(
-            #                     user_id=user_id,
-            #                     session_id=session_id,
-            #                     payload={
-            #                         "raw": f'data: {{"error": "Izumi agent error: {response.status_code}"}}\n\n'
-            #                     },
-            #                 )
-            #                 db_session.add(evt)
-            #                 await db_session.commit()
-            #                 return
-            #
-            #             async def emit_line(l: str):
-            #                 evt = AgentChatEvent(
-            #                     user_id=user_id,
-            #                     session_id=session_id,
-            #                     payload=(
-            #                         {"raw": f"{l}\n"} if l else {"raw": "\n"}
-            #                     ),
-            #                 )
-            #                 db_session.add(evt)
-            #                 await db_session.commit()
-            #
-            #             async for line in response.aiter_lines():
-            #                 await emit_line(line)
-            #
-            #             # Signal the frontend that the stream is complete
-            #             done_evt = AgentChatEvent(
-            #                 user_id=user_id,
-            #                 session_id=session_id,
-            #                 payload={"raw": "data: [DONE]\n\n"},
-            #             )
-            #             db_session.add(done_evt)
-            #             await db_session.commit()
-            #
-            # except httpx.ReadTimeout:
-            #     logger.error("Timeout streaming from Izumi")
-            #     evt = AgentChatEvent(
-            #         user_id=user_id,
-            #         session_id=session_id,
-            #         payload={
-            #             "raw": f'data: {{"error": "Timeout generating media"}}\n\n'
-            #         },
-            #     )
-            #     db_session.add(evt)
-            #     await db_session.commit()
-            # except Exception as e:
-            #     logger.error(f"Error streaming from Izumi: {e}")
-            #     evt = AgentChatEvent(
-            #         user_id=user_id,
-            #         session_id=session_id,
-            #         payload={
-            #             "raw": f'data: {{"error": "Internal error streaming from agent"}}\n\n'
-            #         },
-            #     )
-            #     db_session.add(evt)
-            #     await db_session.commit()
-            # --------------------------------------------
             try:
                 agent_config = _get_agent_config(body.get("appName"))
                 remote_agent = reasoning_engines.ReasoningEngine(
@@ -615,10 +488,7 @@ async def chat(
                 )
 
                 agent_input = {
-                    "message": body.get("newMessage"),
-                    "user_id": user_id,
-                    "session_id": session_id,
-                    "workspace_id": body.get("workspaceId"),
+                    "message": body.get("newMessage")
                 }
 
                 # Build request payload without run_config since appName/workspaceId are not permitted
