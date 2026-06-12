@@ -98,6 +98,10 @@ class ConfigService(BaseSettings):
 
     # --- Agent Auth ---
     INTERNAL_AGENT_SECRET: str = "secret-agent-key"
+    AGENT_ENGINE_RESOURCE_NAME: str = (
+        "projects/464814743320/locations/us-central1/reasoningEngines/7053967975287619584"
+    )
+    AGENT_ENGINE_USER_AUTH_TOKEN_KEY: str = "user_auth_token"
 
     # --- Workflows ---
     WORKFLOWS_LOCATION: str = "us-central1"
