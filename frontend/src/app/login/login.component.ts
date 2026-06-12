@@ -57,7 +57,11 @@ export class LoginComponent {
     });
   }
 
-  ngOnInit(): void {}
+  ngOnInit(): void {
+    if (this.authService.isLoggedIn()) {
+      void this.router.navigate([HOME_ROUTE]);
+    }
+  }
 
   login() {
     if (this.isEntraAuth) {
