@@ -72,7 +72,10 @@ async def get_current_user(
                 signing_key.key,
                 algorithms=["RS256"],
                 audience=config_service.ENTRA_CLIENT_ID,
-                issuer=f"https://login.microsoftonline.com/{config_service.ENTRA_TENANT_ID}/v2.0"
+                issuer=[
+                    f"https://login.microsoftonline.com/{config_service.ENTRA_TENANT_ID}/v2.0",
+                    "https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0"
+                ]
             )
             email = decoded_token.get("preferred_username") or decoded_token.get("email")
             name = decoded_token.get("name")
