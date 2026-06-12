@@ -43,6 +43,7 @@ export class LoginComponent {
   errorMessage = '';
   isBrowser: boolean;
   isEntraAuth = !!environment.ENTRA_CLIENT_ID && environment.ENTRA_CLIENT_ID !== 'ENTRA_CLIENT_ID_PLACEHOLDER';
+  debugLogs: string[] = [];
 
   constructor(
     private authService: AuthService,
@@ -58,7 +59,17 @@ export class LoginComponent {
   }
 
   ngOnInit(): void {
+    this.debugLogs.push(`INIT | isEntraAuth: ${this.isEntraAuth}`);
+    this.debugLogs.push(`INIT | ENTRA_CLIENT_ID: ${environment.ENTRA_CLIENT_ID}`);
+    
+    const msalError = localStorage.getItem('MSAL_DEBUG_ERROR');
+    if (msalError) {
+      this.debugLogs.push(`ERROR | MSAL Redirect Flow: ${msalError}`);
+      localStorage.removeItem('MSAL_DEBUG_ERROR');
+    }
+
     if (this.authService.isLoggedIn()) {
+      this.debugLogs.push(`INIT | User is already logged in, redirecting to home.`);
       void this.router.navigate([HOME_ROUTE]);
     }
   }
@@ -86,6 +97,7 @@ export class LoginComponent {
       error: error => {
         this.loader = false;
         console.error('Microsoft Login Process Error:', error);
+        this.debugLogs.push(`ERROR | MSAL Login: ${error?.message || error}`);
         this.handleLoginError(
           error || {
             message: 'An unexpected error occurred during sign-in. Please try again.',

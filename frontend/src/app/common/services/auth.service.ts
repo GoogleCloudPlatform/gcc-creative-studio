@@ -238,6 +238,7 @@ export class AuthService {
         this.router.navigate([LOGIN_ROUTE]).then(() => this.router.navigate(['/']));
       }
     } catch (error) {
+        localStorage.setItem('MSAL_DEBUG_ERROR', (error as any)?.message || String(error));
         console.error('Error handling MSAL redirect:', error);
     }
     return this.msalInstance;
