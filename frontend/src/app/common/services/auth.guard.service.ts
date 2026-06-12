@@ -43,7 +43,7 @@ export class AuthGuardService implements CanActivate {
     private settingsService: SettingsService,
   ) {}
 
-  canActivate(
+  async canActivate(
     route: ActivatedRouteSnapshot,
     state: RouterStateSnapshot,
   ):
@@ -62,6 +62,9 @@ export class AuthGuardService implements CanActivate {
     }
 
     // --- BROWSER SIDE ---
+    // Ensure MSAL has a chance to process any pending redirects before we check auth status
+    await this.authService.getMsalInstance();
+
     if (!this.authService.isLoggedIn()) {
       void this.router.navigate([LOGIN_ROUTE]);
       return false;

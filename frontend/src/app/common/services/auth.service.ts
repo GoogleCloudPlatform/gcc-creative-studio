@@ -186,44 +186,51 @@ export class AuthService {
     );
   }
 
+  private msalInitPromise: Promise<PublicClientApplication> | null = null;
+
   async getMsalInstance(): Promise<PublicClientApplication> {
-    if (!this.msalInstance) {
-      const msalConfig: Configuration = {
-        auth: {
-          clientId: environment.ENTRA_CLIENT_ID,
-          authority: `https://login.microsoftonline.com/${environment.ENTRA_TENANT_ID}/v2.0`,
-          redirectUri: window.location.origin
-        },
-        cache: {
-          cacheLocation: 'localStorage',
-        }
-      };
-      this.msalInstance = new PublicClientApplication(msalConfig);
-      await this.msalInstance.initialize();
+    if (!this.msalInitPromise) {
+      this.msalInitPromise = this._initMsal();
+    }
+    return this.msalInitPromise;
+  }
 
-      try {
-        const result = await this.msalInstance.handleRedirectPromise();
-        if (result) {
-          const idToken = result.idToken;
-          const payload = JSON.parse(atob(idToken.split('.')[1]));
-          
-          this.firebaseIdToken = idToken;
-          this.firebaseTokenExpiry = payload.exp * 1000;
-
-          const session: FirebaseSession = {
-            token: idToken,
-            expiry: this.firebaseTokenExpiry,
-          };
-          localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
-
-          await firstValueFrom(this.syncUserWithBackend$(idToken));
-          await this.settingsService.loadSettings();
-          // After successfully processing redirect, navigate to home
-          this.router.navigate([LOGIN_ROUTE]).then(() => this.router.navigate(['/']));
-        }
-      } catch (error) {
-         console.error('Error handling MSAL redirect:', error);
+  private async _initMsal(): Promise<PublicClientApplication> {
+    const msalConfig: Configuration = {
+      auth: {
+        clientId: environment.ENTRA_CLIENT_ID,
+        authority: `https://login.microsoftonline.com/${environment.ENTRA_TENANT_ID}/v2.0`,
+        redirectUri: window.location.origin
+      },
+      cache: {
+        cacheLocation: 'localStorage',
       }
+    };
+    this.msalInstance = new PublicClientApplication(msalConfig);
+    await this.msalInstance.initialize();
+
+    try {
+      const result = await this.msalInstance.handleRedirectPromise();
+      if (result) {
+        const idToken = result.idToken;
+        const payload = JSON.parse(atob(idToken.split('.')[1]));
+        
+        this.firebaseIdToken = idToken;
+        this.firebaseTokenExpiry = payload.exp * 1000;
+
+        const session: FirebaseSession = {
+          token: idToken,
+          expiry: this.firebaseTokenExpiry,
+        };
+        localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
+
+        await firstValueFrom(this.syncUserWithBackend$(idToken));
+        await this.settingsService.loadSettings();
+        // After successfully processing redirect, navigate to home
+        this.router.navigate([LOGIN_ROUTE]).then(() => this.router.navigate(['/']));
+      }
+    } catch (error) {
+        console.error('Error handling MSAL redirect:', error);
     }
     return this.msalInstance;
   }
