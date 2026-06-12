@@ -69,17 +69,42 @@ def fixture_mock_enrich_storyboard():
         yield mock
 
 
+@pytest.fixture(name="mock_workspace_repo")
+def fixture_mock_workspace_repo():
+    repo = AsyncMock()
+    from src.workspaces.schema.workspace_model import (
+        WorkspaceScopeEnum,
+        WorkspaceModel,
+    )
+
+    repo.get_scope.return_value = WorkspaceScopeEnum.PUBLIC
+    mock_workspace = MagicMock(spec=WorkspaceModel)
+    mock_workspace.id = 1
+    mock_workspace.name = "Test Workspace"
+    mock_workspace.scope = WorkspaceScopeEnum.PUBLIC
+    repo.get_by_id.return_value = mock_workspace
+    return repo
+
+
 @pytest.fixture(name="client")
 def fixture_client(
-    mock_user, mock_db, mock_workspace_service, mock_storyboard_repo
+    mock_user,
+    mock_db,
+    mock_workspace_service,
+    mock_storyboard_repo,
+    mock_workspace_repo,
 ):
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_current_user] = lambda: mock_user
     app.dependency_overrides[get_db] = lambda: mock_db
     from src.workspaces.workspace_service import WorkspaceService
+    from src.workspaces.repository.workspace_repository import (
+        WorkspaceRepository,
+    )
 
     app.dependency_overrides[WorkspaceService] = lambda: mock_workspace_service
+    app.dependency_overrides[WorkspaceRepository] = lambda: mock_workspace_repo
     app.dependency_overrides[StoryboardRepository] = (
         lambda: mock_storyboard_repo
     )
@@ -310,4 +335,24 @@ async def test_get_session_detail_missing_params(client):
     assert (
         response.json()["detail"]
         == "Either session_id or storyboard_id must be provided to query details."
+    )
+
+
+@pytest.mark.anyio
+async def test_get_session_detail_storyboard_id_out_of_range(
+    mock_storyboard_repo, client
+):
+    mock_storyboard_repo.get_by_id_with_details.side_effect = Exception(
+        "value out of int32 range"
+    )
+
+    response = client.get(
+        "/api/agent/sessions/detail?workspace_id=1&storyboard_id=6454042614055305000"
+    )
+
+    assert response.status_code == 400
+    assert "Invalid storyboard ID" in response.json()["detail"]
+    assert (
+        "out of range for the database integer type"
+        in response.json()["detail"]
     )

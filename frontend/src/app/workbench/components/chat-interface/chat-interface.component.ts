@@ -32,7 +32,7 @@ import {
 } from '../../services/agent-chat.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
 import {StoryboardService} from '../../../services/storyboard/storyboard.service';
-import {ActivatedRoute} from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 import {combineLatest} from 'rxjs';
 import {CommonModule} from '@angular/common';
 import {FormsModule} from '@angular/forms';
@@ -69,6 +69,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   private snackBar = inject(MatSnackBar);
   private storyboardService = inject(StoryboardService);
   private route = inject(ActivatedRoute);
+  private router = inject(Router);
 
   sessions = signal<any[]>([]);
   topics = signal<{[key: string]: any}>({});
@@ -205,40 +206,87 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       const storyboardId = params['storyboardId'];
       const sessionId = params['sessionId'];
 
-      if (sessionId || storyboardId) {
-        this.agentChatService
-          .getSessionDetail(
-            workspaceId,
-            sessionId || undefined,
-            storyboardId ? Number(storyboardId) : undefined,
-          )
-          .subscribe({
-            next: (res: any) => {
-              if (res.storyboard) {
-                this.agentChatService.currentStoryboard.set(res.storyboard);
-              }
-              if (res.session) {
-                this.currentSessionId = res.session.id;
-                this.agentChatService.selectedSessionId.set(res.session.id);
+      // Always load sessions first to populate the sessions dropdown
+      this.agentChatService.getSessions().subscribe({
+        next: (sessions: any[]) => {
+          this.sessions.set(sessions || []);
 
-                const messages = res.session.events || [];
-                const mappedMessages = this.mapEventsToMessages(messages);
-                this.chatMessages.set(mappedMessages);
-              } else {
-                this.startNewChat();
-              }
-              this.isLoadingHistory.set(false);
-            },
-            error: err => {
-              console.error('Failed to preload workspace state:', err);
-              this.isLoadingHistory.set(false);
-              this.startNewChat();
-            },
-          });
-      } else {
-        this.agentChatService.getSessions().subscribe({
-          next: (sessions: any[]) => {
-            this.sessions.set(sessions || []);
+          if (sessionId || storyboardId) {
+            this.agentChatService
+              .getSessionDetail(
+                workspaceId,
+                sessionId || undefined,
+                storyboardId ? Number(storyboardId) : undefined,
+              )
+              .subscribe({
+                next: (res: any) => {
+                  if (res.storyboard) {
+                    this.agentChatService.currentStoryboard.set(res.storyboard);
+                  }
+                  const hasSession = res.session && res.session.id;
+                  const hasEvents =
+                    res.session?.events && res.session.events.length > 0;
+                  const hasState =
+                    res.session?.state &&
+                    Object.keys(res.session.state).length > 0;
+
+                  if (hasSession && (hasEvents || hasState)) {
+                    this.currentSessionId = res.session.id;
+                    this.agentChatService.selectedSessionId.set(res.session.id);
+
+                    const messages = res.session.events || [];
+                    const mappedMessages = this.mapEventsToMessages(messages);
+                    this.chatMessages.set(mappedMessages);
+                  } else {
+                    handleErrorSnackbar(
+                      this.snackBar,
+                      new Error('Session not found.'),
+                      'Preload Workspace State',
+                    );
+                    this.router.navigate([], {
+                      relativeTo: this.route,
+                      queryParams: {},
+                    });
+                    if (hasSession) {
+                      this.sessions.update(s => [res.session, ...s]);
+                      this.currentSessionId = res.session.id;
+                      this.agentChatService.selectedSessionId.set(
+                        res.session.id,
+                      );
+                      this.chatMessages.set([]);
+                      this.addWelcomeMessage();
+                      this.shouldScrollToBottom = true;
+                    } else {
+                      const currentSessions = this.sessions();
+                      if (currentSessions && currentSessions.length > 0) {
+                        this.currentSessionId = currentSessions[0].id;
+                        this.agentChatService.selectedSessionId.set(
+                          currentSessions[0].id,
+                        );
+                        this.loadChatMessages(this.currentSessionId!);
+                      } else {
+                        this.startNewChat();
+                      }
+                    }
+                  }
+                  this.isLoadingHistory.set(false);
+                },
+                error: err => {
+                  console.error('Failed to preload workspace state:', err);
+                  handleErrorSnackbar(
+                    this.snackBar,
+                    new Error('Storyboard unavailable or access denied.'),
+                    'Preload Workspace State',
+                  );
+                  this.router.navigate([], {
+                    relativeTo: this.route,
+                    queryParams: {},
+                  });
+                  this.isLoadingHistory.set(false);
+                  this.startNewChat();
+                },
+              });
+          } else {
             if (sessions && sessions.length > 0) {
               this.currentSessionId = sessions[0].id;
               this.agentChatService.selectedSessionId.set(sessions[0].id);
@@ -246,14 +294,15 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
             } else {
               this.startNewChat();
             }
-          },
-          error: err => {
-            console.error('Error fetching sessions:', err);
-            this.isLoadingHistory.set(false);
-            this.startNewChat();
-          },
-        });
-      }
+          }
+        },
+        error: err => {
+          console.error('Error fetching sessions:', err);
+          handleErrorSnackbar(this.snackBar, err, 'Fetch Sessions');
+          this.isLoadingHistory.set(false);
+          this.startNewChat();
+        },
+      });
     });
   }
 
@@ -281,14 +330,15 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
               const messages = (res.session && res.session.events) || [];
               const mappedMessages = this.mapEventsToMessages(messages);
               this.chatMessages.set(mappedMessages);
-              this.isLoadingHistory.set(false);
-              this.shouldScrollToBottom = true;
               if (mappedMessages.length === 0) {
                 this.addWelcomeMessage();
               }
+              this.isLoadingHistory.set(false);
+              this.shouldScrollToBottom = true;
             },
             error: err => {
               console.error('Error loading session details:', err);
+              handleErrorSnackbar(this.snackBar, err, 'Load Session Details');
               this.isLoadingHistory.set(false);
             },
           });
