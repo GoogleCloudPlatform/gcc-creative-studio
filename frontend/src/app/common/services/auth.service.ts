@@ -250,8 +250,25 @@ export class AuthService {
 
   signInWithMicrosoftEntra(): Observable<string> {
     return from(this.getMsalInstance()).pipe(
-      switchMap(msal => from(msal.loginRedirect({ scopes: ['User.Read'] }))),
-      switchMap(() => EMPTY),
+      switchMap(msal => from(msal.loginPopup({ scopes: ['User.Read'] }))),
+      switchMap((result: AuthenticationResult) => {
+        const idToken = result.idToken;
+        const payload = JSON.parse(atob(idToken.split('.')[1]));
+        
+        this.firebaseIdToken = idToken;
+        this.firebaseTokenExpiry = payload.exp * 1000;
+
+        const session: FirebaseSession = {
+          token: idToken,
+          expiry: this.firebaseTokenExpiry,
+        };
+        localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
+
+        return this.syncUserWithBackend$(idToken).pipe(
+           switchMap(() => from(this.settingsService.loadSettings())),
+           map(() => idToken)
+        );
+      }),
       catchError(error => {
          console.error('Error during MSAL login:', error);
          return throwError(() => error);
@@ -322,17 +339,22 @@ export class AuthService {
     // First, check our own session info which is loaded from localStorage.
     // This is synchronous and tells us if we have a valid, non-expired token.
     if (!this.isLoggedIn()) {
+      console.log('getValidIdentityPlatformToken: isLoggedIn is FALSE');
       return of();
     }
 
     // Fallback case: The Firebase Auth instance is not yet initialized, but we
     // have a valid token from localStorage. We can use this for the current
     // request. The next request will likely hit the ideal case above.
+    console.log('getValidIdentityPlatformToken: isLoggedIn is TRUE, returning token');
     return of(this.firebaseIdToken!);
   }
 
   private syncUserWithBackend$(token: string): Observable<UserModel> {
-    const headers = new HttpHeaders().set('Authorization', `Bearer ${token}`);
+    // We intentionally do NOT use the 'Authorization' header because the Google Cloud Run
+    // Identity-Aware Proxy will intercept it and return 401 for Microsoft Entra tokens.
+    // Instead, we pass the token in X-Custom-Auth, which our backend FastAPI app reads.
+    const headers = new HttpHeaders().set('X-Custom-Auth', `Bearer ${token}`);
     return this.httpClient
       .get<UserModel>(`${environment.backendURL}/users/me`, {headers})
       .pipe(

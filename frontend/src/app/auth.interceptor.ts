@@ -38,13 +38,16 @@ export class AuthInterceptor implements HttpInterceptor {
     // Asynchronously get a valid token. This will use the cache or trigger a silent refresh.
     return this.authService.getValidIdentityPlatformToken$().pipe(
       switchMap(token => {
-        // Token was retrieved successfully. Clone the request and add the auth header.
-        const authorizedRequest = request.clone({
-          setHeaders: {
-            Authorization: `Bearer ${token}`,
-            'X-Custom-Auth': `Bearer ${token}`,
-          },
-        });
+        console.log('AuthInterceptor: Intercepting request to', request.url);
+        // Token was retrieved successfully. Clone the request and add the custom auth header.
+        // We MUST remove the standard Authorization header because Google Cloud Run
+        // will intercept it and return 401 if it's an Entra token.
+        const headers = request.headers
+          .delete('Authorization')
+          .set('X-Custom-Auth', `Bearer ${token}`);
+        
+        const authorizedRequest = request.clone({ headers });
+        console.log('AuthInterceptor: Cloned request headers', authorizedRequest.headers.keys());
         return next.handle(authorizedRequest);
       }),
       catchError(error => {
