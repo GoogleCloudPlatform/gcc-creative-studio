@@ -112,11 +112,9 @@ options:
   logging: CLOUD_LOGGING_ONLY
 
 substitutions:
-  _ANGULAR_BUILD_COMMAND: build-dev
   _FE_SERVICE_NAME: cstudio-fe
   _BACKEND_SERVICE_ID: cstudio-be
   _BACKEND_URL: https://gcpvto4.web.app
   _FIREBASE_SITE_ID: gcpvto4
-  _FIREBASE_PROJECT_ID: gcpvto4
   _ENTRA_CLIENT_ID: '6829b912-a054-4036-86a8-f5c3329cd41e'
   _ENTRA_TENANT_ID: 'af731eba-c788-490b-b38f-41a97b164253'
