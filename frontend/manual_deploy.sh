@@ -9,8 +9,8 @@ export FIREBASE_SENDER_ID=$(gcloud secrets versions access latest --secret="FIRE
 export FIREBASE_APP_ID=$(gcloud secrets versions access latest --secret="FIREBASE_APP_ID" --project="YOUR_GCP_PROJECT_ID")
 export FIREBASE_MEASUREMENT_ID=$(gcloud secrets versions access latest --secret="FIREBASE_MEASUREMENT_ID" --project="YOUR_GCP_PROJECT_ID")
 export GOOGLE_CLIENT_ID=$(gcloud secrets versions access latest --secret="GOOGLE_CLIENT_ID" --project="YOUR_GCP_PROJECT_ID")
-export ENTRA_CLIENT_ID="YOUR_ENTRA_CLIENT_ID"
-export ENTRA_TENANT_ID="YOUR_ENTRA_TENANT_ID"
+export ENTRA_CLIENT_ID=$(gcloud secrets versions access latest --secret="ENTRA_CLIENT_ID" --project="YOUR_GCP_PROJECT_ID")
+export ENTRA_TENANT_ID=$(gcloud secrets versions access latest --secret="ENTRA_TENANT_ID" --project="YOUR_GCP_PROJECT_ID")
 export BACKEND_URL="https://YOUR_FIREBASE_SITE_ID.web.app/api"
 
 # Make a backup of environment.prod.ts so we don't mess up the repo permanently
