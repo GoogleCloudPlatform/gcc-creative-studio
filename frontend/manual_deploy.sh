@@ -9,8 +9,8 @@ export FIREBASE_SENDER_ID=$(gcloud secrets versions access latest --secret="FIRE
 export FIREBASE_APP_ID=$(gcloud secrets versions access latest --secret="FIREBASE_APP_ID" --project="gcpvto4")
 export FIREBASE_MEASUREMENT_ID=$(gcloud secrets versions access latest --secret="FIREBASE_MEASUREMENT_ID" --project="gcpvto4")
 export GOOGLE_CLIENT_ID=$(gcloud secrets versions access latest --secret="GOOGLE_CLIENT_ID" --project="gcpvto4")
-export ENTRA_CLIENT_ID="6829b912-a054-4036-86a8-f5c3329cd41e"
-export ENTRA_TENANT_ID="af731eba-c788-490b-b38f-41a97b164253"
+export ENTRA_CLIENT_ID=$(gcloud secrets versions access latest --secret="ENTRA_CLIENT_ID" --project="gcpvto4")
+export ENTRA_TENANT_ID=$(gcloud secrets versions access latest --secret="ENTRA_TENANT_ID" --project="gcpvto4")
 export BACKEND_URL="https://gcpvto4.web.app/api"
 
 # Make a backup of environment.prod.ts so we don't mess up the repo permanently
