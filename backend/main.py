@@ -60,6 +60,7 @@ from src.workspaces.workspace_controller import router as workspace_router
 from src.system_settings.system_settings_controller import (
     router as system_settings_router,
 )
+from src.auth.auth_controller import router as auth_router
 
 
 def configure_cors(app):
@@ -84,7 +85,7 @@ def configure_cors(app):
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
-        allow_credentials=environment == "production",
+        allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -185,3 +186,4 @@ app.include_router(workflow_router)
 app.include_router(workflows_executor_router)
 app.include_router(workbench_router)
 app.include_router(system_settings_router)
+app.include_router(auth_router)

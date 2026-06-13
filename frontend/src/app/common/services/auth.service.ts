@@ -35,17 +35,11 @@ import {SettingsService} from '../../services/settings.service';
 // Declare the 'google' global object from the Google Identity Services script
 declare const google: any;
 
-const FIREBASE_SESSION_KEY = 'firebase_session';
 const USER_DETAILS = 'USER_DETAILS';
 const LOGIN_ROUTE = '/login';
 const INITIAL_HASH = typeof window !== 'undefined' ? window.location.hash : '';
 if (typeof window !== 'undefined') {
   (window as any).INITIAL_HASH = INITIAL_HASH;
-}
-
-interface FirebaseSession {
-  token: string;
-  expiry: number; // Expiration timestamp in milliseconds
 }
 
 @Injectable({
@@ -103,11 +97,9 @@ export class AuthService {
         const token = idTokenResult.token;
         const expirationTime = Date.parse(idTokenResult.expirationTime);
 
-        // Save session details to memory and local storage.
+        // Save session details to memory.
         this.firebaseIdToken = token;
         this.firebaseTokenExpiry = expirationTime;
-        const session: FirebaseSession = {token, expiry: expirationTime};
-        localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
 
         // Call the backend to get or create the user profile.
         return this.syncUserWithBackend$(token).pipe(
@@ -151,9 +143,6 @@ export class AuthService {
 
           this.firebaseIdToken = token;
           this.firebaseTokenExpiry = expiry;
-
-          const session: FirebaseSession = {token, expiry};
-          localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
         }),
       );
     }
@@ -178,12 +167,6 @@ export class AuthService {
         // If allowed, proceed to save session and return token
         this.firebaseIdToken = idToken;
         this.firebaseTokenExpiry = payload.exp * 1000;
-
-        const session: FirebaseSession = {
-          token: idToken,
-          expiry: this.firebaseTokenExpiry,
-        };
-        localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
 
         // Call the backend to get or create the user profile.
         return this.syncUserWithBackend$(idToken).pipe(
@@ -230,11 +213,8 @@ export class AuthService {
         this.firebaseIdToken = idToken;
         this.firebaseTokenExpiry = payload.exp * 1000;
 
-        const session: FirebaseSession = {
-          token: idToken,
-          expiry: this.firebaseTokenExpiry,
-        };
-        localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
+        this.firebaseIdToken = idToken;
+        this.firebaseTokenExpiry = payload.exp * 1000;
 
         await firstValueFrom(this.syncUserWithBackend$(idToken));
         await this.settingsService.loadSettings();
@@ -258,11 +238,8 @@ export class AuthService {
         this.firebaseIdToken = idToken;
         this.firebaseTokenExpiry = payload.exp * 1000;
 
-        const session: FirebaseSession = {
-          token: idToken,
-          expiry: this.firebaseTokenExpiry,
-        };
-        localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
+        this.firebaseIdToken = idToken;
+        this.firebaseTokenExpiry = payload.exp * 1000;
 
         return this.syncUserWithBackend$(idToken).pipe(
            switchMap(() => from(this.settingsService.loadSettings())),
@@ -351,34 +328,41 @@ export class AuthService {
   }
 
   private syncUserWithBackend$(token: string): Observable<UserModel> {
-    // We intentionally do NOT use the 'Authorization' header because the Google Cloud Run
-    // Identity-Aware Proxy will intercept it and return 401 for Microsoft Entra tokens.
-    // Instead, we pass the token in X-Custom-Auth, which our backend FastAPI app reads.
     const headers = new HttpHeaders().set('X-Custom-Auth', `Bearer ${token}`);
-    return this.httpClient
-      .get<UserModel>(`${environment.backendURL}/users/me`, {headers})
-      .pipe(
-        tap((userDetails: UserModel) => {
-          // The backend is the source of truth. Save the returned profile to local storage.
-          localStorage.setItem(USER_DETAILS, JSON.stringify(userDetails));
-          console.log('User profile successfully synced with backend.');
-        }),
-        catchError((error: HttpErrorResponse) => {
-          console.error('Failed to sync user with backend', error);
-          // This is a critical error, so we should propagate it.
-          return throwError(
-            () =>
-              new Error(
-                error?.error?.detail ||
-                  `Could not synchronize user profile with the server. ${error?.error?.detail}`,
-              ),
-          );
-        }),
-      );
+    
+    // First, exchange the token for an HttpOnly session cookie
+    return this.httpClient.post(`${environment.backendURL}/auth/session`, {}, {headers, withCredentials: true}).pipe(
+      // Then, fetch the user profile using the newly set cookie
+      switchMap(() => this.httpClient.get<UserModel>(`${environment.backendURL}/users/me`, {withCredentials: true})),
+      tap((userDetails: UserModel) => {
+        // The backend is the source of truth. Save the returned profile to local storage.
+        localStorage.setItem(USER_DETAILS, JSON.stringify(userDetails));
+        console.log('User profile successfully synced with backend.');
+      }),
+      catchError((error: HttpErrorResponse) => {
+        console.error('Failed to sync user with backend', error);
+        // This is a critical error, so we should propagate it.
+        return throwError(
+          () =>
+            new Error(
+              error?.error?.detail ||
+                `Could not synchronize user profile with the server. ${error?.error?.detail}`,
+            ),
+        );
+      }),
+    );
   }
 
   async logout(route: string = LOGIN_ROUTE) {
     this.settingsService.reset();
+    
+    // Attempt to log out of the backend first to clear the session cookie
+    try {
+      await firstValueFrom(this.httpClient.post(`${environment.backendURL}/auth/logout`, {}, {withCredentials: true}));
+    } catch (e) {
+      console.error('Backend logout failed', e);
+    }
+    
     return this.auth
       .signOut()
       .then(() => {
@@ -386,7 +370,6 @@ export class AuthService {
         // Clear Firebase session data
         this.firebaseIdToken = null;
         this.firebaseTokenExpiry = null;
-        localStorage.removeItem(FIREBASE_SESSION_KEY);
         localStorage.removeItem(USER_DETAILS);
         localStorage.removeItem('showTooltip');
         void this.router.navigateByUrl(route);
@@ -394,7 +377,6 @@ export class AuthService {
       .catch(e => {
         console.error('Sign Out Error', e);
         this.settingsService.reset();
-        localStorage.removeItem(FIREBASE_SESSION_KEY);
         localStorage.removeItem(USER_DETAILS);
         localStorage.removeItem('showTooltip');
         void this.router.navigate([LOGIN_ROUTE]);
@@ -404,13 +386,7 @@ export class AuthService {
   isLoggedIn() {
     if (!isPlatformBrowser(this.platformId)) return false;
 
-    // Check if the in-memory token is valid
-    const now = Date.now();
-    const isTokenValid = !!(
-      this.firebaseIdToken &&
-      this.firebaseTokenExpiry &&
-      this.firebaseTokenExpiry > now
-    );
+    const isTokenValid = localStorage.getItem(USER_DETAILS) !== null;
 
     if (!isTokenValid && this.router.url !== LOGIN_ROUTE) {
       void this.router.navigate([LOGIN_ROUTE]);
@@ -421,25 +397,13 @@ export class AuthService {
 
   private loadSessionFromStorage(): void {
     if (!isPlatformBrowser(this.platformId)) return;
-
-    const sessionStr = localStorage.getItem(FIREBASE_SESSION_KEY);
-    if (sessionStr) {
-      const session: FirebaseSession = JSON.parse(sessionStr);
-      // Check if the stored session is still valid
-      if (session.expiry > Date.now()) {
-        this.firebaseIdToken = session.token;
-        this.firebaseTokenExpiry = session.expiry;
-      } else {
-        // If expired, remove it from storage.
-        localStorage.removeItem(FIREBASE_SESSION_KEY);
-      }
-    }
+    // Session is now managed via HttpOnly cookies, so we don't load tokens from localStorage.
   }
 
   isUserLoggedIn() {
     if (!isPlatformBrowser(this.platformId)) return false;
 
-    const isUserLoggedIn = localStorage.getItem(FIREBASE_SESSION_KEY) !== null;
+    const isUserLoggedIn = localStorage.getItem(USER_DETAILS) !== null;
     return isUserLoggedIn;
   }
 

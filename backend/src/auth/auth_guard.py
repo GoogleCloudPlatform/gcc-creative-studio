@@ -37,10 +37,15 @@ from src.users.user_service import UserService
 
 import fastapi.security.utils
 
+
 class CustomOAuth2PasswordBearer(OAuth2PasswordBearer):
     async def __call__(self, request: Request) -> str | None:
-        authorization = request.headers.get("X-Custom-Auth") or request.headers.get("Authorization")
-        if not authorization:
+        authorization = request.headers.get(
+            "X-Custom-Auth"
+        ) or request.headers.get("Authorization")
+        cookie_token = request.cookies.get("session_token")
+
+        if not authorization and not cookie_token:
             if self.auto_error:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -49,17 +54,26 @@ class CustomOAuth2PasswordBearer(OAuth2PasswordBearer):
                 )
             else:
                 return None
-        scheme, param = fastapi.security.utils.get_authorization_scheme_param(authorization)
-        if not authorization or scheme.lower() != "bearer":
-            if self.auto_error:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid authentication credentials",
-                    headers={"WWW-Authenticate": "Bearer"},
+
+        if authorization:
+            scheme, param = (
+                fastapi.security.utils.get_authorization_scheme_param(
+                    authorization
                 )
-            else:
-                return None
-        return param
+            )
+            if scheme.lower() != "bearer":
+                if self.auto_error:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid authentication credentials",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                else:
+                    return None
+            return param
+
+        return cookie_token
+
 
 # This scheme will require the client to send a token in the X-Custom-Auth or Authorization
 # header. It tells FastAPI how to find the token but doesn't validate it
@@ -91,7 +105,9 @@ async def get_current_user(
             logger.info("Verifying token using Microsoft Entra ID...")
             jwks_url = f"https://login.microsoftonline.com/{config_service.ENTRA_TENANT_ID}/discovery/v2.0/keys"
             jwks_client = PyJWKClient(jwks_url)
-            signing_key = await asyncio.to_thread(jwks_client.get_signing_key_from_jwt, token)
+            signing_key = await asyncio.to_thread(
+                jwks_client.get_signing_key_from_jwt, token
+            )
             decoded_token = await asyncio.to_thread(
                 jwt.decode,
                 token,
@@ -100,10 +116,12 @@ async def get_current_user(
                 audience=config_service.ENTRA_CLIENT_ID,
                 issuer=[
                     f"https://login.microsoftonline.com/{config_service.ENTRA_TENANT_ID}/v2.0",
-                    "https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0"
-                ]
+                    "https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0",
+                ],
             )
-            email = decoded_token.get("preferred_username") or decoded_token.get("email")
+            email = decoded_token.get(
+                "preferred_username"
+            ) or decoded_token.get("email")
             name = decoded_token.get("name")
             picture = ""
             token_info_hd = None
@@ -182,14 +200,16 @@ async def get_current_user(
         return user_doc
 
     except (auth.ExpiredIdTokenError, jwt.ExpiredSignatureError) as exc:
-        logger.error(
-            "[get_current_user - ExpiredIdTokenError] for %s", email
-        )
+        logger.error("[get_current_user - ExpiredIdTokenError] for %s", email)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication token has expired.",
         ) from exc
-    except (auth.InvalidIdTokenError, jwt.InvalidTokenError, jwt.PyJWKError) as e:
+    except (
+        auth.InvalidIdTokenError,
+        jwt.InvalidTokenError,
+        jwt.PyJWKError,
+    ) as e:
         logger.error(
             "[get_current_user - InvalidIdTokenError] for %s: %s",
             email,
