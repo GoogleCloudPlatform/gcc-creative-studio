@@ -18,7 +18,7 @@
   <!-- Top Navigation Bar -->
   <header class="sb-header">
     <div class="sb-tabs">
-      <button 
+      <!-- <button 
         class="sb-tab opacity-50 cursor-not-allowed" 
         [class.active]="activeTab() === 'characters'" 
         [disabled]="true"
@@ -26,11 +26,10 @@
       >
         <mat-icon class="sb-icon-sm">face</mat-icon>
         Characters
-      </button>
+      </button> -->
       <button 
-        class="sb-tab" 
-        [class.active]="activeTab() === 'scenes'" 
-        (click)="setActiveTab('scenes')"
+        class="sb-tab !cursor-auto" 
+        [class.active]="activeTab() === 'scenes'"
       >
         <mat-icon class="sb-icon-sm">movie</mat-icon>
         Scenes
