@@ -32,7 +32,7 @@ import {
 } from '../../services/agent-chat.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
 import {StoryboardService} from '../../../services/storyboard/storyboard.service';
-import { ActivatedRoute, Router } from '@angular/router';
+import {ActivatedRoute, Router} from '@angular/router';
 import {combineLatest} from 'rxjs';
 import {CommonModule} from '@angular/common';
 import {FormsModule} from '@angular/forms';
@@ -243,7 +243,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                       new Error('Session not found.'),
                       'Preload Workspace State',
                     );
-                    this.router.navigate([], {
+                    void this.router.navigate([], {
                       relativeTo: this.route,
                       queryParams: {},
                     });
@@ -278,7 +278,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                     new Error('Storyboard unavailable or access denied.'),
                     'Preload Workspace State',
                   );
-                  this.router.navigate([], {
+                  void this.router.navigate([], {
                     relativeTo: this.route,
                     queryParams: {},
                   });

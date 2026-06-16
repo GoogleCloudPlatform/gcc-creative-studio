@@ -62,9 +62,9 @@ import {
 } from '../common/models/storyboard.model';
 import {ActivatedRoute} from '@angular/router';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
-import { Subject, Subscription } from 'rxjs';
-import { debounceTime } from 'rxjs/operators';
-import { StoryboardService } from '../services/storyboard/storyboard.service';
+import {Subject, Subscription} from 'rxjs';
+import {debounceTime} from 'rxjs/operators';
+import {StoryboardService} from '../services/storyboard/storyboard.service';
 
 @Component({
   selector: 'app-workbench',
