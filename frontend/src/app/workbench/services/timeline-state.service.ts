@@ -25,6 +25,8 @@ export interface TimelineClip {
   offset: number; // offset into the original source file
   trackIndex: number; // 0 for video, 1 for audio
   color: string;
+  mediaItemId?: number;
+  sourceAssetId?: number;
 }
 
 export interface MediaAsset {
@@ -35,6 +37,8 @@ export interface MediaAsset {
   safeUrl: SafeResourceUrl;
   duration: number;
   thumbnail?: string;
+  mediaItemId?: number;
+  sourceAssetId?: number;
 }
 
 @Injectable({

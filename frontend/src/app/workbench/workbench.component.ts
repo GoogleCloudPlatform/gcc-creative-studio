@@ -58,9 +58,13 @@ import {
   TimelineDTO,
   VideoClipDTO,
   AudioClipDTO,
+  StoryboardResponse,
 } from '../common/models/storyboard.model';
 import {ActivatedRoute} from '@angular/router';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
+import { Subject, Subscription } from 'rxjs';
+import { debounceTime } from 'rxjs/operators';
+import { StoryboardService } from '../services/storyboard/storyboard.service';
 
 @Component({
   selector: 'app-workbench',
@@ -155,6 +159,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   protected timelineState = inject(TimelineStateService);
   protected playbackService = inject(PlayheadSyncService);
   private route = inject(ActivatedRoute);
+  private storyboardService = inject(StoryboardService);
 
   private workspaceStateService = inject(WorkspaceStateService);
 
@@ -180,6 +185,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   } | null = null;
 
   isBrowser: boolean;
+  lastSavedText = signal<string>('');
+
+  private saveSubject = new Subject<void>();
+  private saveSubscription?: Subscription;
+  private isSaving = false;
 
   constructor(
     public matIconRegistry: MatIconRegistry,
@@ -192,18 +202,23 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     effect(
       () => {
         const storyboard = this.agentChatService.currentStoryboard();
+        if (this.isSaving) {
+          return;
+        }
         if (storyboard && storyboard.timeline) {
           console.log(
             'Loading timeline from AgentChatService signal:',
             storyboard.timeline,
           );
           this.processGeneratedData(storyboard.timeline);
+          this.lastSavedText.set('Saved');
         } else {
           console.log(
             'No storyboard or timeline found, clearing timeline clips.',
           );
           this.timelineState.timelineClips.set([]);
           this.timelineState.selectedClipId.set(null);
+          this.lastSavedText.set('');
         }
       },
       {allowSignalWrites: true},
@@ -329,6 +344,13 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit() {
+    // save timeline after 10 seconds of inactivity
+    this.saveSubscription = this.saveSubject
+      .pipe(debounceTime(10000))
+      .subscribe(() => {
+        this.saveTimeline();
+      });
+
     this.route.queryParams.subscribe(params => {
       const sessionId = params['sessionId'];
       const storyboardId = params['storyboardId'];
@@ -381,6 +403,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     this.playbackService.stopLoop();
+    if (this.saveSubscription) {
+      this.saveSubscription.unsubscribe();
+    }
   }
 
   // --- Logic: File Handling ---
@@ -460,6 +485,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     let type: 'video' | 'audio';
     let thumbnail: string | undefined;
 
+    let mediaItemId: number | undefined;
+    let sourceAssetId: number | undefined;
+
     if (isGalleryItem) {
       const selection = result as MediaItemSelection;
       const mediaItem = selection.mediaItem;
@@ -473,6 +501,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         type === 'video'
           ? mediaItem.presignedThumbnailUrls?.[selectedIndex] || url
           : undefined;
+      mediaItemId = mediaItem.id;
     } else {
       const asset = result as SourceAssetResponseDto;
       url = asset.presignedUrl || '';
@@ -483,6 +512,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         type === 'video'
           ? asset.presignedThumbnailUrl || asset.presignedUrl
           : undefined;
+      sourceAssetId = asset.id;
     }
 
     if (!url) return;
@@ -496,6 +526,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       safeUrl: this.sanitizer.bypassSecurityTrustUrl(url),
       duration: 0,
       thumbnail,
+      mediaItemId,
+      sourceAssetId,
     };
 
     this.timelineState.assets.update(prev => [...prev, newAsset]);
@@ -661,6 +693,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
               ),
               duration: clip.trim_duration || 5,
               thumbnail: clip.presigned_thumbnail_url,
+              mediaItemId: clip.media_item_id,
+              sourceAssetId: clip.source_asset_id,
             },
           ]);
         }
@@ -673,6 +707,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           offset: clip.trim_offset || 0,
           trackIndex: 0,
           color: '#3b82f6',
+          mediaItemId: clip.media_item_id,
+          sourceAssetId: clip.source_asset_id,
         });
         currentVideoTime += clip.trim_duration || 5;
       });
@@ -699,6 +735,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
                 clip.presigned_url!,
               ),
               duration: clip.trim_duration || 5,
+              mediaItemId: clip.media_item_id,
+              sourceAssetId: clip.source_asset_id,
             },
           ]);
         }
@@ -738,6 +776,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           offset: clip.trim_offset || 0,
           trackIndex: targetTrack,
           color: '#10b981',
+          mediaItemId: clip.media_item_id,
+          sourceAssetId: clip.source_asset_id,
         });
       });
     }
@@ -783,6 +823,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         offset: 0,
         trackIndex: 0,
         color: assetColor,
+        mediaItemId: asset.mediaItemId,
+        sourceAssetId: asset.sourceAssetId,
       });
 
       // Add Audio for Video (Synced at same start time)
@@ -798,6 +840,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         offset: 0,
         trackIndex: targetTrack,
         color: '#10b981',
+        mediaItemId: asset.mediaItemId,
+        sourceAssetId: asset.sourceAssetId,
       });
     } else {
       // Smart Audio: Add at playhead, find first available track
@@ -815,11 +859,14 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         offset: 0,
         trackIndex: targetTrack,
         color: '#10b981',
+        mediaItemId: asset.mediaItemId,
+        sourceAssetId: asset.sourceAssetId,
       });
     }
 
     this.timelineState.timelineClips.update(prev => [...prev, ...clipsToAdd]);
     this.refreshTimelineLayout();
+    this.triggerAutoSave();
   }
 
   deleteAsset(asset: MediaAsset, event: Event) {
@@ -847,6 +894,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     }
 
     this.refreshTimelineLayout();
+    this.triggerAutoSave();
   }
 
   private findAvailableAudioTrack(startTime: number, duration: number): number {
@@ -905,6 +953,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     );
     this.timelineState.selectedClipId.set(null);
     this.refreshTimelineLayout();
+    this.triggerAutoSave();
   }
 
   // --- Split Logic ---
@@ -946,6 +995,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
     this.timelineState.selectedClipId.set(clip2.id);
     this.refreshTimelineLayout();
+    this.triggerAutoSave();
   }
 
   togglePlay() {
@@ -1185,6 +1235,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     if (this.trimState && this.trimState.active) {
       this.refreshTimelineLayout();
       this.trimState = null;
+      this.triggerAutoSave();
     }
   }
 
@@ -1282,6 +1333,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         ),
       );
     }
+    this.triggerAutoSave();
   }
 
   // --- Utilities ---
@@ -1332,5 +1384,76 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     const target = event.target as HTMLElement;
     this.timelineState.scrollOffset.set(target.scrollLeft);
     this.timeRuler.setScrollLeft(target.scrollLeft);
+  }
+
+  triggerAutoSave() {
+    this.lastSavedText.set('Saving...');
+    this.saveSubject.next();
+  }
+
+  saveTimeline() {
+    const sb = this.agentChatService.currentStoryboard();
+    if (!sb || !sb.id) {
+      console.warn('Cannot auto-save timeline: missing storyboard or ID');
+      return;
+    }
+
+    this.lastSavedText.set('Saving...');
+
+    const clips = this.timelineState.timelineClips();
+    const videoClips = clips
+      .filter(c => c.trackIndex === 0)
+      .map(c => {
+        const asset = this.timelineState.assets().find(a => a.id === c.assetId);
+        return {
+          media_item_id: c.mediaItemId || asset?.mediaItemId || null,
+          source_asset_id: c.sourceAssetId || asset?.sourceAssetId || null,
+          trim: {
+            offset: c.offset,
+            duration: c.duration,
+          },
+          volume: 1.0,
+          speed: 1.0,
+        };
+      });
+
+    const audioClips = clips
+      .filter(c => c.trackIndex > 0)
+      .map(c => {
+        const asset = this.timelineState.assets().find(a => a.id === c.assetId);
+        return {
+          media_item_id: c.mediaItemId || asset?.mediaItemId || null,
+          source_asset_id: c.sourceAssetId || asset?.sourceAssetId || null,
+          start_offset: c.startTime,
+          trim: {
+            offset: c.offset,
+            duration: c.duration,
+          },
+          volume: 1.0,
+        };
+      });
+
+    const updateData = {
+      timeline_data: {
+        title: sb.timeline?.title || 'Timeline',
+        video_clips: videoClips,
+        audio_clips: audioClips,
+      },
+    };
+
+    this.isSaving = true;
+    this.storyboardService.updateStoryboard(sb.id, updateData).subscribe({
+      next: (res: StoryboardResponse) => {
+        console.log('Storyboard timeline updated successfully', res);
+        this.agentChatService.currentStoryboard.set(res);
+        this.lastSavedText.set('Saved');
+        this.isSaving = false;
+      },
+      error: (err: unknown) => {
+        console.error('Error updating storyboard timeline', err);
+        this.lastSavedText.set('Failed to save changes');
+        this.isSaving = false;
+      },
+    });
   }
 }

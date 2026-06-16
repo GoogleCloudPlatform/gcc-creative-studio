@@ -29,6 +29,7 @@ import {
 
 import {TimelineDTO} from '../common/models/storyboard.model';
 import {MediaItemSelection} from '../common/components/image-selector/image-selector.component';
+import {StoryboardService} from '../services/storyboard/storyboard.service';
 
 describe('WorkbenchComponent', () => {
   let component: WorkbenchComponent;
@@ -355,6 +356,68 @@ describe('WorkbenchComponent', () => {
       mockAudio.onloadedmetadata();
       const updatedAsset = stateService.assets().find(a => a.id === 'a1');
       expect(updatedAsset?.duration).toBe(15);
+    });
+  });
+
+  describe('Auto-Save Logic', () => {
+    let storyboardService: StoryboardService;
+    let agentChatService: AgentChatService;
+    let stateService: TimelineStateService;
+
+    beforeEach(() => {
+      storyboardService = TestBed.inject(StoryboardService);
+      agentChatService = TestBed.inject(AgentChatService);
+      stateService = TestBed.inject(TimelineStateService);
+    });
+
+    it('should set status to Saving... in triggerAutoSave', () => {
+      component.triggerAutoSave();
+      expect(component.lastSavedText()).toBe('Saving...');
+    });
+
+    it('should call updateStoryboard and update currentStoryboard on saveTimeline success', () => {
+      const mockStoryboard = {id: 1, timeline: {title: 'Timeline'}};
+      agentChatService.currentStoryboard.set(mockStoryboard as any);
+      stateService.timelineClips.set([
+        {
+          id: 'c1',
+          assetId: 'a1',
+          startTime: 0,
+          duration: 5,
+          offset: 0,
+          trackIndex: 0,
+          color: 'blue',
+          mediaItemId: 1219,
+        },
+      ]);
+
+      const mockResponse = {
+        id: 1,
+        timeline: {title: 'Timeline Updated'},
+      };
+      spyOn(storyboardService, 'updateStoryboard').and.returnValue(
+        of(mockResponse as any),
+      );
+
+      component.saveTimeline();
+
+      expect(storyboardService.updateStoryboard).toHaveBeenCalledWith(1, {
+        timeline_data: {
+          title: 'Timeline',
+          video_clips: [
+            {
+              media_item_id: 1219,
+              source_asset_id: null,
+              trim: {offset: 0, duration: 5},
+              volume: 1.0,
+              speed: 1.0,
+            },
+          ],
+          audio_clips: [],
+        },
+      });
+      expect(agentChatService.currentStoryboard()).toEqual(mockResponse as any);
+      expect(component.lastSavedText()).toBe('Saved');
     });
   });
 });
