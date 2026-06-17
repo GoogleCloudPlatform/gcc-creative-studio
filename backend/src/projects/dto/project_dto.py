@@ -21,7 +21,7 @@ from typing import Optional, List
 class SceneDTO(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    id: Optional[int] = None
     topic: Optional[str] = None
     duration_seconds: Optional[float] = None
     first_frame_description: Optional[str] = None
@@ -48,7 +48,7 @@ class SceneDTO(BaseModel):
 class StoryboardDTO(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    id: Optional[int] = None
     session_id: Optional[str] = None
     template_name: Optional[str] = None
     bg_music_description: Optional[str] = None
@@ -60,7 +60,7 @@ class StoryboardDTO(BaseModel):
 class VideoClipDTO(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    id: Optional[int] = None
     media_item_id: Optional[int] = None
     source_asset_id: Optional[int] = None
     trim_offset: float
@@ -74,7 +74,7 @@ class VideoClipDTO(BaseModel):
 class AudioClipDTO(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    id: Optional[int] = None
     media_item_id: Optional[int] = None
     source_asset_id: Optional[int] = None
     start_offset: float
@@ -88,7 +88,7 @@ class AudioClipDTO(BaseModel):
 class TimelineDTO(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    id: Optional[int] = None
     title: Optional[str] = None
     video_clips: List[VideoClipDTO] = []
     audio_clips: List[AudioClipDTO] = []
@@ -104,6 +104,8 @@ class CanvasDTO(BaseModel):
 
 
 class StoryboardCreate(BaseModel):
+    model_config = ConfigDict(from_attributes=True, extra="allow")
+
     workspace_id: int
     session_id: Optional[str] = None
     template_name: Optional[str] = None
@@ -112,11 +114,14 @@ class StoryboardCreate(BaseModel):
 
 
 class StoryboardUpdate(BaseModel):
+    model_config = ConfigDict(from_attributes=True, extra="allow")
+
     template_name: Optional[str] = None
     bg_music_description: Optional[str] = None
     bg_music_asset_id: Optional[int] = None
     scenes: Optional[List[dict]] = None  # Simplified updates
     timeline_data: Optional[dict] = None  # Simplified updates
+    storyboard: Optional[dict] = None
 
 
 class StoryboardCreateResponse(BaseModel):

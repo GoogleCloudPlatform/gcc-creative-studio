@@ -29,6 +29,8 @@ from src.projects.schema.project_model import (
 from src.projects.dto.project_dto import (
     StoryboardResponse,
     StoryboardCreateResponse,
+    SceneDTO,
+    TimelineDTO,
 )
 
 
@@ -119,8 +121,9 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
     async def update_storyboard_data(
         self,
         storyboard_id: int,
-        storyboard_data: dict = None,
-        timeline_data: dict = None,
+        bg_music_description: str | None = None,
+        scenes: list[SceneDTO] | None = None,
+        timeline: TimelineDTO | None = None,
     ) -> StoryboardResponse | None:
         """Updates or creates related data for a storyboard."""
         query = (
@@ -141,98 +144,44 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
         if not storyboard:
             return None
 
-        if storyboard_data is not None:
-            storyboard.template_name = storyboard_data.get("template_name")
-            bg_music = storyboard_data.get("background_music_prompt", {})
-            storyboard.bg_music_description = bg_music.get("description")
+        if bg_music_description is not None:
+            storyboard.bg_music_description = bg_music_description
 
+        if scenes is not None:
             # Clear existing scenes
             storyboard.scenes.clear()
 
-            for scene_data in storyboard_data.get("scenes", []):
+            for scene_dto in scenes:
                 new_scene = Scene(
-                    topic=scene_data.get("topic"),
-                    duration_seconds=scene_data.get("duration_seconds"),
-                    first_frame_description=scene_data.get(
-                        "first_frame_prompt", {}
-                    ).get("description"),
-                    first_frame_media_item_id=scene_data.get(
-                        "first_frame_prompt", {}
-                    ).get("media_item_id"),
-                    first_frame_source_asset_id=scene_data.get(
-                        "first_frame_prompt", {}
-                    ).get("source_asset_id"),
-                    video_description=scene_data.get("video_prompt", {}).get(
-                        "description"
-                    ),
-                    video_duration_seconds=scene_data.get(
-                        "video_prompt", {}
-                    ).get("duration_seconds"),
-                    video_media_item_id=scene_data.get("video_prompt", {}).get(
-                        "media_item_id"
-                    ),
-                    video_source_asset_id=scene_data.get(
-                        "video_prompt", {}
-                    ).get("source_asset_id"),
-                    video_generated_url=scene_data.get("video_prompt", {}).get(
-                        "generated_url"
-                    ),
-                    voiceover_text=scene_data.get("voiceover_prompt", {}).get(
-                        "text"
-                    ),
-                    voiceover_gender=scene_data.get("voiceover_prompt", {}).get(
-                        "gender"
-                    ),
-                    voiceover_description=scene_data.get(
-                        "voiceover_prompt", {}
-                    ).get("description"),
-                    voiceover_media_item_id=scene_data.get(
-                        "voiceover_prompt", {}
-                    ).get("media_item_id"),
-                    voiceover_source_asset_id=scene_data.get(
-                        "voiceover_prompt", {}
-                    ).get("source_asset_id"),
-                    transition_type=scene_data.get("transition_hints", {}).get(
-                        "type"
-                    ),
-                    transition_duration=scene_data.get(
-                        "transition_hints", {}
-                    ).get("duration"),
-                    audio_ambient_description=scene_data.get(
-                        "audio_hints", {}
-                    ).get("ambient_sound"),
-                    audio_sfx_description=scene_data.get("audio_hints", {}).get(
-                        "sfx"
-                    ),
+                    **scene_dto.model_dump(exclude={"id"}, exclude_none=True)
                 )
                 storyboard.scenes.append(new_scene)
 
-        if timeline_data is not None:
+        if timeline is not None:
             if not storyboard.timeline:
                 storyboard.timeline = Timeline()
-            storyboard.timeline.title = timeline_data.get("title")
+            storyboard.timeline.title = timeline.title
 
             storyboard.timeline.video_clips.clear()
-            for clip_data in timeline_data.get("video_clips", []):
+            for clip_dto in timeline.video_clips:
                 new_clip = VideoClip(
-                    media_item_id=clip_data.get("media_item_id"),
-                    source_asset_id=clip_data.get("source_asset_id"),
-                    trim_offset=clip_data.get("trim", {}).get("offset", 0.0),
-                    trim_duration=clip_data.get("trim", {}).get("duration"),
-                    volume=clip_data.get("volume", 1.0),
-                    speed=clip_data.get("speed", 1.0),
+                    **clip_dto.model_dump(
+                        exclude={
+                            "id",
+                            "presigned_url",
+                            "presigned_thumbnail_url",
+                        },
+                        exclude_none=True,
+                    )
                 )
                 storyboard.timeline.video_clips.append(new_clip)
 
             storyboard.timeline.audio_clips.clear()
-            for clip_data in timeline_data.get("audio_clips", []):
+            for clip_dto in timeline.audio_clips:
                 new_clip = AudioClip(
-                    media_item_id=clip_data.get("media_item_id"),
-                    source_asset_id=clip_data.get("source_asset_id"),
-                    start_offset=clip_data.get("start_offset", 0.0),
-                    trim_offset=clip_data.get("trim", {}).get("offset", 0.0),
-                    trim_duration=clip_data.get("trim", {}).get("duration"),
-                    volume=clip_data.get("volume", 1.0),
+                    **clip_dto.model_dump(
+                        exclude={"id", "presigned_url"}, exclude_none=True
+                    )
                 )
                 storyboard.timeline.audio_clips.append(new_clip)
 

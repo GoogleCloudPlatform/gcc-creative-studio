@@ -40,7 +40,7 @@ from src.agents.agent_dtos import (
 from src.projects.project_repository import StoryboardRepository
 from src.images.repository.media_item_repository import MediaRepository
 from src.auth.iam_signer_credentials_service import IamSignerCredentials
-from src.projects.project_controller import _enrich_storyboard
+from src.projects.project_service import ProjectService
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
 router = APIRouter(
@@ -181,9 +181,8 @@ async def get_session_detail(
     appName: str = APP_NAME,
     current_user: UserModel = Depends(get_current_user),
     storyboard_repo: StoryboardRepository = Depends(),
-    media_repo: MediaRepository = Depends(),
-    iam_signer_credentials: IamSignerCredentials = Depends(),
     workspace_auth: WorkspaceAuth = Depends(),
+    project_service: ProjectService = Depends(),
 ):
     """Retrieve session messages (from Vertex AI) and associated storyboard (from DB) in a single request."""
     user_id = str(current_user.id)
@@ -198,9 +197,7 @@ async def get_session_detail(
     # 1. Retrieve and enrich storyboard if storyboard_id is provided
     if storyboard_id is not None:
         try:
-            storyboard = await storyboard_repo.get_by_id_with_details(
-                storyboard_id
-            )  # move this to service
+            storyboard = await project_service.get_storyboard(storyboard_id)
         except Exception as e:
             logger.error(f"Error retrieving storyboard {storyboard_id}: {e}")
             raise HTTPException(
@@ -214,24 +211,16 @@ async def get_session_detail(
                 status_code=403,
                 detail="Not authorized to access this storyboard",
             )
-        await _enrich_storyboard(storyboard, media_repo, iam_signer_credentials)
         if storyboard.session_id:
             resolved_session_id = storyboard.session_id
 
     # 2. Retrieve storyboard by workspace & session_id if storyboard_id was not provided
     elif resolved_session_id is not None:
-        storyboards = await storyboard_repo.find_by_workspace(
-            workspace_id=workspace_id
+        storyboards = await project_service.list_storyboards(
+            workspace_id=workspace_id, session_id=resolved_session_id
         )
         if storyboards:
-            # Filter manually by session_id in the resolved workspace list
-            for sb in storyboards:
-                if sb.session_id == resolved_session_id:
-                    storyboard = sb
-                    await _enrich_storyboard(
-                        storyboard, media_repo, iam_signer_credentials
-                    )
-                    break
+            storyboard = storyboards[0]
 
     # 3. Retrieve session messages from Vertex AI if we have a session_id
     session_dto = None
@@ -487,9 +476,7 @@ async def chat(
                     agent_config["resource_name"]
                 )
 
-                agent_input = {
-                    "message": body.get("newMessage")
-                }
+                agent_input = {"message": body.get("newMessage")}
 
                 # Build request payload without run_config since appName/workspaceId are not permitted
                 request = aip_types.StreamQueryReasoningEngineRequest(

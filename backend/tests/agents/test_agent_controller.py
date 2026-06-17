@@ -61,12 +61,13 @@ def fixture_mock_reasoning_engine():
         yield mock_instance
 
 
-@pytest.fixture(name="mock_enrich_storyboard", autouse=True)
-def fixture_mock_enrich_storyboard():
-    with patch(
-        "src.agents.agent_controller._enrich_storyboard", AsyncMock()
-    ) as mock:
-        yield mock
+from src.projects.project_service import ProjectService
+
+
+@pytest.fixture(name="mock_project_service")
+def fixture_mock_project_service():
+    service = AsyncMock(spec=ProjectService)
+    return service
 
 
 @pytest.fixture(name="mock_workspace_repo")
@@ -93,6 +94,7 @@ def fixture_client(
     mock_workspace_service,
     mock_storyboard_repo,
     mock_workspace_repo,
+    mock_project_service,
 ):
     app = FastAPI()
     app.include_router(router)
@@ -108,6 +110,7 @@ def fixture_client(
     app.dependency_overrides[StoryboardRepository] = (
         lambda: mock_storyboard_repo
     )
+    app.dependency_overrides[ProjectService] = lambda: mock_project_service
     return TestClient(app)
 
 
@@ -227,7 +230,7 @@ async def test_chat_success(client, mock_db):
 
 @pytest.mark.anyio
 async def test_get_session_detail_by_session_id(
-    mock_reasoning_engine, mock_storyboard_repo, client
+    mock_reasoning_engine, mock_project_service, client
 ):
     # Mock reasoning engine
     mock_reasoning_engine.get_session.return_value = {
@@ -249,7 +252,7 @@ async def test_get_session_detail_by_session_id(
     mock_storyboard.scenes = []
     mock_storyboard.timeline = None
     # Use standard dict representation to align with pydantic validation
-    mock_storyboard_repo.find_by_workspace.return_value = [mock_storyboard]
+    mock_project_service.list_storyboards.return_value = [mock_storyboard]
 
     response = client.get(
         "/api/agent/sessions/detail?workspace_id=1&session_id=s1"
@@ -263,7 +266,7 @@ async def test_get_session_detail_by_session_id(
 
 @pytest.mark.anyio
 async def test_get_session_detail_by_storyboard_id(
-    mock_reasoning_engine, mock_storyboard_repo, client
+    mock_reasoning_engine, mock_project_service, client
 ):
     # Mock storyboard repo get_by_id_with_details
     mock_storyboard = MagicMock()
@@ -276,7 +279,7 @@ async def test_get_session_detail_by_storyboard_id(
     mock_storyboard.bg_music_asset_id = None
     mock_storyboard.scenes = []
     mock_storyboard.timeline = None
-    mock_storyboard_repo.get_by_id_with_details.return_value = mock_storyboard
+    mock_project_service.get_storyboard.return_value = mock_storyboard
 
     # Mock reasoning engine
     mock_reasoning_engine.get_session.return_value = {
@@ -298,9 +301,9 @@ async def test_get_session_detail_by_storyboard_id(
 
 @pytest.mark.anyio
 async def test_get_session_detail_storyboard_not_found(
-    mock_storyboard_repo, client
+    mock_project_service, client
 ):
-    mock_storyboard_repo.get_by_id_with_details.return_value = None
+    mock_project_service.get_storyboard.return_value = None
 
     response = client.get(
         "/api/agent/sessions/detail?workspace_id=1&storyboard_id=999"
@@ -311,11 +314,11 @@ async def test_get_session_detail_storyboard_not_found(
 
 
 @pytest.mark.anyio
-async def test_get_session_detail_unauthorized(mock_storyboard_repo, client):
+async def test_get_session_detail_unauthorized(mock_project_service, client):
     mock_storyboard = MagicMock()
     mock_storyboard.id = 123
     mock_storyboard.user_id = 999  # different user
-    mock_storyboard_repo.get_by_id_with_details.return_value = mock_storyboard
+    mock_project_service.get_storyboard.return_value = mock_storyboard
 
     response = client.get(
         "/api/agent/sessions/detail?workspace_id=1&storyboard_id=123"
@@ -340,9 +343,9 @@ async def test_get_session_detail_missing_params(client):
 
 @pytest.mark.anyio
 async def test_get_session_detail_storyboard_id_out_of_range(
-    mock_storyboard_repo, client
+    mock_project_service, client
 ):
-    mock_storyboard_repo.get_by_id_with_details.side_effect = Exception(
+    mock_project_service.get_storyboard.side_effect = Exception(
         "value out of int32 range"
     )
 

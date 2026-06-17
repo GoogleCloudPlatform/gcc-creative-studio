@@ -823,7 +823,7 @@ class VeoService:
             source_assets=source_assets or None,
             gcs_uris=[],
             thumbnail_uris=[],
-            comment=request_dto.file_name,
+            comment=getattr(request_dto, "file_name", None),
         )
 
         # 2. Save to DB to get the ID
@@ -916,7 +916,7 @@ class VeoService:
                     i.model_dump() for i in request_dto.inputs
                 ],
             },
-            comment=request_dto.file_name,
+            comment=getattr(request_dto, "file_name", None),
         )
 
         # 2. Save to DB

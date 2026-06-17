@@ -29,7 +29,9 @@ os.environ["ENVIRONMENT"] = "local"
 
 import google.auth
 
-google.auth.default = MagicMock(return_value=(MagicMock(), "dummy-project-id"))
+mock_creds = MagicMock()
+mock_creds.universe_domain = "googleapis.com"
+google.auth.default = MagicMock(return_value=(mock_creds, "dummy-project-id"))
 
 # Mock ProjectsClient to prevent live API calls during startup validation check
 from google.cloud import resourcemanager_v3

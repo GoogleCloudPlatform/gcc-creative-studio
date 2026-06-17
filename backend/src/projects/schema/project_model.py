@@ -88,6 +88,7 @@ class Scene(Base):
     storyboard_id: Mapped[int] = mapped_column(
         ForeignKey("storyboards.id"), nullable=False
     )
+    order: Mapped[int] = mapped_column(default=0, nullable=False)
     topic: Mapped[str | None] = mapped_column(String, nullable=True)
     duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
 

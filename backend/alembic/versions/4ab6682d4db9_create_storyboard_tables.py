@@ -15,7 +15,7 @@
 """create_storyboard_tables
 
 Revision ID: 4ab6682d4db9
-Revises: 8493cfe9111e
+Revises: 5ec709cf70e9
 Create Date: 2026-04-14 19:50:19.192265
 
 """

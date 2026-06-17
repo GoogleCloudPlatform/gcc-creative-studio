@@ -60,6 +60,10 @@ from src.workspaces.workspace_controller import router as workspace_router
 from src.agents.agent_controller import router as agent_router
 from src.projects.project_controller import router as project_router
 
+from dotenv import load_dotenv
+
+# Load environment variables from a .env file
+load_dotenv()
 
 def configure_cors(app):
     """Configures CORS middleware based on the environment."""
