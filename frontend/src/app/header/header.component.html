@@ -28,7 +28,7 @@
     [matTooltip]="getTooltipText()"
     matTooltipClass="multiline-tooltip"
     matTooltipPosition="right"
-    class="user-profile-button cursor-pointer !w-14 !h-14 bg-blend-soft-light bg-white/40 !rounded-full shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] backdrop-blur-2xl inline-flex justify-center items-center gap-2.5 overflow-hidden !aspect-square"
+    class="user-profile-button cursor-pointer !w-11 !h-11 md:!w-14 md:!h-14 bg-blend-soft-light bg-white/40 !rounded-full shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] backdrop-blur-2xl inline-flex justify-center items-center gap-2.5 overflow-hidden !aspect-square"
   >
     <img
       *ngIf="currentUser?.picture; else placeholder"
@@ -51,13 +51,13 @@
       routerLink="/"
       matTooltip="Images"
       matTooltipPosition="right"
-      class="md:mb-[10px] cursor-pointer w-14 h-14 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-2.5"
+      class="md:mb-[10px] cursor-pointer md:w-14 md:h-14 w-10 h-10 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-2.5"
     >
       <div
         *ngIf="router.isActive('/', true)"
         class="flex-1 h-14 bg-gradient-to-r from-blue-500 via-violet-500 to-red-400 rounded-full blur-[3px] backdrop-blur-md"
       ></div>
-      <div class="w-6 h-6 left-[16px] top-[16px] absolute overflow-hidden">
+      <div class="w-6 h-6 left-[9px] top-[9px] md:left-[16px] md:top-[16px] absolute overflow-hidden">
         <button
           matFab
           aria-label="Images"
@@ -72,13 +72,13 @@
       routerLink="/video"
       matTooltip="Video"
       matTooltipPosition="right"
-      class="md:mb-[10px] cursor-pointer w-14 h-14 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-2.5 overflow-hidden"
+      class="md:mb-[10px] cursor-pointer md:w-14 md:h-14 w-10 h-10 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-1.5 md:gap-2.5 overflow-hidden"
     >
       <div
         *ngIf="router.isActive('/video', true)"
         class="flex-1 h-14 bg-gradient-to-r from-blue-500 via-violet-500 to-red-400 rounded-full blur-[3px] backdrop-blur-md"
       ></div>
-      <div class="w-6 h-6 left-[16px] top-[16px] absolute overflow-hidden">
+      <div class="w-6 h-6 left-[9px] top-[9px] md:left-[16px] md:top-[16px] absolute overflow-hidden">
         <button
           matFab
           aria-label="Video"
@@ -93,13 +93,13 @@
       routerLink="/audio"
       matTooltip="Audio"
       matTooltipPosition="right"
-      class="md:mb-[10px] cursor-pointer w-14 h-14 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-2.5 overflow-hidden"
+      class="md:mb-[10px] cursor-pointer md:w-14 md:h-14 w-10 h-10 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-1.5 md:gap-2.5 overflow-hidden"
     >
       <div
         *ngIf="router.isActive('/audio', false)"
         class="flex-1 h-14 bg-gradient-to-r from-blue-500 via-violet-500 to-red-400 rounded-full blur-[3px] backdrop-blur-md"
       ></div>
-      <div class="w-6 h-6 left-[16px] top-[16px] absolute overflow-hidden">
+      <div class="w-6 h-6 left-[9px] top-[9px] md:left-[16px] md:top-[16px] absolute overflow-hidden">
         <button
           matFab
           aria-label="Audio"
@@ -117,13 +117,13 @@
     >
       <div
         [class.bg-white]="toolsMenuHovered"
-        class="cursor-pointer w-14 h-14 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-2.5 overflow-hidden transition-colors duration-200"
+        class="cursor-pointer md:w-14 md:h-14 w-10 h-10 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-1.5 md:gap-2.5 overflow-hidden transition-colors duration-200"
       >
         <div
           *ngIf="router.isActive('/fun-templates', true) || router.isActive('/vto', false)"
           class="flex-1 h-14 bg-gradient-to-r from-blue-500 via-violet-500 to-red-400 rounded-full blur-[3px] backdrop-blur-md"
         ></div>
-        <div class="w-6 h-6 left-[16px] top-[16px] absolute overflow-hidden">
+        <div class="w-6 h-6 left-[9px] top-[9px] md:left-[16px] md:top-[16px] absolute overflow-hidden">
           <button
             matFab
             aria-label="Tools"
@@ -217,13 +217,13 @@
       routerLink="/gallery"
       matTooltip="Media Gallery"
       matTooltipPosition="right"
-      class="md:mb-[10px] cursor-pointer w-14 h-14 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-2.5 overflow-hidden"
+      class="md:mb-[10px] cursor-pointer md:w-14 md:h-14 w-10 h-10 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-1.5 md:gap-2.5 overflow-hidden"
     >
       <div
         *ngIf="router.isActive('/gallery', false)"
         class="flex-1 h-14 bg-gradient-to-r from-blue-500 via-violet-500 to-red-400 rounded-full blur-[3px] backdrop-blur-md"
       ></div>
-      <div class="w-6 h-6 left-[16px] top-[16px] absolute overflow-hidden">
+      <div class="w-6 h-6 left-[9px] top-[9px] md:left-[16px] md:top-[16px] absolute overflow-hidden">
         <button
           matFab
           aria-label="Arena"
@@ -238,13 +238,13 @@
       routerLink="/workbench"
       matTooltip="Workbench"
       matTooltipPosition="right"
-      class="md:mb-[10px] cursor-pointer w-14 h-14 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-2.5 overflow-hidden"
+      class="md:mb-[10px] cursor-pointer md:w-14 md:h-14 w-10 h-10 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-1.5 md:gap-2.5 overflow-hidden"
     >
        <div
         *ngIf="router.isActive('/workbench', true)"
         class="flex-1 h-14 bg-gradient-to-r from-blue-500 via-violet-500 to-red-400 rounded-full blur-[3px] backdrop-blur-md"
       ></div>
-      <div class="w-6 h-6 left-[16px] top-[16px] absolute overflow-hidden">
+      <div class="w-6 h-6 left-[9px] top-[9px] md:left-[16px] md:top-[16px] absolute overflow-hidden">
         <button
           matFab
           aria-label="workbench"
@@ -259,13 +259,13 @@
       routerLink="/projects"
       matTooltip="Projects"
       matTooltipPosition="right"
-      class="md:mb-[10px] cursor-pointer w-14 h-14 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-2.5 overflow-hidden"
+      class="md:mb-[10px] cursor-pointer md:w-14 md:h-14 w-10 h-10 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-1.5 md:gap-2.5 overflow-hidden"
     >
        <div
         *ngIf="router.isActive('/projects', true)"
         class="flex-1 h-14 bg-gradient-to-r from-blue-500 via-violet-500 to-red-400 rounded-full blur-[3px] backdrop-blur-md"
       ></div>
-      <div class="w-6 h-6 left-[16px] top-[16px] absolute overflow-hidden">
+      <div class="w-6 h-6 left-[9px] top-[9px] md:left-[16px] md:top-[16px] absolute overflow-hidden">
         <button
           matFab
           aria-label="projects"
@@ -281,13 +281,13 @@
       *ngIf="authService.isUserAdmin()"
       matTooltip="Admin"
       matTooltipPosition="right"
-      class="md:mb-[10px] cursor-pointer w-14 h-14 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-2.5 overflow-hidden"
+      class="md:mb-[10px] cursor-pointer md:w-14 md:h-14 w-10 h-10 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-1.5 md:gap-2.5 overflow-hidden"
     >
       <div
         *ngIf="router.isActive('/admin', false)"
         class="flex-1 h-14 bg-gradient-to-r from-blue-500 via-violet-500 to-red-400 rounded-full blur-[3px] backdrop-blur-md"
       ></div>
-      <div class="w-6 h-6 left-[16px] top-[16px] absolute overflow-hidden">
+      <div class="w-6 h-6 left-[9px] top-[9px] md:left-[16px] md:top-[16px] absolute overflow-hidden">
         <button
           matFab
           aria-label="Admin"
@@ -302,9 +302,9 @@
       (click)="logout()"
       matTooltip="Logout"
       matTooltipPosition="right"
-      class="cursor-pointer w-14 h-14 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-2.5 overflow-hidden"
+      class="cursor-pointer md:w-14 md:h-14 w-10 h-10 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-1.5 md:gap-2.5 overflow-hidden"
     >
-      <div class="w-6 h-6 left-[16px] top-[16px] absolute overflow-hidden">
+      <div class="w-6 h-6 left-[9px] top-[9px] md:left-[16px] md:top-[16px] absolute overflow-hidden">
         <button
           matFab
           aria-label="Logout"

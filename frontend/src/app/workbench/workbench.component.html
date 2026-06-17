@@ -31,7 +31,7 @@
     (mouseup)="onTrimEnd(); onDragEnd(); onScrubEnd()"
   >
     <!-- Top Workspace (2 Columns) -->
-    <div class="flex flex-row justify-center items-center gap-6">
+    <div class="flex flex-row justify-center items-center gap-6 top-workspace">
       <!-- COL 1: Assets Panel -->
       <div
         *ngIf="
@@ -437,7 +437,7 @@
 
       <!-- COL 3: Preview Area -->
       <div
-        class="glass-bg-effect flex-1 max-w-[80rem] min-h-[500px] flex flex-col items-center justify-center rounded-xl overflow-hidden rounded-[48px]"
+        class="glass-bg-effect flex-1 max-w-[80rem] min-h-[500px] flex flex-col items-center justify-center rounded-xl overflow-hidden rounded-[48px] max-w-[108rem] w-[100%]"
         style="height: 55vh"
       >
         <!-- Storyboard View (Agent Active) -->
@@ -576,23 +576,23 @@
     </div>
 
     <!-- Bottom Timeline (Floating) -->
-    <div class="pt-4 flex flex-col overflow-hidden relative z-10">
+    <div class="flex flex-col overflow-hidden relative z-10 bottom-workspace">
       <div
-        class="flex flex-col overflow-hidden relative max-w-[108rem] w-[100%] mx-auto"
+        class="flex flex-col md:overflow-hidden overflow-x-auto relative max-w-[108rem] w-[100%] mx-auto"
       >
         <!-- Global Playhead -->
         <div *ngIf="
-                                            timelineState.currentTime() * timelineState.pixelsPerSecond() >=
-                                            timelineState.scrollOffset()
-                                          "
+                    timelineState.currentTime() * timelineState.pixelsPerSecond() >=
+                    timelineState.scrollOffset()
+                  "
           class="absolute top-0 bottom-1 w-px bg-white pointer-events-none !z-[100]"
           [style.left]="
-          'calc(20rem + ' +
-          (timelineState.currentTime() * timelineState.pixelsPerSecond() -
-          timelineState.scrollOffset()) +
-          'px)'
+            'calc(20rem + ' +
+            (timelineState.currentTime() * timelineState.pixelsPerSecond() -
+            timelineState.scrollOffset()) +
+            'px)'
           "
-          >
+        >
           <!-- Transparent Hit Box for Dragging -->
           <div
             class="absolute top-0 bottom-0 w-6 -left-3 cursor-grab active:cursor-grabbing pointer-events-auto z-[101] hover:bg-white/5 transition-colors"
@@ -677,7 +677,7 @@
           </div>
 
           <div
-            class="flex flex-row w-[calc(100%-18rem)] items-center gap-2 mt-[0.5rem] !pl-4"
+            class="flex flex-row w-[calc(100%-18rem)] items-center gap-2 mt-[0.5rem] !pl-4 min-w-[32rem]"
           >
             <app-time-ruler class="flex-1 min-w-0" [totalDuration]="timelineState.totalDuration()"
               [pixelsPerSecond]="timelineState.pixelsPerSecond()" [scrollOffset]="timelineState.scrollOffset()"
@@ -725,7 +725,7 @@
 
         <!-- Tracks Area -->
         <div
-          class="glass-bg-effect min-h-[12rem] max-w-[108rem] w-[100%] flex-1 flex flex-col items-end p-2 rounded-2xl backdrop-blur-[50px] relative"
+          class="glass-bg-effect min-h-[12rem] max-w-[108rem] w-fit min-w-[100%] md:w-[100%] flex-1 flex flex-col items-end p-2 rounded-2xl backdrop-blur-[50px] relative"
         >
           <div class="flex flex-row items-center gap-4">
             <!-- Last Saved Status -->
@@ -746,7 +746,7 @@
               <mat-icon *ngIf="!isDownloading()">download</mat-icon>
               <mat-icon *ngIf="isDownloading()" class="animate-spin">sync</mat-icon>
               <span>{{ isDownloading() ? 'Rendering...' : 'Download' }}</span>
-              </studio-button>
+            </studio-button>
           </div>
           <div class="w-full flex-1 flex">
             <!-- Left Track Controls -->
@@ -814,12 +814,13 @@
               </div>
             </div>
 
-            <div class="flex-1 flex flex-col w-[calc(100%-18rem)]">
+            <div class="flex-1 flex flex-col md:w-[calc(100%-18rem)]">
               <!-- Main Scrollable Timeline -->
               <div #timelineContainer class="relative !pl-4 overflow-hidden" (mousedown)="onTimelineMouseDown($event)">
                 <div class="relative h-full" [style.width.px]="timelineWidth()" [style.transform]="
-                                                                    'translateX(-' + timelineState.scrollOffset() + 'px)'
-                                                                  ">
+                                  'translateX(-' + timelineState.scrollOffset() + 'px)'
+                  "
+                >
                   <!-- VIDEO TRACK (draggable clips) -->
                   <div class="h-20 mt-2 relative w-full">
                     <div
@@ -871,8 +872,8 @@
                       >
                         <ng-container *ngFor="let i of getThumbnailsSequence(clip.duration)">
                           <img [src]="getAssetThumbnail(clip.assetId)" class="h-full object-cover w-20 flex-shrink-0" />
-                          </ng-container>
-                          </div>
+                        </ng-container>
+                        </div>
 
                       <!-- Fallback gradient when no thumbnail -->
                       <div *ngIf="!getAssetThumbnail(clip.assetId)"
@@ -945,15 +946,16 @@
                       </div>
                       <!-- Dummy Scrollbar -->
             <div *ngIf="
-                                                                timelineState.totalDuration() *
-                                                                  timelineState.pixelsPerSecond() >
-                                                                containerWidthSignal()
-                                                              " #dummyScrollContainer
+                            timelineState.totalDuration() *
+                              timelineState.pixelsPerSecond() >
+                            containerWidthSignal()
+              "
+              #dummyScrollContainer
               class="absolute bottom-0 right-0 w-[calc(100%-18rem)] h-6 overflow-x-auto !pl-4 z-20 custom-scrollbar"
               (scroll)="onDummyScroll($event)"
-              >
+            >
               <div [style.width.px]="timelineWidth()" class="h-px"></div>
-              </div>
+            </div>
           </div>
           <!-- Timer -->
           <div class="absolute bottom-2 right-2 w-max z-20">
