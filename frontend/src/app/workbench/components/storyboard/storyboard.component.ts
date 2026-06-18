@@ -180,10 +180,10 @@ export class StoryboardComponent {
                   {
                     id: `shot-${idx + 1}-1`,
                     // Use generated asset URL if available, otherwise fallback to old structure or placeholder
-                    imageUrl:
+                    imageUrl: this.convertGcsUri(
                       s.first_frame_generated_url ||
-                      s.first_frame_prompt?.generated_asset_url ||
-                      'assets/images/storyboard-default.png',
+                      s.first_frame_prompt?.generated_asset_url
+                    ),
                     assetId:
                       s.first_frame_prompt?.asset_id ||
                       s.first_frame_media_item_id,
@@ -445,5 +445,13 @@ export class StoryboardComponent {
       return isNaN(id) ? null : id;
     }
     return null;
+  }
+
+  convertGcsUri(uri?: string): string {
+    if (!uri) return 'assets/images/storyboard-default.png';
+    if (uri.startsWith('gs://')) {
+      return `https://storage.googleapis.com/${uri.substring(5)}`;
+    }
+    return uri;
   }
 }

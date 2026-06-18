@@ -97,9 +97,7 @@ class ConfigService(BaseSettings):
     ADMIN_USER_EMAIL: str = "system"
 
     # --- Agent Auth ---
-    AGENT_ENGINE_RESOURCE_NAME: str = (
-        ""
-    )
+    AGENT_ENGINE_RESOURCE_NAME: str = ""
     AGENT_LOCATION: str = "us-central1"
     AGENT_ENGINE_USER_AUTH_TOKEN_KEY: str = "user_auth_token"
 

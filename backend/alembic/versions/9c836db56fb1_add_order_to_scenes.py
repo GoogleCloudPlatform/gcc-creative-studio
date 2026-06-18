@@ -35,9 +35,7 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.add_column(
         "scenes",
-        sa.Column(
-            "order", sa.Integer(), nullable=False, server_default="0"
-        ),
+        sa.Column("order", sa.Integer(), nullable=False, server_default="0"),
     )
 
 

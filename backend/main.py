@@ -65,6 +65,7 @@ from dotenv import load_dotenv
 # Load environment variables from a .env file
 load_dotenv()
 
+
 def configure_cors(app):
     """Configures CORS middleware based on the environment."""
     environment = getenv("ENVIRONMENT")

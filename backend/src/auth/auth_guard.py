@@ -47,7 +47,11 @@ async def get_current_user(
     try:
         user_auth_header = request.headers.get("X-User-Authorization")
         if user_auth_header:
-            token = user_auth_header.replace("Bearer ", "").replace("bearer ", "").strip()
+            token = (
+                user_auth_header.replace("Bearer ", "")
+                .replace("bearer ", "")
+                .strip()
+            )
 
         # 2. Fall back to Token verification
         if not token:
@@ -55,12 +59,13 @@ async def get_current_user(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Missing authentication token.",
             )
-            
+
         decoded_token = {}
         if token.startswith("ya29."):
             # --- Verify Google OAuth Access Token (Agent Engine) ---
             logger.info("Verifying Google OAuth Access Token...")
             import requests
+
             response = await asyncio.to_thread(
                 requests.get,
                 f"https://oauth2.googleapis.com/tokeninfo?access_token={token}",
@@ -73,13 +78,28 @@ async def get_current_user(
                 )
             decoded_token = response.json()
         elif config_service.ENVIRONMENT == "local":
-            # --- Local: Use Firebase Auth ---
-            # Verifies the token using the standard Firebase Admin SDK method.
-            logger.info("Verifying token using Firebase Admin SDK...")
-            decoded_token = await asyncio.to_thread(auth.verify_id_token, token)
+            try:
+                logger.info("Verifying token using Firebase Admin SDK...")
+                decoded_token = await asyncio.to_thread(
+                    auth.verify_id_token, token
+                )
+            except Exception as firebase_err:
+                logger.info(
+                    "Firebase verification failed, falling back to Google OIDC: %s",
+                    firebase_err,
+                )
+                try:
+                    google_token_audience = config_service.GOOGLE_TOKEN_AUDIENCE
+                    decoded_token = await asyncio.to_thread(
+                        id_token.verify_oauth2_token,
+                        token,
+                        google_auth_requests.Request(),
+                        audience=google_token_audience,
+                    )
+                except Exception as oidc_err:
+                    raise firebase_err from oidc_err
         else:
-            # --- Development/Production: Use Google Identity Platform
-            # (OIDC) ---
+            # --- Development/Production: Use Google Identity Platform (OIDC) ---
             # Verifies the Google-issued OIDC ID token. The audience must be the
             # OAuth 2.0 client ID of the Identity Platform-protected resource.
             google_token_audience = config_service.GOOGLE_TOKEN_AUDIENCE

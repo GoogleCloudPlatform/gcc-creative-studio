@@ -54,19 +54,43 @@ def fixture_mock_storyboard_repo():
 
 @pytest.fixture(name="mock_remote_agent")
 def fixture_mock_remote_agent():
-    with patch(
-        "src.agents.agent_service.AgentService._get_remote_agent"
-    ) as mock, patch("vertexai.Client") as mock_vclient:
+    with (
+        patch(
+            "src.agents.agent_service.AgentService._get_remote_agent"
+        ) as mock,
+        patch("vertexai.Client") as mock_vclient,
+    ):
         mock_instance = MagicMock()
         mock.return_value = mock_instance
 
         mock_vclient_inst = MagicMock()
         mock_vclient.return_value = mock_vclient_inst
         mock_vclient_inst.agent_engines.sessions.list.return_value = [
-            {"id": "session_1", "appName": "ads_x", "userId": "1", "state": {}, "lastUpdateTime": None, "events": []}
+            {
+                "id": "session_1",
+                "appName": "ads_x",
+                "userId": "1",
+                "state": {},
+                "lastUpdateTime": None,
+                "events": [],
+            }
         ]
-        mock_vclient_inst.agent_engines.sessions.create.return_value = {"id": "session_1", "appName": "ads_x", "userId": "1", "state": {}, "lastUpdateTime": None, "events": []}
-        mock_vclient_inst.agent_engines.sessions.get.return_value = {"id": "session_1", "appName": "ads_x", "userId": "1", "state": {}, "lastUpdateTime": None, "events": []}
+        mock_vclient_inst.agent_engines.sessions.create.return_value = {
+            "id": "session_1",
+            "appName": "ads_x",
+            "userId": "1",
+            "state": {},
+            "lastUpdateTime": None,
+            "events": [],
+        }
+        mock_vclient_inst.agent_engines.sessions.get.return_value = {
+            "id": "session_1",
+            "appName": "ads_x",
+            "userId": "1",
+            "state": {},
+            "lastUpdateTime": None,
+            "events": [],
+        }
         mock_vclient_inst.agent_engines.sessions.delete.return_value = None
         mock_instance.vclient = mock_vclient_inst
         yield mock_instance
@@ -121,7 +145,9 @@ def fixture_client(
         lambda: mock_storyboard_repo
     )
     app.dependency_overrides[ProjectService] = lambda: mock_project_service
-    app.dependency_overrides[security] = lambda: HTTPAuthorizationCredentials(scheme="Bearer", credentials="dummy")
+    app.dependency_overrides[security] = lambda: HTTPAuthorizationCredentials(
+        scheme="Bearer", credentials="dummy"
+    )
     return TestClient(app, headers={"Authorization": "Bearer dummy"})
 
 
@@ -220,6 +246,7 @@ async def test_chat_success(mock_remote_agent, client, mock_db):
     async def dummy_stream(*args, **kwargs):
         if False:
             yield None
+
     mock_remote_agent.async_stream_query = dummy_stream
 
     payload = {
@@ -441,4 +468,3 @@ async def test_agent_service_exceptions(mock_remote_agent):
     service.client.agent_engines.sessions.delete.side_effect = Exception("err")
     with pytest.raises(HTTPException):
         await service.delete_session("s1", "u", MagicMock())
-

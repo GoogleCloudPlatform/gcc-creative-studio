@@ -355,6 +355,13 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
         let text = '';
         let assetMetadata = null;
         let storyboardMetadata = null;
+        if (m.actions?.storyboard) {
+          const extracted = this.extractStoryboardData(m.actions.storyboard);
+          if (extracted) {
+            storyboardMetadata = extracted;
+            this.agentChatService.currentStoryboard.set(extracted);
+          }
+        }
         for (const part of parts) {
           if (part.text) {
             let partText = part.text;
@@ -550,6 +557,29 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     let isInJsonBlock = false;
     const callbacks: SSECallbacks<any> = {
       onMessage: (data: any) => {
+        if (data.actions?.storyboard) {
+          const sb = this.extractStoryboardData(data.actions.storyboard);
+          if (sb) {
+            this.isTyping.set(false);
+            this.agentChatService.isGeneratingStoryboard.set(false);
+            this.agentChatService.currentStoryboard.set(sb);
+            this.chatMessages.update(msgs => {
+              if (agentMessageIndex === -1) {
+                msgs.push({
+                  sender: 'agent',
+                  text: '',
+                  storyboard: sb,
+                  timestamp: new Date(),
+                });
+                agentMessageIndex = msgs.length - 1;
+              } else {
+                msgs[agentMessageIndex].storyboard = sb;
+              }
+              return [...msgs];
+            });
+            this.shouldScrollToBottom = true;
+          }
+        }
         if (data.content && data.content.parts) {
           for (const part of data.content.parts) {
             if (part.text) {
@@ -802,7 +832,9 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
             if (
               (msg.text.includes('final video') &&
                 msg.text.includes('generated successfully')) ||
-              msg.text.includes('Creative Studio workbench')
+              msg.text.includes('Creative Studio workbench') ||
+              msg.text.includes('Production Complete!') ||
+              msg.text.includes('Storyboard and timeline')
             ) {
               const workspaceId =
                 this.workspaceStateService.getActiveWorkspaceId();
@@ -817,14 +849,22 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                         );
                         // Notify that video is generated
                         this.agentChatService.videoGenerated$.next(true);
+                      } else {
+                        // Fallback: stop spinner on local environment
+                        this.agentChatService.videoGenerated$.next(true);
                       }
                     },
-                    error: err =>
+                    error: err => {
                       console.error(
                         'Failed to fetch storyboard after video generation:',
                         err,
-                      ),
+                      );
+                      // Fallback: stop spinner on error too
+                      this.agentChatService.videoGenerated$.next(true);
+                    },
                   });
+              } else {
+                this.agentChatService.videoGenerated$.next(true);
               }
             }
             this.checkForStoryboardId(msg.text);
@@ -934,6 +974,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     }
     return null;
   }
+
 
   private parseAndExtractJSONs(text: string): {
     assets: any[];

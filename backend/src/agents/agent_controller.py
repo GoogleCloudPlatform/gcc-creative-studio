@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 APP_NAME = "ads_x"
 security = HTTPBearer()
 
+
 @router.get("/sessions", response_model=List[SessionResponseDto])
 async def get_sessions(
     request: Request,
@@ -46,7 +47,7 @@ async def get_sessions(
     appName: str = APP_NAME,
     current_user: UserModel = Depends(get_current_user),
     agent_service: AgentService = Depends(),
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
     """List chat sessions for the current user from Vertex AI Agent Engines."""
     user_id = str(current_user.id)
@@ -65,7 +66,7 @@ async def create_session(
     appName: str = APP_NAME,
     current_user: UserModel = Depends(get_current_user),
     agent_service: AgentService = Depends(),
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
     """Create a new chat session in Vertex AI Agent Engines."""
     user_id = str(current_user.id)
@@ -86,7 +87,7 @@ async def get_session_detail(
     appName: str = APP_NAME,
     current_user: UserModel = Depends(get_current_user),
     agent_service: AgentService = Depends(),
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
     """Retrieve session messages (from Vertex AI) and associated storyboard (from DB) in a single request."""
     return await agent_service.get_session_detail(
@@ -107,7 +108,7 @@ async def get_session_messages(
     appName: str = APP_NAME,
     current_user: UserModel = Depends(get_current_user),
     agent_service: AgentService = Depends(),
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
     """Get messages for a specific session from Vertex AI Agent Engines."""
     user_id = str(current_user.id)
@@ -128,7 +129,7 @@ async def delete_session(
     appName: str = APP_NAME,
     current_user: UserModel = Depends(get_current_user),
     agent_service: AgentService = Depends(),
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
     """Deletes a specific session from Vertex AI Agent Engines."""
     user_id = str(current_user.id)
@@ -147,7 +148,7 @@ async def chat(
     request: Request,
     current_user: UserModel = Depends(get_current_user),
     agent_service: AgentService = Depends(),
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
     """Start generation task for the Izumi agent."""
     user_id = str(current_user.id)
@@ -161,7 +162,7 @@ async def poll_session_events(
     session_id: str,
     current_user: UserModel = Depends(get_current_user),
     agent_service: AgentService = Depends(),
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
     """Retrieve all pending stream chunks for a chat session queue and mark them as consumed."""
     return await agent_service.poll_session_events(
