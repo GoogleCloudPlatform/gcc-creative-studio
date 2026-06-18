@@ -106,7 +106,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
 
   availableAgents: DropdownOption[] = [
     {label: 'Creative Toolbox', value: 'creative_toolbox'},
-    {label: 'Ads X Agent', value: 'ads_x_template'},
+    {label: 'Ads X Agent', value: 'ads_x'},
   ];
 
   get currentAgent(): string {
@@ -542,7 +542,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       });
     }
     this.isTyping.set(true);
-    if (this.currentAgent === 'ads_x_template') {
+    if (this.currentAgent === 'ads_x') {
       this.agentChatService.isGeneratingStoryboard.set(true);
     }
     this.shouldScrollToBottom = true;

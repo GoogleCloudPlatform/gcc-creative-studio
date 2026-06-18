@@ -30,7 +30,7 @@ dependencies = [
     "fastapi>=0.118.0",
     "fastapi-utilities==0.3.0",
     "firebase-admin>=6.9.0",
-    "google-cloud-aiplatform>=1.119.0",
+    "google-cloud-aiplatform[adk]>=1.119.0",
     "google-genai>=1.52.0",
     "mediapy>=1.2.4",
     "numpy>=2.3.3",

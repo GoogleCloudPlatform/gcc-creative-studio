@@ -64,7 +64,7 @@ export class AgentChatService {
   selectedSessionId = signal<string | null>(null);
 
   // Agent Selection State
-  activeAgent = signal<string>('ads_x_template');
+  activeAgent = signal<string>('ads_x');
   isGeneratingStoryboard = signal<boolean>(false);
 
   // Triggers video generation from the Storyboard component

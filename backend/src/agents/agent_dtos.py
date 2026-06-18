@@ -54,11 +54,10 @@ class ChatRequestDto(BaseModel):
     """Payload for starting an agent chat interaction."""
 
     sessionId: str
-    appName: Optional[str] = "ads_x_template"
-    workspaceId: Optional[int] = None
+    workspaceId: int
+    appName: Optional[str] = "ads_x"
     newMessage: Optional[ChatMessage] = None
     streaming: Optional[bool] = False
-    userId: Optional[str] = None
 
 
 class ChatResponseDto(BaseModel):
