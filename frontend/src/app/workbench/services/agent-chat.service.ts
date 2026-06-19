@@ -79,11 +79,12 @@ export class AgentChatService {
     );
   }
 
-  createSession(): Observable<any> {
-    return this.http.post(
-      `${this.apiUrl}/sessions?appName=${this.activeAgent()}`,
-      {},
-    );
+  createSession(workspaceId?: number): Observable<any> {
+    let url = `${this.apiUrl}/sessions?appName=${this.activeAgent()}`;
+    if (workspaceId) {
+      url += `&workspace_id=${workspaceId}`;
+    }
+    return this.http.post(url, {});
   }
 
   getSessionDetail(

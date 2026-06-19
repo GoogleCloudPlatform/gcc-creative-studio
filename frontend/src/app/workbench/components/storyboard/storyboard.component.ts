@@ -182,7 +182,7 @@ export class StoryboardComponent {
                     // Use generated asset URL if available, otherwise fallback to old structure or placeholder
                     imageUrl: this.convertGcsUri(
                       s.first_frame_generated_url ||
-                      s.first_frame_prompt?.generated_asset_url
+                        s.first_frame_prompt?.generated_asset_url,
                     ),
                     assetId:
                       s.first_frame_prompt?.asset_id ||

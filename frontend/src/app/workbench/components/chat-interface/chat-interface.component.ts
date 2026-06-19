@@ -230,7 +230,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                     res.session?.state &&
                     Object.keys(res.session.state).length > 0;
 
-                  if (hasSession && (hasEvents || hasState)) {
+                  if (hasSession) {
                     this.currentSessionId = res.session.id;
                     this.agentChatService.selectedSessionId.set(res.session.id);
 
@@ -359,7 +359,6 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
           const extracted = this.extractStoryboardData(m.actions.storyboard);
           if (extracted) {
             storyboardMetadata = extracted;
-            this.agentChatService.currentStoryboard.set(extracted);
           }
         }
         for (const part of parts) {
@@ -385,7 +384,6 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                 const extracted = this.extractStoryboardData(result);
                 if (extracted) {
                   storyboardMetadata = extracted;
-                  this.agentChatService.currentStoryboard.set(extracted);
                 }
               }
             } catch (e) {
@@ -457,17 +455,12 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     }
   }
   startNewChat() {
-    this.agentChatService.createSession().subscribe({
-      next: (session: any) => {
-        this.sessions.update(s => [session, ...s]);
-        this.currentSessionId = session.id;
-        this.chatMessages.set([]);
-        this.agentChatService.currentStoryboard.set(null);
-        this.addWelcomeMessage();
-        this.shouldScrollToBottom = true;
-      },
-      error: err => console.error('Error starting new chat:', err),
-    });
+    this.currentSessionId = null;
+    this.agentChatService.selectedSessionId.set(null);
+    this.chatMessages.set([]);
+    this.agentChatService.currentStoryboard.set(null);
+    this.addWelcomeMessage();
+    this.shouldScrollToBottom = true;
   }
   onSessionChange(sessionId: string) {
     if (sessionId && sessionId !== this.currentSessionId) {
@@ -520,10 +513,30 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   }
   sendChatMessage(text: string) {
     if ((!text || !text.trim()) && this.selectedImages().length === 0) return;
+
     if (!this.currentSessionId) {
-      console.error('No active session');
+      this.isTyping.set(true);
+      const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+      this.agentChatService.createSession(workspaceId ?? undefined).subscribe({
+        next: (session: any) => {
+          this.sessions.update(s => [session, ...s]);
+          this.currentSessionId = session.id;
+          this.agentChatService.selectedSessionId.set(session.id);
+          this.executeSendMessage(text);
+        },
+        error: err => {
+          console.error('Error starting new chat session on first message:', err);
+          this.isTyping.set(false);
+          handleErrorSnackbar(this.snackBar, err, 'Start Chat');
+        }
+      });
       return;
     }
+
+    this.executeSendMessage(text);
+  }
+
+  private executeSendMessage(text: string) {
     const currentImages = this.selectedImages();
     const userMessage = {
       sender: 'user',
@@ -554,33 +567,19 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     }
     this.shouldScrollToBottom = true;
     let agentMessageIndex = -1;
+    let lastInvocationId = '';
     let isInJsonBlock = false;
     const callbacks: SSECallbacks<any> = {
       onMessage: (data: any) => {
         if (data.actions?.storyboard) {
-          const sb = this.extractStoryboardData(data.actions.storyboard);
-          if (sb) {
-            this.isTyping.set(false);
-            this.agentChatService.isGeneratingStoryboard.set(false);
-            this.agentChatService.currentStoryboard.set(sb);
-            this.chatMessages.update(msgs => {
-              if (agentMessageIndex === -1) {
-                msgs.push({
-                  sender: 'agent',
-                  text: '',
-                  storyboard: sb,
-                  timestamp: new Date(),
-                });
-                agentMessageIndex = msgs.length - 1;
-              } else {
-                msgs[agentMessageIndex].storyboard = sb;
-              }
-              return [...msgs];
-            });
-            this.shouldScrollToBottom = true;
-          }
+          this.isTyping.set(false);
+          this.agentChatService.isGeneratingStoryboard.set(false);
         }
         if (data.content && data.content.parts) {
+          const currentInvocationId = data.id || data.invocation_id || '';
+          if (currentInvocationId && currentInvocationId !== lastInvocationId) {
+            agentMessageIndex = -1;
+          }
           for (const part of data.content.parts) {
             if (part.text) {
               const textChunk = part.text;
@@ -606,12 +605,9 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                         timestamp: new Date(),
                       });
                       agentMessageIndex = msgs.length - 1;
+                      lastInvocationId = currentInvocationId;
                     } else {
-                      if (data.partial) {
-                        msgs[agentMessageIndex].text += textPart;
-                      } else {
-                        msgs[agentMessageIndex].text = textPart;
-                      }
+                      msgs[agentMessageIndex].text += textPart;
                     }
                   }
 
@@ -691,12 +687,9 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                       timestamp: new Date(),
                     });
                     agentMessageIndex = msgs.length - 1;
+                    lastInvocationId = currentInvocationId;
                   } else {
-                    if (data.partial) {
-                      msgs[agentMessageIndex].text += textChunk;
-                    } else {
-                      msgs[agentMessageIndex].text = textChunk;
-                    }
+                    msgs[agentMessageIndex].text += textChunk;
                     if (
                       msgs[agentMessageIndex].text.includes('[System Note:')
                     ) {
@@ -770,26 +763,6 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                   if (extracted) {
                     this.isTyping.set(false);
                     this.agentChatService.isGeneratingStoryboard.set(false);
-                    const sb = extracted;
-                    this.agentChatService.currentStoryboard.set(sb);
-                    const wasNearBottom = this.isNearBottom();
-                    this.chatMessages.update(msgs => {
-                      if (agentMessageIndex === -1) {
-                        msgs.push({
-                          sender: 'agent',
-                          text: '',
-                          storyboard: sb,
-                          timestamp: new Date(),
-                        });
-                        agentMessageIndex = msgs.length - 1;
-                      } else {
-                        msgs[agentMessageIndex].storyboard = sb;
-                      }
-                      return [...msgs];
-                    });
-                    if (wasNearBottom) {
-                      this.shouldScrollToBottom = true;
-                    }
                   }
                 }
               } catch (e) {
@@ -823,58 +796,39 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                 );
               }
             }
-            if (extraction.storyboards.length > 0) {
-              const sb = extraction.storyboards[0];
-              currentMsgs[agentMessageIndex].storyboard = sb;
-              this.agentChatService.currentStoryboard.set(sb);
-              currentMsgs[agentMessageIndex].text = extraction.cleanText;
-            }
-            if (
-              (msg.text.includes('final video') &&
-                msg.text.includes('generated successfully')) ||
-              msg.text.includes('Creative Studio workbench') ||
-              msg.text.includes('Production Complete!') ||
-              msg.text.includes('Storyboard and timeline')
-            ) {
-              const workspaceId =
-                this.workspaceStateService.getActiveWorkspaceId();
-              if (workspaceId && this.currentSessionId) {
-                this.storyboardService
-                  .getStoryboardForSession(workspaceId, this.currentSessionId)
-                  .subscribe({
-                    next: storyboards => {
-                      if (storyboards && storyboards.length > 0) {
-                        this.agentChatService.currentStoryboard.set(
-                          storyboards[0],
-                        );
-                        // Notify that video is generated
-                        this.agentChatService.videoGenerated$.next(true);
-                      } else {
-                        // Fallback: stop spinner on local environment
-                        this.agentChatService.videoGenerated$.next(true);
-                      }
-                    },
-                    error: err => {
-                      console.error(
-                        'Failed to fetch storyboard after video generation:',
-                        err,
-                      );
-                      // Fallback: stop spinner on error too
-                      this.agentChatService.videoGenerated$.next(true);
-                    },
-                  });
-              } else {
-                this.agentChatService.videoGenerated$.next(true);
-              }
-            }
             this.checkForStoryboardId(msg.text);
-            if (
-              extraction.assets.length > 0 ||
-              extraction.storyboards.length > 0
-            ) {
+            if (extraction.assets.length > 0) {
               this.chatMessages.set([...currentMsgs]);
             }
           }
+        }
+
+        // Always query database on stream completion to get the latest storyboard & scenes
+        const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+        if (workspaceId && this.currentSessionId) {
+          this.storyboardService
+            .getStoryboardForSession(workspaceId, this.currentSessionId)
+            .subscribe({
+              next: storyboards => {
+                if (storyboards && storyboards.length > 0) {
+                  this.agentChatService.currentStoryboard.set(storyboards[0]);
+                  if (storyboards[0].timeline) {
+                    this.agentChatService.videoGenerated$.next(true);
+                  }
+                } else {
+                  this.agentChatService.videoGenerated$.next(true);
+                }
+              },
+              error: err => {
+                console.error(
+                  'Failed to fetch storyboard after stream completion:',
+                  err,
+                );
+                this.agentChatService.videoGenerated$.next(true);
+              },
+            });
+        } else {
+          this.agentChatService.videoGenerated$.next(true);
         }
       },
     };
@@ -974,7 +928,6 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     }
     return null;
   }
-
 
   private parseAndExtractJSONs(text: string): {
     assets: any[];

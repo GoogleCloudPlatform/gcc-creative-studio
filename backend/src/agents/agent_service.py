@@ -98,7 +98,45 @@ class AgentService:
         session: Any,
         appName: str = APP_NAME,
         fallback_user_id: str | None = None,
+        events: List[Any] | None = None,
     ) -> SessionResponseDto:
+
+        def sanitize_serializable(data: Any) -> Any:
+            if isinstance(data, dict):
+                return {k: sanitize_serializable(v) for k, v in data.items()}
+            elif isinstance(data, list):
+                return [sanitize_serializable(x) for x in data]
+            elif isinstance(data, bytes):
+                try:
+                    return data.decode("utf-8")
+                except UnicodeDecodeError:
+                    return data.decode("latin-1")
+            return data
+
+        s_events = events if events is not None else []
+        if not s_events and not isinstance(session, dict):
+            s_events = getattr(session, "events", [])
+        elif not s_events and isinstance(session, dict):
+            s_events = session.get("events", [])
+
+        s_events = s_events if isinstance(s_events, list) else []
+
+        mapped_events = []
+        for e in s_events:
+            if hasattr(e, "model_dump"):
+                try:
+                    mapped_events.append(sanitize_serializable(e.model_dump()))
+                except Exception:
+                    mapped_events.append(str(e))
+            elif hasattr(e, "to_dict"):
+                try:
+                    mapped_events.append(sanitize_serializable(e.to_dict()))
+                except Exception:
+                    mapped_events.append(str(e))
+            elif isinstance(e, dict):
+                mapped_events.append(sanitize_serializable(e))
+            else:
+                mapped_events.append(str(e))
 
         if isinstance(session, dict):
             s_state = session.get("session_state") or session.get("state", {})
@@ -128,11 +166,7 @@ class AgentService:
                 lastUpdateTime=(
                     s_time if isinstance(s_time, (int, float)) else None
                 ),
-                events=(
-                    session.get("events", [])
-                    if isinstance(session.get("events", []), list)
-                    else []
-                ),
+                events=mapped_events,
             )
 
         s_name = getattr(session, "name", None) or getattr(session, "id", None)
@@ -167,16 +201,13 @@ class AgentService:
         if hasattr(s_time, "timestamp"):
             s_time = s_time.timestamp()
 
-        s_events = getattr(session, "events", [])
-        s_events = s_events if isinstance(s_events, list) else []
-
         return SessionResponseDto(
             id=s_id,
             appName=s_app,
             userId=s_user,
             state=s_state,
             lastUpdateTime=s_time if isinstance(s_time, (int, float)) else None,
-            events=s_events,
+            events=mapped_events,
         )
 
     async def list_sessions(
@@ -300,6 +331,7 @@ class AgentService:
                     session = self.client.agent_engines.sessions.get(
                         name=full_session_name
                     )
+
                     if session is None:
                         raise ValueError("Session not found")
                 except Exception as inner_e:
@@ -309,8 +341,16 @@ class AgentService:
                         logger.warning(
                             f"Session {resolved_session_id} not found. Re-creating dynamic session."
                         )
+                        auth_header = request.headers.get("Authorization", "")
+                        auth_key = agent_config.get("token_key", "user_auth_token")
+                        state_data = {
+                            "workspace_id": workspace_id,
+                            auth_key: auth_header,
+                        }
                         op = self.client.agent_engines.sessions.create(
-                            name=agent_name, user_id=user_id
+                            name=agent_name,
+                            user_id=user_id,
+                            config={"session_state": state_data},
                         )
                         session = getattr(op, "response", None) or op
                         new_session_id = (
@@ -326,8 +366,20 @@ class AgentService:
                     else:
                         raise inner_e
 
+                events_list = []
+                try:
+                    events_list = list(
+                        self.client.agent_engines.sessions.events.list(
+                            name=full_session_name
+                        )
+                    )
+                except Exception as e_err:
+                    logger.warning(
+                        f"Could not list session events for detail: {e_err}"
+                    )
+
                 session_dto = self._map_session_to_dto(
-                    session, appName, user_id
+                    session, appName, user_id, events=events_list
                 )
             except Exception as e:
                 logger.error(
@@ -362,7 +414,22 @@ class AgentService:
             )
             if session is None:
                 raise HTTPException(status_code=404, detail="Session not found")
-            return self._map_session_to_dto(session, appName, user_id)
+
+            events_list = []
+            try:
+                events_list = list(
+                    self.client.agent_engines.sessions.events.list(
+                        name=full_session_name
+                    )
+                )
+            except Exception as e_err:
+                logger.warning(
+                    f"Could not list session events for messages: {e_err}"
+                )
+
+            return self._map_session_to_dto(
+                session, appName, user_id, events=events_list
+            )
         except HTTPException:
             raise
         except Exception as e:
@@ -452,82 +519,84 @@ class AgentService:
 
         # Internal background task function
         async def process_stream():
-            async with async_session_local() as db_session:
-                repo = AgentRepository(db_session)
-                try:
-                    import datetime
+            try:
+                import datetime
 
-                    app_name = body.get("appName") or APP_NAME
-                    remote_agent = self._get_remote_agent(app_name)
-                    agent_config = self._get_agent_config(app_name)
-                    auth_header = request.headers.get("Authorization", "")
-                    auth_key = agent_config.get("token_key", "user_auth_token")
+                app_name = body.get("appName") or APP_NAME
+                remote_agent = self._get_remote_agent(app_name)
+                agent_config = self._get_agent_config(app_name)
+                auth_header = request.headers.get("Authorization", "")
+                auth_key = agent_config.get("token_key", "user_auth_token")
 
-                    if session_id and auth_header:
-                        agent_name = agent_config.get("resource_name")
-                        full_session_name = (
-                            f"{agent_name}/sessions/{session_id}"
+                if session_id and auth_header:
+                    agent_name = agent_config.get("resource_name")
+                    full_session_name = f"{agent_name}/sessions/{session_id}"
+                    try:
+                        self.client.agent_engines.sessions.events.append(
+                            name=full_session_name,
+                            author="system",
+                            invocation_id="token_propagation",
+                            timestamp=datetime.datetime.now(
+                                datetime.timezone.utc
+                            ),
+                            config={
+                                "actions": {
+                                    "state_delta": {auth_key: auth_header}
+                                }
+                            },
                         )
+                    except Exception as upd_err:
+                        logger.warning(
+                            f"Could not append state delta event: {upd_err}"
+                        )
+
+                msg_payload = body.get("newMessage")
+
+                response_stream = remote_agent.stream_query(
+                    user_id=user_id,
+                    session_id=session_id,
+                    message=msg_payload,
+                )
+                import json
+
+                for chunk in response_stream:
+                    if isinstance(chunk, str):
+                        chunk_text = chunk
+                    elif isinstance(chunk, dict):
+                        chunk_text = json.dumps(chunk)
+                    else:
                         try:
-                            self.client.agent_engines.sessions.events.append(
-                                name=full_session_name,
-                                author="system",
-                                invocation_id="token_propagation",
-                                timestamp=datetime.datetime.now(
-                                    datetime.timezone.utc
-                                ),
-                                config={
-                                    "actions": {
-                                        "state_delta": {auth_key: auth_header}
-                                    }
-                                },
-                            )
-                        except Exception as upd_err:
-                            logger.warning(
-                                f"Could not append state delta event: {upd_err}"
-                            )
-
-                    msg_payload = body.get("newMessage")
-
-                    response_stream = remote_agent.stream_query(
-                        user_id=user_id,
-                        session_id=session_id,
-                        message=msg_payload,
-                    )
-                    import json
-
-                    for chunk in response_stream:
-                        if isinstance(chunk, str):
-                            chunk_text = chunk
-                        elif isinstance(chunk, dict):
-                            chunk_text = json.dumps(chunk)
-                        else:
-                            try:
-                                if hasattr(chunk, "model_dump"):
-                                    chunk_text = json.dumps(chunk.model_dump())
-                                elif hasattr(chunk, "to_dict"):
-                                    chunk_text = json.dumps(chunk.to_dict())
-                                else:
-                                    chunk_text = json.dumps(str(chunk))
-                            except Exception:
+                            if hasattr(chunk, "model_dump"):
+                                chunk_text = json.dumps(chunk.model_dump())
+                            elif hasattr(chunk, "to_dict"):
+                                chunk_text = json.dumps(chunk.to_dict())
+                            else:
                                 chunk_text = json.dumps(str(chunk))
+                        except Exception:
+                            chunk_text = json.dumps(str(chunk))
 
+                    async with async_session_local() as db_session:
+                        repo = AgentRepository(db_session)
                         await repo.add_chat_event(
                             user_id=user_id,
                             session_id=session_id,
                             payload={"raw": f"data: {chunk_text}\n\n"},
                         )
 
+                async with async_session_local() as db_session:
+                    repo = AgentRepository(db_session)
                     await repo.add_chat_event(
                         user_id=user_id,
                         session_id=session_id,
                         payload={"raw": "data: [DONE]\n\n"},
                     )
 
-                except Exception as e:
-                    logger.error(
-                        f"Error streaming from Agent Engine: {e}", exc_info=True
-                    )
+            except Exception as e:
+                logger.error(
+                    f"Error streaming from Agent Engine: {e}", exc_info=True
+                )
+                async with async_session_local() as db_session:
+                    repo = AgentRepository(db_session)
                     await repo.add_chat_event(
                         user_id=user_id,
                         session_id=session_id,
