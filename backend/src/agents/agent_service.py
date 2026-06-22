@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 vertexai.init(
     project=config_service.PROJECT_ID,
     location=config_service.WORKFLOWS_LOCATION,
-    api_transport="grpc"  # Options: "grpc" or "rest"
+    api_transport="grpc",  # Options: "grpc" or "rest"
 )
 
 AGENT_REASONING_ENGINES = {
@@ -343,7 +343,9 @@ class AgentService:
                             f"Session {resolved_session_id} not found. Re-creating dynamic session."
                         )
                         auth_header = request.headers.get("Authorization", "")
-                        auth_key = agent_config.get("token_key", "user_auth_token")
+                        auth_key = agent_config.get(
+                            "token_key", "user_auth_token"
+                        )
                         state_data = {
                             "workspace_id": workspace_id,
                             auth_key: auth_header,
@@ -581,13 +583,19 @@ class AgentService:
                             elif hasattr(chunk, "to_dict"):
                                 chunk_text = json.dumps(chunk.to_dict())
                                 print("9999999999999999999999", chunk_text)
-                                print("101010101010101010101010", type(chunk_text))
+                                print(
+                                    "101010101010101010101010", type(chunk_text)
+                                )
                             else:
                                 chunk_text = json.dumps(str(chunk))
                                 print("121212121212121212121212", chunk_text)
-                                print("13131313131131313131331", type(chunk_text))
+                                print(
+                                    "13131313131131313131331", type(chunk_text)
+                                )
                         except Exception:
-                            print("1414141414141444141", chunk, type(chunk_text))
+                            print(
+                                "1414141414141444141", chunk, type(chunk_text)
+                            )
                             chunk_text = json.dumps(str(chunk))
                             print("15151515155151515151551", chunk_text)
 
@@ -620,7 +628,9 @@ class AgentService:
                             payload={"raw": "data: [DONE]\n\n"},
                         )
                 else:
-                    logger.error(f"ValueError during streaming: {ve}", exc_info=True)
+                    logger.error(
+                        f"ValueError during streaming: {ve}", exc_info=True
+                    )
                     async with async_session_local() as db_session:
                         repo = AgentRepository(db_session)
                         await repo.add_chat_event(

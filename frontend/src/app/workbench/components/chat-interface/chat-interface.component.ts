@@ -525,10 +525,13 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
           this.executeSendMessage(text);
         },
         error: err => {
-          console.error('Error starting new chat session on first message:', err);
+          console.error(
+            'Error starting new chat session on first message:',
+            err,
+          );
           this.isTyping.set(false);
           handleErrorSnackbar(this.snackBar, err, 'Start Chat');
-        }
+        },
       });
       return;
     }
