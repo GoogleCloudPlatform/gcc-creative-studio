@@ -559,21 +559,36 @@ class AgentService:
                 )
                 import json
 
+                print("111111111111111111", response_stream)
                 for chunk in response_stream:
+                    print("00000000000000000", type(chunk))
+                    print("222222222222222222", chunk)
                     if isinstance(chunk, str):
                         chunk_text = chunk
+                        print("33333333333333333333", chunk_text)
+                        print("4444444444444444444", type(chunk_text))
                     elif isinstance(chunk, dict):
                         chunk_text = json.dumps(chunk)
+                        print("55555555555555555555", chunk_text)
+                        print("6666666666666666666", type(chunk_text))
                     else:
                         try:
                             if hasattr(chunk, "model_dump"):
                                 chunk_text = json.dumps(chunk.model_dump())
+                                print("777777777777777777777", chunk_text)
+                                print("888888888888888888888", type(chunk_text))
                             elif hasattr(chunk, "to_dict"):
                                 chunk_text = json.dumps(chunk.to_dict())
+                                print("9999999999999999999999", chunk_text)
+                                print("101010101010101010101010", type(chunk_text))
                             else:
                                 chunk_text = json.dumps(str(chunk))
+                                print("121212121212121212121212", chunk_text)
+                                print("13131313131131313131331", type(chunk_text))
                         except Exception:
+                            print("1414141414141444141", chunk, type(chunk_text))
                             chunk_text = json.dumps(str(chunk))
+                            print("15151515155151515151551", chunk_text)
 
                     async with async_session_local() as db_session:
                         repo = AgentRepository(db_session)
@@ -591,6 +606,29 @@ class AgentService:
                         payload={"raw": "data: [DONE]\n\n"},
                     )
 
+            except ValueError as ve:
+                if "Can only parse array of JSON objects" in str(ve):
+                    logger.warning(
+                        f"Transient REST streaming ValueError encountered (clean termination chunk issue): {ve}. Closing stream gracefully."
+                    )
+                    async with async_session_local() as db_session:
+                        repo = AgentRepository(db_session)
+                        await repo.add_chat_event(
+                            user_id=user_id,
+                            session_id=session_id,
+                            payload={"raw": "data: [DONE]\n\n"},
+                        )
+                else:
+                    logger.error(f"ValueError during streaming: {ve}", exc_info=True)
+                    async with async_session_local() as db_session:
+                        repo = AgentRepository(db_session)
+                        await repo.add_chat_event(
+                            user_id=user_id,
+                            session_id=session_id,
+                            payload={
+                                "raw": f'data: {{"error": "ValueError: {str(ve)}"}}\n\n'
+                            },
+                        )
             except Exception as e:
                 logger.error(
                     f"Error streaming from Agent Engine: {e}", exc_info=True

@@ -806,6 +806,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
         // Always query database on stream completion to get the latest storyboard & scenes
         const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
         if (workspaceId && this.currentSessionId) {
+          this.loadChatMessages(this.currentSessionId);
           this.storyboardService
             .getStoryboardForSession(workspaceId, this.currentSessionId)
             .subscribe({
