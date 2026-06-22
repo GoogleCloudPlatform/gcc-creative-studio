@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 vertexai.init(
     project=config_service.PROJECT_ID,
     location=config_service.WORKFLOWS_LOCATION,
+    api_transport="grpc"  # Options: "grpc" or "rest"
 )
 
 AGENT_REASONING_ENGINES = {
