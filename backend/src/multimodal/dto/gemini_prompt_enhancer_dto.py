@@ -51,3 +51,19 @@ class RandomPromptRequestDto(BaseDto):
 
 class RewrittenOrRandomPromptResponse(BaseDto):
     prompt: str
+
+
+class GenerateTitleRequestDto(BaseDto):
+    """Request body for the /generate-title endpoint."""
+
+    text: Annotated[
+        str,
+        Field(
+            description="The text to generate a title for.",
+            min_length=1,
+        ),
+    ]
+
+
+class GenerateTitleResponseDto(BaseDto):
+    title: str
