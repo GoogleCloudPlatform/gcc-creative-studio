@@ -85,7 +85,9 @@ async def test_map_session_to_dto_edge_cases():
             "events": events,
         }
 
-        dto = service._map_session_to_dto(session_dict, fallback_user_id="user_1")
+        dto = service._map_session_to_dto(
+            session_dict, fallback_user_id="user_1"
+        )
         assert dto.id == "s1"
         assert dto.userId == "user_1"
         assert dto.state == {"workspace_id": 1}
@@ -103,9 +105,11 @@ async def test_get_session_detail_recreate_session():
     with patch("vertexai.Client") as mock_vclient:
         mock_vclient_inst = MagicMock()
         mock_vclient.return_value = mock_vclient_inst
-        
+
         # Simulate session get raises "Session not found" and create returns new session
-        mock_vclient_inst.agent_engines.sessions.get.side_effect = ValueError("Session not found (404)")
+        mock_vclient_inst.agent_engines.sessions.get.side_effect = ValueError(
+            "Session not found (404)"
+        )
         mock_vclient_inst.agent_engines.sessions.create.return_value = {
             "id": "new_session_id",
             "session_state": {"workspace_id": 1},
@@ -119,7 +123,7 @@ async def test_get_session_detail_recreate_session():
         mock_storyboard.session_id = "session_old"
         mock_storyboard.template_name = "test_template"
         mock_storyboard.bg_music_description = "some music"
-        
+
         # Timeline subfield
         mock_timeline = MagicMock()
         mock_timeline.title = "my timeline"
@@ -152,7 +156,9 @@ async def test_get_session_detail_recreate_session():
         )
 
         # Assert storyboard session_id was updated to the newly recreated session ID
-        mock_storyboard_repo.update.assert_called_once_with(123, {"session_id": "new_session_id"})
+        mock_storyboard_repo.update.assert_called_once_with(
+            123, {"session_id": "new_session_id"}
+        )
         assert res.session.id == "new_session_id"
 
 
@@ -246,6 +252,7 @@ async def test_chat_process_stream_chunks():
         class FailingToDictChunk:
             def to_dict(self):
                 raise ValueError("to_dict failed")
+
             def __str__(self):
                 return "fallback_string"
 
@@ -266,10 +273,16 @@ async def test_chat_process_stream_chunks():
             # Mock database session manager and repository inside the background task
             mock_db_session = AsyncMock()
             mock_repo_instance = AsyncMock()
-            
-            with patch("src.agents.agent_service.async_session_local") as mock_db_ctx:
-                mock_db_ctx.return_value.__aenter__.return_value = mock_db_session
-                with patch("src.agents.agent_service.AgentRepository") as mock_repo_cls:
+
+            with patch(
+                "src.agents.agent_service.async_session_local"
+            ) as mock_db_ctx:
+                mock_db_ctx.return_value.__aenter__.return_value = (
+                    mock_db_session
+                )
+                with patch(
+                    "src.agents.agent_service.AgentRepository"
+                ) as mock_repo_cls:
                     mock_repo_cls.return_value = mock_repo_instance
 
                     await service.chat(
@@ -288,10 +301,29 @@ async def test_chat_process_stream_chunks():
             assert len(calls) == 7
 
             # Verify each mapped payload
-            assert calls[0].kwargs["payload"]["raw"].strip().split("data: ")[1] == "string_chunk"
-            assert json.loads(calls[1].kwargs["payload"]["raw"].strip().split("data: ")[1]) == {"dict": "chunk"}
-            assert json.loads(calls[2].kwargs["payload"]["raw"].strip().split("data: ")[1]) == {"pydantic": "chunk"}
-            assert json.loads(calls[3].kwargs["payload"]["raw"].strip().split("data: ")[1]) == {"todict": "chunk"}
-            assert json.loads(calls[4].kwargs["payload"]["raw"].strip().split("data: ")[1]) == "custom_chunk"
-            assert json.loads(calls[5].kwargs["payload"]["raw"].strip().split("data: ")[1]) == "fallback_string"
+            assert (
+                calls[0].kwargs["payload"]["raw"].strip().split("data: ")[1]
+                == "string_chunk"
+            )
+            assert json.loads(
+                calls[1].kwargs["payload"]["raw"].strip().split("data: ")[1]
+            ) == {"dict": "chunk"}
+            assert json.loads(
+                calls[2].kwargs["payload"]["raw"].strip().split("data: ")[1]
+            ) == {"pydantic": "chunk"}
+            assert json.loads(
+                calls[3].kwargs["payload"]["raw"].strip().split("data: ")[1]
+            ) == {"todict": "chunk"}
+            assert (
+                json.loads(
+                    calls[4].kwargs["payload"]["raw"].strip().split("data: ")[1]
+                )
+                == "custom_chunk"
+            )
+            assert (
+                json.loads(
+                    calls[5].kwargs["payload"]["raw"].strip().split("data: ")[1]
+                )
+                == "fallback_string"
+            )
             assert calls[6].kwargs["payload"]["raw"] == "data: [DONE]\n\n"

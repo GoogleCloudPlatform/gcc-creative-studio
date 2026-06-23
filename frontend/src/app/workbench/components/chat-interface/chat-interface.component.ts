@@ -41,7 +41,7 @@ import {MatButtonModule} from '@angular/material/button';
 import {MarkdownModule} from 'ngx-markdown';
 
 import {ConfirmationDialogComponent} from '../../../common/components/confirmation-dialog/confirmation-dialog.component';
-import {MatDialog} from '@angular/material/dialog';
+import {MatDialog, MatDialogRef} from '@angular/material/dialog';
 import {
   ImageSelectorComponent,
   MediaItemSelection,
@@ -107,7 +107,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     if (sb && sb.id) {
       const currentStoryboardId =
         this.route.snapshot.queryParams['storyboardId'];
-      if (currentStoryboardId != sb.id) {
+      if (currentStoryboardId !== sb.id) {
         void this.router.navigate([], {
           relativeTo: this.route,
           queryParams: {
@@ -136,8 +136,8 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   private shouldScrollToBottom = true;
 
   @ViewChild('chatContainer') private chatContainer!: ElementRef;
-  @ViewChild('expandDialog') expandDialog!: TemplateRef<any>;
-  private dialogRef: any = null;
+  @ViewChild('expandDialog') expandDialog!: TemplateRef<unknown>;
+  private dialogRef: MatDialogRef<unknown> | null = null;
 
   dropdownOptions = computed<DropdownOption[]>(() => {
     const currentTopics = this.topics();
@@ -227,7 +227,15 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
 
       // Always load sessions first to populate the sessions dropdown
       this.agentChatService.getSessions(workspaceId).subscribe({
-        next: (sessions: any[]) => {
+        next: (
+          sessions: Array<{
+            id: string;
+            state?: {
+              current_storyboard_id?: string | number;
+              currentStoryboardId?: string | number;
+            };
+          }>,
+        ) => {
           this.sessions.set(sessions || []);
 
           // Check if the query parameter sessionId or storyboardId belongs to this workspace
@@ -237,8 +245,9 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
               if (sessionId && s.id === sessionId) return true;
               if (
                 storyboardId &&
-                (s.state?.current_storyboard_id == storyboardId ||
-                  s.state?.currentStoryboardId == storyboardId)
+                (Number(s.state?.current_storyboard_id) ===
+                  Number(storyboardId) ||
+                  Number(s.state?.currentStoryboardId) === Number(storyboardId))
               ) {
                 return true;
               }
@@ -250,7 +259,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
               (sessionId && sessionId !== this.currentSessionId) ||
               (storyboardId &&
                 Number(storyboardId) !==
-                this.agentChatService.currentStoryboard()?.id);
+                  this.agentChatService.currentStoryboard()?.id);
             const isDifferentWorkspace = workspaceId !== this.lastWorkspaceId;
 
             if (isDifferentSession || isDifferentWorkspace) {
@@ -564,28 +573,28 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
         this.agentChatService
           .deleteSession(this.currentSessionId!, workspaceId ?? undefined)
           .subscribe({
-          next: () => {
-            this.sessions.update(s =>
-              s.filter(sess => sess.id !== this.currentSessionId),
-            );
-            this.topics.update(topics => {
-              delete topics[this.currentSessionId!];
-              if (this.isBrowser) {
-                localStorage.setItem('izumi_topics', JSON.stringify(topics));
+            next: () => {
+              this.sessions.update(s =>
+                s.filter(sess => sess.id !== this.currentSessionId),
+              );
+              this.topics.update(topics => {
+                delete topics[this.currentSessionId!];
+                if (this.isBrowser) {
+                  localStorage.setItem('izumi_topics', JSON.stringify(topics));
+                }
+                return {...topics};
+              });
+              this.currentSessionId = null;
+              this.chatMessages.set([]);
+              if (this.sessions().length > 0) {
+                this.currentSessionId = this.sessions()[0].id;
+                this.loadChatMessages(this.currentSessionId!);
+              } else {
+                this.startNewChat();
               }
-              return {...topics};
-            });
-            this.currentSessionId = null;
-            this.chatMessages.set([]);
-            if (this.sessions().length > 0) {
-              this.currentSessionId = this.sessions()[0].id;
-              this.loadChatMessages(this.currentSessionId!);
-            } else {
-              this.startNewChat();
-            }
-          },
-          error: err => console.error('Error deleting session:', err),
-        });
+            },
+            error: err => console.error('Error deleting session:', err),
+          });
       }
     });
   }
