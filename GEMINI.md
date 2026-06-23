@@ -1,6 +1,6 @@
 # 🤖 GEMINI.md - AI Agent & Developer Guide
 
-This document serves as a comprehensive guide for AI Agents and developers working on the **GCC Creative Studio** project. It outlines the architecture, setup, development workflow, and strict guidelines to ensure code quality and consistency.
+This document serves as a comprehensive guide for AI Agents and developers working on the **Google Cloud Creative Studio Platform** project. It outlines the architecture, setup, development workflow, and strict guidelines to ensure code quality and consistency.
 
 ---
 
@@ -107,15 +107,23 @@ uv run pytest tests/users -v
 
 ---
 
-## 📜 AI Agent Guidelines & Senior Rules
+## 📜 AI Agent Guidelines & Rules
 
 To maintain a pristine codebase, AI Agents **MUST** follow these rules:
 
 1.  **Docker Enforcement**: Always use `docker compose` or `docker exec` to run Python scripts or commands that interact with the app environment.
-2.  **No Placeholders**: Never use placeholder images or text. Use generation tools or real assets.
-3.  **Precise Edits**: When editing files, ensure you replace **only** the target content. **DO NOT** append garbage lines or duplicate code.
-4.  **Reactivity First**: In Angular, leverage Signals for computed state to avoid reactivity bugs.
-5.  **Error Handling**: Always wrap async/stream operations in `try/catch` and log errors appropriately.
-6.  **Format Before Commit**: Always ensure the code is formatted (`npm run format` for frontend, `black` for backend) before suggesting a commit.
+2.  **Precise Edits**: When editing files, ensure you replace **only** the target content. **DO NOT** append garbage lines or duplicate code.
+3.  **Reactivity First**: In Angular, leverage Signals for computed state to avoid reactivity bugs.
+4.  **Error Handling**: Always wrap async/stream operations in `try/catch` and log errors appropriately.
+5.  **Format Before Commit**: Always ensure the code is formatted by using the prechecks leveraging automation for code quality before finishing execution.
+6. **Commiting Changes**: Never commit changes, just leave the changes in the files for the user to review and commit.
+7. **Testing**: Always run the tests and verify the coverage is above 80% before finishing execution, if it fails or coverage is below 80%, fix it, add the missing tests and run the tests again until it passes and coverage is above 80%.
+8. **Linting**: Always run the linter and verify the code is clean before finishing execution, if it fails, fix it and run the pre-commit hook again.
+9. **Documentation**: Always update the documentation when making changes to the code, even this file if needed.
+10. **Seniority**: Act as a Senior Software Engineer with 10+ years of experience in software development.
+11. **Code Review**: Always review the code before finishing execution, if it fails, fix it and run the pre-commit hook again.
+12. **Security**: Always review the code for security vulnerabilities and fix them if found.
+13. **Isolation**: Always work in isolation, do not modify files outside the scope of the task. Work with docker containers, do not run any gcloud commands locally nor modify any cloud resources.
+
 
 ---
