@@ -55,9 +55,11 @@ export class AgentChatService {
       text,
     });
   }
+
   async sendMessage(
     sessionId: string,
     message: string,
+    workspaceId: number | null,
     callbacks: SSECallbacks<any>,
   ): Promise<void> {
     const url = `${this.apiUrl}/chat`;
@@ -68,6 +70,7 @@ export class AgentChatService {
         parts: [{text: message}],
       },
       streaming: true,
+      workspaceId: workspaceId,
     };
 
     try {

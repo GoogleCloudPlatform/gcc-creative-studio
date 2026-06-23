@@ -96,19 +96,18 @@ async def random_prompt_endpoint(
 @router.post(
     "/generate-title",
     response_model=GenerateTitleResponseDto,
-    summary="Generate a short title for a text message",
+    summary="Generate a short title and summary for a text message",
 )
 async def generate_title_endpoint(
     request: GenerateTitleRequestDto,
     gemini_service: GeminiService = Depends(),
 ):
-    """Generates a short, concise title (max 5 words) for the provided text."""
+    """Generates a short, concise title (max 5 words) and a longer summary for the provided text."""
     try:
-        prompt = f"Generate a short, concise title (maximum 5 words) for a conversation that starts with this message. Do not use quotes or punctuation in the title. Message: {request.text}"
-        title = gemini_service.generate_text(prompt)
-        return GenerateTitleResponseDto(title=title)
+        data = gemini_service.generate_title_and_summary(request.text)
+        return GenerateTitleResponseDto(**data)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate title from Gemini: {e}",
+            detail=f"Failed to generate title and summary from Gemini: {e}",
         )

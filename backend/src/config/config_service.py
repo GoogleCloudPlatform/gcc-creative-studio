@@ -94,6 +94,9 @@ class ConfigService(BaseSettings):
     )
     ADMIN_USER_EMAIL: str = "system"
 
+    # --- Agent Auth ---
+    INTERNAL_AGENT_SECRET: str = "secret-agent-key"
+
     # --- Workflows ---
     WORKFLOWS_LOCATION: str = "us-central1"
     WORKFLOWS_EXECUTOR_URL: str = (

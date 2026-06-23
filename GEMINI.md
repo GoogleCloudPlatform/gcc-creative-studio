@@ -111,7 +111,7 @@ uv run pytest tests/users -v
 
 To maintain a pristine codebase, AI Agents **MUST** follow these rules:
 
-1.  **Docker Enforcement**: Always use `docker compose` or `docker exec` to run Python scripts or commands that interact with the app environment.
+1.  **Docker Enforcement**: Always use `docker compose` or `docker exec` to run Python scripts or commands that interact with the app environment. Always check if the docker containers are running correctly and in case of finding any errors solve them until the container starts successfully.
 2.  **Precise Edits**: When editing files, ensure you replace **only** the target content. **DO NOT** append garbage lines or duplicate code.
 3.  **Reactivity First**: In Angular, leverage Signals for computed state to avoid reactivity bugs.
 4.  **Error Handling**: Always wrap async/stream operations in `try/catch` and log errors appropriately.
@@ -124,6 +124,5 @@ To maintain a pristine codebase, AI Agents **MUST** follow these rules:
 11. **Code Review**: Always review the code before finishing execution, if it fails, fix it and run the pre-commit hook again.
 12. **Security**: Always review the code for security vulnerabilities and fix them if found.
 13. **Isolation**: Always work in isolation, do not modify files outside the scope of the task. Work with docker containers, do not run any gcloud commands locally nor modify any cloud resources.
-
 
 ---

@@ -40,6 +40,7 @@ import {ClipboardModule} from '@angular/cdk/clipboard';
 import {DragDropModule} from '@angular/cdk/drag-drop';
 import {ScrollingModule} from '@angular/cdk/scrolling';
 import {NgOptimizedImage} from '@angular/common';
+import {MarkdownModule} from 'ngx-markdown';
 import {
   HTTP_INTERCEPTORS,
   provideHttpClient,
@@ -94,6 +95,7 @@ import {LoginComponent} from './login/login.component';
 import {VideoComponent} from './video/video.component';
 import {VtoComponent} from './vto/vto.component';
 import {WorkbenchComponent} from './workbench/workbench.component';
+import {ChatInterfaceComponent} from './workbench/components/chat-interface/chat-interface.component';
 import {BatchExecutionModalComponent} from './workflows/execution-history/batch-execution-modal/batch-execution-modal.component';
 import {ExecutionDetailsModalComponent} from './workflows/execution-history/execution-details-modal/execution-details-modal.component';
 import {ExecutionHistoryComponent} from './workflows/execution-history/execution-history.component';
@@ -126,6 +128,7 @@ import {UpscaleComponent} from './upscale/upscale.component';
     SourceAssetGalleryComponent,
     ImageCropperDialogComponent,
     WorkbenchComponent,
+    ChatInterfaceComponent,
     AudioComponent,
     AddVoiceDialogComponent,
     WorkflowListComponent,
@@ -145,6 +148,7 @@ import {UpscaleComponent} from './upscale/upscale.component';
     BrowserModule,
     AppRoutingModule,
     NgOptimizedImage,
+    MarkdownModule.forRoot(),
     MatTooltipModule,
     MatToolbarModule,
     MatDividerModule,

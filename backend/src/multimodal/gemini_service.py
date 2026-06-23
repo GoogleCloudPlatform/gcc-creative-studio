@@ -362,6 +362,38 @@ class GeminiService:
             )
             raise
 
+    def generate_title_and_summary(self, text: str) -> dict[str, Any]:
+        """Generates a short title and a summary for a conversation starter.
+
+        Args:
+            text: The conversation starter text.
+
+        Returns:
+            A dictionary with 'title' and 'summary'.
+        """
+        prompt = (
+            f"Generate a short title and a summary for a conversation that starts with the following message.\n"
+            f"Message: {text}"
+        )
+        # Import inside to avoid circular imports if any, but it should be fine
+        from src.multimodal.dto.gemini_prompt_enhancer_dto import (
+            GenerateTitleResponseDto,
+        )
+
+        try:
+            response = self.client.models.generate_content(
+                model=self.rewriter_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=GenerateTitleResponseDto,
+                ),
+            )
+            return json.loads(response.text or "{}")
+        except Exception as e:
+            logger.error(f"Failed to generate title and summary: {e}")
+            raise
+
     def extract_brand_info_from_pdf(self, pdf_gcs_uri: str) -> dict[str, Any]:
         """Uses a multimodal model to analyze a PDF from GCS and extract structured
         brand guideline information.

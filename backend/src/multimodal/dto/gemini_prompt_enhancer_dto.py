@@ -67,3 +67,4 @@ class GenerateTitleRequestDto(BaseDto):
 
 class GenerateTitleResponseDto(BaseDto):
     title: str
+    summary: str | None = None

@@ -131,6 +131,11 @@
    border-radius: 12px;
    overflow-y: scroll;
    scroll-behavior: smooth;
+
+   &.no-scroll {
+      overflow-y: hidden;
+      height: 600px;
+   }
 }
 
 .drop-zone {

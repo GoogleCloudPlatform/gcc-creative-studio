@@ -181,60 +181,9 @@
       <!-- COL 1.5: Agent Panel -->
       <div
         *ngIf="activeToolButton() === 'agent'"
-        class="side-panel flex flex-col h-full"
+        class="side-panel no-scroll flex flex-col h-full"
       >
-        <div class="flex items-center justify-between mb-4">
-          <h5 class="text-lg font-semibold">Izumi Agent</h5>
-          <button mat-icon-button (click)="startNewChat()" class="text-gray-500 hover:text-gray-700" title="New Chat">
-            <mat-icon>add_comment</mat-icon>
-          </button>
-        </div>
-
-        <!-- Session Selector -->
-        <div class="mb-4 flex items-center gap-2" *ngIf="sessions().length > 0">
-          <studio-dropdown
-            [options]="dropdownOptions()"
-            [value]="currentSessionId"
-            (valueChange)="onSessionChange($event)"
-            placeholder="Select past conversation"
-            size="small"
-            class="flex-1"
-          ></studio-dropdown>
-          <button
-            mat-icon-button
-            (click)="deleteChat()"
-            class="text-red-500 hover:text-red-700"
-            title="Delete Chat"
-          >
-            <mat-icon>delete</mat-icon>
-          </button>
-        </div>
-        <!-- Chat Messages -->
-        <div class="flex-1 overflow-y-auto flex flex-col gap-3 p-2 custom-scrollbar" #chatContainer>
-          <div *ngFor="let msg of chatMessages()" [class]="msg.sender === 'user' ? 'chat-bubble user' : 'chat-bubble agent'">
-            <div class="chat-text text-sm">{{ msg.text }}</div>
-            <div class="chat-time text-[9px] text-gray-500 mt-1 text-right">{{ msg.timestamp | date:'shortTime' }}</div>
-          </div>
-          <div *ngIf="isTyping()" class="chat-bubble agent">
-            <div class="typing-indicator">
-              <span></span><span></span><span></span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Chat Input -->
-        <div class="mt-4 flex gap-2 items-center">
-          <input
-            #chatInput
-            type="text"
-            placeholder="Ask Izumi..."
-            class="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
-            (keyup.enter)="sendChatMessage(chatInput.value); chatInput.value = ''"
-          />
-          <studio-button variant="primary" size="medium" shape="circle" (click)="sendChatMessage(chatInput.value); chatInput.value = ''">
-            <mat-icon class="!w-5 !h-5">send</mat-icon>
-          </studio-button>
-        </div>
+        <app-chat-interface class="w-full h-full"></app-chat-interface>
       </div>
 
       <!-- COL 2: Properties Panel -->

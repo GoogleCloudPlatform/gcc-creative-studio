@@ -1,0 +1,86 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<div class="flex flex-col h-full">
+  <div class="flex items-center justify-between mb-4">
+    <h5 class="text-lg font-semibold">Izumi Agent</h5>
+    <button mat-icon-button (click)="startNewChat()" class="text-gray-500 hover:text-gray-700" title="New Chat">
+      <mat-icon>add_comment</mat-icon>
+    </button>
+  </div>
+
+  <!-- Session Selector -->
+  <div class="mb-4 flex items-center gap-2" *ngIf="sessions().length > 0">
+    <studio-dropdown
+      [options]="dropdownOptions()"
+      [value]="currentSessionId"
+      (valueChange)="onSessionChange($event)"
+      placeholder="Select past conversation"
+      size="small"
+      class="flex-1"
+    ></studio-dropdown>
+    <button
+      mat-icon-button
+      (click)="deleteChat()"
+      class="text-red-500 hover:text-red-700"
+      title="Delete Chat"
+    >
+      <mat-icon>delete</mat-icon>
+    </button>
+  </div>
+
+  <!-- Chat Messages -->
+  <div class="flex-1 overflow-y-auto flex flex-col gap-3 p-2 custom-scrollbar" #chatContainer>
+    <div *ngFor="let msg of chatMessages()" [class]="msg.sender === 'user' ? 'chat-bubble user' : 'chat-bubble agent'">
+      <div class="chat-text text-sm" (click)="onMessageClick($event)">
+        <!-- Text or Markdown -->
+        <markdown *ngIf="msg.text" [data]="msg.text"></markdown>
+
+        <!-- Structured Media Frame -->
+        <div *ngIf="msg.asset" (click)="viewAsset(msg.asset.id)" class="asset-preview mt-2 border border-gray-700 rounded-lg overflow-hidden bg-gray-900 cursor-pointer">
+          <img *ngIf="msg.asset.type === 'image'" [src]="msg.asset.url" class="w-full h-auto object-cover max-h-60" />
+          <video *ngIf="msg.asset.type === 'video'" [src]="msg.asset.url" controls class="w-full h-auto max-h-60"></video>
+          <audio *ngIf="msg.asset.type === 'audio'" [src]="msg.asset.url" controls class="w-full mt-2"></audio>
+          
+          <div class="p-2 border-t border-gray-700 bg-gray-800 flex justify-between items-center text-xs">
+            <span class="text-gray-300 truncate">{{ msg.asset.filename }}</span>
+            <span class="text-blue-400 hover:underline">View Asset</span>
+          </div>
+        </div>
+      </div>
+      <div class="chat-time text-[9px] text-gray-500 mt-1 text-right">{{ msg.timestamp | date:'shortTime' }}</div>
+    </div>
+    <div *ngIf="isTyping()" class="chat-bubble agent">
+      <div class="typing-indicator">
+        <span></span><span></span><span></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chat Input -->
+  <div class="mt-4 flex gap-2 items-center">
+    <input
+      #chatInput
+      type="text"
+      placeholder="Ask Izumi..."
+      class="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+      (keyup.enter)="sendChatMessage(chatInput.value); chatInput.value = ''"
+    />
+    <studio-button variant="primary" size="medium" shape="circle" (click)="sendChatMessage(chatInput.value); chatInput.value = ''">
+      <mat-icon class="!w-5 !h-5">send</mat-icon>
+    </studio-button>
+  </div>
+</div>

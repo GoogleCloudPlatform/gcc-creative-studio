@@ -20,8 +20,9 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from src.auth.auth_guard import get_current_user
+from src.auth.auth_guard import RoleChecker, get_current_user
 from src.users.user_model import UserModel
+from src.workspaces.workspace_service import WorkspaceService
 
 router = APIRouter(
     prefix="/api/agent",
@@ -120,7 +121,9 @@ async def delete_session(
 
 @router.post("/chat")
 async def chat(
-    request: Request, current_user: UserModel = Depends(get_current_user)
+    request: Request,
+    current_user: UserModel = Depends(get_current_user),
+    workspace_service: WorkspaceService = Depends(),
 ):
     """Send a message to Izumi agent and stream the response."""
     user_id = str(current_user.id)
@@ -135,11 +138,36 @@ async def chat(
     body["userId"] = user_id
     body["appName"] = APP_NAME
 
+    # Fetch fallback workspace if not passed
+    if "workspaceId" not in body or body["workspaceId"] is None:
+        workspaces = await workspace_service.list_workspaces_for_user(
+            current_user
+        )
+        if workspaces:
+            body["workspaceId"] = workspaces[0].id
+
+    workspace_id_final = body.get("workspaceId")
+    if workspace_id_final:
+        # Prompt Injection to make model aware of Workspace ID
+        if "newMessage" in body:
+            new_msg = body["newMessage"]
+            if "parts" in new_msg and new_msg["parts"]:
+                part = new_msg["parts"][0]
+                if isinstance(part, dict) and "text" in part:
+                    part[
+                        "text"
+                    ] += f"\n\n[System Note: Use Workspace ID {workspace_id_final} for any tool calls that require a workspace_id]"
+
+    headers = {
+        "Authorization": request.headers.get("Authorization") or "",
+        "Content-Type": "application/json",
+    }
+
     async def generate():
         try:
             async with httpx.AsyncClient() as client:
                 async with client.stream(
-                    "POST", url, json=body, timeout=60.0
+                    "POST", url, json=body, headers=headers, timeout=60.0
                 ) as response:
                     if response.status_code != 200:
                         logger.error(
