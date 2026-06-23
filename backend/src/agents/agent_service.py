@@ -213,23 +213,49 @@ class AgentService:
 
     async def list_sessions(
         self,
+        current_user: UserModel,
         user_id: str,
         request: Request,
         workspace_id: int | None = None,
         appName: str = APP_NAME,
     ) -> List[SessionResponseDto]:
         try:
+            if workspace_id is not None:
+                await self.workspace_auth.authorize(
+                    workspace_id=workspace_id,
+                    user=current_user,
+                )
+
             agent_config = self._get_agent_config(appName)
             agent_name = agent_config.get("resource_name")
 
             raw_sessions = self.client.agent_engines.sessions.list(
-                name=agent_name
+                name=agent_name, config={"filter": f'user_id="{user_id}"'}
             )
 
-            return [
-                self._map_session_to_dto(s, appName, user_id)
-                for s in raw_sessions
-            ]
+            mapped_sessions = []
+            for s in raw_sessions:
+                s_state = getattr(s, "session_state", None)
+                if isinstance(s, dict):
+                    s_state = s.get("session_state") or s_state
+
+                s_workspace_id = None
+                if isinstance(s_state, dict):
+                    s_workspace_id = s_state.get("workspace_id")
+
+                # Exclude sessions where workspace_id from state is null/missing
+                if s_workspace_id is not None:
+                    if workspace_id is not None:
+                        if str(s_workspace_id) == str(workspace_id):
+                            mapped_sessions.append(
+                                self._map_session_to_dto(s, appName, user_id)
+                            )
+                    else:
+                        mapped_sessions.append(
+                            self._map_session_to_dto(s, appName, user_id)
+                        )
+
+            return mapped_sessions
         except HTTPException:
             raise
         except Exception as e:
@@ -240,12 +266,19 @@ class AgentService:
 
     async def create_session(
         self,
+        current_user: UserModel,
         user_id: str,
         request: Request,
         workspace_id: int | None = None,
         appName: str = APP_NAME,
     ) -> SessionResponseDto:
         try:
+            if workspace_id is not None:
+                await self.workspace_auth.authorize(
+                    workspace_id=workspace_id,
+                    user=current_user,
+                )
+
             agent_config = self._get_agent_config(appName)
             agent_name = agent_config.get("resource_name")
             auth_header = request.headers.get("Authorization", "")
@@ -402,6 +435,7 @@ class AgentService:
 
     async def get_session_messages(
         self,
+        current_user: UserModel,
         session_id: str,
         user_id: str,
         request: Request,
@@ -409,6 +443,12 @@ class AgentService:
         appName: str = APP_NAME,
     ) -> SessionResponseDto:
         try:
+            if workspace_id is not None:
+                await self.workspace_auth.authorize(
+                    workspace_id=workspace_id,
+                    user=current_user,
+                )
+
             agent_config = self._get_agent_config(appName)
             agent_name = agent_config.get("resource_name")
             full_session_name = f"{agent_name}/sessions/{session_id}"
@@ -417,6 +457,21 @@ class AgentService:
             )
             if session is None:
                 raise HTTPException(status_code=404, detail="Session not found")
+
+            # Extract workspace_id from session state and authorize
+            s_state = getattr(session, "session_state", None)
+            if isinstance(session, dict):
+                s_state = session.get("session_state") or s_state
+
+            s_workspace_id = None
+            if isinstance(s_state, dict):
+                s_workspace_id = s_state.get("workspace_id")
+
+            if s_workspace_id is not None:
+                await self.workspace_auth.authorize(
+                    workspace_id=int(s_workspace_id),
+                    user=current_user,
+                )
 
             events_list = []
             try:
@@ -443,6 +498,7 @@ class AgentService:
 
     async def delete_session(
         self,
+        current_user: UserModel,
         session_id: str,
         user_id: str,
         request: Request,
@@ -450,11 +506,44 @@ class AgentService:
         appName: str = APP_NAME,
     ) -> dict:
         try:
+            if workspace_id is not None:
+                await self.workspace_auth.authorize(
+                    workspace_id=workspace_id,
+                    user=current_user,
+                )
+
             agent_config = self._get_agent_config(appName)
             agent_name = agent_config.get("resource_name")
             full_session_name = f"{agent_name}/sessions/{session_id}"
+
+            # Fetch session to extract workspace_id and authorize
+            try:
+                session = self.client.agent_engines.sessions.get(
+                    name=full_session_name
+                )
+                if session:
+                    s_state = getattr(session, "session_state", None)
+                    if isinstance(session, dict):
+                        s_state = session.get("session_state") or s_state
+
+                    s_workspace_id = None
+                    if isinstance(s_state, dict):
+                        s_workspace_id = s_state.get("workspace_id")
+
+                    if s_workspace_id is not None:
+                        await self.workspace_auth.authorize(
+                            workspace_id=int(s_workspace_id),
+                            user=current_user,
+                        )
+            except Exception as e_err:
+                logger.warning(
+                    f"Could not retrieve session for delete authorization: {e_err}"
+                )
+
             self.client.agent_engines.sessions.delete(name=full_session_name)
             return {"status": "success"}
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(
                 f"Unexpected error deleting session: {e}", exc_info=True
@@ -462,7 +551,11 @@ class AgentService:
             raise HTTPException(status_code=500, detail=str(e))
 
     async def chat(
-        self, user_id: str, payload: ChatRequestDto, request: Request
+        self,
+        current_user: UserModel,
+        user_id: str,
+        payload: ChatRequestDto,
+        request: Request,
     ) -> dict:
         body = payload.model_dump(exclude_unset=True)
         if "appName" not in body:
@@ -470,6 +563,39 @@ class AgentService:
 
         session_id = body.get("sessionId")
         workspace_id = body.get("workspaceId")
+
+        if workspace_id is not None:
+            await self.workspace_auth.authorize(
+                workspace_id=workspace_id,
+                user=current_user,
+            )
+        elif session_id is not None:
+            try:
+                agent_config = self._get_agent_config(body["appName"])
+                agent_name = agent_config.get("resource_name")
+                full_session_name = f"{agent_name}/sessions/{session_id}"
+                session = self.client.agent_engines.sessions.get(
+                    name=full_session_name
+                )
+                if session:
+                    s_state = getattr(session, "session_state", None)
+                    if isinstance(session, dict):
+                        s_state = session.get("session_state") or s_state
+
+                    s_workspace_id = None
+                    if isinstance(s_state, dict):
+                        s_workspace_id = s_state.get("workspace_id")
+
+                    if s_workspace_id is not None:
+                        workspace_id = int(s_workspace_id)
+                        await self.workspace_auth.authorize(
+                            workspace_id=workspace_id,
+                            user=current_user,
+                        )
+            except Exception as e_err:
+                logger.warning(
+                    f"Could not retrieve session workspace for chat authorization: {e_err}"
+                )
 
         if "newMessage" in body:
             new_msg = body["newMessage"]
@@ -562,42 +688,21 @@ class AgentService:
                 )
                 import json
 
-                print("1111111111111111111", response_stream)
                 for chunk in response_stream:
-                    print("00000000000000000", type(chunk))
-                    print("222222222222222222", chunk)
                     if isinstance(chunk, str):
                         chunk_text = chunk
-                        print("33333333333333333333", chunk_text)
-                        print("4444444444444444444", type(chunk_text))
                     elif isinstance(chunk, dict):
                         chunk_text = json.dumps(chunk)
-                        print("55555555555555555555", chunk_text)
-                        print("6666666666666666666", type(chunk_text))
                     else:
                         try:
                             if hasattr(chunk, "model_dump"):
                                 chunk_text = json.dumps(chunk.model_dump())
-                                print("777777777777777777777", chunk_text)
-                                print("888888888888888888888", type(chunk_text))
                             elif hasattr(chunk, "to_dict"):
                                 chunk_text = json.dumps(chunk.to_dict())
-                                print("9999999999999999999999", chunk_text)
-                                print(
-                                    "101010101010101010101010", type(chunk_text)
-                                )
                             else:
                                 chunk_text = json.dumps(str(chunk))
-                                print("121212121212121212121212", chunk_text)
-                                print(
-                                    "13131313131131313131331", type(chunk_text)
-                                )
                         except Exception:
-                            print(
-                                "1414141414141444141", chunk, type(chunk_text)
-                            )
                             chunk_text = json.dumps(str(chunk))
-                            print("15151515155151515151551", chunk_text)
 
                     async with async_session_local() as db_session:
                         repo = AgentRepository(db_session)
@@ -615,31 +720,6 @@ class AgentService:
                         payload={"raw": "data: [DONE]\n\n"},
                     )
 
-            except ValueError as ve:
-                if "Can only parse array of JSON objects" in str(ve):
-                    logger.warning(
-                        f"Transient REST streaming ValueError encountered (clean termination chunk issue): {ve}. Closing stream gracefully."
-                    )
-                    async with async_session_local() as db_session:
-                        repo = AgentRepository(db_session)
-                        await repo.add_chat_event(
-                            user_id=user_id,
-                            session_id=session_id,
-                            payload={"raw": "data: [DONE]\n\n"},
-                        )
-                else:
-                    logger.error(
-                        f"ValueError during streaming: {ve}", exc_info=True
-                    )
-                    async with async_session_local() as db_session:
-                        repo = AgentRepository(db_session)
-                        await repo.add_chat_event(
-                            user_id=user_id,
-                            session_id=session_id,
-                            payload={
-                                "raw": f'data: {{"error": "ValueError: {str(ve)}"}}\n\n'
-                            },
-                        )
             except Exception as e:
                 logger.error(
                     f"Error streaming from Agent Engine: {e}", exc_info=True

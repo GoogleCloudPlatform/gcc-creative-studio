@@ -73,10 +73,12 @@ export class AgentChatService {
   // Broadcasts a fully generated video asset from the chat processor
   videoGenerated$ = new Subject<any>();
 
-  getSessions(): Observable<any> {
-    return this.http.get(
-      `${this.apiUrl}/sessions?appName=${this.activeAgent()}`,
-    );
+  getSessions(workspaceId?: number): Observable<any> {
+    let url = `${this.apiUrl}/sessions?appName=${this.activeAgent()}`;
+    if (workspaceId) {
+      url += `&workspace_id=${workspaceId}`;
+    }
+    return this.http.get(url);
   }
 
   createSession(workspaceId?: number): Observable<any> {
@@ -102,10 +104,12 @@ export class AgentChatService {
     return this.http.get(`${this.apiUrl}/sessions/detail?${params}`);
   }
 
-  deleteSession(sessionId: string): Observable<any> {
-    return this.http.delete(
-      `${this.apiUrl}/sessions/${sessionId}?appName=${this.activeAgent()}`,
-    );
+  deleteSession(sessionId: string, workspaceId?: number): Observable<any> {
+    let url = `${this.apiUrl}/sessions/${sessionId}?appName=${this.activeAgent()}`;
+    if (workspaceId) {
+      url += `&workspace_id=${workspaceId}`;
+    }
+    return this.http.delete(url);
   }
 
   generateTitle(text: string): Observable<any> {

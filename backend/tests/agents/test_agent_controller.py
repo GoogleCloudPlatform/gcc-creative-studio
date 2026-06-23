@@ -70,7 +70,7 @@ def fixture_mock_remote_agent():
                 "id": "session_1",
                 "appName": "ads_x",
                 "userId": "1",
-                "state": {},
+                "session_state": {"workspace_id": 1},
                 "lastUpdateTime": None,
                 "events": [],
             }
@@ -79,7 +79,7 @@ def fixture_mock_remote_agent():
             "id": "session_1",
             "appName": "ads_x",
             "userId": "1",
-            "state": {},
+            "session_state": {"workspace_id": 1},
             "lastUpdateTime": None,
             "events": [],
         }
@@ -87,7 +87,7 @@ def fixture_mock_remote_agent():
             "id": "session_1",
             "appName": "ads_x",
             "userId": "1",
-            "state": {},
+            "session_state": {"workspace_id": 1},
             "lastUpdateTime": None,
             "events": [],
         }
@@ -153,8 +153,15 @@ def fixture_client(
 
 @pytest.mark.anyio
 async def test_get_sessions_success(mock_remote_agent, client):
-    mock_remote_agent.async_list_sessions.return_value = [
-        {"id": "session_1", "state": {}, "last_update_time": None, "events": []}
+    mock_remote_agent.vclient.agent_engines.sessions.list.return_value = [
+        {
+            "id": "session_1",
+            "appName": "ads_x",
+            "userId": "1",
+            "session_state": {"workspace_id": 1},
+            "lastUpdateTime": None,
+            "events": [],
+        }
     ]
 
     response = client.get("/api/agent/sessions")
@@ -166,17 +173,44 @@ async def test_get_sessions_success(mock_remote_agent, client):
             "appName": "ads_x",
             "userId": "1",
             "lastUpdateTime": None,
-            "state": {},
+            "state": {"workspace_id": 1},
             "events": [],
         }
     ]
 
 
 @pytest.mark.anyio
+async def test_get_sessions_filtering(mock_remote_agent, client):
+    mock_remote_agent.vclient.agent_engines.sessions.list.return_value = [
+        {
+            "id": "session_1",
+            "appName": "ads_x",
+            "user_id": "1",
+            "session_state": {"workspace_id": 1},
+            "lastUpdateTime": None,
+            "events": [],
+        }
+    ]
+
+    response = client.get("/api/agent/sessions")
+
+    assert response.status_code == 200
+    res_data = response.json()
+    assert len(res_data) == 1
+    assert res_data[0]["id"] == "session_1"
+    assert res_data[0]["userId"] == "1"
+
+    # Assert that sessions.list was called with the user_id query filter config
+    call_args = mock_remote_agent.vclient.agent_engines.sessions.list.call_args
+    assert call_args is not None
+    assert call_args.kwargs.get("config") == {"filter": 'user_id="1"'}
+
+
+@pytest.mark.anyio
 async def test_create_session_success(mock_remote_agent, client):
     mock_remote_agent.async_create_session.return_value = {
         "id": "session_1",
-        "state": {},
+        "state": {"workspace_id": 1},
     }
 
     response = client.post("/api/agent/sessions")
@@ -187,7 +221,7 @@ async def test_create_session_success(mock_remote_agent, client):
         "appName": "ads_x",
         "userId": "1",
         "lastUpdateTime": None,
-        "state": {},
+        "state": {"workspace_id": 1},
         "events": [],
     }
 
@@ -196,7 +230,7 @@ async def test_create_session_success(mock_remote_agent, client):
 async def test_get_session_messages_success(mock_remote_agent, client):
     mock_remote_agent.async_get_session.return_value = {
         "id": "session_1",
-        "state": {},
+        "state": {"workspace_id": 1},
         "last_update_time": None,
         "events": [],
     }
@@ -209,7 +243,7 @@ async def test_get_session_messages_success(mock_remote_agent, client):
         "appName": "ads_x",
         "userId": "1",
         "lastUpdateTime": None,
-        "state": {},
+        "state": {"workspace_id": 1},
         "events": [],
     }
 
@@ -397,7 +431,7 @@ async def test_agent_service_sync_fallbacks(mock_remote_agent):
         agent_repo=MagicMock(),
         workspace_service=MagicMock(),
         storyboard_repo=MagicMock(),
-        workspace_auth=MagicMock(),
+        workspace_auth=AsyncMock(),
         project_service=MagicMock(),
     )
 
@@ -433,10 +467,10 @@ async def test_agent_service_sync_fallbacks(mock_remote_agent):
     )
     mock_remote_agent.delete_session.return_value = None
 
-    await service.list_sessions("u", MagicMock())
-    await service.create_session("u", MagicMock())
-    await service.get_session_messages("s1", "u", MagicMock())
-    await service.delete_session("s1", "u", MagicMock())
+    await service.list_sessions(MagicMock(), "u", MagicMock())
+    await service.create_session(MagicMock(), "u", MagicMock())
+    await service.get_session_messages(MagicMock(), "s1", "u", MagicMock())
+    await service.delete_session(MagicMock(), "s1", "u", MagicMock())
 
 
 @pytest.mark.anyio
@@ -449,22 +483,22 @@ async def test_agent_service_exceptions(mock_remote_agent):
         agent_repo=MagicMock(),
         workspace_service=MagicMock(),
         storyboard_repo=MagicMock(),
-        workspace_auth=MagicMock(),
+        workspace_auth=AsyncMock(),
         project_service=MagicMock(),
     )
 
     service.client.agent_engines.sessions.list.side_effect = Exception("err")
     with pytest.raises(HTTPException):
-        await service.list_sessions("u", MagicMock())
+        await service.list_sessions(MagicMock(), "u", MagicMock())
 
     service.client.agent_engines.sessions.create.side_effect = Exception("err")
     with pytest.raises(HTTPException):
-        await service.create_session("u", MagicMock())
+        await service.create_session(MagicMock(), "u", MagicMock())
 
     service.client.agent_engines.sessions.get.side_effect = Exception("err")
     with pytest.raises(HTTPException):
-        await service.get_session_messages("s1", "u", MagicMock())
+        await service.get_session_messages(MagicMock(), "s1", "u", MagicMock())
 
     service.client.agent_engines.sessions.delete.side_effect = Exception("err")
     with pytest.raises(HTTPException):
-        await service.delete_session("s1", "u", MagicMock())
+        await service.delete_session(MagicMock(), "s1", "u", MagicMock())

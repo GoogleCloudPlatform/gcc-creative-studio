@@ -27,8 +27,8 @@
         <mat-icon class="sb-icon-sm">face</mat-icon>
         Characters
       </button> -->
-      <button 
-        class="sb-tab !cursor-auto" 
+      <button
+        class="sb-tab !cursor-auto"
         [class.active]="activeTab() === 'scenes'"
       >
         <mat-icon class="sb-icon-sm">movie</mat-icon>
@@ -36,114 +36,180 @@
       </button>
     </div>
 
-
-
     <div class="flex gap-2 ml-auto">
-      <button *ngIf="!isGenerating()" class="sb-btn-primary" (click)="onAddScene()">
+      <button
+        *ngIf="!isGenerating()"
+        class="sb-btn-primary"
+        (click)="onAddScene()"
+      >
         <mat-icon class="sb-icon-sm">add</mat-icon> Add Scene
       </button>
-      <button *ngIf="!isGenerating()" class="sb-btn-glow" (click)="onGenerateVideo()" [disabled]="scenes().length <= 1">
+      <button
+        *ngIf="!isGenerating()"
+        class="sb-btn-glow"
+        (click)="onGenerateVideo()"
+        [disabled]="scenes().length === 0 || scenes()[0].id === 'scene-welcome'"
+      >
         <mat-icon class="sb-icon-sm">auto_awesome</mat-icon> Generate Video
       </button>
-      <button *ngIf="showSeeVideoBtn() && !isGenerating()" class="sb-btn-glow-gold ml-2" (click)="onSeeVideoGenerated()">
+      <button
+        *ngIf="showSeeVideoBtn() && !isGenerating()"
+        class="sb-btn-glow-gold ml-2"
+        (click)="onSeeVideoGenerated()"
+      >
         <mat-icon class="sb-icon-sm">visibility</mat-icon> See Video
       </button>
     </div>
   </header>
 
-  <main class="sb-main-scroll" cdkDropList cdkDropListOrientation="horizontal" (cdkDropListDropped)="onDrop($event)">
-    <div *ngIf="isGenerating()" class="flex h-full w-full items-center justify-center flex-col gap-4">
+  <main
+    class="sb-main-scroll"
+    cdkDropList
+    cdkDropListOrientation="horizontal"
+    (cdkDropListDropped)="onDrop($event)"
+  >
+    <div
+      *ngIf="isGenerating()"
+      class="flex h-full w-full items-center justify-center flex-col gap-4"
+    >
       <div class="animate-pulse bg-indigo-500/20 p-6 rounded-full">
-        <mat-icon class="text-indigo-400 text-6xl animate-spin" style="height: 64px; width: 64px; font-size: 64px;">autorenew</mat-icon>
+        <mat-icon
+          class="text-indigo-400 text-6xl animate-spin"
+          style="height: 64px; width: 64px; font-size: 64px"
+          >autorenew</mat-icon
+        >
       </div>
       <h3 class="text-2xl text-white font-semibold">
-        {{ isGeneratingVideo() ? 'Stitching all together and generating your final video' : 'Generating Your Narrative...' }}
+        {{
+          isGeneratingVideo()
+            ? 'Stitching all together and generating your final video'
+            : 'Generating Your Narrative...'
+        }}
       </h3>
-      <p [@messageAnimation]="loadingMessage()" class="text-gray-400 text-center max-w-md">{{ loadingMessage() }}</p>
+      <p
+        [@messageAnimation]="loadingMessage()"
+        class="text-gray-400 text-center max-w-md"
+      >
+        {{ loadingMessage() }}
+      </p>
     </div>
-    
+
     <ng-container *ngIf="!isGenerating()">
       @for (scene of scenes(); track scene.id; let sceneIdx = $index) {
-      <div class="sb-scene-card" cdkDrag>
-        
-        <!-- Scene Header -->
-        <div class="sb-scene-header">
-          <div class="sb-scene-title-group">
-            <mat-icon class="sb-drag-handle" cdkDragHandle>drag_indicator</mat-icon>
-            <h2 *ngIf="!scene.isEditingTitle">{{ scene.title }}</h2>
-            <input *ngIf="scene.isEditingTitle" [(ngModel)]="scene.title" (blur)="stopEditTitle(scene)" class="sb-title-input"
-              style="background: transparent; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; color: white; font-size: 24px; font-weight: 600; padding: 4px 8px;" />
-            <button class="sb-icon-btn" (click)="toggleEditTitle(scene)"><mat-icon class="sb-icon-sm">{{ scene.isEditingTitle ?
-                'check' : 'edit' }}</mat-icon></button>
-            <button class="sb-icon-btn" (click)="onDeleteScene(scene)" title="Delete Scene"><mat-icon
-                class="sb-icon-sm">delete</mat-icon></button>
-          </div>
-
-
-        </div>
-
-        <!-- Shots Container -->
-        <div class="sb-shots-list">
-          @for (shot of scene.shots; track shot.id; let i = $index) {
-            <div class="sb-shot-card">
-              <div 
-                class="sb-shot-thumb cursor-pointer" 
-                [style.background-image]="'url(' + shot.imageUrl + ')'"
-                (click)="onOpenAssetDetail(shot)"
+        <div class="sb-scene-card" cdkDrag>
+          <!-- Scene Header -->
+          <div class="sb-scene-header">
+            <div class="sb-scene-title-group">
+              <mat-icon class="sb-drag-handle" cdkDragHandle
+                >drag_indicator</mat-icon
               >
-                <div class="sb-shot-badge">
-                  <span>{{ i + 1 }}</span>
-                </div>
-                <!-- Edit Icon Overlay -->
-                <button class="sb-edit-shot-btn" (click)="onEditImage(scene, shot, $event)" title="Replace Image">
-                  <mat-icon class="text-white" style="font-size: 24px; height: 24px; width: 24px;">edit</mat-icon>
-                </button>
-              </div>
-
-              <div class="sb-shot-content">
-                <div class="sb-character-chips">
-                  @for (char of shot.characters; track char.id) {
-                    <div class="sb-chip">
-                      <img [src]="char.avatar" class="sb-avatar" alt="Avatar">
-                      <span class="sb-chip-name">{{ char.name }}</span>
-                    </div>
-                  }
-                </div>
-                
-                <textarea 
-                  class="sb-shot-desc" 
-                  [(ngModel)]="shot.description"
-                  (blur)="updateStoryboard()"
-                  placeholder="Shot description"
-                ></textarea>
-              </div>
-            </div>
-          }
-
-          <!-- Add Shot Card (Appears at the end) -->
-          @if (sceneIdx === 0) {
-          <div class="sb-add-shot-card opacity-50 cursor-not-allowed" title="Coming soon multiple reference images">
-            <div class="sb-add-shot-content">
-              <mat-icon class="sb-movie-icon">movie_creation</mat-icon>
-              <h3>Add Shot</h3>
-              <p>Add an additional shot to this scene</p>
-            </div>
-            <div class="sb-add-shot-footer">
-              <div class="sb-add-circle">
-                <mat-icon>add</mat-icon>
-              </div>
+              <h2 *ngIf="!scene.isEditingTitle">{{ scene.title }}</h2>
+              <input
+                *ngIf="scene.isEditingTitle"
+                [(ngModel)]="scene.title"
+                (blur)="stopEditTitle(scene)"
+                class="sb-title-input"
+                style="
+                  background: transparent;
+                  border: 1px solid rgba(255, 255, 255, 0.2);
+                  border-radius: 4px;
+                  color: white;
+                  font-size: 24px;
+                  font-weight: 600;
+                  padding: 4px 8px;
+                "
+              />
+              <button class="sb-icon-btn" (click)="toggleEditTitle(scene)">
+                <mat-icon class="sb-icon-sm">{{
+                  scene.isEditingTitle ? 'check' : 'edit'
+                }}</mat-icon>
+              </button>
+              <button
+                class="sb-icon-btn"
+                (click)="onDeleteScene(scene)"
+                title="Delete Scene"
+              >
+                <mat-icon class="sb-icon-sm">delete</mat-icon>
+              </button>
             </div>
           </div>
-          }
-          
+
+          <!-- Shots Container -->
+          <div class="sb-shots-list">
+            @for (shot of scene.shots; track shot.id; let i = $index) {
+              <div class="sb-shot-card">
+                <div
+                  class="sb-shot-thumb cursor-pointer"
+                  [style.background-image]="'url(' + shot.imageUrl + ')'"
+                  (click)="onOpenAssetDetail(shot)"
+                >
+                  <div class="sb-shot-badge">
+                    <span>{{ i + 1 }}</span>
+                  </div>
+                  <!-- Edit Icon Overlay -->
+                  <button
+                    class="sb-edit-shot-btn"
+                    (click)="onEditImage(scene, shot, $event)"
+                    title="Replace Image"
+                  >
+                    <mat-icon
+                      class="text-white"
+                      style="font-size: 24px; height: 24px; width: 24px"
+                      >edit</mat-icon
+                    >
+                  </button>
+                </div>
+
+                <div class="sb-shot-content">
+                  <div class="sb-character-chips">
+                    @for (char of shot.characters; track char.id) {
+                      <div class="sb-chip">
+                        <img
+                          [src]="char.avatar"
+                          class="sb-avatar"
+                          alt="Avatar"
+                        />
+                        <span class="sb-chip-name">{{ char.name }}</span>
+                      </div>
+                    }
+                  </div>
+
+                  <textarea
+                    class="sb-shot-desc"
+                    [(ngModel)]="shot.description"
+                    (blur)="updateStoryboard()"
+                    placeholder="Shot description"
+                  ></textarea>
+                </div>
+              </div>
+            }
+
+            <!-- Add Shot Card (Appears at the end) -->
+            @if (sceneIdx === 0) {
+              <div
+                class="sb-add-shot-card opacity-50 cursor-not-allowed"
+                title="Coming soon multiple reference images"
+              >
+                <div class="sb-add-shot-content">
+                  <mat-icon class="sb-movie-icon">movie_creation</mat-icon>
+                  <h3>Add Shot</h3>
+                  <p>Add an additional shot to this scene</p>
+                </div>
+                <div class="sb-add-shot-footer">
+                  <div class="sb-add-circle">
+                    <mat-icon>add</mat-icon>
+                  </div>
+                </div>
+              </div>
+            }
+          </div>
         </div>
+      }
+
+      <!-- Next Scene Arrow (Visual indicator from Mockup) -->
+      <div class="sb-next-indicator">
+        <mat-icon>chevron_right</mat-icon>
       </div>
-    }
-    
-    <!-- Next Scene Arrow (Visual indicator from Mockup) -->
-    <div class="sb-next-indicator">
-      <mat-icon>chevron_right</mat-icon>
-    </div>
     </ng-container>
   </main>
 </div>

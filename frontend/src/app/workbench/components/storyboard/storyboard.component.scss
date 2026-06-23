@@ -14,18 +14,22 @@
  * limitations under the License.
  */
 // Placeholder Variables
-$font-family: 'Inter', system-ui, -apple-system, sans-serif;
-$bg-body: #1F1F1F;
+$font-family:
+  'Inter',
+  system-ui,
+  -apple-system,
+  sans-serif;
+$bg-body: #1f1f1f;
 $bg-surface: #262626;
-$bg-card: #2C2C2C;
+$bg-card: #2c2c2c;
 $bg-shot: #333333;
-$bg-interactive: #3A3A3A;
+$bg-interactive: #3a3a3a;
 $bg-glow: rgba(94, 153, 255, 0.2);
 $border-color: rgba(255, 255, 255, 0.1);
 $border-light: rgba(255, 255, 255, 0.15);
-$glow-color: #5E99FF;
-$text-primary: #FFFFFF;
-$text-secondary: #AAAAAA;
+$glow-color: #5e99ff;
+$text-primary: #ffffff;
+$text-secondary: #aaaaaa;
 $border-radius-lg: 16px;
 $border-radius-md: 12px;
 $border-radius-sm: 8px;
@@ -77,9 +81,9 @@ $border-radius-pill: 99px;
   cursor: pointer;
   transition: all 0.2s ease;
   &[disabled] {
-      cursor: not-allowed;
-      opacity: 0.5;
-    }
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
   &.active {
     background-color: rgba(255, 255, 255, 0.1);
     color: $text-primary;
@@ -207,7 +211,7 @@ $border-radius-pill: 99px;
 .sb-btn-glow {
   background: rgba(94, 153, 255, 0.15);
   border: 1px solid rgba(94, 153, 255, 0.4);
-  color: #A3C9FF;
+  color: #a3c9ff;
   border-radius: $border-radius-pill;
   padding: 10px 20px;
   display: flex;
@@ -221,11 +225,20 @@ $border-radius-pill: 99px;
     box-shadow: 0 0 24px rgba(94, 153, 255, 0.4);
     background: rgba(94, 153, 255, 0.25);
   }
+  &[disabled] {
+    cursor: not-allowed;
+    opacity: 0.5;
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.3);
+    box-shadow: none;
+    pointer-events: none;
+  }
 }
 .sb-btn-glow-gold {
   background: rgba(255, 193, 7, 0.15);
   border: 1px solid rgba(255, 193, 7, 0.4);
-  color: #FFE082;
+  color: #ffe082;
   border-radius: $border-radius-pill;
   padding: 10px 20px;
   display: flex;
@@ -238,6 +251,15 @@ $border-radius-pill: 99px;
   &:hover {
     box-shadow: 0 0 24px rgba(255, 193, 7, 0.4);
     background: rgba(255, 193, 7, 0.25);
+  }
+  &[disabled] {
+    cursor: not-allowed;
+    opacity: 0.5;
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.3);
+    box-shadow: none;
+    pointer-events: none;
   }
 }
 // Shots List & Card
@@ -277,7 +299,7 @@ $border-radius-pill: 99px;
   justify-content: center;
   cursor: pointer;
   transition: background-color 0.2s;
-  
+
   &:hover {
     background: rgba(0, 0, 0, 0.7);
   }
@@ -339,9 +361,9 @@ $border-radius-pill: 99px;
   resize: none;
   font-family: inherit;
   min-height: 150px;
-    max-height: 300px;
-    overflow-y: auto;
-  
+  max-height: 300px;
+  overflow-y: auto;
+
   &:focus {
     outline: none;
     color: $text-primary;
@@ -364,20 +386,20 @@ $border-radius-pill: 99px;
   &:hover:not(.opacity-50) {
     border-color: $border-light;
   }
-&.opacity-50 {
-  background-color: rgba(0, 0, 0, 0.2);
-  border-color: rgba(255, 255, 255, 0.05);
-  cursor: not-allowed;
-  .sb-movie-icon,
-  h3,
-  p {
-    color: rgba(255, 255, 255, 0.3);
+  &.opacity-50 {
+    background-color: rgba(0, 0, 0, 0.2);
+    border-color: rgba(255, 255, 255, 0.05);
+    cursor: not-allowed;
+    .sb-movie-icon,
+    h3,
+    p {
+      color: rgba(255, 255, 255, 0.3);
+    }
+    .sb-add-circle {
+      background: rgba(255, 255, 255, 0.1);
+      color: rgba(0, 0, 0, 0.3);
+    }
   }
-  .sb-add-circle {
-    background: rgba(255, 255, 255, 0.1);
-    color: rgba(0, 0, 0, 0.3);
-  }
-}
 }
 .sb-add-shot-content {
   display: flex;
@@ -421,7 +443,7 @@ $border-radius-pill: 99px;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }
 .sb-next-indicator {
   display: flex;
@@ -434,5 +456,5 @@ $border-radius-pill: 99px;
 .sb-icon-sm {
   font-size: 20px;
   width: 26px;
-    height: 26px;
+  height: 26px;
 }

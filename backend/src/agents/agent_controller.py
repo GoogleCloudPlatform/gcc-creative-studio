@@ -52,6 +52,7 @@ async def get_sessions(
     """List chat sessions for the current user from Vertex AI Agent Engines."""
     user_id = str(current_user.id)
     return await agent_service.list_sessions(
+        current_user=current_user,
         user_id=user_id,
         request=request,
         workspace_id=workspace_id,
@@ -71,6 +72,7 @@ async def create_session(
     """Create a new chat session in Vertex AI Agent Engines."""
     user_id = str(current_user.id)
     return await agent_service.create_session(
+        current_user=current_user,
         user_id=user_id,
         request=request,
         workspace_id=workspace_id,
@@ -113,6 +115,7 @@ async def get_session_messages(
     """Get messages for a specific session from Vertex AI Agent Engines."""
     user_id = str(current_user.id)
     return await agent_service.get_session_messages(
+        current_user=current_user,
         session_id=session_id,
         user_id=user_id,
         request=request,
@@ -134,6 +137,7 @@ async def delete_session(
     """Deletes a specific session from Vertex AI Agent Engines."""
     user_id = str(current_user.id)
     return await agent_service.delete_session(
+        current_user=current_user,
         session_id=session_id,
         user_id=user_id,
         request=request,
@@ -153,7 +157,10 @@ async def chat(
     """Start generation task for the Izumi agent."""
     user_id = str(current_user.id)
     return await agent_service.chat(
-        user_id=user_id, payload=payload, request=request
+        current_user=current_user,
+        user_id=user_id,
+        payload=payload,
+        request=request,
     )
 
 
