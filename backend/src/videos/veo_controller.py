@@ -19,6 +19,7 @@ from src.auth.auth_guard import RoleChecker, get_current_user
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.users.user_model import UserModel, UserRoleEnum
 from src.videos.dto.concatenate_videos_dto import ConcatenateVideosDto
+from src.videos.dto.create_gif_dto import CreateGifDto
 from src.videos.dto.create_veo_dto import CreateVeoDto
 from src.videos.veo_service import VeoService
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
@@ -59,6 +60,46 @@ async def generate_videos(
             request_dto=video_request,
             user=current_user,
             executor=executor,  # Pass the pool to the service
+        )
+    except HTTPException as http_exception:
+        raise http_exception
+    except ValueError as value_error:
+        raise HTTPException(
+            status_code=Status.HTTP_400_BAD_REQUEST,
+            detail=str(value_error),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=Status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
+
+
+@router.post(
+    "/generate-gif",
+    response_model=MediaItemResponse,
+    summary="Generate an animated GIF from text and an optional reference image",
+)
+async def generate_gif(
+    gif_request: CreateGifDto,
+    request: Request,
+    current_user: UserModel = Depends(get_current_user),
+    service: VeoService = Depends(),
+    workspace_auth: WorkspaceAuth = Depends(),
+) -> MediaItemResponse | None:
+    """Generates a short video via Veo then converts it to an animated GIF.
+    Returns a placeholder immediately; poll the gallery endpoint for completion.
+    """
+    try:
+        await workspace_auth.authorize(
+            workspace_id=gif_request.workspace_id,
+            user=current_user,
+        )
+        executor = request.app.state.executor
+        return await service.start_gif_generation_job(
+            request_dto=gif_request,
+            user=current_user,
+            executor=executor,
         )
     except HTTPException as http_exception:
         raise http_exception

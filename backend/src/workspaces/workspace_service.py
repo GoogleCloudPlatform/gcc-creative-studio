@@ -135,9 +135,16 @@ class WorkspaceService:
             await self.workspace_repo.get_all_public_workspaces()
         )
 
-        # 3. Combine the lists and remove duplicates.
-        # A dictionary is used to ensure uniqueness based on workspace ID.
         all_workspaces_map = {w.id: w for w in private_workspaces}
+
+        # 3. If user has no private workspaces, auto-create a default one.
+        if not private_workspaces and user.id:
+            default_workspace = await self.create_workspace(
+                user, CreateWorkspaceDto(name="My Workspace")
+            )
+            all_workspaces_map[default_workspace.id] = default_workspace
+
+        # 4. Combine the lists and remove duplicates.
         for w in public_workspaces:
             all_workspaces_map[w.id] = w
 

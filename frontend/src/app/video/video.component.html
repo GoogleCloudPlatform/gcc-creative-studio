@@ -395,6 +395,119 @@
         ></app-flow-prompt-box>
       </div>
 
+    <!-- GIF Mode: reference image upload + settings -->
+    <ng-container *ngIf="currentMode === 'Text to GIF'">
+      <div class="flex flex-col items-center gap-6 mt-4 w-full max-w-2xl mx-auto">
+
+        <!-- Reference image picker -->
+        <div class="w-full">
+          <p class="text-neutral-300 text-sm mb-2">Reference Image (optional)</p>
+          <div
+            class="relative flex flex-col items-center justify-center border-2 border-dashed border-neutral-600 rounded-xl p-6 cursor-pointer hover:border-blue-400 transition-colors"
+            (click)="gifImageInput.click()"
+          >
+            <ng-container *ngIf="!gifReferencePreview; else gifPreviewTpl">
+              <mat-icon class="text-neutral-400 !w-10 !h-10 !text-4xl">add_photo_alternate</mat-icon>
+              <span class="text-neutral-400 text-sm mt-2">Click to upload a reference image</span>
+            </ng-container>
+            <ng-template #gifPreviewTpl>
+              <img
+                [src]="gifReferencePreview"
+                alt="Reference image"
+                class="max-h-40 rounded-lg object-contain"
+              />
+              <button
+                mat-icon-button
+                class="absolute top-1 right-1 !text-red-400"
+                (click)="$event.stopPropagation(); clearGifReferenceImage()"
+                matTooltip="Remove image"
+              >
+                <mat-icon>close</mat-icon>
+              </button>
+            </ng-template>
+          </div>
+          <input
+            #gifImageInput
+            type="file"
+            accept="image/*"
+            class="hidden"
+            (change)="onGifImageSelected($event)"
+          />
+        </div>
+
+        <!-- GIF settings -->
+        <div class="w-full grid grid-cols-3 gap-4 text-neutral-300 text-sm">
+          <div class="flex flex-col gap-1">
+            <label>Duration (s): {{ gifRequest.durationSeconds }}</label>
+            <input
+              type="range"
+              min="3"
+              max="8"
+              step="1"
+              [(ngModel)]="gifRequest.durationSeconds"
+              class="accent-blue-500"
+            />
+          </div>
+          <div class="flex flex-col gap-1">
+            <label>FPS: {{ gifRequest.gifFps }}</label>
+            <input
+              type="range"
+              min="5"
+              max="24"
+              step="1"
+              [(ngModel)]="gifRequest.gifFps"
+              class="accent-blue-500"
+            />
+          </div>
+          <div class="flex flex-col gap-1">
+            <label>Width: {{ gifRequest.gifWidth }}px</label>
+            <input
+              type="range"
+              min="240"
+              max="960"
+              step="120"
+              [(ngModel)]="gifRequest.gifWidth"
+              class="accent-blue-500"
+            />
+          </div>
+        </div>
+
+        <!-- GIF output area -->
+        <ng-container *ngIf="activeGifJob$ | async as gifJob">
+          <div class="w-full" *ngIf="gifJob.status === JobStatus.PROCESSING">
+            <div class="flex flex-col items-center justify-center gap-3 py-8">
+              <mat-progress-spinner color="primary" mode="indeterminate" [diameter]="40"></mat-progress-spinner>
+              <p class="text-neutral-300 text-sm">Generating your GIF... this may take a few minutes.</p>
+            </div>
+          </div>
+
+          <div class="w-full text-center" *ngIf="gifJob.status === JobStatus.FAILED">
+            <mat-icon class="text-red-400 !text-4xl">error_outline</mat-icon>
+            <p class="text-red-400 mt-2 text-sm">{{ gifJob.errorMessage || gifJob.error_message }}</p>
+          </div>
+
+          <div class="w-full flex flex-col items-center gap-3" *ngIf="gifJob.status === JobStatus.COMPLETED && gifJob.presignedUrls?.length">
+            <p class="text-green-400 text-sm font-medium">Your GIF is ready!</p>
+            <img
+              [src]="gifJob.presignedUrls![0]"
+              alt="Generated GIF"
+              class="max-w-full rounded-xl shadow-lg"
+            />
+            <a
+              [href]="gifJob.presignedUrls![0]"
+              download="generated.gif"
+              mat-raised-button
+              color="primary"
+            >
+              <mat-icon>download</mat-icon>
+              Download GIF
+            </a>
+          </div>
+        </ng-container>
+
+      </div>
+    </ng-container>
+
     </div>
   </div>
 </div>

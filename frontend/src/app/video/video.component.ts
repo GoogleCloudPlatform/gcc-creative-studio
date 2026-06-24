@@ -45,6 +45,7 @@ import {
 } from '../common/config/model-config';
 import {JobStatus, MediaItem} from '../common/models/media-item.model';
 import {
+  GifRequest,
   ReferenceImage,
   ReferenceVideo,
   ReferenceAudio,
@@ -124,7 +125,25 @@ export class VideoComponent implements OnInit, AfterViewInit {
     },
     {value: 'Extend Video', icon: 'extension', label: 'Extend Video'},
     {value: 'Concatenate Video', icon: 'merge', label: 'Concatenate Video'},
+    {value: 'Text to GIF', icon: 'gif', label: 'Text to GIF'},
   ];
+
+  // --- GIF Mode State ---
+  activeGifJob$: Observable<MediaItem | null>;
+  gifReferenceAssetId: number | null = null;
+  gifReferencePreview: string | null = null;
+  gifIsLoading = false;
+  gifRequest: GifRequest = {
+    prompt: '',
+    workspaceId: 0,
+    generationModel: 'veo-3.1-fast-generate-001',
+    aspectRatio: '16:9',
+    startImageAssetId: null,
+    durationSeconds: 5,
+    enhancePrompt: true,
+    gifFps: 10,
+    gifWidth: 480,
+  };
 
   // Internal state to track input types
   private _input1IsVideo = false;
@@ -241,6 +260,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
       )?.viewValue || this.generationModels[0].viewValue;
 
     this.isBrowser = isPlatformBrowser(this.platformId);
+    this.activeGifJob$ = this.service.activeGifJob$;
     this.activeVideoJob$ = this.service.activeVideoJob$.pipe(
       map(job =>
         job
@@ -497,6 +517,9 @@ export class VideoComponent implements OnInit, AfterViewInit {
   onPromptChanged(prompt: string) {
     this.searchRequest.prompt = prompt;
     this.service.videoPrompt = prompt;
+    if (this.currentMode === 'Text to GIF') {
+      this.gifRequest.prompt = prompt;
+    }
     this.saveState();
   }
 
@@ -559,6 +582,11 @@ export class VideoComponent implements OnInit, AfterViewInit {
   }
 
   searchTerm() {
+    if (this.currentMode === 'Text to GIF') {
+      this.generateGif();
+      return;
+    }
+
     const activeWorkspaceId = this.workspaceStateService.getActiveWorkspaceId();
     if (!activeWorkspaceId) {
       handleErrorSnackbar(
@@ -772,6 +800,56 @@ export class VideoComponent implements OnInit, AfterViewInit {
           handleErrorSnackbar(this._snackBar, error, 'Search');
         },
       });
+  }
+
+  generateGif() {
+    const activeWorkspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    if (!activeWorkspaceId) {
+      handleErrorSnackbar(
+        this._snackBar,
+        {message: 'Please select a workspace first.'},
+        'Workspace',
+      );
+      return;
+    }
+    if (!this.gifRequest.prompt) {
+      handleInfoSnackbar(this._snackBar, 'Please enter a prompt to generate a GIF.');
+      return;
+    }
+    this.gifRequest.workspaceId = activeWorkspaceId;
+    this.gifRequest.startImageAssetId = this.gifReferenceAssetId;
+    this.gifIsLoading = true;
+    this.service
+      .startGifGeneration(this.gifRequest)
+      .pipe(finalize(() => (this.gifIsLoading = false)))
+      .subscribe({
+        error: err => handleErrorSnackbar(this._snackBar, err, 'GIF generation'),
+      });
+  }
+
+  onGifImageSelected(event: Event) {
+    const file = (event.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e: ProgressEvent<FileReader>) => {
+      this.gifReferencePreview = e.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+
+    this.sourceAssetService
+      .uploadAsset(file, {mimeType: file.type})
+      .subscribe({
+        next: asset => {
+          this.gifReferenceAssetId = asset.id;
+        },
+        error: err =>
+          handleErrorSnackbar(this._snackBar, err, 'Image upload'),
+      });
+  }
+
+  clearGifReferenceImage() {
+    this.gifReferenceAssetId = null;
+    this.gifReferencePreview = null;
   }
 
   rewritePrompt() {

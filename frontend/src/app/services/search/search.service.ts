@@ -30,7 +30,7 @@ import {
 } from 'rxjs';
 import {environment} from '../../../environments/environment';
 import {JobStatus, MediaItem} from '../../common/models/media-item.model';
-import {ImagenRequest, VeoRequest} from '../../common/models/search.model';
+import {GifRequest, ImagenRequest, VeoRequest} from '../../common/models/search.model';
 import {
   handleErrorSnackbar,
   handleSuccessSnackbar,
@@ -74,6 +74,10 @@ export class SearchService {
   private activeVtoJob = new BehaviorSubject<MediaItem | null>(null);
   public activeVtoJob$ = this.activeVtoJob.asObservable();
   private vtoPollingSubscription: Subscription | null = null;
+
+  private activeGifJob = new BehaviorSubject<MediaItem | null>(null);
+  public activeGifJob$ = this.activeGifJob.asObservable();
+  private gifPollingSubscription: Subscription | null = null;
 
   constructor(
     private http: HttpClient,
@@ -181,6 +185,57 @@ export class SearchService {
 
   clearActiveVideoJob() {
     this.activeVideoJob.next(null);
+  }
+
+  startGifGeneration(gifRequest: GifRequest): Observable<MediaItem> {
+    const url = `${environment.backendURL}/videos/generate-gif`;
+    return this.http.post<MediaItem>(url, gifRequest).pipe(
+      tap(initialItem => {
+        this.activeGifJob.next(initialItem);
+        this.startGifPolling(initialItem.id);
+      }),
+    );
+  }
+
+  clearActiveGifJob() {
+    this.activeGifJob.next(null);
+  }
+
+  private startGifPolling(mediaId: number): void {
+    this.stopGifPolling();
+    this.gifPollingSubscription = timer(5000, 15000)
+      .pipe(
+        switchMap(() => this.http.get<MediaItem>(`${environment.backendURL}/gallery/item/${mediaId}`)),
+        tap(latestItem => {
+          this.activeGifJob.next(latestItem);
+          if (
+            latestItem.status === JobStatus.COMPLETED ||
+            latestItem.status === JobStatus.FAILED
+          ) {
+            this.stopGifPolling();
+            if (latestItem.status === JobStatus.COMPLETED) {
+              handleSuccessSnackbar(this._snackBar, 'Your GIF is ready!');
+            } else {
+              handleErrorSnackbar(
+                this._snackBar,
+                {message: latestItem.errorMessage || latestItem.error_message},
+                `GIF generation failed: ${latestItem.errorMessage || latestItem.error_message}`,
+              );
+            }
+          }
+        }),
+        catchError(err => {
+          console.error('GIF polling failed', err);
+          this.stopGifPolling();
+          return EMPTY;
+        }),
+      )
+      .subscribe();
+  }
+
+  private stopGifPolling(): void {
+    this.gifPollingSubscription?.unsubscribe();
+    this.gifPollingSubscription = null;
   }
 
   /**
