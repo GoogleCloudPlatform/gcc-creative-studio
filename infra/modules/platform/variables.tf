@@ -88,14 +88,7 @@ variable "backend_runtime_secrets" {
   default     = {}
 }
 
-variable "entra_client_id" {
+variable "iap_expected_audience" {
   type        = string
-  description = "Microsoft Entra Client ID for alternative authentication."
-  default     = ""
-}
-
-variable "entra_tenant_id" {
-  type        = string
-  description = "Microsoft Entra Tenant ID for alternative authentication."
-  default     = ""
+  description = "The expected Audience (aud) claim for Identity-Aware Proxy (IAP) JWT validation."
 }
