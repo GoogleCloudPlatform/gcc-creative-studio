@@ -21,10 +21,21 @@ output "backend_service_url" {
 
 output "frontend_service_url" {
   description = "The URL of the deployed frontend service."
-  value       = module.frontend_service.url
+  value       = module.frontend_service.service_url
 }
 
 output "cloud_sql_connection_name" {
   description = "The connection name of the Cloud SQL instance to be used by the bootstrap script."
   value       = module.postgresql.connection_name
 }
+
+output "load_balancer_ip" {
+  value       = var.iap_oauth2_client_id != "" ? module.iap_load_balancer[0].load_balancer_ip : ""
+  description = "The external IP address of the Global HTTP(S) Load Balancer."
+}
+
+output "iap_expected_audience" {
+  value       = var.iap_oauth2_client_id != "" ? module.iap_load_balancer[0].iap_expected_audience : ""
+  description = "The expected Audience (aud) claim for IAP JWT validation."
+}
+

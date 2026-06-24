@@ -26,8 +26,9 @@ import {AuthService} from './auth.service';
 import {UserService} from './user.service';
 import {UserRolesEnum} from '../models/user.model';
 import {isPlatformBrowser} from '@angular/common';
-import {Observable, of} from 'rxjs';
+import {Observable, of, firstValueFrom} from 'rxjs';
 import {SettingsService} from '../../services/settings.service';
+import {environment} from '../../../environments/environment';
 
 const LOGIN_ROUTE = '/login';
 @Injectable({
@@ -64,9 +65,16 @@ export class AuthGuardService implements CanActivate {
     }
 
     if (!this.authService.isLoggedIn()) {
+      if (!environment.isLocal) {
+        const hasSession = await firstValueFrom(this.authService.checkIapSession());
+        if (hasSession) {
+          return this.settingsService.loadSettings().then(() => true);
+        }
+      }
       void this.router.navigate([LOGIN_ROUTE]);
       return false;
     }
+
 
     return this.settingsService.loadSettings().then(() => {
       const requiredRoles = route.data?.['requiredRoles'] as UserRolesEnum[];
