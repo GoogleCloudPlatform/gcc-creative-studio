@@ -23,7 +23,9 @@ Before you begin, ensure you have the following tools installed on your system:
 
 ## 3. Add env variables to repo where we’ll work
 
-You can connect to your new GCP Argolis Account by setting a `backend/.env` file for the backend and a `frontend/src/environments/development.environment.ts` file for the frontend.
+You can connect to your new GCP Argolis Account by setting a `backend/.env` file for the backend and a `frontend/src/environments/environment.development.ts` file for the frontend.
+
+Copy the template from `frontend/src/environments/environment.development.ts.example` to `frontend/src/environments/environment.development.ts` and modify it.
 
 > **Important!!!** set `isLocal = True`, in both frontend and backend, this is so that instead of loggin in with Identity Platform, we login with Firebase, and we keep Identity Platform Authorized Javascript origins clean, without the need to whitelist localhost.
 
@@ -62,7 +64,7 @@ ADMIN_USER_EMAIL="your-user-email"
 > - **Safe Experimentation**: Clear volume bindings locally without risking production states or accidental cloud data drops.
 > - **Instant Migrations Validation**: Speed runs Alembic updates completely isolated and offline.
 
-### `frontend/src/environments/development.environment.ts` file
+### `frontend/src/environments/environment.development.ts` file
 
 ```typescript
 export const environment = {

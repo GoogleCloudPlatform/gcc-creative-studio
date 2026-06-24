@@ -36,6 +36,8 @@ resource "google_cloud_run_v2_service" "this" {
   location         = var.gcp_region
   custom_audiences = var.custom_audiences
   deletion_protection = false
+  ingress          = var.ingress
+
 
   template {
     service_account = google_service_account.run_sa.email
@@ -156,6 +158,12 @@ resource "google_artifact_registry_repository_iam_member" "ar_writer_binding" {
   repository = google_artifact_registry_repository.repo.name
   role       = "roles/artifactregistry.writer"
   member     = "serviceAccount:${google_service_account.trigger_sa.email}"
+}
+
+resource "google_project_iam_member" "trigger_storage_viewer" {
+  project = var.gcp_project_id
+  role    = "roles/storage.objectViewer"
+  member  = "serviceAccount:${google_service_account.trigger_sa.email}"
 }
 
 resource "google_cloud_run_v2_service_iam_member" "run_developer_binding" {

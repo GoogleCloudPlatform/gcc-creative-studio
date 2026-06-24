@@ -129,3 +129,10 @@ variable "db_secret_id" {
 }
 variable "db_name" { type = string }
 variable "db_user" { type = string }
+
+variable "ingress" {
+  type        = string
+  description = "Ingress settings for the Cloud Run service. Allowed values: INGRESS_TRAFFIC_ALL, INGRESS_TRAFFIC_INTERNAL_ONLY, INGRESS_TRAFFIC_INTERNAL_AND_GCLB."
+  default     = "INGRESS_TRAFFIC_ALL"
+}
+
