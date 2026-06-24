@@ -507,6 +507,104 @@ class TestBackgroundWorkers:
             mock_media_repo.update.assert_called_once()
 
     @patch("src.database.WorkerDatabase")
+    @patch("src.videos.veo_service.concatenate_videos")
+    @patch("src.videos.veo_service.generate_thumbnail")
+    @pytest.mark.xfail(
+        reason="Exposes different bucket bug in video concatenation"
+    )
+    def test_process_video_concatenation_in_background_different_bucket(
+        self,
+        mock_thumb,
+        mock_concat,
+        mock_worker_db_class,
+    ):
+        from src.videos.dto.concatenate_videos_dto import (
+            ConcatenateVideosDto,
+            ConcatenationInput,
+        )
+
+        request_dto = ConcatenateVideosDto(
+            workspace_id=1,
+            name="Concat Video",
+            inputs=[
+                ConcatenationInput(type="media_item", id=1),
+                ConcatenationInput(type="media_item", id=2),
+            ],
+        )
+
+        # Mock WorkerDatabase Context
+        mock_db_context = AsyncMock()
+        mock_db_factory = MagicMock(return_value=mock_db_context)
+        mock_worker_db_class.return_value.__aenter__.return_value = (
+            mock_db_factory
+        )
+
+        mock_thumb.return_value = "/tmp/thumbnails/thumb.png"
+        mock_concat.return_value = "/tmp/concat.mp4"
+
+        # Patch Repos inside execution
+        with (
+            patch(
+                "src.videos.veo_service.MediaRepository",
+            ) as mock_media_repo_class,
+            patch(
+                "src.videos.veo_service.GcsService",
+            ) as mock_gcs_class,
+        ):
+            mock_media_repo = AsyncMock()
+            mock_media_repo_class.return_value = mock_media_repo
+
+            # Setup mock assets to return for downloading - using a DIFFERENT bucket
+            mock_item1 = MediaItemModel(
+                id=1,
+                workspace_id=1,
+                user_id=1,
+                user_email="t@t.com",
+                mime_type=MimeTypeEnum.VIDEO_MP4,
+                model=GenerationModelEnum.VEO_3_QUALITY,
+                aspect_ratio="16:9",
+                gcs_uris=["gs://different-bucket/1.mp4"],
+                thumbnail_uris=[],
+            )
+            mock_item2 = MediaItemModel(
+                id=2,
+                workspace_id=1,
+                user_id=1,
+                user_email="t@t.com",
+                mime_type=MimeTypeEnum.VIDEO_MP4,
+                model=GenerationModelEnum.VEO_3_QUALITY,
+                aspect_ratio="16:9",
+                gcs_uris=["gs://different-bucket/2.mp4"],
+                thumbnail_uris=[],
+            )
+
+            # get_by_id side_effect to return items
+            mock_media_repo.get_by_id.side_effect = [mock_item1, mock_item2]
+
+            mock_gcs_service = MagicMock()
+            mock_gcs_class.return_value = mock_gcs_service
+            mock_gcs_service.download_from_gcs.return_value = "/tmp/local.mp4"
+            mock_gcs_service.upload_file_to_gcs.return_value = (
+                "gs://bucket/uploaded.mp4"
+            )
+
+            # Execute the outer worker function
+            _process_video_concatenation_in_background(
+                media_item_id=456,
+                request_dto=request_dto,
+            )
+
+            # Assert that download_from_gcs was NOT called with gs:// URI
+            calls = mock_gcs_service.download_from_gcs.call_args_list
+            assert len(calls) == 2
+
+            gcs_uri_path1 = calls[0].kwargs.get("gcs_uri_path")
+            assert gcs_uri_path1 is not None
+            assert not gcs_uri_path1.startswith(
+                "gs://"
+            ), f"Should not pass full URI to download_from_gcs, got: {gcs_uri_path1}"
+
+    @patch("src.database.WorkerDatabase")
     @patch("src.videos.veo_service.GenAIModelSetup.init")
     @patch("src.videos.veo_service.generate_thumbnail")
     def test_process_video_in_background_with_references(

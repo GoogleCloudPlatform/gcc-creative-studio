@@ -53,9 +53,8 @@ class ConfigService(BaseSettings):
         default="", alias="IDENTITY_PLATFORM_ALLOWED_ORGS"
     )
 
-    # --- Microsoft Entra Identity ---
-    ENTRA_CLIENT_ID: str = ""
-    ENTRA_TENANT_ID: str = ""
+    # --- Google Cloud IAP ---
+    IAP_EXPECTED_AUDIENCE: str = ""
 
     # --- Storage ---
     # The defaults will be set in the validator below to prevent recursion.
