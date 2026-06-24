@@ -327,7 +327,22 @@ export class AuthService {
     return of(this.firebaseIdToken!);
   }
 
+  checkIapSession(): Observable<boolean> {
+    return this.httpClient.get<UserModel>(`${environment.backendURL}/users/me`, {withCredentials: true}).pipe(
+      tap((userDetails: UserModel) => {
+        localStorage.setItem(USER_DETAILS, JSON.stringify(userDetails));
+        console.log('IAP Session detected and synchronized.');
+      }),
+      map(() => true),
+      catchError((error) => {
+        console.log('No active IAP session found.', error);
+        return of(false);
+      })
+    );
+  }
+
   private syncUserWithBackend$(token: string): Observable<UserModel> {
+
     const headers = new HttpHeaders().set('X-Custom-Auth', `Bearer ${token}`);
     
     // First, exchange the token for an HttpOnly session cookie
