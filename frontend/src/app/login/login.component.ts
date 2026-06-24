@@ -79,7 +79,8 @@ export class LoginComponent {
           this.debugLogs.push(`INIT | Active IAP session found, redirecting to home.`);
           void this.router.navigate([HOME_ROUTE]);
         } else {
-          this.debugLogs.push(`INIT | No active IAP session.`);
+          this.debugLogs.push(`INIT | No active IAP session. Redirecting to root to trigger IAP authentication.`);
+          window.location.href = HOME_ROUTE;
         }
       });
     }

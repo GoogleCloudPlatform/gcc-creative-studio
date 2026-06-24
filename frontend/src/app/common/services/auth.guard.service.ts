@@ -69,6 +69,10 @@ export class AuthGuardService implements CanActivate {
         const hasSession = await firstValueFrom(this.authService.checkIapSession());
         if (hasSession) {
           return this.settingsService.loadSettings().then(() => true);
+        } else {
+          console.warn('IAP session expired or missing. Reloading page to trigger IAP login...');
+          window.location.reload();
+          return false;
         }
       }
       void this.router.navigate([LOGIN_ROUTE]);
