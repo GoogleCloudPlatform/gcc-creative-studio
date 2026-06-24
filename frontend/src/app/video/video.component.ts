@@ -129,7 +129,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
   ];
 
   // --- GIF Mode State ---
-  activeGifJob$ = this.service.activeGifJob$;
+  activeGifJob$: Observable<MediaItem | null>;
   gifReferenceAssetId: number | null = null;
   gifReferencePreview: string | null = null;
   gifIsLoading = false;
@@ -260,6 +260,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
       )?.viewValue || this.generationModels[0].viewValue;
 
     this.isBrowser = isPlatformBrowser(this.platformId);
+    this.activeGifJob$ = this.service.activeGifJob$;
     this.activeVideoJob$ = this.service.activeVideoJob$.pipe(
       map(job =>
         job
