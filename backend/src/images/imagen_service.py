@@ -1644,7 +1644,14 @@ class ImagenService:
         client = GenAIModelSetup.init()
         try:
             # --- Step 1: Perform the Upscale API Call ---
-            image_for_api = types.Image(gcs_uri=request_dto.user_image)
+            if request_dto.user_image.startswith("gs://"):
+                image_for_api = types.Image(gcs_uri=request_dto.user_image)
+            else:
+                import base64
+
+                image_for_api = types.Image(
+                    image_bytes=base64.b64decode(request_dto.user_image)
+                )
 
             response = client.models.upscale_image(
                 model=GenerationModelEnum.IMAGEN_4_UPSCALE_PREVIEW.value,

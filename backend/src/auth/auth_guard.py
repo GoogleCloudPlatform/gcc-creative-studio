@@ -17,12 +17,9 @@
 import asyncio
 import logging
 
-from fastapi import Depends, HTTPException, status, Request
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import Depends, HTTPException, status, Request, Header
 from firebase_admin import auth
 
-import jwt
-from jwt import PyJWKClient
 
 # --- Google Auth for Identity Platform ---
 from google.auth.transport import requests as google_auth_requests
@@ -37,128 +34,79 @@ from src.users.user_service import UserService
 
 import fastapi.security.utils
 
-
-class CustomOAuth2PasswordBearer(OAuth2PasswordBearer):
-    async def __call__(self, request: Request) -> str | None:
-        authorization = request.headers.get(
-            "X-Custom-Auth"
-        ) or request.headers.get("Authorization")
-        cookie_token = request.cookies.get("session_token")
-
-        if not authorization and not cookie_token:
-            if self.auto_error:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Not authenticated",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-            else:
-                return None
-
-        if authorization:
-            scheme, param = (
-                fastapi.security.utils.get_authorization_scheme_param(
-                    authorization
-                )
-            )
-            if scheme.lower() != "bearer":
-                if self.auto_error:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Invalid authentication credentials",
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
-                else:
-                    return None
-            return param
-
-        return cookie_token
-
-
-# This scheme will require the client to send a token in the X-Custom-Auth or Authorization
-# header. It tells FastAPI how to find the token but doesn't validate it
-# itself.
-oauth2_scheme = CustomOAuth2PasswordBearer(tokenUrl="token")
-
-
 logger = logging.getLogger(__name__)
 
 
+async def get_iap_jwt(
+    request: Request, x_goog_iap_jwt_assertion: str | None = Header(None)
+) -> str | None:
+    """Extracts the IAP JWT assertion. In local environment, this is optional."""
+    if config_service.ENVIRONMENT == "local":
+        return x_goog_iap_jwt_assertion or "mock_local_token"
+    if not x_goog_iap_jwt_assertion:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized: Missing X-Goog-Iap-Jwt-Assertion header.",
+        )
+    return x_goog_iap_jwt_assertion
+
+
 async def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    request: Request,
+    token: str = Depends(get_iap_jwt),
     user_service: UserService = Depends(UserService),
 ) -> UserModel:
     """Dependency that handles the entire authentication and user
-    provisioning flow.
+    provisioning flow via Identity-Aware Proxy (IAP).
 
-    1. Verifies the Firebase ID token.
-    2. Extracts user information (id, email).
-    3. Checks if a user document exists in Firestore.
-    4. If the user is new, creates their document ("Just-In-Time Provisioning").
+    1. Checks if running locally to bypass verification.
+    2. Verifies the Google-signed IAP JWT token.
+    3. Extracts user information (email, name, picture).
+    4. If the user is new, creates their profile JIT.
     5. Returns a Pydantic model with the user's data.
     """
-    email = None
     try:
-        decoded_token = {}
-        if config_service.ENTRA_CLIENT_ID:
-            # --- Microsoft Entra ID ---
-            logger.info("Verifying token using Microsoft Entra ID...")
-            jwks_url = f"https://login.microsoftonline.com/{config_service.ENTRA_TENANT_ID}/discovery/v2.0/keys"
-            jwks_client = PyJWKClient(jwks_url)
-            signing_key = await asyncio.to_thread(
-                jwks_client.get_signing_key_from_jwt, token
+        if config_service.ENVIRONMENT == "local":
+            # Local Dev Bypass: Use mock user
+            mock_email = request.headers.get(
+                "X-Mock-User-Email", "local-dev@example.com"
             )
-            decoded_token = await asyncio.to_thread(
-                jwt.decode,
-                token,
-                signing_key.key,
-                algorithms=["RS256"],
-                audience=config_service.ENTRA_CLIENT_ID,
-                issuer=[
-                    f"https://login.microsoftonline.com/{config_service.ENTRA_TENANT_ID}/v2.0",
-                    "https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0",
-                ],
+            mock_name = request.headers.get(
+                "X-Mock-User-Name", "Local Dev User"
             )
-            email = decoded_token.get(
-                "preferred_username"
-            ) or decoded_token.get("email")
-            name = decoded_token.get("name")
-            picture = ""
-            token_info_hd = None
-        elif config_service.ENVIRONMENT == "local":
-            # --- Local: Use Firebase Auth ---
-            # Verifies the token using the standard Firebase Admin SDK method.
-            logger.info("Verifying token using Firebase Admin SDK...")
-            decoded_token = await asyncio.to_thread(auth.verify_id_token, token)
-            email = decoded_token.get("email")
-            name = decoded_token.get("name")
-            picture = decoded_token.get("picture", "")
-            token_info_hd = decoded_token.get("hd")
-        else:
-            # --- Development/Production: Use Google Identity Platform
-            # (OIDC) ---
-            # Verifies the Google-issued OIDC ID token. The audience must be the
-            # OAuth 2.0 client ID of the Identity Platform-protected resource.
-            google_token_audience = config_service.GOOGLE_TOKEN_AUDIENCE
-            decoded_token = await asyncio.to_thread(
-                id_token.verify_oauth2_token,
-                token,
-                google_auth_requests.Request(),
-                audience=google_token_audience,
+            user_doc = await user_service.create_user_if_not_exists(
+                email=mock_email,
+                name=mock_name,
+                picture="",
             )
-            email = decoded_token.get("email")
-            name = decoded_token.get("name")
-            picture = decoded_token.get("picture", "")
-            token_info_hd = decoded_token.get("hd")
+            return user_doc
+
+        # Verify Google-signed IAP JWT assertion
+        decoded_token = await asyncio.to_thread(
+            id_token.verify_token,
+            token,
+            google_auth_requests.Request(),
+            audience=config_service.IAP_EXPECTED_AUDIENCE,
+            certs_url="https://www.gstatic.com/iap/verify/public_key",
+        )
+
+        email = decoded_token.get("email")
+        # In Workforce Identity Federation, the username/email might be in a different claim.
+        # Fall back to subject if email claim is not present.
+        if not email:
+            email = decoded_token.get("sub")
+
+        name = decoded_token.get(
+            "name", email.split("@")[0] if email and "@" in email else "User"
+        )
+        picture = decoded_token.get("picture", "")
+        token_info_hd = decoded_token.get("hd")
 
         # Restrict by particular organizations if it's a closed environment
         if not email:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=(
-                    "Forbidden: User identity could not be confirmed from "
-                    "token."
-                ),
+                detail="Forbidden: User identity could not be confirmed from IAP token.",
             )
 
         # If ALLOWED_ORGS is configured, check the user's organization.
@@ -199,37 +147,19 @@ async def get_current_user(
 
         return user_doc
 
-    except (auth.ExpiredIdTokenError, jwt.ExpiredSignatureError) as exc:
-        logger.error("[get_current_user - ExpiredIdTokenError] for %s", email)
+    except ValueError as exc:
+        logger.error("[get_current_user - Invalid IAP Token]: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication token has expired.",
+            detail=f"Invalid IAP authentication token: {exc}",
         ) from exc
-    except (
-        auth.InvalidIdTokenError,
-        jwt.InvalidTokenError,
-        jwt.PyJWKError,
-    ) as e:
-        logger.error(
-            "[get_current_user - InvalidIdTokenError] for %s: %s",
-            email,
-            e,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid authentication token: {e}",
-        ) from e
     except HTTPException as e:
-        logger.error("[get_current_user - Exception]: %s", e)
+        logger.error("[get_current_user - HTTPException]: %s", e)
         raise e
     except Exception as e:
-        logger.error("[get_current_user - Exception]: %s", e)
+        logger.error("[get_current_user - Unexpected Exception]: %s", e)
         raise HTTPException(
-            status_code=getattr(
-                e,
-                "status_code",
-                status.HTTP_500_INTERNAL_SERVER_ERROR,
-            ),
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An unexpected error occurred during authentication: {e}",
         ) from e
 

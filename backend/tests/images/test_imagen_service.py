@@ -179,6 +179,43 @@ class TestImagenServiceMethods:
             assert result is not None
 
     @pytest.mark.anyio
+    async def test_upscale_image_base64_success(self, imagen_service):
+        import base64
+        base64_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        request_dto = UpscaleImagenDto(
+            user_image=base64_image,
+            upscale_factor="x4",
+            include_rai_reason=False,
+            enhance_input_image=False,
+            image_preservation_factor=1.0,
+        )
+
+        with patch(
+            "src.images.imagen_service.GenAIModelSetup.init"
+        ) as mock_init:
+            mock_client = MagicMock()
+            mock_init.return_value = mock_client
+
+            mock_response = MagicMock()
+            mock_generated_image = MagicMock()
+            mock_generated_image.image.image_bytes = b"fake_upscaled_bytes"
+            mock_generated_image.rai_filtered_reason = ""
+            mock_response.generated_images = [mock_generated_image]
+
+            mock_client.models.upscale_image.return_value = mock_response
+
+            # Call
+            result = await imagen_service.upscale_image(request_dto)
+
+            assert result is not None
+            # Assert that the SDK was called with image_bytes, not gcs_uri
+            call_args = mock_client.models.upscale_image.call_args
+            assert call_args is not None
+            called_image = call_args.kwargs["image"]
+            assert called_image.image_bytes == base64.b64decode(base64_image)
+            assert called_image.gcs_uri is None
+
+    @pytest.mark.anyio
     async def test_upscale_image_rai_filtered(self, imagen_service):
         from src.images.dto.upscale_imagen_dto import UpscaleImagenDto
 

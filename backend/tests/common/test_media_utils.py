@@ -189,3 +189,40 @@ def test_concatenate_videos_called_process_error():
                 ["/tmp/v1.mp4", "/tmp/v2.mp4"], "/tmp/output.mp4"
             )
             assert res is None
+
+
+def test_get_video_dimensions_ffprobe_not_found():
+    with patch("src.common.media_utils.subprocess.run") as mock_run:
+        mock_run.side_effect = FileNotFoundError()
+        import pytest
+        with pytest.raises(FileNotFoundError):
+            get_video_dimensions("/tmp/video.mp4")
+
+
+def test_get_video_dimensions_called_process_error():
+    with patch("src.common.media_utils.subprocess.run") as mock_run:
+        import subprocess
+        import pytest
+        mock_run.side_effect = subprocess.CalledProcessError(
+            1, "cmd", stderr="error"
+        )
+        with pytest.raises(subprocess.CalledProcessError):
+            get_video_dimensions("/tmp/video.mp4")
+
+
+def test_get_video_dimensions_empty_streams():
+    with patch("src.common.media_utils.subprocess.run") as mock_run:
+        mock_run.return_value.stdout = '{"streams": []}'
+        import pytest
+        with pytest.raises(IndexError):
+            get_video_dimensions("/tmp/video.mp4")
+
+
+def test_get_video_dimensions_missing_streams_key():
+    with patch("src.common.media_utils.subprocess.run") as mock_run:
+        mock_run.return_value.stdout = "{}"
+        import pytest
+        with pytest.raises(KeyError):
+            get_video_dimensions("/tmp/video.mp4")
+
+
