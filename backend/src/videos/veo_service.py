@@ -33,7 +33,11 @@ from src.common.base_dto import (
     MimeTypeEnum,
     ReferenceImageTypeEnum,
 )
-from src.common.media_utils import concatenate_videos, generate_thumbnail
+from src.common.media_utils import (
+    concatenate_videos,
+    convert_video_to_gif,
+    generate_thumbnail,
+)
 from src.common.schema.genai_model_setup import GenAIModelSetup
 from src.common.schema.media_item_model import (
     AssetRoleEnum,
@@ -52,6 +56,7 @@ from src.source_assets.repository.source_asset_repository import (
 )
 from src.users.user_model import UserModel
 from src.videos.dto.concatenate_videos_dto import ConcatenateVideosDto
+from src.videos.dto.create_gif_dto import CreateGifDto
 from src.videos.dto.create_veo_dto import CreateVeoDto
 
 logger = logging.getLogger(__name__)
@@ -1119,6 +1124,264 @@ def _process_video_concatenation_in_background(
         )
 
 
+def _process_gif_in_background(
+    media_item_id: int,
+    request_dto: CreateGifDto,
+    user_email: str,
+):
+    """Background worker that generates a short video via Veo then converts it to GIF.
+
+    Runs in a ThreadPoolExecutor thread with its own asyncio event loop and DB session.
+    """
+    from src.database import WorkerDatabase
+
+    worker_logger = logging.getLogger(f"gif_worker.{media_item_id}")
+    worker_logger.setLevel(logging.INFO)
+    temp_dir = f"temp/gif_{media_item_id}"
+
+    try:
+        if worker_logger.hasHandlers():
+            worker_logger.handlers.clear()
+
+        if os.getenv("ENVIRONMENT") == "production":
+            log_client = LoggerClient()
+            handler = CloudLoggingHandler(
+                log_client,
+                name=f"gif_worker.{media_item_id}",
+            )
+            worker_logger.addHandler(handler)
+        else:
+            handler = logging.StreamHandler(sys.stdout)
+            formatter = logging.Formatter(
+                "%(asctime)s - [GIF_WORKER] - %(levelname)s - %(message)s",
+            )
+            handler.setFormatter(formatter)
+            worker_logger.addHandler(handler)
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        async def _async_worker():
+            async with WorkerDatabase() as db_factory:
+                async with db_factory() as db:
+                    media_repo = MediaRepository(db)
+                    source_asset_repo = SourceAssetRepository(db)
+                    gcs_service = GcsService()
+                    cfg = config_service
+
+                    from src.brand_guidelines.repository.brand_guideline_repository import (
+                        BrandGuidelineRepository,
+                    )
+
+                    brand_guideline_repo = BrandGuidelineRepository(db)
+                    gemini_service = GeminiService(
+                        brand_guideline_repo=brand_guideline_repo,
+                    )
+
+                    try:
+                        os.makedirs(temp_dir, exist_ok=True)
+                        start_time = time.monotonic()
+
+                        client = GenAIModelSetup.init()
+                        gcs_output_directory = f"gs://{cfg.GENMEDIA_BUCKET}"
+
+                        # Optionally enhance the prompt
+                        if request_dto.enhance_prompt:
+                            rewritten_prompt = (
+                                await gemini_service.enhance_prompt_from_dto(
+                                    dto=request_dto,
+                                    target_type=PromptTargetEnum.VIDEO,
+                                )
+                            )
+                            request_dto.prompt = rewritten_prompt
+                        else:
+                            rewritten_prompt = request_dto.prompt
+
+                        # Resolve optional reference image from SourceAsset
+                        start_image_for_api: types.Image | None = None
+                        if request_dto.start_image_asset_id:
+                            ref_asset = await source_asset_repo.get_by_id(
+                                request_dto.start_image_asset_id
+                            )
+                            if ref_asset and ref_asset.gcs_uri:
+                                start_image_for_api = types.Image(
+                                    gcs_uri=ref_asset.gcs_uri,
+                                    mime_type=ref_asset.mime_type,
+                                )
+                            else:
+                                worker_logger.warning(
+                                    "Could not find source asset %s for GIF reference image.",
+                                    request_dto.start_image_asset_id,
+                                )
+
+                        # Call Veo to generate an intermediate video
+                        worker_logger.info(
+                            "Starting Veo video generation for GIF job %s",
+                            media_item_id,
+                        )
+                        operation: types.GenerateVideosOperation = (
+                            await asyncio.to_thread(
+                                client.models.generate_videos,
+                                model=request_dto.generation_model,
+                                prompt=rewritten_prompt,
+                                image=start_image_for_api,
+                                config=types.GenerateVideosConfig(
+                                    number_of_videos=1,
+                                    output_gcs_uri=gcs_output_directory,
+                                    aspect_ratio=request_dto.aspect_ratio,
+                                    duration_seconds=request_dto.duration_seconds,
+                                    generate_audio=False,
+                                ),
+                            )
+                        )
+
+                        # Poll until the video operation completes
+                        while not operation.done:
+                            worker_logger.info(
+                                "Polling Veo operation for GIF job %s...",
+                                media_item_id,
+                            )
+                            await asyncio.sleep(10)
+                            operation = await asyncio.to_thread(
+                                client.operations.get,
+                                operation,
+                            )
+
+                        if operation.error:
+                            raise Exception(operation.error)
+
+                        if (
+                            not operation.response
+                            or not operation.response.generated_videos
+                        ):
+                            raise Exception(
+                                "Veo returned no generated videos for GIF job."
+                            )
+
+                        generated_video = operation.response.generated_videos[0]
+                        if not generated_video.video or not generated_video.video.uri:
+                            raise Exception("Generated video has no GCS URI.")
+
+                        video_gcs_uri = generated_video.video.uri
+                        video_blob = video_gcs_uri.replace(
+                            f"gs://{cfg.GENMEDIA_BUCKET}/", ""
+                        )
+
+                        # Download the intermediate MP4 locally
+                        local_mp4_path = f"{temp_dir}/video.mp4"
+                        await asyncio.to_thread(
+                            gcs_service.download_from_gcs,
+                            gcs_uri_path=video_blob,
+                            destination_file_path=local_mp4_path,
+                        )
+                        worker_logger.info(
+                            "Downloaded intermediate video to %s", local_mp4_path
+                        )
+
+                        # Convert MP4 → GIF
+                        local_gif_path = f"{temp_dir}/animated.gif"
+                        gif_result = await asyncio.to_thread(
+                            convert_video_to_gif,
+                            local_mp4_path,
+                            local_gif_path,
+                            request_dto.gif_fps,
+                            request_dto.gif_width,
+                        )
+                        if not gif_result:
+                            raise Exception("GIF conversion failed.")
+                        worker_logger.info("GIF created at %s", local_gif_path)
+
+                        # Upload GIF to GCS
+                        gif_blob_name = f"gifs/{media_item_id}/animated.gif"
+                        gif_gcs_uri = await asyncio.to_thread(
+                            gcs_service.upload_file_to_gcs,
+                            local_path=local_gif_path,
+                            destination_blob_name=gif_blob_name,
+                            mime_type="image/gif",
+                        )
+                        if not gif_gcs_uri:
+                            raise Exception("Failed to upload GIF to GCS.")
+
+                        # Generate thumbnail (first frame of the GIF as PNG)
+                        thumbnail_gcs_uri = ""
+                        local_thumb_path = f"{temp_dir}/thumbnail.png"
+                        thumb_cmd_result = await asyncio.to_thread(
+                            generate_thumbnail,
+                            local_gif_path,
+                        )
+                        if thumb_cmd_result:
+                            thumb_blob_name = f"gifs/{media_item_id}/thumbnail.png"
+                            thumbnail_gcs_uri = (
+                                await asyncio.to_thread(
+                                    gcs_service.upload_file_to_gcs,
+                                    local_path=thumb_cmd_result,
+                                    destination_blob_name=thumb_blob_name,
+                                    mime_type="image/png",
+                                )
+                                or ""
+                            )
+
+                        # Delete the intermediate MP4 from GCS
+                        try:
+                            await asyncio.to_thread(
+                                gcs_service.delete_blob_from_uri,
+                                video_gcs_uri,
+                            )
+                        except Exception as del_err:
+                            worker_logger.warning(
+                                "Could not delete intermediate video %s: %s",
+                                video_gcs_uri,
+                                del_err,
+                            )
+
+                        end_time = time.monotonic()
+
+                        update_data = {
+                            "status": JobStatusEnum.COMPLETED,
+                            "prompt": rewritten_prompt,
+                            "gcs_uris": [gif_gcs_uri],
+                            "thumbnail_uris": (
+                                [thumbnail_gcs_uri] if thumbnail_gcs_uri else []
+                            ),
+                            "generation_time": end_time - start_time,
+                            "num_media": 1,
+                            "mime_type": MimeTypeEnum.IMAGE_GIF,
+                        }
+                        await media_repo.update(media_item_id, update_data)
+                        worker_logger.info(
+                            "GIF job %s completed successfully.", media_item_id
+                        )
+
+                    except Exception as e:
+                        worker_logger.error(
+                            "GIF generation task failed for job %s: %s",
+                            media_item_id,
+                            e,
+                            exc_info=True,
+                        )
+                        await media_repo.update(
+                            media_item_id,
+                            {
+                                "status": JobStatusEnum.FAILED,
+                                "error_message": str(e),
+                            },
+                        )
+                    finally:
+                        if os.path.exists(temp_dir):
+                            shutil.rmtree(temp_dir)
+
+        loop.run_until_complete(_async_worker())
+        loop.close()
+
+    except Exception as e:
+        worker_logger.error(
+            "GIF worker failed to initialize for job %s: %s",
+            media_item_id,
+            e,
+            exc_info=True,
+        )
+
+
 class VeoService:
     def __init__(
         self,
@@ -1384,6 +1647,61 @@ class VeoService:
         )
 
         logger.info("Video concatenation job queued: %s", placeholder_item.id)
+
+        return MediaItemResponse(
+            **placeholder_item.model_dump(),
+            presigned_urls=[],
+            presigned_thumbnail_urls=[],
+        )
+
+    async def start_gif_generation_job(
+        self,
+        request_dto: CreateGifDto,
+        user: UserModel,
+        executor: ThreadPoolExecutor,
+    ) -> MediaItemResponse:
+        """Creates a placeholder MediaItem and starts GIF generation in the background.
+
+        The background worker calls Veo to produce a short video, converts it to
+        an animated GIF, uploads the GIF to GCS, and updates the MediaItem on
+        completion.
+        """
+        source_assets: list[SourceAssetLink] = []
+
+        placeholder_item = MediaItemModel(
+            workspace_id=request_dto.workspace_id,
+            user_email=user.email,
+            user_id=user.id,
+            mime_type=MimeTypeEnum.IMAGE_GIF,
+            model=request_dto.generation_model,
+            original_prompt=request_dto.prompt,
+            status=JobStatusEnum.PROCESSING,
+            aspect_ratio=request_dto.aspect_ratio,
+            duration_seconds=request_dto.duration_seconds,
+            source_assets=source_assets or None,
+            gcs_uris=[],
+            thumbnail_uris=[],
+        )
+
+        placeholder_item = await self.media_repo.create(placeholder_item)
+
+        executor.submit(
+            _process_gif_in_background,
+            media_item_id=placeholder_item.id,
+            request_dto=request_dto,
+            user_email=user.email,
+        )
+
+        logger.info(
+            "GIF generation job queued.",
+            extra={
+                "json_fields": {
+                    "media_id": placeholder_item.id,
+                    "user_email": user.email,
+                    "model": request_dto.generation_model,
+                },
+            },
+        )
 
         return MediaItemResponse(
             **placeholder_item.model_dump(),

@@ -84,6 +84,18 @@ export type VeoRequest = {
   parentMediaItemId?: number | null;
 };
 
+export type GifRequest = {
+  prompt: string;
+  workspaceId: number;
+  generationModel: string;
+  aspectRatio: string;
+  startImageAssetId?: number | null;
+  durationSeconds: number;
+  enhancePrompt: boolean;
+  gifFps: number;
+  gifWidth: number;
+};
+
 export type SearchResponse = {
   summary: any;
   results: SearchResult[];

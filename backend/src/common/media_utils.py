@@ -218,6 +218,61 @@ def concatenate_videos(video_paths: list[str], output_path: str) -> str | None:
             os.remove(list_file_path)
 
 
+def convert_video_to_gif(
+    video_path: str,
+    gif_path: str,
+    fps: int = 10,
+    width: int = 480,
+) -> str | None:
+    """Converts a video file to an animated GIF using ffmpeg with palette optimization.
+
+    Args:
+        video_path: The path to the source video file.
+        gif_path: The path for the output GIF file.
+        fps: Frame rate for the GIF (default 10).
+        width: Width of the output GIF in pixels; height is scaled proportionally.
+
+    Returns:
+        The path to the generated GIF, or None if conversion fails.
+
+    """
+    palette_path = gif_path + ".palette.png"
+    try:
+        # Pass 1: Generate an optimized color palette from the video
+        palette_cmd = [
+            "ffmpeg",
+            "-i", video_path,
+            "-vf", f"fps={fps},scale={width}:-1:flags=lanczos,palettegen",
+            "-y",
+            palette_path,
+        ]
+        subprocess.run(palette_cmd, check=True, capture_output=True, text=True)
+
+        # Pass 2: Apply the palette to produce a high-quality GIF
+        gif_cmd = [
+            "ffmpeg",
+            "-i", video_path,
+            "-i", palette_path,
+            "-filter_complex",
+            f"fps={fps},scale={width}:-1:flags=lanczos[x];[x][1:v]paletteuse",
+            "-y",
+            gif_path,
+        ]
+        subprocess.run(gif_cmd, check=True, capture_output=True, text=True)
+        return gif_path
+    except FileNotFoundError:
+        logger.error(
+            "ffmpeg not found. Please ensure ffmpeg is installed and in your PATH.",
+        )
+        return None
+    except subprocess.CalledProcessError as e:
+        logger.error("Error converting video to GIF: %s", e.stderr)
+        return None
+    finally:
+        if os.path.exists(palette_path):
+            os.remove(palette_path)
+
+
 def get_video_dimensions(video_path: str) -> tuple[int, int]:
     """Uses ffprobe to get the width and height of a video file."""
     command = [
