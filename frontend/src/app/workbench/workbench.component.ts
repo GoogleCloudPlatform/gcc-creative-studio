@@ -45,7 +45,6 @@ import {
 import {SourceAssetResponseDto} from '../common/services/source-asset.service';
 // --- Interfaces ---
 import {WorkbenchService, TimelineRequest, Clip} from './workbench.service';
-
 import {AgentChatService} from './services/agent-chat.service';
 import {TimeRulerComponent} from './components/time-ruler/time-ruler.component';
 import {

@@ -1,13 +1,9 @@
-<<<<<<< HEAD
 <div align="center">
   <img src="./screenshots/horizontal-creative-studio-next.png" alt="Creative Studio Hero Image" width="600">
   <br>
   <br>
   <h1 align="center">Google Cloud Creative Studio Platform</h1>
   <p align="center"><b>The First Google Cloud Open Source, All-in-One Agentic Studio <br> for Building High-Fidelity Multimedia Content 🚀</b></p>
-=======
-# 🚀 Google Cloud Creative Studio Platform
->>>>>>> 8472114 (docs: Add new guidelines for committing, testing, and linting, and update the formatting instruction.)
 
   <p align="center">
     <img src="https://img.shields.io/badge/angular-%23DD0031.svg?style=for-the-badge&logo=angular&logoColor=white">

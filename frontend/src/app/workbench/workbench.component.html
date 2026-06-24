@@ -957,6 +957,13 @@
               <div [style.width.px]="timelineWidth()" class="h-px"></div>
             </div>
           </div>
+          <!-- Dummy Scrollbar -->
+          <div *ngIf="(timelineState.totalDuration() * timelineState.pixelsPerSecond()) > containerWidthSignal()" #dummyScrollContainer
+            class="absolute bottom-0 right-0 w-[calc(100%-18rem)] h-6 overflow-x-auto !pl-4 z-20 custom-scrollbar"
+            (scroll)="onDummyScroll($event)">
+            <div [style.width.px]="timelineWidth()" class="h-px"></div>
+          </div>
+          </div>
           <!-- Timer -->
           <div class="absolute bottom-2 right-2 w-max z-20">
             <span class="text-sky-300 text-sm"
