@@ -14,6 +14,7 @@
 
 
 import asyncio
+import base64
 import logging
 import os
 import shutil
@@ -338,38 +339,456 @@ def _process_video_in_background(
                             )
 
                         all_generated_videos: list[types.GeneratedVideo] = []
+                        permanent_thumbnail_gcs_uris = []
+                        permanent_gcs_uris = []
+                        raw_data_dict = None
+                        model_name_for_api = None
 
                         start_time = time.monotonic()
 
-                        # Run sync API call in thread
-                        operation: types.GenerateVideosOperation = (
-                            await asyncio.to_thread(
-                                client.models.generate_videos,
-                                model=request_dto.generation_model,
-                                prompt=request_dto.prompt,
-                                image=start_image_for_api,
-                                video=source_video_for_api,
-                                config=types.GenerateVideosConfig(
-                                    number_of_videos=request_dto.number_of_media,
-                                    output_gcs_uri=gcs_output_directory,
-                                    aspect_ratio=request_dto.aspect_ratio,
-                                    negative_prompt=request_dto.negative_prompt,
-                                    generate_audio=request_dto.generate_audio,
-                                    # TODO: Pass from dto the secs if extending video (4, 5, 6, 7)
-                                    duration_seconds=(
-                                        request_dto.duration_seconds
-                                        if not source_video_for_api
-                                        else 7
-                                    ),
-                                    last_frame=end_image_for_api,
-                                    reference_images=(
-                                        reference_images_for_api
-                                        if reference_images_for_api
-                                        else None
-                                    ),
-                                ),
+                        if (
+                            request_dto.generation_model
+                            == GenerationModelEnum.GEMINI_OMNI
+                        ):
+                            worker_logger.info(
+                                "Running Gemini Omni video generation via Interactions API..."
                             )
-                        )
+                            vertex_client = GenAIModelSetup.get_omni_client()
+
+                            # Fetch custom model name from settings
+                            from src.system_settings.repository.system_settings_repository import (
+                                SystemSettingsRepository,
+                            )
+
+                            settings_repo = SystemSettingsRepository(db)
+                            omni_model_setting = await settings_repo.get_by_id(
+                                "gemini_omni_model_name"
+                            )
+                            model_name_for_api = (
+                                omni_model_setting.value
+                                if omni_model_setting is not None
+                                else ""
+                            )
+
+                            interaction_id = None
+                            thought_signature = None
+
+                            # Resolve reference video & reference audio URIs
+                            ref_video_uri = None
+                            if request_dto.reference_video:
+                                ref = request_dto.reference_video
+                                if ref.type == "media_item":
+                                    parent_item = await media_repo.get_by_id(
+                                        ref.id
+                                    )
+                                    if parent_item and parent_item.gcs_uris:
+                                        index = ref.index or 0
+                                        if (
+                                            0
+                                            <= index
+                                            < len(parent_item.gcs_uris)
+                                        ):
+                                            ref_video_uri = (
+                                                parent_item.gcs_uris[index]
+                                            )
+                                        else:
+                                            ref_video_uri = (
+                                                parent_item.gcs_uris[0]
+                                            )
+                                else:
+                                    video_asset = (
+                                        await source_asset_repo.get_by_id(
+                                            ref.id
+                                        )
+                                    )
+                                    if video_asset:
+                                        ref_video_uri = video_asset.gcs_uri
+
+                            ref_audio_uri = None
+                            if request_dto.reference_audio:
+                                ref = request_dto.reference_audio
+                                if ref.type == "media_item":
+                                    parent_item = await media_repo.get_by_id(
+                                        ref.id
+                                    )
+                                    if parent_item and parent_item.gcs_uris:
+                                        index = ref.index or 0
+                                        if (
+                                            0
+                                            <= index
+                                            < len(parent_item.gcs_uris)
+                                        ):
+                                            ref_audio_uri = (
+                                                parent_item.gcs_uris[index]
+                                            )
+                                        else:
+                                            ref_audio_uri = (
+                                                parent_item.gcs_uris[0]
+                                            )
+                                else:
+                                    audio_asset = (
+                                        await source_asset_repo.get_by_id(
+                                            ref.id
+                                        )
+                                    )
+                                    if audio_asset:
+                                        ref_audio_uri = audio_asset.gcs_uri
+
+                            # Check for Turn 2 conversational input context
+                            is_turn_2 = False
+                            if request_dto.parent_media_item_id:
+                                parent_media_item = await media_repo.get_by_id(
+                                    request_dto.parent_media_item_id
+                                )
+                                if (
+                                    parent_media_item
+                                    and parent_media_item.raw_data
+                                ):
+                                    interaction1_id = (
+                                        parent_media_item.raw_data.get(
+                                            "interaction_id"
+                                        )
+                                    )
+                                    signature1 = parent_media_item.raw_data.get(
+                                        "signature"
+                                    )
+                                    if interaction1_id and signature1:
+                                        is_turn_2 = True
+                                    else:
+                                        worker_logger.warning(
+                                            f"Parent MediaItem {request_dto.parent_media_item_id} does not have interaction context in raw_data. Falling back to Turn 1 R2V generation."
+                                        )
+                                else:
+                                    worker_logger.warning(
+                                        f"Parent MediaItem {request_dto.parent_media_item_id} does not have interaction context. Falling back to Turn 1 R2V generation."
+                                    )
+
+                            if is_turn_2:
+                                worker_logger.info(
+                                    f"Performing Turn 2 Multi-Turn generation from parent MediaItem: {request_dto.parent_media_item_id}"
+                                )
+                                prompt1 = (
+                                    parent_media_item.original_prompt
+                                    or parent_media_item.prompt
+                                    or ""
+                                )
+
+                                # Download parent video to read bytes
+                                parent_blob_name = parent_media_item.gcs_uris[
+                                    0
+                                ].replace(f"gs://{cfg.GENMEDIA_BUCKET}/", "")
+                                local_parent_path = (
+                                    f"thumbnails/{parent_blob_name}"
+                                )
+                                os.makedirs(
+                                    os.path.dirname(local_parent_path),
+                                    exist_ok=True,
+                                )
+                                await asyncio.to_thread(
+                                    gcs_service.download_from_gcs,
+                                    gcs_uri_path=parent_blob_name,
+                                    destination_file_path=local_parent_path,
+                                )
+
+                                with open(local_parent_path, "rb") as f:
+                                    parent_video_bytes = f.read()
+
+                                turn2_input = [
+                                    {
+                                        "type": "user_input",
+                                        "content": [
+                                            {"type": "text", "text": prompt1}
+                                        ],
+                                    },
+                                    {
+                                        "type": "model_output",
+                                        "content": [
+                                            {
+                                                "type": "thought",
+                                                "signature": signature1,
+                                            },
+                                            {
+                                                "type": "video",
+                                                "data": parent_video_bytes,
+                                                "mime_type": "video/mp4",
+                                            },
+                                        ],
+                                    },
+                                    {
+                                        "type": "user_input",
+                                        "content": [
+                                            {
+                                                "type": "text",
+                                                "text": request_dto.prompt,
+                                            }
+                                        ],
+                                    },
+                                ]
+
+                                # Clean up local parent video path
+                                if os.path.exists(local_parent_path):
+                                    try:
+                                        os.remove(local_parent_path)
+                                    except Exception as e:
+                                        worker_logger.warning(
+                                            f"Failed to clean up parent video at {local_parent_path}: {e}"
+                                        )
+                            else:
+                                worker_logger.info(
+                                    "Performing Turn 1 Video Generation/R2V"
+                                )
+                                t1_inputs = [
+                                    {"type": "text", "text": request_dto.prompt}
+                                ]
+
+                                for ref_img in reference_images_for_api:
+                                    t1_inputs.append(
+                                        {
+                                            "type": "image",
+                                            "mime_type": ref_img.image.mime_type,
+                                            "uri": ref_img.image.gcs_uri,
+                                        }
+                                    )
+
+                                if start_image_for_api:
+                                    t1_inputs.append(
+                                        {
+                                            "type": "image",
+                                            "mime_type": start_image_for_api.mime_type,
+                                            "uri": start_image_for_api.gcs_uri,
+                                        }
+                                    )
+
+                                if end_image_for_api:
+                                    t1_inputs.append(
+                                        {
+                                            "type": "image",
+                                            "mime_type": end_image_for_api.mime_type,
+                                            "uri": end_image_for_api.gcs_uri,
+                                        }
+                                    )
+
+                                if source_video_for_api:
+                                    t1_inputs.append(
+                                        {
+                                            "type": "video",
+                                            "mime_type": source_video_for_api.mime_type,
+                                            "uri": source_video_for_api.uri,
+                                        }
+                                    )
+
+                                if ref_video_uri:
+                                    t1_inputs.append(
+                                        {
+                                            "type": "video",
+                                            "mime_type": "video/mp4",
+                                            "uri": ref_video_uri,
+                                        }
+                                    )
+
+                                if ref_audio_uri:
+                                    t1_inputs.append(
+                                        {
+                                            "type": "audio",
+                                            "mime_type": "audio/wav",
+                                            "uri": ref_audio_uri,
+                                        }
+                                    )
+
+                            final_gcs_uris = []
+                            permanent_thumbnail_gcs_uris = []
+                            interaction_details = []
+
+                            num_outputs = 1
+                            worker_logger.info(
+                                f"Queueing {num_outputs} Gemini Omni generation interactions."
+                            )
+
+                            async def generate_single_omni_output(i: int):
+                                max_retries = 3
+                                last_err = None
+                                interaction = None
+                                for attempt in range(max_retries):
+                                    try:
+                                        if is_turn_2:
+                                            interaction = await asyncio.to_thread(
+                                                vertex_client.interactions.create,
+                                                model=model_name_for_api,
+                                                previous_interaction_id=interaction1_id,
+                                                input=turn2_input,
+                                            )
+                                        else:
+                                            interaction = await asyncio.to_thread(
+                                                vertex_client.interactions.create,
+                                                model=model_name_for_api,
+                                                input=t1_inputs,
+                                            )
+                                        break
+                                    except Exception as e:
+                                        last_err = e
+                                        worker_logger.warning(
+                                            f"Gemini Omni interactions API call attempt {attempt + 1} failed: {e}. Retrying..."
+                                        )
+                                        if attempt < max_retries - 1:
+                                            await asyncio.sleep(2)
+
+                                if interaction is None:
+                                    raise last_err or Exception(
+                                        "Failed to generate video after multiple attempts."
+                                    )
+
+                                interaction_id = interaction.id
+                                contents = []
+                                thought_signature = None
+                                if interaction.steps:
+                                    for step in interaction.steps:
+                                        if step.type == "model_output":
+                                            contents.extend(step.content)
+                                            if (
+                                                hasattr(step, "signature")
+                                                and step.signature
+                                            ):
+                                                thought_signature = (
+                                                    step.signature
+                                                )
+                                            elif isinstance(
+                                                step, dict
+                                            ) and step.get("signature"):
+                                                thought_signature = step.get(
+                                                    "signature"
+                                                )
+
+                                if not contents or not contents[0].data:
+                                    raise Exception(
+                                        f"Interactions call {i + 1} succeeded but returned no model output data."
+                                    )
+
+                                raw_video_bytes = base64.b64decode(
+                                    contents[0].data
+                                )
+
+                                # Write raw video bytes directly to local output path using index
+                                output_filename = (
+                                    f"videos/{media_item_id}_{i}.mp4"
+                                )
+                                local_output_path = (
+                                    f"thumbnails/{output_filename}"
+                                )
+                                os.makedirs(
+                                    os.path.dirname(local_output_path),
+                                    exist_ok=True,
+                                )
+                                with open(local_output_path, "wb") as f:
+                                    f.write(raw_video_bytes)
+
+                                # Upload local file to GCS
+                                final_gcs_uri = await asyncio.to_thread(
+                                    gcs_service.upload_file_to_gcs,
+                                    local_path=local_output_path,
+                                    destination_blob_name=output_filename,
+                                    mime_type="video/mp4",
+                                )
+
+                                # Generate local thumbnail
+                                thumbnail_path = await asyncio.to_thread(
+                                    generate_thumbnail,
+                                    local_output_path,
+                                )
+                                local_thumbnail_name = thumbnail_path or ""
+
+                                # Upload thumbnail to GCS
+                                thumbnail_gcs_blob = (
+                                    f"thumbnails/{media_item_id}_{i}.png"
+                                )
+                                thumbnail_gcs_uri = ""
+                                if thumbnail_path:
+                                    thumbnail_gcs_uri = (
+                                        await asyncio.to_thread(
+                                            gcs_service.upload_file_to_gcs,
+                                            local_path=thumbnail_path,
+                                            destination_blob_name=thumbnail_gcs_blob,
+                                            mime_type="image/png",
+                                        )
+                                        or ""
+                                    )
+
+                                # Clean up local temp files
+                                for local_path in [
+                                    local_output_path,
+                                    local_thumbnail_name,
+                                ]:
+                                    if os.path.exists(local_path):
+                                        try:
+                                            os.remove(local_path)
+                                        except Exception as e:
+                                            worker_logger.warning(
+                                                f"Failed to clean up {local_path}: {e}"
+                                            )
+
+                                return (
+                                    final_gcs_uri,
+                                    thumbnail_gcs_uri,
+                                    interaction_id,
+                                    thought_signature,
+                                )
+
+                            tasks = [
+                                generate_single_omni_output(i)
+                                for i in range(num_outputs)
+                            ]
+                            parallel_results = await asyncio.gather(*tasks)
+
+                            for (
+                                final_gcs_uri,
+                                thumbnail_gcs_uri,
+                                interaction_id,
+                                thought_signature,
+                            ) in parallel_results:
+                                permanent_gcs_uris.append(final_gcs_uri)
+                                permanent_thumbnail_gcs_uris.append(
+                                    thumbnail_gcs_uri
+                                )
+                                interaction_details.append(
+                                    {
+                                        "interaction_id": interaction_id,
+                                        "signature": thought_signature,
+                                    }
+                                )
+
+                            raw_data_dict = {
+                                "interactions": interaction_details
+                            }
+
+                        else:
+                            # Run sync API call in thread
+                            operation: types.GenerateVideosOperation = (
+                                await asyncio.to_thread(
+                                    client.models.generate_videos,
+                                    model=request_dto.generation_model,
+                                    prompt=request_dto.prompt,
+                                    image=start_image_for_api,
+                                    video=source_video_for_api,
+                                    config=types.GenerateVideosConfig(
+                                        number_of_videos=request_dto.number_of_media,
+                                        output_gcs_uri=gcs_output_directory,
+                                        aspect_ratio=request_dto.aspect_ratio,
+                                        negative_prompt=request_dto.negative_prompt,
+                                        generate_audio=request_dto.generate_audio,
+                                        # TODO: Pass from dto the secs if extending video (4, 5, 6, 7)
+                                        duration_seconds=(
+                                            request_dto.duration_seconds
+                                            if not source_video_for_api
+                                            else 7
+                                        ),
+                                        last_frame=end_image_for_api,
+                                        reference_images=(
+                                            reference_images_for_api
+                                            if reference_images_for_api
+                                            else None
+                                        ),
+                                    ),
+                                )
+                            )
 
                         # Poll the operation status until the video is ready
                         while not operation.done:
@@ -486,6 +905,9 @@ def _process_video_in_background(
                             "generation_time": generation_time,
                             "num_media": len(permanent_gcs_uris),
                         }
+                        if raw_data_dict is not None:
+                            update_data["raw_data"] = raw_data_dict
+
                         await media_repo.update(media_item_id, update_data)
                         worker_logger.info(
                             "Successfully processed video job.",
@@ -798,6 +1220,42 @@ class VeoService:
                         asset_id=ref_image.asset_id,
                         role=role,
                     ),
+                )
+
+        if request_dto.reference_video:
+            ref = request_dto.reference_video
+            if ref.type == "media_item":
+                source_media_items.append(
+                    SourceMediaItemLink(
+                        media_item_id=ref.id,
+                        media_index=ref.index or 0,
+                        role=AssetRoleEnum.VIDEO_REFERENCE,
+                    )
+                )
+            else:
+                source_assets.append(
+                    SourceAssetLink(
+                        asset_id=ref.id,
+                        role=AssetRoleEnum.VIDEO_REFERENCE,
+                    )
+                )
+
+        if request_dto.reference_audio:
+            ref = request_dto.reference_audio
+            if ref.type == "media_item":
+                source_media_items.append(
+                    SourceMediaItemLink(
+                        media_item_id=ref.id,
+                        media_index=ref.index or 0,
+                        role=AssetRoleEnum.AUDIO_REFERENCE,
+                    )
+                )
+            else:
+                source_assets.append(
+                    SourceAssetLink(
+                        asset_id=ref.id,
+                        role=AssetRoleEnum.AUDIO_REFERENCE,
+                    )
                 )
 
         # 1. Create a placeholder MediaItem (without ID, let DB generate it)

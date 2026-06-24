@@ -48,6 +48,10 @@ class AssetReferenceDto(BaseDto):
     type: str = Field(
         description="The type of asset: 'source_asset' or 'media_item'."
     )
+    index: int | None = Field(
+        default=0,
+        description="The index of the media in the media item (if applicable).",
+    )
 
 
 class CreateVeoDto(BaseDto):
@@ -134,6 +138,18 @@ class CreateVeoDto(BaseDto):
         max_length=3,
         description="A list of reference images, each with an ID and a type (ASSET or STYLE).",
     )
+    reference_video: AssetReferenceDto | None = Field(
+        default=None,
+        description="Object containing ID and type of asset to use as a reference video.",
+    )
+    reference_audio: AssetReferenceDto | None = Field(
+        default=None,
+        description="Object containing ID and type of asset to use as a reference audio.",
+    )
+    parent_media_item_id: int | None = Field(
+        default=None,
+        description="The ID of the parent media item for multi-turn conversation editing.",
+    )
     file_name: str | None = Field(
         default=None,
         description="Optional name for the generated media.",
@@ -172,19 +188,28 @@ class CreateVeoDto(BaseDto):
                 if item.role in reference_roles:
                     reference_roles_present = True
 
-        has_asset_references = bool(self.reference_images)
+        has_asset_references = (
+            bool(self.reference_images)
+            or bool(self.reference_video)
+            or bool(self.reference_audio)
+        )
         has_any_references = has_asset_references or reference_roles_present
 
         if has_any_references:
             if (
-                model != GenerationModelEnum.VEO_2_GENERATE_EXP
-                and model != GenerationModelEnum.VEO_3_1_PREVIEW
+                model != GenerationModelEnum.VEO_3_1_PREVIEW
                 and model != GenerationModelEnum.VEO_3_1_GENERATE_001
+                and model != GenerationModelEnum.VEO_3_1_LITE_GENERATE_001
+                and model != GenerationModelEnum.VEO_3_1_FAST_GENERATE_001
+                and model != GenerationModelEnum.GEMINI_OMNI
             ):
                 raise ValueError(
-                    "Reference images are only supported by the "
-                    f"'{GenerationModelEnum.VEO_3_1_PREVIEW.value}' model"
-                    f" or '{GenerationModelEnum.VEO_3_1_GENERATE_001.value}' model.",
+                    "Reference images/media are only supported by the "
+                    f"'{GenerationModelEnum.VEO_3_1_PREVIEW.value}' model, "
+                    f"'{GenerationModelEnum.VEO_3_1_GENERATE_001.value}' model, "
+                    f"'{GenerationModelEnum.VEO_3_1_LITE_GENERATE_001.value}' model, "
+                    f"'{GenerationModelEnum.VEO_3_1_FAST_GENERATE_001.value}' model, or "
+                    f"'{GenerationModelEnum.GEMINI_OMNI.value}' model.",
                 )
 
             start_image_present = bool(self.start_image_asset_id)
@@ -198,7 +223,7 @@ class CreateVeoDto(BaseDto):
                 or conflicting_roles_present
             ):
                 raise ValueError(
-                    "Reference images cannot be used at the same time as a start frame, end frame, or source video.",
+                    "Reference media cannot be used at the same time as a start frame, end frame, or source video.",
                 )
 
         return self
@@ -225,15 +250,15 @@ class CreateVeoDto(BaseDto):
     ) -> GenerationModelEnum:
         """Ensures that only supported generation models for video are used."""
         valid_video_ratios = [
+            GenerationModelEnum.GEMINI_OMNI,
             GenerationModelEnum.VEO_3_1_PREVIEW,
             GenerationModelEnum.VEO_3_1_GENERATE_001,
+            GenerationModelEnum.VEO_3_1_LITE_GENERATE_001,
+            GenerationModelEnum.VEO_3_1_FAST_GENERATE_001,
             GenerationModelEnum.VEO_3_FAST,
             GenerationModelEnum.VEO_3_QUALITY,
             GenerationModelEnum.VEO_3_FAST_PREVIEW,
             GenerationModelEnum.VEO_3_QUALITY_PREVIEW,
-            GenerationModelEnum.VEO_2_FAST,
-            GenerationModelEnum.VEO_2_QUALITY,
-            GenerationModelEnum.VEO_2_GENERATE_EXP,
         ]
         if value not in valid_video_ratios:
             raise ValueError("Invalid generation model for video.")
