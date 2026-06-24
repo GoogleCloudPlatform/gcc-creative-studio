@@ -236,3 +236,24 @@ class TestListWorkspacesForUser:
         ids = [w.id for w in result]
         assert 1 in ids
         assert 2 in ids
+
+    @pytest.mark.anyio
+    async def test_list_workspaces_auto_create_default(
+        self,
+        workspace_service,
+        mock_workspace_repo,
+        mock_user,
+    ):
+        mock_workspace_repo.find_by_member_id.return_value = []
+        mock_workspace_repo.get_all_public_workspaces.return_value = []
+        new_w = WorkspaceModel(
+            id=10, name="My Workspace", owner_id=mock_user.id
+        )
+        mock_workspace_repo.create.return_value = new_w
+
+        result = await workspace_service.list_workspaces_for_user(mock_user)
+
+        assert len(result) == 1
+        assert result[0].id == 10
+        assert result[0].name == "My Workspace"
+        mock_workspace_repo.create.assert_called_once()
