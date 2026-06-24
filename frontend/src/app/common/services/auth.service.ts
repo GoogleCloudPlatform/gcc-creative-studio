@@ -327,16 +327,19 @@ export class AuthService {
     return of(this.firebaseIdToken!);
   }
 
-  checkIapSession(): Observable<boolean> {
+  checkIapSession(): Observable<'authenticated' | 'unauthenticated' | 'unauthorized'> {
     return this.httpClient.get<UserModel>(`${environment.backendURL}/users/me`, {withCredentials: true}).pipe(
       tap((userDetails: UserModel) => {
         localStorage.setItem(USER_DETAILS, JSON.stringify(userDetails));
         console.log('IAP Session detected and synchronized.');
       }),
-      map(() => true),
+      map(() => 'authenticated' as const),
       catchError((error) => {
         console.log('No active IAP session found.', error);
-        return of(false);
+        if (error instanceof HttpErrorResponse && error.status === 401) {
+          return of('unauthorized' as const);
+        }
+        return of('unauthenticated' as const);
       })
     );
   }

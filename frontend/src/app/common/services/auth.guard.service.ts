@@ -66,9 +66,13 @@ export class AuthGuardService implements CanActivate {
 
     if (!this.authService.isLoggedIn()) {
       if (!environment.isLocal) {
-        const hasSession = await firstValueFrom(this.authService.checkIapSession());
-        if (hasSession) {
+        const authStatus = await firstValueFrom(this.authService.checkIapSession());
+        if (authStatus === 'authenticated') {
           return this.settingsService.loadSettings().then(() => true);
+        } else if (authStatus === 'unauthorized') {
+          console.warn('IAP session unauthorized by backend. Redirecting to login to show error.');
+          void this.router.navigate([LOGIN_ROUTE]);
+          return false;
         } else {
           console.warn('IAP session expired or missing. Reloading page to trigger IAP login...');
           window.location.reload();

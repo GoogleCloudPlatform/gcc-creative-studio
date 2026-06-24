@@ -58,7 +58,7 @@ resource "google_iam_workforce_pool_provider" "entra" {
   attribute_mapping = {
     "google.subject"      = "assertion.sub"
     "google.display_name" = "assertion.name"
-    "google.email"        = "assertion.email"
+    "google.email"        = "has(assertion.email) ? assertion.email : assertion.preferred_username"
   }
 
 }

@@ -43,7 +43,7 @@ export class LoginComponent {
   errorMessage = '';
   isBrowser: boolean;
   isEntraAuth = !!environment.ENTRA_CLIENT_ID && environment.ENTRA_CLIENT_ID !== 'ENTRA_CLIENT_ID_PLACEHOLDER';
-  debugLogs: string[] = [];
+
 
   constructor(
     private authService: AuthService,
@@ -61,35 +61,28 @@ export class LoginComponent {
   iapAuthError = false;
 
   ngOnInit(): void {
-    this.debugLogs.push(`INIT | isEntraAuth: ${this.isEntraAuth}`);
-    this.debugLogs.push(`INIT | ENTRA_CLIENT_ID: ${environment.ENTRA_CLIENT_ID}`);
-    this.debugLogs.push(`INIT | Captured Hash: ${typeof window !== 'undefined' && (window as any).INITIAL_HASH ? 'YES' : 'NO'}`);
-    
     const msalError = localStorage.getItem('MSAL_DEBUG_ERROR');
     if (msalError) {
-      this.debugLogs.push(`ERROR | MSAL Redirect Flow: ${msalError}`);
       localStorage.removeItem('MSAL_DEBUG_ERROR');
     }
 
     if (this.authService.isLoggedIn()) {
-      this.debugLogs.push(`INIT | User is already logged in, redirecting to home.`);
       void this.router.navigate([HOME_ROUTE]);
     } else if (!environment.isLocal) {
-      this.debugLogs.push(`INIT | Checking for active IAP session...`);
-      this.authService.checkIapSession().subscribe((hasSession) => {
-        if (hasSession) {
-          this.debugLogs.push(`INIT | Active IAP session found, redirecting to home.`);
+      this.authService.checkIapSession().subscribe((authStatus) => {
+        if (authStatus === 'authenticated') {
           sessionStorage.removeItem('iap_redirect_count');
           void this.router.navigate([HOME_ROUTE]);
+        } else if (authStatus === 'unauthorized') {
+          console.error('IAP session failed authorization check (unauthorized domain).');
+          this.iapAuthError = true;
         } else {
           const redirectCount = parseInt(sessionStorage.getItem('iap_redirect_count') || '0', 10);
           if (redirectCount < 2) {
             sessionStorage.setItem('iap_redirect_count', (redirectCount + 1).toString());
-            this.debugLogs.push(`INIT | No active IAP session. Attempt ${redirectCount + 1} to redirect to root to trigger IAP authentication.`);
             window.location.href = HOME_ROUTE;
           } else {
             console.error('IAP session failed authorization check (loop prevented).');
-            this.debugLogs.push('ERROR | IAP authorization failed. Stopping infinite routing loop.');
             this.iapAuthError = true;
           }
         }
@@ -120,7 +113,6 @@ export class LoginComponent {
       error: error => {
         this.loader = false;
         console.error('Microsoft Login Process Error:', error);
-        this.debugLogs.push(`ERROR | MSAL Login: ${error?.message || error}`);
         this.handleLoginError(
           error || {
             message: 'An unexpected error occurred during sign-in. Please try again.',
