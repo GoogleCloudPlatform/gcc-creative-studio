@@ -90,6 +90,14 @@ async def get_current_user(
             certs_url="https://www.gstatic.com/iap/verify/public_key",
         )
 
+        logger.info("Decoded IAP Token Claims: %s", list(decoded_token.keys()))
+        logger.info(
+            "Decoded Token values - email: %s, sub: %s, hd: %s",
+            decoded_token.get("email"),
+            decoded_token.get("sub"),
+            decoded_token.get("hd"),
+        )
+
         email = decoded_token.get("email")
         # In Workforce Identity Federation, the username/email might be in a different claim.
         # Fall back to subject if email claim is not present.
@@ -100,7 +108,10 @@ async def get_current_user(
             "name", email.split("@")[0] if email and "@" in email else "User"
         )
         picture = decoded_token.get("picture", "")
+        
         token_info_hd = decoded_token.get("hd")
+        if not token_info_hd and email and "@" in email:
+            token_info_hd = email.split("@")[-1]
 
         # Restrict by particular organizations if it's a closed environment
         if not email:

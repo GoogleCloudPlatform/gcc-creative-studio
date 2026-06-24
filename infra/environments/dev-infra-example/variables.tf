@@ -137,3 +137,52 @@ variable "entra_tenant_id" {
   description = "Microsoft Entra Tenant ID for alternative authentication."
   default     = ""
 }
+
+variable "entra_client_secret" {
+  type        = string
+  description = "Microsoft Entra Client Secret for Workforce Identity Federation"
+  default     = ""
+  sensitive   = true
+}
+
+variable "iap_oauth2_client_id" {
+  type        = string
+  description = "Client ID for IAP OAuth configuration."
+  default     = ""
+}
+
+variable "iap_oauth2_client_secret" {
+  type        = string
+  description = "Client Secret for IAP OAuth configuration."
+  default     = ""
+}
+
+variable "domain_name" {
+  type        = string
+  description = "Custom domain name mapped to the application load balancer."
+  default     = ""
+}
+
+variable "iap_expected_audience" {
+  type        = string
+  description = "Expected audience claim in backend verified IAP JWT tokens."
+  default     = ""
+}
+
+variable "iap_access_members" {
+  type        = list(string)
+  description = "List of identity members/principals allowed to access the application via IAP."
+  default     = []
+}
+
+variable "workforce_pool_id" {
+  type        = string
+  description = "Workforce Identity Pool ID."
+  default     = ""
+}
+
+variable "org_id" {
+  type        = string
+  description = "GCP Organization ID for Workforce Identity Federation."
+  default     = ""
+}

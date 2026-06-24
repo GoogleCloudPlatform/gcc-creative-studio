@@ -6,7 +6,7 @@ To run the frontend locally using Docker Compose, you need to configure the envi
 
 ### 1. Configure `development.environment.ts`
 
-Copy from `environments/environment.ts` and create a new file `environments/environment.development.ts`.
+Copy from `environments/environment.development.ts.example` and create a new file `environments/environment.development.ts`.
 Add the following configuration (replace values with your specific configuration):
 
 ```typescript

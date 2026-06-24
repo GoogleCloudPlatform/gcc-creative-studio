@@ -58,6 +58,8 @@ export class LoginComponent {
     });
   }
 
+  iapAuthError = false;
+
   ngOnInit(): void {
     this.debugLogs.push(`INIT | isEntraAuth: ${this.isEntraAuth}`);
     this.debugLogs.push(`INIT | ENTRA_CLIENT_ID: ${environment.ENTRA_CLIENT_ID}`);
@@ -77,10 +79,19 @@ export class LoginComponent {
       this.authService.checkIapSession().subscribe((hasSession) => {
         if (hasSession) {
           this.debugLogs.push(`INIT | Active IAP session found, redirecting to home.`);
+          sessionStorage.removeItem('iap_redirect_count');
           void this.router.navigate([HOME_ROUTE]);
         } else {
-          this.debugLogs.push(`INIT | No active IAP session. Redirecting to root to trigger IAP authentication.`);
-          window.location.href = HOME_ROUTE;
+          const redirectCount = parseInt(sessionStorage.getItem('iap_redirect_count') || '0', 10);
+          if (redirectCount < 2) {
+            sessionStorage.setItem('iap_redirect_count', (redirectCount + 1).toString());
+            this.debugLogs.push(`INIT | No active IAP session. Attempt ${redirectCount + 1} to redirect to root to trigger IAP authentication.`);
+            window.location.href = HOME_ROUTE;
+          } else {
+            console.error('IAP session failed authorization check (loop prevented).');
+            this.debugLogs.push('ERROR | IAP authorization failed. Stopping infinite routing loop.');
+            this.iapAuthError = true;
+          }
         }
       });
     }
