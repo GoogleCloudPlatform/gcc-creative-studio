@@ -38,7 +38,7 @@ export class AuthInterceptor implements HttpInterceptor {
     let authorizedRequest = request;
     
     // Only attach credentials to our backend
-    if (request.url.startsWith(environment.backendURL)) {
+    if (request.url.startsWith(environment.backendURL) || request.url.includes('/api/')) {
       authorizedRequest = request.clone({ withCredentials: true });
     }
     
