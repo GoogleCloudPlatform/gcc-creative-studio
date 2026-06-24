@@ -72,6 +72,16 @@ export class LoginComponent {
     if (this.authService.isLoggedIn()) {
       this.debugLogs.push(`INIT | User is already logged in, redirecting to home.`);
       void this.router.navigate([HOME_ROUTE]);
+    } else if (!environment.isLocal) {
+      this.debugLogs.push(`INIT | Checking for active IAP session...`);
+      this.authService.checkIapSession().subscribe((hasSession) => {
+        if (hasSession) {
+          this.debugLogs.push(`INIT | Active IAP session found, redirecting to home.`);
+          void this.router.navigate([HOME_ROUTE]);
+        } else {
+          this.debugLogs.push(`INIT | No active IAP session.`);
+        }
+      });
     }
   }
 
