@@ -234,6 +234,18 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       const storyboardId = params['storyboardId'];
       const sessionId = params['sessionId'];
 
+      const isExplicitNewChat =
+        !sessionId &&
+        !storyboardId &&
+        this.lastWorkspaceId === workspaceId;
+
+      if (isExplicitNewChat) {
+        this.isLoadingHistory.set(false);
+        return;
+      }
+
+      this.isLoadingHistory.set(true);
+
       // Always load sessions first to populate the sessions dropdown
       this.agentChatService.getSessions(workspaceId).subscribe({
         next: (sessions: ChatSession[]) => {
@@ -316,17 +328,6 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
               this.isLoadingHistory.set(false);
             }
           } else {
-            // Mismatched session/storyboard or no session in URL
-            const isExplicitNewChat =
-              !sessionId &&
-              !storyboardId &&
-              this.lastWorkspaceId === workspaceId;
-
-            if (isExplicitNewChat) {
-              this.isLoadingHistory.set(false);
-              return;
-            }
-
             if ((sessionId || storyboardId) && this.lastWorkspaceId === null) {
               handleErrorSnackbar(
                 this.snackBar,
@@ -421,7 +422,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
           },
         });
     } else {
-      this.isLoadingHistory.set(false);
+      // Do not reset isLoadingHistory to false if workspace is still loading/null
     }
   }
 
