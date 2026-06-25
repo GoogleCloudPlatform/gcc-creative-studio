@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 
+from src.users.user_model import UserModel
 from src.workspaces.dto.create_workspace_dto import CreateWorkspaceDto
 from src.workspaces.dto.invite_user_dto import InviteUserDto
 from src.workspaces.schema.workspace_model import (
@@ -175,6 +176,7 @@ class TestInviteUserToWorkspace:
     ):
         workspace = WorkspaceModel(id=1, name="Test", owner_id=mock_user.id)
         mock_workspace_repo.get_by_id.return_value = workspace
+        mock_workspace_repo.is_member.return_value = False
 
         # Mock invited user
         from src.users.user_model import UserModel
@@ -209,6 +211,42 @@ class TestInviteUserToWorkspace:
         mock_workspace_repo.add_member_to_workspace.assert_called_once()
         mock_email_service.send_workspace_invitation_email.assert_called_once()
 
+    @pytest.mark.anyio
+    async def test_invite_already_member(
+        self,
+        workspace_service,
+        mock_workspace_repo,
+        mock_user_repo,
+        mock_user,
+    ):
+        workspace = WorkspaceModel(id=1, name="Test", owner_id=mock_user.id)
+        mock_workspace_repo.get_by_id.return_value = workspace
+
+        invited_user = UserModel(
+            id=2,
+            email="guest@example.com",
+            roles=[],
+            name="Guest",
+        )
+        mock_user_repo.get_by_email.return_value = invited_user
+        mock_workspace_repo.is_member.return_value = True
+
+        invite_dto = InviteUserDto(
+            email="guest@example.com",
+            role=WorkspaceRoleEnum.VIEWER,
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await workspace_service.invite_user_to_workspace(
+                1,
+                invite_dto,
+                mock_user,
+            )
+
+        assert exc_info.value.status_code == 400
+        assert "User is already a member" in exc_info.value.detail
+        mock_workspace_repo.add_member_to_workspace.assert_not_called()
+
 
 class TestListWorkspacesForUser:
     """Tests for WorkspaceService.list_workspaces_for_user."""
@@ -236,3 +274,123 @@ class TestListWorkspacesForUser:
         ids = [w.id for w in result]
         assert 1 in ids
         assert 2 in ids
+
+
+class TestUpdateMemberRole:
+    """Tests for WorkspaceService.update_member_role."""
+
+    @pytest.mark.anyio
+    async def test_update_role_success(
+        self,
+        workspace_service,
+        mock_workspace_repo,
+        mock_user,
+    ):
+        workspace = WorkspaceModel(id=1, name="Test", owner_id=mock_user.id)
+        mock_workspace_repo.get_by_id.return_value = workspace
+
+        updated_workspace = WorkspaceModel(
+            id=1, name="Test", owner_id=mock_user.id
+        )
+        mock_workspace_repo.update_member_role.return_value = updated_workspace
+
+        result = await workspace_service.update_member_role(
+            workspace_id=1,
+            user_id=2,
+            role=WorkspaceRoleEnum.EDITOR,
+            current_user=mock_user,
+        )
+
+        assert result == updated_workspace
+        mock_workspace_repo.update_member_role.assert_called_once_with(
+            workspace_id=1,
+            user_id=2,
+            role="editor",
+        )
+
+    @pytest.mark.anyio
+    async def test_update_role_workspace_not_found(
+        self,
+        workspace_service,
+        mock_workspace_repo,
+        mock_user,
+    ):
+        mock_workspace_repo.get_by_id.return_value = None
+
+        with pytest.raises(HTTPException) as exc_info:
+            await workspace_service.update_member_role(
+                workspace_id=999,
+                user_id=2,
+                role=WorkspaceRoleEnum.EDITOR,
+                current_user=mock_user,
+            )
+
+        assert exc_info.value.status_code == 404
+        assert "Workspace not found" in exc_info.value.detail
+
+    @pytest.mark.anyio
+    async def test_update_role_forbidden(
+        self,
+        workspace_service,
+        mock_workspace_repo,
+        mock_user,
+    ):
+        workspace = WorkspaceModel(id=1, name="Test", owner_id=99)
+        mock_workspace_repo.get_by_id.return_value = workspace
+
+        with pytest.raises(HTTPException) as exc_info:
+            await workspace_service.update_member_role(
+                workspace_id=1,
+                user_id=2,
+                role=WorkspaceRoleEnum.EDITOR,
+                current_user=mock_user,
+            )
+
+        assert exc_info.value.status_code == 403
+        assert "Only the workspace owner" in exc_info.value.detail
+
+    @pytest.mark.anyio
+    async def test_update_role_cannot_change_owner(
+        self,
+        workspace_service,
+        mock_workspace_repo,
+        mock_user,
+    ):
+        workspace = WorkspaceModel(id=1, name="Test", owner_id=mock_user.id)
+        mock_workspace_repo.get_by_id.return_value = workspace
+
+        with pytest.raises(HTTPException) as exc_info:
+            await workspace_service.update_member_role(
+                workspace_id=1,
+                user_id=mock_user.id,
+                role=WorkspaceRoleEnum.VIEWER,
+                current_user=mock_user,
+            )
+
+        assert exc_info.value.status_code == 400
+        assert (
+            "Cannot change the role of the workspace owner"
+            in exc_info.value.detail
+        )
+
+    @pytest.mark.anyio
+    async def test_update_role_member_not_found(
+        self,
+        workspace_service,
+        mock_workspace_repo,
+        mock_user,
+    ):
+        workspace = WorkspaceModel(id=1, name="Test", owner_id=mock_user.id)
+        mock_workspace_repo.get_by_id.return_value = workspace
+        mock_workspace_repo.update_member_role.return_value = None
+
+        with pytest.raises(HTTPException) as exc_info:
+            await workspace_service.update_member_role(
+                workspace_id=1,
+                user_id=99,
+                role=WorkspaceRoleEnum.EDITOR,
+                current_user=mock_user,
+            )
+
+        assert exc_info.value.status_code == 404
+        assert "Member not found" in exc_info.value.detail

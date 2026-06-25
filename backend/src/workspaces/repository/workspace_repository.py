@@ -126,6 +126,33 @@ class WorkspaceRepository(BaseRepository[Workspace, WorkspaceModel]):
         # We need to map the SQLAlchemy models back to the Pydantic model
         return self._map_to_schema(workspace)
 
+    async def update_member_role(
+        self,
+        workspace_id: int,
+        user_id: int,
+        role: str,
+    ) -> WorkspaceModel | None:
+        """Updates a member's role in the workspace."""
+        result = await self.db.execute(
+            select(WorkspaceMemberAssociation).where(
+                WorkspaceMemberAssociation.workspace_id == workspace_id,
+                WorkspaceMemberAssociation.user_id == user_id,
+            ),
+        )
+        association = result.scalar_one_or_none()
+        if not association:
+            return None
+
+        association.role = role
+        await self.db.commit()
+
+        # Return the updated workspace
+        result = await self.db.execute(
+            select(self.model).where(self.model.id == workspace_id),
+        )
+        workspace = result.scalar_one_or_none()
+        return self._map_to_schema(workspace) if workspace else None
+
     async def find_by_member_id(self, user_id: int) -> list[WorkspaceModel]:
         """Finds all workspaces where the user is a member."""
         result = await self.db.execute(

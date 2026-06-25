@@ -96,6 +96,13 @@ class WorkspaceService:
         if not invited_user:
             return None  # Or raise an exception (e.g., UserNotFound)
 
+        # 2.5 Check if user is already a member
+        if await self.workspace_repo.is_member(workspace_id, invited_user.id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User is already a member of this workspace.",
+            )
+
         # 3. Add the new member to the workspace document
         new_member = WorkspaceMember(
             user_id=invited_user.id,
@@ -116,6 +123,52 @@ class WorkspaceService:
                 workspace_name=updated_workspace.name,
                 workspace_id=workspace_id,
             )
+        return updated_workspace
+
+    async def update_member_role(
+        self,
+        workspace_id: int,
+        user_id: int,
+        role: WorkspaceRoleEnum,
+        current_user: UserModel,
+    ) -> WorkspaceModel:
+        """Updates a member's role in the workspace.
+        Only the workspace owner or a system admin can perform this.
+        """
+        workspace = await self.workspace_repo.get_by_id(workspace_id)
+        if not workspace:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Workspace not found.",
+            )
+
+        is_system_admin = UserRoleEnum.ADMIN in current_user.roles
+        is_workspace_owner = current_user.id == workspace.owner_id
+
+        if not (is_system_admin or is_workspace_owner):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the workspace owner or a system admin can update member roles.",
+            )
+
+        if user_id == workspace.owner_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot change the role of the workspace owner.",
+            )
+
+        updated_workspace = await self.workspace_repo.update_member_role(
+            workspace_id=workspace_id,
+            user_id=user_id,
+            role=role.value,
+        )
+
+        if not updated_workspace:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Member not found in this workspace.",
+            )
+
         return updated_workspace
 
     async def list_workspaces_for_user(

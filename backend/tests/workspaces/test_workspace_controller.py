@@ -117,3 +117,41 @@ class TestInviteUser:
         assert (
             "Workspace or user to invite not found" in response.json()["detail"]
         )
+
+
+class TestUpdateMemberRole:
+    """Tests for PUT /api/workspaces/{workspace_id}/members/{user_id}."""
+
+    def test_update_member_role_success(
+        self, api_client, mock_workspace_service, mock_user
+    ):
+        workspace = WorkspaceModel(id=1, name="Work 1", owner_id=mock_user.id)
+        mock_workspace_service.update_member_role.return_value = workspace
+
+        response = api_client.put(
+            "/api/workspaces/1/members/2",
+            json={"role": "editor"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["id"] == 1
+        mock_workspace_service.update_member_role.assert_called_once()
+
+    def test_update_member_role_not_found(
+        self, api_client, mock_workspace_service
+    ):
+        from fastapi import HTTPException
+
+        mock_workspace_service.update_member_role.side_effect = HTTPException(
+            status_code=404,
+            detail="Member not found in this workspace.",
+        )
+
+        response = api_client.put(
+            "/api/workspaces/1/members/99",
+            json={"role": "editor"},
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert "Member not found" in response.json()["detail"]

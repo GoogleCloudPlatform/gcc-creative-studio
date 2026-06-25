@@ -19,6 +19,7 @@ from src.auth.auth_guard import get_current_user
 from src.users.user_model import UserModel
 from src.workspaces.dto.create_workspace_dto import CreateWorkspaceDto
 from src.workspaces.dto.invite_user_dto import InviteUserDto
+from src.workspaces.dto.update_member_role_dto import UpdateMemberRoleDto
 from src.workspaces.schema.workspace_model import WorkspaceModel
 from src.workspaces.workspace_service import WorkspaceService
 
@@ -91,3 +92,27 @@ async def invite_user(
             detail="Workspace or user to invite not found.",
         )
     return updated_workspace
+
+
+@router.put(
+    "/{workspace_id}/members/{user_id}",
+    response_model=WorkspaceModel,
+    summary="Update Member Role in a Workspace",
+)
+async def update_member_role(
+    workspace_id: int,
+    user_id: int,
+    role_dto: UpdateMemberRoleDto,
+    current_user: UserModel = Depends(get_current_user),
+    workspace_service: WorkspaceService = Depends(),
+):
+    """Updates the role of an existing member in a workspace.
+
+    This action is restricted to the workspace's OWNER or a system ADMIN.
+    """
+    return await workspace_service.update_member_role(
+        workspace_id=workspace_id,
+        user_id=user_id,
+        role=role_dto.role,
+        current_user=current_user,
+    )

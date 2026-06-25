@@ -29,10 +29,8 @@ from src.auth.auth_guard import RoleChecker, get_current_user
 from src.common.base_dto import AspectRatioEnum
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.images.dto.create_imagen_dto import CreateImagenDto
-from src.images.dto.upscale_imagen_dto import UpscaleImagenDto
 from src.images.dto.vto_dto import VtoDto
 from src.images.imagen_service import ImagenService
-from src.images.schema.imagen_result_model import ImageGenerationResult
 from src.source_assets.schema.source_asset_model import (
     AssetScopeEnum,
     AssetTypeEnum,
@@ -180,24 +178,3 @@ async def upload_upscale(
         enhance_input_image=enhance_input_image,
         image_preservation_factor=image_preservation_factor,
     )
-
-
-@router.post("/upscale-image")
-async def upscale_image(
-    image_request: UpscaleImagenDto,
-    service: ImagenService = Depends(),
-) -> ImageGenerationResult | None:
-    try:
-        return await service.upscale_image(request_dto=image_request)
-    except HTTPException as http_exception:
-        raise http_exception
-    except ValueError as value_error:
-        raise HTTPException(
-            status_code=Status.HTTP_400_BAD_REQUEST,
-            detail=str(value_error),
-        ) from value_error
-    except Exception as e:
-        raise HTTPException(
-            status_code=Status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
-        ) from e

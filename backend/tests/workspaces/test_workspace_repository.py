@@ -221,3 +221,52 @@ class TestWorkspaceRepository:
         assert response is not None
         assert len(mock_asset.members) == 1
         db_session_mock.commit.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_add_member_to_workspace_already_member(
+        self,
+        workspace_repo,
+        db_session_mock,
+    ):
+        import datetime
+
+        from src.workspaces.schema.workspace_model import (
+            Workspace,
+            WorkspaceMember,
+            WorkspaceMemberAssociation,
+        )
+
+        now = datetime.datetime.now(datetime.UTC)
+        mock_result = MagicMock()
+        mock_asset = Workspace(
+            id=20,
+            name="Space",
+            owner_id=1,
+            scope="private",
+            created_at=now,
+            updated_at=now,
+        )
+        existing_association = WorkspaceMemberAssociation(
+            workspace_id=20,
+            user_id=5,
+            role="owner",
+        )
+        mock_asset.members = [existing_association]
+        mock_result.scalar_one_or_none.return_value = mock_asset
+        db_session_mock.execute.return_value = mock_result
+
+        member_to_add = WorkspaceMember(
+            user_id=5,
+            role="viewer",
+            email="test@viewer.com",
+        )
+        response = await workspace_repo.add_member_to_workspace(
+            workspace_id=20,
+            member=member_to_add,
+            user_id=5,
+        )
+
+        assert response is not None
+        assert len(mock_asset.members) == 1
+        assert mock_asset.members[0].role == "owner"
+        db_session_mock.commit.assert_not_called()

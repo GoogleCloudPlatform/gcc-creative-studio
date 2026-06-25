@@ -66,12 +66,7 @@ const routes: Routes = [
     component: MediaDetailComponent,
     canActivate: [AuthGuardService],
   },
-  // Optional: Redirect the base URL to the gallery
-  {
-    path: '',
-    redirectTo: '/gallery',
-    pathMatch: 'full',
-  },
+
   {
     path: 'admin',
     loadChildren: () => import('./admin/admin.module').then(m => m.AdminModule),
