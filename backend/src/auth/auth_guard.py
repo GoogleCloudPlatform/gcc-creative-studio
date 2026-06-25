@@ -66,18 +66,33 @@ async def get_current_user(
             logger.info("Verifying Google OAuth Access Token...")
             import requests
 
-            response = await asyncio.to_thread(
-                requests.get,
-                f"https://oauth2.googleapis.com/tokeninfo?access_token={token}",
-                timeout=10,
-            )
-            if response.status_code != 200:
+            try:
+                response = await asyncio.to_thread(
+                    requests.get,
+                    f"https://oauth2.googleapis.com/tokeninfo?access_token={token}",
+                    timeout=10,
+                )
+                if response.status_code != 200:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail=f"Invalid Google access token: {response.text}",
+                    )
+                decoded_token = response.json()
+            except requests.RequestException as req_err:
+                logger.error(
+                    "Failed to verify Google access token: %s", req_err
+                )
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail=f"Invalid Google access token: {response.text}",
+                    detail="Failed to contact Google authentication server.",
                 )
 
-            decoded_token = response.json()
+            if not decoded_token or "email" not in decoded_token:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid Google access token.",
+                )
+
             if "name" not in decoded_token and "email" in decoded_token:
                 email_prefix = decoded_token["email"].split("@")[0]
                 decoded_token["name"] = (
