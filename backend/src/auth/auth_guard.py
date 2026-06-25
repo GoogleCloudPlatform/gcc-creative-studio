@@ -76,7 +76,13 @@ async def get_current_user(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail=f"Invalid Google access token: {response.text}",
                 )
+
             decoded_token = response.json()
+            if "name" not in decoded_token and "email" in decoded_token:
+                email_prefix = decoded_token["email"].split("@")[0]
+                decoded_token["name"] = (
+                    email_prefix if len(email_prefix) >= 2 else "User"
+                )
         elif config_service.ENVIRONMENT == "local":
             try:
                 logger.info("Verifying token using Firebase Admin SDK...")
