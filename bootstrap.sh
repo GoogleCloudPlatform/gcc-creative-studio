@@ -443,6 +443,46 @@ configure_environment() {
         prompt "Please provide the following value:"
         prompt_and_update_tfvar "GitHub Branch to deploy from" "$DEFAULT_BRANCH_NAME" "github_branch_name" "GITHUB_BRANCH"
 
+        # --- Authentication Configuration ---
+        prompt "Choose Authentication Provider:"
+        echo "  (1) Google Auth (default)"
+        echo "  (2) Microsoft Entra ID"
+        read -p "   Enter choice [1]: " AUTH_CHOICE < /dev/tty
+        AUTH_CHOICE=${AUTH_CHOICE:-1}
+
+        if [ "$AUTH_CHOICE" -eq 2 ]; then
+            prompt "Please configure Microsoft Entra ID:"
+            read -p "   Entra Client ID: " ENTRA_CLIENT_ID < /dev/tty
+            read -p "   Entra Tenant ID: " ENTRA_TENANT_ID < /dev/tty
+            read -s -p "   Entra Client Secret: " ENTRA_CLIENT_SECRET < /dev/tty; echo
+            read -p "   Domain Name (or IP): " DOMAIN_NAME < /dev/tty
+            read -p "   GCP Organization ID: " ORG_ID < /dev/tty
+
+            sed -i.bak "s|^[#[:space:]]*entra_client_id[[:space:]]*=.*|entra_client_id = \"$ENTRA_CLIENT_ID\"|g" "$TFVARS_FILE_PATH"
+            sed -i.bak "s|^[#[:space:]]*entra_tenant_id[[:space:]]*=.*|entra_tenant_id = \"$ENTRA_TENANT_ID\"|g" "$TFVARS_FILE_PATH"
+            sed -i.bak "s|^[#[:space:]]*entra_client_secret[[:space:]]*=.*|entra_client_secret = \"$ENTRA_CLIENT_SECRET\"|g" "$TFVARS_FILE_PATH"
+            sed -i.bak "s|^[#[:space:]]*domain_name[[:space:]]*=.*|domain_name = \"$DOMAIN_NAME\"|g" "$TFVARS_FILE_PATH"
+            sed -i.bak "s|^[#[:space:]]*org_id[[:space:]]*=.*|org_id = \"$ORG_ID\"|g" "$TFVARS_FILE_PATH"
+            sed -i.bak "s|^[#[:space:]]*workforce_pool_id[[:space:]]*=.*|workforce_pool_id = \"cs-workforce-pool\"|g" "$TFVARS_FILE_PATH"
+            sed -i.bak "s|^[#[:space:]]*iap_access_members[[:space:]]*=.*|iap_access_members = [\"principalSet://iam.googleapis.com/locations/global/workforcePools/cs-workforce-pool/*\"]|g" "$TFVARS_FILE_PATH"
+
+            write_state "AUTH_CHOICE" "2"
+            write_state "AUTO_ENTRA_CLIENT_SECRET" "$ENTRA_CLIENT_SECRET"
+        else
+            # Google Auth selected
+            # Ensure Entra variables in .tfvars are set to empty or default
+            sed -i.bak "s|^[#[:space:]]*entra_client_id[[:space:]]*=.*|entra_client_id = \"\"|g" "$TFVARS_FILE_PATH"
+            sed -i.bak "s|^[#[:space:]]*entra_tenant_id[[:space:]]*=.*|entra_tenant_id = \"\"|g" "$TFVARS_FILE_PATH"
+            sed -i.bak "s|^[#[:space:]]*entra_client_secret[[:space:]]*=.*|entra_client_secret = \"\"|g" "$TFVARS_FILE_PATH"
+            sed -i.bak "s|^[#[:space:]]*domain_name[[:space:]]*=.*|domain_name = \"\"|g" "$TFVARS_FILE_PATH"
+            sed -i.bak "s|^[#[:space:]]*org_id[[:space:]]*=.*|org_id = \"\"|g" "$TFVARS_FILE_PATH"
+            sed -i.bak "s|^[#[:space:]]*workforce_pool_id[[:space:]]*=.*|workforce_pool_id = \"\"|g" "$TFVARS_FILE_PATH"
+            sed -i.bak "s|^[#[:space:]]*iap_access_members[[:space:]]*=.*|iap_access_members = []|g" "$TFVARS_FILE_PATH"
+
+            write_state "AUTH_CHOICE" "1"
+        fi
+        rm -f "$TFVARS_FILE_PATH.bak"
+
         write_state "ENV_NAME" "$ENV_NAME"; write_state "BE_SERVICE_NAME" "$BE_SERVICE_NAME"; write_state "FE_SERVICE_NAME" "$FE_SERVICE_NAME"; write_state "GITHUB_BRANCH" "$GITHUB_BRANCH"
     else info "Environment directory '$ENV_DIR' already configured."; fi
     success "Configuration files for '$ENV_NAME' environment are ready."
@@ -567,6 +607,29 @@ populate_oauth_secrets() {
     success "Audiences updated in .tfvars file."
 }
 
+setup_entra_secrets() {
+    step 11 "Automating Entra ID Secret Population"
+    local ENV_DIR="environments/$ENV_NAME"
+    local TFVARS_FILE_PATH="$REPO_ROOT/infra/$ENV_DIR/$ENV_NAME.tfvars"
+
+    if grep -q 'entra_client_id.*="[^"]' "$TFVARS_FILE_PATH"; then
+        if [ -n "$AUTO_ENTRA_CLIENT_SECRET" ]; then
+            local SECRET_NAME="entra-client-secret"
+            info "Ensuring Secret Manager secret '$SECRET_NAME' exists..."
+            if ! gcloud secrets describe "$SECRET_NAME" --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
+                gcloud secrets create "$SECRET_NAME" --replication-policy="automatic" --project="$GCP_PROJECT_ID"
+            fi
+            info "Populating '$SECRET_NAME' with value..."
+            echo -n "$AUTO_ENTRA_CLIENT_SECRET" | gcloud secrets versions add "$SECRET_NAME" --data-file="-" --project="$GCP_PROJECT_ID" --quiet
+            success "Secret '$SECRET_NAME' has been populated."
+        else
+            warn "Entra Client Secret is not set in environment or state. Skipping secret creation."
+        fi
+    else
+        info "Entra Auth not selected. Skipping Entra secret population."
+    fi
+}
+
 setup_db_secrets() {
     step 9 "Configuring Database Secrets" # Renumber subsequent steps
     
@@ -610,7 +673,10 @@ run_terraform() {
 
 update_oauth_client() {
     step 11 "Configuring OAuth Client URIs"; cd "$REPO_ROOT"
-    if [ -z "$AUTO_OAUTH_CLIENT_ID" ]; then warn "Could not find OAuth Client ID automatically. Skipping URI update."; return; fi
+    if [ -z "$AUTO_OAUTH_CLIENT_ID" ] || [ "$AUTO_OAUTH_CLIENT_ID" == "not-used-for-entra" ]; then
+        info "OAuth Client ID not used/configured. Skipping OAuth Client URI update."
+        return
+    fi
     info "Fetching full OAuth client name..."; local OAUTH_CLIENT_FULL_NAME=$(gcloud iap oauth-clients list "$GCP_PROJECT_ID" --format="json" | jq -r --arg clientid "$AUTO_OAUTH_CLIENT_ID" '.[] | select(.name | contains($clientid)) | .name')
     if [ -z "$OAUTH_CLIENT_FULL_NAME" ]; then warn "Could not resolve the full name for the OAuth client. Skipping URI update."; return; fi
     info "Ensuring OAuth Client has all required origins and redirect URIs..."; local PROJECT_DOMAIN_BASE=$(gcloud projects describe "$GCP_PROJECT_ID" --format='value(projectId)')
@@ -798,6 +864,7 @@ main() {
         "setup_db_secrets"
         "run_terraform"
         "populate_oauth_secrets"
+        "setup_entra_secrets"
         "update_oauth_client"
         "update_secrets"
         "seed_data"
@@ -814,7 +881,7 @@ main() {
         fi
     done
 
-    step 14 "🎉 Deployment Complete! 🎉";
+    step 15 "🎉 Deployment Complete! 🎉";
     info "Fetching your application URLs...";
     cd "$REPO_ROOT/infra/environments/$ENV_NAME"
 

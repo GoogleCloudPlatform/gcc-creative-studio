@@ -100,7 +100,11 @@ async def get_current_user(
 
         email = decoded_token.get("email")
         # In Workforce Identity Federation, the username/email might be in a different claim.
-        # Fall back to subject if email claim is not present.
+        # Fall back to preferred_username, upn, or subject (final fallback) if email claim is not present.
+        if not email:
+            email = decoded_token.get("preferred_username")
+        if not email:
+            email = decoded_token.get("upn")
         if not email:
             email = decoded_token.get("sub")
 
@@ -108,7 +112,7 @@ async def get_current_user(
             "name", email.split("@")[0] if email and "@" in email else "User"
         )
         picture = decoded_token.get("picture", "")
-        
+
         token_info_hd = decoded_token.get("hd")
         if not token_info_hd and email and "@" in email:
             token_info_hd = email.split("@")[-1]

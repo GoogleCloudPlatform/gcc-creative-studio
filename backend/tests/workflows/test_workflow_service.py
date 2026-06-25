@@ -262,6 +262,52 @@ class TestExecuteWorkflow:
         mock_exec_client.create_execution.assert_called_once()
         mock_run_repo.create.assert_called_once()
 
+    @pytest.mark.anyio
+    @patch("src.workflows.workflow_service.executions_v1.ExecutionsAsyncClient")
+    async def test_execute_workflow_invalid_workspace_id_silently_ignored(
+        self,
+        mock_exec_client_class,
+        workflow_service,
+        mock_workflow_repo,
+        mock_run_repo,
+        sample_workflow_model,
+        sample_user,
+    ):
+        # Setup
+        workflow_service.get_by_id = AsyncMock(
+            return_value=sample_workflow_model
+        )
+
+        # Mock GCP Execution Client
+        mock_exec_client = AsyncMock()
+        mock_exec_client_class.return_value = mock_exec_client
+
+        mock_response = MagicMock()
+        mock_response.name = (
+            "projects/p/locations/l/workflows/w/executions/exec-123"
+        )
+        mock_exec_client.create_execution = AsyncMock(
+            return_value=mock_response
+        )
+
+        # Pass invalid workspace_id
+        args = {"workspace_id": "invalid"}
+
+        # Execute
+        exec_id = await workflow_service.execute_workflow(
+            workflow_id="id-123",
+            args=args,
+            user=sample_user,
+        )
+
+        assert exec_id == "exec-123"
+        workflow_service.get_by_id.assert_called_once_with("id-123")
+        mock_exec_client.create_execution.assert_called_once()
+
+        mock_run_repo.create.assert_called_once()
+        called_args = mock_run_repo.create.call_args[0][0]
+        assert called_args.workspace_id is None
+
 
 class TestGetExecutionDetails:
     """Tests for get_execution_details method."""
