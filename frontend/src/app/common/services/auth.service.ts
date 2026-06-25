@@ -404,11 +404,6 @@ export class AuthService {
     if (!isPlatformBrowser(this.platformId)) return false;
 
     const isTokenValid = localStorage.getItem(USER_DETAILS) !== null;
-
-    if (!isTokenValid && this.router.url !== LOGIN_ROUTE) {
-      void this.router.navigate([LOGIN_ROUTE]);
-    }
-
     return isTokenValid;
   }
 
