@@ -13,6 +13,7 @@
 # limitations under the License.
 """Service for proxying requests to the Izumi GenMedia Agent."""
 
+from fastapi import status
 import asyncio
 import logging
 from typing import Any, List
@@ -595,6 +596,10 @@ class AgentService:
             except Exception as e_err:
                 logger.warning(
                     f"Could not retrieve session workspace for chat authorization: {e_err}"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Unauthorized: Could not verify session workspace authorization.",
                 )
 
         if "newMessage" in body:

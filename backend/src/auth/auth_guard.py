@@ -177,7 +177,8 @@ async def get_current_user(
 
     except auth.ExpiredIdTokenError as exc:
         logger.error(
-            "[get_current_user - auth.ExpiredIdTokenError] for %s", email
+            "[get_current_user - auth.ExpiredIdTokenError] for %s",
+            email or "Unknown email",
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -186,7 +187,7 @@ async def get_current_user(
     except auth.InvalidIdTokenError as e:
         logger.error(
             "[get_current_user - auth.InvalidIdTokenError] for %s: %s",
-            email,
+            email or "Unknown email",
             e,
         )
         raise HTTPException(
