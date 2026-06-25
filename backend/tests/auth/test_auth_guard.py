@@ -240,6 +240,137 @@ class TestGetCurrentUser:
         assert "not part of an allowed organization" in exc_info.value.detail
         config_service.ALLOWED_ORGS_STR = ""
 
+    @pytest.mark.anyio
+    @patch("src.auth.auth_guard.id_token.verify_token")
+    async def test_get_current_user_iap_success_fallback_preferred_username(
+        self, mock_verify, mock_user_service
+    ):
+        config_service.ENVIRONMENT = "production"
+        config_service.IAP_EXPECTED_AUDIENCE = "test-iap-audience"
+        config_service.ALLOWED_ORGS_STR = ""
+
+        mock_request = MagicMock(spec=Request)
+        mock_verify.return_value = {
+            "preferred_username": "preferred_user@example.com",
+            "name": "Preferred User",
+        }
+
+        mock_user_service.create_user_if_not_exists.return_value = UserModel(
+            id=5,
+            email="preferred_user@example.com",
+            name="Preferred User",
+            roles=["user"],
+        )
+
+        user = await get_current_user(
+            request=mock_request,
+            token="valid_iap_jwt",
+            user_service=mock_user_service,
+        )
+
+        assert user.email == "preferred_user@example.com"
+        mock_user_service.create_user_if_not_exists.assert_called_once_with(
+            email="preferred_user@example.com",
+            name="Preferred User",
+            picture="",
+        )
+
+    @pytest.mark.anyio
+    @patch("src.auth.auth_guard.id_token.verify_token")
+    async def test_get_current_user_iap_success_fallback_upn(
+        self, mock_verify, mock_user_service
+    ):
+        config_service.ENVIRONMENT = "production"
+        config_service.IAP_EXPECTED_AUDIENCE = "test-iap-audience"
+        config_service.ALLOWED_ORGS_STR = ""
+
+        mock_request = MagicMock(spec=Request)
+        mock_verify.return_value = {
+            "upn": "upn_user@example.com",
+            "name": "UPN User",
+        }
+
+        mock_user_service.create_user_if_not_exists.return_value = UserModel(
+            id=6,
+            email="upn_user@example.com",
+            name="UPN User",
+            roles=["user"],
+        )
+
+        user = await get_current_user(
+            request=mock_request,
+            token="valid_iap_jwt",
+            user_service=mock_user_service,
+        )
+
+        assert user.email == "upn_user@example.com"
+        mock_user_service.create_user_if_not_exists.assert_called_once_with(
+            email="upn_user@example.com",
+            name="UPN User",
+            picture="",
+        )
+
+    @pytest.mark.anyio
+    @patch("src.auth.auth_guard.id_token.verify_token")
+    async def test_get_current_user_iap_success_fallback_precedence_preferred_username(
+        self, mock_verify, mock_user_service
+    ):
+        config_service.ENVIRONMENT = "production"
+        config_service.IAP_EXPECTED_AUDIENCE = "test-iap-audience"
+        config_service.ALLOWED_ORGS_STR = ""
+
+        mock_request = MagicMock(spec=Request)
+        mock_verify.return_value = {
+            "preferred_username": "preferred@example.com",
+            "upn": "upn@example.com",
+            "sub": "sub-id",
+        }
+
+        mock_user_service.create_user_if_not_exists.return_value = UserModel(
+            id=7,
+            email="preferred@example.com",
+            name="User",
+            roles=["user"],
+        )
+
+        user = await get_current_user(
+            request=mock_request,
+            token="valid_iap_jwt",
+            user_service=mock_user_service,
+        )
+
+        assert user.email == "preferred@example.com"
+
+    @pytest.mark.anyio
+    @patch("src.auth.auth_guard.id_token.verify_token")
+    async def test_get_current_user_iap_success_fallback_precedence_upn(
+        self, mock_verify, mock_user_service
+    ):
+        config_service.ENVIRONMENT = "production"
+        config_service.IAP_EXPECTED_AUDIENCE = "test-iap-audience"
+        config_service.ALLOWED_ORGS_STR = ""
+
+        mock_request = MagicMock(spec=Request)
+        mock_verify.return_value = {
+            "upn": "upn@example.com",
+            "sub": "sub-id",
+        }
+
+        mock_user_service.create_user_if_not_exists.return_value = UserModel(
+            id=8,
+            email="upn@example.com",
+            name="User",
+            roles=["user"],
+        )
+
+        user = await get_current_user(
+            request=mock_request,
+            token="valid_iap_jwt",
+            user_service=mock_user_service,
+        )
+
+        assert user.email == "upn@example.com"
+
 
 class TestRoleChecker:
     """Tests for RoleChecker class."""
