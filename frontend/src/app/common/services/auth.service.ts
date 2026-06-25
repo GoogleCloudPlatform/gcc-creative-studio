@@ -218,8 +218,7 @@ export class AuthService {
 
         await firstValueFrom(this.syncUserWithBackend$(idToken));
         await this.settingsService.loadSettings();
-        // After successfully processing redirect, navigate to home
-        this.router.navigate([LOGIN_ROUTE]).then(() => this.router.navigate(['/']));
+        // After successfully processing redirect, let the guard handle the navigation
       }
     } catch (error) {
         localStorage.setItem('MSAL_DEBUG_ERROR', (error as any)?.message || String(error));
