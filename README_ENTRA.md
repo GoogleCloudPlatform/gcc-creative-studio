@@ -28,7 +28,7 @@ Clone the repository and checkout the latest branch containing the IAP and Entra
     ```
 3.  Switch to the integration branch:
     ```bash
-    git checkout feature/iap-workforce-auth
+    git checkout feature/entra-authentication-final
     ```
 
 ---
@@ -83,17 +83,48 @@ The project includes an automated `bootstrap.sh` script that handles the configu
     ```bash
     ./bootstrap.sh
     ```
-4.  Follow the interactive prompts:
-    *   **GCP Project ID**: Enter `[PROJECT_NAME]`.
-    *   **Environment**: Select `development`.
-    *   **Authentication Choice**: Select **(2) Microsoft Entra ID**.
-    *   **Entra Client ID**: Paste the *Application (client) ID* collected in Step 2.
-    *   **Entra Tenant ID**: Paste the *Directory (tenant) ID* collected in Step 2.
-    *   **Entra Client Secret**: Paste the *Client Secret Value* collected in Step 2.
-    *   **Domain Name**: Enter your domain (e.g., `[YOUR_DOMAIN_OR_IP]` or your custom domain).
-    *   **GCP Organization ID**: Enter your GCP Organization numerical ID (required for Workforce Pools).
+4.  Follow the interactive prompts during the execution of the script:
+    *   **GCP Project ID**: Enter your target Google Cloud Project ID (e.g., `my-project-123`). The script will attempt to set this as your active gcloud project.
+    *   **Environment Name**: Enter a name for your deployment environment (default: `dev-infra`). This defines the folder name under `infra/environments/` where your specific configuration will be stored.
+    *   **GitHub Repository URL**: Enter the URL of your forked repository (e.g., `https://github.com/your-user/gcc-creative-studio.git`).
+    *   **Branch Name**: Enter the git branch to deploy from (default: `main`). For testing the Entra integration, ensure you use `feature/entra-authentication-final` or the branch where you have these changes.
+    *   **Authentication Choice**: Type **2** and press Enter to select **Microsoft Entra ID**.
+    *   **Entra Client ID**: Paste the *Application (client) ID* of the App Registration you created in Step 2.
+    *   **Entra Tenant ID**: Paste the *Directory (tenant) ID* of your Entra Tenant collected in Step 2.
+    *   **Entra Client Secret**: Paste the *Client Secret Value* generated in Step 2. (Input is hidden for security).
+    *   **Domain Name**: Enter the domain name or IP where the app will be hosted. 
+        *   *If you do not have a custom domain yet*, you can use a temporary placeholder like `127.0.0.1` or `temp.example.com`. After the deployment finishes and you get the Load Balancer IP, you can re-run the script or update the `.tfvars` file to use `[LB_IP].nip.io` for testing.
+    *   **GCP Organization ID**: Enter your GCP Organization numerical ID. You can find this in the GCP Console under the project selector or by running `gcloud organizations list`. This is required to set up Workforce Identity Federation.
 
-The script will automatically update the `infra/environments/development/development.tfvars` file, create the necessary secrets in GCP Secret Manager, and trigger the Terraform execution to deploy all resources (Cloud Run, Cloud SQL, IAP, GCS, etc.).
+### ⚠️ Crucial Manual Actions Required During Bootstrapping
+
+The script will automate almost everything, but it will pause at two points to require manual actions in your web browser. **You must complete these before the script can proceed.**
+
+#### Action A: Link your GCP Project to Firebase
+Terraform requires your project to be associated with Firebase to provision Firebase services. Since this requires accepting legal terms, it must be done manually:
+1.  The script will display a URL: `https://console.firebase.google.com/?project=[YOUR_PROJECT_ID]`
+2.  Open this URL in your browser (ensure you are logged in with the same account used for `gcloud`).
+3.  Click **"Add Firebase"** (or **"Get Started"** / **"Link Project"** depending on your console state).
+4.  Follow the prompts to confirm the linking and accept the terms of service.
+5.  Once completed, return to your terminal and press **[Enter]** to resume the script.
+
+#### Action B: Create a GitHub Connection in Cloud Build
+Cloud Build needs authorization to access your GitHub repository to pull code for building.
+1.  The script will display a URL: `https://console.cloud.google.com/cloud-build/connections/create?project=[YOUR_PROJECT_ID]`
+2.  Open this URL in your browser.
+3.  Select **"GitHub (Cloud Build GitHub App)"** and click **"Continue"**.
+4.  You will be redirected to GitHub to authorize the Google Cloud Build application.
+5.  Select your GitHub account/organization and choose to grant access to **all repositories** or specifically to your **forked `gcc-creative-studio` repository**.
+6.  After authorizing, you will be redirected back to the GCP Console, and a connection will be created. Copy the connection name (typically it looks like a short string you provided, or you can check the connection list).
+7.  Return to your terminal, and when prompted for **"Connection Name"**, paste the name (default fallback is `creative-studio`).
+
+### 📦 Automatic Post-Deployment Steps
+After you complete the manual steps, the script will:
+1.  Initialize and run **Terraform** to provision all infrastructure (Cloud Run services, Global Load Balancer, Cloud SQL, Secret Manager, Cloud Storage, WIF Workforce Pools, and IAP configurations).
+2.  **Populate Secrets:** Automatically fetch Firebase configuration values and write them as secrets to Secret Manager.
+3.  **Database Migration & Seeding:** Start a secure Cloud SQL proxy locally, run database migrations, and seed initial templates, VTO models, and assets into the database and GCS bucket.
+
+The script execution is complete when you see a green success message with the **Load Balancer IP** and **IAP Expected Audience**. Keep these values handy for the next steps.
 
 ---
 
