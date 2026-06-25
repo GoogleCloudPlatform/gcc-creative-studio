@@ -200,15 +200,23 @@ export class WorkspaceSwitcherComponent implements OnInit {
   }
 
   get canInvite(): boolean {
+    console.log('canInvite check:', {
+      currentUser: this.currentUser,
+      activeWorkspace: this.activeWorkspace,
+      scope: this.activeWorkspace?.scope
+    });
     if (
       !this.currentUser ||
       !this.activeWorkspace ||
       this.activeWorkspace?.scope === WorkspaceScope.PUBLIC
     ) {
+      console.log('canInvite: basic checks failed');
       return false;
     }
-    const isOwner = this.currentUser.id === this.activeWorkspace.ownerId;
+    // Using loose equality check == to handle potential string/number mismatches safely at runtime
+    const isOwner = this.currentUser.id == this.activeWorkspace.ownerId;
     const isAdmin = !!this.currentUser.roles?.includes(UserRolesEnum.ADMIN);
+    console.log('canInvite results:', { isOwner, isAdmin, currentUserId: this.currentUser.id, ownerId: this.activeWorkspace.ownerId });
     return isOwner || isAdmin;
   }
 
