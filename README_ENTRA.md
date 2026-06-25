@@ -97,6 +97,39 @@ The script will automatically update the `infra/environments/development/develop
 
 ---
 
+## 🔒 Step 3.5: Configure Email Domain Allowlist (Optional)
+
+By default, any user authenticated via your Entra ID tenant can access the application. You can restrict access to specific email domains (e.g., only allow `yourcompany.com` or specific partner domains) using the application-level allowlist.
+
+1.  Locate your environment's `.tfvars` file (created after running the bootstrap script):
+    *   Path: `infra/environments/[YOUR_ENV_NAME]/[YOUR_ENV_NAME].tfvars` (e.g., `infra/environments/dev-infra/dev-infra.tfvars`).
+2.  Open the file and locate the `be_env_vars` block.
+3.  Under the `development` (or `production`) section, find the `IDENTITY_PLATFORM_ALLOWED_ORGS` variable.
+4.  Set it to a comma-separated list of allowed domains (no spaces):
+    ```hcl
+    be_env_vars = {
+      common = {
+        LOG_LEVEL = "INFO"
+      }
+      development = {
+        ENVIRONMENT  = "development"
+        GOOGLE_TOKEN_AUDIENCE = "YOUR_OAUTH_WEB_CLIENT_ID_HERE"
+        IDENTITY_PLATFORM_ALLOWED_ORGS = "yourcompany.com,partnerdomain.com"
+      }
+      # ...
+    }
+    ```
+    *   *Note: If left empty (`""`), any authenticated domain is allowed.*
+5.  Apply the changes to your deployment:
+    *   Navigate to your environment directory and run:
+        ```bash
+        cd infra/environments/[YOUR_ENV_NAME]
+        terraform apply -var-file="[YOUR_ENV_NAME].tfvars"
+        ```
+    *   The backend Cloud Run service will redeploy with the new environment variables. Subsequent login attempts from non-allowlisted domains will be rejected.
+
+---
+
 ## 🌐 Step 4: Add a Custom Domain
 
 To configure a custom domain instead of using the default IP-based hostname:
