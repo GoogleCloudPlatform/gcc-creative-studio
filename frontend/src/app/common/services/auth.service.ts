@@ -132,15 +132,19 @@ export class AuthService {
       // Ideal case: Auth is ready, so we can force a token refresh to ensure it's fresh.
       return from(currentUser.getIdToken(true)).pipe(
         tap((token: string) => {
-          // Update the in-memory cache and localStorage with the refreshed token info.
-          const payload = JSON.parse(atob(token.split('.')[1]));
-          const expiry = payload.exp * 1000;
+          try {
+            // Update the in-memory cache and localStorage with the refreshed token info.
+            const payload = this.decodeJwtPayload(token);
+            const expiry = payload.exp * 1000;
 
-          this.firebaseIdToken = token;
-          this.firebaseTokenExpiry = expiry;
+            this.firebaseIdToken = token;
+            this.firebaseTokenExpiry = expiry;
 
-          const session: FirebaseSession = {token, expiry};
-          localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
+            const session: FirebaseSession = {token, expiry};
+            localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
+          } catch (error) {
+            console.error('Error decoding refreshed token payload:', error);
+          }
         }),
       );
     }
@@ -159,24 +163,32 @@ export class AuthService {
   signInForGoogleIdentityPlatform(): Observable<string> {
     return this.promptForIdentityPlatformToken$().pipe(
       switchMap(idToken => {
-        const payload = JSON.parse(atob(idToken.split('.')[1]));
-        const userEmail = payload.email?.toLowerCase();
+        try {
+          const payload = this.decodeJwtPayload(idToken);
+          const userEmail = payload.email?.toLowerCase();
 
-        // If allowed, proceed to save session and return token
-        this.firebaseIdToken = idToken;
-        this.firebaseTokenExpiry = payload.exp * 1000;
+          // If allowed, proceed to save session and return token
+          this.firebaseIdToken = idToken;
+          this.firebaseTokenExpiry = payload.exp * 1000;
 
-        const session: FirebaseSession = {
-          token: idToken,
-          expiry: this.firebaseTokenExpiry,
-        };
-        localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
+          const session: FirebaseSession = {
+            token: idToken,
+            expiry: this.firebaseTokenExpiry,
+          };
+          localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
 
-        // Call the backend to get or create the user profile.
-        return this.syncUserWithBackend$(idToken).pipe(
-          switchMap(() => from(this.settingsService.loadSettings())),
-          map(() => idToken), // Pass the token along for the final result.
-        );
+          // Call the backend to get or create the user profile.
+          return this.syncUserWithBackend$(idToken).pipe(
+            switchMap(() => from(this.settingsService.loadSettings())),
+            map(() => idToken), // Pass the token along for the final result.
+          );
+        } catch (error) {
+          console.error(
+            'Error decoding Google Identity Platform token:',
+            error,
+          );
+          return throwError(() => error);
+        }
       }),
     );
   }
@@ -380,5 +392,24 @@ export class AuthService {
     // refresh requires re-authentication or more complex flows not covered here.
     // For a simple deploy button click, getting a fresh token on sign-in might suffice.
     return this.currentOAuthAccessToken;
+  }
+
+  decodeJwtPayload(token: string): any {
+    const base64Url = token.split('.')[1];
+    if (!base64Url) {
+      throw new Error('Invalid JWT token');
+    }
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64.padEnd(
+      base64.length + ((4 - (base64.length % 4)) % 4),
+      '=',
+    );
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    const decoded = new TextDecoder().decode(bytes);
+    return JSON.parse(decoded);
   }
 }

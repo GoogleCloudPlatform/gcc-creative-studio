@@ -11,8 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Service for workbench project management."""
-
+"""Service for workbench project and timeline management."""
 
 import asyncio
 import logging
@@ -27,15 +26,110 @@ from fastapi import Depends
 from google.cloud import storage
 
 from src.common.storage_service import GcsService
-from src.workbench.schemas import TimelineRequest
+from src.images.repository.media_item_repository import MediaRepository
+from src.auth.iam_signer_credentials_service import IamSignerCredentials
+from src.workbench.dto.workbench_dto import (
+    TimelineRequest,
+    TimelineCreate,
+    TimelineUpdate,
+    TimelineResponse,
+)
+from src.workbench.repository.timeline_repository import TimelineRepository
 
 logger = logging.getLogger(__name__)
 
 
 class WorkbenchService:
-    def __init__(self, gcs_service: GcsService = Depends()):
+    def __init__(
+        self,
+        gcs_service: GcsService = Depends(),
+        timeline_repo: TimelineRepository = Depends(),
+        media_repo: MediaRepository = Depends(),
+        iam_signer_credentials: IamSignerCredentials = Depends(),
+    ):
         self.gcs_service = gcs_service
+        self.timeline_repo = timeline_repo
+        self.media_repo = media_repo
+        self.iam_signer_credentials = iam_signer_credentials
         self.storage_client = storage.Client()
+
+    async def _enrich_timeline(self, timeline: TimelineResponse):
+        """Enriches a timeline with presigned URLs for video and audio clips."""
+        for clip in timeline.video_clips:
+            if clip.asset_ref and clip.asset_ref.type == "media_item":
+                media_item_id = (
+                    int(clip.asset_ref.id)
+                    if str(clip.asset_ref.id).isdigit()
+                    else None
+                )
+                if media_item_id:
+                    media_item = await self.media_repo.get_by_id(media_item_id)
+                    if media_item and media_item.gcs_uris:
+                        gcs_uri = media_item.gcs_uris[0]
+                        presigned_url = await asyncio.to_thread(
+                            self.iam_signer_credentials.generate_presigned_url,
+                            gcs_uri,
+                        )
+                        clip.presigned_url = presigned_url
+
+                        if media_item.thumbnail_uris:
+                            thumb_gcs_uri = media_item.thumbnail_uris[0]
+                            presigned_thumb_url = await asyncio.to_thread(
+                                self.iam_signer_credentials.generate_presigned_url,
+                                thumb_gcs_uri,
+                            )
+                            clip.presigned_thumbnail_url = presigned_thumb_url
+
+        for clip in timeline.audio_clips:
+            if clip.asset_ref and clip.asset_ref.type == "media_item":
+                media_item_id = (
+                    int(clip.asset_ref.id)
+                    if str(clip.asset_ref.id).isdigit()
+                    else None
+                )
+                if media_item_id:
+                    media_item = await self.media_repo.get_by_id(media_item_id)
+                    if media_item and media_item.gcs_uris:
+                        gcs_uri = media_item.gcs_uris[0]
+                        presigned_url = await asyncio.to_thread(
+                            self.iam_signer_credentials.generate_presigned_url,
+                            gcs_uri,
+                        )
+                        clip.presigned_url = presigned_url
+
+    async def create_timeline(
+        self, timeline_create: TimelineCreate
+    ) -> TimelineResponse:
+        timeline = await self.timeline_repo.create_timeline(timeline_create)
+        await self._enrich_timeline(timeline)
+        return timeline
+
+    async def get_timeline(self, timeline_id: int) -> TimelineResponse | None:
+        timeline = await self.timeline_repo.get_by_id_with_details(timeline_id)
+        if timeline:
+            await self._enrich_timeline(timeline)
+        return timeline
+
+    async def list_timelines(
+        self, storyboard_id: int
+    ) -> list[TimelineResponse]:
+        timelines = await self.timeline_repo.find_by_storyboard(storyboard_id)
+        for t in timelines:
+            await self._enrich_timeline(t)
+        return timelines
+
+    async def update_timeline(
+        self, timeline_id: int, timeline_update: TimelineUpdate
+    ) -> TimelineResponse | None:
+        timeline = await self.timeline_repo.update_timeline(
+            timeline_id, timeline_update
+        )
+        if timeline:
+            await self._enrich_timeline(timeline)
+        return timeline
+
+    async def delete_timeline(self, timeline_id: int) -> bool:
+        return await self.timeline_repo.delete_timeline(timeline_id)
 
     async def render_timeline(
         self, request: TimelineRequest

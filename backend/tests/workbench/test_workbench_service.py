@@ -20,16 +20,26 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.workbench.schemas import Clip, TimelineRequest
-from src.workbench.service import WorkbenchService
+from src.workbench.dto.workbench_dto import Clip, TimelineRequest
+from src.workbench.workbench_service import WorkbenchService
 
 
 @pytest.fixture(name="service")
 def fixture_service():
     # Patch storage.Client to avoid DefaultCredentialsError during __init__
-    with patch("src.workbench.service.storage.Client") as mock_storage_client:
+    with patch(
+        "src.workbench.workbench_service.storage.Client"
+    ) as mock_storage_client:
         mock_gcs_service = AsyncMock()
-        service = WorkbenchService(gcs_service=mock_gcs_service)
+        mock_timeline_repo = AsyncMock()
+        mock_media_repo = AsyncMock()
+        mock_iam_credentials = MagicMock()
+        service = WorkbenchService(
+            gcs_service=mock_gcs_service,
+            timeline_repo=mock_timeline_repo,
+            media_repo=mock_media_repo,
+            iam_signer_credentials=mock_iam_credentials,
+        )
         service.mock_gcs_service = mock_gcs_service
         service.mock_storage_client = mock_storage_client
         return service
@@ -51,9 +61,11 @@ async def test_render_timeline_success_video_only(service):
 
     # 2. Patch downloads and subprocesses
     with patch(
-        "src.workbench.service.urllib.request.urlretrieve"
+        "src.workbench.workbench_service.urllib.request.urlretrieve"
     ) as mock_download:
-        with patch("src.workbench.service.subprocess.run") as mock_run:
+        with patch(
+            "src.workbench.workbench_service.subprocess.run"
+        ) as mock_run:
             # First call is for ffprobe
             mock_process_ffprobe = MagicMock()
             mock_process_ffprobe.returncode = 0
@@ -106,9 +118,11 @@ async def test_render_timeline_with_audio_gaps(service):
     request = TimelineRequest(clips=[video_clip, audio_clip])
 
     with patch(
-        "src.workbench.service.urllib.request.urlretrieve"
+        "src.workbench.workbench_service.urllib.request.urlretrieve"
     ) as mock_download:
-        with patch("src.workbench.service.subprocess.run") as mock_run:
+        with patch(
+            "src.workbench.workbench_service.subprocess.run"
+        ) as mock_run:
             # Pre-populate ffprobe for two different URL downloads
             mock_ff_video = MagicMock(
                 returncode=0,
@@ -159,8 +173,10 @@ async def test_render_timeline_ffmpeg_failure(service):
     )
     request = TimelineRequest(clips=[clip])
 
-    with patch("src.workbench.service.urllib.request.urlretrieve"):
-        with patch("src.workbench.service.subprocess.run") as mock_run:
+    with patch("src.workbench.workbench_service.urllib.request.urlretrieve"):
+        with patch(
+            "src.workbench.workbench_service.subprocess.run"
+        ) as mock_run:
             mock_ffprobe = MagicMock(
                 returncode=0,
                 stdout=b'{"streams": [{"codec_type": "video"}]}',
@@ -191,9 +207,11 @@ async def test_render_timeline_success_hide_video(service):
 
     # 2. Patch downloads and subprocesses
     with patch(
-        "src.workbench.service.urllib.request.urlretrieve"
+        "src.workbench.workbench_service.urllib.request.urlretrieve"
     ) as mock_download:
-        with patch("src.workbench.service.subprocess.run") as mock_run:
+        with patch(
+            "src.workbench.workbench_service.subprocess.run"
+        ) as mock_run:
             # First call is for ffprobe
             mock_process_ffprobe = MagicMock()
             mock_process_ffprobe.returncode = 0

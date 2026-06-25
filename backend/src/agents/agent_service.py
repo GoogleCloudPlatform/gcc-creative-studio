@@ -614,21 +614,13 @@ class AgentService:
                     s_asset_id = p.pop("sourceAssetId", None)
                     s_media = p.pop("sourceMediaItem", None)
                     if s_asset_id is not None:
-                        attached_assets.append(f"source_asset:{s_asset_id}")
+                        attached_assets.append(f"<creative_studio_asset id={s_asset_id} type=\"source_asset\" />")
                     if s_media is not None:
                         media_id = s_media.get("mediaItemId")
-                        attached_assets.append(f"media_item:{media_id}")
+                        attached_assets.append(f"<creative_studio_asset id={media_id} type=\"media_item\" />")
                     if p:
                         sanitized_parts.append(p)
-                injections = []
-                if workspace_id:
-                    injections.append(
-                        f"Use Workspace ID {workspace_id} for any tool calls that require a workspace_id"
-                    )
-                if session_id:
-                    injections.append(
-                        f"Use Session ID {session_id} for any tool calls that require a session_id"
-                    )
+
                 if attached_assets:
                     asset_list = "\n".join(
                         [f"- {aid}" for aid in attached_assets]
