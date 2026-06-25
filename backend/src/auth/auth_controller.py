@@ -1,4 +1,4 @@
-# Copyright 2025 Google LLC
+# Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,9 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# terraform {
-#   backend "gcs" {
-#     bucket = "cstudio-infra-example-cstudio-dev-tfstate"
-#     prefix = "infra/dev/state"
-#   }
-# }
+from fastapi import APIRouter, status
+from fastapi.responses import RedirectResponse
+
+router = APIRouter(
+    prefix="/api/auth",
+    tags=["Auth"],
+)
+
+
+@router.post("/logout")
+async def logout():
+    return RedirectResponse(
+        url="/_gcp_iap/clear_login_cookie",
+        status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+    )

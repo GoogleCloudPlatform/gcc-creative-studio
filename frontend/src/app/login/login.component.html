@@ -41,12 +41,16 @@
     <button
       mat-raised-button
       color="primary"
-      (click)="loginWithGoogle()"
+      (click)="login()"
       class="w-full max-w-xs h-12 text-lg"
     >
-      Login with Google
+      {{ isEntraAuth ? 'Login with Microsoft' : 'Login with Google' }}
     </button>
     <mat-spinner class="mt-5" [diameter]="50" *ngIf="this.loader"></mat-spinner>
+    <div *ngIf="iapAuthError" class="mt-4 p-4 bg-red-900/80 border border-red-500 text-sm text-left rounded-lg w-full max-w-xs text-red-200">
+      <p class="font-bold mb-1">Authorization Failed</p>
+      <p class="text-xs">Your user profile could not be created or matched against allowed organizations. Please verify that your email domain is allowed to access this application.</p>
+    </div>
   </div>
 
   <!-- Desktop View: Left Column -->
@@ -69,22 +73,28 @@
       </mat-card-header>
       <mat-card-content class="flex flex-col items-center">
         <p class="register-text mb-4">
-          Single Sign on with your Google Account
+          Single Sign on with your {{ isEntraAuth ? 'Microsoft' : 'Google' }} Account
         </p>
         <button
           mat-raised-button
           color="primary"
-          (click)="loginWithGoogle()"
+          (click)="login()"
           class="w-full h-12 text-lg login-btn"
         >
-          Login with Google
+          {{ isEntraAuth ? 'Login with Microsoft' : 'Login with Google' }}
         </button>
         <mat-spinner
           class="mt-5 m-auto"
           [diameter]="50"
           *ngIf="this.loader"
         ></mat-spinner>
+        <div *ngIf="iapAuthError" class="mt-4 p-4 bg-red-900/80 border border-red-500 text-sm text-left rounded-lg w-full text-red-200">
+          <p class="font-bold mb-1">Authorization Failed</p>
+          <p class="text-xs">Your user profile could not be created or matched against allowed organizations. Please verify that your email domain is allowed to access this application.</p>
+        </div>
       </mat-card-content>
     </mat-card>
+
+
   </div>
 </div>

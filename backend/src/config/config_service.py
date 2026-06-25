@@ -53,6 +53,9 @@ class ConfigService(BaseSettings):
         default="", alias="IDENTITY_PLATFORM_ALLOWED_ORGS"
     )
 
+    # --- Google Cloud IAP ---
+    IAP_EXPECTED_AUDIENCE: str = ""
+
     # --- Storage ---
     # The defaults will be set in the validator below to prevent recursion.
     GENMEDIA_BUCKET: str = ""

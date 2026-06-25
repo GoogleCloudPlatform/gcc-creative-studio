@@ -257,3 +257,30 @@ def test_store_to_gcs_decode_success(gcs_service):
 def test_store_to_gcs_invalid_type(gcs_service):
     res = gcs_service.store_to_gcs("folder", "file.txt", "text/plain", 123)
     assert res == ""
+
+
+@pytest.mark.xfail(reason="Exposes custom bucket bug in store_to_gcs")
+def test_store_to_gcs_custom_bucket_bug(gcs_service):
+    mock_other_bucket = MagicMock()
+    mock_blob = MagicMock()
+    mock_other_bucket.blob.return_value = mock_blob
+    gcs_service.client.bucket.return_value = mock_other_bucket
+
+    res = gcs_service.store_to_gcs(
+        "folder",
+        "file.txt",
+        "text/plain",
+        b"bytes",
+        bucket_name="other-bucket",
+    )
+
+    # It should return the correct GCS URI
+    assert res == "gs://other-bucket/folder/file.txt"
+
+    # It should have called client.bucket with "other-bucket"
+    gcs_service.client.bucket.assert_called_with("other-bucket")
+
+    # It should have called blob on the other bucket
+    mock_other_bucket.blob.assert_called_once_with("folder/file.txt")
+
+

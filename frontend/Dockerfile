@@ -18,7 +18,7 @@ WORKDIR /app
 COPY . /app/
 
 RUN npm ci
-RUN npm run build-dev
+RUN npx ng build --configuration=production
 
 FROM nginx:alpine
 COPY --from=builder /app/dist/creative-studio/browser /usr/share/nginx/html

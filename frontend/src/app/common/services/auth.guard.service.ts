@@ -26,8 +26,9 @@ import {AuthService} from './auth.service';
 import {UserService} from './user.service';
 import {UserRolesEnum} from '../models/user.model';
 import {isPlatformBrowser} from '@angular/common';
-import {Observable, of} from 'rxjs';
+import {Observable, of, firstValueFrom} from 'rxjs';
 import {SettingsService} from '../../services/settings.service';
+import {environment} from '../../../environments/environment';
 
 const LOGIN_ROUTE = '/login';
 @Injectable({
@@ -43,14 +44,10 @@ export class AuthGuardService implements CanActivate {
     private settingsService: SettingsService,
   ) {}
 
-  canActivate(
+  async canActivate(
     route: ActivatedRouteSnapshot,
     state: RouterStateSnapshot,
-  ):
-    | Observable<boolean | UrlTree>
-    | Promise<boolean | UrlTree>
-    | boolean
-    | UrlTree {
+  ): Promise<boolean | UrlTree> {
     if (!isPlatformBrowser(this.platformId)) {
       // --- SERVER SIDE ---
       // Allow navigation to render the basic app shell.
@@ -62,10 +59,30 @@ export class AuthGuardService implements CanActivate {
     }
 
     // --- BROWSER SIDE ---
+    // Ensure MSAL has a chance to process any pending redirects before we check auth status
+    if (this.authService.isEntraAuth) {
+      await this.authService.getMsalInstance();
+    }
+
     if (!this.authService.isLoggedIn()) {
+      if (!environment.isLocal) {
+        const authStatus = await firstValueFrom(this.authService.checkIapSession());
+        if (authStatus === 'authenticated') {
+          return this.settingsService.loadSettings().then(() => true);
+        } else if (authStatus === 'unauthorized') {
+          console.warn('IAP session unauthorized by backend. Redirecting to login to show error.');
+          void this.router.navigate([LOGIN_ROUTE]);
+          return false;
+        } else {
+          console.warn('IAP session expired or missing. Reloading page to trigger IAP login...');
+          window.location.reload();
+          return false;
+        }
+      }
       void this.router.navigate([LOGIN_ROUTE]);
       return false;
     }
+
 
     return this.settingsService.loadSettings().then(() => {
       const requiredRoles = route.data?.['requiredRoles'] as UserRolesEnum[];

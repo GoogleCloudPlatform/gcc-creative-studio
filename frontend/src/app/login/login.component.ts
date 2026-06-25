@@ -42,6 +42,8 @@ export class LoginComponent {
   invalidLogin = false;
   errorMessage = '';
   isBrowser: boolean;
+  isEntraAuth = !!environment.ENTRA_CLIENT_ID && environment.ENTRA_CLIENT_ID !== 'ENTRA_CLIENT_ID_PLACEHOLDER';
+
 
   constructor(
     private authService: AuthService,
@@ -56,7 +58,69 @@ export class LoginComponent {
     });
   }
 
-  ngOnInit(): void {}
+  iapAuthError = false;
+
+  ngOnInit(): void {
+    const msalError = localStorage.getItem('MSAL_DEBUG_ERROR');
+    if (msalError) {
+      localStorage.removeItem('MSAL_DEBUG_ERROR');
+    }
+
+    if (this.authService.isLoggedIn()) {
+      void this.router.navigate([HOME_ROUTE]);
+    } else if (!environment.isLocal) {
+      this.authService.checkIapSession().subscribe((authStatus) => {
+        if (authStatus === 'authenticated') {
+          sessionStorage.removeItem('iap_redirect_count');
+          void this.router.navigate([HOME_ROUTE]);
+        } else if (authStatus === 'unauthorized') {
+          console.error('IAP session failed authorization check (unauthorized domain).');
+          this.iapAuthError = true;
+        } else {
+          const redirectCount = parseInt(sessionStorage.getItem('iap_redirect_count') || '0', 10);
+          if (redirectCount < 2) {
+            sessionStorage.setItem('iap_redirect_count', (redirectCount + 1).toString());
+            window.location.href = HOME_ROUTE;
+          } else {
+            console.error('IAP session failed authorization check (loop prevented).');
+            this.iapAuthError = true;
+          }
+        }
+      });
+    }
+  }
+
+  login() {
+    if (this.isEntraAuth) {
+      this.loginWithMicrosoft();
+    } else {
+      this.loginWithGoogle();
+    }
+  }
+
+  loginWithMicrosoft() {
+    this.loader = true;
+    this.invalidLogin = false;
+    this.errorMessage = '';
+
+    this.authService.signInWithMicrosoftEntra().subscribe({
+      next: (token: string) => {
+        this.ngZone.run(() => {
+          this.loader = false;
+          void this.router.navigate([HOME_ROUTE]);
+        });
+      },
+      error: error => {
+        this.loader = false;
+        console.error('Microsoft Login Process Error:', error);
+        this.handleLoginError(
+          error || {
+            message: 'An unexpected error occurred during sign-in. Please try again.',
+          },
+        );
+      },
+    });
+  }
 
   loginWithGoogle() {
     this.loader = true;

@@ -62,6 +62,17 @@ module "creative_studio_platform" {
   frontend_secrets       = var.frontend_secrets
   backend_secrets        = var.backend_secrets
   fe_build_substitutions = var.fe_build_substitutions
+  entra_client_id        = var.entra_client_id
+  entra_tenant_id        = var.entra_tenant_id
+  entra_client_secret    = var.entra_client_secret
+  
+  iap_oauth2_client_id     = var.iap_oauth2_client_id
+  iap_oauth2_client_secret = var.iap_oauth2_client_secret
+  domain_name              = var.domain_name
+  iap_expected_audience    = var.iap_expected_audience
+  iap_access_members       = var.iap_access_members
+  workforce_pool_id        = var.workforce_pool_id
+  org_id                   = var.org_id
 
   depends_on = [ google_project_service.apis ]
 }

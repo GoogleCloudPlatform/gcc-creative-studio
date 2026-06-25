@@ -26,21 +26,20 @@ import {
   signInWithPopup,
   UserCredential,
 } from '@angular/fire/auth';
-import {Observable, from, throwError, of} from 'rxjs';
+import {Observable, from, throwError, of, firstValueFrom, EMPTY} from 'rxjs';
 import {catchError, tap, map, switchMap} from 'rxjs/operators';
+import { PublicClientApplication, Configuration, AuthenticationResult } from '@azure/msal-browser';
 import {isPlatformBrowser} from '@angular/common';
 import {SettingsService} from '../../services/settings.service';
 
 // Declare the 'google' global object from the Google Identity Services script
 declare const google: any;
 
-const FIREBASE_SESSION_KEY = 'firebase_session';
 const USER_DETAILS = 'USER_DETAILS';
 const LOGIN_ROUTE = '/login';
-
-interface FirebaseSession {
-  token: string;
-  expiry: number; // Expiration timestamp in milliseconds
+const INITIAL_HASH = typeof window !== 'undefined' ? window.location.hash : '';
+if (typeof window !== 'undefined') {
+  (window as any).INITIAL_HASH = INITIAL_HASH;
 }
 
 @Injectable({
@@ -55,6 +54,11 @@ export class AuthService {
   private currentOAuthAccessToken: string | null = null;
   private firebaseIdToken: string | null = null; // To store the Firebase token for the test
   private firebaseTokenExpiry: number | null = null; // To store token expiration time (in ms)
+  private msalInstance: PublicClientApplication | null = null;
+
+  get isEntraAuth(): boolean {
+    return !!environment.ENTRA_CLIENT_ID && environment.ENTRA_CLIENT_ID !== 'ENTRA_CLIENT_ID_PLACEHOLDER';
+  }
 
   constructor(
     private router: Router,
@@ -67,6 +71,9 @@ export class AuthService {
       prompt: 'select_account',
     });
     this.loadSessionFromStorage();
+    if (isPlatformBrowser(this.platformId) && this.isEntraAuth) {
+      this.getMsalInstance();
+    }
   }
 
   /**
@@ -90,11 +97,9 @@ export class AuthService {
         const token = idTokenResult.token;
         const expirationTime = Date.parse(idTokenResult.expirationTime);
 
-        // Save session details to memory and local storage.
+        // Save session details to memory.
         this.firebaseIdToken = token;
         this.firebaseTokenExpiry = expirationTime;
-        const session: FirebaseSession = {token, expiry: expirationTime};
-        localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
 
         // Call the backend to get or create the user profile.
         return this.syncUserWithBackend$(token).pipe(
@@ -138,9 +143,6 @@ export class AuthService {
 
           this.firebaseIdToken = token;
           this.firebaseTokenExpiry = expiry;
-
-          const session: FirebaseSession = {token, expiry};
-          localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
         }),
       );
     }
@@ -166,18 +168,88 @@ export class AuthService {
         this.firebaseIdToken = idToken;
         this.firebaseTokenExpiry = payload.exp * 1000;
 
-        const session: FirebaseSession = {
-          token: idToken,
-          expiry: this.firebaseTokenExpiry,
-        };
-        localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
-
         // Call the backend to get or create the user profile.
         return this.syncUserWithBackend$(idToken).pipe(
           switchMap(() => from(this.settingsService.loadSettings())),
           map(() => idToken), // Pass the token along for the final result.
         );
       }),
+    );
+  }
+
+  private msalInitPromise: Promise<PublicClientApplication> | null = null;
+
+  async getMsalInstance(): Promise<PublicClientApplication> {
+    if (!this.msalInitPromise) {
+      this.msalInitPromise = this._initMsal();
+    }
+    return this.msalInitPromise;
+  }
+
+  private async _initMsal(): Promise<PublicClientApplication> {
+    const msalConfig: Configuration = {
+      auth: {
+        clientId: environment.ENTRA_CLIENT_ID,
+        authority: `https://login.microsoftonline.com/${environment.ENTRA_TENANT_ID}/v2.0`,
+        redirectUri: window.location.origin,
+        navigateToLoginRequestUrl: false
+      } as any,
+      cache: {
+        cacheLocation: 'localStorage',
+      }
+    };
+    this.msalInstance = new PublicClientApplication(msalConfig);
+    await this.msalInstance.initialize();
+
+    try {
+      if (INITIAL_HASH && !window.location.hash) {
+        window.location.hash = INITIAL_HASH;
+      }
+      const result = await this.msalInstance.handleRedirectPromise();
+      if (result) {
+        const idToken = result.idToken;
+        const payload = JSON.parse(atob(idToken.split('.')[1]));
+        
+        this.firebaseIdToken = idToken;
+        this.firebaseTokenExpiry = payload.exp * 1000;
+
+        this.firebaseIdToken = idToken;
+        this.firebaseTokenExpiry = payload.exp * 1000;
+
+        await firstValueFrom(this.syncUserWithBackend$(idToken));
+        await this.settingsService.loadSettings();
+        // After successfully processing redirect, navigate to home
+        this.router.navigate([LOGIN_ROUTE]).then(() => this.router.navigate(['/']));
+      }
+    } catch (error) {
+        localStorage.setItem('MSAL_DEBUG_ERROR', (error as any)?.message || String(error));
+        console.error('Error handling MSAL redirect:', error);
+    }
+    return this.msalInstance;
+  }
+
+  signInWithMicrosoftEntra(): Observable<string> {
+    return from(this.getMsalInstance()).pipe(
+      switchMap(msal => from(msal.loginPopup({ scopes: ['User.Read'] }))),
+      switchMap((result: AuthenticationResult) => {
+        const idToken = result.idToken;
+        const payload = JSON.parse(atob(idToken.split('.')[1]));
+        
+        this.firebaseIdToken = idToken;
+        this.firebaseTokenExpiry = payload.exp * 1000;
+
+        this.firebaseIdToken = idToken;
+        this.firebaseTokenExpiry = payload.exp * 1000;
+
+        return this.syncUserWithBackend$(idToken).pipe(
+           switchMap(() => from(this.settingsService.loadSettings())),
+           map(() => idToken)
+        );
+      }),
+      catchError(error => {
+         console.error('Error during MSAL login:', error);
+         return throwError(() => error);
+      })
     );
   }
 
@@ -244,41 +316,71 @@ export class AuthService {
     // First, check our own session info which is loaded from localStorage.
     // This is synchronous and tells us if we have a valid, non-expired token.
     if (!this.isLoggedIn()) {
+      console.log('getValidIdentityPlatformToken: isLoggedIn is FALSE');
       return of();
     }
 
     // Fallback case: The Firebase Auth instance is not yet initialized, but we
     // have a valid token from localStorage. We can use this for the current
     // request. The next request will likely hit the ideal case above.
+    console.log('getValidIdentityPlatformToken: isLoggedIn is TRUE, returning token');
     return of(this.firebaseIdToken!);
   }
 
+  checkIapSession(): Observable<'authenticated' | 'unauthenticated' | 'unauthorized'> {
+    return this.httpClient.get<UserModel>(`${environment.backendURL}/users/me`, {withCredentials: true}).pipe(
+      tap((userDetails: UserModel) => {
+        localStorage.setItem(USER_DETAILS, JSON.stringify(userDetails));
+        console.log('IAP Session detected and synchronized.');
+      }),
+      map(() => 'authenticated' as const),
+      catchError((error) => {
+        console.log('No active IAP session found.', error);
+        if (error instanceof HttpErrorResponse && error.status === 401) {
+          return of('unauthorized' as const);
+        }
+        return of('unauthenticated' as const);
+      })
+    );
+  }
+
   private syncUserWithBackend$(token: string): Observable<UserModel> {
-    const headers = new HttpHeaders().set('Authorization', `Bearer ${token}`);
-    return this.httpClient
-      .get<UserModel>(`${environment.backendURL}/users/me`, {headers})
-      .pipe(
-        tap((userDetails: UserModel) => {
-          // The backend is the source of truth. Save the returned profile to local storage.
-          localStorage.setItem(USER_DETAILS, JSON.stringify(userDetails));
-          console.log('User profile successfully synced with backend.');
-        }),
-        catchError((error: HttpErrorResponse) => {
-          console.error('Failed to sync user with backend', error);
-          // This is a critical error, so we should propagate it.
-          return throwError(
-            () =>
-              new Error(
-                error?.error?.detail ||
-                  `Could not synchronize user profile with the server. ${error?.error?.detail}`,
-              ),
-          );
-        }),
-      );
+
+    const headers = new HttpHeaders().set('X-Custom-Auth', `Bearer ${token}`);
+    
+    // First, exchange the token for an HttpOnly session cookie
+    return this.httpClient.post(`${environment.backendURL}/auth/session`, {}, {headers, withCredentials: true}).pipe(
+      // Then, fetch the user profile using the newly set cookie
+      switchMap(() => this.httpClient.get<UserModel>(`${environment.backendURL}/users/me`, {withCredentials: true})),
+      tap((userDetails: UserModel) => {
+        // The backend is the source of truth. Save the returned profile to local storage.
+        localStorage.setItem(USER_DETAILS, JSON.stringify(userDetails));
+        console.log('User profile successfully synced with backend.');
+      }),
+      catchError((error: HttpErrorResponse) => {
+        console.error('Failed to sync user with backend', error);
+        // This is a critical error, so we should propagate it.
+        return throwError(
+          () =>
+            new Error(
+              error?.error?.detail ||
+                `Could not synchronize user profile with the server. ${error?.error?.detail}`,
+            ),
+        );
+      }),
+    );
   }
 
   async logout(route: string = LOGIN_ROUTE) {
     this.settingsService.reset();
+    
+    // Attempt to log out of the backend first to clear the session cookie
+    try {
+      await firstValueFrom(this.httpClient.post(`${environment.backendURL}/auth/logout`, {}, {withCredentials: true}));
+    } catch (e) {
+      console.error('Backend logout failed', e);
+    }
+    
     return this.auth
       .signOut()
       .then(() => {
@@ -286,7 +388,6 @@ export class AuthService {
         // Clear Firebase session data
         this.firebaseIdToken = null;
         this.firebaseTokenExpiry = null;
-        localStorage.removeItem(FIREBASE_SESSION_KEY);
         localStorage.removeItem(USER_DETAILS);
         localStorage.removeItem('showTooltip');
         void this.router.navigateByUrl(route);
@@ -294,7 +395,6 @@ export class AuthService {
       .catch(e => {
         console.error('Sign Out Error', e);
         this.settingsService.reset();
-        localStorage.removeItem(FIREBASE_SESSION_KEY);
         localStorage.removeItem(USER_DETAILS);
         localStorage.removeItem('showTooltip');
         void this.router.navigate([LOGIN_ROUTE]);
@@ -304,13 +404,7 @@ export class AuthService {
   isLoggedIn() {
     if (!isPlatformBrowser(this.platformId)) return false;
 
-    // Check if the in-memory token is valid
-    const now = Date.now();
-    const isTokenValid = !!(
-      this.firebaseIdToken &&
-      this.firebaseTokenExpiry &&
-      this.firebaseTokenExpiry > now
-    );
+    const isTokenValid = localStorage.getItem(USER_DETAILS) !== null;
 
     if (!isTokenValid && this.router.url !== LOGIN_ROUTE) {
       void this.router.navigate([LOGIN_ROUTE]);
@@ -321,25 +415,13 @@ export class AuthService {
 
   private loadSessionFromStorage(): void {
     if (!isPlatformBrowser(this.platformId)) return;
-
-    const sessionStr = localStorage.getItem(FIREBASE_SESSION_KEY);
-    if (sessionStr) {
-      const session: FirebaseSession = JSON.parse(sessionStr);
-      // Check if the stored session is still valid
-      if (session.expiry > Date.now()) {
-        this.firebaseIdToken = session.token;
-        this.firebaseTokenExpiry = session.expiry;
-      } else {
-        // If expired, remove it from storage.
-        localStorage.removeItem(FIREBASE_SESSION_KEY);
-      }
-    }
+    // Session is now managed via HttpOnly cookies, so we don't load tokens from localStorage.
   }
 
   isUserLoggedIn() {
     if (!isPlatformBrowser(this.platformId)) return false;
 
-    const isUserLoggedIn = localStorage.getItem(FIREBASE_SESSION_KEY) !== null;
+    const isUserLoggedIn = localStorage.getItem(USER_DETAILS) !== null;
     return isUserLoggedIn;
   }
 

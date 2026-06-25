@@ -4,6 +4,8 @@
 *environment.*
 !environment.ts
 !environment.prod.ts
+!environment.development.ts.example
+!environment.test.ts.example
 proxy.conf.json
 
 # Compiled output

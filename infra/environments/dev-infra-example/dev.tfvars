@@ -72,3 +72,16 @@ apis_to_enable = [
   "texttospeech.googleapis.com",
   "workflows.googleapis.com",
 ]
+
+entra_client_id = "YOUR_ENTRA_CLIENT_ID"
+entra_tenant_id = "YOUR_ENTRA_TENANT_ID"
+entra_client_secret = "YOUR_ENTRA_CLIENT_SECRET"
+
+# --- IAP & Workforce Identity Configuration ---
+iap_oauth2_client_id     = "YOUR_IAP_OAUTH2_CLIENT_ID"
+iap_oauth2_client_secret = "YOUR_IAP_OAUTH2_CLIENT_SECRET"
+iap_expected_audience    = "YOUR_IAP_EXPECTED_AUDIENCE"
+domain_name              = "YOUR_CUSTOM_DOMAIN_NAME_OR_IP"
+iap_access_members       = ["principalSet://iam.googleapis.com/locations/global/workforcePools/YOUR_WORKFORCE_POOL_ID/*"]
+workforce_pool_id        = "YOUR_WORKFORCE_POOL_ID"
+org_id                   = "YOUR_GCP_ORGANIZATION_ID"
