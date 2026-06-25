@@ -166,9 +166,6 @@ def version():
     return "v0.0.1"
 
 
-configure_cors(app)
-
-app.include_router(imagen_router)
 app.include_router(admin_router)
 app.include_router(audio_router)
 app.include_router(video_router)
@@ -183,5 +180,4 @@ app.include_router(workspace_router)
 app.include_router(brand_guideline_router)
 app.include_router(workflow_router)
 app.include_router(workflows_executor_router)
-app.include_router(workbench_router)
-app.include_router(system_settings_router)
+
