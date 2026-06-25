@@ -72,7 +72,9 @@ jobs:
                   ],
                   "includeTools": [
                     "add_comment_to_pending_review",
-                    "pull_request_read",
+                    "get_pull_request",
+                    "get_pull_request_files",
+                    "get_pull_request_diff",
                     "pull_request_review_write"
                   ],
                   "env": {
@@ -122,9 +124,9 @@ jobs:
 
             - Retrieve the GitHub repository name from the environment variable "${REPOSITORY}".
             - Retrieve the GitHub pull request number from the environment variable "${PULL_REQUEST_NUMBER}".
-            - Use `github__pull_request_read` (method: `get`) to get the title, body, and metadata about the pull request.
-            - Use `github__pull_request_read` (method: `get_files`) to get the list of files that were added, removed, and changed in the pull request.
-            - Use `github__pull_request_read` (method: `get_diff`) to get the diff from the pull request. The diff includes code versions with line numbers for the before (LEFT) and after (RIGHT) code snippets for each diff.
+            - Use `github__get_pull_request` to get the title, body, and metadata about the pull request.
+            - Use `github__get_pull_request_files` to get the list of files that were added, removed, and changed in the pull request.
+            - Use `github__get_pull_request_diff` to get the diff from the pull request. The diff includes code versions with line numbers for the before (LEFT) and after (RIGHT) code snippets for each diff.
 
             -----
 
@@ -135,7 +137,7 @@ jobs:
             ### Step 1: Data Gathering and Analysis
 
             1. **Parse Inputs:** Ingest and parse all information from the **Input Data**
-            2. **Review Code:** Meticulously review the code provided returned from `github__pull_request_read` according to the **Review Criteria**.
+            2. **Review Code:** Meticulously review the code provided returned from `github__get_pull_request` and `github__get_pull_request_diff` according to the **Review Criteria**.
 
             ### Step 2: Formulate Review Comments
 
