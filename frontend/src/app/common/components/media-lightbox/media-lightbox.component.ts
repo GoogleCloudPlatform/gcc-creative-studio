@@ -41,6 +41,7 @@ import {
 import {AssignTagsDialogComponent} from '../assign-tags-dialog/assign-tags-dialog.component';
 import {TagsService} from '../../services/tags.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
+import {SettingsService} from '../../../services/settings.service';
 
 @Component({
   selector: 'app-media-lightbox',
@@ -61,6 +62,10 @@ export class MediaLightboxComponent
     return this.mediaItem?.mimeType?.startsWith('image/') ?? false;
   }
 
+  get showOmni(): boolean {
+    return this.settingsService.getShowGeminiOmni();
+  }
+
   get showEditButton(): boolean {
     return this.isImage;
   }
@@ -78,6 +83,10 @@ export class MediaLightboxComponent
     index: number;
   }>();
   @Output() sendToVtoClicked = new EventEmitter<number>();
+  @Output() editWithOmniClicked = new EventEmitter<{
+    mediaItem: MediaItem;
+    selectedIndex: number;
+  }>();
   @Output() extendWithAiClicked = new EventEmitter<{
     mediaItem: MediaItem;
     selectedIndex: number;
@@ -116,6 +125,7 @@ export class MediaLightboxComponent
     public dialog: MatDialog,
     private tagsService: TagsService,
     private workspaceStateService: WorkspaceStateService,
+    private settingsService: SettingsService,
   ) {}
 
   ngAfterViewInit(): void {
@@ -499,6 +509,15 @@ export class MediaLightboxComponent
 
   onSendToVtoClick(): void {
     this.sendToVtoClicked.emit(this.selectedIndex);
+  }
+
+  onEditWithOmniClick(): void {
+    if (this.mediaItem) {
+      this.editWithOmniClicked.emit({
+        mediaItem: this.mediaItem as MediaItem,
+        selectedIndex: this.selectedIndex,
+      });
+    }
   }
 
   onExtendWithAiClick() {

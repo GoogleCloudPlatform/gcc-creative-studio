@@ -27,6 +27,7 @@ class SourceAssetLinkResponse(SourceAssetLink):
     presigned_url: str
     gcs_uri: str
     presigned_thumbnail_url: str | None = None
+    mime_type: str | None = None
 
 
 class SourceMediaItemLinkResponse(SourceMediaItemLink):
@@ -35,6 +36,7 @@ class SourceMediaItemLinkResponse(SourceMediaItemLink):
     presigned_url: str
     gcs_uri: str
     presigned_thumbnail_url: str | None = None
+    mime_type: str | None = None
 
 
 class MediaItemResponse(MediaItemModel):

@@ -16,6 +16,7 @@
 
 from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
+from src.projects.dto.project_dto import StoryboardResponse
 
 
 # --- Sub-components for Chat ---
@@ -54,11 +55,10 @@ class ChatRequestDto(BaseModel):
     """Payload for starting an agent chat interaction."""
 
     sessionId: str
-    appName: Optional[str] = "creative_toolbox"
-    workspaceId: Optional[int] = None
+    workspaceId: int
+    appName: Optional[str] = "ads_x"
     newMessage: Optional[ChatMessage] = None
     streaming: Optional[bool] = False
-    userId: Optional[str] = None
 
 
 class ChatResponseDto(BaseModel):
@@ -88,3 +88,8 @@ class SessionResponseDto(BaseModel):
 class ProxyResponseDto(BaseModel):
     status: Optional[str] = None
     details: Optional[Any] = None
+
+
+class SessionDetailResponseDto(BaseModel):
+    session: Optional[SessionResponseDto] = None
+    storyboard: Optional[StoryboardResponse] = None

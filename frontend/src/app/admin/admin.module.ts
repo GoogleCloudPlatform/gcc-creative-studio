@@ -44,6 +44,7 @@ import {MatMenuModule} from '@angular/material/menu';
 import {MatDividerModule} from '@angular/material/divider';
 import {MatStepperModule} from '@angular/material/stepper';
 import {MatCheckboxModule} from '@angular/material/checkbox';
+import {MatSlideToggleModule} from '@angular/material/slide-toggle';
 import {MatCardModule} from '@angular/material/card';
 import {ScrollingModule} from '@angular/cdk/scrolling';
 import {MatProgressBarModule} from '@angular/material/progress-bar';
@@ -96,6 +97,7 @@ import {AdminHomeComponent} from './admin-home/admin-home.component';
     MatProgressSpinnerModule,
     MatMenuModule,
     MatCheckboxModule,
+    MatSlideToggleModule,
     MatCardModule,
     MatTableModule,
     FormsModule,

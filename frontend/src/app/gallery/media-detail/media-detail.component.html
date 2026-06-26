@@ -45,6 +45,7 @@
         (sendToVtoClicked)="sendToVto($event)"
         (extendWithAiClicked)="handleExtendWithAi($event)"
         (concatenateClicked)="handleConcatenate($event)"
+        (editWithOmniClicked)="handleEditWithOmni($event)"
         (deleteClicked)="deleteCurrentMedia()"
         (tagsChanged)="onTagsChanged($event)"
         style="max-height: 80vh"
@@ -218,16 +219,26 @@
                 <div class="flex flex-wrap gap-2">
                   <!-- From uploaded assets -->
                   <a *ngFor="let asset of mediaItem.enrichedSourceAssets" [routerLink]="['/asset-detail', asset.assetId]" target="_blank" rel="noopener noreferrer"
-                    class="block w-20 h-20 rounded-md overflow-hidden hover:opacity-80 transition-opacity cursor-pointer">
-                    <img [src]="asset?.presignedThumbnailUrl || asset.presignedUrl" alt="Source Asset"
-                      class="w-full h-full object-cover" />
+                    class="w-20 h-20 rounded-md overflow-hidden hover:opacity-80 transition-opacity cursor-pointer border border-gray-700 bg-neutral-800 flex items-center justify-center">
+                    <ng-container *ngIf="asset.mimeType?.startsWith('audio/')">
+                      <mat-icon class="text-white !text-3xl !h-8 !w-8 flex items-center justify-center">graphic_eq</mat-icon>
+                    </ng-container>
+                    <ng-container *ngIf="!asset.mimeType?.startsWith('audio/')">
+                      <img [src]="asset?.presignedThumbnailUrl || asset.presignedUrl" alt="Source Asset"
+                        class="w-full h-full object-cover" />
+                    </ng-container>
                   </a>
                   <!-- From previously generated media -->
                   <a *ngFor="let source of mediaItem.enrichedSourceMediaItems" [routerLink]="['/gallery', source.mediaItemId]"
                     [queryParams]="{img_index: source.mediaIndex}" target="_blank" rel="noopener noreferrer"
-                    class="block w-20 h-20 rounded-md overflow-hidden hover:opacity-80 transition-opacity cursor-pointer">
-                    <img [src]="source?.presignedThumbnailUrl || source.presignedUrl" alt="Source Media Item"
-                      class="w-full h-full object-cover" />
+                    class="w-20 h-20 rounded-md overflow-hidden hover:opacity-80 transition-opacity cursor-pointer border border-gray-700 bg-neutral-800 flex items-center justify-center">
+                    <ng-container *ngIf="source.mimeType?.startsWith('audio/')">
+                      <mat-icon class="text-white !text-3xl !h-8 !w-8 flex items-center justify-center">graphic_eq</mat-icon>
+                    </ng-container>
+                    <ng-container *ngIf="!source.mimeType?.startsWith('audio/')">
+                      <img [src]="source?.presignedThumbnailUrl || source.presignedUrl" alt="Source Media Item"
+                        class="w-full h-full object-cover" />
+                    </ng-container>
                   </a>
               </div>
               </section>

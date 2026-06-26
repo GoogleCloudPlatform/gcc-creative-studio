@@ -362,6 +362,50 @@ export class MediaDetailComponent implements OnDestroy {
     void this.router.navigate(['/video'], navigationExtras);
   }
 
+  handleEditWithOmni(event: {mediaItem: any; selectedIndex: number}): void {
+    if (!this.mediaItem) {
+      return;
+    }
+
+    const index = event.selectedIndex;
+    const mime = this.mediaItem.mimeType || '';
+    const isAudio = mime.startsWith('audio/');
+
+    const remixState: any = {
+      parentMediaItemId: this.mediaItem.id,
+      parentMediaIndex: index,
+      generationModel: 'gemini-omni',
+      isOmniMode: true,
+    };
+
+    if (isAudio) {
+      remixState.referenceAudio = {
+        id: this.mediaItem.id,
+        type: this.mediaItem.itemType || 'media_item',
+        index: index,
+        name:
+          this.mediaItem.originalPrompt || `Audio Input ${this.mediaItem.id}`,
+      };
+    } else {
+      remixState.referenceVideo = {
+        id: this.mediaItem.id,
+        type: this.mediaItem.itemType || 'media_item',
+        index: index,
+        name:
+          this.mediaItem.originalPrompt || `Video Input ${this.mediaItem.id}`,
+        previewUrl:
+          this.mediaItem.presignedThumbnailUrls?.[index] ||
+          this.mediaItem.presignedUrls?.[index] ||
+          '',
+      };
+    }
+
+    const navigationExtras: NavigationExtras = {
+      state: {remixState},
+    };
+    void this.router.navigate(['/video'], navigationExtras);
+  }
+
   sendToVto(index: number): void {
     if (!this.mediaItem) {
       return;
@@ -400,7 +444,7 @@ export class MediaDetailComponent implements OnDestroy {
       // Since it's a video, we can use the thumbnail as a preview.
       startImagePreviewUrl:
         this.mediaItem.presignedThumbnailUrls?.[event.selectedIndex],
-      generationModel: 'veo-2.0-generate-001', // Switch to Veo 2 for video input
+      generationModel: 'veo-3.1-generate-001', // Switch to Veo 3.1 for video input
     };
 
     const navigationExtras: NavigationExtras = {

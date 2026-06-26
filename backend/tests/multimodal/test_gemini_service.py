@@ -85,7 +85,7 @@ def test_generate_random_or_rewrite_prompt(gemini_service):
 async def test_enhance_prompt_from_dto_success(gemini_service):
     dto = CreateImagenDto(
         prompt="test prompt",
-        generation_model="imagen-3.0-generate-002",
+        generation_model="gemini-3.1-flash-image",
         workspace_id=1,
     )
 
@@ -150,7 +150,7 @@ async def test_enhance_prompt_from_dto_with_brand_guidelines(gemini_service):
 
     dto = CreateImagenDto(
         prompt="test prompt",
-        generation_model="imagen-3.0-generate-002",
+        generation_model="gemini-3.1-flash-image",
         workspace_id=1,
         use_brand_guidelines=True,
     )

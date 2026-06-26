@@ -75,6 +75,7 @@
             [showSeeMoreInfoButton]="true"
             [showDeleteButton]="true"
             (extendWithAiClicked)="handleExtendWithAi($event)"
+            (editWithOmniClicked)="handleEditWithOmni($event)"
             (concatenateClicked)="handleConcatenate($event)"
             (deleteClicked)="deleteGeneratedMedia()"
             style="height: 100%"
@@ -372,6 +373,8 @@
           [image2Preview]="image2Preview"
           [referenceImages]="referenceImages"
           [referenceImagesType]="referenceImagesType"
+          [referenceVideo]="referenceVideo"
+          [referenceAudio]="referenceAudio"
           (promptChanged)="onPromptChanged($event)"
           (aspectRatioChanged)="selectAspectRatio($event)"
           (outputsChanged)="selectNumberOfVideos($event)"
@@ -384,7 +387,11 @@
           (openImageSelectorForReference)="openImageSelectorForReference()"
           (onReferenceImageDrop)="onReferenceImageDrop($event)"
           (clearReferenceImage)="onClearReferenceImage($event)"
-          (toggleReferenceImagesType)="referenceImagesType = $event ? 'STYLE' : 'ASSET'"
+          (openVideoSelectorForReference)="openVideoSelectorForReference()"
+          (clearReferenceVideo)="clearReferenceVideo($event)"
+          (openAudioSelectorForReference)="openAudioSelectorForReference()"
+          (clearReferenceAudio)="clearReferenceAudio($event)"
+          (toggleReferenceImagesType)="referenceImagesType = $event ? 'STYLE' : 'ASSET'; saveState()"
         ></app-flow-prompt-box>
       </div>
 

@@ -100,7 +100,7 @@ def fixture_sample_create_imagen_dto():
     return CreateImagenDto(
         workspace_id=1,
         prompt="A sunset on a beach",
-        generation_model=GenerationModelEnum.IMAGEN_3_001,
+        generation_model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE_PREVIEW,
         aspect_ratio="1:1",
     )
 
@@ -237,7 +237,7 @@ class TestImagenServiceMethods:
         request_dto = CreateImagenDto(
             workspace_id=1,
             prompt="A beautiful sunset",
-            generation_model=GenerationModelEnum.IMAGEN_3_001,
+            generation_model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE_PREVIEW,
             aspect_ratio="1:1",
         )
 
@@ -248,7 +248,7 @@ class TestImagenServiceMethods:
             user_id=1,
             user_email="test@example.com",
             mime_type=MimeTypeEnum.IMAGE_PNG,
-            model=GenerationModelEnum.IMAGEN_3_001,
+            model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE_PREVIEW,
             aspect_ratio="1:1",
             gcs_uris=[],
             original_gcs_uris=[],
@@ -404,7 +404,7 @@ class TestImagenServiceMethods:
             user_id=1,
             user_email="test@example.com",
             mime_type=MimeTypeEnum.IMAGE_PNG,
-            model=GenerationModelEnum.IMAGEN_3_001,
+            model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE_PREVIEW,
             aspect_ratio="1:1",
             gcs_uris=["gs://bucket/image.png"],
             original_gcs_uris=[],
@@ -450,12 +450,6 @@ def test_process_image_in_background_sync(
     mock_client = MagicMock()
     mock_genai_init.return_value = mock_client
 
-    mock_response = MagicMock()
-    mock_generated_image = MagicMock()
-    mock_generated_image.image.gcs_uri = "gs://bucket/output_0.png"
-    mock_response.generated_images = [mock_generated_image]
-
-    mock_client.models.generate_images.return_value = mock_response
     mock_thumb_mu.return_value = "gs://bucket/thumb_0.png"
     mock_thumb_is.return_value = "gs://bucket/thumb_0.png"
 
@@ -476,6 +470,9 @@ def test_process_image_in_background_sync(
         patch(
             "src.images.imagen_service.IamSignerCredentials",
         ) as mock_iam_class,
+        patch(
+            "src.images.imagen_service.gemini_generate_image",
+        ) as mock_gemini_gen,
     ):
         mock_media_repo = AsyncMock()
         mock_media_repo_class.return_value = mock_media_repo
@@ -489,6 +486,11 @@ def test_process_image_in_background_sync(
         mock_gcs = AsyncMock()
         mock_gcs.bucket_name = "test-bucket"
         mock_gcs_class.return_value = mock_gcs
+
+        mock_result = MagicMock()
+        mock_result.image.gcs_uri = "gs://bucket/output_0.png"
+        mock_result.image.mime_type = MimeTypeEnum.IMAGE_PNG
+        mock_gemini_gen.return_value = (mock_result, None)
 
         # Call the worker function
         _process_image_in_background(
@@ -598,14 +600,6 @@ def test_process_image_in_background_sync_with_upscale(
     mock_client = MagicMock()
     mock_genai_init.return_value = mock_client
 
-    # Mock generated images response
-    mock_response = MagicMock()
-    mock_img = MagicMock()
-    mock_img.image.gcs_uri = "gs://b/generated.png"
-    mock_img.image.mime_type = MimeTypeEnum.IMAGE_PNG
-    mock_response.generated_images = [mock_img]
-    mock_client.models.generate_images.return_value = mock_response
-
     with (
         patch(
             "src.images.imagen_service.MediaRepository",
@@ -619,6 +613,9 @@ def test_process_image_in_background_sync_with_upscale(
         patch(
             "src.images.imagen_service.ImagenService.upscale_image",
         ) as mock_upscale_method,
+        patch(
+            "src.images.imagen_service.gemini_generate_image",
+        ) as mock_gemini_gen,
     ):
         mock_media_repo = AsyncMock()
         mock_media_repo_class.return_value = mock_media_repo
@@ -632,6 +629,11 @@ def test_process_image_in_background_sync_with_upscale(
         mock_gcs = AsyncMock()
         mock_gcs.bucket_name = "test-bucket"
         mock_gcs_class.return_value = mock_gcs
+
+        mock_result = MagicMock()
+        mock_result.image.gcs_uri = "gs://b/generated.png"
+        mock_result.image.mime_type = MimeTypeEnum.IMAGE_PNG
+        mock_gemini_gen.return_value = (mock_result, None)
 
         # Mock upscale result
         mock_upscale_result = MagicMock()
@@ -706,7 +708,7 @@ def test_process_image_in_background_sync_gemini_image_to_image(
             source_item = MediaItemModel(
                 workspace_id=99,
                 user_email="admin@test.com",
-                model=GenerationModelEnum.IMAGEN_3_001,
+                model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE_PREVIEW,
                 prompt="Source",
                 mime_type=MimeTypeEnum.IMAGE_PNG,
                 aspect_ratio=AspectRatioEnum.RATIO_1_1,
@@ -828,8 +830,10 @@ def test_process_vto_in_background_sync(
 
         mock_sa_repo.get_by_id.side_effect = get_by_id_side_effect
 
-        mock_gcs = AsyncMock()
+        mock_gcs = MagicMock()
         mock_gcs.bucket_name = "test-bucket"
+        mock_gcs.download_bytes_from_gcs.return_value = b"fake_bytes"
+        mock_gcs.store_to_gcs.return_value = "gs://bucket/output_vto.png"
         mock_gcs_class.return_value = mock_gcs
 
         # Call
@@ -1068,8 +1072,10 @@ def test_process_vto_in_background_sync_media_item(
         top_asset.gcs_uri = "gs://bucket/garment.png"
         mock_sa_repo.get_by_id.return_value = top_asset
 
-        mock_gcs = AsyncMock()
+        mock_gcs = MagicMock()
         mock_gcs.bucket_name = "test-bucket"
+        mock_gcs.download_bytes_from_gcs.return_value = b"fake_bytes"
+        mock_gcs.store_to_gcs.return_value = "gs://bucket/output_vto.png"
         mock_gcs_class.return_value = mock_gcs
 
         # Call
@@ -1106,18 +1112,11 @@ def test_process_image_in_background_sync_edit_image(
     mock_client = MagicMock()
     mock_genai_init.return_value = mock_client
 
-    # response structure for edit_image
-    mock_response = MagicMock()
-    mock_generated_image = MagicMock()
-    mock_generated_image.image.gcs_uri = "gs://bucket/output_edit.png"
-    mock_response.generated_images = [mock_generated_image]
-    mock_client.models.edit_image.return_value = mock_response
-
     # DTO with reference image
     request_dto = CreateImagenDto(
         workspace_id=1,
         prompt="Add a hat",
-        generation_model=GenerationModelEnum.IMAGEN_3_FAST,
+        generation_model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE_PREVIEW,
         source_asset_ids=[101],
     )
 
@@ -1134,6 +1133,9 @@ def test_process_image_in_background_sync_edit_image(
         patch(
             "src.images.imagen_service.GcsService",
         ) as mock_gcs_class,
+        patch(
+            "src.images.imagen_service.gemini_generate_image",
+        ) as mock_gemini_gen,
     ):
         mock_media_repo = AsyncMock()
         mock_media_repo_class.return_value = mock_media_repo
@@ -1157,6 +1159,11 @@ def test_process_image_in_background_sync_edit_image(
         mock_gcs = AsyncMock()
         mock_gcs.bucket_name = "test-bucket"
         mock_gcs_class.return_value = mock_gcs
+
+        mock_result = MagicMock()
+        mock_result.image.gcs_uri = "gs://bucket/output_edit.png"
+        mock_result.image.mime_type = MimeTypeEnum.IMAGE_PNG
+        mock_gemini_gen.return_value = (mock_result, None)
 
         # Call the worker
         _process_image_in_background(
@@ -1182,7 +1189,7 @@ def test_create_imagen_dto_validation_failures():
         CreateImagenDto(
             prompt="   ",
             workspace_id=1,
-            generation_model=GenerationModelEnum.IMAGEN_4_ULTRA,
+            generation_model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE_PREVIEW,
         )
     assert "Prompt cannot be empty" in str(exc_info.value)
 
@@ -1191,8 +1198,8 @@ def test_create_imagen_dto_validation_failures():
         CreateImagenDto(
             prompt="Generate image",
             workspace_id=1,
-            generation_model=GenerationModelEnum.IMAGEN_3_FAST,
-            source_asset_ids=[1, 2],
+            generation_model=GenerationModelEnum.GEMINI_2_5_FLASH_IMAGE,
+            source_asset_ids=[1, 2, 3],
         )
     assert "maximum" in str(exc_info.value)
 
@@ -1203,10 +1210,10 @@ def test_create_imagen_dto_validation_failures():
         CreateImagenDto(
             prompt="Generate image",
             workspace_id=1,
-            generation_model=GenerationModelEnum.IMAGEN_4_ULTRA,
+            generation_model=GenerationModelEnum.GEMINI_2_5_FLASH_IMAGE,
             aspect_ratio=AspectRatioEnum.RATIO_1_4,
         )
-    assert "not supported" in str(exc_info.value)
+    assert "is not supported" in str(exc_info.value)
 
     # 4. Invalid generation model for imagen
     with pytest.raises(ValidationError) as exc_info:
@@ -1222,7 +1229,7 @@ def test_create_imagen_dto_validation_failures():
         CreateImagenDto(
             prompt="Edit image",
             workspace_id=1,
-            generation_model=GenerationModelEnum.IMAGEN_4_ULTRA,
+            generation_model=GenerationModelEnum.IMAGEN_4_UPSCALE_PREVIEW,
             source_asset_ids=[1],
         )
     assert "does not support image editing" in str(exc_info.value)

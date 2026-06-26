@@ -81,6 +81,8 @@ class AssetRoleEnum(str, Enum):
     IMAGE_REFERENCE_ASSET = (
         "image_reference_asset"  # An input for R2V with asset type
     )
+    VIDEO_REFERENCE = "video_reference"  # Video used as omni input reference
+    AUDIO_REFERENCE = "audio_reference"  # Audio used as omni input reference
 
 
 class SourceAssetLink(BaseModel):
@@ -147,7 +149,9 @@ class MediaItem(Base):
         nullable=True,
     )
     mime_type: Mapped[MimeTypeEnum] = mapped_column(String, nullable=False)
-    model: Mapped[GenerationModelEnum] = mapped_column(String, nullable=False)
+    model: Mapped[GenerationModelEnum | str] = mapped_column(
+        String, nullable=False
+    )
 
     # Common fields
     prompt: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -249,7 +253,7 @@ class MediaItemModel(BaseDocument):
     user_email: str
     user_id: int | None = None  # TODO: Change to 'required' in the future
     mime_type: MimeTypeEnum
-    model: GenerationModelEnum
+    model: GenerationModelEnum | str
 
     # Common fields across media types
     prompt: str | None = None

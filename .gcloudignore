@@ -1,4 +1,25 @@
-__pycache__
+# This file specifies files and directories to ignore when uploading source code to Google Cloud Build.
+.gcloudignore
+.git
+.gitignore
+
+# Node dependencies
+**/node_modules/
+
+# Python virtual environments
+**/.venv/
+**/__pycache__/
+**/*.pyc
+
+# Angular build outputs
+**/dist/
+**/.angular/
+
+# Local environment files
+**/.env
+**/.env.local
+**/.env.development
+
 notebooks
 experiments
 

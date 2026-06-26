@@ -223,6 +223,7 @@ class TestBackgroundWorkers:
             model=GenerationModelEnum.GEMINI_2_5_FLASH_TTS,
             sample_count=1,
             language_code=LanguageEnum.EN_US,
+            voice_name=VoiceEnum.AOEDE,
         )
 
         mock_db_factory = MagicMock()
@@ -265,4 +266,12 @@ class TestBackgroundWorkers:
                 "gcs_uris": ["gs://foo/gemini.wav"],
                 "generation_time": pytest.approx(0, abs=10.0),
             },
+        )
+        mock_client.models.generate_content.assert_called_once()
+        _, call_kwargs = mock_client.models.generate_content.call_args
+        called_config = call_kwargs.get("config")
+        assert called_config is not None
+        assert (
+            called_config.speech_config.voice_config.prebuilt_voice_config.voice_name
+            == "Aoede"
         )

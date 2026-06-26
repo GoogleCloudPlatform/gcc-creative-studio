@@ -145,6 +145,17 @@ export class WorkspaceSwitcherComponent implements OnInit {
       return;
     }
 
+    if (preferredWorkspaceId && !isNaN(preferredWorkspaceId)) {
+      handleErrorSnackbar(
+        this.snackBar,
+        {
+          message:
+            'You do not have permission to access the requested workspace, or it does not exist.',
+        },
+        'Access Denied',
+      );
+    }
+
     const googleWorkspace = this.workspaces.find(
       w => w.scope === WorkspaceScope.PUBLIC,
     );

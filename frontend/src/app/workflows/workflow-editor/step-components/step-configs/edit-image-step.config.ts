@@ -20,8 +20,8 @@ import {StepConfig} from '../generic-step/step.model';
 const model_options = MODEL_CONFIGS.filter(
   model =>
     model.value === 'gemini-2.5-flash-image' ||
-    model.value === 'gemini-3-pro-image-preview' ||
-    model.value === 'gemini-3.1-flash-image-preview',
+    model.value === 'gemini-3-pro-image' ||
+    model.value === 'gemini-3.1-flash-image',
 ).map(model => ({
   value: model.value,
   label: model.viewValue,

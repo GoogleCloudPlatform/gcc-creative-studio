@@ -81,11 +81,17 @@ export class FlowPromptBoxComponent {
     event: Event;
   }>();
   @Output() toggleReferenceImagesType = new EventEmitter<boolean>();
+  @Output() openVideoSelectorForReference = new EventEmitter<void>();
+  @Output() clearReferenceVideo = new EventEmitter<Event>();
+  @Output() openAudioSelectorForReference = new EventEmitter<void>();
+  @Output() clearReferenceAudio = new EventEmitter<Event>();
 
   @Input() image1Preview: string | null = null;
   @Input() image2Preview: string | null = null;
   @Input() referenceImages: any[] = [];
   @Input() referenceImagesType: 'ASSET' | 'STYLE' = 'ASSET';
+  @Input() referenceVideo: any | null = null;
+  @Input() referenceAudio: any | null = null;
 
   @ViewChild('modeTrigger') modeTrigger!: ElementRef;
   @ViewChild('modeMenu') modeMenu!: ElementRef;

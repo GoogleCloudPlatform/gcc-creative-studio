@@ -19,8 +19,8 @@
   // This positions the workspace switcher at the top on mobile
   app-workspace-switcher {
     position: fixed;
-    bottom: 10vh;
-    left: 20vw;
+    bottom: 12vh;
+      left: 0;
     transform: translateX(-10%);
     z-index: 100;
     width: 80vw;
@@ -73,6 +73,8 @@
     app-workspace-switcher {
       position: static;
       transform: none;
+      left: 20vw;
+        bottom: 10vh;
     }
   }
   // --- End: Mobile Fix ---

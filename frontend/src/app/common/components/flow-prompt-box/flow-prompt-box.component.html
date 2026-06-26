@@ -162,6 +162,48 @@
                 </div>
                 </div>
                 </ng-container>
+
+            <!-- Video Reference Slot (only for Ingredients to Video mode AND only for Gemini Omni) -->
+            <div *ngIf="mode === 'Ingredients to Video' && getSelectedModelObject()?.value === 'gemini-omni-generate-preview'"
+              class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
+              (click)="!referenceVideo && openVideoSelectorForReference.emit()"
+            >
+              <ng-container *ngIf="!referenceVideo">
+                <mat-icon class="text-neutral-500">videocam</mat-icon>
+                <span class="absolute bottom-1 text-[8px] text-neutral-500">Video Ref</span>
+              </ng-container>
+              <ng-container *ngIf="referenceVideo">
+                <img *ngIf="referenceVideo.type === 'media_item' || referenceVideo.previewUrl?.includes('.png') || referenceVideo.previewUrl?.includes('.webp') || referenceVideo.previewUrl?.includes('.jpg') || referenceVideo.previewUrl?.includes('.jpeg') || referenceVideo.previewUrl?.includes('presignedThumbnailUrls')" [src]="referenceVideo.previewUrl" class="h-full w-full rounded-lg object-cover" />
+                <video *ngIf="referenceVideo.type !== 'media_item' && !referenceVideo.previewUrl?.includes('.png') && !referenceVideo.previewUrl?.includes('.webp') && !referenceVideo.previewUrl?.includes('.jpg') && !referenceVideo.previewUrl?.includes('.jpeg') && !referenceVideo.previewUrl?.includes('presignedThumbnailUrls')" [src]="referenceVideo.previewUrl" class="h-full w-full rounded-lg object-cover" muted></video>
+                <button
+                  (click)="$event.stopPropagation(); clearReferenceVideo.emit($event)"
+                  class="absolute -right-2 -top-2 rounded-full bg-neutral-900 p-0.5 text-neutral-400 hover:text-white"
+                >
+                  <mat-icon class="!h-4 !w-4 text-sm">close</mat-icon>
+                </button>
+              </ng-container>
+            </div>
+
+            <!-- Audio Reference Slot (only for Ingredients to Video mode AND only for Gemini Omni) -->
+            <div *ngIf="mode === 'Ingredients to Video' && getSelectedModelObject()?.value === 'gemini-omni-generate-preview'"
+              class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
+              (click)="!referenceAudio && openAudioSelectorForReference.emit()"
+            >
+              <ng-container *ngIf="!referenceAudio">
+                <mat-icon class="text-neutral-500">audiotrack</mat-icon>
+                <span class="absolute bottom-1 text-[8px] text-neutral-500">Audio Ref</span>
+              </ng-container>
+              <ng-container *ngIf="referenceAudio">
+                <mat-icon class="text-blue-400 !text-3xl !h-8 !w-8 flex items-center justify-center">music_note</mat-icon>
+                <span class="absolute bottom-1 text-[8px] text-neutral-300 max-w-[64px] truncate">{{ referenceAudio.name || 'Audio' }}</span>
+                <button
+                  (click)="$event.stopPropagation(); clearReferenceAudio.emit($event)"
+                  class="absolute -right-2 -top-2 rounded-full bg-neutral-900 p-0.5 text-neutral-400 hover:text-white"
+                >
+                  <mat-icon class="!h-4 !w-4 text-sm">close</mat-icon>
+                </button>
+              </ng-container>
+            </div>
         </ng-container>
         </div>
 
@@ -353,24 +395,26 @@
               >
                 1
               </button>
-              <button
-                (click)="selectOutputs(2)"
-                class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600"
-              >
-                2
-              </button>
-              <button
-                (click)="selectOutputs(3)"
-                class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600"
-              >
-                3
-              </button>
-              <button
-                (click)="selectOutputs(4)"
-                class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600"
-              >
-                4
-              </button>
+              @if (getSelectedModelObject()?.value !== 'gemini-omni-generate-preview') {
+                <button
+                  (click)="selectOutputs(2)"
+                  class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600"
+                >
+                  2
+                </button>
+                <button
+                  (click)="selectOutputs(3)"
+                  class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600"
+                >
+                  3
+                </button>
+                <button
+                  (click)="selectOutputs(4)"
+                  class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600"
+                >
+                  4
+                </button>
+              }
             </div>
           }
         </div>

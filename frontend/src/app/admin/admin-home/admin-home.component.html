@@ -18,6 +18,52 @@
   <h1 class="text-3xl font-semibold mb-6">Admin Dashboard</h1>
   
   <div *ngIf="isSuperAdmin$ | async; else orgAdminView">
+    <!-- Feature Toggles -->
+    <div class="dark:bg-[#1E1F22] p-6 rounded-lg shadow border border-zinc-700 mb-6">
+      <h3 class="text-2xl font-semibold text-zinc-200 mb-4">Feature Toggles</h3>
+      <div class="flex flex-col dark:bg-[#2A2B2F] p-4 rounded-lg border border-zinc-800 gap-4">
+        <div class="flex items-center justify-between">
+          <div class="flex flex-col">
+            <span class="text-white font-semibold text-base">Enable Gemini Omni Model</span>
+            <span class="text-zinc-400 text-sm mt-0.5">Note: This feature is exclusive to the Early Access Program (EAP)
+              participants. To check your status or request access, please contact your Google Account Executive.</span>
+          </div>
+          <mat-slide-toggle [checked]="showGeminiOmni" (change)="toggleGeminiOmni($event)">
+          </mat-slide-toggle>
+        </div>
+
+        <div *ngIf="showGeminiOmni" class="flex flex-col gap-2 border-t border-zinc-700 pt-4">
+          <span class="text-white font-semibold text-sm">Gemini Omni Model Name</span>
+          <span class="text-zinc-400 text-xs mt-0.5">Specify the actual vertex model ID to target (defaults to an empty string).</span>
+          <div class="flex gap-3 items-center mt-2">
+            <div class="relative flex-grow">
+              <input
+                [type]="showModelName ? 'text' : 'password'"
+                [(ngModel)]="geminiOmniModelName"
+                placeholder="e.g. custom-model-id"
+                class="bg-zinc-800 text-white border border-zinc-700 rounded pl-3 pr-10 py-2 text-sm focus:outline-none focus:border-blue-500 w-full"
+              />
+              <button
+                type="button"
+                (click)="showModelName = !showModelName"
+                class="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white transition-colors focus:outline-none flex items-center justify-center"
+              >
+                <mat-icon class="!text-lg !w-5 !h-5 !leading-5">
+                  {{ showModelName ? 'visibility_off' : 'visibility' }}
+                </mat-icon>
+              </button>
+            </div>
+            <button
+              (click)="saveGeminiOmniModelName()"
+              class="bg-blue-600 hover:bg-blue-700 text-white rounded px-4 py-2 text-sm font-semibold transition-colors"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Platform Overview Stats -->
     <div class="dark:bg-[#1E1F22] p-6 rounded-lg shadow border border-zinc-700 mb-6">
       <div class="flex justify-between items-center mb-4 flex-wrap gap-4">

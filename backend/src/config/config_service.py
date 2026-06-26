@@ -73,7 +73,7 @@ class ConfigService(BaseSettings):
     DB_PORT: str = "5432"
 
     # --- Veo ---
-    VEO_MODEL_ID: str = "veo-2.0-generate-001"
+    VEO_MODEL_ID: str = "veo-3.1-generate-001"
 
     # --- VTO ---
     VTO_MODEL_ID: str = "virtual-try-on-001"
@@ -97,7 +97,9 @@ class ConfigService(BaseSettings):
     ADMIN_USER_EMAIL: str = "system"
 
     # --- Agent Auth ---
-    INTERNAL_AGENT_SECRET: str = "secret-agent-key"
+    AGENT_ENGINE_RESOURCE_NAME: str = ""
+    AGENT_LOCATION: str = "us-central1"
+    AGENT_ENGINE_USER_AUTH_TOKEN_KEY: str = "user_auth_token"
 
     # --- Workflows ---
     WORKFLOWS_LOCATION: str = "us-central1"

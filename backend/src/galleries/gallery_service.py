@@ -123,6 +123,7 @@ class GalleryService:
             presigned_url=presigned_url,
             presigned_thumbnail_url=presigned_thumbnail_url,
             gcs_uri=asset_doc.gcs_uri,
+            mime_type=asset_doc.mime_type,
         )
 
     async def _enrich_source_media_item_link(
@@ -174,6 +175,7 @@ class GalleryService:
             presigned_url=presigned_url,
             presigned_thumbnail_url=presigned_thumbnail_url,
             gcs_uri=parent_gcs_uri,
+            mime_type=parent_item.mime_type,
         )
 
     async def _create_gallery_response(

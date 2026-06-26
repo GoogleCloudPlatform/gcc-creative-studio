@@ -60,8 +60,11 @@ export class AgentChatService {
   // Global parsed storyboard
   currentStoryboard = signal<any>(null);
 
+  // Selected session ID from route query params
+  selectedSessionId = signal<string | null>(null);
+
   // Agent Selection State
-  activeAgent = signal<string>('ads_x_template');
+  activeAgent = signal<string>('ads_x');
   isGeneratingStoryboard = signal<boolean>(false);
 
   // Triggers video generation from the Storyboard component
@@ -70,29 +73,43 @@ export class AgentChatService {
   // Broadcasts a fully generated video asset from the chat processor
   videoGenerated$ = new Subject<any>();
 
-  getSessions(): Observable<any> {
-    return this.http.get(
-      `${this.apiUrl}/sessions?appName=${this.activeAgent()}`,
-    );
+  getSessions(workspaceId?: number): Observable<any> {
+    let url = `${this.apiUrl}/sessions?appName=${this.activeAgent()}`;
+    if (workspaceId) {
+      url += `&workspace_id=${workspaceId}`;
+    }
+    return this.http.get(url);
   }
 
-  createSession(): Observable<any> {
-    return this.http.post(
-      `${this.apiUrl}/sessions?appName=${this.activeAgent()}`,
-      {},
-    );
+  createSession(workspaceId?: number): Observable<any> {
+    let url = `${this.apiUrl}/sessions?appName=${this.activeAgent()}`;
+    if (workspaceId) {
+      url += `&workspace_id=${workspaceId}`;
+    }
+    return this.http.post(url, {});
   }
 
-  getMessages(sessionId: string): Observable<any> {
-    return this.http.get(
-      `${this.apiUrl}/sessions/${sessionId}?appName=${this.activeAgent()}`,
-    );
+  getSessionDetail(
+    workspaceId: number,
+    sessionId?: string,
+    storyboardId?: number,
+  ): Observable<any> {
+    let params = `workspace_id=${workspaceId}`;
+    if (sessionId) {
+      params += `&session_id=${sessionId}`;
+    }
+    if (storyboardId) {
+      params += `&storyboard_id=${storyboardId}`;
+    }
+    return this.http.get(`${this.apiUrl}/sessions/detail?${params}`);
   }
 
-  deleteSession(sessionId: string): Observable<any> {
-    return this.http.delete(
-      `${this.apiUrl}/sessions/${sessionId}?appName=${this.activeAgent()}`,
-    );
+  deleteSession(sessionId: string, workspaceId?: number): Observable<any> {
+    let url = `${this.apiUrl}/sessions/${sessionId}?appName=${this.activeAgent()}`;
+    if (workspaceId) {
+      url += `&workspace_id=${workspaceId}`;
+    }
+    return this.http.delete(url);
   }
 
   generateTitle(text: string): Observable<any> {

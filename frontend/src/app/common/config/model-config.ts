@@ -51,8 +51,8 @@ export interface GenerationModelConfig {
 export const MODEL_CONFIGS: GenerationModelConfig[] = [
   // --- Image Models ---
   {
-    value: 'gemini-3.1-flash-image-preview',
-    viewValue: 'Nano Banana 2 (Preview)',
+    value: 'gemini-3.1-flash-image',
+    viewValue: 'Nano Banana 2',
     type: 'IMAGE',
     imageSrc: 'assets/images/banana-peel.png',
     isImage: true,
@@ -79,8 +79,8 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
     },
   },
   {
-    value: 'gemini-3-pro-image-preview',
-    viewValue: 'Nano Banana Pro (Preview)',
+    value: 'gemini-3-pro-image',
+    viewValue: 'Nano Banana Pro',
     type: 'IMAGE',
     imageSrc: 'assets/images/banana-peel.png',
     isImage: true,
@@ -125,64 +125,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       ],
     },
   },
-  {
-    value: 'imagen-4.0-generate-001',
-    viewValue: 'Imagen 4 (deprecated)',
-    type: 'IMAGE',
-    icon: 'gemini-spark-icon',
-    isSvg: true,
-    capabilities: {
-      supportedModes: ['Text to Image'], // No ingredients support yet?
-      maxReferenceImages: 0,
-      supportedAspectRatios: ['1:1', '16:9', '9:16', '3:4', '4:3'],
-    },
-  },
-  {
-    value: 'imagen-4.0-ultra-generate-001',
-    viewValue: 'Imagen 4 Ultra (deprecated)',
-    type: 'IMAGE',
-    icon: 'gemini-spark-icon',
-    isSvg: true,
-    capabilities: {
-      supportedModes: ['Text to Image'],
-      maxReferenceImages: 0,
-      supportedAspectRatios: ['1:1', '16:9', '9:16', '3:4', '4:3'],
-    },
-  },
-  {
-    value: 'imagen-4.0-fast-generate-001',
-    viewValue: 'Imagen 4 Fast (deprecated)',
-    type: 'IMAGE',
-    icon: 'gemini-spark-icon',
-    isSvg: true,
-    capabilities: {
-      supportedModes: ['Text to Image'],
-      maxReferenceImages: 0,
-      supportedAspectRatios: ['1:1', '16:9', '9:16', '3:4', '4:3'],
-    },
-  },
-  {
-    value: 'imagen-3.0-generate-002',
-    viewValue: 'Imagen 3 (deprecated)',
-    type: 'IMAGE',
-    icon: 'auto_awesome',
-    capabilities: {
-      supportedModes: ['Text to Image', 'Ingredients to Image'],
-      maxReferenceImages: 2,
-      supportedAspectRatios: ['1:1', '16:9', '9:16', '3:4', '4:3'],
-    },
-  },
-  {
-    value: 'imagen-3.0-fast-generate-001',
-    viewValue: 'Imagen 3 Fast (deprecated)',
-    type: 'IMAGE',
-    icon: 'auto_awesome',
-    capabilities: {
-      supportedModes: ['Text to Image', 'Ingredients to Image'],
-      maxReferenceImages: 2,
-      supportedAspectRatios: ['1:1', '16:9', '9:16', '3:4', '4:3'],
-    },
-  },
+
   // --- Text Models ---
   {
     value: 'gemini-2.5-pro',
@@ -234,6 +177,22 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
   },
   // --- Video Models ---
   {
+    value: 'gemini-omni-generate-preview',
+    viewValue: 'Gemini Omni \n (Early Access Preview)',
+    type: 'VIDEO',
+    icon: 'layers',
+    capabilities: {
+      supportedModes: [
+        'Text to Video',
+        'Ingredients to Video',
+        'Frames to Video',
+      ],
+      maxReferenceImages: 3,
+      supportedAspectRatios: ['16:9', '9:16'],
+      supportsAudio: true,
+    },
+  },
+  {
     value: 'veo-3.1-generate-001',
     viewValue: 'Veo 3.1 \n (Beta Audio)',
     type: 'VIDEO',
@@ -281,66 +240,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportsAudio: true,
     },
   },
-  {
-    value: 'veo-3.0-generate-001',
-    viewValue: 'Veo 3 Quality (deprecated) \n (Beta Audio)',
-    type: 'VIDEO',
-    icon: 'volume_up',
-    capabilities: {
-      supportedModes: ['Text to Video'],
-      maxReferenceImages: 3,
-      supportedAspectRatios: ['16:9', '9:16'],
-      supportsAudio: true,
-    },
-  },
-  {
-    value: 'veo-3.0-fast-generate-001',
-    viewValue: 'Veo 3 Fast (deprecated) \n (Beta Audio)',
-    type: 'VIDEO',
-    icon: 'volume_up',
-    capabilities: {
-      supportedModes: ['Text to Video'],
-      maxReferenceImages: 3,
-      supportedAspectRatios: ['16:9', '9:16'],
-      supportsAudio: true,
-    },
-  },
-  {
-    value: 'veo-2.0-generate-001',
-    viewValue: 'Veo 2 Quality (deprecated) \n (No Audio)',
-    type: 'VIDEO',
-    icon: 'videocam_off',
-    capabilities: {
-      supportedModes: ['Text to Video'],
-      maxReferenceImages: 3,
-      supportedAspectRatios: ['16:9', '9:16'],
-      supportsAudio: false,
-    },
-  },
-  {
-    value: 'veo-2.0-fast-generate-001',
-    viewValue: 'Veo 2 Fast (deprecated) \n (No Audio)',
-    type: 'VIDEO',
-    icon: 'videocam_off',
-    capabilities: {
-      supportedModes: ['Text to Video'],
-      maxReferenceImages: 3,
-      supportedAspectRatios: ['16:9', '9:16'],
-      supportsAudio: false,
-    },
-  },
-  {
-    value: 'veo-2.0-generate-exp',
-    viewValue: 'Veo 2 Exp (deprecated) \n (Reference Image)',
-    type: 'VIDEO',
-    icon: 'image',
-    capabilities: {
-      supportedModes: ['Text to Video', 'Ingredients to Video'],
-      maxReferenceImages: 3,
-      supportedAspectRatios: ['16:9', '9:16'],
-      supportsAudio: false,
-    },
-  },
+
   // --- Audio Models ---
   {
     value: 'lyria-002',

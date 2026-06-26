@@ -88,6 +88,7 @@ async def test_enrich_source_asset_link(service):
     mock_asset = MagicMock()
     mock_asset.gcs_uri = "gs://bucket/asset.jpg"
     mock_asset.thumbnail_gcs_uri = "gs://bucket/thumb.jpg"
+    mock_asset.mime_type = "image/jpeg"
     service.mock_source_asset_repo.get_by_id.return_value = mock_asset
 
     # Mock iam_signer_credentials
@@ -566,6 +567,7 @@ async def test_get_media_by_id_with_both_source_references(service):
     source_asset = MagicMock()
     source_asset.gcs_uri = "gs://bucket/asset.jpg"
     source_asset.thumbnail_gcs_uri = "gs://bucket/thumb.jpg"
+    source_asset.mime_type = "image/jpeg"
 
     def get_by_id_side_effect(id, **kwargs):
         if id == 123:

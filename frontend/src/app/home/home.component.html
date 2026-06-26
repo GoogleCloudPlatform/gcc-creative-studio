@@ -319,7 +319,7 @@
         </mat-menu>
       </div>
 
-      <div *ngIf="searchRequest.generationModel === 'gemini-3-pro-image-preview' || searchRequest.generationModel === 'gemini-3.1-flash-image-preview'" matTooltip="Enable Google Search"
+      <div *ngIf="searchRequest.generationModel === 'gemini-3-pro-image' || searchRequest.generationModel === 'gemini-3.1-flash-image'" matTooltip="Enable Google Search"
         class="cursor-pointer w-32 inline-flex flex-col justify-start items-center">
         <mat-slide-toggle [(ngModel)]="searchRequest.googleSearch" (ngModelChange)="saveState()"
           class="!w-16 !h-16 !shadow-none text-center !flex justify-center items-center text-stone-300">

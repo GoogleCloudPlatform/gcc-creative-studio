@@ -296,8 +296,7 @@ def _process_audio_in_background(
                                     if not audio_b64:
                                         return None
 
-                                    timestamp = int(time.time())
-                                    file_name = f"lyria_music_{timestamp}_{uid_short}_{index}.wav"
+                                    file_name = f"lyria_music_{media_item_id}_{uid_short}_{index}.wav"
                                     return gcs_service.store_to_gcs(
                                         folder="lyria_audio",
                                         file_name=file_name,
@@ -405,6 +404,7 @@ class AudioService:
             language_code=request_dto.language_code,
             seed=request_dto.seed,
             gcs_uris=[],
+            comment=request_dto.file_name,
         )
         saved_item = await self.media_repo.create(media_post_to_save)
 

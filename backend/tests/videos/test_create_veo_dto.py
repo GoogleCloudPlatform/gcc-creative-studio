@@ -74,7 +74,7 @@ def test_validate_source_media_items_model_conflict():
             ],
             source_media_items=[],  # Force validator to run
         )
-    assert "Reference images are only supported by" in str(exc_info.value)
+    assert "Reference images/media are only supported by" in str(exc_info.value)
 
 
 def test_validate_source_media_items_conflicting_inputs():
@@ -92,7 +92,7 @@ def test_validate_source_media_items_conflicting_inputs():
             ],
             source_media_items=[],  # Force validator to run
         )
-    assert "Reference images cannot be used at the same time" in str(
+    assert "Reference media cannot be used at the same time" in str(
         exc_info.value
     )
 
@@ -106,3 +106,20 @@ def test_validate_video_generation_model_error():
         "Invalid generation model for video" in str(exc_info.value)
         or "enum" in str(exc_info.value).lower()
     )
+
+
+def test_create_veo_dto_with_omni_references():
+    dto = CreateVeoDto(
+        prompt="Test Omni",
+        workspace_id=1,
+        generation_model=GenerationModelEnum.GEMINI_OMNI,
+        reference_video={"id": 10, "type": "media_item"},
+        reference_audio={"id": 20, "type": "media_item"},
+        parent_media_item_id=15,
+    )
+    assert dto.generation_model == GenerationModelEnum.GEMINI_OMNI
+    assert dto.reference_video.id == 10
+    assert dto.reference_video.type == "media_item"
+    assert dto.reference_audio.id == 20
+    assert dto.reference_audio.type == "media_item"
+    assert dto.parent_media_item_id == 15

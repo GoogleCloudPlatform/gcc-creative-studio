@@ -44,7 +44,10 @@ import {DropdownOption} from '../../common/components/studio-dropdown/studio-dro
 import {MODEL_CONFIGS} from '../../common/config/model-config';
 import {JobStatus, MediaItem} from '../../common/models/media-item.model';
 import {GalleryItem} from '../../common/models/gallery-item.model';
-import {GallerySearchDto} from '../../common/models/search.model';
+import {
+  GalleryFiltersState,
+  GallerySearchDto,
+} from '../../common/models/search.model';
 import {UserService} from '../../common/services/user.service';
 import {GalleryService} from '../gallery.service';
 import {WorkspaceStateService} from '../../services/workspace/workspace-state.service';
@@ -58,7 +61,6 @@ import {ConfirmationDialogComponent} from '../../common/components/confirmation-
   selector: 'app-media-gallery',
   templateUrl: './media-gallery.component.html',
   styleUrl: './media-gallery.component.scss',
-  providers: [GalleryService],
   animations: [
     trigger('fadeSlideInOut', [
       transition(':enter', [
@@ -256,7 +258,22 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     this.isAdmin = userDetails?.roles?.includes(UserRolesEnum.ADMIN) || false;
 
     this.mediaTypeFilter = this.filterByType || '';
-    this.searchTerm(); // Set initial filters
+
+    if (!this.isSelectionMode && !this.isSelectorMode) {
+      const savedState = this.galleryService.filtersState;
+      if (savedState) {
+        this.queryFilter = savedState.query;
+        this.startDateFilter = savedState.startDate;
+        this.endDateFilter = savedState.endDate;
+        this.mediaTypeFilter = savedState.mimeType;
+        this.generationModelFilter = savedState.model;
+        this.assetTypeFilter = savedState.itemType;
+        this.tagsFilter = savedState.tags;
+        this.onlyMyMedia = savedState.onlyMyMedia;
+      }
+    }
+
+    this.searchTerm(); // Initial search with stored filters
     this.loadingSubscription = this.galleryService.isLoading$.subscribe(
       loading => {
         this.isLoading = loading;
@@ -865,6 +882,19 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     }
     if (this.tagsFilter.length > 0) {
       filters['tags'] = this.tagsFilter;
+    }
+    if (!this.isSelectionMode && !this.isSelectorMode) {
+      const state: GalleryFiltersState = {
+        query: this.queryFilter,
+        startDate: this.startDateFilter,
+        endDate: this.endDateFilter,
+        mimeType: this.mediaTypeFilter,
+        model: this.generationModelFilter,
+        itemType: this.assetTypeFilter,
+        tags: this.tagsFilter,
+        onlyMyMedia: this.onlyMyMedia,
+      };
+      this.galleryService.setFiltersState(state);
     }
     this.galleryService.setFilters(filters);
   }

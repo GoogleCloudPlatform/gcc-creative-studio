@@ -83,7 +83,7 @@ class IamSignerCredentials(credentials.Signing):
     def generate_presigned_url(
         self,
         gcs_uri: str | None,
-        expiration_hours: int = 72,
+        expiration_hours: int = 1,
     ) -> str:
         """Generates a v4 presigned URL for a GCS object.
 

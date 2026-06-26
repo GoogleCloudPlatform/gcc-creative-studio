@@ -53,7 +53,7 @@ describe('HomeComponent', () => {
     prompt: '',
     negativePrompt: '',
     aspectRatio: '1:1',
-    model: 'gemini-3-pro-image-preview',
+    model: 'gemini-3-pro-image',
     lighting: null,
     watermark: false,
     googleSearch: false,
@@ -133,7 +133,7 @@ describe('HomeComponent', () => {
   it('should initialize with default search request values', () => {
     const defaultSearchRequest = {
       prompt: '',
-      generationModel: 'gemini-3-pro-image-preview',
+      generationModel: 'gemini-3-pro-image',
       aspectRatio: '1:1',
       numberOfMedia: 4,
       style: null,
@@ -160,7 +160,7 @@ describe('HomeComponent', () => {
     const testState = {
       ...initialState,
       prompt: 'a cat',
-      model: 'imagen-3.0-generate-002',
+      model: 'gemini-3.1-flash-image',
     };
     (
       Object.getOwnPropertyDescriptor(mockImageStateService, 'state$')
@@ -171,7 +171,7 @@ describe('HomeComponent', () => {
 
     expect(component.searchRequest.prompt).toBe('a cat');
     expect(component.searchRequest.generationModel).toBe(
-      'imagen-3.0-generate-002',
+      'gemini-3.1-flash-image',
     );
   });
 
@@ -179,7 +179,7 @@ describe('HomeComponent', () => {
     it('should apply remixState', () => {
       const remixState = {
         prompt: 'remix prompt',
-        generationModel: 'imagen-3.0-generate-002',
+        generationModel: 'gemini-3.1-flash-image',
         aspectRatio: '16:9',
         negativePrompt: 'blurry',
         sourceAssetIds: [123],
@@ -193,7 +193,7 @@ describe('HomeComponent', () => {
 
       expect(component.searchRequest.prompt).toBe('remix prompt');
       expect(component.searchRequest.generationModel).toBe(
-        'imagen-3.0-generate-002',
+        'gemini-3.1-flash-image',
       );
       expect(component.currentMode).toBe('Ingredients to Image');
       expect(component.referenceImages.length).toBe(1);
@@ -203,7 +203,7 @@ describe('HomeComponent', () => {
     it('should apply templateParams', () => {
       const templateParams = {
         prompt: 'template prompt',
-        model: 'imagen-3.0-generate-002',
+        model: 'gemini-3.1-flash-image',
         aspectRatio: '9:16' as const,
       };
       mockRouter.getCurrentNavigation.and.returnValue({
@@ -215,7 +215,7 @@ describe('HomeComponent', () => {
 
       expect(component.searchRequest.prompt).toBe('template prompt');
       expect(component.searchRequest.generationModel).toBe(
-        'imagen-3.0-generate-002',
+        'gemini-3.1-flash-image',
       );
       expect(component.searchRequest.aspectRatio).toBe('9:16');
     });
@@ -223,11 +223,11 @@ describe('HomeComponent', () => {
 
   it('should update searchRequest and save state when selecting a model', () => {
     const model = MODEL_CONFIGS.find(
-      m => m.value === 'imagen-3.0-generate-002',
+      m => m.value === 'gemini-3.1-flash-image',
     )!;
     component.selectModel(model);
     expect(component.searchRequest.generationModel).toBe(
-      'imagen-3.0-generate-002',
+      'gemini-3.1-flash-image',
     );
     expect(mockImageStateService.updateState).toHaveBeenCalled();
   });

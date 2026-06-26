@@ -97,7 +97,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
   // This object holds the current state of all user selections.
   searchRequest: ImagenRequest = {
     prompt: '',
-    generationModel: 'gemini-3.1-flash-image-preview',
+    generationModel: 'gemini-3.1-flash-image',
     aspectRatio: '1:1',
     numberOfMedia: 4,
     style: null,
@@ -753,27 +753,6 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
 
-    const hasSourceAssets = this.referenceImages.length > 0;
-    const isImagen4 = [
-      'imagen-4.0-generate-001',
-      'imagen-4.0-ultra-generate-001',
-      'imagen-4.0-fast-generate-001',
-    ].includes(this.searchRequest.generationModel);
-
-    if (hasSourceAssets && isImagen4) {
-      const imagen3Model = this.generationModels.find(
-        m => m.value === 'imagen-3.0-generate-002',
-      );
-      if (imagen3Model) {
-        this.selectModel(imagen3Model);
-        handleSuccessSnackbar(
-          this._snackBar,
-          "Imagen 4 doesn't support images as input, so we've switched to Imagen 3 for you!",
-        );
-        return;
-      }
-    }
-
     const validSourceMediaItems: SourceMediaItemLink[] = [];
     const sourceAssetIds: number[] = [];
 
@@ -870,7 +849,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
   resetAllFilters() {
     this.searchRequest = {
       prompt: '',
-      generationModel: 'gemini-3.1-flash-image-preview',
+      generationModel: 'gemini-3.1-flash-image',
       aspectRatio: '1:1',
       numberOfMedia: 4,
       style: null,
@@ -906,7 +885,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
 
     if (!supportsIngredients) {
       const nanoBanana2 = this.generationModels.find(
-        m => m.value === 'gemini-3.1-flash-image-preview',
+        m => m.value === 'gemini-3.1-flash-image',
       );
       if (nanoBanana2) {
         this.selectModel(nanoBanana2);

@@ -72,6 +72,32 @@ from src.users.user_model import UserModel
 logger = logging.getLogger(__name__)
 
 
+def optimize_image_bytes(data: bytes, max_size: int = 1024) -> bytes:
+    """Resizes image to a max dimension of `max_size` (maintaining aspect ratio)
+    and compresses it as JPEG to optimize Vertex API payload size.
+    """
+    try:
+        img = PILImage.open(io.BytesIO(data))
+        # Convert RGBA to RGB (JPEG doesn't support transparency/alpha channel)
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        # Resize if larger than max_size
+        if max(img.width, img.height) > max_size:
+            img.thumbnail((max_size, max_size), PILImage.Resampling.LANCZOS)
+
+        out_buf = io.BytesIO()
+        img.save(out_buf, format="JPEG", quality=90)
+        return out_buf.getvalue()
+    except Exception as e:
+        logger.warning(
+            "Failed to optimize image bytes: %s. Using original bytes.", e
+        )
+        return data
+
+
 # --- STANDALONE WORKER FUNCTION FOR VTO ---
 def _process_vto_in_background(
     media_item_id: int,
@@ -139,30 +165,47 @@ def _process_vto_in_background(
                         ] = []  # type: ignore
                         source_assets: list[SourceAssetLink] = []
 
-                        async def get_gcs_uri_from_input(
-                            vto_input: VtoInputLink,
-                            role: AssetRoleEnum,
-                        ) -> str:
-                            """Helper to get GCS URI from either source asset or
-                            media item."""
-                            if vto_input.source_asset_id:
+                        # --- Resolve all input links sequentially to avoid concurrent DB sessions ---
+                        garment_inputs = [
+                            (request_dto.top_image, AssetRoleEnum.VTO_TOP),
+                            (
+                                request_dto.bottom_image,
+                                AssetRoleEnum.VTO_BOTTOM,
+                            ),
+                            (request_dto.dress_image, AssetRoleEnum.VTO_DRESS),
+                            (request_dto.shoe_image, AssetRoleEnum.VTO_SHOE),
+                        ]
+
+                        active_garment_inputs = [
+                            (inp, role)
+                            for inp, role in garment_inputs
+                            if inp is not None
+                        ]
+
+                        inputs_to_resolve = [
+                            (request_dto.person_image, AssetRoleEnum.VTO_PERSON)
+                        ]
+                        for inp, role in active_garment_inputs:
+                            inputs_to_resolve.append((inp, role))
+
+                        gcs_uris_with_roles = []
+                        for inp, role in inputs_to_resolve:
+                            if inp.source_asset_id:
                                 asset = await source_asset_repo.get_by_id(
-                                    vto_input.source_asset_id,
+                                    inp.source_asset_id,
                                 )
                                 if not asset:
                                     raise ValueError(
-                                        f"Source asset "
-                                        f"{vto_input.source_asset_id} not found.",
+                                        f"Source asset {inp.source_asset_id} not found."
                                     )
                                 source_assets.append(
                                     SourceAssetLink(
                                         asset_id=asset.id, role=role
-                                    ),
+                                    )
                                 )
-                                return asset.gcs_uri
-
-                            if vto_input.source_media_item:
-                                media_item_link = vto_input.source_media_item
+                                gcs_uri = asset.gcs_uri
+                            elif inp.source_media_item:
+                                media_item_link = inp.source_media_item
                                 parent_item = await media_repo.get_by_id(
                                     media_item_link.media_item_id,
                                 )
@@ -176,104 +219,103 @@ def _process_vto_in_background(
                                     )
                                 ):
                                     raise ValueError(
-                                        f"Source media item "
-                                        f"{media_item_link.media_item_id} "
-                                        f"not found or index is invalid.",
+                                        f"Source media item {media_item_link.media_item_id} "
+                                        f"not found or index is invalid."
                                     )
-
                                 source_media_items.append(
                                     SourceMediaItemLink(
-                                        media_item_id=(
-                                            media_item_link.media_item_id
-                                        ),
+                                        media_item_id=media_item_link.media_item_id,
                                         media_index=media_item_link.media_index,
                                         role=role,
-                                    ),
+                                    )
                                 )
-                                return parent_item.gcs_uris[
+                                gcs_uri = parent_item.gcs_uris[
                                     media_item_link.media_index
                                 ]
+                            else:
+                                raise ValueError("Invalid VTO input provided.")
 
-                            raise ValueError("Invalid VTO input provided.")
+                            gcs_uris_with_roles.append((gcs_uri, role))
 
-                        # --- Set up the iterative VTO process ---
-                        current_person_gcs_uri = await get_gcs_uri_from_input(
-                            request_dto.person_image,
-                            AssetRoleEnum.VTO_PERSON,
-                        )
+                        # --- Download & Optimize all inputs in parallel ---
+                        async def download_and_optimize_uri(
+                            gcs_uri: str, role: AssetRoleEnum
+                        ) -> bytes:
+                            img_bytes = await asyncio.to_thread(
+                                gcs_service.download_bytes_from_gcs, gcs_uri
+                            )
+                            if not img_bytes:
+                                raise ValueError(
+                                    f"Failed to download bytes from GCS: {gcs_uri}"
+                                )
+                            return await asyncio.to_thread(
+                                optimize_image_bytes, img_bytes
+                            )
 
-                        # Define the order of garment application
-                        garment_inputs = [
-                            (request_dto.top_image, AssetRoleEnum.VTO_TOP),
-                            (
-                                request_dto.bottom_image,
-                                AssetRoleEnum.VTO_BOTTOM,
-                            ),
-                            (request_dto.dress_image, AssetRoleEnum.VTO_DRESS),
-                            (request_dto.shoe_image, AssetRoleEnum.VTO_SHOE),
-                        ]
-                        active_garments = [
-                            (inp, role)
-                            for inp, role in garment_inputs
-                            if inp is not None
-                        ]
+                        tasks = []
+                        for gcs_uri, role in gcs_uris_with_roles:
+                            tasks.append(
+                                download_and_optimize_uri(gcs_uri, role)
+                            )
+
+                        downloaded_results = await asyncio.gather(*tasks)
+
+                        current_person_bytes = downloaded_results[0]
+                        active_garments_bytes = downloaded_results[1:]
 
                         final_response = None
 
-                        # --- Loop through each garment and apply it
-                        # sequentially ---
+                        # --- Loop through each garment and apply it sequentially ---
                         for i, (garment_input, role) in enumerate(
-                            active_garments
+                            active_garment_inputs
                         ):
-                            if garment_input:
-                                garment_gcs_uri = await get_gcs_uri_from_input(
-                                    garment_input,
-                                    role,
-                                )
-                                person_image_part = types.Image(
-                                    gcs_uri=current_person_gcs_uri,
-                                )
-                                product_image_part = types.ProductImage(
-                                    product_image=types.Image(
-                                        gcs_uri=garment_gcs_uri
-                                    ),
-                                )
+                            garment_bytes = active_garments_bytes[i]
+                            person_image_part = types.Image(
+                                image_bytes=current_person_bytes,
+                            )
+                            product_image_part = types.ProductImage(
+                                product_image=types.Image(
+                                    image_bytes=garment_bytes
+                                ),
+                            )
 
-                                worker_logger.info(
-                                    "Applying garment %s/%s with role %s",
-                                    i + 1,
-                                    len(active_garments),
-                                    role,
-                                )
+                            worker_logger.info(
+                                "Applying garment %s/%s with role %s",
+                                i + 1,
+                                len(active_garment_inputs),
+                                role,
+                            )
 
-                                # Run sync API call in thread to avoid blocking
-                                # the loop
-                                response = await asyncio.to_thread(
-                                    client.models.recontext_image,
-                                    model=cfg.VTO_MODEL_ID,
-                                    source=types.RecontextImageSource(
-                                        person_image=person_image_part,
-                                        product_images=[product_image_part],
+                            # Run sync API call in thread to avoid blocking
+                            # the loop
+                            response = await asyncio.to_thread(
+                                client.models.recontext_image,
+                                model=cfg.VTO_MODEL_ID,
+                                source=types.RecontextImageSource(
+                                    person_image=person_image_part,
+                                    product_images=[product_image_part],
+                                ),
+                                config=types.RecontextImageConfig(
+                                    number_of_images=(
+                                        request_dto.number_of_media
                                     ),
-                                    config=types.RecontextImageConfig(
-                                        output_gcs_uri=gcs_output_directory,
-                                        number_of_images=(
-                                            request_dto.number_of_media
-                                        ),
-                                    ),
-                                )
+                                ),
+                            )
 
-                                if i == len(active_garments) - 1:
-                                    final_response = response
-                                elif (
-                                    response.generated_images
-                                    and response.generated_images[0].image
-                                ):
-                                    current_person_gcs_uri = (
-                                        response.generated_images[
-                                            0
-                                        ].image.gcs_uri
-                                    )
+                            if i == len(active_garment_inputs) - 1:
+                                final_response = response
+                            elif (
+                                response.generated_images
+                                and response.generated_images[0].image
+                                and response.generated_images[
+                                    0
+                                ].image.image_bytes
+                            ):
+                                current_person_bytes = (
+                                    response.generated_images[
+                                        0
+                                    ].image.image_bytes
+                                )
 
                         if not final_response:
                             raise ValueError(
@@ -294,21 +336,46 @@ def _process_vto_in_background(
                         valid_generated_images = [
                             img
                             for img in all_generated_images
-                            if img.image and img.image.gcs_uri
+                            if img.image and img.image.image_bytes
                         ]
+                        if not valid_generated_images:
+                            raise ValueError(
+                                "No valid images returned from VTO process."
+                            )
+
                         mime_type: MimeTypeEnum = (
                             MimeTypeEnum.IMAGE_PNG
-                            if valid_generated_images[0].image
-                            and valid_generated_images[0].image.mime_type
+                            if valid_generated_images[0].image.mime_type
                             == MimeTypeEnum.IMAGE_PNG
                             else MimeTypeEnum.IMAGE_JPEG
                         )
 
-                        permanent_gcs_uris = [
-                            img.image.gcs_uri
-                            for img in valid_generated_images
-                            if img.image and img.image.gcs_uri
-                        ]
+                        # Save final images to GCS and get permanent URIs
+                        permanent_gcs_uris = []
+                        for img in valid_generated_images:
+                            import uuid
+
+                            ext = (
+                                "png"
+                                if mime_type == MimeTypeEnum.IMAGE_PNG
+                                else "jpg"
+                            )
+                            file_name = f"{str(uuid.uuid4())}.{ext}"
+                            gcs_uri = gcs_service.store_to_gcs(
+                                folder=f"images/{cfg.IMAGEN_RECONTEXT_SUBFOLDER}",
+                                file_name=file_name,
+                                mime_type=mime_type.value,
+                                contents=img.image.image_bytes,
+                                decode=False,
+                                bucket_name=cfg.GENMEDIA_BUCKET,
+                            )
+                            if gcs_uri:
+                                permanent_gcs_uris.append(gcs_uri)
+
+                        if not permanent_gcs_uris:
+                            raise ValueError(
+                                "Failed to save generated images to GCS."
+                            )
 
                         # Generate thumbnails
                         thumbnail_uris = []
@@ -322,12 +389,6 @@ def _process_vto_in_background(
                                 thumbnail_uris.append(thumb_uri)
                             else:
                                 thumbnail_uris.append(uri)
-
-                        # Generate presigned URLs
-                        presigned_urls = [
-                            iam_signer_credentials.generate_presigned_url(uri)
-                            for uri in permanent_gcs_uris
-                        ]
 
                         end_time = time.monotonic()
                         generation_time = end_time - start_time
@@ -833,7 +894,7 @@ def _process_image_in_background(
                             upscale_dtos: list[UpscaleImagenDto] = [
                                 UpscaleImagenDto(
                                     generation_model=(
-                                        request_dto.generation_model
+                                        GenerationModelEnum.IMAGEN_4_UPSCALE_PREVIEW
                                     ),
                                     user_image=img.image.gcs_uri or "",
                                     mime_type=(

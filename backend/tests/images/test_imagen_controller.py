@@ -79,7 +79,7 @@ def test_generate_images_success(client, mock_service, mock_workspace_auth):
         user_email="test@example.com",
         mime_type=MimeTypeEnum.IMAGE_PNG,
         status=JobStatusEnum.PROCESSING,
-        model=GenerationModelEnum.IMAGEN_3_001,
+        model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE_PREVIEW,
         gcs_uris=[],
         presigned_urls=[],
         presigned_thumbnail_urls=[],
@@ -90,7 +90,7 @@ def test_generate_images_success(client, mock_service, mock_workspace_auth):
     payload = {
         "prompt": "A sunset",
         "workspace_id": 1,
-        "generation_model": "imagen-3.0-generate-001",
+        "generation_model": "gemini-3.1-flash-image",
     }
 
     response = client.post("/api/images/generate-images", json=payload)
@@ -110,7 +110,7 @@ def test_generate_images_vto_success(client, mock_service, mock_workspace_auth):
         user_email="test@example.com",
         mime_type=MimeTypeEnum.IMAGE_PNG,
         status=JobStatusEnum.PROCESSING,
-        model=GenerationModelEnum.IMAGEN_3_001,
+        model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE,
         gcs_uris=[],
         presigned_urls=[],
         aspect_ratio="1:1",
@@ -186,7 +186,7 @@ def test_generate_images_http_exception(client, mock_service):
     payload = {
         "prompt": "A sunset",
         "workspace_id": 1,
-        "generation_model": "imagen-3.0-generate-001",
+        "generation_model": "gemini-3.1-flash-image",
     }
 
     response = client.post("/api/images/generate-images", json=payload)
@@ -203,7 +203,7 @@ def test_generate_images_value_error(client, mock_service):
     payload = {
         "prompt": "A sunset",
         "workspace_id": 1,
-        "generation_model": "imagen-3.0-generate-001",
+        "generation_model": "gemini-3.1-flash-image",
     }
 
     response = client.post("/api/images/generate-images", json=payload)
@@ -220,7 +220,7 @@ def test_generate_images_general_exception(client, mock_service):
     payload = {
         "prompt": "A sunset",
         "workspace_id": 1,
-        "generation_model": "imagen-3.0-generate-001",
+        "generation_model": "gemini-3.1-flash-image",
     }
 
     response = client.post("/api/images/generate-images", json=payload)
