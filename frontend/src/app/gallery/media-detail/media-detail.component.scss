@@ -15,20 +15,23 @@
  */
 
 :host {
-// Increase specificity to override default Material styles for mat-tab labels.
-    // This makes the tab labels lighter and more readable against the dark background.
-    ::ng-deep .mat-mdc-tab-group .mat-mdc-tab .mdc-tab__text-label,
-    ::ng-deep .mat-expansion-panel-header-title {
-        color: white;
-        font-weight: normal;
+  // Increase specificity to override default Material styles for mat-tab labels.
+  // This makes the tab labels lighter and more readable against the dark background.
+  ::ng-deep .mat-mdc-tab-group .mat-mdc-tab .mdc-tab__text-label,
+  ::ng-deep .mat-expansion-panel-header-title {
+    color: white;
+    font-weight: normal;
   }
 
   // Make the active tab label fully white and bold for emphasis.
-  ::ng-deep .mat-mdc-tab-group .mat-mdc-tab.mdc-tab--active .mdc-tab__text-label {
+  ::ng-deep
+    .mat-mdc-tab-group
+    .mat-mdc-tab.mdc-tab--active
+    .mdc-tab__text-label {
     color: #2d7cef;
-    }
+  }
 
   ::ng-deep .mat-mdc-chip-action-label {
-      color: white !important;
+    color: white !important;
   }
 }
