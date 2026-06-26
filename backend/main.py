@@ -57,6 +57,9 @@ from src.workflows_executor.workflows_executor_controller import (
     router as workflows_executor_router,
 )
 from src.workspaces.workspace_controller import router as workspace_router
+from src.system_settings.system_settings_controller import (
+    router as system_settings_router,
+)
 from src.agents.agent_controller import router as agent_router
 from src.projects.project_controller import router as project_router
 
@@ -182,6 +185,7 @@ app.include_router(workspace_router)
 app.include_router(brand_guideline_router)
 app.include_router(workflow_router)
 app.include_router(workflows_executor_router)
+app.include_router(system_settings_router)
 app.include_router(workbench_router)
 app.include_router(agent_router)
 app.include_router(project_router)

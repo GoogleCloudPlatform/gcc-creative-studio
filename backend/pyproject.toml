@@ -19,7 +19,6 @@ description = "GenMedia Creative Studio"
 authors = [
     {name = "Mauro Cominotti", email = "maurocominotti@google.com"},
     {name = "Nacho Villaluenga", email = "nachov@google.com"},
-    {name = "Tomasz Świtoń", email = "switon@google.com"},
     {name = "San Srinivasan", email = "sansrinivasan@google.com"},
 ]
 readme = "README.md"

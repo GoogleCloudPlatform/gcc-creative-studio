@@ -340,7 +340,7 @@ def _process_video_in_background(
 
                         all_generated_videos: list[types.GeneratedVideo] = []
                         permanent_thumbnail_gcs_uris = []
-                        permanent_gcs_uris = []
+                        final_gcs_uris = []
                         raw_data_dict = None
                         model_name_for_api = None
 
@@ -744,7 +744,7 @@ def _process_video_in_background(
                                 interaction_id,
                                 thought_signature,
                             ) in parallel_results:
-                                permanent_gcs_uris.append(final_gcs_uri)
+                                final_gcs_uris.append(final_gcs_uri)
                                 permanent_thumbnail_gcs_uris.append(
                                     thumbnail_gcs_uri
                                 )
@@ -790,97 +790,101 @@ def _process_video_in_background(
                                 )
                             )
 
-                        # Poll the operation status until the video is ready
-                        while not operation.done:
-                            worker_logger.info(
-                                "Waiting for video generation to complete, polling video generation status...",
-                                extra={
-                                    "json_fields": {
-                                        "media_id": media_item_id,
-                                        "operation_name": operation.name,
+                            # Poll the operation status until the video is ready
+                            while not operation.done:
+                                worker_logger.info(
+                                    "Waiting for video generation to complete, polling video generation status...",
+                                    extra={
+                                        "json_fields": {
+                                            "media_id": media_item_id,
+                                            "operation_name": operation.name,
+                                        },
                                     },
-                                },
-                            )
-                            await asyncio.sleep(10)
-                            operation = await asyncio.to_thread(
-                                client.operations.get,
-                                operation,
-                            )
+                                )
+                                await asyncio.sleep(10)
+                                operation = await asyncio.to_thread(
+                                    client.operations.get,
+                                    operation,
+                                )
 
-                        if operation.error:
-                            raise Exception(operation.error)
+                            if operation.error:
+                                raise Exception(operation.error)
 
-                        if (
-                            not operation
-                            or not operation.response
-                            or not operation.response.generated_videos
-                        ):
-                            return
-
-                        # Download the generated video and create thumbnail
-                        thumbnail_path = ""
-
-                        permanent_thumbnail_gcs_uris = []
-
-                        for (
-                            generated_video
-                        ) in operation.response.generated_videos:
                             if (
-                                generated_video.video
-                                and generated_video.video.uri
+                                not operation
+                                or not operation.response
+                                or not operation.response.generated_videos
                             ):
-                                output_path = f"{generated_video.video.uri.replace(f'gs://{cfg.GENMEDIA_BUCKET}/', '')}"
+                                return
 
-                                # Step 1: Download the Video from GCS
-                                local_output_path = f"thumbnails/{output_path}"
-                                downloaded_video_path = await asyncio.to_thread(
-                                    gcs_service.download_from_gcs,
-                                    gcs_uri_path=output_path,
-                                    destination_file_path=local_output_path,
-                                )
+                            # Download the generated video and create thumbnail
+                            thumbnail_path = ""
 
-                                # Step 2: Generate Thumbnail from the first video frame
-                                thumbnail_path = await asyncio.to_thread(
-                                    generate_thumbnail,
-                                    downloaded_video_path or "",
-                                )
+                            permanent_thumbnail_gcs_uris = []
 
-                                # Step 3: Save the Thumbnail in GCS
-                                if thumbnail_path:
-                                    # Get the parent directory of the thumbnail to clean it up later.
-                                    temp_dir = os.path.dirname(thumbnail_path)
-                                    try:
-                                        thumbnail_gcs_uri = (
-                                            await asyncio.to_thread(
-                                                gcs_service.upload_file_to_gcs,
-                                                local_path=thumbnail_path,
-                                                destination_blob_name=thumbnail_path.replace(
-                                                    "thumbnails/",
-                                                    "",
-                                                ),
-                                                mime_type="image/png",
+                            for (
+                                generated_video
+                            ) in operation.response.generated_videos:
+                                if (
+                                    generated_video.video
+                                    and generated_video.video.uri
+                                ):
+                                    output_path = f"{generated_video.video.uri.replace(f'gs://{cfg.GENMEDIA_BUCKET}/', '')}"
+
+                                    # Step 1: Download the Video from GCS
+                                    local_output_path = (
+                                        f"thumbnails/{output_path}"
+                                    )
+                                    downloaded_video_path = await asyncio.to_thread(
+                                        gcs_service.download_from_gcs,
+                                        gcs_uri_path=output_path,
+                                        destination_file_path=local_output_path,
+                                    )
+
+                                    # Step 2: Generate Thumbnail from the first video frame
+                                    thumbnail_path = await asyncio.to_thread(
+                                        generate_thumbnail,
+                                        downloaded_video_path or "",
+                                    )
+
+                                    # Step 3: Save the Thumbnail in GCS
+                                    if thumbnail_path:
+                                        # Get the parent directory of the thumbnail to clean it up later.
+                                        temp_dir = os.path.dirname(
+                                            thumbnail_path
+                                        )
+                                        try:
+                                            thumbnail_gcs_uri = (
+                                                await asyncio.to_thread(
+                                                    gcs_service.upload_file_to_gcs,
+                                                    local_path=thumbnail_path,
+                                                    destination_blob_name=thumbnail_path.replace(
+                                                        "thumbnails/",
+                                                        "",
+                                                    ),
+                                                    mime_type="image/png",
+                                                )
+                                                or ""
                                             )
-                                            or ""
-                                        )
 
-                                        permanent_thumbnail_gcs_uris.append(
-                                            thumbnail_gcs_uri,
-                                        )
-                                        # TODO: Delete the folder created under thumbnails/
-                                    except Exception as e:
-                                        # It's good practice to log or handle potential upload errors.
-                                        print(
-                                            f"Failed to upload {thumbnail_path}. Error: {e}",
-                                        )
-                                    finally:
-                                        # This block executes whether the try block succeeded or failed.
-                                        # We use shutil.rmtree to recursively delete the temporary directory.
-                                        if os.path.exists(temp_dir):
-                                            shutil.rmtree(temp_dir)
+                                            permanent_thumbnail_gcs_uris.append(
+                                                thumbnail_gcs_uri,
+                                            )
+                                            # TODO: Delete the folder created under thumbnails/
+                                        except Exception as e:
+                                            # It's good practice to log or handle potential upload errors.
+                                            print(
+                                                f"Failed to upload {thumbnail_path}. Error: {e}",
+                                            )
+                                        finally:
+                                            # This block executes whether the try block succeeded or failed.
+                                            # We use shutil.rmtree to recursively delete the temporary directory.
+                                            if os.path.exists(temp_dir):
+                                                shutil.rmtree(temp_dir)
 
-                        all_generated_videos.extend(
-                            operation.response.generated_videos or [],
-                        )
+                            all_generated_videos.extend(
+                                operation.response.generated_videos or [],
+                            )
 
                         end_time = time.monotonic()
                         generation_time = end_time - start_time
@@ -890,20 +894,20 @@ def _process_video_in_background(
                             for img in all_generated_videos
                             if img.video and img.video.uri
                         ]
-                        permanent_gcs_uris = [
+                        final_gcs_uris = [
                             img.video.uri
                             for img in valid_generated_videos
                             if img.video and img.video.uri
                         ]
 
-                        # --- WHEN COMPLETE, UPDATE THE DOCUMENT IN FIRESTORE ---
+                        # --- WHEN COMPLETE, UPDATE THE RECORD IN POSTGRESQL ---
                         update_data = {
                             "status": JobStatusEnum.COMPLETED,
                             "prompt": rewritten_prompt,
-                            "gcs_uris": permanent_gcs_uris,  # The final GCS URLs
+                            "gcs_uris": final_gcs_uris,  # The final GCS URLs
                             "thumbnail_uris": permanent_thumbnail_gcs_uris,
                             "generation_time": generation_time,
-                            "num_media": len(permanent_gcs_uris),
+                            "num_media": len(final_gcs_uris),
                         }
                         if raw_data_dict is not None:
                             update_data["raw_data"] = raw_data_dict
@@ -915,7 +919,7 @@ def _process_video_in_background(
                                 "json_fields": {
                                     "media_id": media_item_id,
                                     "generation_time_seconds": generation_time,
-                                    "videos_generated": len(permanent_gcs_uris),
+                                    "videos_generated": len(final_gcs_uris),
                                 },
                             },
                         )

@@ -46,25 +46,12 @@ class GenerationModelEnum(str, Enum):
 
     # Image-Specific Models
     IMAGEN_4_UPSCALE_PREVIEW = "imagen-4.0-upscale-preview"
-    IMAGEN_4_001 = "imagen-4.0-generate-001"
-    IMAGEN_4_ULTRA = "imagen-4.0-ultra-generate-001"
-    IMAGEN_4_ULTRA_PREVIEW = "imagen-4.0-ultra-generate-preview-06-06"
-    IMAGEN_4_FAST = "imagen-4.0-fast-generate-001"
-    IMAGEN_4_FAST_PREVIEW = "imagen-4.0-fast-generate-preview-06-06"
-    IMAGEN_3_001 = "imagen-3.0-generate-001"
-    IMAGEN_3_FAST = "imagen-3.0-fast-generate-001"
-    IMAGEN_3_002 = "imagen-3.0-generate-002"
-    IMAGEGEN_006 = "imagegeneration@006"
-    IMAGEGEN_005 = "imagegeneration@005"
-    IMAGEGEN_002 = "imagegeneration@002"
     GEMINI_2_5_PRO = "gemini-2.5-pro"
     GEMINI_2_5_FLASH = "gemini-2.5-flash"
     GEMINI_2_5_FLASH_IMAGE_PREVIEW = "gemini-2.5-flash-image-preview"
     GEMINI_2_5_FLASH_IMAGE = "gemini-2.5-flash-image"
     GEMINI_3_PRO_PREVIEW = "gemini-3-pro-preview"
-    GEMINI_3_PRO_IMAGE_PREVIEW = "gemini-3-pro-image-preview"
     GEMINI_3_PRO_IMAGE = "gemini-3-pro-image"
-    GEMINI_3_1_FLASH_IMAGE_PREVIEW = "gemini-3.1-flash-image-preview"
     GEMINI_3_1_FLASH_IMAGE = "gemini-3.1-flash-image"
     GEMINI_3_FLASH_PREVIEW = "gemini-3-flash-preview"
     VTO = "virtual-try-on-001"
@@ -80,10 +67,6 @@ class GenerationModelEnum(str, Enum):
     VEO_3_QUALITY = "veo-3.0-generate-001"
     VEO_3_FAST_PREVIEW = "veo-3.0-fast-generate-preview"
     VEO_3_QUALITY_PREVIEW = "veo-3.0-generate-preview"
-    VEO_2_FAST = "veo-2.0-generate-001"
-    VEO_2_QUALITY = "veo-2.0-fast-generate-001"
-    VEO_2_GENERATE_EXP = "veo-2.0-generate-exp"
-
     # Audio-Specific Models
     LYRIA_002 = "lyria-002"
     CHIRP_3 = "chirp_3"
@@ -93,6 +76,22 @@ class GenerationModelEnum(str, Enum):
 
     # Deprecated models (For old generations only, do not use)
     _DEPRECATED_VTO = "virtual-try-on-preview-08-04"
+    GEMINI_3_PRO_IMAGE_PREVIEW = "gemini-3-pro-image-preview"
+    GEMINI_3_1_FLASH_IMAGE_PREVIEW = "gemini-3.1-flash-image-preview"
+    IMAGEN_4_001 = "imagen-4.0-generate-001"
+    IMAGEN_4_ULTRA = "imagen-4.0-ultra-generate-001"
+    IMAGEN_4_ULTRA_PREVIEW = "imagen-4.0-ultra-generate-preview-06-06"
+    IMAGEN_4_FAST = "imagen-4.0-fast-generate-001"
+    IMAGEN_4_FAST_PREVIEW = "imagen-4.0-fast-generate-preview-06-06"
+    IMAGEN_3_001 = "imagen-3.0-generate-001"
+    IMAGEN_3_FAST = "imagen-3.0-fast-generate-001"
+    IMAGEN_3_002 = "imagen-3.0-generate-002"
+    IMAGEGEN_006 = "imagegeneration@006"
+    IMAGEGEN_005 = "imagegeneration@005"
+    IMAGEGEN_002 = "imagegeneration@002"
+    VEO_2_FAST = "veo-2.0-generate-001"
+    VEO_2_QUALITY = "veo-2.0-fast-generate-001"
+    VEO_2_GENERATE_EXP = "veo-2.0-generate-exp"
 
     @property
     def is_gemini_image_model(self) -> bool:
