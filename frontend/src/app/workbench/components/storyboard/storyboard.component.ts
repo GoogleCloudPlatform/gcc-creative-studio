@@ -168,7 +168,7 @@ export class StoryboardComponent {
       () => {
         const sb = this.agentChatService.currentStoryboard();
         if (sb) {
-          if (sb.timeline) {
+          if (sb.timeline_id) {
             this.showSeeVideoBtn.set(true);
           }
           if (sb.scenes && sb.scenes.length > 0) {

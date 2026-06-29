@@ -23,9 +23,6 @@ from src.projects.dto.project_dto import (
     StoryboardCreate,
     StoryboardUpdate,
     SceneDTO,
-    TimelineDTO,
-    VideoClipDTO,
-    AudioClipDTO,
 )
 
 
@@ -54,41 +51,6 @@ class ProjectService:
                         gcs_uri,
                     )
                     scene.first_frame_generated_url = presigned_url
-
-        if storyboard.timeline:
-            for clip in storyboard.timeline.video_clips:
-                if clip.media_item_id:
-                    media_item = await self.media_repo.get_by_id(
-                        clip.media_item_id
-                    )
-                    if media_item and media_item.gcs_uris:
-                        gcs_uri = media_item.gcs_uris[0]
-                        presigned_url = await asyncio.to_thread(
-                            self.iam_signer_credentials.generate_presigned_url,
-                            gcs_uri,
-                        )
-                        clip.presigned_url = presigned_url
-
-                        if media_item.thumbnail_uris:
-                            thumb_gcs_uri = media_item.thumbnail_uris[0]
-                            presigned_thumb_url = await asyncio.to_thread(
-                                self.iam_signer_credentials.generate_presigned_url,
-                                thumb_gcs_uri,
-                            )
-                            clip.presigned_thumbnail_url = presigned_thumb_url
-
-            for clip in storyboard.timeline.audio_clips:
-                if clip.media_item_id:
-                    media_item = await self.media_repo.get_by_id(
-                        clip.media_item_id
-                    )
-                    if media_item and media_item.gcs_uris:
-                        gcs_uri = media_item.gcs_uris[0]
-                        presigned_url = await asyncio.to_thread(
-                            self.iam_signer_credentials.generate_presigned_url,
-                            gcs_uri,
-                        )
-                        clip.presigned_url = presigned_url
 
     async def create_storyboard(
         self, storyboard_create: StoryboardCreate, user_id: int

@@ -161,6 +161,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   private storyboardService = inject(StoryboardService);
 
   private workspaceStateService = inject(WorkspaceStateService);
+  private loadedTimelineId?: number;
 
   isDownloading = signal(false);
 
@@ -173,6 +174,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     initialStart: number;
     initialDur: number;
     initialOffset: number;
+    hasMoved?: boolean;
   } | null = null;
 
   // Drag state for moving clips along the timeline
@@ -181,6 +183,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     clipId: string;
     startX: number;
     initialStartTime: number;
+    hasMoved?: boolean;
   } | null = null;
 
   isBrowser: boolean;
@@ -204,19 +207,34 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         if (this.isSaving) {
           return;
         }
-        if (storyboard && storyboard.timeline) {
-          console.log(
-            'Loading timeline from AgentChatService signal:',
-            storyboard.timeline,
-          );
-          this.processGeneratedData(storyboard.timeline);
-          this.lastSavedText.set('Saved');
+        if (storyboard && storyboard.timeline_id) {
+          if (this.loadedTimelineId === storyboard.timeline_id) {
+            return;
+          }
+          console.log('Fetching timeline for ID:', storyboard.timeline_id);
+          this.loadedTimelineId = storyboard.timeline_id;
+          this.workbenchService.getTimeline(storyboard.timeline_id).subscribe({
+            next: (timeline: TimelineDTO) => {
+              console.log('Loading timeline from API:', timeline);
+              this.processGeneratedData(timeline);
+              this.lastSavedText.set('Saved');
+            },
+            error: err => {
+              console.error('Failed to fetch timeline:', err);
+              this.lastSavedText.set('Failed to load timeline');
+            },
+          });
         } else {
           console.log(
-            'No storyboard or timeline found, clearing timeline clips.',
+            'No storyboard or timeline ID found, clearing timeline clips.',
           );
+          this.loadedTimelineId = undefined;
           this.timelineState.timelineClips.set([]);
           this.timelineState.selectedClipId.set(null);
+          this.timelineState.assets.set([]);
+          this.timelineState.currentTime.set(0);
+          this.timelineState.isPlaying.set(false);
+          this.timelineState.scrollOffset.set(0);
           this.lastSavedText.set('');
         }
       },
@@ -664,85 +682,104 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   }
 
   processGeneratedData(data: TimelineDTO) {
-    console.log('processGeneratedData called with:', data);
     const newClips: TimelineClip[] = [];
+
+    // Save transitions metadata
+    this.timelineState.transitions.set(data.transitions || []);
+    this.timelineState.transitionIn.set(data.transition_in || null);
+    this.timelineState.transitionOut.set(data.transition_out || null);
 
     // Handle Video Clips
     let currentVideoTime = 0;
     if (data.video_clips) {
       data.video_clips.forEach((clip: VideoClipDTO) => {
-        const assetId = String(
-          clip.media_item_id || clip.source_asset_id || '',
-        );
+        const mediaItemId =
+          clip.asset_ref?.type === 'media_item'
+            ? Number(clip.asset_ref.id)
+            : undefined;
+        const sourceAssetId =
+          clip.asset_ref?.type === 'source_asset'
+            ? Number(clip.asset_ref.id)
+            : undefined;
+        const trimDuration = clip.trim?.duration_seconds || 5;
+        const trimOffset = clip.trim?.offset_seconds || 0;
+
+        const assetId = String(mediaItemId || sourceAssetId || '');
 
         // Populate assets signal so lookup works
-        const existingAsset = this.timelineState
+        const existingAsset: MediaAsset | undefined = this.timelineState
           .assets()
           .find(a => a.id === assetId);
         if (!existingAsset && clip.presigned_url) {
-          this.timelineState.assets.update(prev => [
-            ...prev,
-            {
-              id: assetId,
-              name: 'Clip ' + assetId,
-              type: 'video',
-              url: clip.presigned_url!,
-              safeUrl: this.sanitizer.bypassSecurityTrustUrl(
-                clip.presigned_url!,
-              ),
-              duration: clip.trim_duration || 5,
-              thumbnail: clip.presigned_thumbnail_url,
-              mediaItemId: clip.media_item_id,
-              sourceAssetId: clip.source_asset_id,
-            },
-          ]);
+          const newAsset: MediaAsset = {
+            id: assetId,
+            name: 'Clip ' + assetId,
+            type: 'video',
+            url: clip.presigned_url!,
+            safeUrl: this.sanitizer.bypassSecurityTrustUrl(clip.presigned_url!),
+            duration: trimDuration,
+            thumbnail: clip.presigned_thumbnail_url || undefined,
+            mediaItemId: mediaItemId,
+            sourceAssetId: sourceAssetId,
+          };
+          this.timelineState.assets.update(prev => [...prev, newAsset]);
         }
 
         newClips.push({
           id: Math.random().toString(36).substr(2, 9),
           assetId: assetId,
           startTime: currentVideoTime,
-          duration: clip.trim_duration || 5,
-          offset: clip.trim_offset || 0,
+          duration: trimDuration,
+          offset: trimOffset,
           trackIndex: 0,
           color: '#3b82f6',
-          mediaItemId: clip.media_item_id,
-          sourceAssetId: clip.source_asset_id,
+          mediaItemId: mediaItemId,
+          sourceAssetId: sourceAssetId,
+          first_frame_asset_ref: clip.first_frame_asset_ref || null,
+          last_frame_asset_ref: clip.last_frame_asset_ref || null,
+          placeholder: clip.placeholder || null,
         });
-        currentVideoTime += clip.trim_duration || 5;
+        currentVideoTime += trimDuration;
       });
     }
 
     // Handle Audio Clips
     if (data.audio_clips) {
       data.audio_clips.forEach((clip: AudioClipDTO) => {
+        const mediaItemId =
+          clip.asset_ref?.type === 'media_item'
+            ? Number(clip.asset_ref.id)
+            : undefined;
+        const sourceAssetId =
+          clip.asset_ref?.type === 'source_asset'
+            ? Number(clip.asset_ref.id)
+            : undefined;
+        const trimDuration = clip.trim?.duration_seconds || 5;
+        const trimOffset = clip.trim?.offset_seconds || 0;
+        const startTime = clip.start_at?.offset_seconds || 0;
+
         const assetId = clip.presigned_url || '';
 
         // Populate assets signal
-        const existingAsset = this.timelineState
+        const existingAsset: MediaAsset | undefined = this.timelineState
           .assets()
           .find(a => a.id === assetId);
         if (!existingAsset && clip.presigned_url) {
-          this.timelineState.assets.update(prev => [
-            ...prev,
-            {
-              id: assetId,
-              name: 'Audio ' + assetId,
-              type: 'audio',
-              url: clip.presigned_url!,
-              safeUrl: this.sanitizer.bypassSecurityTrustUrl(
-                clip.presigned_url!,
-              ),
-              duration: clip.trim_duration || 5,
-              mediaItemId: clip.media_item_id,
-              sourceAssetId: clip.source_asset_id,
-            },
-          ]);
+          const newAsset: MediaAsset = {
+            id: assetId,
+            name: 'Audio ' + assetId,
+            type: 'audio',
+            url: clip.presigned_url!,
+            safeUrl: this.sanitizer.bypassSecurityTrustUrl(clip.presigned_url!),
+            duration: trimDuration,
+            mediaItemId: mediaItemId,
+            sourceAssetId: sourceAssetId,
+          };
+          this.timelineState.assets.update(prev => [...prev, newAsset]);
         }
 
         // Find available track among newClips
-        const startTime = clip.start_offset || 0;
-        const duration = clip.trim_duration || 5;
+        const duration = trimDuration;
         const allAudioClips = newClips.filter(c => c.trackIndex > 0);
         let targetTrack = 1;
         let found = false;
@@ -772,11 +809,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           assetId: assetId,
           startTime: startTime,
           duration: duration,
-          offset: clip.trim_offset || 0,
+          offset: trimOffset,
           trackIndex: targetTrack,
           color: '#10b981',
-          mediaItemId: clip.media_item_id,
-          sourceAssetId: clip.source_asset_id,
+          mediaItemId: mediaItemId,
+          sourceAssetId: sourceAssetId,
         });
       });
     }
@@ -1192,6 +1229,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     if (!this.trimState || !this.trimState.active) return;
 
     const deltaX = event.clientX - this.trimState.startX;
+    if (Math.abs(deltaX) < 1) return; // Ignore micro-jitters
+    this.trimState.hasMoved = true;
+
     const deltaTime = deltaX / this.timelineState.pixelsPerSecond();
     const {clipId, type, initialDur, initialOffset} = this.trimState;
 
@@ -1232,9 +1272,12 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   onTrimEnd() {
     if (this.trimState && this.trimState.active) {
+      const hasMoved = this.trimState.hasMoved;
       this.refreshTimelineLayout();
       this.trimState = null;
-      this.triggerAutoSave();
+      if (hasMoved) {
+        this.triggerAutoSave();
+      }
     }
   }
 
@@ -1244,6 +1287,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     if (!this.dragState || !this.dragState.active) return;
 
     const deltaX = event.clientX - this.dragState.startX;
+    if (Math.abs(deltaX) < 1) return; // Ignore micro-jitters
+    this.dragState.hasMoved = true;
+
     const deltaTime = deltaX / this.timelineState.pixelsPerSecond();
     let newStartTime = this.dragState.initialStartTime + deltaTime;
     if (newStartTime < 0) newStartTime = 0;
@@ -1267,8 +1313,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   onDragEnd() {
     if (this.dragState && this.dragState.active) {
       const clipId = this.dragState.clipId;
+      const hasMoved = this.dragState.hasMoved;
       this.dragState = null;
-      this.resolveOverlaps(clipId);
+      if (hasMoved) {
+        this.resolveOverlaps(clipId);
+      }
     }
   }
 
@@ -1392,8 +1441,10 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   saveTimeline() {
     const sb = this.agentChatService.currentStoryboard();
-    if (!sb || !sb.id) {
-      console.warn('Cannot auto-save timeline: missing storyboard or ID');
+    if (!sb || !sb.id || !sb.timeline_id) {
+      console.warn(
+        'Cannot auto-save timeline: missing storyboard, ID, or timeline ID',
+      );
       return;
     }
 
@@ -1404,13 +1455,28 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       .filter(c => c.trackIndex === 0)
       .map(c => {
         const asset = this.timelineState.assets().find(a => a.id === c.assetId);
+        let assetRef = null;
+        if (c.mediaItemId || asset?.mediaItemId) {
+          assetRef = {
+            id: c.mediaItemId || asset?.mediaItemId,
+            type: 'media_item',
+          };
+        } else if (c.sourceAssetId || asset?.sourceAssetId) {
+          assetRef = {
+            id: c.sourceAssetId || asset?.sourceAssetId,
+            type: 'source_asset',
+          };
+        }
+
         return {
-          media_item_id: c.mediaItemId || asset?.mediaItemId || null,
-          source_asset_id: c.sourceAssetId || asset?.sourceAssetId || null,
+          asset_ref: assetRef,
           trim: {
-            offset: c.offset,
-            duration: c.duration,
+            offset_seconds: c.offset,
+            duration_seconds: c.duration,
           },
+          first_frame_asset_ref: c.first_frame_asset_ref || null,
+          last_frame_asset_ref: c.last_frame_asset_ref || null,
+          placeholder: c.placeholder || null,
           volume: 1.0,
           speed: 1.0,
         };
@@ -1420,39 +1486,59 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       .filter(c => c.trackIndex > 0)
       .map(c => {
         const asset = this.timelineState.assets().find(a => a.id === c.assetId);
+        let assetRef = null;
+        if (c.mediaItemId || asset?.mediaItemId) {
+          assetRef = {
+            id: c.mediaItemId || asset?.mediaItemId,
+            type: 'media_item',
+          };
+        } else if (c.sourceAssetId || asset?.sourceAssetId) {
+          assetRef = {
+            id: c.sourceAssetId || asset?.sourceAssetId,
+            type: 'source_asset',
+          };
+        }
+
         return {
-          media_item_id: c.mediaItemId || asset?.mediaItemId || null,
-          source_asset_id: c.sourceAssetId || asset?.sourceAssetId || null,
-          start_offset: c.startTime,
-          trim: {
-            offset: c.offset,
-            duration: c.duration,
+          start_at: {
+            video_clip_index: 0,
+            offset_seconds: c.startTime,
           },
-          volume: 1.0,
+          asset_ref: assetRef,
+          trim: {
+            offset_seconds: c.offset,
+            duration_seconds: c.duration,
+          },
         };
       });
 
-    const updateData = {
-      timeline_data: {
-        title: sb.timeline?.title || 'Timeline',
-        video_clips: videoClips,
-        audio_clips: audioClips,
-      },
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+
+    const timelineUpdate = {
+      timeline_id: sb.timeline_id,
+      workspace_id: workspaceId || 1,
+      title: 'Timeline',
+      video_clips: videoClips,
+      audio_clips: audioClips,
+      transitions: this.timelineState.transitions(),
+      transition_in: this.timelineState.transitionIn() || undefined,
+      transition_out: this.timelineState.transitionOut() || undefined,
     };
 
     this.isSaving = true;
-    this.storyboardService.updateStoryboard(sb.id, updateData).subscribe({
-      next: (res: StoryboardResponse) => {
-        console.log('Storyboard timeline updated successfully', res);
-        this.agentChatService.currentStoryboard.set(res);
-        this.lastSavedText.set('Saved');
-        this.isSaving = false;
-      },
-      error: (err: unknown) => {
-        console.error('Error updating storyboard timeline', err);
-        this.lastSavedText.set('Failed to save changes');
-        this.isSaving = false;
-      },
-    });
+    this.workbenchService
+      .updateTimeline(sb.timeline_id, timelineUpdate)
+      .subscribe({
+        next: (res: any) => {
+          console.log('Timeline updated successfully', res);
+          this.lastSavedText.set('Saved');
+          this.isSaving = false;
+        },
+        error: (err: unknown) => {
+          console.error('Error updating timeline', err);
+          this.lastSavedText.set('Failed to save changes');
+          this.isSaving = false;
+        },
+      });
   }
 }

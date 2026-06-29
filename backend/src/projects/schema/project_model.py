@@ -80,6 +80,10 @@ class Storyboard(Base):
         back_populates="storyboard", uselist=False, cascade="all, delete-orphan"
     )
 
+    @property
+    def timeline_id(self) -> int | None:
+        return self.timeline.id if self.timeline else None
+
 
 class Scene(Base):
     __tablename__ = "scenes"

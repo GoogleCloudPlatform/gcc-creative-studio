@@ -409,6 +409,7 @@ export class AuthService {
     for (let i = 0; i < binary.length; i++) {
       bytes[i] = binary.charCodeAt(i);
     }
+    // eslint-disable-next-line n/no-unsupported-features/node-builtins
     const decoded = new TextDecoder().decode(bytes);
     return JSON.parse(decoded);
   }

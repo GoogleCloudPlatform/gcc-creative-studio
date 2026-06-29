@@ -30,6 +30,7 @@ import {
 import {TimelineDTO} from '../common/models/storyboard.model';
 import {MediaItemSelection} from '../common/components/image-selector/image-selector.component';
 import {StoryboardService} from '../services/storyboard/storyboard.service';
+import {WorkbenchService} from './workbench.service';
 
 describe('WorkbenchComponent', () => {
   let component: WorkbenchComponent;
@@ -175,16 +176,31 @@ describe('WorkbenchComponent', () => {
 
   it('should process generated data', () => {
     const stateService = TestBed.inject(TimelineStateService);
-    const mockData = {
+    const mockData: TimelineDTO = {
+      timeline_id: 2,
+      workspace_id: 1,
+      title: 'Timeline',
       video_clips: [
-        {media_item_id: 1, presigned_url: 'video1.mp4', trim_duration: 5},
+        {
+          asset_ref: {id: 1, type: 'media_item'},
+          trim: {offset_seconds: 0, duration_seconds: 5},
+          presigned_url: 'video1.mp4',
+          volume: 1.0,
+          speed: 1.0,
+        },
       ],
       audio_clips: [
-        {presigned_url: 'audio1.mp3', trim_duration: 10, start_offset: 0},
+        {
+          asset_ref: {id: 2, type: 'media_item'},
+          start_at: {video_clip_index: 0, offset_seconds: 0},
+          trim: {offset_seconds: 0, duration_seconds: 10},
+          presigned_url: 'audio1.mp3',
+          volume: 1.0,
+        },
       ],
     };
 
-    component.processGeneratedData(mockData as TimelineDTO);
+    component.processGeneratedData(mockData);
 
     const assets = stateService.assets();
     expect(assets.length).toBe(2);
@@ -363,11 +379,13 @@ describe('WorkbenchComponent', () => {
     let storyboardService: StoryboardService;
     let agentChatService: AgentChatService;
     let stateService: TimelineStateService;
+    let workbenchService: WorkbenchService;
 
     beforeEach(() => {
       storyboardService = TestBed.inject(StoryboardService);
       agentChatService = TestBed.inject(AgentChatService);
       stateService = TestBed.inject(TimelineStateService);
+      workbenchService = TestBed.inject(WorkbenchService);
     });
 
     it('should set status to Saving... in triggerAutoSave', () => {
@@ -375,8 +393,8 @@ describe('WorkbenchComponent', () => {
       expect(component.lastSavedText()).toBe('Saving...');
     });
 
-    it('should call updateStoryboard and update currentStoryboard on saveTimeline success', () => {
-      const mockStoryboard = {id: 1, timeline: {title: 'Timeline'}};
+    it('should call updateTimeline and update lastSavedText on saveTimeline success', () => {
+      const mockStoryboard = {id: 1, timeline_id: 2};
       agentChatService.currentStoryboard.set(mockStoryboard as any);
       stateService.timelineClips.set([
         {
@@ -392,31 +410,43 @@ describe('WorkbenchComponent', () => {
       ]);
 
       const mockResponse = {
-        id: 1,
-        timeline: {title: 'Timeline Updated'},
+        timeline_id: 2,
+        title: 'Timeline Updated',
+        video_clips: [
+          {
+            id: 1,
+            asset_ref: {id: 1219, type: 'media_item'},
+            trim: {offset_seconds: 0, duration_seconds: 5},
+          },
+        ],
+        audio_clips: [],
       };
-      spyOn(storyboardService, 'updateStoryboard').and.returnValue(
+      spyOn(workbenchService, 'updateTimeline').and.returnValue(
         of(mockResponse as any),
       );
 
       component.saveTimeline();
 
-      expect(storyboardService.updateStoryboard).toHaveBeenCalledWith(1, {
-        timeline_data: {
-          title: 'Timeline',
-          video_clips: [
-            {
-              media_item_id: 1219,
-              source_asset_id: null,
-              trim: {offset: 0, duration: 5},
-              volume: 1.0,
-              speed: 1.0,
-            },
-          ],
-          audio_clips: [],
-        },
+      expect(workbenchService.updateTimeline).toHaveBeenCalledWith(2, {
+        timeline_id: 2,
+        workspace_id: 1,
+        title: 'Timeline',
+        video_clips: [
+          {
+            asset_ref: {id: 1219, type: 'media_item'},
+            trim: {offset_seconds: 0, duration_seconds: 5},
+            first_frame_asset_ref: null,
+            last_frame_asset_ref: null,
+            placeholder: null,
+            volume: 1.0,
+            speed: 1.0,
+          },
+        ],
+        audio_clips: [],
+        transitions: [],
+        transition_in: undefined,
+        transition_out: undefined,
       });
-      expect(agentChatService.currentStoryboard()).toEqual(mockResponse as any);
       expect(component.lastSavedText()).toBe('Saved');
     });
   });

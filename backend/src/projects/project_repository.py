@@ -25,7 +25,6 @@ from src.projects.dto.project_dto import (
     StoryboardResponse,
     StoryboardCreateResponse,
     SceneDTO,
-    TimelineDTO,
 )
 
 
@@ -76,12 +75,7 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
             .where(self.model.id == storyboard_id)
             .options(
                 selectinload(self.model.scenes),
-                selectinload(self.model.timeline).selectinload(
-                    Timeline.video_clips
-                ),
-                selectinload(self.model.timeline).selectinload(
-                    Timeline.audio_clips
-                ),
+                selectinload(self.model.timeline),
             )
         )
         result = await self.db.execute(query)
@@ -99,12 +93,7 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
             .where(self.model.workspace_id == workspace_id)
             .options(
                 selectinload(self.model.scenes),
-                selectinload(self.model.timeline).selectinload(
-                    Timeline.video_clips
-                ),
-                selectinload(self.model.timeline).selectinload(
-                    Timeline.audio_clips
-                ),
+                selectinload(self.model.timeline),
             )
         )
         if session_id:
@@ -125,12 +114,7 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
             .where(self.model.id == storyboard_id)
             .options(
                 selectinload(self.model.scenes),
-                selectinload(self.model.timeline).selectinload(
-                    Timeline.video_clips
-                ),
-                selectinload(self.model.timeline).selectinload(
-                    Timeline.audio_clips
-                ),
+                selectinload(self.model.timeline),
             )
         )
         result = await self.db.execute(query)

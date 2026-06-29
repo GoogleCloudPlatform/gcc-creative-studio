@@ -896,7 +896,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
               next: storyboards => {
                 if (storyboards && storyboards.length > 0) {
                   this.agentChatService.currentStoryboard.set(storyboards[0]);
-                  if (storyboards[0].timeline) {
+                  if (storyboards[0].timeline_id) {
                     this.agentChatService.videoGenerated$.next(true);
                   }
                 } else {

@@ -38,34 +38,63 @@ export interface SceneDTO {
   audio_sfx_description?: string;
 }
 
+export interface AssetRef {
+  id: number | string;
+  type: 'source_asset' | 'media_item';
+}
+
+export interface Trim {
+  offset_seconds: number;
+  duration_seconds?: number | null;
+}
+
+export interface Transition {
+  type: 'fade' | 'none' | 'wipe_left' | 'wipe_right';
+  duration_seconds: number;
+}
+
 export interface VideoClipDTO {
-  id: number;
-  media_item_id?: number;
-  source_asset_id?: number;
-  trim_offset: number;
-  trim_duration?: number;
+  id?: number;
+  asset_ref?: AssetRef | null;
+  trim?: Trim | null;
   volume: number;
   speed: number;
-  presigned_url?: string;
-  presigned_thumbnail_url?: string;
+  first_frame_asset_ref?: AssetRef | null;
+  last_frame_asset_ref?: AssetRef | null;
+  placeholder?: string | null;
+  presigned_url?: string | null;
+  presigned_thumbnail_url?: string | null;
+}
+
+export interface AudioPlacement {
+  video_clip_index: number;
+  offset_seconds: number;
 }
 
 export interface AudioClipDTO {
-  id: number;
-  media_item_id?: number;
-  source_asset_id?: number;
-  start_offset: number;
-  trim_offset: number;
-  trim_duration?: number;
+  id?: number;
+  start_at: AudioPlacement;
+  asset_ref?: AssetRef | null;
+  trim?: Trim | null;
   volume: number;
-  presigned_url?: string;
+  speed?: number;
+  fade_in_duration_seconds?: number;
+  fade_out_duration_seconds?: number;
+  placeholder?: string | null;
+  presigned_url?: string | null;
 }
 
 export interface TimelineDTO {
-  id: number;
-  title?: string;
+  timeline_id?: number | string;
+  workspace_id: number | string;
+  user_id?: number | string;
+  session_id?: string;
+  title: string;
   video_clips: VideoClipDTO[];
+  transitions?: Transition[];
   audio_clips: AudioClipDTO[];
+  transition_in?: Transition;
+  transition_out?: Transition;
 }
 
 export interface StoryboardCreate {
@@ -103,5 +132,5 @@ export interface StoryboardResponse {
   bg_music_description?: string;
   bg_music_asset_id?: number;
   scenes: SceneDTO[];
-  timeline?: TimelineDTO;
+  timeline_id?: number;
 }

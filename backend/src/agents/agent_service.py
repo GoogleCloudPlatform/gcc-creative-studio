@@ -614,10 +614,14 @@ class AgentService:
                     s_asset_id = p.pop("sourceAssetId", None)
                     s_media = p.pop("sourceMediaItem", None)
                     if s_asset_id is not None:
-                        attached_assets.append(f"<creative_studio_asset id={s_asset_id} type=\"source_asset\" />")
+                        attached_assets.append(
+                            f'<creative_studio_asset id={s_asset_id} type="source_asset" />'
+                        )
                     if s_media is not None:
                         media_id = s_media.get("mediaItemId")
-                        attached_assets.append(f"<creative_studio_asset id={media_id} type=\"media_item\" />")
+                        attached_assets.append(
+                            f'<creative_studio_asset id={media_id} type="media_item" />'
+                        )
                     if p:
                         sanitized_parts.append(p)
 
