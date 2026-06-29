@@ -27,7 +27,7 @@ import {
   MediaAsset,
 } from './services/timeline-state.service';
 
-import {TimelineDTO} from '../common/models/storyboard.model';
+import {TimelineDTO} from '../common/models/workbench.model';
 import {MediaItemSelection} from '../common/components/image-selector/image-selector.component';
 import {StoryboardService} from '../services/storyboard/storyboard.service';
 import {WorkbenchService} from './workbench.service';
@@ -391,6 +391,45 @@ describe('WorkbenchComponent', () => {
     it('should set status to Saving... in triggerAutoSave', () => {
       component.triggerAutoSave();
       expect(component.lastSavedText()).toBe('Saving...');
+      expect(component['hasPendingSave']).toBeTrue();
+    });
+
+    it('should cancel previous in-flight save request when a new save is triggered', () => {
+      const mockStoryboard = {id: 1, timeline_id: 2};
+      agentChatService.currentStoryboard.set(mockStoryboard as any);
+      stateService.timelineClips.set([]);
+
+      spyOn(workbenchService, 'updateTimeline').and.returnValue(
+        new Subject<any>(),
+      );
+
+      component.saveTimeline();
+
+      const firstSubscription = component['activeSaveSubscription'];
+      expect(firstSubscription).toBeDefined();
+      spyOn(firstSubscription!, 'unsubscribe').and.callThrough();
+
+      component.saveTimeline();
+
+      expect(firstSubscription!.unsubscribe).toHaveBeenCalled();
+    });
+
+    it('should trigger saveTimeline on ngOnDestroy if hasPendingSave is true', () => {
+      spyOn(component, 'saveTimeline');
+      component['hasPendingSave'] = true;
+
+      component.ngOnDestroy();
+
+      expect(component.saveTimeline).toHaveBeenCalled();
+    });
+
+    it('should not trigger saveTimeline on ngOnDestroy if hasPendingSave is false', () => {
+      spyOn(component, 'saveTimeline');
+      component['hasPendingSave'] = false;
+
+      component.ngOnDestroy();
+
+      expect(component.saveTimeline).not.toHaveBeenCalled();
     });
 
     it('should call updateTimeline and update lastSavedText on saveTimeline success', () => {
@@ -448,6 +487,77 @@ describe('WorkbenchComponent', () => {
         transition_out: undefined,
       });
       expect(component.lastSavedText()).toBe('Saved');
+    });
+  });
+
+  describe('Storyboard Loading Effect', () => {
+    let agentChatService: AgentChatService;
+    let stateService: TimelineStateService;
+    let workbenchService: WorkbenchService;
+
+    beforeEach(() => {
+      agentChatService = TestBed.inject(AgentChatService);
+      stateService = TestBed.inject(TimelineStateService);
+      workbenchService = TestBed.inject(WorkbenchService);
+    });
+
+    it('should fetch timeline when currentStoryboard is updated with a new timeline_id', () => {
+      const mockTimeline: TimelineDTO = {
+        timeline_id: 42,
+        workspace_id: 1,
+        title: 'Mock Timeline',
+        video_clips: [],
+        audio_clips: [],
+      };
+
+      spyOn(workbenchService, 'getTimeline').and.returnValue(of(mockTimeline));
+      spyOn(component, 'processGeneratedData').and.callThrough();
+
+      stateService.loadedTimelineId.set(undefined);
+
+      agentChatService.currentStoryboard.set({
+        id: 1,
+        timeline_id: 42,
+        scenes: [],
+      } as any);
+
+      // Trigger effect execution
+      fixture.detectChanges();
+
+      expect(workbenchService.getTimeline).toHaveBeenCalledWith(42);
+      expect(component.processGeneratedData).toHaveBeenCalledWith(mockTimeline);
+      expect(stateService.loadedTimelineId()).toBe(42);
+      expect(component.lastSavedText()).toBe('Saved');
+    });
+
+    it('should not fetch timeline if loadedTimelineId already matches storyboard.timeline_id', () => {
+      spyOn(workbenchService, 'getTimeline').and.callThrough();
+
+      stateService.loadedTimelineId.set(42);
+
+      agentChatService.currentStoryboard.set({
+        id: 1,
+        timeline_id: 42,
+        scenes: [],
+      } as any);
+
+      fixture.detectChanges();
+
+      expect(workbenchService.getTimeline).not.toHaveBeenCalled();
+    });
+
+    it('should clear timeline state if storyboard is null', () => {
+      agentChatService.currentStoryboard.set({id: 1, timeline_id: 42} as any);
+      fixture.detectChanges();
+
+      stateService.timelineClips.set([{id: 'c1'} as any]);
+      expect(stateService.timelineClips().length).toBe(1);
+
+      agentChatService.currentStoryboard.set(null);
+      fixture.detectChanges();
+
+      expect(stateService.timelineClips()).toEqual([]);
+      expect(stateService.loadedTimelineId()).toBeUndefined();
     });
   });
 });

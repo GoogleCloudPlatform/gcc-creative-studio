@@ -134,3 +134,21 @@ export interface StoryboardResponse {
   scenes: SceneDTO[];
   timeline_id?: number;
 }
+
+export interface ChatSession {
+  id: string;
+  appName?: string;
+  userId?: string;
+  lastUpdateTime?: number;
+  state?: {
+    current_storyboard_id?: string | number;
+    currentStoryboardId?: string | number;
+    [key: string]: unknown;
+  };
+  events?: any[];
+}
+
+export interface SessionDetailResponse {
+  session?: ChatSession;
+  storyboard?: StoryboardResponse;
+}

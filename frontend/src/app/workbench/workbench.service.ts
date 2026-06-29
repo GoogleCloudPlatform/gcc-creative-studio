@@ -18,6 +18,7 @@ import {Injectable} from '@angular/core';
 import {HttpClient} from '@angular/common/http';
 import {Observable} from 'rxjs';
 import {environment} from '../../environments/environment';
+import {TimelineDTO} from '../common/models/workbench.model';
 
 export interface Clip {
   assetId: string;
@@ -51,12 +52,15 @@ export class WorkbenchService {
     });
   }
 
-  getTimeline(timelineId: number): Observable<any> {
-    return this.http.get<any>(`${this.apiUrl}/timelines/${timelineId}`);
+  getTimeline(timelineId: number | string): Observable<TimelineDTO> {
+    return this.http.get<TimelineDTO>(`${this.apiUrl}/timelines/${timelineId}`);
   }
 
-  updateTimeline(timelineId: number, timeline: any): Observable<any> {
-    return this.http.put<any>(
+  updateTimeline(
+    timelineId: number | string,
+    timeline: TimelineDTO,
+  ): Observable<TimelineDTO> {
+    return this.http.put<TimelineDTO>(
       `${this.apiUrl}/timelines/${timelineId}`,
       timeline,
     );

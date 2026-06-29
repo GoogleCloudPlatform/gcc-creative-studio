@@ -58,7 +58,7 @@ import {
   VideoClipDTO,
   AudioClipDTO,
   StoryboardResponse,
-} from '../common/models/storyboard.model';
+} from '../common/models/workbench.model';
 import {ActivatedRoute} from '@angular/router';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
 import {Subject, Subscription} from 'rxjs';
@@ -161,7 +161,6 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   private storyboardService = inject(StoryboardService);
 
   private workspaceStateService = inject(WorkspaceStateService);
-  private loadedTimelineId?: number;
 
   isDownloading = signal(false);
 
@@ -191,6 +190,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   private saveSubject = new Subject<void>();
   private saveSubscription?: Subscription;
+  private activeSaveSubscription?: Subscription;
+  private hasPendingSave = false;
   private isSaving = false;
 
   constructor(
@@ -208,11 +209,13 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           return;
         }
         if (storyboard && storyboard.timeline_id) {
-          if (this.loadedTimelineId === storyboard.timeline_id) {
+          if (
+            this.timelineState.loadedTimelineId() === storyboard.timeline_id
+          ) {
             return;
           }
           console.log('Fetching timeline for ID:', storyboard.timeline_id);
-          this.loadedTimelineId = storyboard.timeline_id;
+          this.timelineState.loadedTimelineId.set(storyboard.timeline_id);
           this.workbenchService.getTimeline(storyboard.timeline_id).subscribe({
             next: (timeline: TimelineDTO) => {
               console.log('Loading timeline from API:', timeline);
@@ -228,7 +231,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           console.log(
             'No storyboard or timeline ID found, clearing timeline clips.',
           );
-          this.loadedTimelineId = undefined;
+          this.timelineState.loadedTimelineId.set(undefined);
           this.timelineState.timelineClips.set([]);
           this.timelineState.selectedClipId.set(null);
           this.timelineState.assets.set([]);
@@ -365,6 +368,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     this.saveSubscription = this.saveSubject
       .pipe(debounceTime(10000))
       .subscribe(() => {
+        this.hasPendingSave = false;
         this.saveTimeline();
       });
 
@@ -420,8 +424,14 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     this.playbackService.stopLoop();
+    if (this.hasPendingSave) {
+      this.saveTimeline();
+    }
     if (this.saveSubscription) {
       this.saveSubscription.unsubscribe();
+    }
+    if (this.activeSaveSubscription) {
+      this.activeSaveSubscription.unsubscribe();
     }
   }
 
@@ -1435,17 +1445,23 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   }
 
   triggerAutoSave() {
+    this.hasPendingSave = true;
     this.lastSavedText.set('Saving...');
     this.saveSubject.next();
   }
 
   saveTimeline() {
+    this.hasPendingSave = false;
     const sb = this.agentChatService.currentStoryboard();
     if (!sb || !sb.id || !sb.timeline_id) {
       console.warn(
         'Cannot auto-save timeline: missing storyboard, ID, or timeline ID',
       );
       return;
+    }
+
+    if (this.activeSaveSubscription) {
+      this.activeSaveSubscription.unsubscribe();
     }
 
     this.lastSavedText.set('Saving...');
@@ -1456,15 +1472,17 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       .map(c => {
         const asset = this.timelineState.assets().find(a => a.id === c.assetId);
         let assetRef = null;
-        if (c.mediaItemId || asset?.mediaItemId) {
+        const mediaItemId = c.mediaItemId || asset?.mediaItemId;
+        const sourceAssetId = c.sourceAssetId || asset?.sourceAssetId;
+        if (mediaItemId) {
           assetRef = {
-            id: c.mediaItemId || asset?.mediaItemId,
-            type: 'media_item',
+            id: mediaItemId,
+            type: 'media_item' as const,
           };
-        } else if (c.sourceAssetId || asset?.sourceAssetId) {
+        } else if (sourceAssetId) {
           assetRef = {
-            id: c.sourceAssetId || asset?.sourceAssetId,
-            type: 'source_asset',
+            id: sourceAssetId,
+            type: 'source_asset' as const,
           };
         }
 
@@ -1487,21 +1505,23 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       .map(c => {
         const asset = this.timelineState.assets().find(a => a.id === c.assetId);
         let assetRef = null;
-        if (c.mediaItemId || asset?.mediaItemId) {
+        const mediaItemId = c.mediaItemId || asset?.mediaItemId;
+        const sourceAssetId = c.sourceAssetId || asset?.sourceAssetId;
+        if (mediaItemId) {
           assetRef = {
-            id: c.mediaItemId || asset?.mediaItemId,
-            type: 'media_item',
+            id: mediaItemId,
+            type: 'media_item' as const,
           };
-        } else if (c.sourceAssetId || asset?.sourceAssetId) {
+        } else if (sourceAssetId) {
           assetRef = {
-            id: c.sourceAssetId || asset?.sourceAssetId,
-            type: 'source_asset',
+            id: sourceAssetId,
+            type: 'source_asset' as const,
           };
         }
 
         return {
           start_at: {
-            video_clip_index: 0,
+            video_clip_index: -1,
             offset_seconds: c.startTime,
           },
           asset_ref: assetRef,
@@ -1509,6 +1529,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
             offset_seconds: c.offset,
             duration_seconds: c.duration,
           },
+          volume: 1.0,
         };
       });
 
@@ -1526,15 +1547,15 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     };
 
     this.isSaving = true;
-    this.workbenchService
+    this.activeSaveSubscription = this.workbenchService
       .updateTimeline(sb.timeline_id, timelineUpdate)
       .subscribe({
-        next: (res: any) => {
+        next: (res: TimelineDTO) => {
           console.log('Timeline updated successfully', res);
           this.lastSavedText.set('Saved');
           this.isSaving = false;
         },
-        error: (err: unknown) => {
+        error: err => {
           console.error('Error updating timeline', err);
           this.lastSavedText.set('Failed to save changes');
           this.isSaving = false;

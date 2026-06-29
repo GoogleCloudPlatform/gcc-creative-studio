@@ -16,7 +16,7 @@
 
 import {Injectable, signal, computed} from '@angular/core';
 import {SafeResourceUrl} from '@angular/platform-browser';
-import {AssetRef, Transition} from '../../common/models/storyboard.model';
+import {AssetRef, Transition} from '../../common/models/workbench.model';
 
 export interface TimelineClip {
   id: string;
@@ -60,6 +60,7 @@ export class TimelineStateService {
   transitions = signal<Transition[]>([]);
   transitionIn = signal<Transition | null>(null);
   transitionOut = signal<Transition | null>(null);
+  loadedTimelineId = signal<number | string | undefined>(undefined);
 
   // Computed Values
   totalDuration = computed(() => {

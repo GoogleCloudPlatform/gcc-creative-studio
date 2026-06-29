@@ -32,6 +32,7 @@ import {
 } from '../../services/agent-chat.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
 import {StoryboardService} from '../../../services/storyboard/storyboard.service';
+import {TimelineStateService} from '../../services/timeline-state.service';
 import {ActivatedRoute, Router} from '@angular/router';
 import {combineLatest} from 'rxjs';
 import {CommonModule} from '@angular/common';
@@ -50,6 +51,13 @@ import {SourceAssetResponseDto} from '../../../common/services/source-asset.serv
 import {environment} from '../../../../environments/environment';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {handleErrorSnackbar} from '../../../utils/handleMessageSnackbar';
+
+import {
+  StoryboardResponse,
+  TimelineDTO,
+  ChatSession,
+  SessionDetailResponse,
+} from '../../../common/models/workbench.model';
 
 interface DropdownOption {
   value: string;
@@ -70,8 +78,9 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   private storyboardService = inject(StoryboardService);
   private route = inject(ActivatedRoute);
   private router = inject(Router);
+  private timelineState = inject(TimelineStateService);
 
-  sessions = signal<any[]>([]);
+  sessions = signal<ChatSession[]>([]);
   topics = signal<{[key: string]: any}>({});
   chatMessages = signal<any[]>([]);
   filteredChatMessages = computed(() => {
@@ -227,15 +236,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
 
       // Always load sessions first to populate the sessions dropdown
       this.agentChatService.getSessions(workspaceId).subscribe({
-        next: (
-          sessions: Array<{
-            id: string;
-            state?: {
-              current_storyboard_id?: string | number;
-              currentStoryboardId?: string | number;
-            };
-          }>,
-        ) => {
+        next: (sessions: ChatSession[]) => {
           this.sessions.set(sessions || []);
 
           // Check if the query parameter sessionId or storyboardId belongs to this workspace
@@ -271,15 +272,16 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                   storyboardId ? Number(storyboardId) : undefined,
                 )
                 .subscribe({
-                  next: (res: any) => {
+                  next: (res: SessionDetailResponse) => {
                     if (res.storyboard) {
+                      if (res.storyboard.timeline_id) {
+                        this.timelineState.loadedTimelineId.set(undefined);
+                      }
                       this.agentChatService.currentStoryboard.set(
                         res.storyboard,
                       );
                     }
-                    const hasSession = res.session && res.session.id;
-
-                    if (hasSession) {
+                    if (res.session && res.session.id) {
                       this.currentSessionId = res.session.id;
                       this.agentChatService.selectedSessionId.set(
                         res.session.id,
@@ -383,8 +385,11 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       this.agentChatService
         .getSessionDetail(workspaceId, sessionId, storyboardId)
         .subscribe({
-          next: (res: any) => {
+          next: (res: SessionDetailResponse) => {
             if (res.storyboard) {
+              if (res.storyboard.timeline_id) {
+                this.timelineState.loadedTimelineId.set(undefined);
+              }
               this.agentChatService.currentStoryboard.set(res.storyboard);
             } else {
               this.agentChatService.currentStoryboard.set(null);
@@ -605,7 +610,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       this.isTyping.set(true);
       const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
       this.agentChatService.createSession(workspaceId ?? undefined).subscribe({
-        next: (session: any) => {
+        next: (session: ChatSession) => {
           this.sessions.update(s => [session, ...s]);
           this.currentSessionId = session.id;
           this.agentChatService.selectedSessionId.set(session.id);
@@ -831,6 +836,9 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                     .getStoryboard(result.storyboard_id)
                     .subscribe({
                       next: storyboard => {
+                        if (storyboard.timeline_id) {
+                          this.timelineState.loadedTimelineId.set(undefined);
+                        }
                         this.agentChatService.currentStoryboard.set(storyboard);
                       },
                       error: err => {
@@ -895,6 +903,9 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
             .subscribe({
               next: storyboards => {
                 if (storyboards && storyboards.length > 0) {
+                  if (storyboards[0].timeline_id) {
+                    this.timelineState.loadedTimelineId.set(undefined);
+                  }
                   this.agentChatService.currentStoryboard.set(storyboards[0]);
                   if (storyboards[0].timeline_id) {
                     this.agentChatService.videoGenerated$.next(true);
@@ -975,29 +986,30 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     }
   }
 
-  private extractStoryboardData(parsed: any): any {
+  private extractStoryboardData(parsed: unknown): StoryboardResponse | null {
     if (!parsed || typeof parsed !== 'object') return null;
+    const obj = parsed as Record<string, any>;
     // Check current level
-    if (parsed.scenes && Array.isArray(parsed.scenes)) {
-      return parsed;
+    if (obj['scenes'] && Array.isArray(obj['scenes'])) {
+      return obj as unknown as StoryboardResponse;
     }
     // Check specific known wrappers to prevent deep search overhead if possible
-    if (parsed.storyboard?.scenes && Array.isArray(parsed.storyboard.scenes)) {
-      return parsed.storyboard;
+    if (obj['storyboard']?.scenes && Array.isArray(obj['storyboard'].scenes)) {
+      return obj['storyboard'] as StoryboardResponse;
     }
     if (
-      parsed.storyboard_agent_templated_response?.scenes &&
-      Array.isArray(parsed.storyboard_agent_templated_response.scenes)
+      obj['storyboard_agent_templated_response']?.scenes &&
+      Array.isArray(obj['storyboard_agent_templated_response'].scenes)
     ) {
-      return parsed.storyboard_agent_templated_response;
+      return obj['storyboard_agent_templated_response'] as StoryboardResponse;
     }
     // Otherwise recursive search up to a certain depth to prevent stack overflows
-    return this.deepSearchScenes(parsed, 5);
+    return this.deepSearchScenes(obj, 5);
   }
-  private deepSearchScenes(obj: any, depth: number): any {
+  private deepSearchScenes(obj: any, depth: number): StoryboardResponse | null {
     if (depth === 0 || !obj || typeof obj !== 'object') return null;
     if (obj.scenes && Array.isArray(obj.scenes)) {
-      return obj;
+      return obj as StoryboardResponse;
     }
     for (const key of Object.keys(obj)) {
       const result = this.deepSearchScenes(obj[key], depth - 1);
@@ -1008,15 +1020,15 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
 
   private parseAndExtractJSONs(text: string): {
     assets: any[];
-    storyboards: any[];
-    timelines: any[];
+    storyboards: StoryboardResponse[];
+    timelines: TimelineDTO[];
 
     cleanText: string;
   } {
     const cleanText = text;
     const assets: any[] = [];
-    const storyboards: any[] = [];
-    const timelines: any[] = [];
+    const storyboards: StoryboardResponse[] = [];
+    const timelines: TimelineDTO[] = [];
 
     if (!text.includes('{') || !text.includes('}')) {
       return {assets, storyboards, timelines, cleanText};
@@ -1111,7 +1123,12 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
         const id = parseInt(numericId, 10);
         if (!isNaN(id)) {
           this.storyboardService.getStoryboard(id).subscribe({
-            next: sb => this.agentChatService.currentStoryboard.set(sb),
+            next: sb => {
+              if (sb.timeline_id) {
+                this.timelineState.loadedTimelineId.set(undefined);
+              }
+              this.agentChatService.currentStoryboard.set(sb);
+            },
             error: err => console.error('Failed to fetch storyboard:', err),
           });
         }
