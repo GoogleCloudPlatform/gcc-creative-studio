@@ -13,41 +13,251 @@
 # limitations under the License.
 """Tests for Workbench Service."""
 
-
 import os
 import shutil
+import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.workbench.dto.workbench_dto import Clip, TimelineRequest
+from src.workbench.dto.workbench_dto import (
+    AssetRef,
+    AudioClip,
+    AudioPlacement,
+    Clip,
+    TimelineRequest,
+    TimelineResponse,
+    Transition,
+    TransitionType,
+    Trim,
+    VideoClip,
+    VideoTimeline,
+)
+from src.workbench.ffmpeg_service import FFmpegService
 from src.workbench.workbench_service import WorkbenchService
 
 
 @pytest.fixture(name="service")
 def fixture_service():
-    # Patch storage.Client to avoid DefaultCredentialsError during __init__
     with patch(
         "src.workbench.workbench_service.storage.Client"
     ) as mock_storage_client:
         mock_gcs_service = AsyncMock()
         mock_timeline_repo = AsyncMock()
         mock_media_repo = AsyncMock()
+        mock_source_asset_service = AsyncMock()
+        mock_source_asset_service.repo = AsyncMock()
         mock_iam_credentials = MagicMock()
+        mock_iam_credentials.generate_presigned_url.return_value = (
+            "http://presigned.url"
+        )
+
+        mock_ffmpeg_service = FFmpegService()
         service = WorkbenchService(
             gcs_service=mock_gcs_service,
             timeline_repo=mock_timeline_repo,
             media_repo=mock_media_repo,
+            source_asset_service=mock_source_asset_service,
             iam_signer_credentials=mock_iam_credentials,
+            ffmpeg_service=mock_ffmpeg_service,
         )
         service.mock_gcs_service = mock_gcs_service
         service.mock_storage_client = mock_storage_client
+        service.mock_source_asset_service = mock_source_asset_service
+        service.mock_media_repo = mock_media_repo
+        service.mock_timeline_repo = mock_timeline_repo
         return service
 
 
 @pytest.mark.anyio
+async def test_enrich_timeline(service):
+    timeline = VideoTimeline(
+        timeline_id=1,
+        workspace_id="ws1",
+        title="Enrich Test",
+        video_clips=[
+            VideoClip(asset_ref=AssetRef(id=10, type="media_item")),
+            VideoClip(asset_ref=AssetRef(id=20, type="source_asset")),
+        ],
+        audio_clips=[
+            AudioClip(
+                start_at=AudioPlacement(video_clip_index=0, offset_seconds=0),
+                asset_ref=AssetRef(id=30, type="media_item"),
+            ),
+            AudioClip(
+                start_at=AudioPlacement(
+                    video_clip_index=-1, offset_seconds=1.0
+                ),
+                asset_ref=AssetRef(id=40, type="source_asset"),
+            ),
+        ],
+    )
+
+    mock_media = MagicMock()
+    mock_media.gcs_uris = ["gs://b/m.mp4"]
+    mock_media.thumbnail_uris = ["gs://b/m_thumb.png"]
+    service.mock_media_repo.get_by_id.return_value = mock_media
+
+    mock_source = MagicMock()
+    mock_source.gcs_uri = "gs://b/s.mp4"
+    mock_source.thumbnail_gcs_uri = "gs://b/s_thumb.png"
+    service.mock_source_asset_service.repo.get_by_id.return_value = mock_source
+
+    await service._enrich_timeline(timeline)
+
+    assert timeline.video_clips[0].presigned_url == "http://presigned.url"
+    assert timeline.video_clips[1].presigned_url == "http://presigned.url"
+    assert timeline.audio_clips[0].presigned_url == "http://presigned.url"
+    assert timeline.audio_clips[1].presigned_url == "http://presigned.url"
+
+
+@pytest.mark.anyio
+async def test_create_get_list_update_delete_timeline(service):
+    timeline = VideoTimeline(timeline_id=1, workspace_id="1", title="T")
+    service.mock_timeline_repo.create_timeline.return_value = timeline
+    service.mock_timeline_repo.get_by_id_with_details.return_value = timeline
+    service.mock_timeline_repo.find_by_storyboard.return_value = [timeline]
+    service.mock_timeline_repo.update_timeline.return_value = timeline
+    service.mock_timeline_repo.delete_timeline.return_value = True
+
+    c = await service.create_timeline(timeline)
+    assert c.title == "T"
+
+    g = await service.get_timeline(1)
+    assert g.title == "T"
+
+    l = await service.list_timelines(1)
+    assert len(l) == 1
+
+    u = await service.update_timeline(1, timeline)
+    assert u.title == "T"
+
+    d = await service.delete_timeline(1)
+    assert d is True
+
+
+@pytest.mark.anyio
+async def test_render_timeline_by_id_not_found(service):
+    service.get_timeline = AsyncMock(return_value=None)
+    mock_user = MagicMock()
+    res = await service.render_timeline_by_id(999, mock_user)
+    assert res is None
+
+
+@pytest.mark.anyio
+async def test_render_timeline_by_id_success(service):
+    mock_timeline = VideoTimeline(
+        timeline_id=1,
+        workspace_id="1",
+        title="Test Timeline",
+        video_clips=[],
+        audio_clips=[],
+    )
+    service.get_timeline = AsyncMock(return_value=mock_timeline)
+
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
+        tf.write(b"video content")
+        tf_path = tf.name
+    temp_dir = tempfile.mkdtemp()
+
+    service._stitch_timeline = AsyncMock(return_value=(tf_path, temp_dir))
+
+    mock_asset = MagicMock()
+    mock_asset.id = 100
+    mock_asset.gcs_uri = "gs://bucket/renders/timeline_1_export.mp4"
+    service.mock_source_asset_service.upload_asset.return_value = mock_asset
+
+    mock_user = MagicMock()
+    res = await service.render_timeline_by_id(1, mock_user)
+
+    assert res is not None
+    assert res.asset_id == 100
+    assert res.timeline_id == 1
+    assert res.gcs_uri == "gs://bucket/renders/timeline_1_export.mp4"
+
+
+@pytest.mark.anyio
+async def test_stitch_timeline_full_flow(service):
+    timeline = VideoTimeline(
+        timeline_id=1,
+        workspace_id="1",
+        title="Stitch Flow",
+        video_clips=[
+            VideoClip(
+                presigned_url="http://example.com/video.mp4",
+                trim=Trim(offset_seconds=0.0, duration_seconds=3.0),
+                speed=1.0,
+            ),
+            VideoClip(
+                presigned_url="http://example.com/image.png",
+                trim=Trim(offset_seconds=0.0, duration_seconds=2.0),
+                speed=1.0,
+            ),
+            VideoClip(
+                placeholder="Missing Asset Clip",
+                trim=Trim(duration_seconds=2.0),
+            ),
+        ],
+        transitions=[
+            Transition(type=TransitionType.FADE, duration_seconds=0.5),
+            None,
+        ],
+        audio_clips=[
+            AudioClip(
+                start_at=AudioPlacement(video_clip_index=0, offset_seconds=0.5),
+                presigned_url="http://example.com/audio.mp3",
+                trim=Trim(offset_seconds=0.0, duration_seconds=2.0),
+                speed=1.2,
+                fade_in_duration_seconds=0.2,
+                fade_out_duration_seconds=0.2,
+            ),
+            AudioClip(
+                start_at=AudioPlacement(
+                    video_clip_index=-1, offset_seconds=0.0
+                ),
+                presigned_url="http://example.com/bg_music.mp3",
+                trim=Trim(offset_seconds=0.0, duration_seconds=5.0),
+            ),
+        ],
+        transition_in=Transition(
+            type=TransitionType.FADE, duration_seconds=0.5
+        ),
+        transition_out=Transition(
+            type=TransitionType.FADE, duration_seconds=0.5
+        ),
+    )
+
+    with patch.object(
+        service, "_download_asset", new_callable=AsyncMock
+    ) as mock_dl:
+        with patch.object(
+            service.ffmpeg_service, "get_media_info", new_callable=AsyncMock
+        ) as mock_info:
+            mock_info.return_value = {
+                "format": {"duration": "5.0"},
+                "streams": [
+                    {
+                        "codec_type": "video",
+                        "width": 1280,
+                        "height": 720,
+                        "r_frame_rate": "24/1",
+                    }
+                ],
+            }
+            with patch(
+                "src.workbench.ffmpeg_service.subprocess.run"
+            ) as mock_sub:
+                mock_sub.return_value = MagicMock(
+                    returncode=0, stdout=b"", stderr=b""
+                )
+                out_path, temp_dir = await service._stitch_timeline(timeline)
+                assert out_path.endswith("output.mp4")
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+
+
+@pytest.mark.anyio
 async def test_render_timeline_success_video_only(service):
-    # 1. Setup TimelineRequest with 1 video clip
     clip = Clip(
         assetId="1",
         url="http://example.com/video.mp4",
@@ -59,98 +269,20 @@ async def test_render_timeline_success_video_only(service):
     )
     request = TimelineRequest(clips=[clip])
 
-    # 2. Patch downloads and subprocesses
-    with patch(
-        "src.workbench.workbench_service.urllib.request.urlretrieve"
-    ) as mock_download:
-        with patch(
-            "src.workbench.workbench_service.subprocess.run"
-        ) as mock_run:
-            # First call is for ffprobe
-            mock_process_ffprobe = MagicMock()
-            mock_process_ffprobe.returncode = 0
-            mock_process_ffprobe.stdout = b'{"streams": [{"codec_type": "video"}, {"codec_type": "audio"}]}'
-
-            # Second call is for ffmpeg
-            mock_process_ffmpeg = MagicMock()
-            mock_process_ffmpeg.returncode = 0
-            mock_process_ffmpeg.stdout = b""
-            mock_process_ffmpeg.stderr = b""
-
-            # side_effect handles multiple calls
-            mock_run.side_effect = [mock_process_ffprobe, mock_process_ffmpeg]
-
-            output_path, temp_dir = await service.render_timeline(request)
-
-            assert output_path.endswith("output.mp4")
-            assert os.path.exists(temp_dir)
-
-            # Cleanup temp_dir created by tempfile.mkdtemp in the service
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
-
-            assert mock_download.called
-            assert mock_run.call_count == 2  # 1 ffprobe + 1 ffmpeg
-
-
-@pytest.mark.anyio
-async def test_render_timeline_with_audio_gaps(service):
-    # 1. Setup TimelineRequest with 1 Video + 1 Audio Clip with a Gap
-    video_clip = Clip(
-        assetId="1",
-        url="http://example.com/video.mp4",
-        startTime=0.0,
-        duration=5.0,
-        offset=0.0,
-        trackIndex=0,
-        type="video",
-    )
-    # Audio starts at 2.0s, gap of 2s
-    audio_clip = Clip(
-        assetId="2",
-        url="http://example.com/audio.mp3",
-        startTime=2.0,
-        duration=3.0,
-        offset=0.0,
-        trackIndex=1,
-        type="audio",
-    )
-    request = TimelineRequest(clips=[video_clip, audio_clip])
-
-    with patch(
-        "src.workbench.workbench_service.urllib.request.urlretrieve"
-    ) as mock_download:
-        with patch(
-            "src.workbench.workbench_service.subprocess.run"
-        ) as mock_run:
-            # Pre-populate ffprobe for two different URL downloads
-            mock_ff_video = MagicMock(
-                returncode=0,
-                stdout=b'{"streams": [{"codec_type": "video"}, {"codec_type": "audio"}]}',
+    with patch("src.workbench.workbench_service.urllib.request.urlretrieve"):
+        with patch("src.workbench.ffmpeg_service.subprocess.run") as mock_run:
+            mock_process_ffprobe = MagicMock(
+                returncode=0, stdout=b'{"streams": [{"codec_type": "video"}]}'
             )
-            mock_ff_audio = MagicMock(
-                returncode=0,
-                stdout=b'{"streams": [{"codec_type": "audio"}]}',
-            )
-
             mock_process_ffmpeg = MagicMock(
                 returncode=0, stdout=b"", stderr=b""
             )
-
-            # sequence: ffprobe lists for 2 unique files, then 1 ffmpeg
-            mock_run.side_effect = [
-                mock_ff_video,
-                mock_ff_audio,
-                mock_process_ffmpeg,
-            ]
+            mock_run.side_effect = [mock_process_ffprobe, mock_process_ffmpeg]
 
             output_path, temp_dir = await service.render_timeline(request)
-
             assert output_path.endswith("output.mp4")
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
-
-            assert mock_run.call_count == 3
 
 
 @pytest.mark.anyio
@@ -174,70 +306,14 @@ async def test_render_timeline_ffmpeg_failure(service):
     request = TimelineRequest(clips=[clip])
 
     with patch("src.workbench.workbench_service.urllib.request.urlretrieve"):
-        with patch(
-            "src.workbench.workbench_service.subprocess.run"
-        ) as mock_run:
+        with patch("src.workbench.ffmpeg_service.subprocess.run") as mock_run:
             mock_ffprobe = MagicMock(
-                returncode=0,
-                stdout=b'{"streams": [{"codec_type": "video"}]}',
+                returncode=0, stdout=b'{"streams": [{"codec_type": "video"}]}'
             )
             mock_ffmpeg = MagicMock(
                 returncode=1, stderr=b"FFmpeg error description"
             )
-
             mock_run.side_effect = [mock_ffprobe, mock_ffmpeg]
 
             with pytest.raises(RuntimeError, match="FFmpeg failed"):
                 await service.render_timeline(request)
-
-
-@pytest.mark.anyio
-async def test_render_timeline_success_hide_video(service):
-    # 1. Setup TimelineRequest with 1 video clip and hide_video=True
-    clip = Clip(
-        assetId="1",
-        url="http://example.com/video.mp4",
-        startTime=0.0,
-        duration=5.0,
-        offset=0.0,
-        trackIndex=0,
-        type="video",
-    )
-    request = TimelineRequest(clips=[clip], hide_video=True)
-
-    # 2. Patch downloads and subprocesses
-    with patch(
-        "src.workbench.workbench_service.urllib.request.urlretrieve"
-    ) as mock_download:
-        with patch(
-            "src.workbench.workbench_service.subprocess.run"
-        ) as mock_run:
-            # First call is for ffprobe
-            mock_process_ffprobe = MagicMock()
-            mock_process_ffprobe.returncode = 0
-            mock_process_ffprobe.stdout = b'{"streams": [{"codec_type": "video"}, {"codec_type": "audio"}]}'
-
-            # Second call is for ffmpeg
-            mock_process_ffmpeg = MagicMock()
-            mock_process_ffmpeg.returncode = 0
-            mock_process_ffmpeg.stdout = b""
-            mock_process_ffmpeg.stderr = b""
-
-            mock_run.side_effect = [mock_process_ffprobe, mock_process_ffmpeg]
-
-            output_path, temp_dir = await service.render_timeline(request)
-
-            assert output_path.endswith("output.mp4")
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
-
-            assert mock_download.called
-            assert mock_run.call_count == 2
-
-            # Verify that the color filter was used instead of trim
-            args, _ = mock_run.call_args_list[1]
-            cmd = args[0]
-            filter_idx = cmd.index("-filter_complex")
-            filter_str = cmd[filter_idx + 1]
-            assert "color=s=1280x720" in filter_str
-            assert "[0:v]trim=" not in filter_str

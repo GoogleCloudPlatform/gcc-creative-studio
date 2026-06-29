@@ -28,6 +28,8 @@ from src.workbench.dto.workbench_dto import (
     TimelineCreate,
     TimelineUpdate,
     TimelineResponse,
+    RenderTimelineRequest,
+    RenderTimelineResponse,
 )
 from src.workbench.workbench_service import WorkbenchService
 
@@ -40,27 +42,37 @@ logger = logging.getLogger(__name__)
 security = HTTPBearer()
 
 
-def cleanup_temp_dir(path: str):
-    try:
-        shutil.rmtree(path)
-        logger.info("Cleaned up temp dir: %s", path)
-    except Exception as e:
-        logger.error("Failed to cleanup temp dir %s: %s", path, e)
-
-
-@router.post("/render")
-async def render_timeline(
-    request: TimelineRequest,
+@router.post(
+    "/timelines/{timeline_id}/render",
+    response_model=RenderTimelineResponse,
+)
+async def render_timeline_by_id(
+    timeline_id: int,
+    current_user: UserModel = Depends(get_current_user),
     service: WorkbenchService = Depends(),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
-    video_path, temp_dir = await service.render_timeline(request)
+    result = await service.render_timeline_by_id(timeline_id, current_user)
+    if not result:
+        raise HTTPException(status_code=404, detail="Timeline not found")
+    return result
 
-    return FileResponse(
-        video_path,
-        media_type="video/mp4",
-        filename="export.mp4",
-        background=BackgroundTask(cleanup_temp_dir, temp_dir),
+
+@router.post("/render", response_model=RenderTimelineResponse)
+async def render_timeline(
+    request: RenderTimelineRequest,
+    current_user: UserModel = Depends(get_current_user),
+    service: WorkbenchService = Depends(),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    if not request.timeline_id:
+        raise HTTPException(status_code=400, detail="timeline_id is required")
+    result = await service.render_timeline_by_id(
+        request.timeline_id, current_user
     )
+    if not result:
+        raise HTTPException(status_code=404, detail="Timeline not found")
+    return result
 
 
 @router.post(

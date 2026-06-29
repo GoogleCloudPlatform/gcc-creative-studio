@@ -202,6 +202,7 @@ class SourceAssetService:
         upscale_factor: str | None = None,
         enhance_input_image: bool | None = None,
         image_preservation_factor: float | None = None,
+        skip_deduplication: bool = False,
     ) -> SourceAssetResponseDto:
         """Handles uploading, de-duplicating, upscaling, and saving a new user asset."""
         contents = file_bytes
@@ -213,13 +214,16 @@ class SourceAssetService:
 
         file_hash = hashlib.sha256(contents).hexdigest()
 
-        # 1. Check for duplicates for this user
-        existing_asset = await self.repo.find_by_hash(user.id, file_hash)
-        if existing_asset:
-            logger.info(
-                f"Duplicate asset found for user {user.email} with hash {file_hash[:8]}. Returning existing.",
-            )
-            return await self._create_asset_response(existing_asset)
+        # 1. Check for duplicates for this user unless skipping deduplication
+        if skip_deduplication:
+            file_hash = f"{file_hash[:24]}_{uuid.uuid4().hex[:8]}"
+        else:
+            existing_asset = await self.repo.find_by_hash(user.id, file_hash)
+            if existing_asset:
+                logger.info(
+                    f"Duplicate asset found for user {user.email} with hash {file_hash[:8]}. Returning existing.",
+                )
+                return await self._create_asset_response(existing_asset)
 
         # 2. Handle file processing based on type (image vs. video vs. audio)
         is_video: bool = bool(mime_type and "video" in mime_type)

@@ -42,6 +42,18 @@ class TimelineRequest(BaseModel):
     hide_video: bool = False
 
 
+class RenderTimelineRequest(BaseModel):
+    timeline_id: int | None = None
+    output_filename: str | None = None
+
+
+class RenderTimelineResponse(BaseModel):
+    asset_id: int | str
+    gcs_uri: str
+    timeline_id: int
+    message: str = "Timeline rendered successfully"
+
+
 # --- Video Timeline NLE Models (with Relative Placements) ---
 
 

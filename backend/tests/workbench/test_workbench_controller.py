@@ -21,7 +21,10 @@ import pytest
 from fastapi import status
 
 from main import app
-from src.workbench.dto.workbench_dto import TimelineResponse
+from src.workbench.dto.workbench_dto import (
+    TimelineResponse,
+    RenderTimelineResponse,
+)
 from src.workbench.workbench_service import WorkbenchService
 
 
@@ -53,35 +56,23 @@ class TestWorkbenchController:
     """Tests for Workbench Controller endpoints."""
 
     def test_render_timeline(self, api_client, mock_workbench_service):
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
-            tf.write(b"dummy video content")
-            tf_path = tf.name
-
-        temp_dir = tempfile.mkdtemp()
-        mock_workbench_service.render_timeline.return_value = (
-            tf_path,
-            temp_dir,
+        mock_res = RenderTimelineResponse(
+            asset_id=10,
+            gcs_uri="gs://bucket/renders/export.mp4",
+            timeline_id=1,
+            message="Success",
         )
+        mock_workbench_service.render_timeline_by_id.return_value = mock_res
 
-        payload = {
-            "clips": [
-                {
-                    "assetId": "1",
-                    "url": "http://example.com/v.mp4",
-                    "startTime": 0.0,
-                    "duration": 5.0,
-                    "offset": 0.0,
-                    "trackIndex": 0,
-                    "type": "video",
-                }
-            ]
-        }
-        response = api_client.post("/api/workbench/render", json=payload)
+        response = api_client.post("/api/workbench/timelines/1/render")
         assert response.status_code == status.HTTP_200_OK
-        assert response.headers["content-type"] == "video/mp4"
+        assert response.json()["asset_id"] == 10
+        assert response.json()["gcs_uri"] == "gs://bucket/renders/export.mp4"
 
-        if os.path.exists(tf_path):
-            os.remove(tf_path)
+        payload = {"timeline_id": 1}
+        response_legacy = api_client.post("/api/workbench/render", json=payload)
+        assert response_legacy.status_code == status.HTTP_200_OK
+        assert response_legacy.json()["asset_id"] == 10
 
     def test_create_timeline(self, api_client, mock_workbench_service):
         mock_res = TimelineResponse(
