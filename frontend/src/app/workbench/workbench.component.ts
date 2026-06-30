@@ -42,9 +42,16 @@ import {
   ImageSelectorComponent,
   MediaItemSelection,
 } from '../common/components/image-selector/image-selector.component';
-import {SourceAssetResponseDto} from '../common/services/source-asset.service';
+import {
+  SourceAssetResponseDto,
+  SourceAssetService,
+} from '../common/services/source-asset.service';
 // --- Interfaces ---
-import {WorkbenchService, TimelineRequest, Clip} from './workbench.service';
+import {
+  WorkbenchService,
+  RenderTimelineRequest,
+  RenderTimelineResponse,
+} from './workbench.service';
 import {AgentChatService} from './services/agent-chat.service';
 import {TimeRulerComponent} from './components/time-ruler/time-ruler.component';
 import {
@@ -61,7 +68,7 @@ import {
 } from '../common/models/workbench.model';
 import {ActivatedRoute} from '@angular/router';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
-import {Subject, Subscription} from 'rxjs';
+import {Subject, Subscription, of, Observable} from 'rxjs';
 import {debounceTime} from 'rxjs/operators';
 import {StoryboardService} from '../services/storyboard/storyboard.service';
 
@@ -161,6 +168,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   private storyboardService = inject(StoryboardService);
 
   private workspaceStateService = inject(WorkspaceStateService);
+  private sourceAssetService = inject(SourceAssetService);
 
   isDownloading = signal(false);
 
@@ -1068,54 +1076,63 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   // --- Download / Render ---
   downloadVideo() {
-    // Only allow download if there are clips and not already downloading
-    if (this.timelineState.timelineClips().length === 0 || this.isDownloading())
+    const storyboard = this.agentChatService.currentStoryboard();
+    if (!storyboard || !storyboard.timeline_id || this.isDownloading()) {
+      console.warn('Cannot download: missing storyboard or timeline ID');
       return;
+    }
 
-    this.isDownloading.set(true);
+    const runRender = () => {
+      this.isDownloading.set(true);
 
-    // Map timeline clips to request format
-    const requestClips: Clip[] = this.timelineState
-      .timelineClips()
-      .filter(clip => !this.isTrackMuted(clip.trackIndex))
-      .map(clip => {
-        const asset = this.timelineState
-          .assets()
-          .find(a => a.id === clip.assetId);
-        return {
-          assetId: clip.assetId,
-          url: asset?.url || '',
-          startTime: clip.startTime,
-          duration: clip.duration,
-          offset: clip.offset,
-          trackIndex: clip.trackIndex,
-          type: clip.trackIndex === 0 ? 'video' : 'audio',
-        };
+      const request: RenderTimelineRequest = {
+        timeline_id: storyboard.timeline_id,
+      };
+
+      this.workbenchService.renderVideo(request).subscribe({
+        next: (res: RenderTimelineResponse) => {
+          this.sourceAssetService.getAsset(Number(res.asset_id)).subscribe({
+            next: asset => {
+              if (asset && (asset.presignedOriginalUrl || asset.presignedUrl)) {
+                const url = asset.presignedOriginalUrl || asset.presignedUrl;
+                const a = document.createElement('a');
+                a.href = url;
+                a.download =
+                  asset.originalFilename ||
+                  `creative-studio-export-${new Date().getTime()}.mp4`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+              } else {
+                console.error('Failed to download: presigned URL is missing');
+              }
+              this.isDownloading.set(false);
+            },
+            error: err => {
+              console.error('Failed to fetch rendered asset details', err);
+              this.isDownloading.set(false);
+            },
+          });
+        },
+        error: err => {
+          console.error('Render failed', err);
+          this.isDownloading.set(false);
+        },
       });
-
-    const request: TimelineRequest = {
-      clips: requestClips,
-      hide_video: this.isVideoHidden(),
     };
 
-    this.workbenchService.renderVideo(request).subscribe({
-      next: blob => {
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `creative-studio-export-${new Date().getTime()}.mp4`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url);
-        this.isDownloading.set(false);
-      },
-      error: err => {
-        console.error('Download failed', err);
-        this.isDownloading.set(false);
-        // Ideally show a snackbar here
-      },
-    });
+    if (this.hasPendingSave) {
+      this.saveTimeline().subscribe({
+        next: () => {
+          runRender();
+        },
+        error: err => {
+          console.error('Save failed before download, aborting render', err);
+        },
+      });
+    } else {
+      runRender();
+    }
   }
 
   // Scrubbing State
@@ -1450,14 +1467,14 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     this.saveSubject.next();
   }
 
-  saveTimeline() {
+  saveTimeline(): Observable<TimelineDTO | null> {
     this.hasPendingSave = false;
     const sb = this.agentChatService.currentStoryboard();
     if (!sb || !sb.id || !sb.timeline_id) {
       console.warn(
         'Cannot auto-save timeline: missing storyboard, ID, or timeline ID',
       );
-      return;
+      return of(null);
     }
 
     if (this.activeSaveSubscription) {
@@ -1547,6 +1564,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     };
 
     this.isSaving = true;
+    const subject = new Subject<TimelineDTO>();
     this.activeSaveSubscription = this.workbenchService
       .updateTimeline(sb.timeline_id, timelineUpdate)
       .subscribe({
@@ -1554,12 +1572,16 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           console.log('Timeline updated successfully', res);
           this.lastSavedText.set('Saved');
           this.isSaving = false;
+          subject.next(res);
+          subject.complete();
         },
         error: err => {
           console.error('Error updating timeline', err);
           this.lastSavedText.set('Failed to save changes');
           this.isSaving = false;
+          subject.error(err);
         },
       });
+    return subject.asObservable();
   }
 }

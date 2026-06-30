@@ -30,7 +30,8 @@ import {
 import {TimelineDTO} from '../common/models/workbench.model';
 import {MediaItemSelection} from '../common/components/image-selector/image-selector.component';
 import {StoryboardService} from '../services/storyboard/storyboard.service';
-import {WorkbenchService} from './workbench.service';
+import {WorkbenchService, RenderTimelineResponse} from './workbench.service';
+import {SourceAssetService} from '../common/services/source-asset.service';
 
 describe('WorkbenchComponent', () => {
   let component: WorkbenchComponent;
@@ -487,6 +488,121 @@ describe('WorkbenchComponent', () => {
         transition_out: undefined,
       });
       expect(component.lastSavedText()).toBe('Saved');
+    });
+  });
+
+  describe('downloadVideo', () => {
+    let agentChatService: AgentChatService;
+    let workbenchService: WorkbenchService;
+    let sourceAssetService: SourceAssetService;
+
+    beforeEach(() => {
+      agentChatService = TestBed.inject(AgentChatService);
+      workbenchService = TestBed.inject(WorkbenchService);
+      sourceAssetService = TestBed.inject(SourceAssetService);
+    });
+
+    it('should not call renderVideo if storyboard is null', () => {
+      agentChatService.currentStoryboard.set(null);
+      spyOn(workbenchService, 'renderVideo');
+
+      component.downloadVideo();
+
+      expect(workbenchService.renderVideo).not.toHaveBeenCalled();
+    });
+
+    it('should not call renderVideo if storyboard.timeline_id is null', () => {
+      agentChatService.currentStoryboard.set({id: 1} as any);
+      spyOn(workbenchService, 'renderVideo');
+
+      component.downloadVideo();
+
+      expect(workbenchService.renderVideo).not.toHaveBeenCalled();
+    });
+
+    it('should call renderVideo and then getAsset to trigger file download', () => {
+      const mockStoryboard = {id: 1, timeline_id: 2};
+      agentChatService.currentStoryboard.set(mockStoryboard as any);
+
+      const renderResponse: RenderTimelineResponse = {
+        asset_id: 10,
+        gcs_uri: 'gs://bucket/renders/export.mp4',
+        timeline_id: 2,
+        message: 'Success',
+      };
+
+      const assetResponse = {
+        id: 10,
+        presignedOriginalUrl: 'http://example.com/download-video.mp4',
+        originalFilename: 'video_rendered.mp4',
+      };
+
+      spyOn(workbenchService, 'renderVideo').and.returnValue(
+        of(renderResponse),
+      );
+      spyOn(sourceAssetService, 'getAsset').and.returnValue(
+        of(assetResponse as any),
+      );
+
+      const mockAnchor = jasmine.createSpyObj('HTMLAnchorElement', ['click']);
+      spyOn(document, 'createElement').and.returnValue(mockAnchor);
+      spyOn(document.body, 'appendChild');
+      spyOn(document.body, 'removeChild');
+
+      component.downloadVideo();
+
+      expect(workbenchService.renderVideo).toHaveBeenCalledWith({
+        timeline_id: 2,
+      });
+      expect(sourceAssetService.getAsset).toHaveBeenCalledWith(10);
+      expect(document.createElement).toHaveBeenCalledWith('a');
+      expect(mockAnchor.href).toBe('http://example.com/download-video.mp4');
+      expect(mockAnchor.download).toBe('video_rendered.mp4');
+      expect(mockAnchor.click).toHaveBeenCalled();
+      expect(component.isDownloading()).toBeFalse();
+    });
+
+    it('should call saveTimeline first if hasPendingSave is true before rendering', () => {
+      const mockStoryboard = {id: 1, timeline_id: 2};
+      agentChatService.currentStoryboard.set(mockStoryboard as any);
+
+      component['hasPendingSave'] = true;
+
+      const renderResponse: RenderTimelineResponse = {
+        asset_id: 10,
+        gcs_uri: 'gs://bucket/renders/export.mp4',
+        timeline_id: 2,
+        message: 'Success',
+      };
+
+      const assetResponse = {
+        id: 10,
+        presignedOriginalUrl: 'http://example.com/download-video.mp4',
+        originalFilename: 'video_rendered.mp4',
+      };
+
+      spyOn(component, 'saveTimeline').and.returnValue(of({} as any));
+      spyOn(workbenchService, 'renderVideo').and.returnValue(
+        of(renderResponse),
+      );
+      spyOn(sourceAssetService, 'getAsset').and.returnValue(
+        of(assetResponse as any),
+      );
+
+      const mockAnchor = jasmine.createSpyObj('HTMLAnchorElement', ['click']);
+      spyOn(document, 'createElement').and.returnValue(mockAnchor);
+      spyOn(document.body, 'appendChild');
+      spyOn(document.body, 'removeChild');
+
+      component.downloadVideo();
+
+      expect(component.saveTimeline).toHaveBeenCalled();
+      expect(workbenchService.renderVideo).toHaveBeenCalledWith({
+        timeline_id: 2,
+      });
+      expect(sourceAssetService.getAsset).toHaveBeenCalledWith(10);
+      expect(mockAnchor.click).toHaveBeenCalled();
+      expect(component.isDownloading()).toBeFalse();
     });
   });
 

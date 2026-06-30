@@ -20,22 +20,16 @@ import {Observable} from 'rxjs';
 import {environment} from '../../environments/environment';
 import {TimelineDTO} from '../common/models/workbench.model';
 
-export interface Clip {
-  assetId: string;
-  url: string;
-  startTime: number;
-  duration: number;
-  offset: number;
-  trackIndex: number;
-  type: 'video' | 'audio';
+export interface RenderTimelineRequest {
+  timeline_id: number;
+  output_filename?: string;
 }
 
-export interface TimelineRequest {
-  clips: Clip[];
-  output_format?: string;
-  width?: number;
-  height?: number;
-  hide_video?: boolean;
+export interface RenderTimelineResponse {
+  asset_id: number | string;
+  gcs_uri: string;
+  timeline_id: number;
+  message: string;
 }
 
 @Injectable({
@@ -46,10 +40,13 @@ export class WorkbenchService {
 
   constructor(private http: HttpClient) {}
 
-  renderVideo(request: TimelineRequest): Observable<Blob> {
-    return this.http.post(`${this.apiUrl}/render`, request, {
-      responseType: 'blob',
-    });
+  renderVideo(
+    request: RenderTimelineRequest,
+  ): Observable<RenderTimelineResponse> {
+    return this.http.post<RenderTimelineResponse>(
+      `${this.apiUrl}/render`,
+      request,
+    );
   }
 
   getTimeline(timelineId: number | string): Observable<TimelineDTO> {
