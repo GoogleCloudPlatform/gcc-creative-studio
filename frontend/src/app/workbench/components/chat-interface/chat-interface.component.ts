@@ -235,9 +235,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       const sessionId = params['sessionId'];
 
       const isExplicitNewChat =
-        !sessionId &&
-        !storyboardId &&
-        this.lastWorkspaceId === workspaceId;
+        !sessionId && !storyboardId && this.lastWorkspaceId === workspaceId;
 
       if (isExplicitNewChat) {
         this.isLoadingHistory.set(false);
