@@ -16,6 +16,7 @@
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {WorkbenchComponent} from './workbench.component';
+import {HttpClient} from '@angular/common/http';
 import {HttpClientTestingModule} from '@angular/common/http/testing';
 import {RouterTestingModule} from '@angular/router/testing';
 import {MatDialogModule} from '@angular/material/dialog';
@@ -26,6 +27,7 @@ import {
   TimelineStateService,
   MediaAsset,
 } from './services/timeline-state.service';
+import {PlayheadSyncService} from './services/playhead-sync.service';
 
 import {TimelineDTO} from '../common/models/workbench.model';
 import {MediaItemSelection} from '../common/components/image-selector/image-selector.component';
@@ -495,11 +497,13 @@ describe('WorkbenchComponent', () => {
     let agentChatService: AgentChatService;
     let workbenchService: WorkbenchService;
     let sourceAssetService: SourceAssetService;
+    let http: HttpClient;
 
     beforeEach(() => {
       agentChatService = TestBed.inject(AgentChatService);
       workbenchService = TestBed.inject(WorkbenchService);
       sourceAssetService = TestBed.inject(SourceAssetService);
+      http = TestBed.inject(HttpClient);
     });
 
     it('should not call renderVideo if storyboard is null', () => {
@@ -544,6 +548,11 @@ describe('WorkbenchComponent', () => {
         of(assetResponse as any),
       );
 
+      const mockBlob = new Blob(['mock binary'], {type: 'video/mp4'});
+      spyOn(http, 'get').and.returnValue(of(mockBlob));
+      spyOn(window.URL, 'createObjectURL').and.returnValue('blob:mock-url');
+      spyOn(window.URL, 'revokeObjectURL');
+
       const mockAnchor = jasmine.createSpyObj('HTMLAnchorElement', ['click']);
       spyOn(document, 'createElement').and.returnValue(mockAnchor);
       spyOn(document.body, 'appendChild');
@@ -555,8 +564,12 @@ describe('WorkbenchComponent', () => {
         timeline_id: 2,
       });
       expect(sourceAssetService.getAsset).toHaveBeenCalledWith(10);
+      expect(http.get).toHaveBeenCalledWith(
+        'http://example.com/download-video.mp4',
+        {responseType: 'blob'} as any,
+      );
       expect(document.createElement).toHaveBeenCalledWith('a');
-      expect(mockAnchor.href).toBe('http://example.com/download-video.mp4');
+      expect(mockAnchor.href).toBe('blob:mock-url');
       expect(mockAnchor.download).toBe('video_rendered.mp4');
       expect(mockAnchor.click).toHaveBeenCalled();
       expect(component.isDownloading()).toBeFalse();
@@ -589,6 +602,11 @@ describe('WorkbenchComponent', () => {
         of(assetResponse as any),
       );
 
+      const mockBlob = new Blob(['mock binary'], {type: 'video/mp4'});
+      spyOn(http, 'get').and.returnValue(of(mockBlob));
+      spyOn(window.URL, 'createObjectURL').and.returnValue('blob:mock-url2');
+      spyOn(window.URL, 'revokeObjectURL');
+
       const mockAnchor = jasmine.createSpyObj('HTMLAnchorElement', ['click']);
       spyOn(document, 'createElement').and.returnValue(mockAnchor);
       spyOn(document.body, 'appendChild');
@@ -601,8 +619,67 @@ describe('WorkbenchComponent', () => {
         timeline_id: 2,
       });
       expect(sourceAssetService.getAsset).toHaveBeenCalledWith(10);
+      expect(http.get).toHaveBeenCalledWith(
+        'http://example.com/download-video.mp4',
+        {responseType: 'blob'} as any,
+      );
+      expect(document.createElement).toHaveBeenCalledWith('a');
+      expect(mockAnchor.href).toBe('blob:mock-url2');
+      expect(mockAnchor.download).toBe('video_rendered.mp4');
       expect(mockAnchor.click).toHaveBeenCalled();
       expect(component.isDownloading()).toBeFalse();
+    });
+  });
+
+  describe('togglePlay', () => {
+    let stateService: TimelineStateService;
+    let playbackService: PlayheadSyncService;
+
+    beforeEach(() => {
+      stateService = TestBed.inject(TimelineStateService);
+      playbackService = TestBed.inject(PlayheadSyncService);
+      spyOn(playbackService, 'runGameLoop');
+      spyOn(playbackService, 'stopLoop');
+    });
+
+    it('should pause playback if currently playing', () => {
+      stateService.isPlaying.set(true);
+
+      component.togglePlay();
+
+      expect(stateService.isPlaying()).toBeFalse();
+      expect(playbackService.stopLoop).toHaveBeenCalled();
+    });
+
+    it('should start playback if currently paused', () => {
+      stateService.isPlaying.set(false);
+
+      component.togglePlay();
+
+      expect(stateService.isPlaying()).toBeTrue();
+      expect(playbackService.runGameLoop).toHaveBeenCalled();
+    });
+
+    it('should set activeToolButton to null when starting play and agent view is active with timeline content', () => {
+      stateService.isPlaying.set(false);
+      component.activeToolButton.set('agent');
+      stateService.timelineClips.set([{id: 'clip1'} as any]);
+
+      component.togglePlay();
+
+      expect(component.activeToolButton()).toBeNull();
+      expect(stateService.isPlaying()).toBeTrue();
+    });
+
+    it('should keep activeToolButton as agent when starting play and agent view is active but timeline is empty', () => {
+      stateService.isPlaying.set(false);
+      component.activeToolButton.set('agent');
+      stateService.timelineClips.set([]);
+
+      component.togglePlay();
+
+      expect(component.activeToolButton()).toBe('agent');
+      expect(stateService.isPlaying()).toBeTrue();
     });
   });
 

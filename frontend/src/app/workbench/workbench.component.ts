@@ -31,6 +31,7 @@ import {
   PLATFORM_ID,
 } from '@angular/core';
 import {isPlatformBrowser} from '@angular/common';
+import {HttpClient} from '@angular/common/http';
 import {MatIconRegistry} from '@angular/material/icon';
 import {
   DomSanitizer,
@@ -161,6 +162,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   // Services
   private sanitizer = inject(DomSanitizer);
   private workbenchService = inject(WorkbenchService);
+  private http = inject(HttpClient);
   private agentChatService = inject(AgentChatService);
   protected timelineState = inject(TimelineStateService);
   protected playbackService = inject(PlayheadSyncService);
@@ -1066,6 +1068,12 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       }
     } else {
       // Playing
+      if (
+        this.activeToolButton() === 'agent' &&
+        this.timelineState.timelineClips().length > 0
+      ) {
+        this.activeToolButton.set(null);
+      }
       this.timelineState.isPlaying.set(true);
       this.playbackService.runGameLoop();
     }
@@ -1095,18 +1103,29 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
             next: asset => {
               if (asset && (asset.presignedOriginalUrl || asset.presignedUrl)) {
                 const url = asset.presignedOriginalUrl || asset.presignedUrl;
-                const a = document.createElement('a');
-                a.href = url;
-                a.download =
-                  asset.originalFilename ||
-                  `creative-studio-export-${new Date().getTime()}.mp4`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
+                this.http.get(url, {responseType: 'blob'}).subscribe({
+                  next: blob => {
+                    const localUrl = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = localUrl;
+                    a.download =
+                      asset.originalFilename ||
+                      `creative-studio-export-${new Date().getTime()}.mp4`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(localUrl);
+                    this.isDownloading.set(false);
+                  },
+                  error: err => {
+                    console.error('Failed to download video file blob', err);
+                    this.isDownloading.set(false);
+                  },
+                });
               } else {
                 console.error('Failed to download: presigned URL is missing');
+                this.isDownloading.set(false);
               }
-              this.isDownloading.set(false);
             },
             error: err => {
               console.error('Failed to fetch rendered asset details', err);
