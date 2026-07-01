@@ -82,7 +82,7 @@ configure_firebase_site_id() {
     local default_site_name
     # The `jq` filter first looks for a site with type "DEFAULT_SITE". If not found, it takes the first site in the list.
     # The result is the full resource name, e.g., "projects/my-proj/sites/my-site-id".
-    default_site_name=$(firebase hosting:sites:list --project "$project_id" --json | jq -r 'first(.result.sites[] | select(.type == "DEFAULT_SITE") | .name) // first(.result.sites[].name) // ""')
+    default_site_name=$(firebase hosting:sites:list --project "$project_id" --json | jq -r 'first(.result.sites[]? | select(.type == "DEFAULT_SITE") | .name) // first(.result.sites[]?.name) // ""')
 
     # If a site was found, extract the site ID from the name. Otherwise, fall back to the project ID.
     local site_id_to_use=$project_id
