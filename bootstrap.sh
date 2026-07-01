@@ -458,11 +458,17 @@ configure_environment() {
             read -p "   Domain Name (or IP): " DOMAIN_NAME < /dev/tty
             read -p "   GCP Organization ID: " ORG_ID < /dev/tty
 
+            prompt "Please configure Workforce IAP OAuth Client (See README_ENTRA.md Step 3):"
+            read -p "   IAP OAuth Client ID: " IAP_OAUTH_CLIENT_ID < /dev/tty
+            read -s -p "   IAP OAuth Client Secret: " IAP_OAUTH_CLIENT_SECRET < /dev/tty; echo
+
             sed -i.bak "s|^[#[:space:]]*entra_client_id[[:space:]]*=.*|entra_client_id = \"$ENTRA_CLIENT_ID\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*entra_tenant_id[[:space:]]*=.*|entra_tenant_id = \"$ENTRA_TENANT_ID\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*entra_client_secret[[:space:]]*=.*|entra_client_secret = \"$ENTRA_CLIENT_SECRET\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*domain_name[[:space:]]*=.*|domain_name = \"$DOMAIN_NAME\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*org_id[[:space:]]*=.*|org_id = \"$ORG_ID\"|g" "$TFVARS_FILE_PATH"
+            sed -i.bak "s|^[#[:space:]]*iap_oauth2_client_id[[:space:]]*=.*|iap_oauth2_client_id = \"$IAP_OAUTH_CLIENT_ID\"|g" "$TFVARS_FILE_PATH"
+            sed -i.bak "s|^[#[:space:]]*iap_oauth2_client_secret[[:space:]]*=.*|iap_oauth2_client_secret = \"$IAP_OAUTH_CLIENT_SECRET\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*workforce_pool_id[[:space:]]*=.*|workforce_pool_id = \"cs-workforce-pool\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*iap_access_members[[:space:]]*=.*|iap_access_members = [\"principalSet://iam.googleapis.com/locations/global/workforcePools/cs-workforce-pool/*\"]|g" "$TFVARS_FILE_PATH"
 

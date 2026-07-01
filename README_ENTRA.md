@@ -67,7 +67,57 @@ You need to register the Creative Studio application in your Microsoft Entra Ten
 
 ---
 
-## 🚀 Step 3: Deploy to Google Cloud Platform (GCP)
+## 🛡️ Step 3: Create Google Workforce OAuth Client for IAP
+
+Standard Google Accounts OAuth clients cannot be used with Workforce Identity Federation. Instead, you must create a dedicated Workforce Identity OAuth Client using the `gcloud` CLI. **Do NOT use the GCP Console to create this client**, as it will incorrectly prompt you to configure a consent screen.
+
+1.  Run the following command to create the global Workforce OAuth client (replace `YOUR_PROJECT_ID` with your GCP project ID):
+    ```bash
+    gcloud iam oauth-clients create cs-wif-oauth-client \
+        --project=YOUR_PROJECT_ID \
+        --location=global \
+        --client-type="confidential-client" \
+        --display-name="Creative Studio IAP WIF Client" \
+        --allowed-grant-types="authorization-code-grant" \
+        --allowed-scopes="openid,email,https://www.googleapis.com/auth/cloud-platform" \
+        --allowed-redirect-uris="https://example.com/callback"
+    ```
+2.  Describe the client to retrieve the system-generated **Client ID**:
+    ```bash
+    gcloud iam oauth-clients describe cs-wif-oauth-client \
+        --project=YOUR_PROJECT_ID \
+        --location=global
+    ```
+    *Copy the **`clientId`** value from the output (e.g., `ae1b3ac35...`).*
+3.  Update the OAuth client's redirect URI with its own generated Client ID:
+    ```bash
+    gcloud iam oauth-clients update cs-wif-oauth-client \
+        --project=YOUR_PROJECT_ID \
+        --location=global \
+        --allowed-redirect-uris="https://iap.googleapis.com/v1/oauth/clientIds/YOUR_GENERATED_CLIENT_ID:handleRedirect"
+    ```
+    *(Replace `YOUR_GENERATED_CLIENT_ID` with the Client ID from the previous step).*
+4.  Generate the **Client Secret**:
+    ```bash
+    gcloud iam oauth-clients credentials create cs-wif-oauth-credential \
+        --oauth-client=cs-wif-oauth-client \
+        --project=YOUR_PROJECT_ID \
+        --location=global
+    ```
+5.  Retrieve and save the generated **Client Secret**:
+    ```bash
+    gcloud iam oauth-clients credentials describe cs-wif-oauth-credential \
+        --oauth-client=cs-wif-oauth-client \
+        --project=YOUR_PROJECT_ID \
+        --location=global
+    ```
+    *Copy the **`clientSecret`** value from the output.*
+
+Keep both the **Client ID** and **Client Secret** handy for the next step.
+
+---
+
+## 🚀 Step 4: Deploy to Google Cloud Platform (GCP)
 
 The project includes an automated `bootstrap.sh` script that handles the configuration of Terraform variables, GCP Secret Manager initialization, and deployment.
 
@@ -95,6 +145,8 @@ The project includes an automated `bootstrap.sh` script that handles the configu
     *   **Domain Name**: Enter the domain name or IP where the app will be hosted. 
         *   *If you do not have a custom domain yet*, you can use a temporary placeholder like `127.0.0.1` or `temp.example.com`. After the deployment finishes and you get the Load Balancer IP, you can re-run the script or update the `.tfvars` file to use `[LB_IP].nip.io` for testing.
     *   **GCP Organization ID**: Enter your GCP Organization numerical ID. You can find this in the GCP Console under the project selector or by running `gcloud organizations list`. This is required to set up Workforce Identity Federation.
+    *   **IAP OAuth Client ID**: Paste the Client ID generated in Step 3.
+    *   **IAP OAuth Client Secret**: Paste the Client Secret generated in Step 3.
 
 ### ⚠️ Crucial Manual Actions Required During Bootstrapping
 
@@ -128,7 +180,7 @@ The script execution is complete when you see a green success message with the *
 
 ---
 
-## 🔒 Step 3.5: Configure Email Domain Allowlist (Optional)
+## 🔒 Step 4.5: Configure Email Domain Allowlist (Optional)
 
 By default, any user authenticated via your Entra ID tenant can access the application. You can restrict access to specific email domains (e.g., only allow `yourcompany.com` or specific partner domains) using the application-level allowlist.
 
@@ -161,7 +213,7 @@ By default, any user authenticated via your Entra ID tenant can access the appli
 
 ---
 
-## 🌐 Step 4: Add a Custom Domain
+## 🌐 Step 5: Add a Custom Domain
 
 To configure a custom domain instead of using the default IP-based hostname:
 
