@@ -94,7 +94,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
 
   private sessionSelectorEffect = effect(() => {
     const sessionId = this.agentChatService.selectedSessionId();
-    if (sessionId && sessionId !== this.currentSessionId) {
+    if (sessionId && Number(sessionId) !== Number(this.currentSessionId)) {
       this.currentSessionId = sessionId;
       this.loadChatMessages(sessionId);
     }
@@ -116,7 +116,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     if (sb && sb.id) {
       const currentStoryboardId =
         this.route.snapshot.queryParams['storyboardId'];
-      if (currentStoryboardId !== sb.id) {
+      if (Number(currentStoryboardId) !== Number(sb.id)) {
         void this.router.navigate([], {
           relativeTo: this.route,
           queryParams: {
@@ -253,7 +253,12 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
           const sessionExistsInWorkspace =
             sessions &&
             sessions.some(s => {
-              if (sessionId && s.id === sessionId) return true;
+              if (
+                sessionId &&
+                (s.id === sessionId || Number(s.id) === Number(sessionId))
+              ) {
+                return true;
+              }
               if (
                 storyboardId &&
                 (Number(s.state?.current_storyboard_id) ===
@@ -267,10 +272,11 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
 
           if ((sessionId || storyboardId) && sessionExistsInWorkspace) {
             const isDifferentSession =
-              (sessionId && sessionId !== this.currentSessionId) ||
+              (sessionId &&
+                Number(sessionId) !== Number(this.currentSessionId)) ||
               (storyboardId &&
                 Number(storyboardId) !==
-                  this.agentChatService.currentStoryboard()?.id);
+                  Number(this.agentChatService.currentStoryboard()?.id));
             const isDifferentWorkspace = workspaceId !== this.lastWorkspaceId;
 
             if (isDifferentSession || isDifferentWorkspace) {
@@ -338,6 +344,10 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
 
             if (sessions && sessions.length > 0) {
               const latestSession = sessions[0];
+              if (Number(this.currentSessionId) === Number(latestSession.id)) {
+                this.isLoadingHistory.set(false);
+                return;
+              }
               this.currentSessionId = latestSession.id;
               this.agentChatService.selectedSessionId.set(latestSession.id);
               this.lastWorkspaceId = workspaceId;
@@ -385,6 +395,11 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
         .getSessionDetail(workspaceId, sessionId, storyboardId)
         .subscribe({
           next: (res: SessionDetailResponse) => {
+            const activeSessionId =
+              (res.session && res.session.id) || sessionId;
+            this.currentSessionId = activeSessionId;
+            this.agentChatService.selectedSessionId.set(activeSessionId);
+
             if (res.storyboard) {
               if (res.storyboard.timeline_id) {
                 this.timelineState.loadedTimelineId.set(undefined);
@@ -551,7 +566,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     });
   }
   onSessionChange(sessionId: string) {
-    if (sessionId && sessionId !== this.currentSessionId) {
+    if (sessionId && Number(sessionId) !== Number(this.currentSessionId)) {
       this.currentSessionId = sessionId;
       this.loadChatMessages(sessionId);
     }
