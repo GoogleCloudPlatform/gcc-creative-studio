@@ -78,14 +78,14 @@
   </header>
 
   <!-- Main Content Area (Canvas) -->
-  <div class="flex-grow flex overflow-hidden relative bg-neutral-900" #canvasContainer>
+  <div class="flex-grow flex overflow-hidden relative bg-neutral-900" #canvasContainer (mousedown)="onCanvasMouseDown($event)">
     <div class="canvas-content absolute inset-0" #canvasContent>
       <div class="transform-layer w-full h-full absolute top-0 left-0 origin-top-left">
         <!-- Edges Layer (SVG) -->
         <svg class="absolute inset-0 w-full h-full pointer-events-none overflow-visible" style="z-index: 10;">
-          <path *ngFor="let edge of edges" class="animated-wire" [attr.d]="edge.path" fill="none" stroke="#4a5568" stroke-width="3"
+          <path *ngFor="let edge of edges" class="animated-wire" [attr.d]="edge.path" fill="none" [attr.stroke]="edge.color || '#4a5568'" stroke-width="3"
             stroke-linecap="round" />
-          <path *ngIf="activeDragWire" [attr.d]="activeDragWire.path" fill="none" stroke="#63b3ed" stroke-width="3"
+          <path *ngIf="activeDragWire" [attr.d]="activeDragWire.path" fill="none" [attr.stroke]="activeDragWireColor" stroke-width="3"
             stroke-dasharray="5,5" stroke-linecap="round" />
         </svg>
     
@@ -94,6 +94,7 @@
 
           <!-- User Input Node -->
           <div class="user-input-node absolute z-10" 
+               [class.selected-node]="selectedNodeId === 'user_input'"
                [style.left.px]="getNodePosition('user_input').x"
                [style.top.px]="getNodePosition('user_input').y"
                (mousedown)="onNodeMouseDown($event, 'user_input')"
@@ -139,12 +140,15 @@
               <div *ngFor="let def of outputDefinitionsArray.controls; let i = index" class="output-port-container">
                 <div class="port-label">{{ def.get('name')?.value }}</div>
                 <div class="port output-port"
+                     [style.background-color]="getTypeColor(def.get('type')?.value)"
+                     [style.border-color]="getTypeColor(def.get('type')?.value)"
                      matTooltip="Drag to connect"
                      [attr.data-node-id]="'user_input'"
                      [attr.data-port-name]="def.get('name')?.value"
                      [attr.data-port-type]="'output'"
                      (mousedown)="onPortDragStart({stepId: 'user_input', outputName: def.get('name')?.value, mouseEvent: $event})">
                 </div>
+                <span class="port-type-chip output-chip" [attr.data-type]="def.get('type')?.value">{{ getShortType(def.get('type')?.value) }}</span>
               </div>
             </div>
             
@@ -167,9 +171,11 @@
                 [showValidationErrors]="submitted"
                 [stepExecution]="getStepExecution(step.value.stepId)"
                 [mediaUrlMap]="mediaUrlMap"
+                [isSelected]="selectedNodeId === step.value.stepId"
                 (portDragStart)="onPortDragStart($event)"
                 (portDrop)="onPortDrop($event, step.value.stepId)"
-                (delete)="deleteStep(i)">
+                (delete)="deleteStep(i)"
+                (clone)="cloneStep(i)">
               </app-generic-step>
             </ng-container>
           </div>
@@ -178,11 +184,21 @@
       </div>
     </div>
     <!-- Floating Add Node Button -->
-    <div class="add-btn-container" *ngIf="!isReadOnly">
-      <studio-button variant="primary" size="large" (click)="openAddStepModal()">
-        <mat-icon>add</mat-icon>
-        Add Node
-      </studio-button>
+    <div class="add-btn-wrapper" *ngIf="!isReadOnly">
+      <div class="history-btns" *ngIf="historyIndex > 0 || historyIndex < historyStack.length - 1">
+        <button mat-mini-fab color="primary" class="mini-history-btn" *ngIf="historyIndex > 0" (click)="undo()" matTooltip="Undo (Ctrl+Z)">
+          <mat-icon>undo</mat-icon>
+        </button>
+        <button mat-mini-fab color="primary" class="mini-history-btn" *ngIf="historyIndex < historyStack.length - 1" (click)="redo()" matTooltip="Redo (Ctrl+Y)">
+          <mat-icon>redo</mat-icon>
+        </button>
+      </div>
+      <div class="add-btn-container">
+        <studio-button variant="primary" size="large" (click)="openAddStepModal()">
+          <mat-icon>add</mat-icon>
+          Add Node
+        </studio-button>
+      </div>
     </div>
 
   </div>

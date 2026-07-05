@@ -34,7 +34,7 @@ import {MatDialog} from '@angular/material/dialog';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {ActivatedRoute, Router} from '@angular/router';
 import {Observable, Subscription, of} from 'rxjs';
-import {switchMap, tap} from 'rxjs/operators';
+import {switchMap, tap, debounceTime} from 'rxjs/operators';
 import {
   handleErrorSnackbar,
   handleSuccessSnackbar,
@@ -68,6 +68,7 @@ export interface Edge {
   path: string;
   sourceId: string;
   targetId: string;
+  color?: string;
 }
 
 @Component({
@@ -146,6 +147,98 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   activeDragWire: {path: string} | null = null;
   dragSourcePort: {stepId: string; outputName: string} | null = null;
 
+  get activeDragWireColor(): string {
+    if (this.dragSourcePort) {
+      return this.getTypeColor(
+        this.getOutputType(
+          this.dragSourcePort.stepId,
+          this.dragSourcePort.outputName,
+        ),
+      );
+    }
+    return '#63b3ed';
+  }
+
+  selectedNodeId: string | null = null;
+
+  historyStack: any[] = [];
+  historyIndex = -1;
+  isUndoRedoAction = false;
+
+  @HostListener('document:keydown', ['$event'])
+  onDocumentKeydown(event: KeyboardEvent): void {
+    if (this.isReadOnly) return;
+
+    const target = event.target as HTMLElement;
+    if (
+      target &&
+      (target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable)
+    ) {
+      return;
+    }
+
+    if (event.ctrlKey || event.metaKey) {
+      if (event.key.toLowerCase() === 'z') {
+        if (event.shiftKey) {
+          this.redo();
+        } else {
+          this.undo();
+        }
+        event.preventDefault();
+      } else if (event.key.toLowerCase() === 'y') {
+        this.redo();
+        event.preventDefault();
+      }
+    }
+  }
+
+  saveHistoryState() {
+    const currentState = {
+      form: this.workflowForm.getRawValue(),
+      positions: JSON.parse(JSON.stringify(this.nodePositions)),
+    };
+    if (this.historyIndex < this.historyStack.length - 1) {
+      this.historyStack = this.historyStack.slice(0, this.historyIndex + 1);
+    }
+    this.historyStack.push(JSON.parse(JSON.stringify(currentState)));
+    this.historyIndex++;
+  }
+
+  undo() {
+    if (this.historyIndex > 0) {
+      this.isUndoRedoAction = true;
+      this.historyIndex--;
+      const state = this.historyStack[this.historyIndex];
+      this.formService.patchData(state.form);
+      this.nodePositions = JSON.parse(JSON.stringify(state.positions));
+      setTimeout(() => this.updateEdges(), 0);
+    }
+  }
+
+  redo() {
+    if (this.historyIndex < this.historyStack.length - 1) {
+      this.isUndoRedoAction = true;
+      this.historyIndex++;
+      const state = this.historyStack[this.historyIndex];
+      this.formService.patchData(state.form);
+      this.nodePositions = JSON.parse(JSON.stringify(state.positions));
+      setTimeout(() => this.updateEdges(), 0);
+    }
+  }
+
+  onCanvasMouseDown(event: MouseEvent): void {
+    const target = event.target as HTMLElement;
+    if (
+      target.closest('.user-input-node') ||
+      target.closest('app-generic-step')
+    ) {
+      return;
+    }
+    this.selectedNodeId = null;
+  }
+
   private currentTransform = d3.zoomIdentity;
   private zoomBehavior!: d3.ZoomBehavior<Element, unknown>;
 
@@ -174,10 +267,40 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     return control as FormGroup;
   }
 
+  getShortType(type: string): string {
+    if (!type) return 'ANY';
+    const t = type.toLowerCase();
+    if (t.includes('image')) return 'IMG';
+    if (t.includes('text') || t.includes('string')) return 'TXT';
+    if (t.includes('video')) return 'VID';
+    if (t.includes('audio')) return 'AUD';
+    return type.substring(0, 3).toUpperCase();
+  }
+
+  getTypeColor(type: string): string {
+    if (!type) return '#63b3ed'; // Default blue
+    const t = type.toLowerCase();
+    if (t.includes('image')) return '#d53f8c'; // Pink
+    if (t.includes('text') || t.includes('string')) return '#3182ce'; // Blue
+    if (t.includes('video')) return '#dd6b20'; // Orange
+    if (t.includes('audio')) return '#805ad5'; // Purple
+    return '#63b3ed'; // Default
+  }
+
   ngOnInit(): void {
     // Initialize form immediately with empty/default data
     this.formService.initForm();
     this.loadNodePositions();
+
+    this.workflowForm.valueChanges
+      .pipe(debounceTime(500), takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => {
+        if (this.isUndoRedoAction) {
+          this.isUndoRedoAction = false;
+          return;
+        }
+        this.saveHistoryState();
+      });
 
     // Subscribe to available outputs from service
     this.formService.availableOutputsPerStep$.subscribe(outputs => {
@@ -217,6 +340,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             this.displayedWorkflow = this.workflowRun?.workflowSnapshot ?? null;
             this.workflowId = this.workflowRun?.id ?? null;
             if (this.displayedWorkflow) {
+              this.loadNodePositions();
               this.formService.patchData(this.displayedWorkflow);
             }
             this.workflowForm.disable(); // Read-only mode
@@ -224,6 +348,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             this.workflow = data as WorkflowModel;
             this.displayedWorkflow = this.workflow;
             if (this.displayedWorkflow) {
+              this.loadNodePositions();
               this.formService.patchData(this.displayedWorkflow);
             }
           } else {
@@ -258,12 +383,16 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       // Use setTimeout to ensure initial render is complete before updating edges
       setTimeout(() => this.updateEdges(), 100);
 
-      const nodesContainer = this.canvasContent.nativeElement.querySelector('.nodes-container');
+      const nodesContainer =
+        this.canvasContent.nativeElement.querySelector('.nodes-container');
       if (nodesContainer) {
         this.domObserver = new MutationObserver(() => {
           this.updateEdges();
         });
-        this.domObserver.observe(nodesContainer, { childList: true, subtree: true });
+        this.domObserver.observe(nodesContainer, {
+          childList: true,
+          subtree: true,
+        });
       }
     }
   }
@@ -281,17 +410,24 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       .scaleExtent([0.1, 4])
       .on('zoom', event => {
         this.currentTransform = event.transform;
-        
+
         // Transform the inner layer for nodes and edges
-        d3.select(this.canvasContent.nativeElement.querySelector('.transform-layer')).style(
+        d3.select(
+          this.canvasContent.nativeElement.querySelector('.transform-layer'),
+        ).style(
           'transform',
           `translate(${event.transform.x}px, ${event.transform.y}px) scale(${event.transform.k})`,
         );
         // Move the background grid to create an infinite canvas effect
         d3.select(this.canvasContent.nativeElement)
-          .style('background-position', `${event.transform.x}px ${event.transform.y}px`)
-          .style('background-size', `${20 * event.transform.k}px ${20 * event.transform.k}px`);
-    
+          .style(
+            'background-position',
+            `${event.transform.x}px ${event.transform.y}px`,
+          )
+          .style(
+            'background-size',
+            `${20 * event.transform.k}px ${20 * event.transform.k}px`,
+          );
       });
 
     d3.select(this.canvasContainer.nativeElement).call(
@@ -314,9 +450,12 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     }
     // Assign defaults for missing nodes
     if (!this.nodePositions['user_input']) {
-      const centerX = window.innerWidth / 2 - 160; // 320px width / 2
+      const centerX = window.innerWidth / 2 - 200; // 400px width / 2
       const centerY = window.innerHeight / 2 - 150; // Approximate height / 2
-      this.nodePositions['user_input'] = {x: centerX > 0 ? centerX : 100, y: centerY > 0 ? centerY : 100};
+      this.nodePositions['user_input'] = {
+        x: centerX > 0 ? centerX : 100,
+        y: centerY > 0 ? centerY : 100,
+      };
     }
     this.stepsArray.controls.forEach((control, index) => {
       const stepId = control.get('stepId')?.value;
@@ -346,6 +485,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
 
   onNodeMouseDown(event: MouseEvent, stepId: string): void {
     if (this.isReadOnly) return;
+    this.selectedNodeId = stepId;
 
     // Check if clicked on a port or header buttons (avoid dragging if clicking those)
     const target = event.target as HTMLElement;
@@ -423,6 +563,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   onMouseUp(): void {
     if (this.draggingNodeId) {
       this.saveNodePositions();
+      this.saveHistoryState();
       this.draggingNodeId = null;
     }
     if (this.dragSourcePort) {
@@ -478,38 +619,61 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
 
       if (inputs) {
         Object.keys(inputs).forEach(inputName => {
-          const val = inputs[inputName];
-          if (
-            val &&
-            typeof val === 'object' &&
-            !Array.isArray(val) &&
-            val.step &&
-            val.output
-          ) {
-            const sourceId = val.step;
+          let val = inputs[inputName];
+          if (!val) return;
 
-            const sourcePos = this.getPortPosition(
-              sourceId,
-              val.output,
-              'output',
-            );
-            const targetPos = this.getPortPosition(
-              targetId,
-              inputName,
-              'input',
-            );
-
-            if (sourcePos && targetPos) {
-              this.edges.push({
-                sourceId,
-                targetId,
-                path: this.createBezierPath(sourcePos, targetPos),
-              });
-            }
+          // Normalize to array for easier processing
+          if (!Array.isArray(val)) {
+            val = [val];
           }
+
+          val.forEach((item: any) => {
+            if (item && typeof item === 'object' && item.step && item.output) {
+              const sourceId = item.step;
+
+              const sourcePos = this.getPortPosition(
+                sourceId,
+                item.output,
+                'output',
+              );
+              const targetPos = this.getPortPosition(
+                targetId,
+                inputName,
+                'input',
+              );
+
+              if (sourcePos && targetPos) {
+                this.edges.push({
+                  sourceId,
+                  targetId,
+                  path: this.createBezierPath(sourcePos, targetPos),
+                  color: this.getTypeColor(
+                    this.getOutputType(sourceId, item.output),
+                  ),
+                });
+              }
+            }
+          });
         });
       }
     });
+  }
+
+  private getOutputType(stepId: string, outputName: string): string {
+    if (stepId === NodeTypes.USER_INPUT) {
+      const def = this.outputDefinitionsArray.controls.find(
+        c => c.get('name')?.value === outputName,
+      );
+      return def?.get('type')?.value || 'text';
+    } else {
+      const type = this.getStepType(stepId) as string;
+      if (type) {
+        const config = this.getStepConfig(type);
+        const output = config?.outputs?.find((o: any) => o.name === outputName);
+        return output?.type || 'any';
+      }
+    }
+    return 'any';
   }
 
   private getPortPosition(
@@ -520,19 +684,26 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     if (!isPlatformBrowser(this.platformId)) return null;
 
     // Wait, the port element should have data attributes
-    const portEl = document.querySelector(`[data-node-id="${stepId}"][data-port-name="${portName}"][data-port-type="${type}"]`);
-    
+    const portEl = document.querySelector(
+      `[data-node-id="${stepId}"][data-port-name="${portName}"][data-port-type="${type}"]`
+    );
+
     if (portEl && this.canvasContent) {
-      const transformLayer = this.canvasContent.nativeElement.querySelector('.transform-layer');
+      const transformLayer =
+        this.canvasContent.nativeElement.querySelector('.transform-layer');
       if (transformLayer) {
         const portRect = portEl.getBoundingClientRect();
         const layerRect = transformLayer.getBoundingClientRect();
-        
+
         // The transformLayer has transform: scale(k), so getBoundingClientRect() returns scaled dimensions.
         // To find the unscaled position inside the transform layer:
-        const x = (portRect.left + portRect.width / 2 - layerRect.left) / this.currentTransform.k;
-        const y = (portRect.top + portRect.height / 2 - layerRect.top) / this.currentTransform.k;
-        
+        const x =
+          (portRect.left + portRect.width / 2 - layerRect.left) /
+          this.currentTransform.k;
+        const y =
+          (portRect.top + portRect.height / 2 - layerRect.top) /
+          this.currentTransform.k;
+
         return {x, y};
       }
     }
@@ -616,7 +787,6 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
 
   // ... (rest of the component: ngOnDestroy, initForm, addStepToForm, etc. remains the same)
 
-
   addOutput(name = '', type = 'text', id?: string): void {
     this.formService.addOutputDefinition(name, type, id);
   }
@@ -690,6 +860,30 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   }
 
   // createFormGroupFromData removed, handled by service
+
+  cloneStep(index: number) {
+    const stepControl = this.stepsArray.at(index);
+    if (!stepControl) return;
+
+    const stepData = JSON.parse(JSON.stringify(stepControl.value));
+
+    // Generate new ID and reset status
+    stepData.stepId = `node_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    stepData.status = StepStatusEnum.IDLE;
+
+    // Reset linked inputs so they don't clone the same exact wires if that's undesired?
+    // Actually, preserving them is fine, it will just wire up to the same sources!
+
+    const oldStepId = stepControl.get('stepId')?.value;
+    const oldPos = this.nodePositions[oldStepId] || {x: 0, y: 0};
+
+    // Offset the cloned node slightly
+    this.nodePositions[stepData.stepId] = {x: oldPos.x + 40, y: oldPos.y + 40};
+
+    this.formService.addStep(stepData.type, stepData);
+    this.saveNodePositions();
+    this.saveHistoryState();
+  }
 
   deleteStep(index: number) {
     const deletedStepId = this.formService.deleteStep(index);
@@ -794,6 +988,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
           this.mode = EditorMode.Edit;
           this.workflowId = response.id;
           this.workflowForm.patchValue({id: response.id});
+          this.saveNodePositions();
           // Update URL without reloading
           void this.router.navigate(['/workflows', 'edit', response.id], {
             replaceUrl: true,
@@ -860,6 +1055,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
           this.workflowId = response.id;
           workflowId = response.id;
           this.workflowForm.patchValue({id: response.id});
+          this.saveNodePositions();
           void this.router.navigate(['/workflows', 'edit', response.id], {
             replaceUrl: true,
           });

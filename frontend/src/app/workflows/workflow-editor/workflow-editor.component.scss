@@ -157,7 +157,7 @@
   border-radius: 0.5rem;
   border: 1px solid var(--border-color, #333);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-  width: 320px;
+  width: 400px;
   border-top: 4px solid #f87171;
   /* Match user input red */
 
@@ -227,17 +227,42 @@
 }
 
 
-.add-btn-container {
+.add-btn-wrapper {
   position: fixed;
   bottom: 40px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 100;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
 
-  button {
-    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+  .history-btns {
+    display: flex;
+    gap: 8px;
+
+    .mini-history-btn {
+      transform: scale(0.85);
+      background-color: var(--background-elevated);
+      color: var(--text-primary);
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+      transition: all 0.2s ease;
+
+      &:hover {
+        transform: scale(0.95);
+        background-color: var(--background-hover);
+      }
+    }
+  }
+
+  .add-btn-container {
+    display: flex;
+    justify-content: center;
+
+    button {
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+    }
   }
 }
 
@@ -407,3 +432,38 @@
   stroke-dasharray: 10, 10;
   animation: flow-animation 0.5s linear infinite;
 }
+
+.selected-node {
+  box-shadow: 0 0 15px 2px #63b3ed, 0 10px 30px rgba(0, 0, 0, 0.3) !important;
+  border-color: #63b3ed !important;
+}
+
+
+.port-type-chip {
+  position: absolute;
+  top: 50%;
+  font-size: 9px;
+  font-weight: bold;
+  padding: 2px 4px;
+  border-radius: 4px;
+  color: #fff;
+  background-color: #4a5568;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.input-chip {
+  left: -36px;
+  transform: translate(-100%, -50%);
+}
+
+.output-chip {
+  right: -36px;
+  transform: translate(100%, -50%);
+}
+
+.port-type-chip[data-type*="text"], .port-type-chip[data-type*="string"] { background-color: #3182ce; }
+.port-type-chip[data-type*="image"], .port-type-chip[data-type*="Image"] { background-color: #d53f8c; }
+.port-type-chip[data-type*="video"], .port-type-chip[data-type*="Video"] { background-color: #dd6b20; }
+.port-type-chip[data-type*="audio"], .port-type-chip[data-type*="Audio"] { background-color: #805ad5; }
+

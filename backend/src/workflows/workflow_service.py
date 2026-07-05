@@ -86,8 +86,42 @@ class WorkflowService:
         # We init with this default param that is going to propagate user auth header
         workflow_params = ["user_auth_header"]
         user_input_step_id = None
+        # Build dependency graph for topological sorting
+        steps_by_id = {s.step_id: s for s in workflow.steps}
+        adj = {s.step_id: [] for s in workflow.steps}
+        in_degree = {s.step_id: 0 for s in workflow.steps}
 
         for step in workflow.steps:
+            if step.inputs:
+                inputs_dump = step.inputs.model_dump()
+
+                def extract_refs(val):
+                    if isinstance(val, dict) and "step" in val:
+                        ref = val["step"]
+                        if ref in adj and ref != step.step_id:
+                            adj[ref].append(step.step_id)
+                            in_degree[step.step_id] += 1
+                    elif isinstance(val, list):
+                        for item in val:
+                            extract_refs(item)
+
+                for input_value in inputs_dump.values():
+                    extract_refs(input_value)
+
+        queue = [s_id for s_id, deg in in_degree.items() if deg == 0]
+        sorted_steps = []
+        while queue:
+            curr = queue.pop(0)
+            sorted_steps.append(steps_by_id[curr])
+            for neighbor in adj[curr]:
+                in_degree[neighbor] -= 1
+                if in_degree[neighbor] == 0:
+                    queue.append(neighbor)
+
+        if len(sorted_steps) != len(workflow.steps):
+            raise ValueError("Cycle detected in workflow graph")
+
+        for step in sorted_steps:
             if step.type.value == NodeTypes.USER_INPUT:
                 print("USER INPUT FOUND")
                 # This is a user input step, so we should treat it as a workflow parameter

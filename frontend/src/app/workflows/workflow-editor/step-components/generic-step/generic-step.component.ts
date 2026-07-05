@@ -45,8 +45,10 @@ export class GenericStepComponent implements OnInit, OnChanges {
   @Input() showValidationErrors = false;
   @Input() stepExecution: any = null;
   @Input() mediaUrlMap!: Map<string, string>;
+  @Input() isSelected = false;
 
   @Output() delete = new EventEmitter<void>();
+  @Output() clone = new EventEmitter<void>();
   @Output() portDragStart = new EventEmitter<{
     stepId: string;
     outputName: string;
@@ -65,6 +67,26 @@ export class GenericStepComponent implements OnInit, OnChanges {
   compatibleOutputs: {[key: string]: any[]} = {};
 
   constructor(private fb: FormBuilder) {}
+
+  getShortType(type: string): string {
+    if (!type) return 'ANY';
+    const t = type.toLowerCase();
+    if (t.includes('image')) return 'IMG';
+    if (t.includes('text') || t.includes('string')) return 'TXT';
+    if (t.includes('video')) return 'VID';
+    if (t.includes('audio')) return 'AUD';
+    return type.substring(0, 3).toUpperCase();
+  }
+
+  getTypeColor(type: string): string {
+    if (!type) return '#63b3ed'; // Default blue
+    const t = type.toLowerCase();
+    if (t.includes('image')) return '#d53f8c'; // Pink
+    if (t.includes('text') || t.includes('string')) return '#3182ce'; // Blue
+    if (t.includes('video')) return '#dd6b20'; // Orange
+    if (t.includes('audio')) return '#805ad5'; // Purple
+    return '#63b3ed'; // Default
+  }
 
   ngOnInit(): void {
     this.initializeStepState();
@@ -140,7 +162,12 @@ export class GenericStepComponent implements OnInit, OnChanges {
       if (!value) return;
       Object.keys(value).forEach(key => {
         const val = value[key];
-        const isLinked = val && typeof val === 'object' && !Array.isArray(val) && 'step' in val && 'output' in val;
+        const isLinked =
+          val &&
+          typeof val === 'object' &&
+          !Array.isArray(val) &&
+          'step' in val &&
+          'output' in val;
         if (isLinked && this.inputModes[key] !== 'linked') {
           this.inputModes[key] = 'linked';
         }
