@@ -113,15 +113,15 @@
 }
 
 .input-port {
-  left: -32px; /* Outside the card body padding */
+  left: -24px;
   top: 50%;
-  transform: translateY(-50%);
+  transform: translate(-50%, -50%);
 }
 
 .output-port {
-  right: -32px;
+  right: -24px;
   top: 50%;
-  transform: translateY(-50%);
+  transform: translate(-50%, -50%);
 }
 
 /* 1. Header Section */

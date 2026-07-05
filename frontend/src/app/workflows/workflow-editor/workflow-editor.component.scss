@@ -200,9 +200,10 @@
     cursor: crosshair;
     z-index: 10;
     border: 2px solid #2d3748;
-    right: -6px;
+    right: 0;
+  transform: translate(50%, -50%);
     top: 50%;
-    transform: translateY(-50%);
+    
   
     &:hover {
       background-color: #bee3f8;
@@ -262,7 +263,7 @@
   position: absolute;
   top: 50%;
   left: -40px;
-  transform: translateY(-50%);
+  
   color: #666;
   cursor: move;
   z-index: 10;
@@ -392,4 +393,17 @@
   100% {
     transform: rotate(360deg);
   }
+}
+
+@keyframes flow-animation {
+  from {
+    stroke-dashoffset: 20;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.animated-wire {
+  stroke-dasharray: 10, 10;
+  animation: flow-animation 0.5s linear infinite;
 }

@@ -187,6 +187,10 @@ export class WorkflowListComponent implements OnInit, OnDestroy, AfterViewInit {
     }
   }
 
+  navigateToEdit(workflow: WorkflowModel): void {
+    void this.router.navigate(['/workflows/edit', workflow.id], { queryParams: { returnUrl: '/workflows' }});
+  }
+
   navigateToHistory(workflow: WorkflowModel): void {
     void this.router.navigate(['/workflows', workflow.id, 'executions']);
   }

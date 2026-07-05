@@ -60,7 +60,7 @@ export class GenericStepComponent implements OnInit, OnChanges {
   private inputsSubscription?: Subscription;
   currentMaxReferenceImages = 1;
 
-  isCollapsed = true;
+  isCollapsed = false;
   inputModes: {[key: string]: 'fixed' | 'linked' | 'mixed'} = {};
   compatibleOutputs: {[key: string]: any[]} = {};
 

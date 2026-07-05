@@ -110,13 +110,17 @@
 
     <div class="section outputs">
       <h3>Outputs</h3>
-      <div *ngFor="let output of localConfig.outputs" class="output-pill relative">
-        <mat-icon>{{ output.type }}</mat-icon> {{ output.label }}
-        <div class="port output-port"
-             [attr.data-node-id]="stepForm.value.stepId"
-             [attr.data-port-name]="output.name"
-             [attr.data-port-type]="'output'"
-             (mousedown)="$event.stopPropagation(); portDragStart.emit({stepId: stepForm.value.stepId, outputName: output.name, mouseEvent: $event})">
+      <div class="flex flex-col gap-2">
+        <div *ngFor="let output of localConfig.outputs" class="output-row relative w-full flex items-center justify-between">
+          <div class="output-pill relative">
+            <mat-icon>{{ output.type }}</mat-icon> {{ output.label }}
+          </div>
+          <div class="port output-port"
+               [attr.data-node-id]="stepForm.value.stepId"
+               [attr.data-port-name]="output.name"
+               [attr.data-port-type]="'output'"
+               (mousedown)="$event.stopPropagation(); portDragStart.emit({stepId: stepForm.value.stepId, outputName: output.name, mouseEvent: $event})">
+          </div>
         </div>
       </div>
     </div>

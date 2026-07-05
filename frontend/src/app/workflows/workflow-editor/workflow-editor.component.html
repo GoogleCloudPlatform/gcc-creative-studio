@@ -83,7 +83,7 @@
       <div class="transform-layer w-full h-full absolute top-0 left-0 origin-top-left">
         <!-- Edges Layer (SVG) -->
         <svg class="absolute inset-0 w-full h-full pointer-events-none overflow-visible" style="z-index: 10;">
-          <path *ngFor="let edge of edges" [attr.d]="edge.path" fill="none" stroke="#4a5568" stroke-width="3"
+          <path *ngFor="let edge of edges" class="animated-wire" [attr.d]="edge.path" fill="none" stroke="#4a5568" stroke-width="3"
             stroke-linecap="round" />
           <path *ngIf="activeDragWire" [attr.d]="activeDragWire.path" fill="none" stroke="#63b3ed" stroke-width="3"
             stroke-dasharray="5,5" stroke-linecap="round" />
