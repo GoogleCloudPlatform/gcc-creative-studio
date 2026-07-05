@@ -43,11 +43,21 @@ export class GenericStepComponent implements OnInit, OnChanges {
   @Input() mode: 'create' | 'edit' | 'run' = 'create';
   @Input() config!: StepConfig;
   @Input() showValidationErrors = false;
+  @Input() stepExecution: any = null;
+  @Input() mediaUrlMap!: Map<string, string>;
+
   @Output() delete = new EventEmitter<void>();
+  @Output() portDragStart = new EventEmitter<{
+    stepId: string;
+    outputName: string;
+    mouseEvent: MouseEvent;
+  }>();
+  @Output() portDrop = new EventEmitter<{stepId: string; inputName: string}>();
 
   localConfig!: StepConfig;
   private settingsSubscription?: Subscription;
   private inputModeSubscription?: Subscription;
+  private inputsSubscription?: Subscription;
   currentMaxReferenceImages = 1;
 
   isCollapsed = true;
@@ -66,6 +76,9 @@ export class GenericStepComponent implements OnInit, OnChanges {
     }
     if (this.inputModeSubscription) {
       this.inputModeSubscription.unsubscribe();
+    }
+    if (this.inputsSubscription) {
+      this.inputsSubscription.unsubscribe();
     }
   }
 
@@ -118,6 +131,20 @@ export class GenericStepComponent implements OnInit, OnChanges {
       } else {
         this.inputModes[input.name] = 'fixed';
       }
+    });
+
+    if (this.inputsSubscription) {
+      this.inputsSubscription.unsubscribe();
+    }
+    this.inputsSubscription = inputs.valueChanges.subscribe(value => {
+      if (!value) return;
+      Object.keys(value).forEach(key => {
+        const val = value[key];
+        const isLinked = val && typeof val === 'object' && !Array.isArray(val) && 'step' in val && 'output' in val;
+        if (isLinked && this.inputModes[key] !== 'linked') {
+          this.inputModes[key] = 'linked';
+        }
+      });
     });
 
     const settings = this.stepForm.get('settings') as FormGroup;

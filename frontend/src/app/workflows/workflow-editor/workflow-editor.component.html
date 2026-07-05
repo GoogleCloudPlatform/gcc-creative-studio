@@ -17,17 +17,6 @@
 <div class="editor-container h-full flex flex-col text-white">
   <!-- A. Global Header -->
   <header class="header-section">
-    <!-- Top Actions (Back Button) -->
-    <div class="top-actions">
-        <button
-          mat-icon-button
-          (click)="goBack()"
-          matTooltip="Back"
-        >
-            <mat-icon>arrow_back</mat-icon>
-        </button>
-    </div>
-
     <div class="in-line-wrapper">
         <!-- Breadcrumbs/Title Area -->
         <div class="title-group flex-grow">
@@ -76,155 +65,125 @@
               (click)="save()"
               [disabled]="workflowForm.pristine || isLoading"
             >Save</studio-button>
+            <button
+              mat-icon-button
+              (click)="goBack()"
+              matTooltip="Back"
+              class="ml-2"
+            >
+                <mat-icon>close</mat-icon>
+            </button>
         </div>
     </div>
   </header>
 
-  <!-- Main Content Area -->
-  <div class="flex-grow flex overflow-hidden">
-    <!-- Left Panel (Workflow Graph / History) -->
-    <div class="w-2/3 flex flex-col">
-      <div class="p-4 border-b border-neutral-700 flex justify-between items-center">
-        <h5 class="text-lg font-semibold">Workflow Graph</h5>
-        <div class="flex items-center gap-2">
-          <studio-button variant="primary" size="medium"
-            *ngIf="!isReadOnly"
-            mat-raised-button
+  <!-- Main Content Area (Canvas) -->
+  <div class="flex-grow flex overflow-hidden relative bg-neutral-900" #canvasContainer>
+    <div class="canvas-content absolute inset-0" #canvasContent>
+      <div class="transform-layer w-full h-full absolute top-0 left-0 origin-top-left">
+        <!-- Edges Layer (SVG) -->
+        <svg class="absolute inset-0 w-full h-full pointer-events-none overflow-visible" style="z-index: 10;">
+          <path *ngFor="let edge of edges" [attr.d]="edge.path" fill="none" stroke="#4a5568" stroke-width="3"
+            stroke-linecap="round" />
+          <path *ngIf="activeDragWire" [attr.d]="activeDragWire.path" fill="none" stroke="#63b3ed" stroke-width="3"
+            stroke-dasharray="5,5" stroke-linecap="round" />
+        </svg>
+    
+        <!-- Nodes Layer -->
+        <div class="nodes-container relative w-full h-full" style="z-index: 20;">
+
+          <!-- User Input Node -->
+          <div class="user-input-node absolute z-10" 
+               [style.left.px]="getNodePosition('user_input').x"
+               [style.top.px]="getNodePosition('user_input').y"
+               (mousedown)="onNodeMouseDown($event, 'user_input')"
+               [formGroup]="workflowForm" *ngIf="!isReadOnly">
+               
+            <div class="step-header">
+              <div class="step-title">
+                <mat-icon>input</mat-icon>
+                Workflow Parameters
+              </div>
+            </div>
             
-            (click)="openAddStepModal()">
-            <mat-icon>add</mat-icon>
-            Add Step
-          </studio-button>
-        </div>
-      </div>
-      <div class="flex-grow p-4 overflow-auto" [formGroup]="workflowForm">
-        <!-- User Input Section -->
-        <div class="user-input-panel" formGroupName="userInput">
-          
-          <div class="step-content">
-            <div class="section">
-              <h3>Define Workflow Parameters</h3>
-              <div formGroupName="settings" class="step-settings">
-                <div formArrayName="definitions" class="definitions-list">
-                  <div class="definition-row header-row">
-                    <div class="name-col"></div>
-                    <div class="type-col"></div>
-                    <div class="action-col"></div>
-                  </div>
-                  <div *ngFor="let def of outputDefinitionsArray.controls; let i = index" [formGroupName]="i" class="definition-row">
-                    <mat-form-field appearance="outline" class="name-col">
-                      <mat-label>Parameter Name</mat-label>
-                      <input matInput formControlName="name" placeholder="e.g., Main Prompt" />
-                    </mat-form-field>
-                    <mat-form-field appearance="outline" class="type-col">
-                      <mat-label>Type</mat-label>
-                      <mat-select formControlName="type">
-                        <mat-option value="text">Text</mat-option>
-                        <mat-option value="image">Image</mat-option>
-                      </mat-select>
-                    </mat-form-field>
-                    <button mat-icon-button color="warn" (click)="removeOutput(i)" class="action-col" aria-label="Delete output">
-                      <mat-icon>delete_outline</mat-icon>
-                    </button>
+            <div class="step-content user-input-panel" formGroupName="userInput">
+              <div class="section">
+                <div formGroupName="settings" class="step-settings">
+                  <div formArrayName="definitions" class="definitions-list flex flex-col gap-4">
+                    <div *ngFor="let def of outputDefinitionsArray.controls; let i = index" [formGroupName]="i"
+                      class="definition-row flex gap-2 items-center">
+                      <mat-form-field appearance="outline" class="flex-grow">
+                        <mat-label>Name</mat-label>
+                        <input matInput formControlName="name" placeholder="Prompt" />
+                      </mat-form-field>
+                      <mat-form-field appearance="outline" class="w-24">
+                        <mat-label>Type</mat-label>
+                        <mat-select formControlName="type">
+                          <mat-option value="text">Text</mat-option>
+                          <mat-option value="image">Image</mat-option>
+                        </mat-select>
+                      </mat-form-field>
+                      <button mat-icon-button color="warn" (click)="removeOutput(i)">
+                        <mat-icon>delete</mat-icon>
+                      </button>
+                    </div>
                   </div>
                 </div>
+                <button mat-stroked-button color="primary" (click)="addOutput()" class="mt-4 w-full">
+                  Add Parameter
+                </button>
               </div>
-              <button mat-stroked-button color="primary" (click)="addOutput()" class="add-output-btn">
-                Add Input Field
-              </button>
             </div>
+            
+            <div class="step-footer relative min-h-[40px] pb-4">
+              <div *ngFor="let def of outputDefinitionsArray.controls; let i = index" class="output-port-container">
+                <div class="port-label">{{ def.get('name')?.value }}</div>
+                <div class="port output-port"
+                     matTooltip="Drag to connect"
+                     [attr.data-node-id]="'user_input'"
+                     [attr.data-port-name]="def.get('name')?.value"
+                     [attr.data-port-type]="'output'"
+                     (mousedown)="onPortDragStart({stepId: 'user_input', outputName: def.get('name')?.value, mouseEvent: $event})">
+                </div>
+              </div>
+            </div>
+            
           </div>
-        </div>
 
-        <!-- Steps Section -->
-        <div cdkDropList formArrayName="steps" (cdkDropListDropped)="dropStep($event)" class="flex flex-col gap-4">
-          <ng-container *ngFor="let step of stepsArray.controls; let i = index" [formGroupName]="i">
-            <app-generic-step
-              class="step-card"
-              (click)="selectedStepIndex = i"
-              cdkDrag [cdkDragDisabled]="isReadOnly"
-              [stepForm]="asFormGroup(step)"
-              [stepIndex]="i"
-              [config]="getStepConfig(step.value.type)"
-              [availableOutputs]="availableOutputsPerStep[i]"
-              [showValidationErrors]="submitted"
-              (delete)="deleteStep(i)">
-            </app-generic-step>
-          </ng-container>
+          <!-- Steps -->
+          <ng-container [formGroup]="workflowForm">
+            <div formArrayName="steps">
+              <ng-container *ngFor="let step of stepsArray.controls; let i = index" [formGroupName]="i">
+                <app-generic-step
+                class="absolute"
+                [style.left.px]="getNodePosition(step.value.stepId).x"
+                [style.top.px]="getNodePosition(step.value.stepId).y"
+                (mousedown)="onNodeMouseDown($event, step.value.stepId)"
+                (click)="selectedStepIndex = i"
+                [stepForm]="asFormGroup(step)"
+                [stepIndex]="i"
+                [config]="getStepConfig(step.value.type)"
+                [availableOutputs]="availableOutputsPerStep[i]"
+                [showValidationErrors]="submitted"
+                [stepExecution]="getStepExecution(step.value.stepId)"
+                [mediaUrlMap]="mediaUrlMap"
+                (portDragStart)="onPortDragStart($event)"
+                (portDrop)="onPortDrop($event, step.value.stepId)"
+                (delete)="deleteStep(i)">
+              </app-generic-step>
+            </ng-container>
+          </div>
+        </ng-container>
         </div>
       </div>
     </div>
-
-    <!-- Separator -->
-    <div class="w-px bg-neutral-700"></div>
-
-    <!-- Right Panel (Outputs) -->
-    <div class="w-1/3 flex flex-col">
-      <div class="p-4 border-b border-neutral-700 flex items-center justify-between">
-        <h5 class="text-lg font-semibold">Outputs</h5>
-        <!-- TODO: Add tabs if a step has multiple output types -->
-      </div>
-      <div class="flex-grow p-4 overflow-auto">
-        <!-- Zero State (No execution) -->
-        <div *ngIf="!currentExecutionId && !selectedStep"
-          class="flex flex-col items-center justify-center h-full text-center text-neutral-500">
-          <mat-icon class="!text-8xl !w-36 !h-36 text-neutral-600">hub</mat-icon>
-          <p class="mt-4 font-medium">Run the workflow to generate results</p>
-          <p class="text-sm text-neutral-600">Select a step on the left to see its outputs</p>
-          <p class="text-sm text-neutral-600">here once a run is complete.</p>
-        </div>
-
-        <!-- Workflow Running State -->
-        <div *ngIf="currentExecutionId && currentExecutionState === 'ACTIVE' && !selectedStep"
-          class="flex flex-col items-center justify-center h-full text-center text-blue-300">
-          
-          <mat-icon class="hourglass-loader !text-8xl !w-36 !h-36">
-            hourglass_top
-          </mat-icon>
-
-          <p class="mt-4 font-medium">Workflow is running...</p>
-          <p class="text-sm text-neutral-400">Select a step to see its output as it completes</p>
-        </div>
-
-        <!-- Workflow Completed State (no step selected) -->
-        <div *ngIf="currentExecutionId && currentExecutionState !== 'ACTIVE' && !selectedStep"
-          class="flex flex-col items-center justify-center h-full text-center"
-          [ngClass]="currentExecutionState === 'SUCCEEDED' ? 'text-green-300' : 'text-red-300'">
-          <mat-icon class="!text-8xl !w-36 !h-36">
-            {{ currentExecutionState === 'SUCCEEDED' ? 'check_circle' : 'error' }}
-          </mat-icon>
-          <p class="mt-4 font-medium">
-            Workflow {{ currentExecutionState === 'SUCCEEDED' ? 'completed successfully' : 'failed' }}
-          </p>
-          <p class="text-sm text-neutral-400">Select a step to view its outputs</p>
-        </div>
-
-        <!-- Selected Step Outputs -->
-        <div *ngIf="selectedStep" class="step-outputs">
-          <div class="flex items-center justify-between mb-4">
-            <h3 class="text-lg font-semibold">{{ selectedStep.type | titlecase }} Outputs</h3>
-            <mat-chip *ngIf="selectedStep.status !== 'idle'" [ngClass]="selectedStep.status | workflowStatus:'class'">
-              <mat-icon class="!text-sm !w-4 !h-4 mr-1">
-                {{ selectedStep.status | workflowStatus:'icon' }}
-              </mat-icon>
-              {{ selectedStep.status | uppercase }}
-            </mat-chip>
-          </div>
-
-          <div *ngIf="!selectedStepExecution || (selectedStepExecution | keyvalue)?.length === 0; else elseBlock" class="text-neutral-500 text-sm italic">
-            No outputs generated yet.
-          </div>
-          <ng-template #elseBlock>
-            <app-step-execution-details
-              [stepId]="selectedStep.stepId"
-              [stepType]="selectedStep.type"
-              [inputs]="selectedStepExecution.step_inputs"
-              [outputs]="selectedStepExecution.step_outputs"
-              [mediaUrlMap]="mediaUrlMap">
-            </app-step-execution-details>
-          </ng-template>
-        </div>
-      </div>
+    <!-- Floating Add Node Button -->
+    <div class="add-btn-container" *ngIf="!isReadOnly">
+      <studio-button variant="primary" size="large" (click)="openAddStepModal()">
+        <mat-icon>add</mat-icon>
+        Add Node
+      </studio-button>
     </div>
+
   </div>
 </div>

@@ -14,12 +14,28 @@
  * limitations under the License.
  */
 
+/* Glassmorphism Card Style */
+@mixin glass-card {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+}
+
+:host {
+  display: block;
+  position: absolute;
+}
+
 .step-card {
-  background-color: var(--card-bg);
+  @include glass-card;
+  background-color: var(--card-bg, #1e1e1e);
   border-radius: 0.5rem;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-color, #333);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-  overflow: hidden;
+  overflow: visible;
+  width: 320px;
   transition: border-color 0.3s ease, box-shadow 0.3s ease;
 
   &:hover {
@@ -74,6 +90,40 @@
   }
 }
 
+/* Ports */
+.port-row {
+  display: flex;
+  align-items: center;
+}
+
+.port {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background-color: #63b3ed;
+  border-radius: 50%;
+  cursor: crosshair;
+  z-index: 10;
+  border: 2px solid #2d3748;
+
+  &:hover {
+    background-color: #bee3f8;
+    transform: scale(1.2);
+  }
+}
+
+.input-port {
+  left: -32px; /* Outside the card body padding */
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.output-port {
+  right: -32px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
 /* 1. Header Section */
 .step-header {
   display: flex;
@@ -82,6 +132,8 @@
   padding: 16px 24px;
   background: rgba(255, 255, 255, 0.03);
   border-bottom: 1px solid var(--border-color);
+  border-top-left-radius: 0.5rem;
+  border-top-right-radius: 0.5rem;
   cursor: move;
 
   .step-title {

@@ -22,6 +22,10 @@ import {
   OnInit,
   inject,
   PLATFORM_ID,
+  ViewChild,
+  ElementRef,
+  AfterViewInit,
+  HostListener,
 } from '@angular/core';
 import {isPlatformBrowser} from '@angular/common';
 import {takeUntilDestroyed} from '@angular/core/rxjs-interop';
@@ -53,6 +57,18 @@ import {AddStepModalComponent} from './add-step-modal/add-step-modal.component';
 import {RunWorkflowModalComponent} from './run-workflow-modal/run-workflow-modal.component';
 
 import {WorkflowFormService} from './workflow-form.service';
+import * as d3 from 'd3';
+
+export interface Point {
+  x: number;
+  y: number;
+}
+
+export interface Edge {
+  path: string;
+  sourceId: string;
+  targetId: string;
+}
 
 @Component({
   selector: 'app-workflow-editor',
@@ -121,6 +137,22 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   loadedMedia = new Set<string>();
   returnUrl: string | null = null;
 
+  // --- Canvas Properties ---
+  @ViewChild('canvasContainer', {static: false}) canvasContainer!: ElementRef;
+  @ViewChild('canvasContent', {static: false}) canvasContent!: ElementRef;
+
+  nodePositions: {[stepId: string]: Point} = {};
+  edges: Edge[] = [];
+  activeDragWire: {path: string} | null = null;
+  dragSourcePort: {stepId: string; outputName: string} | null = null;
+
+  private currentTransform = d3.zoomIdentity;
+  private zoomBehavior!: d3.ZoomBehavior<Element, unknown>;
+
+  // Node dragging state
+  private draggingNodeId: string | null = null;
+  private dragOffset: Point = {x: 0, y: 0};
+
   constructor(
     private route: ActivatedRoute,
     private router: Router,
@@ -145,6 +177,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     // Initialize form immediately with empty/default data
     this.formService.initForm();
+    this.loadNodePositions();
 
     // Subscribe to available outputs from service
     this.formService.availableOutputsPerStep$.subscribe(outputs => {
@@ -217,6 +250,316 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     }
   }
 
+  private domObserver?: MutationObserver;
+
+  ngAfterViewInit(): void {
+    if (isPlatformBrowser(this.platformId) && this.canvasContainer) {
+      this.initZoom();
+      // Use setTimeout to ensure initial render is complete before updating edges
+      setTimeout(() => this.updateEdges(), 100);
+
+      const nodesContainer = this.canvasContent.nativeElement.querySelector('.nodes-container');
+      if (nodesContainer) {
+        this.domObserver = new MutationObserver(() => {
+          this.updateEdges();
+        });
+        this.domObserver.observe(nodesContainer, { childList: true, subtree: true });
+      }
+    }
+  }
+
+  ngOnDestroy(): void {
+    if (this.domObserver) {
+      this.domObserver.disconnect();
+    }
+    this.mainSubscription?.unsubscribe();
+  }
+
+  private initZoom(): void {
+    this.zoomBehavior = d3
+      .zoom()
+      .scaleExtent([0.1, 4])
+      .on('zoom', event => {
+        this.currentTransform = event.transform;
+        
+        // Transform the inner layer for nodes and edges
+        d3.select(this.canvasContent.nativeElement.querySelector('.transform-layer')).style(
+          'transform',
+          `translate(${event.transform.x}px, ${event.transform.y}px) scale(${event.transform.k})`,
+        );
+        // Move the background grid to create an infinite canvas effect
+        d3.select(this.canvasContent.nativeElement)
+          .style('background-position', `${event.transform.x}px ${event.transform.y}px`)
+          .style('background-size', `${20 * event.transform.k}px ${20 * event.transform.k}px`);
+    
+      });
+
+    d3.select(this.canvasContainer.nativeElement).call(
+      this.zoomBehavior as any,
+    );
+  }
+
+  // --- Canvas Logic ---
+
+  loadNodePositions(): void {
+    if (isPlatformBrowser(this.platformId)) {
+      const saved = localStorage.getItem(
+        `workflow_positions_${this.workflowId || 'new'}`,
+      );
+      if (saved) {
+        try {
+          this.nodePositions = JSON.parse(saved);
+        } catch (e) {}
+      }
+    }
+    // Assign defaults for missing nodes
+    if (!this.nodePositions['user_input']) {
+      const centerX = window.innerWidth / 2 - 160; // 320px width / 2
+      const centerY = window.innerHeight / 2 - 150; // Approximate height / 2
+      this.nodePositions['user_input'] = {x: centerX > 0 ? centerX : 100, y: centerY > 0 ? centerY : 100};
+    }
+    this.stepsArray.controls.forEach((control, index) => {
+      const stepId = control.get('stepId')?.value;
+      if (stepId && !this.nodePositions[stepId]) {
+        this.nodePositions[stepId] = {x: 100 + index * 300, y: 100};
+      }
+    });
+  }
+
+  saveNodePositions(): void {
+    if (isPlatformBrowser(this.platformId)) {
+      localStorage.setItem(
+        `workflow_positions_${this.workflowId || 'new'}`,
+        JSON.stringify(this.nodePositions),
+      );
+    }
+  }
+
+  getNodePosition(stepId: string): Point {
+    return this.nodePositions[stepId] || {x: 100, y: 100};
+  }
+
+  getStepExecution(stepId: string): any {
+    if (!this.executionStepEntries) return null;
+    return this.executionStepEntries.find(e => e.step_id === stepId) || null;
+  }
+
+  onNodeMouseDown(event: MouseEvent, stepId: string): void {
+    if (this.isReadOnly) return;
+
+    // Check if clicked on a port or header buttons (avoid dragging if clicking those)
+    const target = event.target as HTMLElement;
+    if (
+      target.closest('.port') ||
+      target.closest('button') ||
+      target.closest('input') ||
+      target.closest('.mat-mdc-select')
+    ) {
+      return;
+    }
+
+    this.draggingNodeId = stepId;
+
+    // Calculate initial offset based on current transform scale
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const pos = this.getNodePosition(stepId);
+
+    this.dragOffset = {
+      x: (event.clientX - rect.left) / this.currentTransform.k,
+      y: (event.clientY - rect.top) / this.currentTransform.k,
+    };
+
+    event.stopPropagation();
+  }
+
+  @HostListener('window:mousemove', ['$event'])
+  onMouseMove(event: MouseEvent): void {
+    if (this.draggingNodeId) {
+      // Convert screen coordinates to canvas coordinates
+      const containerRect =
+        this.canvasContainer.nativeElement.getBoundingClientRect();
+
+      const x =
+        (event.clientX - containerRect.left - this.currentTransform.x) /
+          this.currentTransform.k -
+        this.dragOffset.x;
+      const y =
+        (event.clientY - containerRect.top - this.currentTransform.y) /
+          this.currentTransform.k -
+        this.dragOffset.y;
+
+      this.nodePositions[this.draggingNodeId] = {x, y};
+      this.updateEdges();
+    }
+
+    if (this.dragSourcePort) {
+      const containerRect =
+        this.canvasContainer.nativeElement.getBoundingClientRect();
+
+      // Target position is the mouse position in canvas space
+      const targetX =
+        (event.clientX - containerRect.left - this.currentTransform.x) /
+        this.currentTransform.k;
+      const targetY =
+        (event.clientY - containerRect.top - this.currentTransform.y) /
+        this.currentTransform.k;
+
+      // Source position is the port position
+      const sourcePos = this.getPortPosition(
+        this.dragSourcePort.stepId,
+        this.dragSourcePort.outputName,
+        'output',
+      );
+
+      if (sourcePos) {
+        this.activeDragWire = {
+          path: this.createBezierPath(sourcePos, {x: targetX, y: targetY}),
+        };
+      }
+    }
+  }
+
+  @HostListener('window:mouseup')
+  onMouseUp(): void {
+    if (this.draggingNodeId) {
+      this.saveNodePositions();
+      this.draggingNodeId = null;
+    }
+    if (this.dragSourcePort) {
+      this.dragSourcePort = null;
+      this.activeDragWire = null;
+    }
+  }
+
+  onPortDragStart(event: {
+    stepId: string;
+    outputName: string;
+    mouseEvent: MouseEvent;
+  }): void {
+    this.dragSourcePort = {stepId: event.stepId, outputName: event.outputName};
+    event.mouseEvent.stopPropagation();
+    // Prevent default to avoid text selection while dragging
+    event.mouseEvent.preventDefault();
+  }
+
+  onPortDrop(
+    event: {stepId: string; inputName: string},
+    targetStepId: string,
+  ): void {
+    if (this.dragSourcePort) {
+      // Connect dragSourcePort to event target
+      const stepForm = this.stepsArray.controls.find(
+        c => c.get('stepId')?.value === targetStepId,
+      ) as FormGroup;
+      if (stepForm) {
+        const inputs = stepForm.get('inputs') as FormGroup;
+        if (inputs && inputs.contains(event.inputName)) {
+          // Set as linked input
+          inputs.get(event.inputName)?.setValue({
+            step: this.dragSourcePort.stepId,
+            output: this.dragSourcePort.outputName,
+          });
+          inputs.get(event.inputName)?.markAsDirty();
+          this.updateEdges();
+        }
+      }
+      this.dragSourcePort = null;
+      this.activeDragWire = null;
+    }
+  }
+
+  private updateEdges(): void {
+    this.edges = [];
+
+    // Basic wire computation: iterate over all steps and their inputs
+    this.stepsArray.controls.forEach(stepControl => {
+      const targetId = stepControl.get('stepId')?.value;
+      const inputs = stepControl.get('inputs')?.value;
+
+      if (inputs) {
+        Object.keys(inputs).forEach(inputName => {
+          const val = inputs[inputName];
+          if (
+            val &&
+            typeof val === 'object' &&
+            !Array.isArray(val) &&
+            val.step &&
+            val.output
+          ) {
+            const sourceId = val.step;
+
+            const sourcePos = this.getPortPosition(
+              sourceId,
+              val.output,
+              'output',
+            );
+            const targetPos = this.getPortPosition(
+              targetId,
+              inputName,
+              'input',
+            );
+
+            if (sourcePos && targetPos) {
+              this.edges.push({
+                sourceId,
+                targetId,
+                path: this.createBezierPath(sourcePos, targetPos),
+              });
+            }
+          }
+        });
+      }
+    });
+  }
+
+  private getPortPosition(
+    stepId: string,
+    portName: string,
+    type: 'input' | 'output',
+  ): Point | null {
+    if (!isPlatformBrowser(this.platformId)) return null;
+
+    // Wait, the port element should have data attributes
+    const portEl = document.querySelector(`[data-node-id="${stepId}"][data-port-name="${portName}"][data-port-type="${type}"]`);
+    
+    if (portEl && this.canvasContent) {
+      const transformLayer = this.canvasContent.nativeElement.querySelector('.transform-layer');
+      if (transformLayer) {
+        const portRect = portEl.getBoundingClientRect();
+        const layerRect = transformLayer.getBoundingClientRect();
+        
+        // The transformLayer has transform: scale(k), so getBoundingClientRect() returns scaled dimensions.
+        // To find the unscaled position inside the transform layer:
+        const x = (portRect.left + portRect.width / 2 - layerRect.left) / this.currentTransform.k;
+        const y = (portRect.top + portRect.height / 2 - layerRect.top) / this.currentTransform.k;
+        
+        return {x, y};
+      }
+    }
+
+    // Fallback logic
+    const nodePos = this.getNodePosition(stepId);
+    if (!nodePos) return null;
+    const NODE_WIDTH = 320;
+    const HEADER_HEIGHT = 50;
+
+    if (type === 'input') {
+      return {x: nodePos.x, y: nodePos.y + HEADER_HEIGHT + 30};
+    } else {
+      return {x: nodePos.x + NODE_WIDTH, y: nodePos.y + HEADER_HEIGHT + 30};
+    }
+  }
+
+  private createBezierPath(source: Point, target: Point): string {
+    // Standard horizontal S-curve
+    const dist = Math.abs(target.x - source.x) * 0.5;
+    const cp1x = source.x + dist;
+    const cp1y = source.y;
+    const cp2x = target.x - dist;
+    const cp2y = target.y;
+    return `M ${source.x},${source.y} C ${cp1x},${cp1y} ${cp2x},${cp2y} ${target.x},${target.y}`;
+  }
+
   resolveMediaUrls(details: any): void {
     if (!details || !details.step_entries) return;
 
@@ -272,15 +615,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   }
 
   // ... (rest of the component: ngOnDestroy, initForm, addStepToForm, etc. remains the same)
-  ngOnDestroy(): void {
-    if (this.mainSubscription) {
-      this.mainSubscription.unsubscribe();
-    }
-    if (this.mainSubscription) {
-      this.mainSubscription.unsubscribe();
-    }
-    // pollingSubscription removal not needed, handled by DestroyRef
-  }
+
 
   addOutput(name = '', type = 'text', id?: string): void {
     this.formService.addOutputDefinition(name, type, id);
@@ -338,6 +673,20 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
 
   addStepToForm(type: string, existingData?: any) {
     this.formService.addStep(type, existingData);
+    // Give it a default position near the center of the current view
+    setTimeout(() => {
+      const stepIndex = this.stepsArray.length - 1;
+      const stepId = this.stepsArray.at(stepIndex).get('stepId')?.value;
+      if (stepId) {
+        // Find view center
+        const viewCenterX =
+          -this.currentTransform.x / this.currentTransform.k + 200;
+        const viewCenterY =
+          -this.currentTransform.y / this.currentTransform.k + 200;
+        this.nodePositions[stepId] = {x: viewCenterX, y: viewCenterY};
+        this.saveNodePositions();
+      }
+    });
   }
 
   // createFormGroupFromData removed, handled by service
