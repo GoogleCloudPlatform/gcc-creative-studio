@@ -159,3 +159,83 @@ def test_generate_videos_value_error(client, mock_veo_service):
 
     assert response.status_code == 400
     assert "Test ValueError message" in response.json()["detail"]
+
+
+def test_generate_videos_http_exception(client, mock_workspace_auth):
+    from fastapi import HTTPException
+
+    mock_workspace_auth.authorize.side_effect = HTTPException(
+        status_code=403, detail="Forbidden workspace access"
+    )
+
+    payload = {
+        "prompt": "A running horse",
+        "workspace_id": 1,
+        "generation_model": "veo-3.0-generate-001",
+        "aspect_ratio": "16:9",
+        "duration_seconds": 5,
+    }
+
+    response = client.post("/api/videos/generate-videos", json=payload)
+    assert response.status_code == 403
+    assert "Forbidden workspace access" in response.json()["detail"]
+
+
+def test_generate_videos_general_exception(client, mock_veo_service):
+    mock_veo_service.start_video_generation_job.side_effect = Exception(
+        "System crash"
+    )
+
+    payload = {
+        "prompt": "A running horse",
+        "workspace_id": 1,
+        "generation_model": "veo-3.0-generate-001",
+        "aspect_ratio": "16:9",
+        "duration_seconds": 5,
+    }
+
+    response = client.post("/api/videos/generate-videos", json=payload)
+    assert response.status_code == 500
+    assert "System crash" in response.json()["detail"]
+
+
+def test_concatenate_videos_http_exception(client, mock_workspace_auth):
+    from fastapi import HTTPException
+
+    mock_workspace_auth.authorize.side_effect = HTTPException(
+        status_code=403, detail="Forbidden workspace access"
+    )
+
+    payload = {
+        "name": "Concatenated Video",
+        "workspace_id": 1,
+        "inputs": [
+            {"type": "media_item", "id": 1},
+            {"type": "media_item", "id": 2},
+        ],
+        "aspect_ratio": "16:9",
+    }
+
+    response = client.post("/api/videos/concatenate", json=payload)
+    assert response.status_code == 403
+    assert "Forbidden workspace access" in response.json()["detail"]
+
+
+def test_concatenate_videos_general_exception(client, mock_veo_service):
+    mock_veo_service.start_video_concatenation_job.side_effect = Exception(
+        "Database is down"
+    )
+
+    payload = {
+        "name": "Concatenated Video",
+        "workspace_id": 1,
+        "inputs": [
+            {"type": "media_item", "id": 1},
+            {"type": "media_item", "id": 2},
+        ],
+        "aspect_ratio": "16:9",
+    }
+
+    response = client.post("/api/videos/concatenate", json=payload)
+    assert response.status_code == 500
+    assert "Database is down" in response.json()["detail"]

@@ -319,7 +319,7 @@
         </mat-menu>
       </div>
 
-      <div *ngIf="searchRequest.generationModel === 'gemini-3-pro-image' || searchRequest.generationModel === 'gemini-3.1-flash-image'" matTooltip="Enable Google Search"
+      <div *ngIf="searchRequest.generationModel === 'gemini-3-pro-image' || searchRequest.generationModel === 'gemini-3.1-flash-image' || searchRequest.generationModel === 'gemini-3.1-flash-lite-image'" matTooltip="Enable Google Search"
         class="cursor-pointer w-32 inline-flex flex-col justify-start items-center">
         <mat-slide-toggle [(ngModel)]="searchRequest.googleSearch" (ngModelChange)="saveState()"
           class="!w-16 !h-16 !shadow-none text-center !flex justify-center items-center text-stone-300">
@@ -379,11 +379,13 @@
           [aspectRatio]="selectedAspectRatio" [outputs]="searchRequest.numberOfMedia || 4" [mode]="currentMode"
           [modes]="modes" [aspectRatioOptions]="aspectRatioOptions" [generationModels]="generationModels"
           [isLoading]="isImageGenerating" [selectedGenerationModel]="selectedGenerationModel"
-          [referenceImages]="referenceImages" (promptChanged)="onPromptChanged($event)"
-          (aspectRatioChanged)="onAspectRatioChanged($event)" (outputsChanged)="onOutputsChanged($event)"
+          [referenceImages]="referenceImages" [resolution]="searchRequest.resolution"
+          (promptChanged)="onPromptChanged($event)" (aspectRatioChanged)="onAspectRatioChanged($event)"
+          (resolutionChanged)="onResolutionChanged($event)" (outputsChanged)="onOutputsChanged($event)"
           (generateClicked)="onGenerateClicked()" (rewriteClicked)="onRewriteClicked()"
           (modelSelected)="onModelSelected($event)" (openImageSelectorForReference)="onOpenImageSelectorForReference()"
           (onReferenceImageDrop)="onReferenceImageDrop($event)" (clearReferenceImage)="onClearReferenceImage($event)"
+          (editReferenceImage)="onEditPromptReferenceImage($event)"
           (modeChanged)="onModeChanged($event)"></app-flow-prompt-box>
       </div>
     </div>

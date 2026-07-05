@@ -229,6 +229,7 @@ export class AudioComponent implements OnInit {
     } else {
       this.selectedVoice = value;
     }
+    this.saveState();
   }
 
   openAddVoiceDialog() {

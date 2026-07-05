@@ -21,9 +21,18 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 from src.database import Base, get_conn_string
-from src.tags.schema.tags_model import (
-    Tag,
-)  # Import to ensure registered with Base.metadata
+from src.tags.schema.tags_model import Tag
+from src.common.schema.media_item_model import MediaItem
+from src.workflows.schema.workflow_model import Workflow
+from src.workflows.schema.workflow_run_model import WorkflowRun
+from src.workspaces.schema.workspace_model import (
+    Workspace,
+    WorkspaceMemberAssociation,
+)
+from src.users.user_model import User
+from src.source_assets.schema.source_asset_model import SourceAsset
+from src.media_templates.schema.media_template_model import MediaTemplate
+from src.common.schema.unified_gallery_view import UnifiedGalleryView
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
