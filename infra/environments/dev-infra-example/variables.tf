@@ -70,11 +70,13 @@ variable "github_branch_name" {
 variable "backend_custom_audiences" {
   type        = list(string)
   description = "List of custom audiences for the backend service."
+  default     = []
 }
 
 variable "frontend_custom_audiences" {
   type        = list(string)
   description = "List of custom audiences for the frontend service."
+  default     = []
 }
 
 # --- Service-Specific Environment Variables ---
@@ -98,13 +100,13 @@ variable "fe_build_substitutions" {
 variable "frontend_secrets" {
   type        = list(string)
   description = "A list of secret names required by the frontend build."
-  default = []
+  default     = []
 }
 
 variable "backend_secrets" {
   type        = list(string)
   description = "A list of secret names required by the backend build."
-  default = []
+  default     = []
 }
 
 variable "backend_runtime_secrets" {

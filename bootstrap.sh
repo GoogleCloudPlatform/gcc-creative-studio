@@ -386,6 +386,11 @@ setup_repo() {
     success "Project root successfully set to: $REPO_ROOT"
 
     GITHUB_REPO_OWNER=$(git remote get-url origin | sed -n 's/.*github.com\/\(.*\)\/.*/\1/p')
+    if [ "$GITHUB_REPO_OWNER" == "GoogleCloudPlatform" ]; then
+        warn "You appear to have cloned the upstream repository directly."
+        prompt "Enter YOUR GitHub username (where you installed the Cloud Build App): "; read -r CUSTOMER_GITHUB < /dev/tty
+        GITHUB_REPO_OWNER=${CUSTOMER_GITHUB:-$GITHUB_REPO_OWNER}
+    fi
     GITHUB_REPO_NAME=$REPO_CLONE_DIR
 
     info "Detected GitHub owner: $GITHUB_REPO_OWNER"
@@ -469,8 +474,8 @@ configure_environment() {
             sed -i.bak "s|^[#[:space:]]*org_id[[:space:]]*=.*|org_id = \"$ORG_ID\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*iap_oauth2_client_id[[:space:]]*=.*|iap_oauth2_client_id = \"$IAP_OAUTH_CLIENT_ID\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*iap_oauth2_client_secret[[:space:]]*=.*|iap_oauth2_client_secret = \"$IAP_OAUTH_CLIENT_SECRET\"|g" "$TFVARS_FILE_PATH"
-            sed -i.bak "s|^[#[:space:]]*workforce_pool_id[[:space:]]*=.*|workforce_pool_id = \"cs-workforce-pool\"|g" "$TFVARS_FILE_PATH"
-            sed -i.bak "s|^[#[:space:]]*iap_access_members[[:space:]]*=.*|iap_access_members = [\"principalSet://iam.googleapis.com/locations/global/workforcePools/cs-workforce-pool/*\"]|g" "$TFVARS_FILE_PATH"
+            sed -i.bak "s|^[#[:space:]]*workforce_pool_id[[:space:]]*=.*|workforce_pool_id = \"\"|g" "$TFVARS_FILE_PATH"
+            sed -i.bak "s|^[#[:space:]]*iap_access_members[[:space:]]*=.*|iap_access_members = []|g" "$TFVARS_FILE_PATH"
 
             write_state "AUTH_CHOICE" "2"
             write_state "AUTO_ENTRA_CLIENT_SECRET" "$ENTRA_CLIENT_SECRET"

@@ -16,17 +16,27 @@ data "google_project" "project" {
 }
 
 locals {
-  # If org_id is provided, we create a pool called cs-workforce-pool, otherwise use the provided pool ID
-  resolved_pool_id = var.org_id != "" ? "locations/global/workforcePools/cs-workforce-pool" : var.workforce_pool_id
+  # Generate the expected workforce pool ID, using a provided one or generating a dynamic one
+  expected_pool_id = var.workforce_pool_id != "" ? var.workforce_pool_id : "cs-workforce-pool-${random_id.pool_suffix[0].hex}"
+  resolved_pool_id = var.org_id != "" ? "locations/global/workforcePools/${local.expected_pool_id}" : (var.workforce_pool_id != "" ? "locations/global/workforcePools/${var.workforce_pool_id}" : "")
   use_workforce    = local.resolved_pool_id != ""
+
+  # Dynamically compute the Entra ID principal set so bootstrap.sh doesn't have to guess it
+  entra_member                 = local.use_workforce ? ["principalSet://iam.googleapis.com/${local.resolved_pool_id}/*"] : []
+  effective_iap_access_members = setunion(toset(var.iap_access_members), toset(local.entra_member))
 }
 
 # --- 1. Workforce Identity Federation ---
 
+resource "random_id" "pool_suffix" {
+  count       = var.org_id != "" && var.workforce_pool_id == "" ? 1 : 0
+  byte_length = 4
+}
+
 resource "google_iam_workforce_pool" "pool" {
-  count             = var.org_id != "" ? 1 : 0
+  count             = var.org_id != "" && var.workforce_pool_id == "" ? 1 : 0
   provider          = google-beta
-  workforce_pool_id = "cs-workforce-pool"
+  workforce_pool_id = local.expected_pool_id
   parent            = "organizations/${var.org_id}"
   location          = "global"
 }
@@ -41,13 +51,13 @@ resource "google_iam_workforce_pool_provider" "entra" {
   oidc {
     issuer_uri = "https://login.microsoftonline.com/${var.entra_tenant_id}/v2.0"
     client_id  = var.entra_client_id
-    
+
     client_secret {
       value {
         plain_text = var.entra_client_secret
       }
     }
-    
+
     web_sso_config {
       response_type             = "CODE"
       assertion_claims_behavior = "MERGE_USER_INFO_OVER_ID_TOKEN_CLAIMS"
@@ -191,16 +201,16 @@ resource "tls_self_signed_cert" "example" {
 }
 
 resource "google_compute_ssl_certificate" "fallback_cert" {
-  count           = var.domain_name == "" ? 1 : 0
-  name            = "cs-backend-fallback-cert"
-  private_key     = tls_private_key.example[0].private_key_pem
-  certificate     = tls_self_signed_cert.example[0].cert_pem
+  count       = var.domain_name == "" ? 1 : 0
+  name        = "cs-backend-fallback-cert"
+  private_key = tls_private_key.example[0].private_key_pem
+  certificate = tls_self_signed_cert.example[0].cert_pem
 }
 
 # Target HTTPS Proxy
 resource "google_compute_target_https_proxy" "https_proxy" {
-  name             = "cs-backend-https-proxy"
-  url_map          = google_compute_url_map.url_map.id
+  name    = "cs-backend-https-proxy"
+  url_map = google_compute_url_map.url_map.id
   ssl_certificates = compact([
     var.domain_name != "" ? google_compute_managed_ssl_certificate.lb_cert[0].id : "",
     var.domain_name == "" ? google_compute_ssl_certificate.fallback_cert[0].id : ""
@@ -242,7 +252,7 @@ resource "google_cloud_run_v2_service_iam_member" "iap_can_invoke_frontend" {
 
 # Grant users IAP secured Web App User role on backend service
 resource "google_iap_web_backend_service_iam_member" "member" {
-  for_each            = toset(var.iap_access_members)
+  for_each            = local.effective_iap_access_members
   project             = var.gcp_project_id
   web_backend_service = google_compute_backend_service.be_service.name
   role                = "roles/iap.httpsResourceAccessor"
@@ -251,7 +261,7 @@ resource "google_iap_web_backend_service_iam_member" "member" {
 
 # Grant users IAP secured Web App User role on frontend service
 resource "google_iap_web_backend_service_iam_member" "fe_member" {
-  for_each            = toset(var.iap_access_members)
+  for_each            = local.effective_iap_access_members
   project             = var.gcp_project_id
   web_backend_service = google_compute_backend_service.fe_service.name
   role                = "roles/iap.httpsResourceAccessor"
