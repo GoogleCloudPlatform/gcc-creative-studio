@@ -721,36 +721,37 @@ def _process_image_in_background(
                     if request_dto.aspect_ratio == AspectRatioEnum.AUTO:
                         resolved_ratio = AspectRatioEnum.RATIO_1_1
                         if reference_images_for_api:
-                            ref_image = reference_images_for_api[0]
-                            if ref_image.gcs_uri:
-                                try:
-                                    image_bytes = await asyncio.to_thread(
-                                        gcs_service.download_bytes_from_gcs,
-                                        ref_image.gcs_uri,
-                                    )
-                                    if image_bytes:
-                                        with PILImage.open(
-                                            io.BytesIO(image_bytes)
-                                        ) as img:
-                                            width, height = img.size
-
-                                        resolved_ratio = get_closest_aspect_ratio(
-                                            width,
-                                            height,
-                                            request_dto.generation_model.valid_aspect_ratios,
-                                        )
-                                        worker_logger.info(
-                                            "Auto aspect ratio resolved to %s from image %s (%dx%d)",
-                                            resolved_ratio.value,
+                            for ref_image in reference_images_for_api:
+                                if ref_image.gcs_uri:
+                                    try:
+                                        image_bytes = await asyncio.to_thread(
+                                            gcs_service.download_bytes_from_gcs,
                                             ref_image.gcs_uri,
-                                            width,
-                                            height,
                                         )
-                                except Exception as e:
-                                    worker_logger.error(
-                                        "Failed to resolve auto aspect ratio: %s. Falling back to 1:1.",
-                                        e,
-                                    )
+                                        if image_bytes:
+                                            with PILImage.open(
+                                                io.BytesIO(image_bytes)
+                                            ) as img:
+                                                width, height = img.size
+                                            resolved_ratio = get_closest_aspect_ratio(
+                                                width,
+                                                height,
+                                                request_dto.generation_model.valid_aspect_ratios,
+                                            )
+                                            worker_logger.info(
+                                                "Auto aspect ratio resolved to %s from image %s (%dx%d)",
+                                                resolved_ratio.value,
+                                                ref_image.gcs_uri,
+                                                width,
+                                                height,
+                                            )
+                                            break  # Found and successfully resolved, stop looking
+                                    except Exception as e:
+                                        worker_logger.warning(
+                                            "Failed to resolve auto aspect ratio from image %s: %s. Trying next reference image.",
+                                            ref_image.gcs_uri,
+                                            e,
+                                        )
                         request_dto.aspect_ratio = resolved_ratio
 
                     all_generated_images: list[types.GeneratedImage] = []

@@ -263,7 +263,7 @@ def get_closest_aspect_ratio(
         if r in (AspectRatioEnum.AUTO, AspectRatioEnum.OTHER):
             continue
 
-        ratio_str = r.value if hasattr(r, "value") else str(r)
+        ratio_str = str(r.value if hasattr(r, "value") else r)
         if ":" in ratio_str:
             try:
                 w_str, h_str = ratio_str.split(":")
