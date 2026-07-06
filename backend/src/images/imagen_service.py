@@ -715,6 +715,48 @@ def _process_image_in_background(
                                     gen_input.media_index,
                                 )
 
+                    if request_dto.aspect_ratio == AspectRatioEnum.AUTO:
+                        resolved_ratio = AspectRatioEnum.RATIO_1_1
+                        if reference_images_for_api:
+                            ref_image = reference_images_for_api[0]
+                            if ref_image.gcs_uri:
+                                try:
+                                    image_bytes = (
+                                        gcs_service.download_bytes_from_gcs(
+                                            ref_image.gcs_uri
+                                        )
+                                    )
+                                    if image_bytes:
+                                        from io import BytesIO
+                                        from PIL import Image as PILImage
+
+                                        with PILImage.open(
+                                            BytesIO(image_bytes)
+                                        ) as img:
+                                            width, height = img.size
+                                        from src.common.media_utils import (
+                                            get_closest_aspect_ratio,
+                                        )
+
+                                        resolved_ratio = get_closest_aspect_ratio(
+                                            width,
+                                            height,
+                                            request_dto.generation_model.valid_aspect_ratios,
+                                        )
+                                        worker_logger.info(
+                                            "Auto aspect ratio resolved to %s from image %s (%dx%d)",
+                                            resolved_ratio.value,
+                                            ref_image.gcs_uri,
+                                            width,
+                                            height,
+                                        )
+                                except Exception as e:
+                                    worker_logger.error(
+                                        "Failed to resolve auto aspect ratio: %s. Falling back to 1:1.",
+                                        e,
+                                    )
+                        request_dto.aspect_ratio = resolved_ratio
+
                     all_generated_images: list[types.GeneratedImage] = []
 
                     try:

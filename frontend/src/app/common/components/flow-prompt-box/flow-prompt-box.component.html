@@ -369,7 +369,13 @@
             <span class="flex items-center gap-2 min-w-0">
               <!-- Landscape Icon -->
               <mat-icon class="flex-shrink-0">
-                {{ aspectRatio.includes('16:9') ? 'crop_landscape' : 'crop_portrait' }}
+                @if (aspectRatio === 'Auto') {
+                  aspect_ratio
+                } @else if (aspectRatio === '16:9') {
+                  crop_landscape
+                } @else {
+                  crop_portrait
+                }
               </mat-icon>
               <span class="truncate whitespace-nowrap">{{ aspectRatio }}</span>
             </span>

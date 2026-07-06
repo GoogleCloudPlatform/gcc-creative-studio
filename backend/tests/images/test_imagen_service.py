@@ -1277,3 +1277,100 @@ def test_vto_dto_validation_failures():
     with pytest.raises(ValidationError) as exc_info:
         VtoDto(workspace_id=1, person_image=valid_input)
     assert "At least one garment" in str(exc_info.value)
+
+
+@patch("src.images.imagen_service.generate_image_thumbnail_from_gcs")
+@patch("src.common.media_utils.generate_image_thumbnail_from_gcs")
+@patch("src.database.WorkerDatabase")
+@patch("src.images.imagen_service.GenAIModelSetup.init")
+def test_process_image_in_background_sync_auto_aspect_ratio(
+    mock_genai_init,
+    mock_worker_db_class,
+    mock_thumb_mu,
+    mock_thumb_is,
+    sample_user,
+):
+    _ = (mock_thumb_mu, mock_thumb_is)
+
+    # Mock WorkerDatabase Context
+    mock_db_context = AsyncMock()
+    mock_db_factory = MagicMock(return_value=mock_db_context)
+    mock_worker_db_class.return_value.__aenter__.return_value = mock_db_factory
+
+    # Mock GenAI SDK client
+    mock_client = MagicMock()
+    mock_genai_init.return_value = mock_client
+
+    # DTO with AUTO aspect ratio and reference image
+    request_dto = CreateImagenDto(
+        workspace_id=1,
+        prompt="A cute cat",
+        generation_model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE_PREVIEW,
+        source_asset_ids=[101],
+        aspect_ratio=AspectRatioEnum.AUTO,
+    )
+
+    with (
+        patch(
+            "src.images.imagen_service.MediaRepository",
+        ) as mock_media_repo_class,
+        patch(
+            "src.images.imagen_service.SourceAssetRepository",
+        ) as mock_source_asset_repo_class,
+        patch(
+            "src.images.imagen_service.GeminiService",
+        ) as mock_gemini_service_class,
+        patch(
+            "src.images.imagen_service.GcsService",
+        ) as mock_gcs_class,
+        patch(
+            "src.images.imagen_service.gemini_generate_image",
+        ) as mock_gemini_gen,
+    ):
+        mock_media_repo = AsyncMock()
+        mock_media_repo_class.return_value = mock_media_repo
+
+        mock_gemini_service = AsyncMock()
+        mock_gemini_service_class.return_value = mock_gemini_service
+
+        mock_sa_repo = AsyncMock()
+        mock_source_asset_repo_class.return_value = mock_sa_repo
+
+        # Setup source asset return for the input
+        asset = MagicMock()
+        asset.id = 101
+        asset.gcs_uri = "gs://bucket/input.png"
+        asset.mime_type = "image/png"
+        mock_sa_repo.get_by_id.return_value = asset
+
+        mock_gcs = MagicMock()
+        mock_gcs.bucket_name = "test-bucket"
+
+        # 160x90 is 16:9 ratio
+        from PIL import Image as PILImage
+        import io
+
+        file_bytes = io.BytesIO()
+        image = PILImage.new("RGBA", size=(160, 90), color=(256, 0, 0))
+        image.save(file_bytes, "png")
+        dummy_png_bytes = file_bytes.getvalue()
+
+        mock_gcs.download_bytes_from_gcs.return_value = dummy_png_bytes
+        mock_gcs_class.return_value = mock_gcs
+
+        mock_result = MagicMock()
+        mock_result.image.gcs_uri = "gs://bucket/output_edit.png"
+        mock_result.image.mime_type = MimeTypeEnum.IMAGE_PNG
+        mock_gemini_gen.return_value = (mock_result, None)
+
+        # Call the worker
+        _process_image_in_background(
+            media_item_id=777,
+            request_dto=request_dto,
+            current_user=sample_user,
+        )
+
+        # Verify gemini_generate_image was called with resolved aspect ratio 16:9
+        mock_gemini_gen.assert_called_once()
+        called_kwargs = mock_gemini_gen.call_args[1]
+        assert called_kwargs["aspect_ratio"] == AspectRatioEnum.RATIO_16_9

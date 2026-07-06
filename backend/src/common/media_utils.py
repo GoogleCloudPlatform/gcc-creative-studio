@@ -26,6 +26,7 @@ from PIL import Image as PILImage
 from google.api_core import exceptions
 
 from src.common.storage_service import GcsService
+from src.common.base_dto import AspectRatioEnum
 
 logger = logging.getLogger(__name__)
 
@@ -237,3 +238,40 @@ def get_video_dimensions(video_path: str) -> tuple[int, int]:
     width = data["streams"][0]["width"]
     height = data["streams"][0]["height"]
     return width, height
+
+
+def get_closest_aspect_ratio(
+    width: int,
+    height: int,
+    supported_ratios: list[AspectRatioEnum],
+) -> AspectRatioEnum:
+    """Finds the closest supported aspect ratio for given dimensions."""
+    if not supported_ratios:
+        return AspectRatioEnum.RATIO_1_1
+
+    if height == 0:
+        return AspectRatioEnum.RATIO_1_1
+
+    actual_ratio = width / height
+
+    # Filter out auto/other and map to float
+    supported_ratios_map = {}
+    for r in supported_ratios:
+        if r in (AspectRatioEnum.AUTO, AspectRatioEnum.OTHER):
+            continue
+        if ":" in r.value:
+            try:
+                w_str, h_str = r.value.split(":")
+                supported_ratios_map[r] = float(w_str) / float(h_str)
+            except (ValueError, ZeroDivisionError):
+                continue
+
+    if not supported_ratios_map:
+        return AspectRatioEnum.RATIO_1_1
+
+    closest_enum = min(
+        supported_ratios_map.keys(),
+        key=lambda e: abs(supported_ratios_map[e] - actual_ratio),
+    )
+
+    return closest_enum
