@@ -62,10 +62,15 @@ async def create_workflow(
     workflow_service: WorkflowService = Depends(),
 ):
     """Creates a new workflow definition."""
-    created_workflow = await workflow_service.create_workflow(
-        workflow_data,
-        current_user,
-    )
+    try:
+        created_workflow = await workflow_service.create_workflow(
+            workflow_data,
+            current_user,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
+        )
 
     return created_workflow
 
@@ -99,11 +104,16 @@ async def update_workflow(
 
     # 4. Pass the DTO to the service to handle the update logic.
     # Service update_workflow returns the coroutine from repo.update_workflow, so we await it.
-    return await workflow_service.update_workflow(
-        workflow_id,
-        workflow_data,
-        current_user,
-    )
+    try:
+        return await workflow_service.update_workflow(
+            workflow_id,
+            workflow_data,
+            current_user,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
+        )
 
 
 @router.get("/{workflow_id}", response_model=WorkflowModel)

@@ -446,7 +446,9 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       if (saved) {
         try {
           this.nodePositions = JSON.parse(saved);
-        } catch (e) {}
+        } catch (e) {
+          console.error('Failed to parse saved node positions', e);
+        }
       }
     }
     // Assign defaults for missing nodes
@@ -907,6 +909,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     if (deletedStepId) {
       this.clearDependents(deletedStepId);
     }
+    this.updateEdges();
   }
 
   private clearDependents(deletedStepId: string) {
@@ -917,7 +920,18 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       Object.keys(inputs.controls).forEach(inputKey => {
         const control = inputs.get(inputKey);
         const value = control?.value;
-        if (
+
+        if (Array.isArray(value)) {
+          const newValue = value.filter(
+            (v: any) =>
+              !(v && typeof v === 'object' && v.step === deletedStepId),
+          );
+          if (newValue.length !== value.length) {
+            control?.setValue(newValue);
+            control?.markAsDirty();
+            control?.updateValueAndValidity();
+          }
+        } else if (
           value &&
           typeof value === 'object' &&
           value.step === deletedStepId
@@ -1001,7 +1015,14 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       },
       error: err => {
         console.error('Failed to save workflow', err);
-        this.errorMessage = err.error?.message || 'Failed to save workflow.';
+        const errorMsg =
+          err.error?.detail || err.error?.message || 'Failed to save workflow.';
+        this.errorMessage = errorMsg;
+        handleErrorSnackbar(
+          this.snackBar,
+          {message: errorMsg},
+          'Save workflow',
+        );
         this.isLoading = false;
       },
     });
@@ -1071,7 +1092,16 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       },
       error: err => {
         console.error('Failed to save before run', err);
-        this.errorMessage = 'Failed to save workflow before running.';
+        const errorMsg =
+          err.error?.detail ||
+          err.error?.message ||
+          'Failed to save workflow before running.';
+        this.errorMessage = errorMsg;
+        handleErrorSnackbar(
+          this.snackBar,
+          {message: errorMsg},
+          'Save workflow',
+        );
         this.isLoading = false;
       },
     });

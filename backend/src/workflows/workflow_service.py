@@ -21,7 +21,7 @@ import uuid
 import google.auth
 import yaml
 from fastapi import Depends
-from google.api_core.exceptions import NotFound
+from google.api_core.exceptions import NotFound, InvalidArgument
 from google.auth.transport.requests import AuthorizedSession
 from google.cloud import workflows_v1
 from google.cloud.workflows import executions_v1
@@ -96,11 +96,14 @@ class WorkflowService:
                 inputs_dump = step.inputs.model_dump()
 
                 def extract_refs(val):
-                    if isinstance(val, dict) and "step" in val:
-                        ref = val["step"]
-                        if ref in adj and ref != step.step_id:
-                            adj[ref].append(step.step_id)
-                            in_degree[step.step_id] += 1
+                    if isinstance(val, dict):
+                        if "step" in val:
+                            ref = val["step"]
+                            if ref in adj and ref != step.step_id:
+                                adj[ref].append(step.step_id)
+                                in_degree[step.step_id] += 1
+                        for v in val.values():
+                            extract_refs(v)
                     elif isinstance(val, list):
                         for item in val:
                             extract_refs(item)
@@ -215,9 +218,12 @@ class WorkflowService:
             workflow_id=workflow_id,
         )
 
-        operation = client.create_workflow(request=request)
-        response = operation.result()
-        return response
+        try:
+            operation = client.create_workflow(request=request)
+            response = operation.result()
+            return response
+        except InvalidArgument as e:
+            raise ValueError(str(e))
 
     def _update_gcp_workflow(self, source_contents: str, workflow_id: str):
         client = workflows_v1.WorkflowsClient()
@@ -239,9 +245,12 @@ class WorkflowService:
             workflow=workflow,
         )
 
-        operation = client.update_workflow(request=request)
-        response = operation.result()
-        return response
+        try:
+            operation = client.update_workflow(request=request)
+            response = operation.result()
+            return response
+        except InvalidArgument as e:
+            raise ValueError(str(e))
 
     def _delete_gcp_workflow(self, workflow_id: str):
         client = workflows_v1.WorkflowsClient()
