@@ -305,6 +305,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     this.workflowForm.valueChanges
       .pipe(debounceTime(500), takeUntilDestroyed(this.destroyRef))
       .subscribe(() => {
+        if (this.isReadOnly) return;
         if (
           this.currentExecutionState &&
           this.currentExecutionState !== 'ACTIVE'
@@ -891,6 +892,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     // Generate new ID and reset status
     stepData.stepId = `node_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     stepData.status = StepStatusEnum.IDLE;
+    stepData.outputs = {}; // Reset outputs for the cloned step
 
     // Reset linked inputs so they don't clone the same exact wires if that's undesired?
     // Actually, preserving them is fine, it will just wire up to the same sources!
@@ -993,6 +995,18 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     const formValue = this.workflowForm.getRawValue();
     const steps = this.prepareSteps(formValue);
 
+    if (this.hasCycle(steps)) {
+      handleErrorSnackbar(
+        this.snackBar,
+        new Error(
+          'Cycle detected in workflow steps. Please fix before saving.',
+        ),
+        'Save workflow',
+      );
+      this.isLoading = false;
+      return;
+    }
+
     let request$: Observable<any>;
 
     if (this.mode === EditorMode.Edit) {
@@ -1051,6 +1065,18 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
 
     const formValue = this.workflowForm.getRawValue();
     const steps = this.prepareSteps(formValue);
+
+    if (this.hasCycle(steps)) {
+      handleErrorSnackbar(
+        this.snackBar,
+        new Error(
+          'Cycle detected in workflow steps. Please fix before running.',
+        ),
+        'Run workflow',
+      );
+      return;
+    }
+
     const userInputStep = steps.find(s => s.type === NodeTypes.USER_INPUT);
 
     // If form is pristine and we have an ID, just run it
@@ -1168,6 +1194,58 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       status: StepStatusEnum.IDLE,
     };
     return [user_input_step, ...steps];
+  }
+
+  private hasCycle(steps: any[]): boolean {
+    const adj = new Map<string, string[]>();
+    steps.forEach(s => adj.set(s.stepId, []));
+
+    // Build adjacency list (edges from dependencies to dependents)
+    steps.forEach(step => {
+      if (!step.inputs) return;
+
+      const addEdge = (ref: any) => {
+        if (ref && typeof ref === 'object' && ref.step) {
+          if (adj.has(ref.step)) {
+            adj.get(ref.step)!.push(step.stepId);
+          }
+        }
+      };
+
+      Object.values(step.inputs).forEach((val: any) => {
+        if (Array.isArray(val)) {
+          val.forEach(addEdge);
+        } else {
+          addEdge(val);
+        }
+      });
+    });
+
+    const visited = new Set<string>();
+    const recStack = new Set<string>();
+
+    const dfs = (node: string): boolean => {
+      if (recStack.has(node)) return true; // cycle found
+      if (visited.has(node)) return false;
+
+      visited.add(node);
+      recStack.add(node);
+
+      const neighbors = adj.get(node) || [];
+      for (const neighbor of neighbors) {
+        if (dfs(neighbor)) return true;
+      }
+
+      recStack.delete(node);
+      return false;
+    };
+
+    for (const step of steps) {
+      if (!visited.has(step.stepId)) {
+        if (dfs(step.stepId)) return true;
+      }
+    }
+    return false;
   }
 
   private cleanInputValue(val: any): any {
