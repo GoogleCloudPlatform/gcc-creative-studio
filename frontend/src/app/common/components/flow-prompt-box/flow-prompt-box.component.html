@@ -369,15 +369,7 @@
             <span class="flex items-center gap-2 min-w-0">
               <!-- Landscape Icon -->
               <mat-icon class="flex-shrink-0">
-                @if (aspectRatio === 'Auto') {
-                  aspect_ratio
-                } @else if (aspectRatio && (aspectRatio.toLowerCase().includes('16:9') || aspectRatio.toLowerCase().includes('landscape') || aspectRatio.toLowerCase().includes('horizontal') || aspectRatio.toLowerCase().includes('wide') || aspectRatio.toLowerCase().includes('pin') || aspectRatio.toLowerCase().includes('banner'))) {
-                  crop_landscape
-                } @else if (aspectRatio && (aspectRatio.toLowerCase().includes('square') || aspectRatio.toLowerCase().includes('1:1'))) {
-                  crop_square
-                } @else {
-                  crop_portrait
-                }
+                {{ getAspectRatioIcon(aspectRatio) }}
               </mat-icon>
               <span class="truncate whitespace-nowrap">{{ aspectRatio }}</span>
             </span>

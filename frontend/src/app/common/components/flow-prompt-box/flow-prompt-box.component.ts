@@ -346,6 +346,26 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
     return activeModel?.capabilities?.supportedDurations ?? [];
   }
 
+  getAspectRatioIcon(aspectRatio: string | null | undefined): string {
+    if (!aspectRatio) return 'crop_portrait';
+    const ratio = aspectRatio.toLowerCase();
+    if (ratio === 'auto') return 'aspect_ratio';
+    if (
+      ratio.includes('16:9') ||
+      ratio.includes('landscape') ||
+      ratio.includes('horizontal') ||
+      ratio.includes('wide') ||
+      ratio.includes('pin') ||
+      ratio.includes('banner')
+    ) {
+      return 'crop_landscape';
+    }
+    if (ratio.includes('square') || ratio.includes('1:1')) {
+      return 'crop_square';
+    }
+    return 'crop_portrait';
+  }
+
   private updateSupportedResolutions(model?: any, modeChanged = false) {
     const supported = this.getSelectedModelResolutions(model);
     this.supportedResolutions.set(supported);
