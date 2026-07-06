@@ -99,7 +99,7 @@ class WorkflowService:
                     if isinstance(val, dict):
                         if "step" in val:
                             ref = val["step"]
-                            if ref in adj and ref != step.step_id:
+                            if ref in adj:
                                 adj[ref].append(step.step_id)
                                 in_degree[step.step_id] += 1
                         for v in val.values():
