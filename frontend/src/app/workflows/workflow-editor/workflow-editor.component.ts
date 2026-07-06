@@ -296,6 +296,12 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     this.workflowForm.valueChanges
       .pipe(debounceTime(500), takeUntilDestroyed(this.destroyRef))
       .subscribe(() => {
+        if (
+          this.currentExecutionState &&
+          this.currentExecutionState !== 'ACTIVE'
+        ) {
+          this.currentExecutionState = null;
+        }
         if (this.isUndoRedoAction) {
           this.isUndoRedoAction = false;
           return;
@@ -453,8 +459,12 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     }
     // Assign defaults for missing nodes
     if (!this.nodePositions['user_input']) {
-      const centerX = window.innerWidth / 2 - 200; // 400px width / 2
-      const centerY = window.innerHeight / 2 - 150; // Approximate height / 2
+      let centerX = 100;
+      let centerY = 100;
+      if (isPlatformBrowser(this.platformId)) {
+        centerX = window.innerWidth / 2 - 200; // 400px width / 2
+        centerY = window.innerHeight / 2 - 150; // Approximate height / 2
+      }
       this.nodePositions['user_input'] = {
         x: centerX > 0 ? centerX : 100,
         y: centerY > 0 ? centerY : 100,
