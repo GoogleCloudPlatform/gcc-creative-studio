@@ -69,6 +69,7 @@ export interface Edge {
   sourceId: string;
   targetId: string;
   color?: string;
+  isTargetRunning?: boolean;
 }
 
 @Component({
@@ -615,6 +616,8 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     // Basic wire computation: iterate over all steps and their inputs
     this.stepsArray.controls.forEach(stepControl => {
       const targetId = stepControl.get('stepId')?.value;
+      const targetStatus = stepControl.get('status')?.value;
+      const isTargetRunning = targetStatus === 'RUNNING';
       const inputs = stepControl.get('inputs')?.value;
 
       if (inputs) {
@@ -650,6 +653,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
                   color: this.getTypeColor(
                     this.getOutputType(sourceId, item.output),
                   ),
+                  isTargetRunning,
                 });
               }
             }
@@ -685,7 +689,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
 
     // Wait, the port element should have data attributes
     const portEl = document.querySelector(
-      `[data-node-id="${stepId}"][data-port-name="${portName}"][data-port-type="${type}"]`
+      `[data-node-id="${stepId}"][data-port-name="${portName}"][data-port-type="${type}"]`,
     );
 
     if (portEl && this.canvasContent) {
@@ -1240,6 +1244,9 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         );
       }
     }
+
+    // Refresh edges to reflect new states (e.g. running highlights)
+    setTimeout(() => this.updateEdges(), 0);
   }
 
   private updateStepStatuses(details: any): void {

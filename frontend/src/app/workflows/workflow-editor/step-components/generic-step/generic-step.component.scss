@@ -301,3 +301,15 @@
   border-color: #63b3ed !important;
 }
 
+
+.running-node {
+  box-shadow: 0 0 15px 2px #4ade80, 0 10px 30px rgba(0, 0, 0, 0.3) !important;
+  border-color: #4ade80 !important;
+  animation: pulse-green 2s infinite;
+}
+
+@keyframes pulse-green {
+  0% { box-shadow: 0 0 10px 2px #4ade80, 0 10px 30px rgba(0, 0, 0, 0.3); }
+  50% { box-shadow: 0 0 20px 6px #4ade80, 0 10px 30px rgba(0, 0, 0, 0.3); }
+  100% { box-shadow: 0 0 10px 2px #4ade80, 0 10px 30px rgba(0, 0, 0, 0.3); }
+}

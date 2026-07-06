@@ -15,7 +15,7 @@
 -->
 
 
-<div class="step-card" [formGroup]="stepForm" [ngClass]="localConfig.type" [class.invalid-step]="stepForm.invalid && showValidationErrors" [class.selected-node]="isSelected">
+<div class="step-card" [formGroup]="stepForm" [ngClass]="localConfig.type" [class.invalid-step]="stepForm.invalid && showValidationErrors" [class.selected-node]="isSelected" [class.running-node]="stepForm.get('status')?.value === 'RUNNING'">
   <div class="step-header">
     <div class="step-title">
       <mat-icon>{{ localConfig.icon }}</mat-icon>
