@@ -38,7 +38,10 @@ from src.common.base_dto import (
     GenerationModelEnum,
     MimeTypeEnum,
 )
-from src.common.media_utils import generate_image_thumbnail_from_gcs
+from src.common.media_utils import (
+    generate_image_thumbnail_from_gcs,
+    get_closest_aspect_ratio,
+)
 from src.common.schema.genai_model_setup import GenAIModelSetup
 from src.common.schema.media_item_model import (
     AssetRoleEnum,
@@ -721,19 +724,15 @@ def _process_image_in_background(
                             ref_image = reference_images_for_api[0]
                             if ref_image.gcs_uri:
                                 try:
-                                    image_bytes = (
-                                        gcs_service.download_bytes_from_gcs(
-                                            ref_image.gcs_uri
-                                        )
+                                    image_bytes = await asyncio.to_thread(
+                                        gcs_service.download_bytes_from_gcs,
+                                        ref_image.gcs_uri,
                                     )
                                     if image_bytes:
                                         with PILImage.open(
                                             io.BytesIO(image_bytes)
                                         ) as img:
                                             width, height = img.size
-                                        from src.common.media_utils import (
-                                            get_closest_aspect_ratio,
-                                        )
 
                                         resolved_ratio = get_closest_aspect_ratio(
                                             width,
