@@ -727,11 +727,8 @@ def _process_image_in_background(
                                         )
                                     )
                                     if image_bytes:
-                                        from io import BytesIO
-                                        from PIL import Image as PILImage
-
                                         with PILImage.open(
-                                            BytesIO(image_bytes)
+                                            io.BytesIO(image_bytes)
                                         ) as img:
                                             width, height = img.size
                                         from src.common.media_utils import (
