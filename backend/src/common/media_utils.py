@@ -252,7 +252,7 @@ def get_closest_aspect_ratio(
     if not supported_ratios:
         return AspectRatioEnum.RATIO_1_1
 
-    if height == 0:
+    if width == 0 or height == 0:
         return AspectRatioEnum.RATIO_1_1
 
     actual_ratio = width / height

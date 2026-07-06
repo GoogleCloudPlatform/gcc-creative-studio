@@ -371,9 +371,9 @@
               <mat-icon class="flex-shrink-0">
                 @if (aspectRatio === 'Auto') {
                   aspect_ratio
-                } @else if (aspectRatio && (aspectRatio.includes('16:9') || aspectRatio.includes('Landscape') || aspectRatio.includes('Horizontal') || aspectRatio.includes('Wide') || aspectRatio.includes('Pin') || aspectRatio.includes('Banner'))) {
+                } @else if (aspectRatio && (aspectRatio.toLowerCase().includes('16:9') || aspectRatio.toLowerCase().includes('landscape') || aspectRatio.toLowerCase().includes('horizontal') || aspectRatio.toLowerCase().includes('wide') || aspectRatio.toLowerCase().includes('pin') || aspectRatio.toLowerCase().includes('banner'))) {
                   crop_landscape
-                } @else if (aspectRatio && (aspectRatio.includes('Square') || aspectRatio.includes('1:1'))) {
+                } @else if (aspectRatio && (aspectRatio.toLowerCase().includes('square') || aspectRatio.toLowerCase().includes('1:1'))) {
                   crop_square
                 } @else {
                   crop_portrait
