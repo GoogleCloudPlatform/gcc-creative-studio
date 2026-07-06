@@ -37,6 +37,8 @@ from src.images.imagen_service import (
     gemini_generate_image,
 )
 from src.users.user_model import UserModel
+from PIL import Image as PILImage
+import io
 
 
 @pytest.fixture(name="mock_media_repo")
@@ -1347,9 +1349,6 @@ def test_process_image_in_background_sync_auto_aspect_ratio(
         mock_gcs.bucket_name = "test-bucket"
 
         # 160x90 is 16:9 ratio
-        from PIL import Image as PILImage
-        import io
-
         file_bytes = io.BytesIO()
         image = PILImage.new("RGBA", size=(160, 90), color=(255, 0, 0, 255))
         image.save(file_bytes, "png")
