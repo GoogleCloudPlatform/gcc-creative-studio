@@ -262,9 +262,11 @@ def get_closest_aspect_ratio(
     for r in supported_ratios:
         if r in (AspectRatioEnum.AUTO, AspectRatioEnum.OTHER):
             continue
-        if ":" in r.value:
+
+        ratio_str = r.value if hasattr(r, "value") else str(r)
+        if ":" in ratio_str:
             try:
-                w_str, h_str = r.value.split(":")
+                w_str, h_str = ratio_str.split(":")
                 supported_ratios_map[r] = float(w_str) / float(h_str)
             except (ValueError, ZeroDivisionError):
                 continue

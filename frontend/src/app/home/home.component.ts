@@ -524,7 +524,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     const options = this.baseAspectRatioOptions.map(r => ({
       ...r,
       disabled: capabilities
-        ? !capabilities.supportedAspectRatios.includes(r.value)
+        ? !capabilities.supportedAspectRatios?.includes(r.value)
         : false,
     }));
 
@@ -544,7 +544,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
 
     const isCurrentValid =
       (this.searchRequest.aspectRatio === 'auto' && isIngredients) ||
-      (capabilities?.supportedAspectRatios.includes(
+      (capabilities?.supportedAspectRatios?.includes(
         this.searchRequest.aspectRatio,
       ) ??
         false);
