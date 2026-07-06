@@ -51,24 +51,40 @@
             <mat-icon *ngIf="!model.isImage && model.isSvg && model.icon" [svgIcon]="model.icon || ''"
               class="!text-sm !h-4 !w-4 !flex !items-center !justify-center"></mat-icon>
           </ng-container>
-          <span>{{ selectedGenerationModel }}</span>
+          {{ selectedGenerationModel }}
         </div>
-        <div
-          (click)="toggleSettingsMenu(); $event.stopPropagation()"
-          class="flex items-center gap-1.5 rounded-md bg-neutral-800 px-2 py-1 cursor-pointer hover:bg-neutral-700"
-        >
-          <mat-icon class="!text-sm !h-4 !w-4 !flex !items-center !justify-center">
-            {{ aspectRatio.includes('16:9') ? 'crop_landscape' : 'crop_portrait' }}
-          </mat-icon>
-          x{{ outputs }}
-        </div>
-        <!-- Settings/Filter Icon Button -->
+        <!-- Ratio -->
         <button
           (click)="toggleSettingsMenu(); $event.stopPropagation()"
-          class="rounded-md bg-neutral-800 p-1 transition-colors hover:bg-neutral-700"
+          class="rounded-md bg-neutral-800 px-2 py-1 cursor-pointer hover:bg-neutral-700"
         >
-          <mat-icon>tune</mat-icon>
+          {{ aspectRatio.split(' ')[0] }}
         </button>
+        <!-- Outputs -->
+        <button
+          (click)="toggleSettingsMenu(); $event.stopPropagation()"
+          class="rounded-md bg-neutral-800 px-2 py-1 cursor-pointer hover:bg-neutral-700"
+        >
+          x{{ outputs }}
+        </button>
+        <!-- Duration -->
+        @if (hasDurationOptions()) {
+          <button
+            (click)="toggleSettingsMenu(); $event.stopPropagation()"
+            class="rounded-md bg-neutral-800 px-2 py-1 cursor-pointer hover:bg-neutral-700"
+          >
+            {{ selectedDuration() }}s
+          </button>
+        }
+        <!-- Resolution -->
+        @if (hasResolutionOptions()) {
+          <button
+            (click)="toggleSettingsMenu(); $event.stopPropagation()"
+            class="rounded-md bg-neutral-800 px-2 py-1.5 cursor-pointer hover:bg-neutral-700"
+          >
+            <mat-icon class="!h-4 !w-4 !flex !items-center !justify-center">{{ selectedResolution() | lowercase }}</mat-icon>
+          </button>
+        }
       </div>
     </div>
 
@@ -100,7 +116,10 @@
               <mat-icon class="text-neutral-500">add</mat-icon>
             </ng-container>
             <ng-container *ngIf="image1Preview">
-              <img [src]="image1Preview" class="h-full w-full rounded-lg object-cover" />
+              <div class="group absolute inset-0 rounded-lg overflow-hidden">
+                <img [src]="image1Preview" class="h-full w-full object-cover" />
+                <ng-container *ngTemplateOutlet="editOverlay; context: { num: 1 }"></ng-container>
+              </div>
               <button
                 (click)="$event.stopPropagation(); clearImage.emit({num: 1, event: $event})"
                 class="absolute -right-2 -top-2 rounded-full bg-neutral-900 p-0.5 text-neutral-400 hover:text-white"
@@ -125,7 +144,10 @@
               <mat-icon class="text-neutral-500">add</mat-icon>
             </ng-container>
             <ng-container *ngIf="image2Preview">
-              <img [src]="image2Preview" class="h-full w-full rounded-lg object-cover" />
+              <div class="group absolute inset-0 rounded-lg overflow-hidden">
+                <img [src]="image2Preview" class="h-full w-full object-cover" />
+                <ng-container *ngTemplateOutlet="editOverlay; context: { num: 2 }"></ng-container>
+              </div>
               <button
                 (click)="$event.stopPropagation(); clearImage.emit({num: 2, event: $event})"
                 class="absolute -right-2 -top-2 rounded-full bg-neutral-900 p-0.5 text-neutral-400 hover:text-white"
@@ -152,19 +174,20 @@
               </div>
               <!-- Show small previews of reference images -->
             <div class="flex flex-wrap gap-1">
-              <div *ngFor="let ref of referenceImages; let i = index" class="relative h-12 w-12 flex-shrink-0"
+              <div *ngFor="let ref of referenceImages; let i = index" class="relative h-12 w-12 flex-shrink-0 group rounded-lg overflow-hidden"
                 [class.highlight-new]="ref.isNew">
-                <img [src]="ref.previewUrl" class="h-full w-full rounded-lg object-cover" />
+                <img [src]="ref.previewUrl" class="h-full w-full object-cover" />
+                <ng-container *ngTemplateOutlet="editOverlay; context: { index: i, ref: ref, small: true }"></ng-container>
                 <button (click)="$event.stopPropagation(); clearReferenceImage.emit({index: i, event: $event})"
                   class="absolute -right-1 -top-1 rounded-full bg-neutral-900 p-0.5 text-neutral-400 hover:text-white">
                   <mat-icon class="!h-3 !w-3 text-xs">close</mat-icon>
                 </button>
-                </div>
-                </div>
-                </ng-container>
+              </div>
+            </div>
+          </ng-container>
 
             <!-- Video Reference Slot (only for Ingredients to Video mode AND only for Gemini Omni) -->
-            <div *ngIf="mode === 'Ingredients to Video' && getSelectedModelObject()?.value === 'gemini-omni-generate-preview'"
+            <div *ngIf="mode === 'Ingredients to Video' && getSelectedModelObject()?.value === 'gemini-omni-flash-preview'"
               class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
               (click)="!referenceVideo && openVideoSelectorForReference.emit()"
             >
@@ -185,7 +208,7 @@
             </div>
 
             <!-- Audio Reference Slot (only for Ingredients to Video mode AND only for Gemini Omni) -->
-            <div *ngIf="mode === 'Ingredients to Video' && getSelectedModelObject()?.value === 'gemini-omni-generate-preview'"
+            <div *ngIf="mode === 'Ingredients to Video' && getSelectedModelObject()?.value === 'gemini-omni-flash-preview'"
               class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
               (click)="!referenceAudio && openAudioSelectorForReference.emit()"
             >
@@ -240,45 +263,37 @@
   <!-- 2. Mode Selector Menu                         -->
   <!-- ============================================= -->
   @if (isModeMenuOpen()) {
-    <div
-      #modeMenu
-      class="absolute left-0 bottom-full z-20 mb-2 w-64 rounded-xl bg-neutral-800 p-2 text-white shadow-lg"
-    >
+    <div #modeMenu class="absolute left-0 bottom-full z-20 mb-2 w-64 rounded-xl bg-neutral-800 p-2 text-white shadow-lg">
       @if (modes.length > 0) {
-      @for (m of modes; track m.value) {
-      <button (click)="selectMode(m.value)"
-        class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left font-medium transition-colors"
-        [class.bg-neutral-700]="mode === m.value" [class.hover:bg-neutral-700]="mode !== m.value">
-        <mat-icon [fontIcon]="m.icon"></mat-icon>
-        <span>{{ m.label }}</span>
-      </button>
-      }
+        @for (m of modes; track m.value) {
+          <button (click)="selectMode(m.value)"
+            class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left font-medium transition-colors"
+            [class.bg-neutral-700]="mode === m.value" [class.hover:bg-neutral-700]="mode !== m.value">
+            <mat-icon [fontIcon]="m.icon"></mat-icon>
+            <span>{{ m.label }}</span>
+          </button>
+        }
       } @else {
         <button (click)="selectMode('Text to Video')"
           class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left font-medium transition-colors"
-          [class.bg-neutral-700]="mode === 'Text to Video'" [class.hover:bg-neutral-700]="
-                    mode !== 'Text to Video'
-                  ">
+          [class.bg-neutral-700]="mode === 'Text to Video'"
+          [class.hover:bg-neutral-700]="mode !== 'Text to Video'">
           <!-- Mode Icon 1 -->
           <mat-icon>text_fields</mat-icon>
           <span>Text to Video</span>
         </button>
         <button (click)="selectMode('Frames to Video')"
           class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left font-medium transition-colors"
-          [class.bg-neutral-700]="mode === 'Frames to Video'" [class.hover:bg-neutral-700]="
-                    mode !== 'Frames to Video'
-                  ">
+          [class.bg-neutral-700]="mode === 'Frames to Video'"
+          [class.hover:bg-neutral-700]="mode !== 'Frames to Video'">
           <!-- Mode Icon 2 -->
           <mat-icon fontIcon="image"></mat-icon>
           <span>Frames to Video</span>
         </button>
         <button (click)="selectMode('Ingredients to Video')"
           class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left font-medium transition-colors"
-          [class.bg-neutral-700]="
-                                                                                                            mode === 'Ingredients to Video'
-                  " [class.hover:bg-neutral-700]="
-                    mode !== 'Ingredients to Video'
-                  ">
+          [class.bg-neutral-700]="mode === 'Ingredients to Video'"
+          [class.hover:bg-neutral-700]="mode !== 'Ingredients to Video'">
           <!-- Mode Icon 3 -->
           <mat-icon fontIcon="image_search"></mat-icon>
           <span>Ingredients to Video</span>
@@ -296,6 +311,45 @@
       class="absolute right-0 bottom-full z-20 mb-2 w-[500px] rounded-xl bg-neutral-800 p-4 text-white shadow-lg"
     >
       <div class="grid grid-cols-2 gap-3">
+        <!-- Model Dropdown -->
+        <div class="relative">
+          <label for="model" class="block text-xs font-medium text-neutral-400 mb-1.5">Model</label>
+          <button
+            (click)="
+              $event.stopPropagation();
+              isSettingsDropdownOpen.set(
+                isSettingsDropdownOpen() === 'model' ? null : 'model'
+              )
+            "
+            class="relative w-full flex items-center justify-between rounded-lg bg-neutral-700 px-3 py-2 text-left text-sm"
+          >
+            <span>{{ selectedGenerationModel }}</span>
+            <mat-icon class="transition-transform" [class.rotate-180]="isSettingsDropdownOpen() === 'model'">
+              expand_more
+            </mat-icon>
+          </button>
+          @if (isSettingsDropdownOpen() === 'model') {
+            <div class="absolute left-0 top-full z-30 mt-1 w-full rounded-lg bg-neutral-700 p-1 shadow-lg max-h-80 overflow-y-auto">
+              @for (model of generationModels; track model.value) {
+                <button
+                  (click)="selectInternalModel(model)"
+                  class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600 whitespace-pre-wrap"
+                  [class.bg-neutral-600]="selectedGenerationModel === model.viewValue"
+                >
+                  <div class="flex items-center gap-2">
+                    @if (model.isImage) {
+                      <img [src]="model.imageSrc" class="h-5 w-5 object-contain" alt="model icon" />
+                    } @else if (model.isSvg) {
+                      <mat-icon [svgIcon]="model.icon || ''" class="!h-5 !w-5"></mat-icon>
+                    }
+                    {{ model.viewValue }}
+                  </div>
+                </button>
+              }
+            </div>
+          }
+        </div>
+
         <!-- Aspect Ratio Dropdown -->
         <div class="relative">
           <label
@@ -331,24 +385,24 @@
               class="absolute left-0 top-full z-30 mt-1 w-full rounded-lg bg-neutral-700 p-1 shadow-lg max-h-60 overflow-y-auto"
             >
               @if (aspectRatioOptions.length > 0) {
-              @for (option of aspectRatioOptions; track option.value) {
-              <button (click)="selectNewAspectRatio(option.value)"
-                class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600" [disabled]="option.disabled"
-                [class.opacity-50]="option.disabled" [class.cursor-not-allowed]="option.disabled">
-                <div class="flex items-center gap-2 whitespace-nowrap">
-                  <mat-icon>{{ option.icon || 'crop_landscape' }}</mat-icon>
-                  {{ option.viewValue.replace('\n', '') }}
-                </div>
-              </button>
-              }
+                @for (option of aspectRatioOptions; track option.value) {
+                  <button (click)="selectNewAspectRatio(option.value)"
+                    class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600" [disabled]="option.disabled"
+                    [class.opacity-50]="option.disabled" [class.cursor-not-allowed]="option.disabled">
+                    <div class="flex items-center gap-2 whitespace-nowrap">
+                      <mat-icon>{{ option.icon || 'crop_landscape' }}</mat-icon>
+                      {{ option.viewValue.replace('\n', '') }}
+                    </div>
+                  </button>
+                }
               } @else {
-              <button (click)="selectNewAspectRatio('16:9')"
-                class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600">
-                <div class="flex items-center gap-2 whitespace-nowrap">
-                  <mat-icon>crop_landscape</mat-icon>
-                  Horizontal (16:9)
-                </div>
-              </button>
+                <button (click)="selectNewAspectRatio('16:9')"
+                  class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600">
+                  <div class="flex items-center gap-2 whitespace-nowrap">
+                    <mat-icon>crop_landscape</mat-icon>
+                    Horizontal (16:9)
+                  </div>
+                </button>
                 <button (click)="selectNewAspectRatio('9:16')"
                   class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600">
                   <div class="flex items-center gap-2 whitespace-nowrap">
@@ -360,7 +414,13 @@
             </div>
           }
         </div>
+      </div>
 
+      <div class="grid gap-3 mt-3"
+        [class.grid-cols-3]="hasResolutionOptions() && hasDurationOptions()"
+        [class.grid-cols-2]="hasResolutionOptions() !== hasDurationOptions()"
+        [class.grid-cols-1]="!(hasResolutionOptions() || hasDurationOptions())"
+      >
         <!-- Outputs Dropdown -->
         <div class="relative">
           <label
@@ -377,7 +437,7 @@
             "
             class="relative w-full flex items-center justify-between rounded-lg bg-neutral-700 px-3 py-2 text-left text-sm"
           >
-            <span>{{ outputs }}</span>
+            <span>x{{ outputs }}</span>
             <mat-icon
             class="transition-transform"
             [class.rotate-180]="isSettingsDropdownOpen() === 'outputs'"
@@ -393,79 +453,102 @@
                 (click)="selectOutputs(1)"
                 class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600"
               >
-                1
+                x1
               </button>
-              @if (getSelectedModelObject()?.value !== 'gemini-omni-generate-preview') {
+              @if (getSelectedModelObject()?.value !== 'gemini-omni-flash-preview') {
                 <button
                   (click)="selectOutputs(2)"
                   class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600"
                 >
-                  2
+                  x2
                 </button>
                 <button
                   (click)="selectOutputs(3)"
                   class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600"
                 >
-                  3
+                  x3
                 </button>
                 <button
                   (click)="selectOutputs(4)"
                   class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600"
                 >
-                  4
+                  x4
                 </button>
               }
             </div>
           }
         </div>
-      </div>
 
-      <!-- Model Dropdown -->
-      <div class="relative mt-3">
-        <label
-          for="model"
-          class="block text-xs font-medium text-neutral-400 mb-1.5"
-          >Model</label
-        >
-        <button
-          (click)="
-            $event.stopPropagation();
-            isSettingsDropdownOpen.set(
-              isSettingsDropdownOpen() === 'model' ? null : 'model'
-            )
-          "
-          class="relative w-full flex items-center justify-between rounded-lg bg-neutral-700 px-3 py-2 text-left text-sm"
-        >
-          <span>{{ selectedGenerationModel }}</span>
-          <mat-icon
-            class="transition-transform"
-            [class.rotate-180]="isSettingsDropdownOpen() === 'model'"
-          >
-            expand_more
-          </mat-icon>
-        </button>
-        @if (isSettingsDropdownOpen() === 'model') {
-          <div
-            class="absolute left-0 top-full z-30 mt-1 w-full rounded-lg bg-neutral-700 p-1 shadow-lg max-h-80 overflow-y-auto"
-          >
+        <!-- Duration Dropdown -->
+        @if (hasDurationOptions()) {
+          <div class="relative">
+            <label for="duration" class="block text-xs font-medium text-neutral-400 mb-1.5">Duration</label>
             <button
-              *ngFor="let model of generationModels"
-              (click)="selectInternalModel(model)"
-              class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600 whitespace-pre-wrap"
-              [ngClass]="{
-                'bg-neutral-600':
-                  selectedGenerationModel === model.viewValue,
-              }"
+              (click)="
+                $event.stopPropagation();
+                isSettingsDropdownOpen.set(
+                  isSettingsDropdownOpen() === 'duration' ? null : 'duration'
+                )
+              "
+              class="relative w-full flex items-center justify-between rounded-lg bg-neutral-700 px-3 py-2 text-left text-sm"
             >
-              <div class="flex items-center gap-2">
-                @if (model.isImage) {
-                <img [src]="model.imageSrc" class="h-5 w-5 object-contain" alt="model icon" />
-                } @else if (model.isSvg) {
-                <mat-icon [svgIcon]="model.icon || ''" class="!h-5 !w-5"></mat-icon>
-                }
-                {{ model.viewValue }}
-              </div>
+              <span>{{ selectedDuration() }} seconds</span>
+              <mat-icon class="transition-transform" [class.rotate-180]="isSettingsDropdownOpen() === 'duration'">
+                expand_more
+              </mat-icon>
             </button>
+            @if (isSettingsDropdownOpen() === 'duration') {
+              <div class="absolute left-0 top-full z-30 mt-1 w-full rounded-lg bg-neutral-700 p-1 shadow-lg max-h-80 overflow-y-auto">
+                @for (duration of getSelectedModelDurations(); track duration) {
+                  <button
+                    (click)="selectDuration(duration)"
+                    class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600 whitespace-pre-wrap"
+                    [class.bg-neutral-600]="selectedDuration() === duration"
+                  >
+                    <div class="flex items-center gap-2">
+                      {{ duration }} seconds
+                    </div>
+                  </button>
+                }
+              </div>
+            }
+          </div>
+        }
+
+        <!-- Resolution Dropdown -->
+        @if (hasResolutionOptions()) {
+          <div class="relative">
+            <label for="resolution" class="block text-xs font-medium text-neutral-400 mb-1.5">Resolution</label>
+            <button
+              (click)="
+                $event.stopPropagation();
+                isSettingsDropdownOpen.set(
+                  isSettingsDropdownOpen() === 'resolution' ? null : 'resolution'
+                )
+              "
+              class="relative w-full flex items-center justify-between rounded-lg bg-neutral-700 px-3 py-2 text-left text-sm"
+            >
+              <span>{{ selectedResolution() }}</span>
+              <mat-icon class="transition-transform" [class.rotate-180]="isSettingsDropdownOpen() === 'resolution'">
+                expand_more
+              </mat-icon>
+            </button>
+            @if (isSettingsDropdownOpen() === 'resolution') {
+              <div class="absolute left-0 top-full z-30 mt-1 w-full rounded-lg bg-neutral-700 p-1 shadow-lg max-h-80 overflow-y-auto">
+                @for (resolution of ALL_RESOLUTIONS; track resolution) {
+                  <button
+                    (click)="selectResolution(resolution)"
+                    class="block w-full px-3 py-1.5 text-left text-sm rounded hover:enabled:bg-neutral-600 disabled:opacity-50 disabled:cursor-not-allowed whitespace-pre-wrap"
+                    [class.bg-neutral-600]="selectedResolution() === resolution"
+                    [disabled]="!supportedResolutions().includes(resolution)"
+                  >
+                    <div class="flex items-center gap-2">
+                      {{ resolution }}
+                    </div>
+                  </button>
+                }
+              </div>
+            }
           </div>
         }
       </div>
@@ -473,3 +556,13 @@
   }
 
 </div>
+
+<ng-template #editOverlay let-num="num" let-index="index" let-ref="ref" let-small="small">
+  <div
+    (click)="$event.stopPropagation(); onEditOverlayClick(num, index, ref)"
+    class="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100 cursor-pointer"
+    matTooltip="Edit Image"
+  >
+    <mat-icon [class]="'text-white flex items-center justify-center ' + (small ? '!h-4 !w-4 text-xs' : '!h-5 !w-5 text-base')">edit</mat-icon>
+  </div>
+</ng-template>

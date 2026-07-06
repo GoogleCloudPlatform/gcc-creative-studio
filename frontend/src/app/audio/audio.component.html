@@ -91,7 +91,7 @@
     <div class="control-panel glass-effect">
 
         <div class="model-selector">
-            <mat-button-toggle-group [(ngModel)]="selectedModel" name="modelSelect" aria-label="Select Model">
+            <mat-button-toggle-group [(ngModel)]="selectedModel" (ngModelChange)="saveState()" name="modelSelect" aria-label="Select Model">
                 <mat-button-toggle value="lyria">Lyria (Music)</mat-button-toggle>
                 <mat-button-toggle value="chirp">Chirp TTS</mat-button-toggle>
                 <mat-button-toggle value="gemini-tts">Gemini TTS</mat-button-toggle>
@@ -105,22 +105,22 @@
             <ng-container *ngIf="selectedModel === 'lyria'">
                 <mat-form-field appearance="outline" class="large-field">
                     <mat-label>Prompt</mat-label>
-                    <textarea matInput [(ngModel)]="prompt" placeholder="Describe the music..." (keydown.control.enter)="generate()"></textarea>
+                    <textarea matInput [(ngModel)]="prompt" (ngModelChange)="saveState()" placeholder="Describe the music..." (keydown.control.enter)="generate()"></textarea>
                 </mat-form-field>
 
                 <mat-form-field appearance="outline">
                     <mat-label>Negative Prompt</mat-label>
-                    <input matInput [(ngModel)]="negativePrompt" placeholder="What to avoid">
+                    <input matInput [(ngModel)]="negativePrompt" (ngModelChange)="saveState()" placeholder="What to avoid">
                 </mat-form-field>
 
                 <mat-form-field appearance="outline" class="short-field">
                     <mat-label>Seed</mat-label>
-                    <input matInput type="number" [(ngModel)]="seed">
+                    <input matInput type="number" [(ngModel)]="seed" (ngModelChange)="saveState()">
                 </mat-form-field>
 
                 <mat-form-field appearance="outline" class="short-field">
                     <mat-label>Results</mat-label>
-                    <mat-select [(ngModel)]="sampleCount">
+                    <mat-select [(ngModel)]="sampleCount" (ngModelChange)="saveState()">
                         <mat-option *ngFor="let count of [1, 2, 3, 4]" [value]="count">
                             {{ count }}
                         </mat-option>
@@ -131,12 +131,12 @@
             <ng-container *ngIf="selectedModel !== 'lyria'">
                 <mat-form-field appearance="outline" class="large-field">
                     <mat-label>Text to Speech</mat-label>
-                    <textarea matInput [(ngModel)]="prompt" placeholder="Enter text to speak..." (keydown.control.enter)="generate()"></textarea>
+                    <textarea matInput [(ngModel)]="prompt" (ngModelChange)="saveState()" placeholder="Enter text to speak..." (keydown.control.enter)="generate()"></textarea>
                 </mat-form-field>
 
                 <mat-form-field appearance="outline">
                     <mat-label>Language</mat-label>
-                    <mat-select [(ngModel)]="selectedLanguage">
+                    <mat-select [(ngModel)]="selectedLanguage" (ngModelChange)="saveState()">
                         <mat-option *ngFor="let lang of languages" [value]="lang.code">
                             {{ lang.name }}
                         </mat-option>
@@ -160,7 +160,7 @@
 
                 <mat-form-field appearance="outline" class="short-field">
                     <mat-label>Results</mat-label>
-                    <mat-select [(ngModel)]="sampleCount">
+                    <mat-select [(ngModel)]="sampleCount" (ngModelChange)="saveState()">
                         <mat-option *ngFor="let count of [1, 2, 3, 4]" [value]="count">
                             {{ count }}
                         </mat-option>

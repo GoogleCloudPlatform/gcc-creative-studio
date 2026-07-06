@@ -53,12 +53,13 @@ class GenerationModelEnum(str, Enum):
     GEMINI_3_PRO_PREVIEW = "gemini-3-pro-preview"
     GEMINI_3_PRO_IMAGE = "gemini-3-pro-image"
     GEMINI_3_1_FLASH_IMAGE = "gemini-3.1-flash-image"
+    GEMINI_3_1_FLASH_LITE_IMAGE = "gemini-3.1-flash-lite-image"
     GEMINI_3_FLASH_PREVIEW = "gemini-3-flash-preview"
     VTO = "virtual-try-on-001"
 
     # Video-Specific Models
     GEMINI_OMNI = "gemini-omni-generate-preview"
-    GEMINI_OMNI_GENERATE_PREVIEW = "gemini-omni-generate-preview"
+    GEMINI_OMNI_FLASH_PREVIEW = "gemini-omni-flash-preview"
     VEO_3_1_FAST_GENERATE_001 = "veo-3.1-fast-generate-001"
     VEO_3_1_LITE_GENERATE_001 = "veo-3.1-lite-generate-001"
     VEO_3_1_GENERATE_001 = "veo-3.1-generate-001"
@@ -103,6 +104,7 @@ class GenerationModelEnum(str, Enum):
             GenerationModelEnum.GEMINI_3_PRO_IMAGE,
             GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE_PREVIEW,
             GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE,
+            GenerationModelEnum.GEMINI_3_1_FLASH_LITE_IMAGE,
         ]
 
     @property
@@ -111,6 +113,7 @@ class GenerationModelEnum(str, Enum):
         if self in [
             GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE_PREVIEW,
             GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE,
+            GenerationModelEnum.GEMINI_3_1_FLASH_LITE_IMAGE,
         ]:
             return [
                 AspectRatioEnum.RATIO_1_1,
@@ -157,6 +160,7 @@ class GenerationModelEnum(str, Enum):
             GenerationModelEnum.GEMINI_3_PRO_IMAGE,
             GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE_PREVIEW,
             GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE,
+            GenerationModelEnum.GEMINI_3_1_FLASH_LITE_IMAGE,
         ]:
             return 14
         if self.is_gemini_image_model:
