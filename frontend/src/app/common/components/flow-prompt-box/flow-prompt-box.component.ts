@@ -350,8 +350,18 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
     if (!aspectRatio) return 'crop_portrait';
     const ratio = aspectRatio.toLowerCase();
     if (ratio === 'auto') return 'aspect_ratio';
+    // Parse numeric ratio if present (e.g. "4:3", "3:2", "9:16")
+    if (ratio.includes(':')) {
+      const parts = ratio.split(':');
+      const w = parseFloat(parts[0]);
+      const h = parseFloat(parts[1]);
+      if (!isNaN(w) && !isNaN(h)) {
+        if (w > h) return 'crop_landscape';
+        if (w === h) return 'crop_square';
+        return 'crop_portrait';
+      }
+    }
     if (
-      ratio.includes('16:9') ||
       ratio.includes('landscape') ||
       ratio.includes('horizontal') ||
       ratio.includes('wide') ||
@@ -360,7 +370,7 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
     ) {
       return 'crop_landscape';
     }
-    if (ratio.includes('square') || ratio.includes('1:1')) {
+    if (ratio.includes('square')) {
       return 'crop_square';
     }
     return 'crop_portrait';
