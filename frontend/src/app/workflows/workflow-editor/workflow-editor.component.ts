@@ -164,7 +164,6 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
 
   historyStack: any[] = [];
   historyIndex = -1;
-  isUndoRedoAction = false;
 
   @HostListener('document:keydown', ['$event'])
   onDocumentKeydown(event: KeyboardEvent): void {
@@ -200,16 +199,27 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       form: this.workflowForm.getRawValue(),
       positions: JSON.parse(JSON.stringify(this.nodePositions)),
     };
+    const currentStateString = JSON.stringify(currentState);
+
+    // Deep equality check to prevent saving duplicate states or race conditions with undo/redo
+    if (this.historyStack.length > 0 && this.historyIndex >= 0) {
+      const lastStateString = JSON.stringify(
+        this.historyStack[this.historyIndex],
+      );
+      if (currentStateString === lastStateString) {
+        return;
+      }
+    }
+
     if (this.historyIndex < this.historyStack.length - 1) {
       this.historyStack = this.historyStack.slice(0, this.historyIndex + 1);
     }
-    this.historyStack.push(JSON.parse(JSON.stringify(currentState)));
+    this.historyStack.push(JSON.parse(currentStateString));
     this.historyIndex++;
   }
 
   undo() {
     if (this.historyIndex > 0) {
-      this.isUndoRedoAction = true;
       this.historyIndex--;
       const state = this.historyStack[this.historyIndex];
       this.formService.patchData(state.form);
@@ -220,7 +230,6 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
 
   redo() {
     if (this.historyIndex < this.historyStack.length - 1) {
-      this.isUndoRedoAction = true;
       this.historyIndex++;
       const state = this.historyStack[this.historyIndex];
       this.formService.patchData(state.form);
@@ -301,10 +310,6 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
           this.currentExecutionState !== 'ACTIVE'
         ) {
           this.currentExecutionState = null;
-        }
-        if (this.isUndoRedoAction) {
-          this.isUndoRedoAction = false;
-          return;
         }
         this.saveHistoryState();
       });
