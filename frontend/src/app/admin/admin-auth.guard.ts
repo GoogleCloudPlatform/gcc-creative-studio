@@ -28,7 +28,6 @@ import {UserService} from '../common/services/user.service';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {AuthService} from '../common/services/auth.service';
 import {handleErrorSnackbar} from '../utils/handleMessageSnackbar';
-import {SettingsService} from '../services/settings.service';
 
 const LOGIN_ROUTE = '/login';
 
@@ -43,7 +42,6 @@ export class AdminAuthGuard implements CanActivate {
     private router: Router,
     private userService: UserService,
     private _snackBar: MatSnackBar,
-    private settingsService: SettingsService,
   ) {}
 
   canActivate(
@@ -70,31 +68,29 @@ export class AdminAuthGuard implements CanActivate {
       return false;
     }
 
-    return this.settingsService.loadSettings().then(() => {
-      const userDetails = this.userService.getUserDetails(); // Get user details from localStorage
-      const userEmail = userDetails?.email?.toLowerCase();
+    const userDetails = this.userService.getUserDetails(); // Get user details from localStorage
+    const userEmail = userDetails?.email?.toLowerCase();
 
-      if (userEmail && this.authService.isUserAdmin()) {
-        return true; // User is authenticated and email is in the allowed list
-      } else {
-        // User is not authenticated or not an allowed admin
-        console.warn('Access denied to admin area.');
+    if (userEmail && this.authService.isUserAdmin()) {
+      return true; // User is authenticated and email is in the allowed list
+    } else {
+      // User is not authenticated or not an allowed admin
+      console.warn('Access denied to admin area.');
 
-        handleErrorSnackbar(
-          this._snackBar,
-          {
-            message: `Access Denied: Your email (${userEmail}) is not authorized or login session expired.`,
-          },
-          'Access Denied',
-        );
+      handleErrorSnackbar(
+        this._snackBar,
+        {
+          message: `Access Denied: Your email (${userEmail}) is not authorized or login session expired.`,
+        },
+        'Access Denied',
+      );
 
-        // Use async logout and navigate *after* logout completes
-        void this.authService.logout().then(() => {
-          console.log('Forced logout due to DEV email restriction complete.');
-          // Navigation is handled by the logout method itself
-        });
-        return false; // Prevent navigation
-      }
-    });
+      // Use async logout and navigate *after* logout completes
+      void this.authService.logout().then(() => {
+        console.log('Forced logout due to DEV email restriction complete.');
+        // Navigation is handled by the logout method itself
+      });
+      return false; // Prevent navigation
+    }
   }
 }

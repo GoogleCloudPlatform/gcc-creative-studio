@@ -73,7 +73,7 @@
     <div
       *ngFor="let wf of obs$ | async"
       class="workflow-card"
-      (click)="navigateToHistory(wf)"
+      (click)="navigateToEdit(wf)"
     >
       <!-- Double click to view history -->
 
@@ -100,12 +100,10 @@
         >
           <button
             mat-icon-button
-            (click)="$event.stopPropagation()"
-            [routerLink]="['/workflows/edit', wf.id]"
-            [queryParams]="{ returnUrl: '/workflows' }"
-            matTooltip="Edit Definition"
+            (click)="$event.stopPropagation(); navigateToHistory(wf)"
+            matTooltip="View History"
           >
-            <mat-icon>edit</mat-icon>
+            <mat-icon>history</mat-icon>
           </button>
           <button
             mat-icon-button

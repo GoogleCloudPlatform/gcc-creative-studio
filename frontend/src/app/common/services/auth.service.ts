@@ -14,22 +14,21 @@
  * limitations under the License.
  */
 
-import {Injectable, PLATFORM_ID, inject} from '@angular/core';
-import {Router} from '@angular/router';
-import {UserModel, UserRolesEnum} from '../models/user.model';
-import {HttpClient, HttpHeaders, HttpErrorResponse} from '@angular/common/http';
-import {environment} from '../../../environments/environment';
-import {Auth, IdTokenResult} from '@angular/fire/auth';
-import {UserService} from '../services/user.service';
+import { Injectable, PLATFORM_ID, inject } from '@angular/core';
+import { Router } from '@angular/router';
+import { UserModel, UserRolesEnum } from '../models/user.model';
+import { HttpClient, HttpHeaders, HttpErrorResponse } from '@angular/common/http';
+import { environment } from '../../../environments/environment';
+import { Auth, IdTokenResult } from '@angular/fire/auth';
+import { UserService } from '../services/user.service';
 import {
   GoogleAuthProvider,
   signInWithPopup,
   UserCredential,
 } from '@angular/fire/auth';
-import {Observable, from, throwError, of} from 'rxjs';
-import {catchError, tap, map, switchMap} from 'rxjs/operators';
-import {isPlatformBrowser} from '@angular/common';
-import {SettingsService} from '../../services/settings.service';
+import { Observable, from, throwError, of } from 'rxjs';
+import { catchError, tap, map, switchMap } from 'rxjs/operators';
+import { isPlatformBrowser } from '@angular/common';
 
 // Declare the 'google' global object from the Google Identity Services script
 declare const google: any;
@@ -60,7 +59,6 @@ export class AuthService {
     private router: Router,
     private httpClient: HttpClient,
     private userService: UserService,
-    private settingsService: SettingsService,
   ) {
     this.provider.setCustomParameters({
       // Set custom params for the provider
@@ -93,12 +91,11 @@ export class AuthService {
         // Save session details to memory and local storage.
         this.firebaseIdToken = token;
         this.firebaseTokenExpiry = expirationTime;
-        const session: FirebaseSession = {token, expiry: expirationTime};
+        const session: FirebaseSession = { token, expiry: expirationTime };
         localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
 
         // Call the backend to get or create the user profile.
         return this.syncUserWithBackend$(token).pipe(
-          switchMap(() => from(this.settingsService.loadSettings())),
           map(() => token), // Pass the token along for the final result.
         );
       }),
@@ -140,7 +137,7 @@ export class AuthService {
             this.firebaseIdToken = token;
             this.firebaseTokenExpiry = expiry;
 
-            const session: FirebaseSession = {token, expiry};
+            const session: FirebaseSession = { token, expiry };
             localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
           } catch (error) {
             console.error('Error decoding refreshed token payload:', error);
@@ -163,32 +160,23 @@ export class AuthService {
   signInForGoogleIdentityPlatform(): Observable<string> {
     return this.promptForIdentityPlatformToken$().pipe(
       switchMap(idToken => {
-        try {
-          const payload = this.decodeJwtPayload(idToken);
-          const userEmail = payload.email?.toLowerCase();
+        const payload = JSON.parse(atob(idToken.split('.')[1]));
+        const userEmail = payload.email?.toLowerCase();
 
-          // If allowed, proceed to save session and return token
-          this.firebaseIdToken = idToken;
-          this.firebaseTokenExpiry = payload.exp * 1000;
+        // If allowed, proceed to save session and return token
+        this.firebaseIdToken = idToken;
+        this.firebaseTokenExpiry = payload.exp * 1000;
 
-          const session: FirebaseSession = {
-            token: idToken,
-            expiry: this.firebaseTokenExpiry,
-          };
-          localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
+        const session: FirebaseSession = {
+          token: idToken,
+          expiry: this.firebaseTokenExpiry,
+        };
+        localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
 
-          // Call the backend to get or create the user profile.
-          return this.syncUserWithBackend$(idToken).pipe(
-            switchMap(() => from(this.settingsService.loadSettings())),
-            map(() => idToken), // Pass the token along for the final result.
-          );
-        } catch (error) {
-          console.error(
-            'Error decoding Google Identity Platform token:',
-            error,
-          );
-          return throwError(() => error);
-        }
+        // Call the backend to get or create the user profile.
+        return this.syncUserWithBackend$(idToken).pipe(
+          map(() => idToken), // Pass the token along for the final result.
+        );
       }),
     );
   }
@@ -268,7 +256,7 @@ export class AuthService {
   private syncUserWithBackend$(token: string): Observable<UserModel> {
     const headers = new HttpHeaders().set('Authorization', `Bearer ${token}`);
     return this.httpClient
-      .get<UserModel>(`${environment.backendURL}/users/me`, {headers})
+      .get<UserModel>(`${environment.backendURL}/users/me`, { headers })
       .pipe(
         tap((userDetails: UserModel) => {
           // The backend is the source of truth. Save the returned profile to local storage.
@@ -282,7 +270,7 @@ export class AuthService {
             () =>
               new Error(
                 error?.error?.detail ||
-                  `Could not synchronize user profile with the server. ${error?.error?.detail}`,
+                `Could not synchronize user profile with the server. ${error?.error?.detail}`,
               ),
           );
         }),
@@ -290,7 +278,6 @@ export class AuthService {
   }
 
   async logout(route: string = LOGIN_ROUTE) {
-    this.settingsService.reset();
     return this.auth
       .signOut()
       .then(() => {
@@ -305,7 +292,6 @@ export class AuthService {
       })
       .catch(e => {
         console.error('Sign Out Error', e);
-        this.settingsService.reset();
         localStorage.removeItem(FIREBASE_SESSION_KEY);
         localStorage.removeItem(USER_DETAILS);
         localStorage.removeItem('showTooltip');

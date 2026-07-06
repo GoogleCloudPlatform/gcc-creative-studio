@@ -14,58 +14,12 @@
  limitations under the License.
 -->
 
-<div class="py-4 px-0 dark:text-gray-100 min-h-screen">
+<div class="py-4 px-0 text-gray-100 min-h-screen">
   <h1 class="text-3xl font-semibold mb-6">Admin Dashboard</h1>
   
   <div *ngIf="isSuperAdmin$ | async; else orgAdminView">
-    <!-- Feature Toggles -->
-    <div class="dark:bg-[#1E1F22] p-6 rounded-lg shadow border border-zinc-700 mb-6">
-      <h3 class="text-2xl font-semibold text-zinc-200 mb-4">Feature Toggles</h3>
-      <div class="flex flex-col dark:bg-[#2A2B2F] p-4 rounded-lg border border-zinc-800 gap-4">
-        <div class="flex items-center justify-between">
-          <div class="flex flex-col">
-            <span class="text-white font-semibold text-base">Enable Gemini Omni Model</span>
-            <span class="text-zinc-400 text-sm mt-0.5">Note: This feature is exclusive to the Early Access Program (EAP)
-              participants. To check your status or request access, please contact your Google Account Executive.</span>
-          </div>
-          <mat-slide-toggle [checked]="showGeminiOmni" (change)="toggleGeminiOmni($event)">
-          </mat-slide-toggle>
-        </div>
-
-        <div *ngIf="showGeminiOmni" class="flex flex-col gap-2 border-t border-zinc-700 pt-4">
-          <span class="text-white font-semibold text-sm">Gemini Omni Model Name</span>
-          <span class="text-zinc-400 text-xs mt-0.5">Specify the actual vertex model ID to target (defaults to an empty string).</span>
-          <div class="flex gap-3 items-center mt-2">
-            <div class="relative flex-grow">
-              <input
-                [type]="showModelName ? 'text' : 'password'"
-                [(ngModel)]="geminiOmniModelName"
-                placeholder="e.g. custom-model-id"
-                class="bg-zinc-800 text-white border border-zinc-700 rounded pl-3 pr-10 py-2 text-sm focus:outline-none focus:border-blue-500 w-full"
-              />
-              <button
-                type="button"
-                (click)="showModelName = !showModelName"
-                class="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white transition-colors focus:outline-none flex items-center justify-center"
-              >
-                <mat-icon class="!text-lg !w-5 !h-5 !leading-5">
-                  {{ showModelName ? 'visibility_off' : 'visibility' }}
-                </mat-icon>
-              </button>
-            </div>
-            <button
-              (click)="saveGeminiOmniModelName()"
-              class="bg-blue-600 hover:bg-blue-700 text-white rounded px-4 py-2 text-sm font-semibold transition-colors"
-            >
-              Save
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <!-- Platform Overview Stats -->
-    <div class="dark:bg-[#1E1F22] p-6 rounded-lg shadow border border-zinc-700 mb-6">
+    <div class="bg-[#1E1F22] p-6 rounded-lg shadow border border-zinc-700 mb-6">
       <div class="flex justify-between items-center mb-4 flex-wrap gap-4">
         <div>
           <h3 class="text-2xl font-semibold text-zinc-200">Platform Overview</h3>
@@ -81,42 +35,42 @@
       </div>
       <div *ngIf="overviewStats$ | async as stats; else loadingStats">
         <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-4">
-          <div class="dark:bg-[#2A2B2F] p-4 rounded-lg shadow flex flex-col items-center justify-center border border-zinc-800 cursor-pointer" matTooltip="Count of all registered users on the platform.">
+          <div class="bg-[#2A2B2F] p-4 rounded-lg shadow flex flex-col items-center justify-center border border-zinc-800 cursor-pointer" matTooltip="Count of all registered users on the platform.">
             <mat-icon class="text-blue-400 mb-2 flex justify-center items-center" style="font-size: 48px; width: 48px; height: 48px;">group</mat-icon>
             <span class="!text-3xl font-bold text-white">{{ stats.totalUsers }}</span>
             <span class="text-zinc-400 mt-1 text-sm">Total Users</span>
           </div>
-          <div class="dark:bg-[#2A2B2F] p-4 rounded-lg shadow flex flex-col items-center justify-center border border-zinc-800 cursor-pointer" matTooltip="Count of all workspaces created.">
+          <div class="bg-[#2A2B2F] p-4 rounded-lg shadow flex flex-col items-center justify-center border border-zinc-800 cursor-pointer" matTooltip="Count of all workspaces created.">
             <mat-icon class="text-purple-400 mb-2 flex justify-center items-center" style="font-size: 48px; width: 48px; height: 48px;">business</mat-icon>
             <span class="!text-3xl font-bold text-white">{{ stats.totalWorkspaces }}</span>
             <span class="text-zinc-400 mt-1 text-sm">Workspaces</span>
           </div>
-          <div class="dark:bg-[#2A2B2F] p-4 rounded-lg shadow flex flex-col items-center justify-center border border-zinc-800 cursor-pointer" matTooltip="Total number of AI-generated images.">
+          <div class="bg-[#2A2B2F] p-4 rounded-lg shadow flex flex-col items-center justify-center border border-zinc-800 cursor-pointer" matTooltip="Total number of AI-generated images.">
             <mat-icon class="text-red-400 mb-2 flex justify-center items-center" style="font-size: 48px; width: 48px; height: 48px;">image</mat-icon>
             <span class="!text-3xl font-bold text-white">{{ stats.imagesGenerated }}</span>
             <span class="text-zinc-400 mt-1 text-sm">Images Gen.</span>
           </div>
-          <div class="dark:bg-[#2A2B2F] p-4 rounded-lg shadow flex flex-col items-center justify-center border border-zinc-800 cursor-pointer" matTooltip="Total number of AI-generated videos.">
+          <div class="bg-[#2A2B2F] p-4 rounded-lg shadow flex flex-col items-center justify-center border border-zinc-800 cursor-pointer" matTooltip="Total number of AI-generated videos.">
             <mat-icon class="text-green-400 mb-2 flex justify-center items-center" style="font-size: 48px; width: 48px; height: 48px;">movie</mat-icon>
             <span class="!text-3xl font-bold text-white">{{ stats.videosGenerated }}</span>
             <span class="text-zinc-400 mt-1 text-sm">Videos Gen.</span>
           </div>
-          <div class="dark:bg-[#2A2B2F] p-4 rounded-lg shadow flex flex-col items-center justify-center border border-zinc-800 cursor-pointer" matTooltip="Total number of AI-generated audios.">
+          <div class="bg-[#2A2B2F] p-4 rounded-lg shadow flex flex-col items-center justify-center border border-zinc-800 cursor-pointer" matTooltip="Total number of AI-generated audios.">
             <mat-icon class="text-yellow-400 mb-2 flex justify-center items-center" style="font-size: 48px; width: 48px; height: 48px;">audiotrack</mat-icon>
             <span class="!text-3xl font-bold text-white">{{ stats.audiosGenerated }}</span>
             <span class="text-zinc-400 mt-1 text-sm">Audios Gen.</span>
           </div>
-          <div class="dark:bg-[#2A2B2F] p-4 rounded-lg shadow flex flex-col items-center justify-center border border-zinc-800 cursor-pointer" matTooltip="Combined total of all AI-generated assets (Images + Videos + Audios).">
+          <div class="bg-[#2A2B2F] p-4 rounded-lg shadow flex flex-col items-center justify-center border border-zinc-800 cursor-pointer" matTooltip="Combined total of all AI-generated assets (Images + Videos + Audios).">
             <mat-icon class="text-teal-400 mb-2 flex justify-center items-center" style="font-size: 48px; width: 48px; height: 48px;">perm_media</mat-icon>
             <span class="!text-3xl font-bold text-white">{{ stats.totalMedia }}</span>
             <span class="text-zinc-400 mt-1 text-sm">AI Media Total</span>
           </div>
-          <div class="dark:bg-[#2A2B2F] p-4 rounded-lg shadow flex flex-col items-center justify-center border border-zinc-800 cursor-pointer" matTooltip="Count of all user uploaded source assets.">
+          <div class="bg-[#2A2B2F] p-4 rounded-lg shadow flex flex-col items-center justify-center border border-zinc-800 cursor-pointer" matTooltip="Count of all user uploaded source assets.">
             <mat-icon class="text-indigo-400 mb-2 flex justify-center items-center" style="font-size: 48px; width: 48px; height: 48px;">cloud_upload</mat-icon>
             <span class="!text-3xl font-bold text-white">{{ stats.userUploadedMedia }}</span>
             <span class="text-zinc-400 mt-1 text-sm">Uploaded</span>
           </div>
-          <div class="dark:bg-[#2A2B2F] p-4 rounded-lg shadow flex flex-col items-center justify-center border border-zinc-800 cursor-pointer" matTooltip="Overall total of all media assets combined (AI Generated + Uploaded).">
+          <div class="bg-[#2A2B2F] p-4 rounded-lg shadow flex flex-col items-center justify-center border border-zinc-800 cursor-pointer" matTooltip="Overall total of all media assets combined (AI Generated + Uploaded).">
             <mat-icon class="text-orange-400 mb-2 flex justify-center items-center" style="font-size: 48px; width: 48px; height: 48px;">analytics</mat-icon>
             <span class="!text-3xl font-bold text-white">{{ stats.overallTotalMedia }}</span>
             <span class="text-zinc-400 mt-1 text-sm">Overall Total</span>

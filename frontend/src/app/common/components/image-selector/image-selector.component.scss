@@ -98,6 +98,7 @@
   backdrop-filter: blur(4px);
   z-index: 100;
   justify-content: center;
+  pointer-events: none;
   align-items: center;
   border: 2px dashed rgba(255, 255, 255, 0.4);
   border-radius: 12px;

@@ -39,6 +39,7 @@ import {NotificationContainerComponent} from './common/components/notification-c
 import {ClipboardModule} from '@angular/cdk/clipboard';
 import {DragDropModule} from '@angular/cdk/drag-drop';
 import {ScrollingModule} from '@angular/cdk/scrolling';
+import {TextFieldModule} from '@angular/cdk/text-field';
 import {NgOptimizedImage} from '@angular/common';
 import {MarkdownModule} from 'ngx-markdown';
 import {
@@ -193,6 +194,7 @@ import {TimeRulerComponent} from './workbench/components/time-ruler/time-ruler.c
     WorkflowStatusPipe,
     StoryboardComponent,
     TimeRulerComponent,
+    TextFieldModule,
   ],
   providers: [
     provideClientHydration(),

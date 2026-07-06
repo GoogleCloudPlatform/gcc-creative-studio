@@ -22,7 +22,7 @@
       class="mr-4"
       color="primary"
     >
-      <span class="text-sm text-neutral-300">Crop before upload</span>
+      <span class="text-sm text-neutral-300">Edit before upload</span>
     </mat-slide-toggle>
     <studio-button
       variant="primary"
@@ -50,9 +50,10 @@
   </div>
 
   <div class="gallery-wrapper" 
+       (dragenter)="onDragOver($event)"
        (dragover)="onDragOver($event)"
        (dragleave)="onDragLeave($event)"
-       (drop)="!isUploading && onDrop($event)"
+       (drop)="onDrop($event)"
        [class.dragging]="isDragging">
     
     <div *ngIf="isDragging" class="drop-overlay">

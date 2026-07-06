@@ -56,6 +56,12 @@ from src.videos.dto.create_veo_dto import CreateVeoDto
 
 logger = logging.getLogger(__name__)
 
+VIDEO_RESOLUTION_MAP = {
+    "1K": "720p",
+    "2K": "1080p",
+    "4K": "4k",
+}
+
 
 # --- STANDALONE WORKER FUNCTION ---
 # This function will run in the background thread. It is defined outside the class.
@@ -342,33 +348,18 @@ def _process_video_in_background(
                         permanent_thumbnail_gcs_uris = []
                         final_gcs_uris = []
                         raw_data_dict = None
-                        model_name_for_api = None
+                        model_name_for_api = request_dto.generation_model.value
 
                         start_time = time.monotonic()
 
-                        if (
-                            request_dto.generation_model
-                            == GenerationModelEnum.GEMINI_OMNI
-                        ):
+                        if request_dto.generation_model in [
+                            GenerationModelEnum.GEMINI_OMNI,
+                            GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+                        ]:
                             worker_logger.info(
                                 "Running Gemini Omni video generation via Interactions API..."
                             )
                             vertex_client = GenAIModelSetup.get_omni_client()
-
-                            # Fetch custom model name from settings
-                            from src.system_settings.repository.system_settings_repository import (
-                                SystemSettingsRepository,
-                            )
-
-                            settings_repo = SystemSettingsRepository(db)
-                            omni_model_setting = await settings_repo.get_by_id(
-                                "gemini_omni_model_name"
-                            )
-                            model_name_for_api = (
-                                omni_model_setting.value
-                                if omni_model_setting is not None
-                                else ""
-                            )
 
                             interaction_id = None
                             thought_signature = None
@@ -760,6 +751,11 @@ def _process_video_in_background(
                             }
 
                         else:
+                            # Map DTO resolution ("1K", "2K", "4K") to GenAI SDK supported resolutions ("720p", "1080p", "4k")
+                            api_resolution = VIDEO_RESOLUTION_MAP.get(
+                                request_dto.resolution, "720p"
+                            )
+
                             # Run sync API call in thread
                             operation: types.GenerateVideosOperation = (
                                 await asyncio.to_thread(
@@ -772,6 +768,7 @@ def _process_video_in_background(
                                         number_of_videos=request_dto.number_of_media,
                                         output_gcs_uri=gcs_output_directory,
                                         aspect_ratio=request_dto.aspect_ratio,
+                                        resolution=api_resolution,
                                         negative_prompt=request_dto.negative_prompt,
                                         generate_audio=request_dto.generate_audio,
                                         # TODO: Pass from dto the secs if extending video (4, 5, 6, 7)
