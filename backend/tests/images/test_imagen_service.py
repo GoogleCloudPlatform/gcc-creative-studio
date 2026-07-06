@@ -1351,7 +1351,7 @@ def test_process_image_in_background_sync_auto_aspect_ratio(
         import io
 
         file_bytes = io.BytesIO()
-        image = PILImage.new("RGBA", size=(160, 90), color=(256, 0, 0))
+        image = PILImage.new("RGBA", size=(160, 90), color=(255, 0, 0, 255))
         image.save(file_bytes, "png")
         dummy_png_bytes = file_bytes.getvalue()
 

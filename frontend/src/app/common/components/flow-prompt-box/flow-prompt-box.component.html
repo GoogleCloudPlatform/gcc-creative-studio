@@ -371,8 +371,10 @@
               <mat-icon class="flex-shrink-0">
                 @if (aspectRatio === 'Auto') {
                   aspect_ratio
-                } @else if (aspectRatio === '16:9') {
+                } @else if (aspectRatio.includes('16:9') || aspectRatio.includes('Landscape') || aspectRatio.includes('Horizontal') || aspectRatio.includes('Wide') || aspectRatio.includes('Pin') || aspectRatio.includes('Banner')) {
                   crop_landscape
+                } @else if (aspectRatio.includes('Square') || aspectRatio.includes('1:1')) {
+                  crop_square
                 } @else {
                   crop_portrait
                 }

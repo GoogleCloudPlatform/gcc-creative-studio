@@ -246,6 +246,9 @@ def get_closest_aspect_ratio(
     supported_ratios: list[AspectRatioEnum],
 ) -> AspectRatioEnum:
     """Finds the closest supported aspect ratio for given dimensions."""
+    width = abs(width)
+    height = abs(height)
+
     if not supported_ratios:
         return AspectRatioEnum.RATIO_1_1
 
