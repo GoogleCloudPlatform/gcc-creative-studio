@@ -179,16 +179,15 @@
 
     <!-- FOOTER ACTION FOR ALL FAILED -->
     <div class="panel-footer">
-      <button
+      <studio-button
         id="retry-all-failed-btn"
-        class="retry-all-btn"
         type="button"
         [disabled]="uploadService.totalFailed() === 0 || !uploadService.canClose()"
         (click)="onRetryAll()"
       >
         <mat-icon>refresh</mat-icon>
         <span>Retry All Failed</span>
-      </button>
+      </studio-button>
     </div>
   </div>
 </div>
