@@ -738,14 +738,17 @@ def _process_image_in_background(
                             first_ref_aspect_ratio
                             and first_ref_aspect_ratio != AspectRatioEnum.AUTO
                         ):
+                            ratio_str = (
+                                first_ref_aspect_ratio.value
+                                if hasattr(first_ref_aspect_ratio, "value")
+                                else first_ref_aspect_ratio
+                            )
                             if (
                                 first_ref_aspect_ratio != AspectRatioEnum.OTHER
-                                and ":" in first_ref_aspect_ratio.value
+                                and ":" in ratio_str
                             ):
                                 try:
-                                    w_str, h_str = (
-                                        first_ref_aspect_ratio.value.split(":")
-                                    )
+                                    w_str, h_str = ratio_str.split(":")
                                     width = int(w_str)
                                     height = int(h_str)
                                     resolved_ratio = get_closest_aspect_ratio(
@@ -756,13 +759,13 @@ def _process_image_in_background(
                                     worker_logger.info(
                                         "Auto aspect ratio resolved to %s from database cached ratio %s",
                                         resolved_ratio.value,
-                                        first_ref_aspect_ratio.value,
+                                        ratio_str,
                                     )
                                     resolved_from_cache = True
                                 except Exception as e:
                                     worker_logger.warning(
                                         "Failed to parse database aspect ratio %s: %s",
-                                        first_ref_aspect_ratio.value,
+                                        ratio_str,
                                         e,
                                     )
 
