@@ -665,6 +665,7 @@ def _process_image_in_background(
                     source_assets: list[SourceAssetLink] = []
                     reference_images_for_api: list[types.Image] = []
                     grounding_metadata = None
+                    first_ref_aspect_ratio: AspectRatioEnum | None = None
 
                     if request_dto.source_asset_ids:
                         for asset_id in request_dto.source_asset_ids:
@@ -684,6 +685,10 @@ def _process_image_in_background(
                                         mime_type=source_asset.mime_type,
                                     ),
                                 )
+                                if not first_ref_aspect_ratio:
+                                    first_ref_aspect_ratio = (
+                                        source_asset.aspect_ratio
+                                    )
                             else:
                                 worker_logger.warning(
                                     "Source asset with ID %s not found.",
@@ -711,6 +716,10 @@ def _process_image_in_background(
                                         mime_type=parent_item.mime_type,
                                     ),
                                 )
+                                if not first_ref_aspect_ratio:
+                                    first_ref_aspect_ratio = (
+                                        parent_item.aspect_ratio
+                                    )
                             else:
                                 worker_logger.warning(
                                     "Could not find or use generated_input: %s at index %s",
@@ -724,7 +733,40 @@ def _process_image_in_background(
                             if request_dto.generation_model.valid_aspect_ratios
                             else AspectRatioEnum.RATIO_1_1
                         )
-                        if reference_images_for_api:
+                        resolved_from_cache = False
+                        if (
+                            first_ref_aspect_ratio
+                            and first_ref_aspect_ratio != AspectRatioEnum.AUTO
+                        ):
+                            if (
+                                first_ref_aspect_ratio != AspectRatioEnum.OTHER
+                                and ":" in first_ref_aspect_ratio.value
+                            ):
+                                try:
+                                    w_str, h_str = (
+                                        first_ref_aspect_ratio.value.split(":")
+                                    )
+                                    width = int(w_str)
+                                    height = int(h_str)
+                                    resolved_ratio = get_closest_aspect_ratio(
+                                        width,
+                                        height,
+                                        request_dto.generation_model.valid_aspect_ratios,
+                                    )
+                                    worker_logger.info(
+                                        "Auto aspect ratio resolved to %s from database cached ratio %s",
+                                        resolved_ratio.value,
+                                        first_ref_aspect_ratio.value,
+                                    )
+                                    resolved_from_cache = True
+                                except Exception as e:
+                                    worker_logger.warning(
+                                        "Failed to parse database aspect ratio %s: %s",
+                                        first_ref_aspect_ratio.value,
+                                        e,
+                                    )
+
+                        if not resolved_from_cache and reference_images_for_api:
                             for ref_image in reference_images_for_api:
                                 if ref_image.gcs_uri:
                                     try:
@@ -743,7 +785,7 @@ def _process_image_in_background(
                                                 request_dto.generation_model.valid_aspect_ratios,
                                             )
                                             worker_logger.info(
-                                                "Auto aspect ratio resolved to %s from image %s (%dx%d)",
+                                                "Auto aspect ratio resolved to %s from image %s (%dx%d) (download fallback)",
                                                 resolved_ratio.value,
                                                 ref_image.gcs_uri,
                                                 width,
@@ -752,7 +794,7 @@ def _process_image_in_background(
                                             break  # Found and successfully resolved, stop looking
                                     except Exception as e:
                                         worker_logger.warning(
-                                            "Failed to resolve auto aspect ratio from image %s: %s. Trying next reference image.",
+                                            "Failed to resolve auto aspect ratio from image %s on fallback: %s. Trying next reference image.",
                                             ref_image.gcs_uri,
                                             e,
                                         )

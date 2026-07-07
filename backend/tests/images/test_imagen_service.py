@@ -1343,6 +1343,97 @@ def test_process_image_in_background_sync_auto_aspect_ratio(
         asset.id = 101
         asset.gcs_uri = "gs://bucket/input.png"
         asset.mime_type = "image/png"
+        asset.aspect_ratio = AspectRatioEnum.RATIO_9_16
+        mock_sa_repo.get_by_id.return_value = asset
+
+        mock_gcs = MagicMock()
+        mock_gcs.bucket_name = "test-bucket"
+        mock_gcs_class.return_value = mock_gcs
+
+        mock_result = MagicMock()
+        mock_result.image.gcs_uri = "gs://bucket/output_edit.png"
+        mock_result.image.mime_type = MimeTypeEnum.IMAGE_PNG
+        mock_gemini_gen.return_value = (mock_result, None)
+
+        # Call the worker
+        _process_image_in_background(
+            media_item_id=777,
+            request_dto=request_dto,
+            current_user=sample_user,
+        )
+
+        # Verify gemini_generate_image was called with resolved aspect ratio 9:16
+        mock_gemini_gen.assert_called_once()
+        called_kwargs = mock_gemini_gen.call_args[1]
+        assert called_kwargs["aspect_ratio"] == AspectRatioEnum.RATIO_9_16
+
+        # Verify download was NOT called because we resolved from database cache
+        mock_gcs.download_bytes_from_gcs.assert_not_called()
+
+
+@patch("src.images.imagen_service.generate_image_thumbnail_from_gcs")
+@patch("src.common.media_utils.generate_image_thumbnail_from_gcs")
+@patch("src.database.WorkerDatabase")
+@patch("src.images.imagen_service.GenAIModelSetup.init")
+def test_process_image_in_background_sync_auto_aspect_ratio_fallback(
+    mock_genai_init,
+    mock_worker_db_class,
+    mock_thumb_mu,
+    mock_thumb_is,
+    sample_user,
+):
+    _ = (mock_thumb_mu, mock_thumb_is)
+
+    # Mock WorkerDatabase Context
+    mock_db_context = AsyncMock()
+    mock_db_factory = MagicMock(return_value=mock_db_context)
+    mock_worker_db_class.return_value.__aenter__.return_value = mock_db_factory
+
+    # Mock GenAI SDK client
+    mock_client = MagicMock()
+    mock_genai_init.return_value = mock_client
+
+    # DTO with AUTO aspect ratio and reference image
+    request_dto = CreateImagenDto(
+        workspace_id=1,
+        prompt="A cute cat",
+        generation_model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE_PREVIEW,
+        source_asset_ids=[101],
+        aspect_ratio=AspectRatioEnum.AUTO,
+    )
+
+    with (
+        patch(
+            "src.images.imagen_service.MediaRepository",
+        ) as mock_media_repo_class,
+        patch(
+            "src.images.imagen_service.SourceAssetRepository",
+        ) as mock_source_asset_repo_class,
+        patch(
+            "src.images.imagen_service.GeminiService",
+        ) as mock_gemini_service_class,
+        patch(
+            "src.images.imagen_service.GcsService",
+        ) as mock_gcs_class,
+        patch(
+            "src.images.imagen_service.gemini_generate_image",
+        ) as mock_gemini_gen,
+    ):
+        mock_media_repo = AsyncMock()
+        mock_media_repo_class.return_value = mock_media_repo
+
+        mock_gemini_service = AsyncMock()
+        mock_gemini_service_class.return_value = mock_gemini_service
+
+        mock_sa_repo = AsyncMock()
+        mock_source_asset_repo_class.return_value = mock_sa_repo
+
+        # Setup source asset return for the input with OTHER aspect ratio
+        asset = MagicMock()
+        asset.id = 101
+        asset.gcs_uri = "gs://bucket/input.png"
+        asset.mime_type = "image/png"
+        asset.aspect_ratio = AspectRatioEnum.OTHER
         mock_sa_repo.get_by_id.return_value = asset
 
         mock_gcs = MagicMock()
@@ -1369,7 +1460,12 @@ def test_process_image_in_background_sync_auto_aspect_ratio(
             current_user=sample_user,
         )
 
-        # Verify gemini_generate_image was called with resolved aspect ratio 16:9
+        # Verify gemini_generate_image was called with resolved aspect ratio 16:9 from download fallback
         mock_gemini_gen.assert_called_once()
         called_kwargs = mock_gemini_gen.call_args[1]
         assert called_kwargs["aspect_ratio"] == AspectRatioEnum.RATIO_16_9
+
+        # Verify download was called because database value was OTHER
+        mock_gcs.download_bytes_from_gcs.assert_called_once_with(
+            "gs://bucket/input.png"
+        )
