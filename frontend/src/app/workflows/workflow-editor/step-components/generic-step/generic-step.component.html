@@ -15,7 +15,7 @@
 -->
 
 
-<div class="step-card" [formGroup]="stepForm" [ngClass]="localConfig.type" [class.invalid-step]="stepForm.invalid && showValidationErrors" [class.selected-node]="isSelected" [class.running-node]="stepForm.get('status')?.value === 'RUNNING'">
+<div class="step-card" [formGroup]="stepForm" [ngClass]="localConfig.type" [class.invalid-step]="stepForm.invalid && showValidationErrors" [class.selected-node]="isSelected" [class.running-node]="stepForm.get('status')?.value === StepStatusEnum.RUNNING">
   <div class="step-header">
     <div class="step-title">
       <mat-icon>{{ localConfig.icon }}</mat-icon>
@@ -23,7 +23,7 @@
       <mat-icon *ngIf="stepForm.invalid && showValidationErrors" class="!text-red-500 ml-2" matTooltip="Step has errors">error</mat-icon>
       <span class="step-id-subtle">#{{ stepIndex + 1 }}</span>
       <!-- Status Chip -->
-      <mat-chip *ngIf="stepForm.get('status')?.value !== 'idle'" 
+      <mat-chip *ngIf="stepForm.get('status')?.value !== StepStatusEnum.IDLE" 
                 [ngClass]="stepForm.get('status')?.value | workflowStatus:'class'"
                 class="ml-2">
         <mat-icon class="!text-sm !w-4 !h-4 mr-1">
