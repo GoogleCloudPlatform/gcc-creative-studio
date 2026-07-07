@@ -601,3 +601,173 @@ async def test_upload_asset_upscale_failure(
     )
 
     assert response.id == 80
+
+
+@pytest.mark.anyio
+async def test_generate_signed_upload_url_success(
+    service, mock_dependencies, sample_user
+):
+    from src.source_assets.dto.generate_upload_url_dto import (
+        GenerateSourceAssetUploadUrlDto,
+    )
+
+    mock_dependencies[
+        "iam_signer"
+    ].generate_v4_upload_signed_url.return_value = (
+        "https://signed.gcs/upload",
+        "gs://bucket/source_assets/1/uploads/uuid/test.png",
+    )
+    mock_dependencies["gcs_service"].bucket_name = "bucket"
+
+    dto = GenerateSourceAssetUploadUrlDto(
+        workspace_id=1,
+        filename="test.png",
+        content_type="image/png",
+        size=1024,
+    )
+    result = await service.generate_signed_upload_url(dto, sample_user)
+
+    assert result.upload_url == "https://signed.gcs/upload"
+    assert result.gcs_uri == "gs://bucket/source_assets/1/uploads/uuid/test.png"
+    assert result.file_uuid is not None
+
+
+@pytest.mark.anyio
+async def test_generate_signed_upload_url_error(
+    service, mock_dependencies, sample_user
+):
+    from src.source_assets.dto.generate_upload_url_dto import (
+        GenerateSourceAssetUploadUrlDto,
+    )
+
+    mock_dependencies[
+        "iam_signer"
+    ].generate_v4_upload_signed_url.return_value = (
+        None,
+        None,
+    )
+    mock_dependencies["gcs_service"].bucket_name = "bucket"
+
+    dto = GenerateSourceAssetUploadUrlDto(
+        workspace_id=1,
+        filename="test.png",
+        content_type="image/png",
+        size=1024,
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        await service.generate_signed_upload_url(dto, sample_user)
+    assert exc_info.value.status_code == 500
+
+
+@pytest.mark.anyio
+async def test_finalize_direct_upload_success_image(
+    service, mock_dependencies, sample_user
+):
+    from src.source_assets.dto.finalize_upload_dto import (
+        FinalizeSourceAssetUploadDto,
+    )
+
+    mock_dependencies["iam_signer"].generate_presigned_url.return_value = (
+        "https://signed.url"
+    )
+
+    saved_asset = SourceAssetModel(
+        id=101,
+        workspace_id=1,
+        user_id=sample_user.id,
+        gcs_uri="gs://bucket/source_assets/1/uploads/uuid/image.png",
+        original_filename="image.png",
+        file_hash="hash101",
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+    )
+    mock_dependencies["repo"].create.return_value = saved_asset
+
+    dto = FinalizeSourceAssetUploadDto(
+        workspace_id=1,
+        gcs_uri="gs://bucket/source_assets/1/uploads/uuid/image.png",
+        filename="image.png",
+        mime_type="image/png",
+        size=2048,
+    )
+    response = await service.finalize_direct_upload(dto, sample_user)
+
+    assert response.id == 101
+    assert response.original_filename == "image.png"
+    mock_dependencies["repo"].create.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_finalize_direct_upload_video_and_audio(
+    service, mock_dependencies, sample_user
+):
+    from src.source_assets.dto.finalize_upload_dto import (
+        FinalizeSourceAssetUploadDto,
+    )
+
+    mock_dependencies["iam_signer"].generate_presigned_url.return_value = (
+        "https://signed.url"
+    )
+
+    saved_video = SourceAssetModel(
+        id=102,
+        workspace_id=1,
+        user_id=sample_user.id,
+        gcs_uri="gs://bucket/source_assets/1/uploads/uuid/video.mp4",
+        original_filename="video.mp4",
+        file_hash="hash102",
+        mime_type=MimeTypeEnum.VIDEO_MP4,
+        asset_type=AssetTypeEnum.GENERIC_VIDEO,
+    )
+    mock_dependencies["repo"].create.return_value = saved_video
+
+    video_dto = FinalizeSourceAssetUploadDto(
+        workspace_id=1,
+        gcs_uri="gs://bucket/source_assets/1/uploads/uuid/video.mp4",
+        filename="video.mp4",
+        mime_type="video/mp4",
+        size=50000,
+    )
+    res_video = await service.finalize_direct_upload(video_dto, sample_user)
+    assert res_video.id == 102
+
+    saved_audio = SourceAssetModel(
+        id=103,
+        workspace_id=1,
+        user_id=sample_user.id,
+        gcs_uri="gs://bucket/source_assets/1/uploads/uuid/audio.mp3",
+        original_filename="audio.mp3",
+        file_hash="hash103",
+        mime_type=MimeTypeEnum.AUDIO_MPEG,
+    )
+    mock_dependencies["repo"].create.return_value = saved_audio
+
+    audio_dto = FinalizeSourceAssetUploadDto(
+        workspace_id=1,
+        gcs_uri="gs://bucket/source_assets/1/uploads/uuid/audio.mp3",
+        filename="audio.mp3",
+        mime_type="audio/mp3",
+        size=30000,
+    )
+    res_audio = await service.finalize_direct_upload(audio_dto, sample_user)
+    assert res_audio.id == 103
+
+
+@pytest.mark.anyio
+async def test_finalize_direct_upload_non_admin_scope_error(
+    service, sample_user
+):
+    from src.source_assets.dto.finalize_upload_dto import (
+        FinalizeSourceAssetUploadDto,
+    )
+
+    dto = FinalizeSourceAssetUploadDto(
+        workspace_id=1,
+        gcs_uri="gs://b/file.png",
+        filename="file.png",
+        mime_type="image/png",
+        size=100,
+        scope=AssetScopeEnum.SYSTEM,
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        await service.finalize_direct_upload(dto, sample_user)
+    assert exc_info.value.status_code == 403

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {Component, Input} from '@angular/core';
+import {Component, HostBinding, Input} from '@angular/core';
 
 @Component({
   selector: 'studio-button',
@@ -45,5 +45,19 @@ export class StudioButtonComponent {
     }
 
     return classList.join(' ');
+  }
+
+  @HostBinding('style.pointer-events')
+  get pointerEvents(): string {
+    return this.disabled ? 'none' : 'auto';
+  }
+
+  handleHostClick(event: MouseEvent): void {
+    if (this.disabled) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      return;
+    }
   }
 }
