@@ -241,8 +241,8 @@ def get_video_dimensions(video_path: str) -> tuple[int, int]:
 
 
 def get_closest_aspect_ratio(
-    width: int,
-    height: int,
+    width: float,
+    height: float,
     supported_ratios: list[AspectRatioEnum],
 ) -> AspectRatioEnum:
     """Finds the closest supported aspect ratio for given dimensions."""

@@ -749,8 +749,8 @@ def _process_image_in_background(
                             ):
                                 try:
                                     w_str, h_str = ratio_str.split(":")
-                                    width = int(w_str)
-                                    height = int(h_str)
+                                    width = float(w_str)
+                                    height = float(h_str)
                                     resolved_ratio = get_closest_aspect_ratio(
                                         width,
                                         height,
