@@ -719,7 +719,11 @@ def _process_image_in_background(
                                 )
 
                     if request_dto.aspect_ratio == AspectRatioEnum.AUTO:
-                        resolved_ratio = AspectRatioEnum.RATIO_1_1
+                        resolved_ratio = (
+                            request_dto.generation_model.valid_aspect_ratios[0]
+                            if request_dto.generation_model.valid_aspect_ratios
+                            else AspectRatioEnum.RATIO_1_1
+                        )
                         if reference_images_for_api:
                             for ref_image in reference_images_for_api:
                                 if ref_image.gcs_uri:
