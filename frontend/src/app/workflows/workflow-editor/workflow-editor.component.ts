@@ -133,6 +133,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   private mainSubscription!: Subscription;
   // private pollingSubscription?: Subscription; // Removed
   currentExecutionId: string | null = null;
+  initialExecutionId: string | null = null;
   currentExecutionState: string | null = null;
   executionStepEntries: any[] = [];
   mediaUrlMap = new Map<string, string>();
@@ -324,6 +325,13 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(params => {
         this.returnUrl = params.get('returnUrl');
+        const executionId = params.get('executionId');
+        if (executionId) {
+          this.initialExecutionId = executionId;
+          if (this.workflowId && this.displayedWorkflow) {
+            this.onExecutionSelected(executionId);
+          }
+        }
       });
 
     this.mainSubscription = this.route.paramMap
@@ -363,6 +371,9 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             if (this.displayedWorkflow) {
               this.loadNodePositions();
               this.formService.patchData(this.displayedWorkflow);
+              if (this.initialExecutionId) {
+                this.onExecutionSelected(this.initialExecutionId);
+              }
             }
           } else {
             // Already initialized in initForm() defaults
