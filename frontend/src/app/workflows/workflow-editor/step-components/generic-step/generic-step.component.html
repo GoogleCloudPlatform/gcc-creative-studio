@@ -140,7 +140,7 @@
       <h3>Results</h3>
       <app-step-execution-details
         [stepId]="stepForm.value.stepId"
-        [stepType]="localConfig.type"
+        [stepType]="stepForm.value.type"
         [inputs]="stepExecution.step_inputs"
         [outputs]="stepExecution.step_outputs"
         [mediaUrlMap]="mediaUrlMap">

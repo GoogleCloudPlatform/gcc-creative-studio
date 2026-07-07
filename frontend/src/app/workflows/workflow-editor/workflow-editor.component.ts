@@ -614,12 +614,34 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       if (stepForm) {
         const inputs = stepForm.get('inputs') as FormGroup;
         if (inputs && inputs.contains(event.inputName)) {
-          // Set as linked input
-          inputs.get(event.inputName)?.setValue({
+          const control = inputs.get(event.inputName);
+          const currentVal = control?.value;
+          const newValue = {
             step: this.dragSourcePort.stepId,
             output: this.dragSourcePort.outputName,
-          });
-          inputs.get(event.inputName)?.markAsDirty();
+          };
+
+          const stepType = stepForm.get('type')?.value;
+          const config = this.getStepConfig(stepType);
+          const inputConfig = config?.inputs?.find(
+            (i: any) => i.name === event.inputName,
+          );
+          if (inputConfig?.type === 'image' || inputConfig?.type === 'video') {
+            if (Array.isArray(currentVal)) {
+              control?.setValue([...currentVal, newValue]);
+            } else if (
+              currentVal &&
+              typeof currentVal === 'object' &&
+              Object.keys(currentVal).length > 0
+            ) {
+              control?.setValue([currentVal, newValue]);
+            } else {
+              control?.setValue([newValue]);
+            }
+          } else {
+            control?.setValue(newValue);
+          }
+          control?.markAsDirty();
           this.updateEdges();
         }
       }
