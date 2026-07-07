@@ -657,7 +657,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     this.stepsArray.controls.forEach(stepControl => {
       const targetId = stepControl.get('stepId')?.value;
       const targetStatus = stepControl.get('status')?.value;
-      const isTargetRunning = targetStatus === 'RUNNING';
+      const isTargetRunning = targetStatus === StepStatusEnum.RUNNING;
       const inputs = stepControl.get('inputs')?.value;
 
       if (inputs) {
