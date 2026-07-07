@@ -510,6 +510,12 @@ class SourceAssetService:
         current_user: UserModel,
     ) -> SourceAssetResponseDto:
         """Finalizes registration of a source asset uploaded directly to GCS."""
+        expected_prefix = f"gs://{self.gcs_service.bucket_name}/source_assets/{current_user.id}/"
+        if not request_dto.gcs_uri.startswith(expected_prefix):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid GCS URI path.",
+            )
         content_type = request_dto.mime_type or ""
         if content_type.startswith("video/"):
             mime_type_enum = MimeTypeEnum.VIDEO_MP4
@@ -549,6 +555,7 @@ class SourceAssetService:
             request_dto.aspect_ratio or AspectRatioEnum.RATIO_1_1
         )
 
+        # Fallback to hashing the GCS URI as a unique placeholder because the file content is not available on the server
         file_hash = hashlib.sha256(
             request_dto.gcs_uri.encode("utf-8")
         ).hexdigest()

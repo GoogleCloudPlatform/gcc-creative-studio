@@ -30,15 +30,16 @@ import {WorkspaceStateService} from '../../../services/workspace/workspace-state
 export class UploadProgressWidgetComponent {
   readonly isExpanded = signal<boolean>(true);
   readonly UploadStatus = UploadStatus;
+  readonly isLoginRoute = signal<boolean>(false);
 
   constructor(
     public uploadService: MediaUploadService,
     private workspaceStateService: WorkspaceStateService,
     private router: Router,
-  ) {}
-
-  isLoginRoute(): boolean {
-    return this.router.url.startsWith('/login');
+  ) {
+    this.router.events.subscribe(() =>
+      this.isLoginRoute.set(this.router.url.startsWith('/login')),
+    );
   }
 
   toggleExpand(): void {
