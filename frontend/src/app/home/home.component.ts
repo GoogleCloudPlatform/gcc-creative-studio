@@ -497,12 +497,6 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
       this.selectedGenerationModel = modelOption.viewValue;
       this.selectedGenerationModelObject = modelOption;
     }
-    const ratioOption = this.aspectRatioOptions.find(
-      r => r.value === state.aspectRatio,
-    );
-    if (ratioOption) {
-      this.selectedAspectRatio = ratioOption.viewValue;
-    }
     const watermarkOption = this.watermarkOptions.find(
       o => o.value === state.watermark,
     );

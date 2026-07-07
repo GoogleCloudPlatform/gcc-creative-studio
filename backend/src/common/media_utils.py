@@ -283,7 +283,4 @@ def get_closest_aspect_ratio(
         supported_ratios_map.keys(),
         key=lambda e: abs(supported_ratios_map[e] - actual_ratio),
     )
-    try:
-        return AspectRatioEnum(closest_enum)
-    except ValueError:
-        return AspectRatioEnum.RATIO_1_1
+    return closest_enum
