@@ -16,7 +16,7 @@
 import logging
 import shutil
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -29,8 +29,8 @@ from src.workbench.dto.workbench_dto import (
     TimelineUpdate,
     TimelineResponse,
     RenderTimelineRequest,
-    RenderTimelineResponse,
 )
+from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.workbench.workbench_service import WorkbenchService
 
 router = APIRouter(
@@ -44,31 +44,35 @@ security = HTTPBearer()
 
 @router.post(
     "/timelines/{timeline_id}/render",
-    response_model=RenderTimelineResponse,
+    response_model=MediaItemResponse,
 )
 async def render_timeline_by_id(
     timeline_id: int,
+    request: Request,
     current_user: UserModel = Depends(get_current_user),
     service: WorkbenchService = Depends(),
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
-    result = await service.render_timeline_by_id(timeline_id, current_user)
+    executor = request.app.state.executor
+    result = await service.render_timeline_by_id(timeline_id, current_user, executor)
     if not result:
         raise HTTPException(status_code=404, detail="Timeline not found")
     return result
 
 
-@router.post("/render", response_model=RenderTimelineResponse)
+@router.post("/render", response_model=MediaItemResponse)
 async def render_timeline(
-    request: RenderTimelineRequest,
+    req: RenderTimelineRequest,
+    request: Request,
     current_user: UserModel = Depends(get_current_user),
     service: WorkbenchService = Depends(),
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
-    if not request.timeline_id:
+    if not req.timeline_id:
         raise HTTPException(status_code=400, detail="timeline_id is required")
+    executor = request.app.state.executor
     result = await service.render_timeline_by_id(
-        request.timeline_id, current_user
+        req.timeline_id, current_user, executor
     )
     if not result:
         raise HTTPException(status_code=404, detail="Timeline not found")

@@ -19,17 +19,31 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from google.cloud.logging.handlers import CloudLoggingHandler
+from google.cloud.logging import Client as LoggerClient
 from urllib.parse import urlparse
 
 from fastapi import Depends
 from google.cloud import storage
 
 from src.auth.iam_signer_credentials_service import IamSignerCredentials
+from src.common.base_dto import GenerationModelEnum, MimeTypeEnum, AspectRatioEnum
+from src.common.media_utils import generate_thumbnail
+from src.common.schema.media_item_model import (
+    AssetRoleEnum,
+    JobStatusEnum,
+    MediaItemModel,
+    SourceAssetLink,
+    SourceMediaItemLink,
+)
 from src.common.storage_service import GcsService
+from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.images.repository.media_item_repository import MediaRepository
-from src.source_assets.source_asset_service import SourceAssetService
+from src.source_assets.repository.source_asset_repository import SourceAssetRepository
 from src.users.user_model import UserModel
 from src.workbench.dto.workbench_dto import (
     AudioClip,
@@ -47,20 +61,138 @@ from src.workbench.repository.timeline_repository import TimelineRepository
 logger = logging.getLogger(__name__)
 
 
+def _process_timeline_in_background(
+    media_item_id: int,
+    timeline_id: int,
+):
+    from src.database import WorkerDatabase
+
+    worker_logger = logging.getLogger(f"timeline_worker.{media_item_id}")
+    worker_logger.setLevel(logging.INFO)
+
+    try:
+        if worker_logger.hasHandlers():
+            worker_logger.handlers.clear()
+
+        if os.getenv("ENVIRONMENT") == "production":
+            log_client = LoggerClient()
+            handler = CloudLoggingHandler(
+                log_client,
+                name=f"timeline_worker.{media_item_id}",
+            )
+            worker_logger.addHandler(handler)
+        else:
+            handler = logging.StreamHandler(sys.stdout)
+            formatter = logging.Formatter(
+                "%(asctime)s - [TIMELINE_WORKER] - %(levelname)s - %(message)s",
+            )
+            handler.setFormatter(formatter)
+            worker_logger.addHandler(handler)
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        async def _async_worker():
+            async with WorkerDatabase() as db_factory:
+                async with db_factory() as db:
+                    from src.workbench.repository.timeline_repository import TimelineRepository
+                    from src.workbench.workbench_service import WorkbenchService
+                    from src.source_assets.repository.source_asset_repository import SourceAssetRepository
+                    from src.auth.iam_signer_credentials_service import IamSignerCredentials
+                    from types import SimpleNamespace
+
+                    timeline_repo = TimelineRepository(db)
+                    media_repo = MediaRepository(db)
+                    source_asset_repo = SourceAssetRepository(db)
+                    gcs_service = GcsService()
+                    ffmpeg_service = FFmpegService()
+
+                    service = WorkbenchService(
+                        gcs_service=gcs_service,
+                        timeline_repo=timeline_repo,
+                        media_repo=media_repo,
+                        source_asset_repo=source_asset_repo,
+                        iam_signer_credentials=IamSignerCredentials(),
+                        ffmpeg_service=ffmpeg_service,
+                    )
+
+                    try:
+                        timeline = await timeline_repo.get_by_id_with_details(timeline_id)
+                        if not timeline:
+                            worker_logger.error("Timeline not found")
+                            await media_repo.update(media_item_id, {
+                                "status": JobStatusEnum.FAILED,
+                                "error_message": "Timeline not found"
+                            })
+                            return
+
+                        # Enrich timeline to get presigned URLs
+                        await service._enrich_timeline(timeline)
+
+                        output_path, temp_dir = await service._stitch_timeline(timeline)
+
+                        try:
+                            final_gcs_uri = await asyncio.to_thread(
+                                gcs_service.upload_file_to_gcs,
+                                local_path=output_path,
+                                destination_blob_name=f"videos/{media_item_id}.mp4",
+                                mime_type="video/mp4",
+                            )
+
+                            thumbnail_path = await asyncio.to_thread(generate_thumbnail, output_path)
+                            thumbnail_gcs_uri = None
+                            if thumbnail_path:
+                                thumbnail_gcs_uri = await asyncio.to_thread(
+                                    gcs_service.upload_file_to_gcs,
+                                    local_path=thumbnail_path,
+                                    destination_blob_name=f"thumbnails/{media_item_id}.png",
+                                    mime_type="image/png",
+                                )
+
+                            update_data = {
+                                "gcs_uris": [final_gcs_uri] if final_gcs_uri else [],
+                                "status": JobStatusEnum.COMPLETED
+                            }
+                            if thumbnail_gcs_uri:
+                                update_data["thumbnail_uris"] = [thumbnail_gcs_uri]
+                            await media_repo.update(media_item_id, update_data)
+                        finally:
+                            if os.path.exists(temp_dir):
+                                shutil.rmtree(temp_dir)
+                            if thumbnail_path and os.path.exists(thumbnail_path): # type: ignore
+                                os.remove(thumbnail_path)
+                    except Exception as e:
+                        worker_logger.error(f"Error rendering timeline: {e}", exc_info=True)
+                        await media_repo.update(media_item_id, {
+                            "status": JobStatusEnum.FAILED,
+                            "error_message": f"Render failed: {str(e)}"
+                        })
+
+        loop.run_until_complete(_async_worker())
+        loop.close()
+
+    except Exception as e:
+        worker_logger.error(
+            "Timeline generation task failed.",
+            extra={"json_fields": {"media_id": media_item_id, "error": str(e)}},
+            exc_info=True,
+        )
+
+
 class WorkbenchService:
     def __init__(
         self,
         gcs_service: GcsService = Depends(),
         timeline_repo: TimelineRepository = Depends(),
         media_repo: MediaRepository = Depends(),
-        source_asset_service: SourceAssetService = Depends(),
+        source_asset_repo: SourceAssetRepository = Depends(),
         iam_signer_credentials: IamSignerCredentials = Depends(),
         ffmpeg_service: FFmpegService = Depends(),
     ):
         self.gcs_service = gcs_service
         self.timeline_repo = timeline_repo
         self.media_repo = media_repo
-        self.source_asset_service = source_asset_service
+        self.source_asset_repo = source_asset_repo
         self.iam_signer_credentials = iam_signer_credentials
         self.ffmpeg_service = ffmpeg_service
         self.storage_client = storage.Client()
@@ -93,7 +225,7 @@ class WorkbenchService:
                     )
                     if source_asset_id:
                         source_asset = (
-                            await self.source_asset_service.repo.get_by_id(
+                            await self.source_asset_repo.get_by_id(
                                 source_asset_id
                             )
                         )
@@ -137,7 +269,7 @@ class WorkbenchService:
                     )
                     if source_asset_id:
                         source_asset = (
-                            await self.source_asset_service.repo.get_by_id(
+                            await self.source_asset_repo.get_by_id(
                                 source_asset_id
                             )
                         )
@@ -186,42 +318,94 @@ class WorkbenchService:
         return await self.timeline_repo.delete_timeline(timeline_id)
 
     async def render_timeline_by_id(
-        self, timeline_id: int, user: UserModel
-    ) -> RenderTimelineResponse | None:
+        self, timeline_id: int, user: UserModel, executor: ThreadPoolExecutor
+    ) -> MediaItemResponse | None:
         timeline = await self.get_timeline(timeline_id)
         if not timeline:
             return None
 
-        output_path, temp_dir = await self._stitch_timeline(timeline)
-        try:
-            with open(output_path, "rb") as f:
-                file_bytes = f.read()
+        source_assets = []
+        source_media_items = []
 
-            ws_id = (
-                int(timeline.workspace_id)
-                if str(timeline.workspace_id).isdigit()
-                else 1
-            )
-            filename = f"timeline_{timeline_id}_export.mp4"
+        for clip in timeline.video_clips:
+            if clip.asset_ref:
+                ref = clip.asset_ref
+                if ref.type == "source_asset":
+                    source_assets.append(
+                        SourceAssetLink(
+                            asset_id=int(ref.id) if str(ref.id).isdigit() else 0,
+                            role=AssetRoleEnum.CONCATENATION_SOURCE,
+                        )
+                    )
+                elif ref.type == "media_item":
+                    source_media_items.append(
+                        SourceMediaItemLink(
+                            media_item_id=int(ref.id) if str(ref.id).isdigit() else 0,
+                            media_index=0,
+                            role=AssetRoleEnum.CONCATENATION_SOURCE,
+                        )
+                    )
 
-            source_asset = await self.source_asset_service.upload_asset(
-                user=user,
-                file_bytes=file_bytes,
-                filename=filename,
-                workspace_id=ws_id,
-                mime_type="video/mp4",
-                skip_deduplication=True,
-            )
+        for clip in timeline.audio_clips:
+            if clip.asset_ref:
+                ref = clip.asset_ref
+                if ref.type == "source_asset":
+                    source_assets.append(
+                        SourceAssetLink(
+                            asset_id=int(ref.id) if str(ref.id).isdigit() else 0,
+                            role=AssetRoleEnum.CONCATENATION_SOURCE,
+                        )
+                    )
+                elif ref.type == "media_item":
+                    source_media_items.append(
+                        SourceMediaItemLink(
+                            media_item_id=int(ref.id) if str(ref.id).isdigit() else 0,
+                            media_index=0,
+                            role=AssetRoleEnum.CONCATENATION_SOURCE,
+                        )
+                    )
 
-            return RenderTimelineResponse(
-                asset_id=source_asset.id,
-                gcs_uri=source_asset.gcs_uri,
-                timeline_id=timeline_id,
-                message="Timeline rendered and saved as Source Asset successfully",
-            )
-        finally:
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
+        # TODO: change this to a proper way of figuring the ratio
+        timeline_aspect_ratio = AspectRatioEnum.RATIO_16_9
+        first_video_clip = next((clip for clip in timeline.video_clips if clip.asset_ref), None)
+        if first_video_clip and first_video_clip.asset_ref:
+            ref = first_video_clip.asset_ref
+            item_id = int(ref.id) if str(ref.id).isdigit() else None
+            if item_id:
+                if ref.type == "media_item":
+                    media_item = await self.media_repo.get_by_id(item_id)
+                    if media_item and media_item.aspect_ratio:
+                        timeline_aspect_ratio = media_item.aspect_ratio
+                elif ref.type == "source_asset":
+                    source_asset = await self.source_asset_repo.get_by_id(item_id)
+                    if source_asset and source_asset.aspect_ratio:
+                        timeline_aspect_ratio = source_asset.aspect_ratio
+
+        ws_id = int(timeline.workspace_id) if str(timeline.workspace_id).isdigit() else 1
+
+        new_media_item = MediaItemModel(
+            prompt=f"Render of timeline {timeline_id}",
+            mime_type=MimeTypeEnum.VIDEO_MP4,
+            status=JobStatusEnum.PROCESSING,
+            user_id=user.id,
+            user_email=user.email,
+            workspace_id=ws_id,
+            model=GenerationModelEnum.WORKBENCH_RENDER,
+            aspect_ratio=timeline_aspect_ratio,
+            gcs_uris=[],
+            num_media=1,
+            source_assets=source_assets,
+            source_media_items=source_media_items,
+        )
+        db_item = await self.media_repo.create(new_media_item)
+
+        executor.submit(
+            _process_timeline_in_background,
+            db_item.id,
+            timeline_id,
+        )
+
+        return MediaItemResponse.model_validate(db_item)
 
     async def render_timeline(
         self, request: TimelineRequest

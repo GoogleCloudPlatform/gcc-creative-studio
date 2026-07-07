@@ -20,16 +20,11 @@ import {Observable} from 'rxjs';
 import {environment} from '../../environments/environment';
 import {TimelineDTO} from '../common/models/workbench.model';
 
+import {MediaItem} from '../common/models/media-item.model';
+
 export interface RenderTimelineRequest {
   timeline_id: number;
   output_filename?: string;
-}
-
-export interface RenderTimelineResponse {
-  asset_id: number | string;
-  gcs_uri: string;
-  timeline_id: number;
-  message: string;
 }
 
 @Injectable({
@@ -42,8 +37,8 @@ export class WorkbenchService {
 
   renderVideo(
     request: RenderTimelineRequest,
-  ): Observable<RenderTimelineResponse> {
-    return this.http.post<RenderTimelineResponse>(
+  ): Observable<MediaItem> {
+    return this.http.post<MediaItem>(
       `${this.apiUrl}/render`,
       request,
     );
