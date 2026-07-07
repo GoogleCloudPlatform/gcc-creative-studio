@@ -337,6 +337,11 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
           this.currentExecutionState = null;
           this.executionStepEntries = [];
           this.stopPollingExecution();
+
+          if (this.displayedWorkflow) {
+            this.formService.patchData(this.displayedWorkflow);
+            setTimeout(() => this.updateEdges(), 0);
+          }
         }
       });
 
