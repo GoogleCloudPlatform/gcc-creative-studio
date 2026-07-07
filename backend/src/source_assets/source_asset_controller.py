@@ -29,6 +29,13 @@ from fastapi import (
 from src.auth.auth_guard import RoleChecker, get_current_user
 from src.common.base_dto import AspectRatioEnum, GenerationModelEnum
 from src.common.dto.pagination_response_dto import PaginationResponseDto
+from src.source_assets.dto.finalize_upload_dto import (
+    FinalizeSourceAssetUploadDto,
+)
+from src.source_assets.dto.generate_upload_url_dto import (
+    GenerateSourceAssetUploadUrlDto,
+    GenerateSourceAssetUploadUrlResponseDto,
+)
 from src.source_assets.dto.source_asset_response_dto import (
     SourceAssetResponseDto,
 )
@@ -43,6 +50,8 @@ from src.users.repository.user_repository import UserRepository
 from src.users.user_model import UserModel, UserRoleEnum
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
+MAX_UPLOAD_SIZE_BYTES = 500 * 1024 * 1024  # 500 MB
+
 router = APIRouter(
     prefix="/api/source_assets",
     tags=["User Assets"],
@@ -53,6 +62,77 @@ router = APIRouter(
         ),
     ],
 )
+
+
+# code similar to: backend/src/brand_guidelines/brand_guideline_controller.py
+@router.post(
+    "/generate-upload-url",
+    response_model=GenerateSourceAssetUploadUrlResponseDto,
+    summary="Get a Signed URL for Direct Source Asset Upload",
+)
+async def generate_source_asset_upload_url(
+    request_dto: GenerateSourceAssetUploadUrlDto,
+    current_user: UserModel = Depends(get_current_user),
+    service: SourceAssetService = Depends(),
+    workspace_auth: WorkspaceAuth = Depends(),
+):
+    """Generates a secure, short-lived signed URL to upload a source asset directly to GCS."""
+    await workspace_auth.authorize(
+        workspace_id=request_dto.workspace_id,
+        user=current_user,
+    )
+
+    if request_dto.size > MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=f"File is too large. Maximum size is {MAX_UPLOAD_SIZE_BYTES // (1024 * 1024)}MB.",
+        )
+
+    allowed_mime_types = {
+        "image/png",
+        "image/jpeg",
+        "image/jpg",
+        "video/mp4",
+        "audio/wav",
+        "audio/mpeg",
+        "audio/mp3",
+        "audio/ogg",
+        "audio/webm",
+    }
+    if request_dto.content_type.lower() not in allowed_mime_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported file format.",
+        )
+
+    return await service.generate_signed_upload_url(
+        request_dto=request_dto,
+        current_user=current_user,
+    )
+
+
+@router.post(
+    "/finalize-upload",
+    response_model=SourceAssetResponseDto,
+    status_code=status.HTTP_201_CREATED,
+    summary="Finalize Direct Source Asset Upload",
+)
+async def finalize_source_asset_upload(
+    request_dto: FinalizeSourceAssetUploadDto,
+    current_user: UserModel = Depends(get_current_user),
+    service: SourceAssetService = Depends(),
+    workspace_auth: WorkspaceAuth = Depends(),
+):
+    """Finalizes registration of a source asset in the database after direct GCS upload."""
+    await workspace_auth.authorize(
+        workspace_id=request_dto.workspace_id,
+        user=current_user,
+    )
+
+    return await service.finalize_direct_upload(
+        request_dto=request_dto,
+        current_user=current_user,
+    )
 
 
 @router.post("/upload", response_model=SourceAssetResponseDto)

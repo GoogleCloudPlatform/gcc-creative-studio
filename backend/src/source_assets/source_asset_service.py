@@ -37,6 +37,13 @@ from src.common.storage_service import GcsService
 from src.images.dto.upscale_imagen_dto import UpscaleImagenDto
 from src.images.imagen_service import ImagenService
 from src.multimodal.gemini_service import GeminiService
+from src.source_assets.dto.finalize_upload_dto import (
+    FinalizeSourceAssetUploadDto,
+)
+from src.source_assets.dto.generate_upload_url_dto import (
+    GenerateSourceAssetUploadUrlDto,
+    GenerateSourceAssetUploadUrlResponseDto,
+)
 from src.source_assets.dto.source_asset_response_dto import (
     SourceAssetResponseDto,
 )
@@ -499,6 +506,103 @@ class SourceAssetService:
             titles=final_titles,
             descriptions=final_descriptions,
         )
+        created_asset = await self.repo.create(new_asset)
+        new_asset.id = created_asset.id
+
+        return await self._create_asset_response(new_asset)
+
+    # code similar to: backend/src/brand_guidelines/brand_guideline_service.py
+    async def generate_signed_upload_url(
+        self,
+        request_dto: GenerateSourceAssetUploadUrlDto,
+        current_user: UserModel,
+    ) -> GenerateSourceAssetUploadUrlResponseDto:
+        """Generates a GCS v4 signed URL for a client-side direct source asset upload."""
+        file_uuid = str(uuid.uuid4())
+        destination_blob_name = f"source_assets/{current_user.id}/uploads/{file_uuid}/{request_dto.filename}"
+
+        signed_url, gcs_uri = await asyncio.to_thread(
+            self.iam_signer.generate_v4_upload_signed_url,
+            destination_blob_name,
+            request_dto.content_type,
+            self.gcs_service.bucket_name,
+        )
+
+        if not signed_url or not gcs_uri:
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "Could not generate upload URL.",
+            )
+
+        return GenerateSourceAssetUploadUrlResponseDto(
+            upload_url=signed_url,
+            gcs_uri=gcs_uri,
+            file_uuid=file_uuid,
+        )
+
+    async def finalize_direct_upload(
+        self,
+        request_dto: FinalizeSourceAssetUploadDto,
+        current_user: UserModel,
+    ) -> SourceAssetResponseDto:
+        """Finalizes registration of a source asset uploaded directly to GCS."""
+        content_type = request_dto.mime_type or ""
+        if content_type.startswith("video/"):
+            mime_type_enum = MimeTypeEnum.VIDEO_MP4
+        elif content_type.startswith("audio/"):
+            if content_type in ["audio/mpeg", "audio/mp3"]:
+                mime_type_enum = MimeTypeEnum.AUDIO_MPEG
+            elif content_type == "audio/wav":
+                mime_type_enum = MimeTypeEnum.AUDIO_WAV
+            elif content_type == "audio/ogg":
+                mime_type_enum = MimeTypeEnum.AUDIO_OGG
+            elif content_type == "audio/webm":
+                mime_type_enum = MimeTypeEnum.AUDIO_WEBM
+            else:
+                mime_type_enum = MimeTypeEnum.AUDIO_MPEG
+        else:
+            mime_type_enum = MimeTypeEnum.IMAGE_PNG
+
+        is_admin = UserRoleEnum.ADMIN in current_user.roles
+        final_scope = AssetScopeEnum.PRIVATE
+        if is_admin:
+            final_scope = request_dto.scope or AssetScopeEnum.PRIVATE
+        elif request_dto.scope and request_dto.scope != AssetScopeEnum.PRIVATE:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only administrators can set a non-private scope.",
+            )
+
+        if request_dto.asset_type:
+            final_asset_type = request_dto.asset_type
+        else:
+            if content_type.startswith("video/"):
+                final_asset_type = AssetTypeEnum.GENERIC_VIDEO
+            else:
+                final_asset_type = AssetTypeEnum.GENERIC_IMAGE
+
+        final_aspect_ratio = (
+            request_dto.aspect_ratio or AspectRatioEnum.RATIO_1_1
+        )
+
+        file_hash = hashlib.sha256(
+            request_dto.gcs_uri.encode("utf-8")
+        ).hexdigest()
+
+        new_asset = SourceAssetModel(
+            workspace_id=request_dto.workspace_id,
+            user_id=current_user.id,
+            aspect_ratio=final_aspect_ratio,
+            original_gcs_uri=request_dto.gcs_uri,
+            gcs_uri=request_dto.gcs_uri,
+            thumbnail_gcs_uri=None,
+            original_filename=request_dto.filename or "untitled",
+            mime_type=mime_type_enum,
+            file_hash=file_hash,
+            scope=final_scope,
+            asset_type=final_asset_type,
+        )
+
         created_asset = await self.repo.create(new_asset)
         new_asset.id = created_asset.id
 
