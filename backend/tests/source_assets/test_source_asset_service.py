@@ -679,6 +679,7 @@ async def test_finalize_direct_upload_success_image(
         FinalizeSourceAssetUploadDto,
     )
 
+    mock_dependencies["gcs_service"].bucket_name = "bucket"
     mock_dependencies["iam_signer"].generate_presigned_url.return_value = (
         "https://signed.url"
     )
@@ -716,6 +717,7 @@ async def test_finalize_direct_upload_video_and_audio(
         FinalizeSourceAssetUploadDto,
     )
 
+    mock_dependencies["gcs_service"].bucket_name = "bucket"
     mock_dependencies["iam_signer"].generate_presigned_url.return_value = (
         "https://signed.url"
     )
@@ -766,15 +768,17 @@ async def test_finalize_direct_upload_video_and_audio(
 
 @pytest.mark.anyio
 async def test_finalize_direct_upload_non_admin_scope_error(
-    service, sample_user
+    service, mock_dependencies, sample_user
 ):
     from src.source_assets.dto.finalize_upload_dto import (
         FinalizeSourceAssetUploadDto,
     )
 
+    mock_dependencies["gcs_service"].bucket_name = "bucket"
+
     dto = FinalizeSourceAssetUploadDto(
         workspace_id=1,
-        gcs_uri="gs://b/file.png",
+        gcs_uri="gs://bucket/source_assets/1/uploads/uuid/file.png",
         filename="file.png",
         mime_type="image/png",
         size=100,

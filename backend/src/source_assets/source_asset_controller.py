@@ -90,8 +90,6 @@ async def generate_source_asset_upload_url(
 
     allowed_mime_types = {
         "image/png",
-        "image/jpeg",
-        "image/jpg",
         "video/mp4",
         "audio/wav",
         "audio/mpeg",
@@ -99,7 +97,8 @@ async def generate_source_asset_upload_url(
         "audio/ogg",
         "audio/webm",
     }
-    if request_dto.content_type.lower() not in allowed_mime_types:
+    content_type = request_dto.content_type.split(";")[0].strip().lower()
+    if content_type not in allowed_mime_types:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Unsupported file format.",

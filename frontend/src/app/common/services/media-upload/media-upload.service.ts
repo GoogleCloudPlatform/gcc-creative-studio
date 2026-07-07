@@ -208,10 +208,12 @@ export class MediaUploadService {
     // Effect to attach/detach window beforeunload listener when transfers are active
     effect(() => {
       const inProgress = this.inProgressCount();
-      if (inProgress > 0) {
-        window.addEventListener('beforeunload', this.beforeUnloadHandler);
-      } else {
-        window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+      if (typeof window !== 'undefined') {
+        if (inProgress > 0) {
+          window.addEventListener('beforeunload', this.beforeUnloadHandler);
+        } else {
+          window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+        }
       }
     });
   }
@@ -474,7 +476,9 @@ export class MediaUploadService {
         },
       });
 
-    this.activeSubscriptions.set(item.id, sub);
+    if (!sub.closed) {
+      this.activeSubscriptions.set(item.id, sub);
+    }
   }
 
   private performGcsPut(
