@@ -131,7 +131,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   private formService = inject(WorkflowFormService);
 
   private mainSubscription!: Subscription;
-  // private pollingSubscription?: Subscription; // Removed
+  private pollingSubscription?: Subscription;
   currentExecutionId: string | null = null;
   initialExecutionId: string | null = null;
   currentExecutionState: string | null = null;
@@ -331,6 +331,12 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
           if (this.workflowId && this.displayedWorkflow) {
             this.onExecutionSelected(executionId);
           }
+        } else {
+          this.initialExecutionId = null;
+          this.currentExecutionId = null;
+          this.currentExecutionState = null;
+          this.executionStepEntries = [];
+          this.stopPollingExecution();
         }
       });
 
@@ -1365,8 +1371,17 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       });
   }
 
+  private stopPollingExecution(): void {
+    if (this.pollingSubscription) {
+      this.pollingSubscription.unsubscribe();
+      this.pollingSubscription = undefined;
+    }
+  }
+
   private startPollingExecution(workflowId: string, executionId: string): void {
-    this.workflowService
+    this.stopPollingExecution();
+
+    this.pollingSubscription = this.workflowService
       .pollExecutionDetails(workflowId, executionId)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
