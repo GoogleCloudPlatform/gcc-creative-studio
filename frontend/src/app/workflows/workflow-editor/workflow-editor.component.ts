@@ -131,8 +131,9 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   private formService = inject(WorkflowFormService);
 
   private mainSubscription!: Subscription;
-  // private pollingSubscription?: Subscription; // Removed
+  private pollingSubscription?: Subscription;
   currentExecutionId: string | null = null;
+  initialExecutionId: string | null = null;
   currentExecutionState: string | null = null;
   executionStepEntries: any[] = [];
   mediaUrlMap = new Map<string, string>();
@@ -324,6 +325,24 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(params => {
         this.returnUrl = params.get('returnUrl');
+        const executionId = params.get('executionId');
+        if (executionId) {
+          this.initialExecutionId = executionId;
+          if (this.workflowId && this.displayedWorkflow) {
+            this.onExecutionSelected(executionId);
+          }
+        } else {
+          this.initialExecutionId = null;
+          this.currentExecutionId = null;
+          this.currentExecutionState = null;
+          this.executionStepEntries = [];
+          this.stopPollingExecution();
+
+          if (this.displayedWorkflow) {
+            this.formService.patchData(this.displayedWorkflow);
+            setTimeout(() => this.updateEdges(), 0);
+          }
+        }
       });
 
     this.mainSubscription = this.route.paramMap
@@ -363,6 +382,9 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             if (this.displayedWorkflow) {
               this.loadNodePositions();
               this.formService.patchData(this.displayedWorkflow);
+              if (this.initialExecutionId) {
+                this.onExecutionSelected(this.initialExecutionId);
+              }
             }
           } else {
             // Already initialized in initForm() defaults
@@ -1354,8 +1376,17 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       });
   }
 
+  private stopPollingExecution(): void {
+    if (this.pollingSubscription) {
+      this.pollingSubscription.unsubscribe();
+      this.pollingSubscription = undefined;
+    }
+  }
+
   private startPollingExecution(workflowId: string, executionId: string): void {
-    this.workflowService
+    this.stopPollingExecution();
+
+    this.pollingSubscription = this.workflowService
       .pollExecutionDetails(workflowId, executionId)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
