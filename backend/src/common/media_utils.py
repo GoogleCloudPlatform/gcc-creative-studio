@@ -274,10 +274,7 @@ def get_closest_aspect_ratio(
     if not supported_ratios_map:
         for r in supported_ratios:
             if r not in (AspectRatioEnum.AUTO, AspectRatioEnum.OTHER):
-                try:
-                    return AspectRatioEnum(r)
-                except ValueError:
-                    continue
+                return r
         return AspectRatioEnum.RATIO_1_1
     closest_enum = min(
         supported_ratios_map.keys(),

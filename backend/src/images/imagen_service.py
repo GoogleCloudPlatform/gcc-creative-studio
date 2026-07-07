@@ -1048,6 +1048,7 @@ def _process_image_in_background(
                             "generation_time": generation_time,
                             "num_media": len(permanent_gcs_uris),
                             "grounding_metadata": grounding_metadata,
+                            "aspect_ratio": request_dto.aspect_ratio,
                             "source_assets": (
                                 [sa.model_dump() for sa in source_assets]
                                 if source_assets
