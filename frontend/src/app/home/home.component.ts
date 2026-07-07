@@ -910,6 +910,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     this.sourceMediaItems = [];
     this.selectedGenerationModel = this.generationModels[0].viewValue;
     this.selectedGenerationModelObject = this.generationModels[0];
+    this.updateAspectRatioOptions();
     this.selectedAspectRatio = this.aspectRatioOptions[0].viewValue;
     this.imageStateService.resetState();
   }

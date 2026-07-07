@@ -369,7 +369,7 @@
             <span class="flex items-center gap-2 min-w-0">
               <!-- Landscape Icon -->
               <mat-icon class="flex-shrink-0">
-                {{ getAspectRatioIcon(aspectRatio) }}
+                {{ aspectRatio | aspectRatioIcon }}
               </mat-icon>
               <span class="truncate whitespace-nowrap">{{ aspectRatio }}</span>
             </span>

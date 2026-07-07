@@ -37,6 +37,7 @@ import {FormsModule} from '@angular/forms';
 import {MatButtonModule} from '@angular/material/button';
 import {MatMenuModule} from '@angular/material/menu';
 import {MatTooltipModule} from '@angular/material/tooltip';
+import {AspectRatioIconPipe} from '../../pipes/aspect-ratio-icon.pipe';
 
 export type NumPos = 1 | 2;
 
@@ -52,6 +53,7 @@ export type NumPos = 1 | 2;
     MatButtonModule,
     MatMenuModule,
     MatTooltipModule,
+    AspectRatioIconPipe,
   ],
 })
 export class FlowPromptBoxComponent implements OnInit, OnDestroy {
@@ -344,36 +346,6 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
     }
 
     return activeModel?.capabilities?.supportedDurations ?? [];
-  }
-
-  getAspectRatioIcon(aspectRatio: string | null | undefined): string {
-    if (!aspectRatio) return 'crop_portrait';
-    const ratio = aspectRatio.toLowerCase();
-    if (ratio === 'auto') return 'aspect_ratio';
-    // Parse numeric ratio if present (e.g. "4:3", "3:2", "9:16")
-    if (ratio.includes(':')) {
-      const parts = ratio.split(':');
-      const w = parseFloat(parts[0]);
-      const h = parseFloat(parts[1]);
-      if (!isNaN(w) && !isNaN(h)) {
-        if (w > h) return 'crop_landscape';
-        if (w === h) return 'crop_square';
-        return 'crop_portrait';
-      }
-    }
-    if (
-      ratio.includes('landscape') ||
-      ratio.includes('horizontal') ||
-      ratio.includes('wide') ||
-      ratio.includes('pin') ||
-      ratio.includes('banner')
-    ) {
-      return 'crop_landscape';
-    }
-    if (ratio.includes('square')) {
-      return 'crop_square';
-    }
-    return 'crop_portrait';
   }
 
   private updateSupportedResolutions(model?: any, modeChanged = false) {
