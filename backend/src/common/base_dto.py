@@ -25,6 +25,10 @@ class MimeTypeEnum(str, Enum):
 
     IMAGE_JPEG = "image/jpeg"
     IMAGE_PNG = "image/png"
+    IMAGE_WEBP = "image/webp"
+    IMAGE_HEIC = "image/heic"
+    IMAGE_HEIF = "image/heif"
+    IMAGE_AVIF = "image/avif"
     VIDEO_MP4 = "video/mp4"
     AUDIO_WAV = "audio/wav"
     AUDIO_MPEG = "audio/mpeg"

@@ -54,6 +54,7 @@ import {UserRolesEnum} from '../../common/models/user.model';
 import {TagsManagementDialogComponent} from '../../common/components/tags-management-dialog/tags-management-dialog.component';
 import {ConfirmationDialogComponent} from '../../common/components/confirmation-dialog/confirmation-dialog.component';
 import {MediaUploadService} from '../../common/services/media-upload/media-upload.service';
+import {ACCEPTED_MEDIA_UPLOAD_FORMATS} from '../../common/services/media-upload/media-upload.constants';
 
 @Component({
   selector: 'app-media-gallery',
@@ -108,6 +109,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   images: GalleryItem[] = [];
   filteredImages: GalleryItem[] = [];
   groups: {title: string; items: GalleryItem[]}[] = [];
+  readonly acceptedMediaUploadFormats = ACCEPTED_MEDIA_UPLOAD_FORMATS;
 
   selectedItems: Set<string> = new Set();
   lastSelectedIndex: number | null = null;

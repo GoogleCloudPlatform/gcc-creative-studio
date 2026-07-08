@@ -20,15 +20,26 @@ import {
   HttpEventType,
   HttpHeaders,
 } from '@angular/common/http';
-import {computed, effect, Injectable, signal} from '@angular/core';
+import {
+  computed,
+  effect,
+  inject,
+  Injectable,
+  OnDestroy,
+  signal,
+} from '@angular/core';
+import {Auth, user} from '@angular/fire/auth';
 import {NavigationEnd, Router} from '@angular/router';
 import {Subject, Subscription} from 'rxjs';
 import {filter} from 'rxjs/operators';
 import {environment} from '../../../../environments/environment';
+import {SourceAssetService} from '../source-asset.service';
 import {UserService} from '../user.service';
+import {ALLOWED_MIME_TYPES} from './media-upload.constants';
 
 export enum UploadStatus {
   QUEUED = 'QUEUED',
+  PREPROCESSING_FILE = 'PREPROCESSING_FILE',
   GENERATING_URL = 'GENERATING_URL',
   UPLOADING = 'UPLOADING',
   FINALIZING = 'FINALIZING',
@@ -41,6 +52,7 @@ export interface UploadItem {
   id: string;
   file?: File;
   filename: string;
+  originalFilename: string;
   size: number;
   mimeType: string;
   status: UploadStatus;
@@ -62,7 +74,7 @@ export const MAX_CONCURRENT_UPLOADS = 5;
 @Injectable({
   providedIn: 'root',
 })
-export class MediaUploadService {
+export class MediaUploadService implements OnDestroy {
   private readonly apiUrl = `${environment.backendURL}/source_assets`;
 
   /**
@@ -104,6 +116,7 @@ export class MediaUploadService {
     () =>
       this.uploadQueue().filter(item =>
         [
+          UploadStatus.PREPROCESSING_FILE,
           UploadStatus.GENERATING_URL,
           UploadStatus.UPLOADING,
           UploadStatus.FINALIZING,
@@ -173,6 +186,7 @@ export class MediaUploadService {
   readonly uploadBatchComplete$ = new Subject<void>();
   private lastUploadCompleteNotified = signal<number>(0);
 
+  private readonly auth = inject(Auth, {optional: true});
   private activeSubscriptions = new Map<string, Subscription>();
   private activeWorkspaceId?: number;
   private isBatchRunning = false;
@@ -186,8 +200,17 @@ export class MediaUploadService {
     private http: HttpClient,
     private userService: UserService,
     private router: Router,
+    private sourceAssetService: SourceAssetService,
   ) {
-    this.restoreQueueFromSessionStorage();
+    if (this.auth) {
+      user(this.auth).subscribe(u => {
+        if (u) {
+          this.restoreQueueFromSessionStorage();
+        }
+      });
+    } else {
+      this.restoreQueueFromSessionStorage();
+    }
 
     // Listen to router events to cancel uploads when navigating to /login
     this.router.events
@@ -212,30 +235,46 @@ export class MediaUploadService {
         if (inProgress > 0) {
           window.addEventListener('beforeunload', this.beforeUnloadHandler);
         } else {
-          window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+          this.removeBeforeUnload();
         }
       }
     });
   }
 
-  private getSessionStorageKey(): string {
-    return `cs_media_uploads_active_job_${this.userService.getUserDetails()?.email || 'default'}`;
+  ngOnDestroy(): void {
+    this.activeSubscriptions.forEach(sub => sub.unsubscribe());
+    this.activeSubscriptions.clear();
+    this.removeBeforeUnload();
   }
 
-  readonly ALLOWED_MIME_TYPES = [
-    'image/png',
-    'video/mp4',
-    'audio/wav',
-    'audio/mpeg',
-    'audio/mp3',
-    'audio/ogg',
-    'audio/webm',
-  ];
+  private removeBeforeUnload(): void {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+    }
+  }
+
+  private getSessionStorageKey(): string {
+    const email =
+      this.auth?.currentUser?.email ||
+      this.userService.getUserDetails()?.email ||
+      'default';
+    return `cs_media_uploads_active_job_${email}`;
+  }
+
+  readonly ALLOWED_MIME_TYPES = ALLOWED_MIME_TYPES;
 
   isAllowedFileType(file: File): boolean {
     if (this.ALLOWED_MIME_TYPES.includes(file.type)) return true;
     const ext = file.name.split('.').pop()?.toLowerCase();
     if (ext === 'png' && (file.type === 'image/png' || !file.type)) return true;
+    if (
+      ['jpg', 'jpeg'].includes(ext || '') &&
+      (file.type === 'image/jpeg' || file.type === 'image/jpg' || !file.type)
+    )
+      return true;
+    if (ext === 'webp' && (file.type === 'image/webp' || !file.type))
+      return true;
+    if (['heic', 'heif', 'avif'].includes(ext || '')) return true;
     if (ext === 'mp4' && (file.type === 'video/mp4' || !file.type)) return true;
     if (['wav', 'mp3', 'ogg', 'webm', 'mpeg'].includes(ext || '')) return true;
     return false;
@@ -244,7 +283,7 @@ export class MediaUploadService {
   allowedFileTypeMessage(file: File): string | null {
     return this.isAllowedFileType(file)
       ? null
-      : 'Unsupported format. Allowed: PNG, MP4, Audio (WAV, MP3, OGG, WEBM)';
+      : 'Unsupported format. Allowed: Images (PNG, JPG, WEBP, HEIC, HEIF, AVIF), MP4, Audio (WAV, MP3, OGG, WEBM)';
   }
 
   /**
@@ -260,6 +299,7 @@ export class MediaUploadService {
         id: this.generateUniqueId(),
         file,
         filename: file.name,
+        originalFilename: file.name,
         size: file.size,
         mimeType: file.type || 'application/octet-stream',
         status: !errorMessage ? UploadStatus.QUEUED : UploadStatus.FAILED,
@@ -292,6 +332,7 @@ export class MediaUploadService {
 
     const isUncompleted = [
       UploadStatus.QUEUED,
+      UploadStatus.PREPROCESSING_FILE,
       UploadStatus.GENERATING_URL,
       UploadStatus.UPLOADING,
       UploadStatus.FINALIZING,
@@ -319,10 +360,10 @@ export class MediaUploadService {
       current.map(item =>
         [
           UploadStatus.QUEUED,
+          UploadStatus.PREPROCESSING_FILE,
           UploadStatus.GENERATING_URL,
           UploadStatus.UPLOADING,
           UploadStatus.FINALIZING,
-          UploadStatus.FAILED,
         ].includes(item.status)
           ? {...item, status: UploadStatus.CANCELLED, errorMessage: undefined}
           : item,
@@ -436,12 +477,79 @@ export class MediaUploadService {
     this.checkBatchCompletion();
   }
 
+  private requiresPngConversion(item: UploadItem): boolean {
+    const ext = item.filename.split('.').pop()?.toLowerCase() || '';
+    if (['heic', 'heif', 'avif'].includes(ext)) return true;
+    if (['image/heic', 'image/heif', 'image/avif'].includes(item.mimeType))
+      return true;
+    return false;
+  }
+
   private executeUpload(workspaceId: number, item: UploadItem): void {
     this.updateItem(item.id, {
       status: UploadStatus.GENERATING_URL,
       progress: 0,
     });
 
+    if (this.requiresPngConversion(item)) {
+      this.updateItem(item.id, {
+        status: UploadStatus.PREPROCESSING_FILE,
+        progress: 0,
+      });
+      if (!item.file) {
+        this.handleUploadError(
+          workspaceId,
+          item.id,
+          'File payload missing for conversion.',
+        );
+        return;
+      }
+      const sub = this.sourceAssetService
+        .convertImageToPng(item.file)
+        .subscribe({
+          next: (pngBlob: Blob) => {
+            this.activeSubscriptions.delete(item.id);
+            const baseName =
+              item.filename.substring(0, item.filename.lastIndexOf('.')) ||
+              item.filename;
+            const newFilename = `${baseName}.png`;
+            const convertedFile = new File([pngBlob], newFilename, {
+              type: 'image/png',
+            });
+            const itemUpdatedProps = {
+              file: convertedFile,
+              filename: newFilename,
+              size: convertedFile.size,
+              mimeType: 'image/png',
+            };
+            const updatedItem: UploadItem = {...item, ...itemUpdatedProps};
+            this.updateItem(item.id, itemUpdatedProps);
+            this.proceedWithSignedUrlGeneration(workspaceId, updatedItem);
+          },
+          error: err => {
+            this.activeSubscriptions.delete(item.id);
+            this.handleUploadError(
+              workspaceId,
+              item.id,
+              err.error?.detail ||
+                err.message ||
+                'Failed to convert image to PNG',
+            );
+          },
+        });
+      if (!sub.closed) {
+        this.activeSubscriptions.set(item.id, sub);
+      }
+      return;
+    }
+
+    this.proceedWithSignedUrlGeneration(workspaceId, item);
+  }
+
+  private proceedWithSignedUrlGeneration(
+    workspaceId: number,
+    item: UploadItem,
+  ): void {
     const generatePayload = {
       workspaceId,
       filename: item.filename,
@@ -530,7 +638,9 @@ export class MediaUploadService {
         },
       });
 
-    this.activeSubscriptions.set(itemId, sub);
+    if (!sub.closed) {
+      this.activeSubscriptions.set(itemId, sub);
+    }
   }
 
   private finalizeUpload(workspaceId: number, itemId: string): void {
@@ -576,7 +686,9 @@ export class MediaUploadService {
         },
       });
 
-    this.activeSubscriptions.set(itemId, sub);
+    if (!sub.closed) {
+      this.activeSubscriptions.set(itemId, sub);
+    }
   }
 
   private handleUploadError(
@@ -614,6 +726,7 @@ export class MediaUploadService {
       const queueToStore = this.uploadQueue().map(item => ({
         id: item.id,
         filename: item.filename,
+        originalFilename: item.originalFilename,
         size: item.size,
         mimeType: item.mimeType,
         status: item.status,
@@ -642,6 +755,8 @@ export class MediaUploadService {
           // If transfer was interrupted mid-flight when page reloaded
           if (
             [
+              UploadStatus.QUEUED,
+              UploadStatus.PREPROCESSING_FILE,
               UploadStatus.GENERATING_URL,
               UploadStatus.UPLOADING,
               UploadStatus.FINALIZING,
