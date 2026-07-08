@@ -233,6 +233,11 @@ module "iap_load_balancer" {
   domain_name              = var.domain_name
   iap_access_members       = var.iap_access_members
   workforce_pool_id        = var.workforce_pool_id
+
+  depends_on = [
+    module.backend_service,
+    module.frontend_service
+  ]
 }
 
 
