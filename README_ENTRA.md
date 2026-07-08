@@ -224,25 +224,27 @@ By default, any user authenticated via your Entra ID tenant can access the appli
 
 ---
 
-## 🌐 Step 5: Add a Custom Domain
+## 🌐 Step 5: Domain and Access Configuration
 
-To configure a custom domain instead of using the default IP-based hostname:
+You must access the deployed application over HTTPS for authentication protocols to work properly. Choose one of the two options below depending on whether you own a custom domain.
 
-### 1. Identify the Load Balancer IP
-Once the Terraform deployment finishes successfully, it will output the external IP address of the Global Load Balancer created for IAP. You can also find it in the console:
-1.  Go to **Network Services** > **Load Balancing** in the GCP Console.
-2.  Select the load balancer created for your deployment (typically named `cstudio-lb-development` or similar).
-3.  Locate the Frontend IP address.
+### Option A: Using a Custom Domain (Recommended)
 
-### 2. Configure DNS
-1.  Log in to your Domain Registrar (e.g., Google Domains, GoDaddy, Cloudflare).
-2.  Navigate to the DNS management panel for your custom domain.
-3.  Create an **A Record**:
-    *   **Host/Name**: `@` (for root domain) or `studio` (for a subdomain like `studio.yourdomain.com`).
-    *   **Value/Points to**: The Frontend IP address of the GCP Load Balancer identified above.
-    *   **TTL**: Default (e.g., 3600 seconds).
+1.  **Identify the Load Balancer IP**: Once the Terraform deployment finishes successfully, the output will display the Load Balancer IP. (You can also find this in the GCP Console under **Network Services** > **Load Balancing**).
+2.  **Configure DNS**: Log in to your Domain Registrar (e.g., Google Domains, GoDaddy). Create an **A Record** pointing your desired hostname (e.g., `studio.yourdomain.com`) to the Load Balancer IP address.
+3.  **Update the App Configurations**: 
+    *   Re-run the `./bootstrap.sh` script (from outside the repository).
+    *   When prompted for the **Domain Name**, enter your new custom domain. This triggers Terraform to provision a managed SSL certificate for your domain (this can take 15-60 minutes to propagate).
+4.  **Update Microsoft Entra ID**: Return to the **Microsoft Entra admin center** > **App registrations** > your app > **Authentication**. Add a new Redirect URI for your custom domain: `https://studio.yourdomain.com/` (ensure it has a trailing slash).
 
-### 3. Update the App Configurations
-Once DNS propagates, you must update the application to recognize the new domain:
-1.  Re-run `./bootstrap.sh` and provide your new custom domain (e.g. `studio.yourdomain.com`) when prompted. This updates Terraform and regenerates the SSL certificate for the Load Balancer.
-2.  Update your Microsoft Entra App Registration (Step 2) to include `https://studio.yourdomain.com/` as an allowed **Redirect URI**.
+### Option B: No Custom Domain (Using nip.io for testing)
+
+If you do not own a domain but want to test the deployment securely over HTTPS, you can use a free wildcard DNS service like `nip.io`.
+
+1.  **Identify the Load Balancer IP**: Wait for your initial deployment to finish and copy the Load Balancer IP (e.g., `34.120.24.5`).
+2.  **Format your nip.io domain**: Your free domain will be formatted as `[IP_ADDRESS].nip.io` (e.g., `34.120.24.5.nip.io`).
+3.  **Update the App Configurations**:
+    *   Re-run the `./bootstrap.sh` script (from outside the repository).
+    *   When prompted for the **Domain Name**, enter your newly formatted `nip.io` domain (e.g., `34.120.24.5.nip.io`).
+    *   Terraform will detect the change and provision a managed SSL certificate for `34.120.24.5.nip.io`. (This usually provisions quickly, but can take up to 15 minutes).
+4.  **Update Microsoft Entra ID**: Return to the **Microsoft Entra admin center** > **App registrations** > your app > **Authentication**. Add a new Redirect URI matching your nip.io domain: `https://34.120.24.5.nip.io/` (ensure it has a trailing slash).
