@@ -169,68 +169,73 @@ export class AgentChatService {
       }
 
       // Start Event Polling Loop
-      const pollUrl = `${this.apiUrl}/sessions/${sessionId}/poll`;
-      const pollInterval = setInterval(async () => {
-        try {
-          const pollToken = await firstValueFrom(
-            this.authService.getValidIdentityPlatformToken$(),
-          );
+      this.startPolling(sessionId, callbacks);
+    } catch (error) {
+      if (callbacks.onError) callbacks.onError(error);
+    }
+  }
 
-          const pollResp = await fetch(pollUrl, {
-            method: 'GET',
-            headers: {
-              Authorization: `Bearer ${pollToken}`,
-              'Content-Type': 'application/json',
-            },
-          });
+  startPolling(sessionId: string, callbacks: SSECallbacks<any>): any {
+    const pollUrl = `${this.apiUrl}/sessions/${sessionId}/poll`;
+    const pollInterval = setInterval(async () => {
+      try {
+        const pollToken = await firstValueFrom(
+          this.authService.getValidIdentityPlatformToken$(),
+        );
 
-          if (!pollResp.ok) {
-            console.warn('Poll failed with status', pollResp.status);
-            return;
-          }
+        const pollResp = await fetch(pollUrl, {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${pollToken}`,
+            'Content-Type': 'application/json',
+          },
+        });
 
-          const pollData = await pollResp.json();
-          if (pollData && pollData.events) {
-            for (const line of pollData.events) {
-              if (line.startsWith('data: ')) {
-                const data = line.substring(6);
-                if (data.trim() === '[DONE]') {
-                  if (callbacks.onClose) callbacks.onClose();
+        if (!pollResp.ok) {
+          console.warn('Poll failed with status', pollResp.status);
+          return;
+        }
+
+        const pollData = await pollResp.json();
+        if (pollData && pollData.events) {
+          for (const line of pollData.events) {
+            if (line.startsWith('data: ')) {
+              const data = line.substring(6);
+              if (data.trim() === '[DONE]') {
+                if (callbacks.onClose) callbacks.onClose();
+                clearInterval(pollInterval);
+                return;
+              }
+              try {
+                const parsed = JSON.parse(data);
+                if (parsed.error) {
+                  if (callbacks.onError)
+                    callbacks.onError(new Error(parsed.error));
                   clearInterval(pollInterval);
                   return;
                 }
-                try {
-                  const parsed = JSON.parse(data);
-                  if (parsed.error) {
-                    if (callbacks.onError)
-                      callbacks.onError(new Error(parsed.error));
-                    clearInterval(pollInterval);
-                    return;
-                  }
-                  if (callbacks.onMessage) callbacks.onMessage(parsed);
-                } catch (e) {
-                  console.warn(
-                    'Polled data is not JSON, treating as text:',
-                    data,
-                  );
-                  // Treat as text chunk
-                  if (callbacks.onMessage) {
-                    callbacks.onMessage({
-                      content: {
-                        parts: [{text: data}],
-                      },
-                    });
-                  }
+                if (callbacks.onMessage) callbacks.onMessage(parsed);
+              } catch (e) {
+                console.warn(
+                  'Polled data is not JSON, treating as text:',
+                  data,
+                );
+                // Treat as text chunk
+                if (callbacks.onMessage) {
+                  callbacks.onMessage({
+                    content: {
+                      parts: [{text: data}],
+                    },
+                  });
                 }
               }
             }
           }
-        } catch (pollErr) {
-          console.error('Polling tick failed:', pollErr);
         }
-      }, 2500);
-    } catch (error) {
-      if (callbacks.onError) callbacks.onError(error);
-    }
+      } catch (pollErr) {
+        console.error('Polling tick failed:', pollErr);
+      }
+    }, 2500);
+    return pollInterval;
   }
 }

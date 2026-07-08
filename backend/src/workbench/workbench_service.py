@@ -31,7 +31,11 @@ from fastapi import Depends
 from google.cloud import storage
 
 from src.auth.iam_signer_credentials_service import IamSignerCredentials
-from src.common.base_dto import GenerationModelEnum, MimeTypeEnum, AspectRatioEnum
+from src.common.base_dto import (
+    GenerationModelEnum,
+    MimeTypeEnum,
+    AspectRatioEnum,
+)
 from src.common.media_utils import generate_thumbnail
 from src.common.schema.media_item_model import (
     AssetRoleEnum,
@@ -43,7 +47,9 @@ from src.common.schema.media_item_model import (
 from src.common.storage_service import GcsService
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.images.repository.media_item_repository import MediaRepository
-from src.source_assets.repository.source_asset_repository import SourceAssetRepository
+from src.source_assets.repository.source_asset_repository import (
+    SourceAssetRepository,
+)
 from src.users.user_model import UserModel
 from src.workbench.dto.workbench_dto import (
     AudioClip,
@@ -95,10 +101,16 @@ def _process_timeline_in_background(
         async def _async_worker():
             async with WorkerDatabase() as db_factory:
                 async with db_factory() as db:
-                    from src.workbench.repository.timeline_repository import TimelineRepository
+                    from src.workbench.repository.timeline_repository import (
+                        TimelineRepository,
+                    )
                     from src.workbench.workbench_service import WorkbenchService
-                    from src.source_assets.repository.source_asset_repository import SourceAssetRepository
-                    from src.auth.iam_signer_credentials_service import IamSignerCredentials
+                    from src.source_assets.repository.source_asset_repository import (
+                        SourceAssetRepository,
+                    )
+                    from src.auth.iam_signer_credentials_service import (
+                        IamSignerCredentials,
+                    )
                     from types import SimpleNamespace
 
                     timeline_repo = TimelineRepository(db)
@@ -117,19 +129,26 @@ def _process_timeline_in_background(
                     )
 
                     try:
-                        timeline = await timeline_repo.get_by_id_with_details(timeline_id)
+                        timeline = await timeline_repo.get_by_id_with_details(
+                            timeline_id
+                        )
                         if not timeline:
                             worker_logger.error("Timeline not found")
-                            await media_repo.update(media_item_id, {
-                                "status": JobStatusEnum.FAILED,
-                                "error_message": "Timeline not found"
-                            })
+                            await media_repo.update(
+                                media_item_id,
+                                {
+                                    "status": JobStatusEnum.FAILED,
+                                    "error_message": "Timeline not found",
+                                },
+                            )
                             return
 
                         # Enrich timeline to get presigned URLs
                         await service._enrich_timeline(timeline)
 
-                        output_path, temp_dir = await service._stitch_timeline(timeline)
+                        output_path, temp_dir = await service._stitch_timeline(
+                            timeline
+                        )
 
                         try:
                             final_gcs_uri = await asyncio.to_thread(
@@ -139,7 +158,9 @@ def _process_timeline_in_background(
                                 mime_type="video/mp4",
                             )
 
-                            thumbnail_path = await asyncio.to_thread(generate_thumbnail, output_path)
+                            thumbnail_path = await asyncio.to_thread(
+                                generate_thumbnail, output_path
+                            )
                             thumbnail_gcs_uri = None
                             if thumbnail_path:
                                 thumbnail_gcs_uri = await asyncio.to_thread(
@@ -150,23 +171,32 @@ def _process_timeline_in_background(
                                 )
 
                             update_data = {
-                                "gcs_uris": [final_gcs_uri] if final_gcs_uri else [],
-                                "status": JobStatusEnum.COMPLETED
+                                "gcs_uris": (
+                                    [final_gcs_uri] if final_gcs_uri else []
+                                ),
+                                "status": JobStatusEnum.COMPLETED,
                             }
                             if thumbnail_gcs_uri:
-                                update_data["thumbnail_uris"] = [thumbnail_gcs_uri]
+                                update_data["thumbnail_uris"] = [
+                                    thumbnail_gcs_uri
+                                ]
                             await media_repo.update(media_item_id, update_data)
                         finally:
                             if os.path.exists(temp_dir):
                                 shutil.rmtree(temp_dir)
-                            if thumbnail_path and os.path.exists(thumbnail_path): # type: ignore
+                            if thumbnail_path and os.path.exists(thumbnail_path):  # type: ignore
                                 os.remove(thumbnail_path)
                     except Exception as e:
-                        worker_logger.error(f"Error rendering timeline: {e}", exc_info=True)
-                        await media_repo.update(media_item_id, {
-                            "status": JobStatusEnum.FAILED,
-                            "error_message": f"Render failed: {str(e)}"
-                        })
+                        worker_logger.error(
+                            f"Error rendering timeline: {e}", exc_info=True
+                        )
+                        await media_repo.update(
+                            media_item_id,
+                            {
+                                "status": JobStatusEnum.FAILED,
+                                "error_message": f"Render failed: {str(e)}",
+                            },
+                        )
 
         loop.run_until_complete(_async_worker())
         loop.close()
@@ -224,10 +254,8 @@ class WorkbenchService:
                         else None
                     )
                     if source_asset_id:
-                        source_asset = (
-                            await self.source_asset_repo.get_by_id(
-                                source_asset_id
-                            )
+                        source_asset = await self.source_asset_repo.get_by_id(
+                            source_asset_id
                         )
                         if source_asset and source_asset.gcs_uri:
                             gcs_uri = source_asset.gcs_uri
@@ -268,10 +296,8 @@ class WorkbenchService:
                         else None
                     )
                     if source_asset_id:
-                        source_asset = (
-                            await self.source_asset_repo.get_by_id(
-                                source_asset_id
-                            )
+                        source_asset = await self.source_asset_repo.get_by_id(
+                            source_asset_id
                         )
                         if source_asset and source_asset.gcs_uri:
                             gcs_uri = source_asset.gcs_uri
@@ -333,14 +359,18 @@ class WorkbenchService:
                 if ref.type == "source_asset":
                     source_assets.append(
                         SourceAssetLink(
-                            asset_id=int(ref.id) if str(ref.id).isdigit() else 0,
+                            asset_id=(
+                                int(ref.id) if str(ref.id).isdigit() else 0
+                            ),
                             role=AssetRoleEnum.CONCATENATION_SOURCE,
                         )
                     )
                 elif ref.type == "media_item":
                     source_media_items.append(
                         SourceMediaItemLink(
-                            media_item_id=int(ref.id) if str(ref.id).isdigit() else 0,
+                            media_item_id=(
+                                int(ref.id) if str(ref.id).isdigit() else 0
+                            ),
                             media_index=0,
                             role=AssetRoleEnum.CONCATENATION_SOURCE,
                         )
@@ -352,14 +382,18 @@ class WorkbenchService:
                 if ref.type == "source_asset":
                     source_assets.append(
                         SourceAssetLink(
-                            asset_id=int(ref.id) if str(ref.id).isdigit() else 0,
+                            asset_id=(
+                                int(ref.id) if str(ref.id).isdigit() else 0
+                            ),
                             role=AssetRoleEnum.CONCATENATION_SOURCE,
                         )
                     )
                 elif ref.type == "media_item":
                     source_media_items.append(
                         SourceMediaItemLink(
-                            media_item_id=int(ref.id) if str(ref.id).isdigit() else 0,
+                            media_item_id=(
+                                int(ref.id) if str(ref.id).isdigit() else 0
+                            ),
                             media_index=0,
                             role=AssetRoleEnum.CONCATENATION_SOURCE,
                         )
@@ -367,7 +401,9 @@ class WorkbenchService:
 
         # TODO: change this to a proper way of figuring the ratio
         timeline_aspect_ratio = AspectRatioEnum.RATIO_16_9
-        first_video_clip = next((clip for clip in timeline.video_clips if clip.asset_ref), None)
+        first_video_clip = next(
+            (clip for clip in timeline.video_clips if clip.asset_ref), None
+        )
         if first_video_clip and first_video_clip.asset_ref:
             ref = first_video_clip.asset_ref
             item_id = int(ref.id) if str(ref.id).isdigit() else None
@@ -377,11 +413,17 @@ class WorkbenchService:
                     if media_item and media_item.aspect_ratio:
                         timeline_aspect_ratio = media_item.aspect_ratio
                 elif ref.type == "source_asset":
-                    source_asset = await self.source_asset_repo.get_by_id(item_id)
+                    source_asset = await self.source_asset_repo.get_by_id(
+                        item_id
+                    )
                     if source_asset and source_asset.aspect_ratio:
                         timeline_aspect_ratio = source_asset.aspect_ratio
 
-        ws_id = int(timeline.workspace_id) if str(timeline.workspace_id).isdigit() else 1
+        ws_id = (
+            int(timeline.workspace_id)
+            if str(timeline.workspace_id).isdigit()
+            else 1
+        )
 
         new_media_item = MediaItemModel(
             prompt=f"Render of timeline {timeline_id}",

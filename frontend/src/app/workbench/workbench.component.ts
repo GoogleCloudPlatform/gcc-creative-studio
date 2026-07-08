@@ -48,10 +48,7 @@ import {
   SourceAssetService,
 } from '../common/services/source-asset.service';
 // --- Interfaces ---
-import {
-  WorkbenchService,
-  RenderTimelineRequest,
-} from './workbench.service';
+import {WorkbenchService, RenderTimelineRequest} from './workbench.service';
 import {AgentChatService} from './services/agent-chat.service';
 import {TimeRulerComponent} from './components/time-ruler/time-ruler.component';
 import {
@@ -68,7 +65,14 @@ import {
 } from '../common/models/workbench.model';
 import {ActivatedRoute} from '@angular/router';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
-import {Subject, Subscription, of, Observable, interval, throwError} from 'rxjs';
+import {
+  Subject,
+  Subscription,
+  of,
+  Observable,
+  interval,
+  throwError,
+} from 'rxjs';
 import {debounceTime, switchMap, takeWhile, catchError} from 'rxjs/operators';
 import {StoryboardService} from '../services/storyboard/storyboard.service';
 import {GalleryService} from '../gallery/gallery.service';
@@ -1104,7 +1108,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           // Poll for completion
           const pollInterval = 2000;
           this.lastSavedText.set('Rendering video...');
-          
+
           interval(pollInterval)
             .pipe(
               switchMap(() => this.galleryService.getMedia(res.id as number)),
@@ -1112,49 +1116,52 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
                 console.error('Error polling rendered media', err);
                 return throwError(() => err);
               }),
-              takeWhile((item) => {
+              takeWhile(item => {
                 if (item.status === 'FAILED') {
-                   this.isDownloading.set(false);
-                   this.lastSavedText.set('Render failed');
-                   return false;
+                  this.isDownloading.set(false);
+                  this.lastSavedText.set('Render failed');
+                  return false;
                 }
                 if (item.status === 'COMPLETED') {
-                   return false;
+                  return false;
                 }
                 return true;
-              }, true) // inclusive to emit the last item
+              }, true), // inclusive to emit the last item
             )
             .subscribe({
-              next: (item) => {
+              next: item => {
                 if (item.status === 'COMPLETED') {
-                   this.isDownloading.set(false);
-                   this.lastSavedText.set('Render complete');
-                   
-                   if (item.presignedUrls && item.presignedUrls.length > 0) {
-                     const url = item.presignedUrls[0];
-                     this.http.get(url, {responseType: 'blob'}).subscribe({
-                       next: blob => {
-                         const localUrl = window.URL.createObjectURL(blob);
-                         const a = document.createElement('a');
-                         a.href = localUrl;
-                         a.download = `creative-studio-export-${new Date().getTime()}.mp4`;
-                         document.body.appendChild(a);
-                         a.click();
-                         document.body.removeChild(a);
-                         window.URL.revokeObjectURL(localUrl);
-                       },
-                       error: err => {
-                         console.error('Failed to download video file blob', err);
-                       },
-                     });
-                   }
+                  this.isDownloading.set(false);
+                  this.lastSavedText.set('Render complete');
+
+                  if (item.presignedUrls && item.presignedUrls.length > 0) {
+                    const url = item.presignedUrls[0];
+                    this.http.get(url, {responseType: 'blob'}).subscribe({
+                      next: blob => {
+                        const localUrl = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = localUrl;
+                        a.download = `creative-studio-export-${new Date().getTime()}.mp4`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        window.URL.revokeObjectURL(localUrl);
+                      },
+                      error: err => {
+                        console.error(
+                          'Failed to download video file blob',
+                          err,
+                        );
+                      },
+                    });
+                  }
                 }
               },
-              error: (err) => {
+              error: err => {
                 console.error('Polling failed', err);
                 this.isDownloading.set(false);
                 this.lastSavedText.set('Render failed');
-              }
+              },
             });
         },
         error: err => {

@@ -14,21 +14,21 @@
  * limitations under the License.
  */
 
-import { Injectable, PLATFORM_ID, inject } from '@angular/core';
-import { Router } from '@angular/router';
-import { UserModel, UserRolesEnum } from '../models/user.model';
-import { HttpClient, HttpHeaders, HttpErrorResponse } from '@angular/common/http';
-import { environment } from '../../../environments/environment';
-import { Auth, IdTokenResult } from '@angular/fire/auth';
-import { UserService } from '../services/user.service';
+import {Injectable, PLATFORM_ID, inject} from '@angular/core';
+import {Router} from '@angular/router';
+import {UserModel, UserRolesEnum} from '../models/user.model';
+import {HttpClient, HttpHeaders, HttpErrorResponse} from '@angular/common/http';
+import {environment} from '../../../environments/environment';
+import {Auth, IdTokenResult} from '@angular/fire/auth';
+import {UserService} from '../services/user.service';
 import {
   GoogleAuthProvider,
   signInWithPopup,
   UserCredential,
 } from '@angular/fire/auth';
-import { Observable, from, throwError, of } from 'rxjs';
-import { catchError, tap, map, switchMap } from 'rxjs/operators';
-import { isPlatformBrowser } from '@angular/common';
+import {Observable, from, throwError, of} from 'rxjs';
+import {catchError, tap, map, switchMap} from 'rxjs/operators';
+import {isPlatformBrowser} from '@angular/common';
 
 // Declare the 'google' global object from the Google Identity Services script
 declare const google: any;
@@ -91,7 +91,7 @@ export class AuthService {
         // Save session details to memory and local storage.
         this.firebaseIdToken = token;
         this.firebaseTokenExpiry = expirationTime;
-        const session: FirebaseSession = { token, expiry: expirationTime };
+        const session: FirebaseSession = {token, expiry: expirationTime};
         localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
 
         // Call the backend to get or create the user profile.
@@ -137,7 +137,7 @@ export class AuthService {
             this.firebaseIdToken = token;
             this.firebaseTokenExpiry = expiry;
 
-            const session: FirebaseSession = { token, expiry };
+            const session: FirebaseSession = {token, expiry};
             localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
           } catch (error) {
             console.error('Error decoding refreshed token payload:', error);
@@ -256,7 +256,7 @@ export class AuthService {
   private syncUserWithBackend$(token: string): Observable<UserModel> {
     const headers = new HttpHeaders().set('Authorization', `Bearer ${token}`);
     return this.httpClient
-      .get<UserModel>(`${environment.backendURL}/users/me`, { headers })
+      .get<UserModel>(`${environment.backendURL}/users/me`, {headers})
       .pipe(
         tap((userDetails: UserModel) => {
           // The backend is the source of truth. Save the returned profile to local storage.
@@ -270,7 +270,7 @@ export class AuthService {
             () =>
               new Error(
                 error?.error?.detail ||
-                `Could not synchronize user profile with the server. ${error?.error?.detail}`,
+                  `Could not synchronize user profile with the server. ${error?.error?.detail}`,
               ),
           );
         }),
