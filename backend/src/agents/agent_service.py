@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 vertexai.init(
     project=config_service.PROJECT_ID,
     location=config_service.WORKFLOWS_LOCATION,
-    api_transport="grpc",  # Options: "grpc" or "rest"
+    api_transport="rest",  # Options: "grpc" or "rest"
 )
 
 AGENT_REASONING_ENGINES = {
@@ -689,33 +689,51 @@ class AgentService:
                     message=msg_payload,
                 )
                 import json
+                import threading
 
-                for chunk in response_stream:
-                    if isinstance(chunk, str):
-                        chunk_text = chunk
-                    elif isinstance(chunk, dict):
-                        chunk_text = json.dumps(chunk)
-                    else:
-                        try:
-                            if hasattr(chunk, "model_dump"):
-                                chunk_text = json.dumps(chunk.model_dump())
-                            elif hasattr(chunk, "to_dict"):
-                                chunk_text = json.dumps(chunk.to_dict())
-                            else:
+                queue = asyncio.Queue()
+                loop = asyncio.get_running_loop()
+
+                def producer():
+                    try:
+                        for chunk in response_stream:
+                            loop.call_soon_threadsafe(queue.put_nowait, chunk)
+                        loop.call_soon_threadsafe(queue.put_nowait, None)
+                    except Exception as prod_err:
+                        loop.call_soon_threadsafe(queue.put_nowait, prod_err)
+
+                threading.Thread(target=producer, daemon=True).start()
+
+                async with async_session_local() as db_session:
+                    repo = AgentRepository(db_session)
+                    while True:
+                        chunk = await queue.get()
+                        if chunk is None:
+                            break
+                        if isinstance(chunk, Exception):
+                            raise chunk
+
+                        if isinstance(chunk, str):
+                            chunk_text = chunk
+                        elif isinstance(chunk, dict):
+                            chunk_text = json.dumps(chunk)
+                        else:
+                            try:
+                                if hasattr(chunk, "model_dump"):
+                                    chunk_text = json.dumps(chunk.model_dump())
+                                elif hasattr(chunk, "to_dict"):
+                                    chunk_text = json.dumps(chunk.to_dict())
+                                else:
+                                    chunk_text = json.dumps(str(chunk))
+                            except Exception:
                                 chunk_text = json.dumps(str(chunk))
-                        except Exception:
-                            chunk_text = json.dumps(str(chunk))
 
-                    async with async_session_local() as db_session:
-                        repo = AgentRepository(db_session)
                         await repo.add_chat_event(
                             user_id=user_id,
                             session_id=session_id,
                             payload={"raw": f"data: {chunk_text}\n\n"},
                         )
 
-                async with async_session_local() as db_session:
-                    repo = AgentRepository(db_session)
                     await repo.add_chat_event(
                         user_id=user_id,
                         session_id=session_id,

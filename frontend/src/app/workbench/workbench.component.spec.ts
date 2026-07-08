@@ -14,7 +14,12 @@
  * limitations under the License.
  */
 
-import {ComponentFixture, TestBed, fakeAsync, tick} from '@angular/core/testing';
+import {
+  ComponentFixture,
+  TestBed,
+  fakeAsync,
+  tick,
+} from '@angular/core/testing';
 import {WorkbenchComponent} from './workbench.component';
 import {HttpClient} from '@angular/common/http';
 import {HttpClientTestingModule} from '@angular/common/http/testing';
@@ -536,17 +541,15 @@ describe('WorkbenchComponent', () => {
       const mediaResponse: any = {
         id: 10,
         status: 'COMPLETED',
-        presignedUrls: ['http://example.com/download-video.mp4']
+        presignedUrls: ['http://example.com/download-video.mp4'],
       };
 
       spyOn(workbenchService, 'renderVideo').and.returnValue(
         of(renderResponse),
       );
-      
+
       const galleryService = TestBed.inject(GalleryService);
-      spyOn(galleryService, 'getMedia').and.returnValue(
-        of(mediaResponse),
-      );
+      spyOn(galleryService, 'getMedia').and.returnValue(of(mediaResponse));
 
       const mockBlob = new Blob(['mock binary'], {type: 'video/mp4'});
       spyOn(http, 'get').and.returnValue(of(mockBlob));

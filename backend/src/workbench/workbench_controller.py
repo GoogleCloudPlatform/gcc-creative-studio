@@ -54,7 +54,9 @@ async def render_timeline_by_id(
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
     executor = request.app.state.executor
-    result = await service.render_timeline_by_id(timeline_id, current_user, executor)
+    result = await service.render_timeline_by_id(
+        timeline_id, current_user, executor
+    )
     if not result:
         raise HTTPException(status_code=404, detail="Timeline not found")
     return result

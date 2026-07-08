@@ -25,6 +25,13 @@ from src.workbench.dto.workbench_dto import (
     TimelineResponse,
     RenderTimelineResponse,
 )
+from src.galleries.dto.gallery_response_dto import MediaItemResponse
+from src.common.schema.media_item_model import (
+    MimeTypeEnum,
+    GenerationModelEnum,
+    AspectRatioEnum,
+    JobStatusEnum,
+)
 from src.workbench.workbench_service import WorkbenchService
 
 
@@ -56,23 +63,27 @@ class TestWorkbenchController:
     """Tests for Workbench Controller endpoints."""
 
     def test_render_timeline(self, api_client, mock_workbench_service):
-        mock_res = RenderTimelineResponse(
-            asset_id=10,
-            gcs_uri="gs://bucket/renders/export.mp4",
-            timeline_id=1,
-            message="Success",
+        mock_res = MediaItemResponse(
+            id=10,
+            workspace_id=1,
+            user_email="user@test.com",
+            mime_type=MimeTypeEnum.VIDEO_MP4,
+            model=GenerationModelEnum.WORKBENCH_RENDER,
+            aspect_ratio=AspectRatioEnum.RATIO_16_9,
+            status=JobStatusEnum.PROCESSING,
+            gcs_uris=["gs://bucket/renders/export.mp4"],
         )
         mock_workbench_service.render_timeline_by_id.return_value = mock_res
 
         response = api_client.post("/api/workbench/timelines/1/render")
         assert response.status_code == status.HTTP_200_OK
-        assert response.json()["asset_id"] == 10
-        assert response.json()["gcs_uri"] == "gs://bucket/renders/export.mp4"
+        assert response.json()["id"] == 10
+        assert response.json()["workspaceId"] == 1
 
         payload = {"timeline_id": 1}
         response_legacy = api_client.post("/api/workbench/render", json=payload)
         assert response_legacy.status_code == status.HTTP_200_OK
-        assert response_legacy.json()["asset_id"] == 10
+        assert response_legacy.json()["id"] == 10
 
     def test_create_timeline(self, api_client, mock_workbench_service):
         mock_res = TimelineResponse(

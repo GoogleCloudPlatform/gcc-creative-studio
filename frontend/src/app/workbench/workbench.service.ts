@@ -35,13 +35,8 @@ export class WorkbenchService {
 
   constructor(private http: HttpClient) {}
 
-  renderVideo(
-    request: RenderTimelineRequest,
-  ): Observable<MediaItem> {
-    return this.http.post<MediaItem>(
-      `${this.apiUrl}/render`,
-      request,
-    );
+  renderVideo(request: RenderTimelineRequest): Observable<MediaItem> {
+    return this.http.post<MediaItem>(`${this.apiUrl}/render`, request);
   }
 
   getTimeline(timelineId: number | string): Observable<TimelineDTO> {
