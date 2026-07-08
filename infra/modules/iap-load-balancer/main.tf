@@ -21,9 +21,6 @@ locals {
   resolved_pool_id = var.org_id != "" ? "locations/global/workforcePools/${local.expected_pool_id}" : (var.workforce_pool_id != "" ? "locations/global/workforcePools/${var.workforce_pool_id}" : "")
   use_workforce    = local.resolved_pool_id != ""
 
-  # Dynamically compute the Entra ID principal set so bootstrap.sh doesn't have to guess it
-  entra_member                 = local.use_workforce ? ["principalSet://iam.googleapis.com/${local.resolved_pool_id}/*"] : []
-  effective_iap_access_members = setunion(toset(var.iap_access_members), toset(local.entra_member))
 }
 
 # --- 1. Workforce Identity Federation ---
@@ -252,20 +249,36 @@ resource "google_cloud_run_v2_service_iam_member" "iap_can_invoke_frontend" {
 
 # Grant users IAP secured Web App User role on backend service
 resource "google_iap_web_backend_service_iam_member" "member" {
-  for_each            = local.effective_iap_access_members
+  for_each            = toset(var.iap_access_members)
   project             = var.gcp_project_id
   web_backend_service = google_compute_backend_service.be_service.name
   role                = "roles/iap.httpsResourceAccessor"
   member              = each.key
 }
 
+resource "google_iap_web_backend_service_iam_member" "backend_entra_member" {
+  count               = local.use_workforce ? 1 : 0
+  project             = var.gcp_project_id
+  web_backend_service = google_compute_backend_service.be_service.name
+  role                = "roles/iap.httpsResourceAccessor"
+  member              = "principalSet://iam.googleapis.com/${local.resolved_pool_id}/*"
+}
+
 # Grant users IAP secured Web App User role on frontend service
 resource "google_iap_web_backend_service_iam_member" "fe_member" {
-  for_each            = local.effective_iap_access_members
+  for_each            = toset(var.iap_access_members)
   project             = var.gcp_project_id
   web_backend_service = google_compute_backend_service.fe_service.name
   role                = "roles/iap.httpsResourceAccessor"
   member              = each.key
+}
+
+resource "google_iap_web_backend_service_iam_member" "frontend_entra_member" {
+  count               = local.use_workforce ? 1 : 0
+  project             = var.gcp_project_id
+  web_backend_service = google_compute_backend_service.fe_service.name
+  role                = "roles/iap.httpsResourceAccessor"
+  member              = "principalSet://iam.googleapis.com/${local.resolved_pool_id}/*"
 }
 
 # Configure IAP Settings to prioritize Workforce Identity Federation on backend service
