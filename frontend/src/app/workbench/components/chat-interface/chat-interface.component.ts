@@ -828,22 +828,22 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                   ) {
                     msgs.push({
                       sender: 'agent',
-                      text: textChunk,
+                      text: textChunk
+                        .replace(/\[System Note:[\s\S]*?(?:\]|$)/g, '')
+                        .trim(),
+                      rawText: textChunk,
                       timestamp: new Date(),
                     });
                     agentMessageIndex = msgs.length - 1;
                     lastInvocationId = currentInvocationId;
                   } else {
-                    msgs[agentMessageIndex].text += textChunk;
-                    if (
-                      msgs[agentMessageIndex].text.includes('[System Note:')
-                    ) {
-                      msgs[agentMessageIndex].text = msgs[
-                        agentMessageIndex
-                      ].text
-                        .split('[System Note:')[0]
-                        .trim();
-                    }
+                    const fullRaw =
+                      (msgs[agentMessageIndex].rawText ||
+                        msgs[agentMessageIndex].text) + textChunk;
+                    msgs[agentMessageIndex].rawText = fullRaw;
+                    msgs[agentMessageIndex].text = fullRaw
+                      .replace(/\[System Note:[\s\S]*?(?:\]|$)/g, '')
+                      .trim();
                   }
                 }
                 return [...msgs];
@@ -1174,22 +1174,22 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                   ) {
                     msgs.push({
                       sender: 'agent',
-                      text: textChunk,
+                      text: textChunk
+                        .replace(/\[System Note:[\s\S]*?(?:\]|$)/g, '')
+                        .trim(),
+                      rawText: textChunk,
                       timestamp: new Date(),
                     });
                     agentMessageIndex = msgs.length - 1;
                     lastInvocationId = currentInvocationId;
                   } else {
-                    msgs[agentMessageIndex].text += textChunk;
-                    if (
-                      msgs[agentMessageIndex].text.includes('[System Note:')
-                    ) {
-                      msgs[agentMessageIndex].text = msgs[
-                        agentMessageIndex
-                      ].text
-                        .split('[System Note:')[0]
-                        .trim();
-                    }
+                    const fullRaw =
+                      (msgs[agentMessageIndex].rawText ||
+                        msgs[agentMessageIndex].text) + textChunk;
+                    msgs[agentMessageIndex].rawText = fullRaw;
+                    msgs[agentMessageIndex].text = fullRaw
+                      .replace(/\[System Note:[\s\S]*?(?:\]|$)/g, '')
+                      .trim();
                   }
                 }
                 return [...msgs];
