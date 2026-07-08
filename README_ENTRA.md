@@ -20,8 +20,12 @@ Before you begin, ensure you have the following installed and configured:
 
 Clone the repository and checkout the latest branch containing the IAP and Entra integration changes.
 
+> [!WARNING]
+> **If you are deploying from your own Fork (Required for Cloud Build):**  
+> The GitHub "Sync fork" button defaults to syncing only the `main` branch. Since the Entra integration relies on the `feature/entra-authentication-final` branch, you **must** manually select this branch from the branch dropdown in the GitHub UI and sync it with upstream before proceeding. If you skip this, your fork will be out of date and fail during Terraform deployment.
+
 1.  Open your terminal.
-2.  Clone the repository:
+2.  Clone the repository (replace with your fork URL if applicable):
     ```bash
     git clone https://github.com/GoogleCloudPlatform/gcc-creative-studio.git
     cd gcc-creative-studio
