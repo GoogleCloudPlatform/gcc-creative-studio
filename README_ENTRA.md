@@ -129,13 +129,20 @@ The project includes an automated `bootstrap.sh` script that handles the configu
     ```bash
     gcloud auth application-default login
     ```
-2.  Make the bootstrap script executable:
+> [!IMPORTANT]
+> **Run From Outside the Repository:** The bootstrap script will attempt to clone your source repository automatically. To prevent creating a confusing "Nested Folder" structure (e.g. `gcc-creative-studio/gcc-creative-studio`), you must run the script from *outside* the repository directory.
+
+2.  Make the bootstrap script executable (assuming you are currently inside `gcc-creative-studio` from Step 1):
     ```bash
     chmod +x bootstrap.sh
     ```
-3.  Run the bootstrap script:
+3.  Navigate one directory up (back to where you cloned the folder):
     ```bash
-    ./bootstrap.sh
+    cd ..
+    ```
+4.  Run the bootstrap script:
+    ```bash
+    ./gcc-creative-studio/bootstrap.sh
     ```
 4.  Follow the interactive prompts during the execution of the script:
     *   **GCP Project ID**: Enter your target Google Cloud Project ID (e.g., `my-project-123`). The script will attempt to set this as your active gcloud project.
