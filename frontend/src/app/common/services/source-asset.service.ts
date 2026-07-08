@@ -419,4 +419,11 @@ export class SourceAssetService {
       `${environment.backendURL}/source_assets/${assetId}`,
     );
   }
+
+  convertImageToPng(file: File): Observable<Blob> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const convertUrl = `${environment.backendURL}/source_assets/convert-to-png`;
+    return this.http.post(convertUrl, formData, {responseType: 'blob'});
+  }
 }
