@@ -23,6 +23,9 @@ import uuid
 
 from fastapi import Depends, HTTPException, UploadFile, status
 from PIL import Image as PILImage
+import pillow_heif
+
+pillow_heif.register_heif_opener()
 
 from src.auth.iam_signer_credentials_service import IamSignerCredentials
 from src.common.base_dto import (
@@ -146,6 +149,26 @@ class SourceAssetService:
 
         logger.info("Deduced aspect ratio as %s", closest_enum.value)
         return closest_enum
+
+    def _determine_mime_type_enum(self, content_type: str) -> MimeTypeEnum:
+        """Determines the appropriate MimeTypeEnum for a given content type string."""
+        if content_type.startswith("video/"):
+            return MimeTypeEnum.VIDEO_MP4
+        if content_type.startswith("audio/"):
+            if content_type in ["audio/mpeg", "audio/mp3"]:
+                return MimeTypeEnum.AUDIO_MPEG
+            if content_type == "audio/wav":
+                return MimeTypeEnum.AUDIO_WAV
+            if content_type == "audio/ogg":
+                return MimeTypeEnum.AUDIO_OGG
+            if content_type == "audio/webm":
+                return MimeTypeEnum.AUDIO_WEBM
+            return MimeTypeEnum.AUDIO_MPEG
+        if content_type in ["image/jpeg", "image/jpg"]:
+            return MimeTypeEnum.IMAGE_JPEG
+        if content_type == "image/webp":
+            return MimeTypeEnum.IMAGE_WEBP
+        return MimeTypeEnum.IMAGE_PNG
 
     async def _create_asset_response(
         self,
@@ -413,23 +436,7 @@ class SourceAssetService:
         # 4. Create and save the new UserAsset document
         # Determine mime_type based on content_type
         content_type = mime_type or ""
-        if content_type.startswith("video/"):
-            mime_type = MimeTypeEnum.VIDEO_MP4
-        elif content_type.startswith("audio/"):
-            # Map common audio types to enum values
-            if content_type in ["audio/mpeg", "audio/mp3"]:
-                mime_type = MimeTypeEnum.AUDIO_MPEG
-            elif content_type == "audio/wav":
-                mime_type = MimeTypeEnum.AUDIO_WAV
-            elif content_type == "audio/ogg":
-                mime_type = MimeTypeEnum.AUDIO_OGG
-            elif content_type == "audio/webm":
-                mime_type = MimeTypeEnum.AUDIO_WEBM
-            else:
-                # Default to MPEG for unknown audio types
-                mime_type = MimeTypeEnum.AUDIO_MPEG
-        else:
-            mime_type = MimeTypeEnum.IMAGE_PNG
+        mime_type = self._determine_mime_type_enum(content_type)
 
         is_admin = UserRoleEnum.ADMIN in user.roles
         final_scope = AssetScopeEnum.PRIVATE
@@ -483,7 +490,7 @@ class SourceAssetService:
     ) -> GenerateSourceAssetUploadUrlResponseDto:
         """Generates a GCS v4 signed URL for a client-side direct source asset upload."""
         file_uuid = str(uuid.uuid4())
-        destination_blob_name = f"source_assets/{current_user.id}/uploads/{file_uuid}/{request_dto.filename}"
+        destination_blob_name = f"source_assets/{current_user.id}/uploads/{file_uuid}/{os.path.basename(request_dto.filename)}"
 
         signed_url, gcs_uri = await asyncio.to_thread(
             self.iam_signer.generate_v4_upload_signed_url,
@@ -511,27 +518,16 @@ class SourceAssetService:
     ) -> SourceAssetResponseDto:
         """Finalizes registration of a source asset uploaded directly to GCS."""
         expected_prefix = f"gs://{self.gcs_service.bucket_name}/source_assets/{current_user.id}/"
-        if not request_dto.gcs_uri.startswith(expected_prefix):
+        if (
+            not request_dto.gcs_uri.startswith(expected_prefix)
+            or ".." in request_dto.gcs_uri
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid GCS URI path.",
             )
         content_type = request_dto.mime_type or ""
-        if content_type.startswith("video/"):
-            mime_type_enum = MimeTypeEnum.VIDEO_MP4
-        elif content_type.startswith("audio/"):
-            if content_type in ["audio/mpeg", "audio/mp3"]:
-                mime_type_enum = MimeTypeEnum.AUDIO_MPEG
-            elif content_type == "audio/wav":
-                mime_type_enum = MimeTypeEnum.AUDIO_WAV
-            elif content_type == "audio/ogg":
-                mime_type_enum = MimeTypeEnum.AUDIO_OGG
-            elif content_type == "audio/webm":
-                mime_type_enum = MimeTypeEnum.AUDIO_WEBM
-            else:
-                mime_type_enum = MimeTypeEnum.AUDIO_MPEG
-        else:
-            mime_type_enum = MimeTypeEnum.IMAGE_PNG
+        mime_type_enum = self._determine_mime_type_enum(content_type)
 
         is_admin = UserRoleEnum.ADMIN in current_user.roles
         final_scope = AssetScopeEnum.PRIVATE

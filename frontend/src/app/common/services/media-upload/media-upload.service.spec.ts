@@ -21,8 +21,9 @@ import {
 import {TestBed} from '@angular/core/testing';
 import {HttpEventType, HttpResponse} from '@angular/common/http';
 import {Event, NavigationEnd, Router} from '@angular/router';
-import {Subject} from 'rxjs';
+import {of, Subject} from 'rxjs';
 import {environment} from '../../../../environments/environment';
+import {SourceAssetService} from '../source-asset.service';
 import {
   MediaUploadService,
   UploadItem,
@@ -37,6 +38,7 @@ describe('MediaUploadService', () => {
   let service: MediaUploadService;
   let httpMock: HttpTestingController;
   let mockUserService: jasmine.SpyObj<UserService>;
+  let mockSourceAssetService: jasmine.SpyObj<SourceAssetService>;
   let mockRouter: jasmine.SpyObj<Router>;
   let routerEventsSubject: Subject<Event>;
 
@@ -63,6 +65,10 @@ describe('MediaUploadService', () => {
       roles: [],
     });
 
+    mockSourceAssetService = jasmine.createSpyObj('SourceAssetService', [
+      'convertImageToPng',
+    ]);
+
     routerEventsSubject = new Subject<Event>();
     mockRouter = jasmine.createSpyObj('Router', ['navigate', 'navigateByUrl']);
     (mockRouter as any).events = routerEventsSubject.asObservable();
@@ -72,6 +78,7 @@ describe('MediaUploadService', () => {
       providers: [
         MediaUploadService,
         {provide: UserService, useValue: mockUserService},
+        {provide: SourceAssetService, useValue: mockSourceAssetService},
         {provide: Router, useValue: mockRouter},
       ],
     });
@@ -525,6 +532,7 @@ describe('MediaUploadService', () => {
         {
           id: '1',
           filename: 'done.png',
+          originalFilename: 'done.png',
           size: 100,
           mimeType: 'image/png',
           status: UploadStatus.COMPLETED,
@@ -533,6 +541,7 @@ describe('MediaUploadService', () => {
         {
           id: '2',
           filename: 'interrupted.png',
+          originalFilename: 'interrupted.png',
           size: 200,
           mimeType: 'image/png',
           status: UploadStatus.UPLOADING,
@@ -552,6 +561,7 @@ describe('MediaUploadService', () => {
             TestBed.inject(MediaUploadService)['http'],
             TestBed.inject(UserService),
             TestBed.inject(Router),
+            TestBed.inject(SourceAssetService),
           ),
       );
 
@@ -658,8 +668,8 @@ describe('MediaUploadService', () => {
       // Let's verify statuses:
       const queue = service.uploadQueue();
       expect(queue[0].status).toBe(UploadStatus.COMPLETED);
-      expect(queue[1].status).toBe(UploadStatus.CANCELLED);
-      expect(queue[1].errorMessage).toBeUndefined();
+      expect(queue[1].status).toBe(UploadStatus.FAILED);
+      expect(queue[1].errorMessage).toBe('Some error');
       expect(queue[2].status).toBe(UploadStatus.CANCELLED);
       expect(queue[3].status).toBe(UploadStatus.CANCELLED);
       expect(queue[4].status).toBe(UploadStatus.CANCELLED);
@@ -677,7 +687,9 @@ describe('MediaUploadService', () => {
       const parsed: UploadItem[] = JSON.parse(stored!);
       expect(parsed.length).toBe(8);
       expect(parsed[0].status).toBe(UploadStatus.COMPLETED);
-      for (let i = 1; i <= 7; i++) {
+      expect(parsed[1].status).toBe(UploadStatus.FAILED);
+      expect(parsed[1].errorMessage).toBe('Some error');
+      for (let i = 2; i <= 7; i++) {
         expect(parsed[i].status).toBe(UploadStatus.CANCELLED);
         expect(parsed[i].errorMessage).toBeUndefined();
       }
@@ -712,6 +724,68 @@ describe('MediaUploadService', () => {
       const openReqs = httpMock.match(() => true);
       expect(openReqs.length).toBe(1);
       expect(openReqs[0].cancelled).toBeTrue();
+    });
+  });
+
+  describe('Pre-upload Format Conversion (AVIF, HEIC, HEIF)', () => {
+    it('should convert avif, heic, and heif files to png before requesting signed upload url', () => {
+      const fileHeic = createDummyFile('photo.heic', 'image/heic', 500);
+      const fakePngBlob = new Blob(['png-bytes'], {type: 'image/png'});
+      mockSourceAssetService.convertImageToPng.and.returnValue(of(fakePngBlob));
+
+      service.uploadFiles(mockWorkspaceId, [fileHeic]);
+
+      expect(mockSourceAssetService.convertImageToPng).toHaveBeenCalledWith(
+        fileHeic,
+      );
+      const req = httpMock.expectOne(`${apiUrl}/generate-upload-url`);
+      expect(req.request.body.filename).toBe('photo.png');
+      expect(req.request.body.contentType).toBe('image/png');
+      expect(service.uploadQueue()[0].originalFilename).toBe('photo.heic');
+      expect(service.uploadQueue()[0].filename).toBe('photo.png');
+    });
+  });
+
+  describe('Session Storage Restoration on Auth Confirmation', () => {
+    it('should restore queue from sessionStorage on initialization', () => {
+      const mockItem: UploadItem = {
+        id: 'test-restore-id',
+        file: createDummyFile('test.png'),
+        filename: 'test.png',
+        originalFilename: 'test.png',
+        size: 1024,
+        mimeType: 'image/png',
+        status: UploadStatus.COMPLETED,
+        progress: 100,
+      };
+      sessionStorage.setItem(
+        MOCK_SESSION_STORAGE_UPLOAD_KEY,
+        JSON.stringify([mockItem]),
+      );
+
+      const newService = TestBed.runInInjectionContext(
+        () =>
+          new MediaUploadService(
+            TestBed.inject(HttpTestingController) as any,
+            mockUserService,
+            mockRouter,
+            mockSourceAssetService,
+          ),
+      );
+      // Trigger restoration check
+      expect(newService.uploadQueue().length).toBe(1);
+      expect(newService.uploadQueue()[0].id).toBe('test-restore-id');
+    });
+  });
+
+  describe('ngOnDestroy', () => {
+    it('should remove beforeunload listener and clear active subscriptions when destroyed', () => {
+      spyOn(window, 'removeEventListener');
+      service.ngOnDestroy();
+      expect(window.removeEventListener).toHaveBeenCalledWith(
+        'beforeunload',
+        jasmine.any(Function),
+      );
     });
   });
 });

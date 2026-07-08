@@ -125,7 +125,7 @@
               #fileInput
               type="file"
               multiple
-              accept="image/png,video/mp4,audio/wav,audio/mpeg,audio/mp3,audio/ogg,audio/webm"
+              [accept]="acceptedMediaUploadFormats"
               class="hidden"
               (change)="onFilesSelected($event)"
             />

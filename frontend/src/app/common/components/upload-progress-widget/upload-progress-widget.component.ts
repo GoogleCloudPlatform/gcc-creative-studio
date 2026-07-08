@@ -21,6 +21,7 @@ import {
   UploadStatus,
 } from '../../services/media-upload/media-upload.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
+import {takeUntilDestroyed} from '@angular/core/rxjs-interop';
 
 @Component({
   selector: 'app-upload-progress-widget',
@@ -37,9 +38,11 @@ export class UploadProgressWidgetComponent {
     private workspaceStateService: WorkspaceStateService,
     private router: Router,
   ) {
-    this.router.events.subscribe(() =>
-      this.isLoginRoute.set(this.router.url.startsWith('/login')),
-    );
+    this.router.events
+      .pipe(takeUntilDestroyed())
+      .subscribe(() =>
+        this.isLoginRoute.set(this.router.url.startsWith('/login')),
+      );
   }
 
   toggleExpand(): void {

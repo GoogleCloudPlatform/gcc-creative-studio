@@ -89,6 +89,9 @@ async def generate_source_asset_upload_url(
 
     allowed_mime_types = {
         "image/png",
+        "image/jpeg",
+        "image/jpg",
+        "image/webp",
         "video/mp4",
         "audio/wav",
         "audio/mpeg",

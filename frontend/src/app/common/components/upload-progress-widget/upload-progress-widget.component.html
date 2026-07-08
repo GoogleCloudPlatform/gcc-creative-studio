@@ -78,6 +78,7 @@
           <button
             *ngIf="
               item.status === UploadStatus.QUEUED ||
+              item.status === UploadStatus.PREPROCESSING_FILE ||
               item.status === UploadStatus.GENERATING_URL ||
               item.status === UploadStatus.UPLOADING ||
               item.status === UploadStatus.FINALIZING
@@ -95,8 +96,8 @@
         <!-- DETAILS -->
         <div class="item-details">
           <div class="item-meta">
-            <span class="item-filename" [title]="item.filename">{{
-              item.filename
+            <span class="item-filename" [title]="item.originalFilename">{{
+              item.originalFilename
             }}</span>
             <span class="item-size">{{ formatFileSize(item.size) }}</span>
           </div>
@@ -109,7 +110,7 @@
               class="status-badge status-queued"
             >
               <mat-icon class="badge-icon">schedule</mat-icon>
-              <span>Waiting in queue (Max 5 concurrent)</span>
+              <span>Waiting in queue</span>
             </div>
 
             <!-- GENERATING URL -->
@@ -119,6 +120,15 @@
             >
               <mat-spinner diameter="14" strokeWidth="2"></mat-spinner>
               <span>Preparing signed URL</span>
+            </div>
+
+            <!-- PREPROCESSING FILE -->
+            <div
+              *ngIf="item.status === UploadStatus.PREPROCESSING_FILE"
+              class="status-badge status-preparing"
+            >
+              <mat-spinner diameter="14" strokeWidth="2"></mat-spinner>
+              <span>Preprocessing file</span>
             </div>
 
             <!-- UPLOADING -->
@@ -159,9 +169,11 @@
               class="status-badge status-failed"
             >
               <mat-icon class="badge-icon">error</mat-icon>
-              <span class="error-msg">{{
-                item.errorMessage || 'Upload failed'
-              }}</span>
+              <span class="error-msg" [title]="item.errorMessage || 'Upload failed'">
+                {{
+                  item.errorMessage || 'Upload failed'
+                }}
+              </span>
             </div>
 
             <!-- CANCELLED -->

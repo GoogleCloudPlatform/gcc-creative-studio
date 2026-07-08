@@ -36,7 +36,7 @@ describe('AppComponent', () => {
       declarations: [AppComponent],
       providers: [
         {provide: LoadingService, useValue: loadingServiceMock},
-        MediaUploadService,
+        {provide: MediaUploadService, useValue: {inProgressCount: () => 0}},
       ],
       schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();

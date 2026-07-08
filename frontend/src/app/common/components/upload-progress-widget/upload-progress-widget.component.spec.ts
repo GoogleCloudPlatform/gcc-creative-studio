@@ -15,9 +15,10 @@
  */
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
 import {HttpClientTestingModule} from '@angular/common/http/testing';
 import {RouterTestingModule} from '@angular/router/testing';
-import {Router} from '@angular/router';
+import {NavigationEnd, Router} from '@angular/router';
 import {MatIconModule} from '@angular/material/icon';
 import {MatProgressSpinnerModule} from '@angular/material/progress-spinner';
 import {UploadProgressWidgetComponent} from './upload-progress-widget.component';
@@ -59,6 +60,7 @@ describe('UploadProgressWidgetComponent', () => {
         WorkspaceStateService,
         {provide: UserService, useValue: mockUserService},
       ],
+      schemas: [CUSTOM_ELEMENTS_SCHEMA],
     }).compileComponents();
 
     fixture = TestBed.createComponent(UploadProgressWidgetComponent);
@@ -77,11 +79,13 @@ describe('UploadProgressWidgetComponent', () => {
 
   it('should detect login route correctly', () => {
     spyOnProperty(router, 'url', 'get').and.returnValue('/login');
+    (router.events as any).next(new NavigationEnd(1, '/login', '/login'));
     expect(component.isLoginRoute()).toBeTrue();
 
     (
       Object.getOwnPropertyDescriptor(router, 'url')?.get as jasmine.Spy
     ).and.returnValue('/gallery');
+    (router.events as any).next(new NavigationEnd(2, '/gallery', '/gallery'));
     expect(component.isLoginRoute()).toBeFalse();
   });
 
@@ -112,6 +116,7 @@ describe('UploadProgressWidgetComponent', () => {
     const itemInFlight: UploadItem = {
       id: 'item-1',
       filename: 'test.png',
+      originalFilename: 'test.png',
       size: 1024,
       mimeType: 'image/png',
       status: UploadStatus.UPLOADING,
@@ -132,6 +137,7 @@ describe('UploadProgressWidgetComponent', () => {
     const completedItem: UploadItem = {
       id: 'item-1',
       filename: 'done.png',
+      originalFilename: 'done.png',
       size: 1024,
       mimeType: 'image/png',
       status: UploadStatus.COMPLETED,
@@ -153,6 +159,7 @@ describe('UploadProgressWidgetComponent', () => {
     const failedItem: UploadItem = {
       id: 'item-fail',
       filename: 'error.png',
+      originalFilename: 'error.png',
       size: 1024,
       mimeType: 'image/png',
       status: UploadStatus.FAILED,
@@ -174,6 +181,7 @@ describe('UploadProgressWidgetComponent', () => {
       {
         id: 'f1',
         filename: 'f1.png',
+        originalFilename: 'f1.png',
         size: 100,
         mimeType: 'image/png',
         status: UploadStatus.FAILED,
@@ -182,6 +190,7 @@ describe('UploadProgressWidgetComponent', () => {
       {
         id: 'f2',
         filename: 'f2.png',
+        originalFilename: 'f2.png',
         size: 200,
         mimeType: 'image/png',
         status: UploadStatus.FAILED,
@@ -201,6 +210,7 @@ describe('UploadProgressWidgetComponent', () => {
       {
         id: '1',
         filename: 'file.png',
+        originalFilename: 'file.png',
         size: 100,
         mimeType: 'image/png',
         status: UploadStatus.COMPLETED,
@@ -236,6 +246,7 @@ describe('UploadProgressWidgetComponent', () => {
       {
         id: 'item-queued',
         filename: 'queued.png',
+        originalFilename: 'queued.png',
         size: 100,
         mimeType: 'image/png',
         status: UploadStatus.QUEUED,
@@ -244,6 +255,7 @@ describe('UploadProgressWidgetComponent', () => {
       {
         id: 'item-completed',
         filename: 'done.png',
+        originalFilename: 'done.png',
         size: 200,
         mimeType: 'image/png',
         status: UploadStatus.COMPLETED,
@@ -281,6 +293,7 @@ describe('UploadProgressWidgetComponent', () => {
       {
         id: 'item-cancelled',
         filename: 'cancelled.png',
+        originalFilename: 'cancelled.png',
         size: 300,
         mimeType: 'image/png',
         status: UploadStatus.CANCELLED,

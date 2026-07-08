@@ -43,7 +43,7 @@ def fixture_mock_dependencies():
     return {
         "repo": AsyncMock(),
         "user_repo": AsyncMock(),
-        "gcs_service": MagicMock(),
+        "gcs_service": MagicMock(bucket_name="bucket"),
         "iam_signer": MagicMock(),
         "imagen_service": AsyncMock(),
         "tags_repo": AsyncMock(),
@@ -766,7 +766,7 @@ async def test_finalize_direct_upload_non_admin_scope_error(
 
     dto = FinalizeSourceAssetUploadDto(
         workspace_id=1,
-        gcs_uri="gs://bucket/source_assets/1/uploads/uuid/file.png",
+        gcs_uri="gs://bucket/source_assets/1/file.png",
         filename="file.png",
         mime_type="image/png",
         size=100,
@@ -775,3 +775,23 @@ async def test_finalize_direct_upload_non_admin_scope_error(
     with pytest.raises(HTTPException) as exc_info:
         await service.finalize_direct_upload(dto, sample_user)
     assert exc_info.value.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_convert_to_png_heic_heif_success(service):
+    import pillow_heif
+    from fastapi import UploadFile
+
+    img = PILImage.new("RGB", (20, 20), color="green")
+    buf = io.BytesIO()
+    try:
+        img.save(buf, format="HEIF")
+    except Exception:
+        pillow_heif.from_pillow(img).save(buf, format="HEIF")
+    buf.seek(0)
+    upload_file = UploadFile(file=buf, filename="test.heic")
+    png_bytes = await service.convert_to_png(upload_file)
+    assert png_bytes is not None
+    out_img = PILImage.open(io.BytesIO(png_bytes))
+    assert out_img.format == "PNG"
+    assert out_img.size == (20, 20)
