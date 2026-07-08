@@ -222,8 +222,8 @@ module "iap_load_balancer" {
 
   gcp_project_id           = var.gcp_project_id
   gcp_region               = var.gcp_region
-  backend_service_name     = var.backend_service_name
-  frontend_service_name    = var.frontend_service_name
+  backend_service_name     = module.backend_service.service_name
+  frontend_service_name    = module.frontend_service.service_name
   org_id                   = var.org_id
   entra_client_id          = var.entra_client_id
   entra_tenant_id          = var.entra_tenant_id
@@ -233,11 +233,6 @@ module "iap_load_balancer" {
   domain_name              = var.domain_name
   iap_access_members       = var.iap_access_members
   workforce_pool_id        = var.workforce_pool_id
-
-  depends_on = [
-    module.backend_service,
-    module.frontend_service
-  ]
 }
 
 
