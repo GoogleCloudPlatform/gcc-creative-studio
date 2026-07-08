@@ -253,7 +253,7 @@ check_and_install_terraform() {
         install_terraform
         return
     fi
-    INSTALLED_VERSION=$(terraform version -json | jq -r .terraform_version)
+    INSTALLED_VERSION=$(terraform version | head -n 1 | awk '{print $2}' | tr -d 'v')
     if [[ "$(printf '%s\n' "$REQUIRED_TERRAFORM_VERSION" "$INSTALLED_VERSION" | sort -V | head -n1)" != "$REQUIRED_TERRAFORM_VERSION" ]]; then
         warn "Your Terraform version ($INSTALLED_VERSION) is older than the required version ($REQUIRED_TERRAFORM_VERSION)."
         install_terraform
@@ -280,7 +280,7 @@ install_terraform() {
     export PATH="$HOME/bin:$PATH"
     hash -r
     rm terraform.zip LICENSE.txt
-    if command -v terraform &> /dev/null && [[ "$(terraform version -json | jq -r .terraform_version)" == "$REQUIRED_TERRAFORM_VERSION" ]]; then
+    if command -v terraform &> /dev/null && [[ "$(terraform version | head -n 1 | awk '{print $2}' | tr -d 'v')" == "$REQUIRED_TERRAFORM_VERSION" ]]; then
         success "Terraform v$(terraform -version | head -n 1) is now active."
     else
         fail "Terraform installation failed. Please open a new terminal and run this script again."
