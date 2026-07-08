@@ -19,9 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.common.base_repository import BaseRepository
 from src.database import get_db
 
-from src.projects.schema.project_model import Storyboard, Scene
+from src.projects.schema.project_model import Project, Storyboard, Scene
 from src.workbench.schema.timeline_model import Timeline, VideoClip, AudioClip
 from src.projects.dto.project_dto import (
+    ProjectResponse,
     StoryboardResponse,
     StoryboardCreateResponse,
     SceneDTO,
@@ -90,7 +91,8 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
         """Finds storyboards for a given workspace, optionally filtered by session."""
         query = (
             select(self.model)
-            .where(self.model.workspace_id == workspace_id)
+            .join(Project)
+            .where(Project.workspace_id == workspace_id)
             .options(
                 selectinload(self.model.scenes),
                 selectinload(self.model.timeline),
@@ -137,3 +139,22 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
 
         await self.db.commit()
         return await self.get_by_id_with_details(storyboard_id)
+
+
+class ProjectRepository(BaseRepository[Project, ProjectResponse]):
+    """Handles database operations for Project objects."""
+
+    def __init__(self, db: AsyncSession = Depends(get_db)):
+        super().__init__(model=Project, schema=ProjectResponse, db=db)
+
+    async def find_by_workspace_and_owner(
+        self, workspace_id: int, owner_id: int
+    ) -> list[ProjectResponse]:
+        """Retrieves all projects in a specific workspace belonging to the owner."""
+        query = select(self.model).where(
+            self.model.workspace_id == workspace_id,
+            self.model.owner_id == owner_id,
+        )
+        result = await self.db.execute(query)
+        items = result.scalars().all()
+        return [self.schema.model_validate(item) for item in items]

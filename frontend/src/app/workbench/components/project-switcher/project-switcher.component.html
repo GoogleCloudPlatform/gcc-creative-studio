@@ -16,8 +16,13 @@
 <div class="project-switcher-container">
   <studio-dropdown
     [options]="projectOptions"
-    [value]="selectedProject"
-    (valueChange)="selectProject($event)"
+    [value]="selectedProjectId"
+    (valueChange)="selectProjectById($event)"
+    [editable]="true"
+    (optionEdited)="renameProject($event)"
+    [showAddOption]="true"
+    addOptionLabel="Add project"
+    (addOptionClicked)="createProject($event)"
     placeholder="Select a project"
     menuTitle="Projects"
     size="small"

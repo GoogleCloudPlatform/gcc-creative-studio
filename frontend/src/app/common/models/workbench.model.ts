@@ -105,6 +105,15 @@ export interface StoryboardCreate {
   bg_music_asset_id?: number;
 }
 
+export interface ProjectCreate {
+  workspace_id: number;
+  name: string;
+  description?: string;
+  thumbnail_media_item_id?: number;
+  thumbnail_source_asset_id?: number;
+  thumbnail_url?: string;
+}
+
 export interface StoryboardUpdate {
   template_name?: string;
   bg_music_description?: string;
@@ -151,4 +160,17 @@ export interface ChatSession {
 export interface SessionDetailResponse {
   session?: ChatSession;
   storyboard?: StoryboardResponse;
+}
+
+export interface ProjectResponse {
+  id: number;
+  workspace_id: number;
+  owner_id: number;
+  name: string;
+  description?: string;
+  thumbnail_url?: string;
+  thumbnail_media_item_id?: number;
+  thumbnail_source_asset_id?: number;
+  created_at: string;
+  updated_at: string;
 }

@@ -13,7 +13,7 @@
 # limitations under the License.
 """SQLAlchemy database models for timeline and clips in workbench."""
 
-from sqlalchemy import Float, ForeignKey, String
+from sqlalchemy import Float, ForeignKey, String, inspect
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.database import Base
 
@@ -25,10 +25,12 @@ class Timeline(Base):
     storyboard_id: Mapped[int | None] = mapped_column(
         ForeignKey("storyboards.id"), nullable=True
     )
-    workspace_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id"), nullable=False
+    )
+    title: Mapped[str | None] = mapped_column(String, nullable=True)
     user_id: Mapped[str | None] = mapped_column(String, nullable=True)
     session_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    title: Mapped[str | None] = mapped_column(String, nullable=True)
 
     transition_in_type: Mapped[str | None] = mapped_column(
         String, nullable=True
@@ -43,6 +45,9 @@ class Timeline(Base):
         Float, nullable=True
     )
 
+    project: Mapped["Project"] = relationship(
+        "Project", back_populates="timelines"
+    )
     storyboard: Mapped["Storyboard"] = relationship(
         "Storyboard", back_populates="timeline"
     )
@@ -52,6 +57,19 @@ class Timeline(Base):
     audio_clips: Mapped[list["AudioClip"]] = relationship(
         back_populates="timeline", cascade="all, delete-orphan"
     )
+
+    @property
+    def workspace_id(self) -> int | None:
+        if hasattr(self, "_workspace_id") and self._workspace_id is not None:
+            return self._workspace_id
+        insp = inspect(self)
+        if insp is not None and "project" in insp.unloaded:
+            return None
+        return self.project.workspace_id if self.project else None
+
+    @workspace_id.setter
+    def workspace_id(self, value):
+        self._workspace_id = value
 
 
 class VideoClip(Base):

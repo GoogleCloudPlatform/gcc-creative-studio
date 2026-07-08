@@ -29,6 +29,7 @@ from src.workspaces.workspace_service import WorkspaceService
 from src.projects.project_repository import StoryboardRepository
 from src.projects.project_service import ProjectService
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
+from src.projects.project_auth_guard import ProjectAuth
 from src.agents.agent_repository import AgentRepository
 from src.agents.agent_dtos import (
     ChatRequestDto,
@@ -72,12 +73,14 @@ class AgentService:
         storyboard_repo: StoryboardRepository = Depends(),
         workspace_auth: WorkspaceAuth = Depends(),
         project_service: ProjectService = Depends(),
+        project_auth: ProjectAuth = Depends(),
     ):
         self.agent_repo = agent_repo
         self.workspace_service = workspace_service
         self.storyboard_repo = storyboard_repo
         self.workspace_auth = workspace_auth
         self.project_service = project_service
+        self.project_auth = project_auth
         self.client = vertexai.Client(
             project=config_service.PROJECT_ID,
             location=config_service.WORKFLOWS_LOCATION,
@@ -218,12 +221,18 @@ class AgentService:
         user_id: str,
         request: Request,
         workspace_id: int | None = None,
+        project_id: int | None = None,
         appName: str = APP_NAME,
     ) -> List[SessionResponseDto]:
         try:
             if workspace_id is not None:
                 await self.workspace_auth.authorize(
                     workspace_id=workspace_id,
+                    user=current_user,
+                )
+            if project_id is not None:
+                await self.project_auth.authorize(
+                    project_id=project_id,
                     user=current_user,
                 )
 
@@ -241,11 +250,19 @@ class AgentService:
                     s_state = s.get("session_state") or s_state
 
                 s_workspace_id = None
+                s_project_id = None
                 if isinstance(s_state, dict):
                     s_workspace_id = s_state.get("workspace_id")
+                    s_project_id = s_state.get("project_id")
 
-                # Exclude sessions where workspace_id from state is null/missing
-                if s_workspace_id is not None:
+                if project_id is not None:
+                    if s_project_id is not None and str(s_project_id) == str(
+                        project_id
+                    ):
+                        mapped_sessions.append(
+                            self._map_session_to_dto(s, appName, user_id)
+                        )
+                elif s_workspace_id is not None:
                     if workspace_id is not None:
                         if str(s_workspace_id) == str(workspace_id):
                             mapped_sessions.append(
@@ -271,12 +288,18 @@ class AgentService:
         user_id: str,
         request: Request,
         workspace_id: int | None = None,
+        project_id: int | None = None,
         appName: str = APP_NAME,
     ) -> SessionResponseDto:
         try:
             if workspace_id is not None:
                 await self.workspace_auth.authorize(
                     workspace_id=workspace_id,
+                    user=current_user,
+                )
+            if project_id is not None:
+                await self.project_auth.authorize(
+                    project_id=project_id,
                     user=current_user,
                 )
 
@@ -287,6 +310,7 @@ class AgentService:
 
             state_data = {
                 "workspace_id": workspace_id,
+                "project_id": project_id,
                 auth_key: auth_header,
             }
             op = self.client.agent_engines.sessions.create(
@@ -311,6 +335,7 @@ class AgentService:
         request: Request,
         session_id: str | None = None,
         storyboard_id: int | None = None,
+        project_id: int | None = None,
         appName: str = APP_NAME,
     ) -> SessionDetailResponseDto:
         user_id = str(current_user.id)
@@ -321,6 +346,12 @@ class AgentService:
             workspace_id=workspace_id,
             user=current_user,
         )
+
+        if project_id is not None:
+            await self.project_auth.authorize(
+                project_id=project_id,
+                user=current_user,
+            )
 
         if storyboard_id is not None:
             try:
@@ -441,12 +472,18 @@ class AgentService:
         user_id: str,
         request: Request,
         workspace_id: int | None = None,
+        project_id: int | None = None,
         appName: str = APP_NAME,
     ) -> SessionResponseDto:
         try:
             if workspace_id is not None:
                 await self.workspace_auth.authorize(
                     workspace_id=workspace_id,
+                    user=current_user,
+                )
+            if project_id is not None:
+                await self.project_auth.authorize(
+                    project_id=project_id,
                     user=current_user,
                 )
 
@@ -504,12 +541,18 @@ class AgentService:
         user_id: str,
         request: Request,
         workspace_id: int | None = None,
+        project_id: int | None = None,
         appName: str = APP_NAME,
     ) -> dict:
         try:
             if workspace_id is not None:
                 await self.workspace_auth.authorize(
                     workspace_id=workspace_id,
+                    user=current_user,
+                )
+            if project_id is not None:
+                await self.project_auth.authorize(
+                    project_id=project_id,
                     user=current_user,
                 )
 
@@ -741,7 +784,9 @@ class AgentService:
         return {"status": "processing"}
 
     async def poll_session_events(
-        self, session_id: str, current_user: UserModel
+        self,
+        session_id: str,
+        current_user: UserModel,
     ) -> PollEventsResponseDto:
         user_id = str(current_user.id)
         events = await self.agent_repo.get_pending_events(

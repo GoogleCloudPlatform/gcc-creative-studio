@@ -14,10 +14,16 @@
 
 import asyncio
 from fastapi import Depends
-from src.projects.project_repository import StoryboardRepository
+from src.projects.project_repository import (
+    StoryboardRepository,
+    ProjectRepository,
+)
 from src.images.repository.media_item_repository import MediaRepository
 from src.auth.iam_signer_credentials_service import IamSignerCredentials
 from src.projects.dto.project_dto import (
+    ProjectCreate,
+    ProjectUpdate,
+    ProjectResponse,
     StoryboardResponse,
     StoryboardCreateResponse,
     StoryboardCreate,
@@ -30,10 +36,12 @@ class ProjectService:
     def __init__(
         self,
         storyboard_repo: StoryboardRepository = Depends(),
+        project_repo: ProjectRepository = Depends(),
         media_repo: MediaRepository = Depends(),
         iam_signer_credentials: IamSignerCredentials = Depends(),
     ):
         self.storyboard_repo = storyboard_repo
+        self.project_repo = project_repo
         self.media_repo = media_repo
         self.iam_signer_credentials = iam_signer_credentials
 
@@ -203,3 +211,30 @@ class ProjectService:
 
     async def delete_storyboard(self, storyboard_id: int):
         await self.storyboard_repo.delete(storyboard_id)
+
+    # --- Project CRUD ---
+    async def create_project(
+        self, project_create: ProjectCreate, owner_id: int
+    ) -> ProjectResponse:
+        data = project_create.model_dump()
+        data["owner_id"] = owner_id
+        return await self.project_repo.create(data)
+
+    async def get_project(self, project_id: int) -> ProjectResponse | None:
+        return await self.project_repo.get_by_id(project_id)
+
+    async def list_projects(
+        self, workspace_id: int, owner_id: int
+    ) -> list[ProjectResponse]:
+        return await self.project_repo.find_by_workspace_and_owner(
+            workspace_id, owner_id
+        )
+
+    async def update_project(
+        self, project_id: int, project_update: ProjectUpdate
+    ) -> ProjectResponse | None:
+        data = project_update.model_dump(exclude_unset=True)
+        return await self.project_repo.update(project_id, data)
+
+    async def delete_project(self, project_id: int) -> bool:
+        return await self.project_repo.delete(project_id)

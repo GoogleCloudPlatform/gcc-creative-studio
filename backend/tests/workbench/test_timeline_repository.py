@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.workbench.schema.timeline_model import Timeline, VideoClip, AudioClip
+from src.projects.schema.project_model import Storyboard
 from src.workbench.dto.workbench_dto import (
     AssetRef,
     AudioClip as AudioClipDTO,
@@ -170,12 +171,17 @@ class TestTimelineRepository:
                 volume=1.0,
             )
         ]
+        mock_storyboard = Storyboard(id=30, project_id=101, user_id=1)
+        mock_sb_result = MagicMock()
+        mock_sb_result.scalar_one_or_none.return_value = mock_storyboard
+
         mock_result.scalar_one_or_none.return_value = mock_timeline
-        db_session_mock.execute.return_value = mock_result
+        db_session_mock.execute.side_effect = [mock_sb_result, mock_result]
 
         data = VideoTimeline(
             timeline_id=None,
             workspace_id="ws1",
+            storyboard_id=30,
             session_id="30",
             title="Created",
             video_clips=[
@@ -203,12 +209,20 @@ class TestTimelineRepository:
     async def test_create_timeline_retrieve_failure(
         self, timeline_repo, db_session_mock
     ):
+        mock_storyboard = Storyboard(id=30, project_id=101, user_id=1)
+        mock_sb_result = MagicMock()
+        mock_sb_result.scalar_one_or_none.return_value = mock_storyboard
+
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
-        db_session_mock.execute.return_value = mock_result
+        db_session_mock.execute.side_effect = [mock_sb_result, mock_result]
 
         data = VideoTimeline(
-            workspace_id="ws1", title="Created", video_clips=[], transitions=[]
+            workspace_id="ws1",
+            storyboard_id=30,
+            title="Created",
+            video_clips=[],
+            transitions=[],
         )
         with pytest.raises(
             RuntimeError, match="Failed to retrieve created timeline"

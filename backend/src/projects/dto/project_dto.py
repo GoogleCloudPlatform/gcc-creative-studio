@@ -68,10 +68,42 @@ class CanvasDTO(BaseModel):
     html_content: Optional[str] = None
 
 
+class ProjectCreate(BaseModel):
+    workspace_id: int
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    thumbnail_media_item_id: Optional[int] = None
+    thumbnail_source_asset_id: Optional[int] = None
+    thumbnail_url: Optional[str] = None
+
+
+class ProjectUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    thumbnail_media_item_id: Optional[int] = None
+    thumbnail_source_asset_id: Optional[int] = None
+    thumbnail_url: Optional[str] = None
+
+
+class ProjectResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    workspace_id: int
+    owner_id: int
+    name: str
+    description: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    thumbnail_media_item_id: Optional[int] = None
+    thumbnail_source_asset_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class StoryboardCreate(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra="allow")
 
-    workspace_id: int
+    project_id: int
     session_id: Optional[str] = None
     template_name: Optional[str] = None
     bg_music_description: Optional[str] = None
@@ -94,7 +126,7 @@ class StoryboardCreateResponse(BaseModel):
 
     id: int
     user_id: int
-    workspace_id: int
+    project_id: int
     session_id: Optional[str] = None
     template_name: Optional[str] = None
     bg_music_description: Optional[str] = None
@@ -106,7 +138,7 @@ class StoryboardResponse(BaseModel):
 
     id: int
     user_id: int
-    workspace_id: int
+    project_id: int
     session_id: Optional[str] = None
     template_name: Optional[str] = None
     bg_music_description: Optional[str] = None

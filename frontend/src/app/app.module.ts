@@ -113,6 +113,7 @@ import {WorkflowStatusPipe} from './workflows/workflow-status.pipe';
 import {UpscaleComponent} from './upscale/upscale.component';
 import {StoryboardComponent} from './workbench/components/storyboard/storyboard.component';
 import {TimeRulerComponent} from './workbench/components/time-ruler/time-ruler.component';
+import {ProjectSwitcherComponent} from './workbench/components/project-switcher/project-switcher.component';
 
 @NgModule({
   declarations: [
@@ -195,6 +196,7 @@ import {TimeRulerComponent} from './workbench/components/time-ruler/time-ruler.c
     StoryboardComponent,
     TimeRulerComponent,
     TextFieldModule,
+    ProjectSwitcherComponent,
   ],
   providers: [
     provideClientHydration(),

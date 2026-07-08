@@ -14,6 +14,7 @@
 
 import datetime
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -23,6 +24,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.common.base_repository import BaseDocument
 from src.database import Base
 from src.users.user_model import User
+
+if TYPE_CHECKING:
+    from src.projects.schema.project_model import Project
 
 
 class WorkspaceRoleEnum(str, Enum):
@@ -78,6 +82,10 @@ class Workspace(Base):
         back_populates="workspace",
         cascade="all, delete-orphan",
         lazy="selectin",
+    )
+    projects: Mapped[list["Project"]] = relationship(
+        back_populates="workspace",
+        cascade="all, delete-orphan",
     )
 
     created_at: Mapped[datetime.datetime] = mapped_column(

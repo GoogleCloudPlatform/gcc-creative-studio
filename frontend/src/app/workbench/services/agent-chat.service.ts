@@ -77,18 +77,24 @@ export class AgentChatService {
   // Broadcasts a fully generated video asset from the chat processor
   videoGenerated$ = new Subject<any>();
 
-  getSessions(workspaceId?: number): Observable<ChatSession[]> {
+  getSessions(workspaceId?: number, projectId?: number): Observable<ChatSession[]> {
     let url = `${this.apiUrl}/sessions?appName=${this.activeAgent()}`;
     if (workspaceId) {
       url += `&workspace_id=${workspaceId}`;
     }
+    if (projectId) {
+      url += `&project_id=${projectId}`;
+    }
     return this.http.get<ChatSession[]>(url);
   }
 
-  createSession(workspaceId?: number): Observable<ChatSession> {
+  createSession(workspaceId?: number, projectId?: number): Observable<ChatSession> {
     let url = `${this.apiUrl}/sessions?appName=${this.activeAgent()}`;
     if (workspaceId) {
       url += `&workspace_id=${workspaceId}`;
+    }
+    if (projectId) {
+      url += `&project_id=${projectId}`;
     }
     return this.http.post<ChatSession>(url, {});
   }
@@ -97,6 +103,7 @@ export class AgentChatService {
     workspaceId: number,
     sessionId?: string,
     storyboardId?: number,
+    projectId?: number,
   ): Observable<SessionDetailResponse> {
     let params = `workspace_id=${workspaceId}`;
     if (sessionId) {
@@ -105,15 +112,25 @@ export class AgentChatService {
     if (storyboardId) {
       params += `&storyboard_id=${storyboardId}`;
     }
+    if (projectId) {
+      params += `&project_id=${projectId}`;
+    }
     return this.http.get<SessionDetailResponse>(
       `${this.apiUrl}/sessions/detail?${params}`,
     );
   }
 
-  deleteSession(sessionId: string, workspaceId?: number): Observable<void> {
+  deleteSession(
+    sessionId: string,
+    workspaceId?: number,
+    projectId?: number,
+  ): Observable<void> {
     let url = `${this.apiUrl}/sessions/${sessionId}?appName=${this.activeAgent()}`;
     if (workspaceId) {
       url += `&workspace_id=${workspaceId}`;
+    }
+    if (projectId) {
+      url += `&project_id=${projectId}`;
     }
     return this.http.delete<void>(url);
   }
@@ -132,6 +149,7 @@ export class AgentChatService {
     message: string | ChatMessagePart[],
     workspaceId: number | null,
     callbacks: SSECallbacks<any>,
+    projectId?: number | null,
   ): Promise<void> {
     const url = `${this.apiUrl}/chat`;
 

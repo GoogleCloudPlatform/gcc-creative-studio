@@ -164,14 +164,6 @@ class WorkbenchService:
             await self._enrich_timeline(timeline)
         return timeline
 
-    async def list_timelines(
-        self, storyboard_id: int
-    ) -> list[TimelineResponse]:
-        timelines = await self.timeline_repo.find_by_storyboard(storyboard_id)
-        for t in timelines:
-            await self._enrich_timeline(t)
-        return timelines
-
     async def update_timeline(
         self, timeline_id: int, timeline_update: TimelineUpdate
     ) -> TimelineResponse | None:
@@ -181,9 +173,6 @@ class WorkbenchService:
         if timeline:
             await self._enrich_timeline(timeline)
         return timeline
-
-    async def delete_timeline(self, timeline_id: int) -> bool:
-        return await self.timeline_repo.delete_timeline(timeline_id)
 
     async def render_timeline_by_id(
         self, timeline_id: int, user: UserModel

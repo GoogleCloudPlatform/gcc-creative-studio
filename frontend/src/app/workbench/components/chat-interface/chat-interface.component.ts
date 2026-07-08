@@ -32,6 +32,7 @@ import {
 } from '../../services/agent-chat.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
 import {StoryboardService} from '../../../services/storyboard/storyboard.service';
+import {ProjectStateService} from '../../../services/project/project-state.service';
 import {TimelineStateService} from '../../services/timeline-state.service';
 import {ActivatedRoute, Router} from '@angular/router';
 import {combineLatest} from 'rxjs';
@@ -73,6 +74,7 @@ interface DropdownOption {
 export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   private agentChatService = inject(AgentChatService);
   private workspaceStateService = inject(WorkspaceStateService);
+  private projectStateService = inject(ProjectStateService);
   private dialog = inject(MatDialog);
   private snackBar = inject(MatSnackBar);
   private storyboardService = inject(StoryboardService);
@@ -91,10 +93,14 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   isLoadingHistory = signal<boolean>(false);
   currentSessionId: string | null = null;
   private lastWorkspaceId: number | null = null;
+  private lastProjectId: number | null | undefined = undefined;
 
   private sessionSelectorEffect = effect(() => {
     const sessionId = this.agentChatService.selectedSessionId();
-    if (sessionId && Number(sessionId) !== Number(this.currentSessionId)) {
+    if (
+      sessionId &&
+      sessionId.toString() !== this.currentSessionId?.toString()
+    ) {
       this.currentSessionId = sessionId;
       this.loadChatMessages(sessionId);
     }
@@ -139,6 +145,10 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
 
   get currentAgent(): string {
     return this.agentChatService.activeAgent();
+  }
+
+  get projectId(): number | undefined {
+    return this.projectStateService.getActiveProjectId() || undefined;
   }
 
   isBrowser = true;
@@ -223,29 +233,43 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   }
 
   loadChatSessions() {
-    this.isLoadingHistory.set(true);
-
     combineLatest([
       this.route.queryParams,
       this.workspaceStateService.activeWorkspaceId$,
-    ]).subscribe(([params, workspaceId]) => {
-      if (!workspaceId) return;
+      this.projectStateService.activeProjectId$,
+    ]).subscribe(([params, workspaceId, projectId]) => {
+      if (!workspaceId || !projectId) return;
 
       const storyboardId = params['storyboardId'];
       const sessionId = params['sessionId'];
 
+      const isSameProject = this.lastProjectId === projectId;
+
       const isExplicitNewChat =
-        !sessionId && !storyboardId && this.lastWorkspaceId === workspaceId;
+        isSameProject && !sessionId && !storyboardId && this.lastWorkspaceId === workspaceId;
 
       if (isExplicitNewChat) {
         this.isLoadingHistory.set(false);
         return;
       }
 
-      this.isLoadingHistory.set(true);
+      const isSameSession =
+        isSameProject &&
+        workspaceId === this.lastWorkspaceId &&
+        ((!sessionId && !storyboardId && this.currentSessionId !== null) ||
+          (sessionId &&
+            sessionId.toString() === this.currentSessionId?.toString()) ||
+          (storyboardId &&
+            Number(storyboardId) ===
+              Number(this.agentChatService.currentStoryboard()?.id)));
+
+      if (isSameSession) {
+        this.isLoadingHistory.set(false);
+        return;
+      }
 
       // Always load sessions first to populate the sessions dropdown
-      this.agentChatService.getSessions(workspaceId).subscribe({
+      this.agentChatService.getSessions(workspaceId, projectId || undefined).subscribe({
         next: (sessions: ChatSession[]) => {
           this.sessions.set(sessions || []);
 
@@ -253,10 +277,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
           const sessionExistsInWorkspace =
             sessions &&
             sessions.some(s => {
-              if (
-                sessionId &&
-                (s.id === sessionId || Number(s.id) === Number(sessionId))
-              ) {
+              if (sessionId && s.id?.toString() === sessionId?.toString()) {
                 return true;
               }
               if (
@@ -273,19 +294,21 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
           if ((sessionId || storyboardId) && sessionExistsInWorkspace) {
             const isDifferentSession =
               (sessionId &&
-                Number(sessionId) !== Number(this.currentSessionId)) ||
+                sessionId.toString() !== this.currentSessionId?.toString()) ||
               (storyboardId &&
                 Number(storyboardId) !==
                   Number(this.agentChatService.currentStoryboard()?.id));
-            const isDifferentWorkspace = workspaceId !== this.lastWorkspaceId;
+            const isDifferentWorkspace = workspaceId !== this.lastWorkspaceId || !isSameProject;
 
             if (isDifferentSession || isDifferentWorkspace) {
               this.lastWorkspaceId = workspaceId;
+              this.lastProjectId = projectId;
               this.agentChatService
                 .getSessionDetail(
                   workspaceId,
                   sessionId || undefined,
                   storyboardId ? Number(storyboardId) : undefined,
+                  projectId || undefined
                 )
                 .subscribe({
                   next: (res: SessionDetailResponse) => {
@@ -344,25 +367,22 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
 
             if (sessions && sessions.length > 0) {
               const latestSession = sessions[0];
-              if (Number(this.currentSessionId) === Number(latestSession.id)) {
+              if (
+                isSameProject &&
+                this.currentSessionId?.toString() ===
+                latestSession.id?.toString()
+              ) {
                 this.isLoadingHistory.set(false);
                 return;
               }
               this.currentSessionId = latestSession.id;
               this.agentChatService.selectedSessionId.set(latestSession.id);
               this.lastWorkspaceId = workspaceId;
+              this.lastProjectId = projectId;
               this.loadChatMessages(latestSession.id);
-              void this.router.navigate([], {
-                relativeTo: this.route,
-                queryParams: {
-                  sessionId: null,
-                  storyboardId:
-                    latestSession.state?.current_storyboard_id || null,
-                },
-                queryParamsHandling: 'merge',
-              });
             } else {
               this.lastWorkspaceId = workspaceId;
+              this.lastProjectId = projectId;
               this.startNewChat();
               void this.router.navigate([], {
                 relativeTo: this.route,
@@ -392,7 +412,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
 
     if (workspaceId) {
       this.agentChatService
-        .getSessionDetail(workspaceId, sessionId, storyboardId)
+        .getSessionDetail(workspaceId, sessionId, storyboardId, this.projectId)
         .subscribe({
           next: (res: SessionDetailResponse) => {
             const activeSessionId =
@@ -566,7 +586,10 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     });
   }
   onSessionChange(sessionId: string) {
-    if (sessionId && Number(sessionId) !== Number(this.currentSessionId)) {
+    if (
+      sessionId &&
+      sessionId.toString() !== this.currentSessionId?.toString()
+    ) {
       this.currentSessionId = sessionId;
       this.loadChatMessages(sessionId);
     }
@@ -590,7 +613,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       if (result) {
         const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
         this.agentChatService
-          .deleteSession(this.currentSessionId!, workspaceId ?? undefined)
+          .deleteSession(this.currentSessionId!, workspaceId ?? undefined, this.projectId)
           .subscribe({
             next: () => {
               this.sessions.update(s =>
@@ -623,7 +646,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     if (!this.currentSessionId) {
       this.isTyping.set(true);
       const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
-      this.agentChatService.createSession(workspaceId ?? undefined).subscribe({
+      this.agentChatService.createSession(workspaceId ?? undefined, this.projectId).subscribe({
         next: (session: ChatSession) => {
           this.sessions.update(s => [session, ...s]);
           this.currentSessionId = session.id;
@@ -962,6 +985,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       partsParams.length > 0 ? partsParams : text,
       workspaceId,
       callbacks,
+      this.projectId,
     );
     this.selectedImages.set([]);
   }

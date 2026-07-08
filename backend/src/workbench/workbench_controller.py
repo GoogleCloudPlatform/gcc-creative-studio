@@ -23,6 +23,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from src.auth.auth_guard import get_current_user
 from src.users.user_model import UserModel
+from src.projects.project_service import ProjectService
 from src.workbench.dto.workbench_dto import (
     TimelineRequest,
     TimelineCreate,
@@ -52,6 +53,13 @@ async def render_timeline_by_id(
     service: WorkbenchService = Depends(),
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
+    timeline = await service.get_timeline(timeline_id)
+    if not timeline:
+        raise HTTPException(status_code=404, detail="Timeline not found")
+    if str(timeline.user_id) != str(current_user.id):
+        raise HTTPException(
+            status_code=403, detail="Not authorized to access this timeline"
+        )
     result = await service.render_timeline_by_id(timeline_id, current_user)
     if not result:
         raise HTTPException(status_code=404, detail="Timeline not found")
@@ -67,6 +75,13 @@ async def render_timeline(
 ):
     if not request.timeline_id:
         raise HTTPException(status_code=400, detail="timeline_id is required")
+    timeline = await service.get_timeline(request.timeline_id)
+    if not timeline:
+        raise HTTPException(status_code=404, detail="Timeline not found")
+    if str(timeline.user_id) != str(current_user.id):
+        raise HTTPException(
+            status_code=403, detail="Not authorized to access this timeline"
+        )
     result = await service.render_timeline_by_id(
         request.timeline_id, current_user
     )
@@ -86,6 +101,7 @@ async def create_timeline(
     service: WorkbenchService = Depends(),
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
+    timeline_create.user_id = str(current_user.id)
     return await service.create_timeline(timeline_create)
 
 
@@ -99,16 +115,13 @@ async def get_timeline(
     timeline = await service.get_timeline(timeline_id)
     if not timeline:
         raise HTTPException(status_code=404, detail="Timeline not found")
+    if str(timeline.user_id) != str(current_user.id):
+        raise HTTPException(
+            status_code=403, detail="Not authorized to access this timeline"
+        )
     return timeline
 
 
-@router.get("/timelines", response_model=list[TimelineResponse])
-async def list_timelines(
-    storyboard_id: int,
-    current_user: UserModel = Depends(get_current_user),
-    service: WorkbenchService = Depends(),
-):
-    return await service.list_timelines(storyboard_id)
 
 
 @router.put("/timelines/{timeline_id}", response_model=TimelineResponse)
@@ -119,21 +132,14 @@ async def update_timeline(
     service: WorkbenchService = Depends(),
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
-    timeline = await service.update_timeline(timeline_id, timeline_update)
+    timeline = await service.get_timeline(timeline_id)
     if not timeline:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    return timeline
-
-
-@router.delete(
-    "/timelines/{timeline_id}", status_code=status.HTTP_204_NO_CONTENT
-)
-async def delete_timeline(
-    timeline_id: int,
-    current_user: UserModel = Depends(get_current_user),
-    service: WorkbenchService = Depends(),
-):
-    success = await service.delete_timeline(timeline_id)
-    if not success:
+    if str(timeline.user_id) != str(current_user.id):
+        raise HTTPException(
+            status_code=403, detail="Not authorized to modify this timeline"
+        )
+    updated_timeline = await service.update_timeline(timeline_id, timeline_update)
+    if not updated_timeline:
         raise HTTPException(status_code=404, detail="Timeline not found")
-    return None
+    return updated_timeline

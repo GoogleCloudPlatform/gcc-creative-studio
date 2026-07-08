@@ -21,6 +21,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from src.auth.auth_guard import get_current_user
 from src.users.user_model import UserModel
 from src.agents.agent_service import AgentService
+from src.projects.project_auth_guard import ProjectAuth
 from src.agents.agent_dtos import (
     ChatRequestDto,
     ChatResponseDto,
@@ -44,6 +45,7 @@ security = HTTPBearer()
 async def get_sessions(
     request: Request,
     workspace_id: int | None = None,
+    project_id: int | None = None,
     appName: str = APP_NAME,
     current_user: UserModel = Depends(get_current_user),
     agent_service: AgentService = Depends(),
@@ -56,6 +58,7 @@ async def get_sessions(
         user_id=user_id,
         request=request,
         workspace_id=workspace_id,
+        project_id=project_id,
         appName=appName,
     )
 
@@ -64,6 +67,7 @@ async def get_sessions(
 async def create_session(
     request: Request,
     workspace_id: int | None = None,
+    project_id: int | None = None,
     appName: str = APP_NAME,
     current_user: UserModel = Depends(get_current_user),
     agent_service: AgentService = Depends(),
@@ -76,6 +80,7 @@ async def create_session(
         user_id=user_id,
         request=request,
         workspace_id=workspace_id,
+        project_id=project_id,
         appName=appName,
     )
 
@@ -86,6 +91,7 @@ async def get_session_detail(
     request: Request,
     session_id: str | None = None,
     storyboard_id: int | None = None,
+    project_id: int | None = None,
     appName: str = APP_NAME,
     current_user: UserModel = Depends(get_current_user),
     agent_service: AgentService = Depends(),
@@ -98,6 +104,7 @@ async def get_session_detail(
         request=request,
         session_id=session_id,
         storyboard_id=storyboard_id,
+        project_id=project_id,
         appName=appName,
     )
 
@@ -107,6 +114,7 @@ async def get_session_messages(
     session_id: str,
     request: Request,
     workspace_id: int | None = None,
+    project_id: int | None = None,
     appName: str = APP_NAME,
     current_user: UserModel = Depends(get_current_user),
     agent_service: AgentService = Depends(),
@@ -120,6 +128,7 @@ async def get_session_messages(
         user_id=user_id,
         request=request,
         workspace_id=workspace_id,
+        project_id=project_id,
         appName=appName,
     )
 
@@ -129,6 +138,7 @@ async def delete_session(
     session_id: str,
     request: Request,
     workspace_id: int | None = None,
+    project_id: int | None = None,
     appName: str = APP_NAME,
     current_user: UserModel = Depends(get_current_user),
     agent_service: AgentService = Depends(),
@@ -142,6 +152,7 @@ async def delete_session(
         user_id=user_id,
         request=request,
         workspace_id=workspace_id,
+        project_id=project_id,
         appName=appName,
     )
 
