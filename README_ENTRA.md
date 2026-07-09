@@ -191,7 +191,29 @@ The script execution is complete when you see a green success message with the *
 
 ---
 
-## 🔒 Step 4.5: Configure Email Domain Allowlist (Optional)
+## 🔒 Step 4.5: Configure IAP Expected Audience
+
+For security, the Backend API explicitly verifies that all incoming requests securely passed through your exact Load Balancer via Identity-Aware Proxy. Because Terraform generates this unique ID dynamically during deployment, you must manually provide it to the backend after the first run.
+
+1. Locate your Load Balancer's unique Audience ID. You can find it:
+    * In the green success box at the end of the `bootstrap.sh` script execution (labeled **IAP Expected Audience**).
+    * By running `terraform output iap_expected_audience` in your environment directory.
+    * Or, from the application error page (it looks like `/projects/12345/global/backendServices/67890`).
+2. Open your environment's `.tfvars` file (e.g., `infra/environments/dev-infra/dev-infra.tfvars`).
+3. Search for the `iap_expected_audience` variable.
+4. Replace the placeholder with your unique Audience ID:
+   ```hcl
+   iap_expected_audience = "/projects/123456789/global/backendServices/987654321"
+   ```
+5. Apply the changes to safely push this key to your Backend Service:
+   ```bash
+   cd infra/environments/dev-infra
+   terraform apply -var-file="dev-infra.tfvars"
+   ```
+
+---
+
+## 🔒 Step 4.6: Configure Email Domain Allowlist (Optional)
 
 By default, any user authenticated via your Entra ID tenant can access the application. You can restrict access to specific email domains (e.g., only allow `yourcompany.com` or specific partner domains) using the application-level allowlist.
 
