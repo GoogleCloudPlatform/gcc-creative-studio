@@ -219,6 +219,7 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
     () => this.selectedMode() === 'Ingredients to Image',
   );
   isTextToVideo = computed(() => this.selectedMode() === 'Text to Video');
+  isVideoToImage = computed(() => this.selectedMode() === 'Video to Image');
   hasResolutionOptions = computed(() => this.supportedResolutions().length > 0);
   hasDurationOptions = computed(
     () =>
@@ -290,6 +291,19 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
     if (!this.isTextToVideo()) {
       const longest = this.getSelectedModelDurations().at(-1);
       if (longest) this.selectDuration(longest);
+    }
+
+    if (
+      this.isVideoToImage() &&
+      !this.getSelectedModelObject()?.capabilities?.supportsVideoReference
+    ) {
+      // If Video to Image is selected, ensure the model supports video reference
+      const model = this.generationModels.find(
+        m => m.capabilities?.supportsVideoReference,
+      );
+      if (model) {
+        this.selectInternalModel(model);
+      }
     }
   }
 
