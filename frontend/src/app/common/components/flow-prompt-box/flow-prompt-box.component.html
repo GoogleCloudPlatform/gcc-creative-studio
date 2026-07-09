@@ -257,13 +257,28 @@
           <!-- Video Reference YouTube Link Slot -->
           @if (!referenceVideo) {
             <div class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
-            (click)="!referenceVideoYoutubeUrl && openVideoUrlInputForReference.emit()">
-              <mat-icon class="text-neutral-500">link</mat-icon>
-              <span class="absolute bottom-1 text-[8px] text-neutral-500">YouTube Link</span>
-              @if (referenceVideoYoutubeUrl) {
+            (click)="!referenceVideoYoutubeUrl && openVideoUrlInputForReference.emit()"
+            [matTooltip]="referenceVideoYoutubeUrl || ''">
+              @if (!referenceVideoYoutubeUrl) {
+                <mat-icon class="text-neutral-500">link</mat-icon>
+                <span class="absolute bottom-1 text-[8px] text-neutral-500">YouTube Link</span>
+              } @else {
+                @if (youtubeThumbnailUrl; as thumb) {
+                  <div class="relative h-full w-full rounded-lg overflow-hidden flex items-center justify-center bg-black">
+                    <img [src]="thumb" class="h-full w-full object-cover opacity-80" alt="YouTube preview" />
+                    <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <div class="flex items-center justify-center w-7 h-5 bg-red-600/90 rounded text-white shadow-md">
+                        <mat-icon class="!h-4 !w-4 !text-sm !flex !items-center !justify-center">play_arrow</mat-icon>
+                      </div>
+                    </div>
+                  </div>
+                } @else {
+                  <mat-icon class="text-red-500 !text-3xl !h-8 !w-8 flex items-center justify-center">play_circle</mat-icon>
+                  <span class="absolute bottom-1 text-[8px] text-neutral-300 max-w-[64px] truncate">YouTube</span>
+                }
                 <button
                   (click)="$event.stopPropagation(); clearReferenceVideoYoutubeUrl.emit()"
-                  class="absolute -right-2 -top-2 rounded-full bg-neutral-900 p-0.5 text-neutral-400 hover:text-white"
+                  class="absolute -right-2 -top-2 z-10 rounded-full bg-neutral-900 p-0.5 text-neutral-400 hover:text-white"
                 >
                   <mat-icon class="!h-4 !w-4 text-sm">close</mat-icon>
                 </button>
