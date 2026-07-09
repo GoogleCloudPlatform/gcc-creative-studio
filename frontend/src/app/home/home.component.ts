@@ -70,6 +70,7 @@ import {
   handleSuccessSnackbar,
 } from '../utils/handleMessageSnackbar';
 import {YouTubeInputComponent} from '../common/components/youtube-input-dialog/youtube-input-dialog.component';
+import {extractYouTubeVideoId} from '../utils/youtube.utils';
 
 @Component({
   selector: 'app-home',
@@ -1334,6 +1335,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
         }
       }
 
+      this.referenceVideoYoutubeUrl = null;
       this.saveState();
     });
   }
@@ -1358,11 +1360,10 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     dialogRef.afterClosed().subscribe((url: string | undefined) => {
       if (!url) return;
 
-      const cleanUrl = url.split('&')[0];
-      const youtubePattern =
-        /^.*(youtu\.be\/|v\/|u\/\w\/|embed\/|shorts\/|watch\?v=|&v=)([^#&?]*).*/;
-      if (youtubePattern.test(cleanUrl)) {
-        this.referenceVideoYoutubeUrl = cleanUrl;
+      const videoId = extractYouTubeVideoId(url);
+      if (videoId) {
+        this.referenceVideoYoutubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
+        this.referenceVideo = null;
         handleInfoSnackbar(this._snackBar, 'YouTube URL added');
       } else {
         handleErrorSnackbar(

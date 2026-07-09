@@ -37,6 +37,10 @@ import {FormsModule} from '@angular/forms';
 import {MatButtonModule} from '@angular/material/button';
 import {MatMenuModule} from '@angular/material/menu';
 import {MatTooltipModule} from '@angular/material/tooltip';
+import {
+  extractYouTubeVideoId,
+  getYouTubeThumbnailUrl,
+} from '../../../utils/youtube.utils';
 
 export type NumPos = 1 | 2;
 
@@ -223,16 +227,11 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   );
 
   get youtubeVideoId(): string | null {
-    if (!this.referenceVideoYoutubeUrl) return null;
-    const regExp =
-      /^.*(youtu\.be\/|v\/|u\/\w\/|embed\/|shorts\/|watch\?v=|&v=)([^#&?]*).*/;
-    const match = this.referenceVideoYoutubeUrl.match(regExp);
-    return match && match[2].length === 11 ? match[2] : null;
+    return extractYouTubeVideoId(this.referenceVideoYoutubeUrl);
   }
 
   get youtubeThumbnailUrl(): string | null {
-    const id = this.youtubeVideoId;
-    return id ? `https://img.youtube.com/vi/${id}/mqdefault.jpg` : null;
+    return getYouTubeThumbnailUrl(this.youtubeVideoId);
   }
 
   // --- Lifecycle Hooks ---

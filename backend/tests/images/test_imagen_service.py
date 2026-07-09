@@ -1246,6 +1246,17 @@ def test_create_imagen_dto_validation_failures():
         )
     assert "does not support video references" in str(exc_info.value)
 
+    # 7. Simultaneous video reference and YouTube URL
+    with pytest.raises(ValidationError) as exc_info:
+        CreateImagenDto(
+            prompt="Video to image",
+            workspace_id=1,
+            generation_model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE_PREVIEW,
+            reference_video=AssetReferenceDto(id=10, type="source_asset"),
+            reference_video_youtube_url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        )
+    assert "Cannot provide both" in str(exc_info.value)
+
 
 def test_upscale_imagen_dto_validation_failures():
     import pytest

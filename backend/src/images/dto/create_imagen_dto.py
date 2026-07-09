@@ -175,6 +175,11 @@ class CreateImagenDto(BaseDto):
                 f"Aspect ratio {self.aspect_ratio} is not supported for model {model.value}.",
             )
 
+        if self.reference_video and self.reference_video_youtube_url:
+            raise ValueError(
+                "Cannot provide both a reference video file and a YouTube URL simultaneously."
+            )
+
         if video_refs_count > 0 and not model.is_gemini_image_model:
             raise ValueError(
                 f"Model '{model.value}' does not support video references."
