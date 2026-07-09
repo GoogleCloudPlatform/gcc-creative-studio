@@ -616,7 +616,7 @@ describe('ChatInterfaceComponent', () => {
       throwError(() => new Error('Get Sessions error')),
     );
 
-    queryParamsSubject.next({});
+    queryParamsSubject.next({sessionId: 'session-error-test'});
 
     expect(console.error).toHaveBeenCalled();
   });
@@ -776,6 +776,12 @@ describe('ChatInterfaceComponent', () => {
     spyOn(router, 'navigate');
     agentChatService.getSessions.and.returnValue(
       of([{id: 'latest-session-id', lastUpdateTime: 123}]),
+    );
+    agentChatService.getSessionDetail.and.returnValue(
+      of({
+        session: {id: 'latest-session-id', events: []},
+        storyboard: null,
+      }),
     );
     component['lastWorkspaceId'] = 999;
 
