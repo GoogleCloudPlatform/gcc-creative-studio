@@ -122,6 +122,13 @@
 
         <!-- Actions Right -->
         <div class="actions-group">
+           <button mat-icon-button class="view-snapshot-btn"
+                   (click)="$event.stopPropagation()"
+                   [routerLink]="['/workflows/edit', workflowId]"
+                   [queryParams]="{ executionId: exec.id, returnUrl: '/workflows/' + workflowId + '/executions' }"
+                   matTooltip="View Snapshot">
+             <mat-icon>visibility</mat-icon>
+           </button>
            <button mat-icon-button class="details-btn">
              <mat-icon>chevron_right</mat-icon>
            </button>
