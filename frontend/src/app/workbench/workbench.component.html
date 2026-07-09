@@ -614,6 +614,7 @@
               <studio-button variant="primary" size="small" [shape]="activeToolButton() !== 'gallery' ? 'circle' : 'pill'"
                 mat-button
                 (click)="toggleToolButton('gallery')"
+                matTooltip="Gallery"
               >
                 <mat-icon
                   svgIcon="photo-merge-auto-icon"
@@ -626,7 +627,7 @@
                 >
               </studio-button>
 
-              <div matTooltip="Audio coming soon!" class="inline-block">
+              <!-- <div matTooltip="Audio coming soon!" class="inline-block">
                 <studio-button variant="primary" size="small" shape="circle"
                   mat-button
                   [disabled]="true"
@@ -636,9 +637,9 @@
                     class="!w-5 !h-5"
                   ></mat-icon>
                 </studio-button>
-              </div>
+              </div> -->
 
-              <div matTooltip="Stories coming soon!" class="inline-block">
+              <!-- <div matTooltip="Stories coming soon!" class="inline-block">
                 <studio-button variant="primary" size="small" shape="circle"
                   mat-button
                   [disabled]="true"
@@ -648,16 +649,16 @@
                     class="!w-5 !h-5"
                   ></mat-icon>
                 </studio-button>
-              </div>
+              </div> -->
 
-              <div matTooltip="Edit coming soon!" class="inline-block">
+              <!-- <div matTooltip="Edit coming soon!" class="inline-block">
                 <studio-button variant="primary" size="small" shape="circle"
                   mat-button
                   [disabled]="true"
                 >
                   <mat-icon svgIcon="edit-icon" class="!w-5 !h-5"></mat-icon>
                 </studio-button>
-              </div>
+              </div> -->
 
               <studio-button variant="primary" size="small" [shape]="activeToolButton() !== 'agent' ? 'circle' : 'pill'"
                 mat-button

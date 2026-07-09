@@ -88,6 +88,8 @@ export interface TimelineDTO {
   timeline_id?: number | string;
   workspace_id: number | string;
   user_id?: number | string;
+  project_id?: number;
+  storyboard_id?: number;
   session_id?: string;
   title: string;
   video_clips: VideoClipDTO[];

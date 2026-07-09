@@ -126,6 +126,7 @@ class VideoTimeline(BaseModel):
     timeline_id: Optional[str | int] = None
     workspace_id: str | int
     storyboard_id: Optional[int] = None
+    project_id: Optional[int] = None
     user_id: Optional[str | int] = None
     session_id: Optional[str] = None
     title: str

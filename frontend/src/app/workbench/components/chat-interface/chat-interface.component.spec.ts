@@ -34,6 +34,7 @@ import {AgentChatService} from '../../services/agent-chat.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
 import {StoryboardService} from '../../../services/storyboard/storyboard.service';
 import {TimelineStateService} from '../../services/timeline-state.service';
+import {ProjectStateService} from '../../../services/project/project-state.service';
 
 describe('ChatInterfaceComponent', () => {
   let component: ChatInterfaceComponent;
@@ -139,6 +140,13 @@ describe('ChatInterfaceComponent', () => {
         ),
     };
 
+    const mockProjectStateService = {
+      getActiveProjectId: jasmine
+        .createSpy('getActiveProjectId')
+        .and.returnValue(202),
+      activeProjectId$: of(202),
+    };
+
     const mockTimelineStateService = {
       loadedTimelineId: signal(undefined),
     };
@@ -158,6 +166,7 @@ describe('ChatInterfaceComponent', () => {
       providers: [
         {provide: AgentChatService, useValue: mockAgentChatService},
         {provide: WorkspaceStateService, useValue: mockWorkspaceStateService},
+        {provide: ProjectStateService, useValue: mockProjectStateService},
         {provide: StoryboardService, useValue: mockStoryboardService},
         {provide: TimelineStateService, useValue: mockTimelineStateService},
         {
@@ -183,7 +192,7 @@ describe('ChatInterfaceComponent', () => {
   });
 
   it('should initialize and load sessions', () => {
-    expect(agentChatService.getSessions).toHaveBeenCalledWith(1);
+    expect(agentChatService.getSessions).toHaveBeenCalledWith(1, 202);
   });
 
   it('should start a new chat', () => {
@@ -217,6 +226,7 @@ describe('ChatInterfaceComponent', () => {
     expect(agentChatService.deleteSession).toHaveBeenCalledWith(
       'session-123',
       1,
+      202,
     );
     expect(component.currentSessionId).toBeNull();
   });
@@ -293,7 +303,7 @@ describe('ChatInterfaceComponent', () => {
 
     component.sendChatMessage('hello');
 
-    expect(agentChatService.createSession).toHaveBeenCalledWith(1);
+    expect(agentChatService.createSession).toHaveBeenCalledWith(1, 202);
     expect(component.currentSessionId).toBe('new-session' as any);
     expect(component['executeSendMessage']).toHaveBeenCalledWith('hello');
   });
@@ -465,6 +475,7 @@ describe('ChatInterfaceComponent', () => {
       1,
       'session-456',
       202,
+      202,
     );
   });
 
@@ -564,6 +575,7 @@ describe('ChatInterfaceComponent', () => {
       ],
       1,
       jasmine.any(Object),
+      202,
     );
     expect(component.selectedImages().length).toBe(0);
   });
@@ -691,6 +703,7 @@ describe('ChatInterfaceComponent', () => {
     expect(agentChatService.deleteSession).toHaveBeenCalledWith(
       'session-123',
       1,
+      202,
     );
     expect(component.currentSessionId).toBe('session-other');
   });

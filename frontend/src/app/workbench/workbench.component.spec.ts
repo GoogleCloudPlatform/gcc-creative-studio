@@ -478,6 +478,8 @@ describe('WorkbenchComponent', () => {
       expect(workbenchService.updateTimeline).toHaveBeenCalledWith(2, {
         timeline_id: 2,
         workspace_id: 1,
+        project_id: undefined,
+        storyboard_id: 1,
         title: 'Timeline',
         video_clips: [
           {
