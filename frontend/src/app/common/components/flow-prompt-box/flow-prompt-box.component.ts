@@ -59,7 +59,7 @@ export type NumPos = 1 | 2;
     MatTooltipModule,
   ],
 })
-export class FlowPromptBoxComponent implements OnInit, OnDestroy, OnChanges {
+export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   private snackBar = inject(MatSnackBar);
 
   @Input() searchRequest!: any; // Keep for now, but prefer individual inputs
@@ -244,21 +244,6 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy, OnChanges {
   ngOnDestroy(): void {
     if (this.resolutionTimeoutId) {
       clearTimeout(this.resolutionTimeoutId);
-    }
-  }
-
-  ngOnChanges(): void {
-    if (
-      this.isVideoToImage() &&
-      !this.getSelectedModelObject()?.capabilities?.supportsVideoReference
-    ) {
-      // If Video to Image is selected, ensure the model supports video reference
-      const model = this.generationModels.find(
-        m => m.capabilities?.supportsVideoReference,
-      );
-      if (model && model !== this.getSelectedModelObject()) {
-        setTimeout(() => this.selectInternalModel(model));
-      }
     }
   }
 

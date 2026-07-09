@@ -690,6 +690,17 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
 
   onModeChanged(mode: string) {
     this.currentMode = mode;
+    if (
+      mode === 'Video to Image' &&
+      !this.selectedGenerationModelObject?.capabilities?.supportsVideoReference
+    ) {
+      const compatibleModel = this.generationModels.find(
+        m => m.capabilities?.supportsVideoReference,
+      );
+      if (compatibleModel) {
+        this.selectModel(compatibleModel);
+      }
+    }
     this.saveState();
   }
 
