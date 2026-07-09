@@ -1349,12 +1349,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
   openVideoUrlInputForReference(): void {
     const dialogRef = this.dialog.open(YouTubeInputComponent, {
       width: '50vw',
-      disableClose: true,
-      data: {
-        title: 'YouTube URL',
-        message: 'Enter or paste a YouTube video URL to use as reference.',
-        placeholder: 'https://www.youtube.com/watch?v=...',
-      },
+      panelClass: 'youtube-input-dialog',
     });
 
     dialogRef.afterClosed().subscribe((url: string | undefined) => {

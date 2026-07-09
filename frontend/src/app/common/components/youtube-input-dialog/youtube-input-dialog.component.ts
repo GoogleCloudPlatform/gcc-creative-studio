@@ -39,12 +39,6 @@ import {
   getYouTubeThumbnailUrl,
 } from '../../../utils/youtube.utils';
 
-export interface YouTubeInputData {
-  title?: string;
-  message?: string;
-  placeholder?: string;
-}
-
 @Component({
   selector: 'app-youtube-input-dialog',
   standalone: true,
@@ -77,10 +71,7 @@ export class YouTubeInputComponent implements OnInit {
     return getYouTubeThumbnailUrl(this.activeVideoId());
   });
 
-  constructor(
-    public dialogRef: MatDialogRef<YouTubeInputComponent>,
-    @Optional() @Inject(MAT_DIALOG_DATA) public data?: YouTubeInputData,
-  ) {}
+  constructor(public dialogRef: MatDialogRef<YouTubeInputComponent>) {}
 
   ngOnInit(): void {
     void this.checkClipboard();

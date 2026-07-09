@@ -14,24 +14,19 @@
  limitations under the License.
 -->
 
-<div class="bg-neutral-900 text-white rounded-2xl p-6 min-w-[420px]">
-  <div class="flex items-start justify-between mb-8">
-    <div class="flex items-center gap-2">
-      <mat-icon class="text-red-500 !h-6 !w-6 flex items-center justify-center">play_circle</mat-icon>
-      <h2 class="text-lg font-semibold text-white !m-0">{{ data?.title || 'Add YouTube Video' }}</h2>
-    </div>
-    <button (click)="cancel()" class="text-neutral-400 hover:text-white transition-colors">
-      <mat-icon>close</mat-icon>
-    </button>
+<div class="text-white rounded-2xl p-6 min-w-[420px]">
+  <div class="yt-dialog-header flex items-center gap-2">
+    <mat-icon class="text-red-500 !h-6 !w-6 flex items-center justify-center">play_circle</mat-icon>
+    <h2 class="!text-[24px] !font-medium text-white !m-0">YouTube URL</h2>
   </div>
 
   <p class="text-sm text-neutral-400 mb-5">
-    {{ data?.message || 'Enter or paste a YouTube video URL to use as reference.' }}
+    Enter or paste a YouTube video URL to use as reference.
   </p>
 
   <!-- Clipboard confirmation card -->
   @if (clipboardUrl() && !inputValue()) {
-    <div class="mb-5 p-3.5 rounded-xl bg-neutral-800 border border-neutral-700/80 flex items-center justify-between gap-3">
+    <div class="mb-5 p-3.5 rounded-xl border border-neutral-700/80 flex items-center justify-between gap-3">
       <div class="flex items-center gap-3 min-w-0">
         @if (clipboardVideoId(); as clipId) {
           <div class="relative h-12 w-20 flex-shrink-0 rounded-lg overflow-hidden bg-black flex items-center justify-center">
@@ -76,7 +71,7 @@
 
   <!-- Live preview card -->
   @if (activeThumbnailUrl(); as thumbUrl) {
-    <div class="mb-6 rounded-xl overflow-hidden border border-neutral-700 bg-neutral-800 shadow-lg">
+    <div class="mb-6 rounded-xl overflow-hidden border border-neutral-700 shadow-lg">
       <div class="relative w-full aspect-video bg-black flex items-center justify-center group">
         <img [src]="thumbUrl" class="w-full h-full object-cover opacity-90 transition-opacity group-hover:opacity-100" alt="Video thumbnail" />
         <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -85,7 +80,7 @@
           </div>
         </div>
       </div>
-      <div class="p-3 bg-neutral-800/90 flex items-center justify-between text-xs text-neutral-300">
+      <div class="p-3 flex items-center justify-between text-xs text-neutral-300">
         <span class="flex items-center gap-1.5 font-medium text-emerald-400">
           <mat-icon class="!h-4 !w-4 !text-sm !flex !items-center !justify-center">check_circle</mat-icon>
           Valid YouTube Video

@@ -16,4 +16,34 @@
 
 :host {
   display: block;
+  /* Glassmorphism background for the whole dialog content */
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+.yt-dialog-header {
+  background: rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  margin: -1.5rem;
+  margin-bottom: 2rem;
+  padding: .5rem 1.5rem;
+}
+
+::ng-deep .youtube-input-dialog .mat-mdc-dialog-container .mdc-dialog__surface {
+  background: transparent !important;
+  border-radius: 20px !important;
+  overflow: hidden !important; /* Ensure the dialog shell doesn't show scrollbars */
+  box-shadow: none !important; /* Let the container handle the shadow */
+}
+
+/* Ensure global horizontal scroll is disabled for the dialog */
+::ng-deep .youtube-input-dialog {
+  overflow: hidden !important;
+  
+  .mat-mdc-dialog-container {
+    padding: 0 !important;
+  }
 }
