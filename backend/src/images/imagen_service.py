@@ -730,6 +730,7 @@ def _process_image_in_background(
                                 if 0 <= index < len(parent_item.gcs_uris):
                                     ref_uri = parent_item.gcs_uris[index]
                                 else:
+                                    index = 0
                                     ref_uri = parent_item.gcs_uris[0]
                                 reference_parts_for_api.append(
                                     types.Part.from_uri(
