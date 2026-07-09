@@ -228,7 +228,50 @@
               </ng-container>
             </div>
         </ng-container>
-        </div>
+        
+        <!-- Only for Video to Image mode -->
+        @if (mode === 'Video to Image') {
+          <!-- Video Reference Slot -->
+          @if (!referenceVideoYoutubeUrl) {
+            <div class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
+            (click)="!referenceVideo && openVideoSelectorForReference.emit()">
+              @if (!referenceVideo) {
+                <mat-icon class="text-neutral-500">videocam</mat-icon>
+                <span class="absolute bottom-1 text-[8px] text-neutral-500">Video Ref</span>
+              } @else {
+                @if (referenceVideo.type === 'media_item' || referenceVideo.previewUrl?.includes('.png') || referenceVideo.previewUrl?.includes('.webp') || referenceVideo.previewUrl?.includes('.jpg') || referenceVideo.previewUrl?.includes('.jpeg') || referenceVideo.previewUrl?.includes('presignedThumbnailUrls')) {
+                  <img [src]="referenceVideo.previewUrl" class="h-full w-full rounded-lg object-cover" />
+                } @else {
+                  <video [src]="referenceVideo.previewUrl" class="h-full w-full rounded-lg object-cover" muted></video>
+                }
+                <button
+                  (click)="$event.stopPropagation(); clearReferenceVideo.emit($event)"
+                  class="absolute -right-2 -top-2 rounded-full bg-neutral-900 p-0.5 text-neutral-400 hover:text-white"
+                >
+                  <mat-icon class="!h-4 !w-4 text-sm">close</mat-icon>
+                </button>
+              }
+            </div>
+          }
+          
+          <!-- Video Reference YouTube Link Slot -->
+          @if (!referenceVideo) {
+            <div class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
+            (click)="!referenceVideoYoutubeUrl && openVideoUrlInputForReference.emit()">
+              <mat-icon class="text-neutral-500">link</mat-icon>
+              <span class="absolute bottom-1 text-[8px] text-neutral-500">YouTube Link</span>
+              @if (referenceVideoYoutubeUrl) {
+                <button
+                  (click)="$event.stopPropagation(); clearReferenceVideoYoutubeUrl.emit()"
+                  class="absolute -right-2 -top-2 rounded-full bg-neutral-900 p-0.5 text-neutral-400 hover:text-white"
+                >
+                  <mat-icon class="!h-4 !w-4 text-sm">close</mat-icon>
+                </button>
+              }
+            </div>
+          }
+        }
+      </div>
 
       <!-- Right: Generate Button -->
       <div class="flex items-center gap-2">

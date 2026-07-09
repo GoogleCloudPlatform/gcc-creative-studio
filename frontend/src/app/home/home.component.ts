@@ -46,8 +46,10 @@ import {
 } from '../common/config/model-config';
 import {MediaItem} from '../common/models/media-item.model';
 import {
+  AssetReferenceDto,
   ImagenRequest,
   ReferenceImage,
+  ReferenceVideo,
   SourceMediaItemLink,
 } from '../common/models/search.model';
 import {
@@ -67,6 +69,7 @@ import {
   handleInfoSnackbar,
   handleSuccessSnackbar,
 } from '../utils/handleMessageSnackbar';
+import {PromptDialogComponent} from '../common/components/prompt-dialog/prompt-dialog.component';
 
 @Component({
   selector: 'app-home',
@@ -83,6 +86,8 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
   referenceImages: ReferenceImage[] = [];
   sourceMediaItems: (SourceMediaItemLink | null)[] = [];
   activeWorkspaceId$: Observable<number | null>;
+  referenceVideo: ReferenceVideo | null = null;
+  referenceVideoYoutubeUrl: string | null = null;
 
   @HostListener('window:keydown.control.enter', ['$event'])
   handleCtrlEnter(event: Event) {
@@ -118,6 +123,11 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
       value: 'Ingredients to Image',
       icon: 'layers',
       label: 'Ingredients to Image',
+    },
+    {
+      value: 'Video to Image',
+      icon: 'movie',
+      label: 'Video to Image',
     },
   ];
   currentMode = 'Text to Image';
@@ -437,6 +447,8 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
         this.watermarkOptions.find(o => o.value === state.watermark)
           ?.viewValue || 'No';
       this.service.imagePrompt = state.prompt;
+      this.referenceVideo = state.referenceVideo;
+      this.referenceVideoYoutubeUrl = state.referenceVideoYoutubeUrl;
     });
   }
 
@@ -457,6 +469,8 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
       useBrandGuidelines: this.searchRequest.useBrandGuidelines,
       enhancePrompt: this.searchRequest.enhancePrompt || false,
       mode: this.currentMode,
+      referenceVideo: this.referenceVideo,
+      referenceVideoYoutubeUrl: this.referenceVideoYoutubeUrl,
     });
   }
 
@@ -782,6 +796,15 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
 
+    let referenceVideo: AssetReferenceDto | undefined;
+    if (this.currentMode === 'Video to Image' && this.referenceVideo) {
+      referenceVideo = {
+        id: this.referenceVideo.id,
+        type: this.referenceVideo.type,
+        index: this.referenceVideo.index,
+      };
+    }
+
     const payload: ImagenRequest = {
       ...this.searchRequest,
       negativePrompt: this.negativePhrases.join(', '),
@@ -795,6 +818,8 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
           ? sourceAssetIds
           : undefined,
       workspaceId: activeWorkspaceId ?? undefined,
+      referenceVideo,
+      referenceVideoYoutubeUrl: this.referenceVideoYoutubeUrl,
     };
 
     this.isImageGenerating = true;
@@ -1269,5 +1294,89 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
           handleErrorSnackbar(this._snackBar, err, 'Delete results');
         },
       });
+  }
+
+  openVideoSelectorForReference(): void {
+    const dialogRef = this.dialog.open(ImageSelectorComponent, {
+      width: '90vw',
+      height: '80vh',
+      maxWidth: '90vw',
+      data: {
+        mimeType: 'video/*',
+        multiSelect: false,
+      },
+      panelClass: 'image-selector-dialog',
+    });
+
+    dialogRef.afterClosed().subscribe((result: any) => {
+      if (!result) return;
+
+      const res = Array.isArray(result) ? result[0] : result;
+      if ('gcsUri' in res) {
+        this.referenceVideo = {
+          id: res.id,
+          type: 'source_asset',
+          previewUrl: res.presignedThumbnailUrl || res.presignedUrl || '',
+          index: 0,
+        };
+      } else {
+        const thumbnail =
+          res.mediaItem.presignedThumbnailUrls?.[res.selectedIndex];
+        const previewUrl =
+          thumbnail || res.mediaItem.presignedUrls?.[res.selectedIndex];
+        if (previewUrl) {
+          this.referenceVideo = {
+            id: res.mediaItem.id,
+            type: 'media_item',
+            previewUrl: previewUrl,
+            index: res.selectedIndex,
+          };
+        }
+      }
+
+      this.saveState();
+    });
+  }
+
+  clearReferenceVideo(event: Event): void {
+    event.stopPropagation();
+    this.referenceVideo = null;
+    this.saveState();
+  }
+
+  openVideoUrlInputForReference(): void {
+    const dialogRef = this.dialog.open(PromptDialogComponent, {
+      width: '50vw',
+      disableClose: true,
+      data: {
+        title: 'YouTube URL',
+        message: 'Enter YouTube URL',
+        placeholder: 'YouTube URL',
+      },
+    });
+
+    dialogRef.afterClosed().subscribe((url: string | undefined) => {
+      if (!url) return;
+
+      const cleanUrl = url.split('&')[0];
+      const youtubePattern =
+        /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]+)$/;
+      if (youtubePattern.test(cleanUrl)) {
+        this.referenceVideoYoutubeUrl = cleanUrl;
+        handleInfoSnackbar(this._snackBar, 'YouTube URL added');
+      } else {
+        handleErrorSnackbar(
+          this._snackBar,
+          {message: 'Invalid YouTube URL'},
+          'Validation Error',
+        );
+      }
+      this.saveState();
+    });
+  }
+
+  clearReferenceVideoYoutubeUrl(): void {
+    this.referenceVideoYoutubeUrl = null;
+    this.saveState();
   }
 }

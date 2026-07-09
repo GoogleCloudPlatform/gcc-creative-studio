@@ -33,6 +33,8 @@ export type ImagenRequest = {
   enhancePrompt?: boolean;
   googleSearch?: boolean;
   resolution?: '1K' | '2K' | '4K';
+  referenceVideo?: AssetReferenceDto | null;
+  referenceVideoYoutubeUrl?: string | null;
 };
 
 export type SourceMediaItemLink = {

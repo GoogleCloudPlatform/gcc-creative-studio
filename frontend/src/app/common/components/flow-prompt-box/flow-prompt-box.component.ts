@@ -145,6 +145,8 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   @Output() clearReferenceVideo = new EventEmitter<Event>();
   @Output() openAudioSelectorForReference = new EventEmitter<void>();
   @Output() clearReferenceAudio = new EventEmitter<Event>();
+  @Output() openVideoUrlInputForReference = new EventEmitter<void>();
+  @Output() clearReferenceVideoYoutubeUrl = new EventEmitter<void>();
 
   @Input() image1Preview: string | null = null;
   @Input() image2Preview: string | null = null;
@@ -152,6 +154,7 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   @Input() referenceImagesType: 'ASSET' | 'STYLE' = 'ASSET';
   @Input() referenceVideo: any | null = null;
   @Input() referenceAudio: any | null = null;
+  @Input() referenceVideoYoutubeUrl: string | null = null;
 
   @ViewChild('modeTrigger') modeTrigger!: ElementRef;
   @ViewChild('modeMenu') modeMenu!: ElementRef;
