@@ -63,7 +63,7 @@ export class ProjectSwitcherComponent implements OnInit, OnDestroy {
         } else {
           this.projects = [];
         }
-      })
+      }),
     );
 
     this.subscriptions.add(
@@ -71,7 +71,7 @@ export class ProjectSwitcherComponent implements OnInit, OnDestroy {
         if (projectId !== this.selectedProjectId) {
           this.selectedProjectId = projectId;
         }
-      })
+      }),
     );
   }
 
@@ -88,7 +88,8 @@ export class ProjectSwitcherComponent implements OnInit, OnDestroy {
           return;
         }
 
-        const queryProjectIdStr = this.route.snapshot.queryParamMap.get('projectId');
+        const queryProjectIdStr =
+          this.route.snapshot.queryParamMap.get('projectId');
         let targetProjectId: number | null = null;
         if (queryProjectIdStr) {
           targetProjectId = parseInt(queryProjectIdStr, 10);
@@ -121,17 +122,19 @@ export class ProjectSwitcherComponent implements OnInit, OnDestroy {
   renameProject(event: {option: DropdownOption; newValue: string}): void {
     const projectId = event.option.value;
     const newName = event.newValue;
-    this.projectService.updateProject(projectId, {name: newName} as any).subscribe({
-      next: (updatedProject: ProjectResponse) => {
-        const project = this.projects.find(p => p.id === projectId);
-        if (project) {
-          project.name = updatedProject.name;
-        }
-      },
-      error: err => {
-        console.error('Failed to rename project:', err);
-      },
-    });
+    this.projectService
+      .updateProject(projectId, {name: newName} as any)
+      .subscribe({
+        next: (updatedProject: ProjectResponse) => {
+          const project = this.projects.find(p => p.id === projectId);
+          if (project) {
+            project.name = updatedProject.name;
+          }
+        },
+        error: err => {
+          console.error('Failed to rename project:', err);
+        },
+      });
   }
 
   createProject(name: string): void {
@@ -148,11 +151,15 @@ export class ProjectSwitcherComponent implements OnInit, OnDestroy {
               next: (projects: ProjectResponse[]) => {
                 this.projects = projects || [];
                 const createdProjectId = project.id;
-                const matched = this.projects.find(p => p.id === createdProjectId);
+                const matched = this.projects.find(
+                  p => p.id === createdProjectId,
+                );
                 if (matched) {
                   this.setActiveProject(matched);
                 } else if (this.projects.length > 0) {
-                  this.setActiveProject(this.projects[this.projects.length - 1]);
+                  this.setActiveProject(
+                    this.projects[this.projects.length - 1],
+                  );
                 }
               },
             });
@@ -163,20 +170,22 @@ export class ProjectSwitcherComponent implements OnInit, OnDestroy {
   }
 
   private createDefaultProject(workspaceId: number): void {
-    this.projectService.createProject({
-      workspace_id: workspaceId,
-      name: 'Default Project',
-    }).subscribe({
-      next: (project: ProjectResponse) => {
-        this.projects = [project];
-        this.setActiveProject(project);
-      },
-      error: err => {
-        console.error('Failed to create default project:', err);
-        this.selectedProjectId = null;
-        this.projectStateService.setActiveProjectId(null);
-      }
-    });
+    this.projectService
+      .createProject({
+        workspace_id: workspaceId,
+        name: 'Default Project',
+      })
+      .subscribe({
+        next: (project: ProjectResponse) => {
+          this.projects = [project];
+          this.setActiveProject(project);
+        },
+        error: err => {
+          console.error('Failed to create default project:', err);
+          this.selectedProjectId = null;
+          this.projectStateService.setActiveProjectId(null);
+        },
+      });
   }
 
   private setActiveProject(project: ProjectResponse): void {

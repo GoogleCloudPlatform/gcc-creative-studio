@@ -81,7 +81,10 @@ export class StudioDropdownComponent {
   @Output() searchChange = new EventEmitter<string>();
   @Output() loadMore = new EventEmitter<void>();
   @Output() checkboxChange = new EventEmitter<boolean>();
-  @Output() optionEdited = new EventEmitter<{option: DropdownOption; newValue: string}>();
+  @Output() optionEdited = new EventEmitter<{
+    option: DropdownOption;
+    newValue: string;
+  }>();
   @Output() addOptionClicked = new EventEmitter<string>();
 
   isOpen = false;

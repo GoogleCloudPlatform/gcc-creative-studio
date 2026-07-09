@@ -246,7 +246,10 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       const isSameProject = this.lastProjectId === projectId;
 
       const isExplicitNewChat =
-        isSameProject && !sessionId && !storyboardId && this.lastWorkspaceId === workspaceId;
+        isSameProject &&
+        !sessionId &&
+        !storyboardId &&
+        this.lastWorkspaceId === workspaceId;
 
       if (isExplicitNewChat) {
         this.isLoadingHistory.set(false);
@@ -269,139 +272,172 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       }
 
       // Always load sessions first to populate the sessions dropdown
-      this.agentChatService.getSessions(workspaceId, projectId || undefined).subscribe({
-        next: (sessions: ChatSession[]) => {
-          this.sessions.set(sessions || []);
+      this.agentChatService
+        .getSessions(workspaceId, projectId || undefined)
+        .subscribe({
+          next: (sessions: ChatSession[]) => {
+            this.sessions.set(sessions || []);
 
-          // Check if the query parameter sessionId or storyboardId belongs to this workspace
-          const sessionExistsInWorkspace =
-            sessions &&
-            sessions.some(s => {
-              if (sessionId && s.id?.toString() === sessionId?.toString()) {
-                return true;
-              }
-              if (
-                storyboardId &&
-                (Number(s.state?.current_storyboard_id) ===
-                  Number(storyboardId) ||
-                  Number(s.state?.currentStoryboardId) === Number(storyboardId))
-              ) {
-                return true;
-              }
-              return false;
-            });
-
-          if ((sessionId || storyboardId) && sessionExistsInWorkspace) {
-            const isDifferentSession =
-              (sessionId &&
-                sessionId.toString() !== this.currentSessionId?.toString()) ||
-              (storyboardId &&
-                Number(storyboardId) !==
-                  Number(this.agentChatService.currentStoryboard()?.id));
-            const isDifferentWorkspace = workspaceId !== this.lastWorkspaceId || !isSameProject;
-
-            if (isDifferentSession || isDifferentWorkspace) {
-              this.lastWorkspaceId = workspaceId;
-              this.lastProjectId = projectId;
-              this.agentChatService
-                .getSessionDetail(
-                  workspaceId,
-                  sessionId || undefined,
-                  storyboardId ? Number(storyboardId) : undefined,
-                  projectId || undefined
-                )
-                .subscribe({
-                  next: (res: SessionDetailResponse) => {
-                    if (res.storyboard) {
-                      if (res.storyboard.timeline_id) {
-                        this.timelineState.loadedTimelineId.set(undefined);
-                      }
-                      this.agentChatService.currentStoryboard.set(
-                        res.storyboard,
-                      );
-                    }
-                    if (res.session && res.session.id) {
-                      this.currentSessionId = res.session.id;
-                      this.agentChatService.selectedSessionId.set(
-                        res.session.id,
-                      );
-
-                      const messages = res.session.events || [];
-                      const mappedMessages = this.mapEventsToMessages(messages);
-                      this.chatMessages.set(mappedMessages);
-                      this.shouldScrollToBottom = true;
-
-                      // Synchronize URL: clear sessionId, set storyboardId
-                      void this.router.navigate([], {
-                        relativeTo: this.route,
-                        queryParams: {
-                          sessionId: null,
-                          storyboardId: res.storyboard?.id || null,
-                        },
-                        queryParamsHandling: 'merge',
-                      });
-                    } else {
-                      this.startNewChat();
-                    }
-                    this.isLoadingHistory.set(false);
-                  },
-                  error: err => {
-                    console.error('Failed to preload workspace state:', err);
-                    this.isLoadingHistory.set(false);
-                    this.startNewChat();
-                  },
-                });
-            } else {
-              this.isLoadingHistory.set(false);
-            }
-          } else {
-            if ((sessionId || storyboardId) && this.lastWorkspaceId === null) {
-              handleErrorSnackbar(
-                this.snackBar,
-                new Error(
-                  'The requested session or storyboard does not exist in this workspace.',
-                ),
-                'Workspace Sync',
-              );
-            }
-
-            if (sessions && sessions.length > 0) {
-              const latestSession = sessions[0];
-              if (
-                isSameProject &&
-                this.currentSessionId?.toString() ===
-                latestSession.id?.toString()
-              ) {
-                this.isLoadingHistory.set(false);
-                return;
-              }
-              this.currentSessionId = latestSession.id;
-              this.agentChatService.selectedSessionId.set(latestSession.id);
-              this.lastWorkspaceId = workspaceId;
-              this.lastProjectId = projectId;
-              this.loadChatMessages(latestSession.id);
-            } else {
-              this.lastWorkspaceId = workspaceId;
-              this.lastProjectId = projectId;
-              this.startNewChat();
-              void this.router.navigate([], {
-                relativeTo: this.route,
-                queryParams: {
-                  sessionId: null,
-                  storyboardId: null,
-                },
-                queryParamsHandling: 'merge',
+            // Check if the query parameter sessionId or storyboardId belongs to this workspace
+            const sessionExistsInWorkspace =
+              sessions &&
+              sessions.some(s => {
+                if (sessionId && s.id?.toString() === sessionId?.toString()) {
+                  return true;
+                }
+                if (
+                  storyboardId &&
+                  (Number(s.state?.current_storyboard_id) ===
+                    Number(storyboardId) ||
+                    Number(s.state?.currentStoryboardId) ===
+                      Number(storyboardId))
+                ) {
+                  return true;
+                }
+                return false;
               });
+
+            const shouldLoadDetail =
+              (sessionId && sessionExistsInWorkspace) || !!storyboardId;
+
+            if (shouldLoadDetail) {
+              const isDifferentSession =
+                (sessionId &&
+                  sessionId.toString() !== this.currentSessionId?.toString()) ||
+                (storyboardId &&
+                  Number(storyboardId) !==
+                    Number(this.agentChatService.currentStoryboard()?.id));
+              const isDifferentWorkspace =
+                workspaceId !== this.lastWorkspaceId || !isSameProject;
+
+              if (isDifferentSession || isDifferentWorkspace) {
+                this.lastWorkspaceId = workspaceId;
+                this.lastProjectId = projectId;
+                this.agentChatService
+                  .getSessionDetail(
+                    workspaceId,
+                    sessionId || undefined,
+                    storyboardId ? Number(storyboardId) : undefined,
+                    projectId || undefined,
+                  )
+                  .subscribe({
+                    next: (res: SessionDetailResponse) => {
+                      if (res.storyboard) {
+                        if (res.storyboard.timeline_id) {
+                          this.timelineState.loadedTimelineId.set(undefined);
+                        }
+                        this.agentChatService.currentStoryboard.set(
+                          res.storyboard,
+                        );
+                      }
+                      if (res.session && res.session.id) {
+                        this.currentSessionId = res.session.id;
+                        this.agentChatService.selectedSessionId.set(
+                          res.session.id,
+                        );
+
+                        const messages = res.session.events || [];
+                        const mappedMessages =
+                          this.mapEventsToMessages(messages);
+                        this.chatMessages.set(mappedMessages);
+                        this.shouldScrollToBottom = true;
+                        this.checkAndResumePolling(res);
+
+                        // Synchronize URL: clear sessionId, set storyboardId
+                        void this.router.navigate([], {
+                          relativeTo: this.route,
+                          queryParams: {
+                            sessionId: null,
+                            storyboardId: res.storyboard?.id || null,
+                          },
+                          queryParamsHandling: 'merge',
+                        });
+                      } else if (res.storyboard) {
+                        // Storyboard exists but has no active session/conversation
+                        this.currentSessionId = null;
+                        this.agentChatService.selectedSessionId.set(null);
+                        this.chatMessages.set([]);
+                        this.addWelcomeMessage();
+                        this.shouldScrollToBottom = true;
+
+                        void this.router.navigate([], {
+                          relativeTo: this.route,
+                          queryParams: {
+                            sessionId: null,
+                            storyboardId: res.storyboard.id,
+                          },
+                          queryParamsHandling: 'merge',
+                        });
+                      } else {
+                        this.startNewChat();
+                      }
+                      this.isLoadingHistory.set(false);
+                    },
+                    error: err => {
+                      console.error('Failed to preload workspace state:', err);
+                      handleErrorSnackbar(
+                        this.snackBar,
+                        err,
+                        'Preload Session Details',
+                      );
+                      this.isLoadingHistory.set(false);
+                      this.startNewChat();
+                    },
+                  });
+              } else {
+                this.isLoadingHistory.set(false);
+              }
+            } else {
+              if (
+                (sessionId || storyboardId) &&
+                this.lastWorkspaceId === null
+              ) {
+                handleErrorSnackbar(
+                  this.snackBar,
+                  new Error(
+                    'The requested session or storyboard does not exist in this workspace.',
+                  ),
+                  'Workspace Sync',
+                );
+              }
+
+              if (sessions && sessions.length > 0) {
+                const latestSession = sessions[0];
+                if (
+                  isSameProject &&
+                  this.currentSessionId?.toString() ===
+                    latestSession.id?.toString()
+                ) {
+                  this.isLoadingHistory.set(false);
+                  return;
+                }
+                this.currentSessionId = latestSession.id;
+                this.agentChatService.selectedSessionId.set(latestSession.id);
+                this.lastWorkspaceId = workspaceId;
+                this.lastProjectId = projectId;
+                this.loadChatMessages(latestSession.id);
+              } else {
+                this.lastWorkspaceId = workspaceId;
+                this.lastProjectId = projectId;
+                this.startNewChat();
+                void this.router.navigate([], {
+                  relativeTo: this.route,
+                  queryParams: {
+                    sessionId: null,
+                    storyboardId: null,
+                  },
+                  queryParamsHandling: 'merge',
+                });
+              }
             }
-          }
-        },
-        error: err => {
-          console.error('Error fetching sessions:', err);
-          handleErrorSnackbar(this.snackBar, err, 'Fetch Sessions');
-          this.isLoadingHistory.set(false);
-          this.startNewChat();
-        },
-      });
+          },
+          error: err => {
+            console.error('Error fetching sessions:', err);
+            handleErrorSnackbar(this.snackBar, err, 'Fetch Sessions');
+            this.isLoadingHistory.set(false);
+            this.startNewChat();
+          },
+        });
     });
   }
 
@@ -432,6 +468,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
             const messages = (res.session && res.session.events) || [];
             const mappedMessages = this.mapEventsToMessages(messages);
             this.chatMessages.set(mappedMessages);
+            this.checkAndResumePolling(res);
             if (mappedMessages.length === 0) {
               this.addWelcomeMessage();
             }
@@ -468,6 +505,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
         let text = '';
         let assetMetadata = null;
         let storyboardMetadata = null;
+        const extractedImages: any[] = [];
         if (m.actions?.storyboard) {
           const extracted = this.extractStoryboardData(m.actions.storyboard);
           if (extracted) {
@@ -478,7 +516,25 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
           if (part.text) {
             let partText = part.text;
             if (partText.includes('[System Note:')) {
+              const systemNote = partText.split('[System Note:')[1];
               partText = partText.split('[System Note:')[0].trim();
+
+              const regex =
+                /<creative_studio_asset\s+id="?(\d+)"?\s+type="?([\w_]+)"?\s*\/>/g;
+              let match;
+              while ((match = regex.exec(systemNote)) !== null) {
+                const assetId = Number(match[1]);
+                const assetType = match[2];
+                if (assetType === 'source_asset') {
+                  extractedImages.push({id: assetId});
+                } else if (assetType === 'media_item') {
+                  extractedImages.push({
+                    mediaItem: {
+                      id: assetId,
+                    },
+                  });
+                }
+              }
             }
             text += partText;
             this.checkForStoryboardId(partText);
@@ -526,6 +582,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
           asset: assetMetadata,
           storyboard: storyboardMetadata,
           isHidden: isHidden,
+          images: extractedImages.length > 0 ? extractedImages : undefined,
           timestamp: m.timestamp ? new Date(m.timestamp * 1000) : new Date(),
         };
       })
@@ -613,7 +670,11 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       if (result) {
         const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
         this.agentChatService
-          .deleteSession(this.currentSessionId!, workspaceId ?? undefined, this.projectId)
+          .deleteSession(
+            this.currentSessionId!,
+            workspaceId ?? undefined,
+            this.projectId,
+          )
           .subscribe({
             next: () => {
               this.sessions.update(s =>
@@ -646,22 +707,24 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     if (!this.currentSessionId) {
       this.isTyping.set(true);
       const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
-      this.agentChatService.createSession(workspaceId ?? undefined, this.projectId).subscribe({
-        next: (session: ChatSession) => {
-          this.sessions.update(s => [session, ...s]);
-          this.currentSessionId = session.id;
-          this.agentChatService.selectedSessionId.set(session.id);
-          this.executeSendMessage(text);
-        },
-        error: err => {
-          console.error(
-            'Error starting new chat session on first message:',
-            err,
-          );
-          this.isTyping.set(false);
-          handleErrorSnackbar(this.snackBar, err, 'Start Chat');
-        },
-      });
+      this.agentChatService
+        .createSession(workspaceId ?? undefined, this.projectId)
+        .subscribe({
+          next: (session: ChatSession) => {
+            this.sessions.update(s => [session, ...s]);
+            this.currentSessionId = session.id;
+            this.agentChatService.selectedSessionId.set(session.id);
+            this.executeSendMessage(text);
+          },
+          error: err => {
+            console.error(
+              'Error starting new chat session on first message:',
+              err,
+            );
+            this.isTyping.set(false);
+            handleErrorSnackbar(this.snackBar, err, 'Start Chat');
+          },
+        });
       return;
     }
 
@@ -814,22 +877,22 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                   ) {
                     msgs.push({
                       sender: 'agent',
-                      text: textChunk,
+                      text: textChunk
+                        .replace(/\[System Note:[\s\S]*?(?:\]|$)/g, '')
+                        .trim(),
+                      rawText: textChunk,
                       timestamp: new Date(),
                     });
                     agentMessageIndex = msgs.length - 1;
                     lastInvocationId = currentInvocationId;
                   } else {
-                    msgs[agentMessageIndex].text += textChunk;
-                    if (
-                      msgs[agentMessageIndex].text.includes('[System Note:')
-                    ) {
-                      msgs[agentMessageIndex].text = msgs[
-                        agentMessageIndex
-                      ].text
-                        .split('[System Note:')[0]
-                        .trim();
-                    }
+                    const fullRaw =
+                      (msgs[agentMessageIndex].rawText ||
+                        msgs[agentMessageIndex].text) + textChunk;
+                    msgs[agentMessageIndex].rawText = fullRaw;
+                    msgs[agentMessageIndex].text = fullRaw
+                      .replace(/\[System Note:[\s\S]*?(?:\]|$)/g, '')
+                      .trim();
                   }
                 }
                 return [...msgs];
@@ -988,6 +1051,328 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
       this.projectId,
     );
     this.selectedImages.set([]);
+  }
+
+  private resumePolling(sessionId: string) {
+    this.isTyping.set(true);
+    if (this.currentAgent === 'ads_x') {
+      this.agentChatService.isGeneratingStoryboard.set(true);
+    }
+    const callbacks = this.setupCallbacks();
+    this.agentChatService.startPolling(sessionId, callbacks);
+  }
+
+  private hasPendingToolCall(event: any): boolean {
+    if (!event) return false;
+    const content = event.content || {};
+    const parts = content.parts || [];
+    for (const part of parts) {
+      if (
+        part.functionCall ||
+        part.function_call ||
+        part.toolCall ||
+        part.tool_call
+      ) {
+        return true;
+      }
+    }
+    const rawEvent = event.raw_event || {};
+    const rawParts = rawEvent.content?.parts || [];
+    for (const part of rawParts) {
+      if (
+        part.functionCall ||
+        part.function_call ||
+        part.toolCall ||
+        part.tool_call
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  checkAndResumePolling(res: SessionDetailResponse) {
+    if (res.session && res.session.events && res.session.events.length > 0) {
+      const events = res.session.events;
+      const lastEvent = events[events.length - 1];
+      const role = lastEvent.content?.role || lastEvent.author;
+
+      const isLastEventUser = role === 'user';
+      const isLastEventPendingTool = this.hasPendingToolCall(lastEvent);
+
+      if (isLastEventUser || isLastEventPendingTool) {
+        this.resumePolling(res.session.id);
+      }
+    }
+  }
+
+  private setupCallbacks(): SSECallbacks<any> {
+    let agentMessageIndex = -1;
+    let lastInvocationId = '';
+    let isInJsonBlock = false;
+
+    return {
+      onMessage: (data: any) => {
+        if (data.actions?.storyboard) {
+          this.isTyping.set(false);
+          this.agentChatService.isGeneratingStoryboard.set(false);
+        }
+        if (data.content && data.content.parts) {
+          const currentInvocationId = data.id || data.invocation_id || '';
+          if (currentInvocationId && currentInvocationId !== lastInvocationId) {
+            agentMessageIndex = -1;
+          }
+          for (const part of data.content.parts) {
+            if (part.text) {
+              const textChunk = part.text;
+              this.isTyping.set(false);
+              const jsonStartIndex = textChunk.indexOf('{\n');
+
+              this.chatMessages.update(msgs => {
+                if (jsonStartIndex !== -1) {
+                  isInJsonBlock = true;
+                  const textPart = textChunk.substring(0, jsonStartIndex);
+                  const jsonPart = textChunk.substring(jsonStartIndex);
+
+                  // Handle text part if not empty
+                  if (textPart.trim()) {
+                    if (
+                      agentMessageIndex === -1 ||
+                      msgs[agentMessageIndex].asset
+                    ) {
+                      msgs.push({
+                        sender: 'agent',
+                        text: textPart,
+                        timestamp: new Date(),
+                      });
+                      agentMessageIndex = msgs.length - 1;
+                      lastInvocationId = currentInvocationId;
+                    } else {
+                      msgs[agentMessageIndex].text += textPart;
+                    }
+                  }
+
+                  // Create a NEW hidden message for JSON data
+                  msgs.push({
+                    sender: 'agent',
+                    text: jsonPart,
+                    isHidden: true,
+                    timestamp: new Date(),
+                  });
+
+                  if (jsonPart.includes('}')) {
+                    isInJsonBlock = false;
+                  }
+
+                  return [...msgs];
+                } else if (isInJsonBlock) {
+                  // Append to last hidden message
+                  let lastHiddenIndex = -1;
+                  for (let i = msgs.length - 1; i >= 0; i--) {
+                    if (msgs[i].isHidden) {
+                      lastHiddenIndex = i;
+                      break;
+                    }
+                  }
+
+                  if (lastHiddenIndex !== -1) {
+                    msgs[lastHiddenIndex].text += textChunk;
+                  } else {
+                    msgs.push({
+                      sender: 'agent',
+                      text: textChunk,
+                      isHidden: true,
+                      timestamp: new Date(),
+                    });
+                  }
+
+                  if (textChunk.includes('}')) {
+                    isInJsonBlock = false;
+                  }
+
+                  return [...msgs];
+                } else {
+                  const isJsonChunk =
+                    textChunk.trim().startsWith('{') ||
+                    textChunk.includes('"scenes"') ||
+                    textChunk.includes('"campaign_brief"') ||
+                    textChunk.includes('"template_name"') ||
+                    textChunk.includes('"campaign_name"') ||
+                    textChunk.includes('"session_id"') ||
+                    textChunk.includes('"workspace_id"') ||
+                    textChunk.includes('Campaign Name:') ||
+                    textChunk.includes('Strategic Context');
+
+                  const isWelcomeMessage =
+                    textChunk.includes('Path A: Bespoke Creative') ||
+                    textChunk.includes('Path B: Use a Professional Template');
+
+                  if (isJsonChunk && !isWelcomeMessage) {
+                    isInJsonBlock = true;
+                    msgs.push({
+                      sender: 'agent',
+                      text: textChunk,
+                      isHidden: true,
+                      timestamp: new Date(),
+                    });
+                    if (textChunk.includes('}')) {
+                      isInJsonBlock = false;
+                    }
+                  } else if (
+                    agentMessageIndex === -1 ||
+                    msgs[agentMessageIndex].asset
+                  ) {
+                    msgs.push({
+                      sender: 'agent',
+                      text: textChunk
+                        .replace(/\[System Note:[\s\S]*?(?:\]|$)/g, '')
+                        .trim(),
+                      rawText: textChunk,
+                      timestamp: new Date(),
+                    });
+                    agentMessageIndex = msgs.length - 1;
+                    lastInvocationId = currentInvocationId;
+                  } else {
+                    const fullRaw =
+                      (msgs[agentMessageIndex].rawText ||
+                        msgs[agentMessageIndex].text) + textChunk;
+                    msgs[agentMessageIndex].rawText = fullRaw;
+                    msgs[agentMessageIndex].text = fullRaw
+                      .replace(/\[System Note:[\s\S]*?(?:\]|$)/g, '')
+                      .trim();
+                  }
+                }
+                return [...msgs];
+              });
+              this.shouldScrollToBottom = true;
+            }
+            if (part.functionResponse?.response?.result) {
+              try {
+                const result = JSON.parse(
+                  part.functionResponse.response.result,
+                );
+                if (result.asset) {
+                  this.chatMessages.update(msgs => {
+                    if (agentMessageIndex === -1) {
+                      msgs.push({
+                        sender: 'agent',
+                        text: '',
+                        asset: result.asset,
+                        timestamp: new Date(),
+                      });
+                      agentMessageIndex = msgs.length - 1;
+                    } else {
+                      msgs[agentMessageIndex].asset = result.asset;
+                    }
+                    // Broadcast newly generated asset to the main Workbench ONLY if it's a video
+                    if (result.asset.type === 'video') {
+                      this.agentChatService.videoGenerated$.next(result.asset);
+                    }
+                    return [...msgs];
+                  });
+                  this.shouldScrollToBottom = true;
+                } else if (result.clips && result.assets) {
+                  this.isTyping.set(false);
+                  this.agentChatService.isGeneratingStoryboard.set(false);
+                  this.agentChatService.videoGenerated$.next(result);
+                } else if (result.storyboard_id) {
+                  this.isTyping.set(false);
+                  this.agentChatService.isGeneratingStoryboard.set(false);
+                  this.storyboardService
+                    .getStoryboard(result.storyboard_id)
+                    .subscribe({
+                      next: storyboard => {
+                        if (storyboard.timeline_id) {
+                          this.timelineState.loadedTimelineId.set(undefined);
+                        }
+                        this.agentChatService.currentStoryboard.set(storyboard);
+                      },
+                      error: err => {
+                        console.error('Failed to fetch storyboard:', err);
+                        handleErrorSnackbar(
+                          this.snackBar,
+                          err,
+                          'Fetch Storyboard',
+                        );
+                      },
+                    });
+                } else {
+                  const extracted = this.extractStoryboardData(result);
+                  if (extracted) {
+                    this.isTyping.set(false);
+                    this.agentChatService.isGeneratingStoryboard.set(false);
+                  }
+                }
+              } catch (e) {
+                // eslint-disable-next-line no-empty
+              }
+            }
+          }
+        }
+      },
+      onError: err => {
+        console.error('SSE Error:', err);
+        this.isTyping.set(false);
+        this.agentChatService.isGeneratingStoryboard.set(false);
+        handleErrorSnackbar(this.snackBar, err, 'Storyboard Generation');
+      },
+      onClose: () => {
+        this.isTyping.set(false);
+        this.agentChatService.isGeneratingStoryboard.set(false);
+        if (agentMessageIndex !== -1) {
+          const currentMsgs = this.chatMessages();
+          const msg = currentMsgs[agentMessageIndex];
+          if (msg && msg.text) {
+            const extraction = this.parseAndExtractJSONs(msg.text);
+            if (extraction.assets.length > 0) {
+              currentMsgs[agentMessageIndex].asset = extraction.assets[0];
+              currentMsgs[agentMessageIndex].text = extraction.cleanText;
+              // Broadcast newly generated asset to the main Workbench ONLY if it's a video
+              if (extraction.assets[0].type === 'video') {
+                this.agentChatService.videoGenerated$.next(
+                  extraction.assets[0],
+                );
+              }
+            }
+            this.checkForStoryboardId(msg.text);
+            if (extraction.assets.length > 0) {
+              this.chatMessages.set([...currentMsgs]);
+            }
+          }
+        }
+
+        // Always query database on stream completion to get the latest storyboard & scenes
+        const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+        if (workspaceId && this.currentSessionId) {
+          this.storyboardService
+            .getStoryboardForSession(workspaceId, this.currentSessionId)
+            .subscribe({
+              next: storyboards => {
+                if (storyboards && storyboards.length > 0) {
+                  if (storyboards[0].timeline_id) {
+                    this.timelineState.loadedTimelineId.set(undefined);
+                  }
+                  this.agentChatService.currentStoryboard.set(storyboards[0]);
+                  if (storyboards[0].timeline_id) {
+                    this.agentChatService.videoGenerated$.next(true);
+                  }
+                } else {
+                  this.agentChatService.videoGenerated$.next(true);
+                }
+              },
+              error: err => {
+                console.error(
+                  'Failed to fetch storyboard after stream completion:',
+                  err,
+                );
+                this.agentChatService.videoGenerated$.next(true);
+              },
+            });
+        } else {
+          this.agentChatService.videoGenerated$.next(true);
+        }
+      },
+    };
   }
 
   private scrollToBottom(): void {

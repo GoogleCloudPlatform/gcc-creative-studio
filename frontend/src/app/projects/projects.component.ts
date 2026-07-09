@@ -19,9 +19,9 @@ import {Router} from '@angular/router';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
 import {ProjectService} from '../services/project/project.service';
 import {Subscription} from 'rxjs';
-import { ProjectResponse } from '../common/models/workbench.model';
+import {ProjectResponse} from '../common/models/workbench.model';
 
-import { ProjectStateService } from '../services/project/project-state.service';
+import {ProjectStateService} from '../services/project/project-state.service';
 
 @Component({
   selector: 'app-projects',

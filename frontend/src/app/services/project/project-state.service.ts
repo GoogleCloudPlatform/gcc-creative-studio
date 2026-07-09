@@ -21,7 +21,9 @@ import {BehaviorSubject, Observable} from 'rxjs';
   providedIn: 'root',
 })
 export class ProjectStateService {
-  private readonly activeProjectIdSubject = new BehaviorSubject<number | null>(null);
+  private readonly activeProjectIdSubject = new BehaviorSubject<number | null>(
+    null,
+  );
   public readonly activeProjectId$: Observable<number | null> =
     this.activeProjectIdSubject.asObservable();
 

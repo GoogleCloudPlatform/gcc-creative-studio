@@ -17,6 +17,7 @@ import os
 import shutil
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import datetime
 
 import pytest
 
@@ -35,6 +36,13 @@ from src.workbench.dto.workbench_dto import (
 )
 from src.workbench.ffmpeg_service import FFmpegService
 from src.workbench.workbench_service import WorkbenchService
+from src.common.schema.media_item_model import (
+    MediaItemModel,
+    MimeTypeEnum,
+    GenerationModelEnum,
+    AspectRatioEnum,
+    JobStatusEnum,
+)
 
 
 @pytest.fixture(name="service")
@@ -45,8 +53,7 @@ def fixture_service():
         mock_gcs_service = AsyncMock()
         mock_timeline_repo = AsyncMock()
         mock_media_repo = AsyncMock()
-        mock_source_asset_service = AsyncMock()
-        mock_source_asset_service.repo = AsyncMock()
+        mock_source_asset_repo = AsyncMock()
         mock_iam_credentials = MagicMock()
         mock_iam_credentials.generate_presigned_url.return_value = (
             "http://presigned.url"
@@ -57,13 +64,13 @@ def fixture_service():
             gcs_service=mock_gcs_service,
             timeline_repo=mock_timeline_repo,
             media_repo=mock_media_repo,
-            source_asset_service=mock_source_asset_service,
+            source_asset_repo=mock_source_asset_repo,
             iam_signer_credentials=mock_iam_credentials,
             ffmpeg_service=mock_ffmpeg_service,
         )
         service.mock_gcs_service = mock_gcs_service
         service.mock_storage_client = mock_storage_client
-        service.mock_source_asset_service = mock_source_asset_service
+        service.mock_source_asset_repo = mock_source_asset_repo
         service.mock_media_repo = mock_media_repo
         service.mock_timeline_repo = mock_timeline_repo
         return service
@@ -101,7 +108,7 @@ async def test_enrich_timeline(service):
     mock_source = MagicMock()
     mock_source.gcs_uri = "gs://b/s.mp4"
     mock_source.thumbnail_gcs_uri = "gs://b/s_thumb.png"
-    service.mock_source_asset_service.repo.get_by_id.return_value = mock_source
+    service.mock_source_asset_repo.get_by_id.return_value = mock_source
 
     await service._enrich_timeline(timeline)
 
@@ -136,16 +143,9 @@ async def test_create_get_list_update_delete_timeline(service):
     assert d is True
 
 
-@pytest.mark.anyio
-async def test_render_timeline_by_id_not_found(service):
-    service.get_timeline = AsyncMock(return_value=None)
-    mock_user = MagicMock()
-    res = await service.render_timeline_by_id(999, mock_user)
-    assert res is None
-
 
 @pytest.mark.anyio
-async def test_render_timeline_by_id_success(service):
+async def test_render_timeline_success(service):
     mock_timeline = VideoTimeline(
         timeline_id=1,
         workspace_id="1",
@@ -153,27 +153,36 @@ async def test_render_timeline_by_id_success(service):
         video_clips=[],
         audio_clips=[],
     )
-    service.get_timeline = AsyncMock(return_value=mock_timeline)
 
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
-        tf.write(b"video content")
-        tf_path = tf.name
-    temp_dir = tempfile.mkdtemp()
+    mock_db_item = MediaItemModel(
+        id=55,
+        workspace_id=1,
+        user_email="user@test.com",
+        user_id=1,
+        mime_type=MimeTypeEnum.VIDEO_MP4,
+        model=GenerationModelEnum.WORKBENCH_RENDER,
+        aspect_ratio=AspectRatioEnum.RATIO_16_9,
+        status=JobStatusEnum.PROCESSING,
+        gcs_uris=[],
+        num_media=1,
+        source_assets=[],
+        source_media_items=[],
+    )
 
-    service._stitch_timeline = AsyncMock(return_value=(tf_path, temp_dir))
-
-    mock_asset = MagicMock()
-    mock_asset.id = 100
-    mock_asset.gcs_uri = "gs://bucket/renders/timeline_1_export.mp4"
-    service.mock_source_asset_service.upload_asset.return_value = mock_asset
+    service.mock_media_repo.create.return_value = mock_db_item
 
     mock_user = MagicMock()
-    res = await service.render_timeline_by_id(1, mock_user)
+    mock_user.id = 1
+    mock_user.email = "user@test.com"
+
+    mock_executor = MagicMock()
+
+    res = await service.render_timeline(mock_timeline, mock_user, mock_executor)
 
     assert res is not None
-    assert res.asset_id == 100
-    assert res.timeline_id == 1
-    assert res.gcs_uri == "gs://bucket/renders/timeline_1_export.mp4"
+    assert res.id == 55
+    assert res.status == JobStatusEnum.PROCESSING
+    mock_executor.submit.assert_called_once()
 
 
 @pytest.mark.anyio
@@ -279,7 +288,7 @@ async def test_render_timeline_success_video_only(service):
             )
             mock_run.side_effect = [mock_process_ffprobe, mock_process_ffmpeg]
 
-            output_path, temp_dir = await service.render_timeline(request)
+            output_path, temp_dir = await service.render_timeline_legacy(request)
             assert output_path.endswith("output.mp4")
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
@@ -289,7 +298,7 @@ async def test_render_timeline_success_video_only(service):
 async def test_render_timeline_no_clips(service):
     request = TimelineRequest(clips=[])
     with pytest.raises(ValueError, match="No clips provided"):
-        await service.render_timeline(request)
+        await service.render_timeline_legacy(request)
 
 
 @pytest.mark.anyio
@@ -316,4 +325,4 @@ async def test_render_timeline_ffmpeg_failure(service):
             mock_run.side_effect = [mock_ffprobe, mock_ffmpeg]
 
             with pytest.raises(RuntimeError, match="FFmpeg failed"):
-                await service.render_timeline(request)
+                await service.render_timeline_legacy(request)

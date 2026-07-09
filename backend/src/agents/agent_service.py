@@ -732,33 +732,76 @@ class AgentService:
                     message=msg_payload,
                 )
                 import json
+                import threading
 
-                for chunk in response_stream:
-                    if isinstance(chunk, str):
-                        chunk_text = chunk
-                    elif isinstance(chunk, dict):
-                        chunk_text = json.dumps(chunk)
-                    else:
-                        try:
-                            if hasattr(chunk, "model_dump"):
-                                chunk_text = json.dumps(chunk.model_dump())
-                            elif hasattr(chunk, "to_dict"):
-                                chunk_text = json.dumps(chunk.to_dict())
-                            else:
+                queue = asyncio.Queue()
+                loop = asyncio.get_running_loop()
+
+                def producer():
+                    try:
+                        for chunk in response_stream:
+                            logger.info(
+                                f"[Agent Stream Chunk Received] Raw chunk: {chunk}"
+                            )
+                            loop.call_soon_threadsafe(queue.put_nowait, chunk)
+                        loop.call_soon_threadsafe(queue.put_nowait, None)
+                    except ValueError as val_err:
+                        logger.warning(
+                            f"[Agent Stream ValueError] {val_err}",
+                            exc_info=True,
+                        )
+                        if "Can only parse array of JSON objects" in str(
+                            val_err
+                        ):
+                            logger.info(
+                                "Gracefully handled trailing REST stream error from Agent Engine."
+                            )
+                            loop.call_soon_threadsafe(queue.put_nowait, None)
+                        else:
+                            loop.call_soon_threadsafe(queue.put_nowait, val_err)
+                    except Exception as prod_err:
+                        logger.error(
+                            f"[Agent Stream Exception] {prod_err}",
+                            exc_info=True,
+                        )
+                        loop.call_soon_threadsafe(queue.put_nowait, prod_err)
+
+                threading.Thread(target=producer, daemon=True).start()
+
+                async with async_session_local() as db_session:
+                    repo = AgentRepository(db_session)
+                    while True:
+                        chunk = await queue.get()
+                        if chunk is None:
+                            break
+                        if isinstance(chunk, Exception):
+                            raise chunk
+
+                        if isinstance(chunk, str):
+                            chunk_text = chunk
+                        elif isinstance(chunk, dict):
+                            chunk_text = json.dumps(chunk)
+                        else:
+                            try:
+                                if hasattr(chunk, "model_dump"):
+                                    chunk_text = json.dumps(chunk.model_dump())
+                                elif hasattr(chunk, "to_dict"):
+                                    chunk_text = json.dumps(chunk.to_dict())
+                                else:
+                                    chunk_text = json.dumps(str(chunk))
+                            except Exception as parse_err:
+                                logger.warning(
+                                    f"Failed standard JSON parse/dump for chunk, falling back: {parse_err}"
+                                )
                                 chunk_text = json.dumps(str(chunk))
-                        except Exception:
-                            chunk_text = json.dumps(str(chunk))
 
-                    async with async_session_local() as db_session:
-                        repo = AgentRepository(db_session)
+                        logger.info(f"[Agent Stream Parsed JSON] {chunk_text}")
                         await repo.add_chat_event(
                             user_id=user_id,
                             session_id=session_id,
                             payload={"raw": f"data: {chunk_text}\n\n"},
                         )
 
-                async with async_session_local() as db_session:
-                    repo = AgentRepository(db_session)
                     await repo.add_chat_event(
                         user_id=user_id,
                         session_id=session_id,
