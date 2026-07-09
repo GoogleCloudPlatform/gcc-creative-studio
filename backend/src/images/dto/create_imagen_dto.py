@@ -122,6 +122,14 @@ class CreateImagenDto(BaseDto):
         description="Optional YouTube video URL for Video to Image generation.",
     )
 
+    @field_validator("reference_video_youtube_url")
+    def validate_youtube_url(cls, value: str | None) -> str | None:
+        if value is not None and not any(
+            host in value.lower() for host in ["youtube.com/", "youtu.be/"]
+        ):
+            raise ValueError("Invalid YouTube URL provided.")
+        return value
+
     @field_validator("prompt")
     def prompt_must_not_be_empty(cls, value: str) -> str:
         if not value.strip():

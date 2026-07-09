@@ -727,11 +727,16 @@ def _process_image_in_background(
                             parent_item = await media_repo.get_by_id(ref.id)
                             if parent_item and parent_item.gcs_uris:
                                 index = ref.index or 0
-                                if 0 <= index < len(parent_item.gcs_uris):
-                                    ref_uri = parent_item.gcs_uris[index]
-                                else:
-                                    index = 0
-                                    ref_uri = parent_item.gcs_uris[0]
+                                if not (0 <= index < len(parent_item.gcs_uris)):
+                                    worker_logger.warning(
+                                        "Reference media item %s index %s out of bounds.",
+                                        ref.id,
+                                        index,
+                                    )
+                                    raise ValueError(
+                                        f"Reference media item {ref.id} index {index} is out of bounds."
+                                    )
+                                ref_uri = parent_item.gcs_uris[index]
                                 reference_parts_for_api.append(
                                     types.Part.from_uri(
                                         file_uri=ref_uri,
