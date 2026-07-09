@@ -338,6 +338,10 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
 
   // Triggered from internal dropdown
   selectInternalModel(model: any) {
+    if (this.isVideoToImage() && !model.capabilities?.supportsVideoReference) {
+      return;
+    }
+
     this.isSettingsDropdownOpen.set(null);
     this.modelSelected.emit(model);
 
