@@ -27,6 +27,7 @@ import {
   OnInit,
   OnDestroy,
   inject,
+  OnChanges,
 } from '@angular/core';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {ReferenceImage} from '../../models/search.model';
@@ -58,7 +59,7 @@ export type NumPos = 1 | 2;
     MatTooltipModule,
   ],
 })
-export class FlowPromptBoxComponent implements OnInit, OnDestroy {
+export class FlowPromptBoxComponent implements OnInit, OnDestroy, OnChanges {
   private snackBar = inject(MatSnackBar);
 
   @Input() searchRequest!: any; // Keep for now, but prefer individual inputs
@@ -246,6 +247,21 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
     }
   }
 
+  ngOnChanges(): void {
+    if (
+      this.isVideoToImage() &&
+      !this.getSelectedModelObject()?.capabilities?.supportsVideoReference
+    ) {
+      // If Video to Image is selected, ensure the model supports video reference
+      const model = this.generationModels.find(
+        m => m.capabilities?.supportsVideoReference,
+      );
+      if (model && model !== this.getSelectedModelObject()) {
+        setTimeout(() => this.selectInternalModel(model));
+      }
+    }
+  }
+
   // --- Event Handlers ---
 
   onPromptInput(event: Event) {
@@ -291,19 +307,6 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
     if (!this.isTextToVideo()) {
       const longest = this.getSelectedModelDurations().at(-1);
       if (longest) this.selectDuration(longest);
-    }
-
-    if (
-      this.isVideoToImage() &&
-      !this.getSelectedModelObject()?.capabilities?.supportsVideoReference
-    ) {
-      // If Video to Image is selected, ensure the model supports video reference
-      const model = this.generationModels.find(
-        m => m.capabilities?.supportsVideoReference,
-      );
-      if (model) {
-        this.selectInternalModel(model);
-      }
     }
   }
 
