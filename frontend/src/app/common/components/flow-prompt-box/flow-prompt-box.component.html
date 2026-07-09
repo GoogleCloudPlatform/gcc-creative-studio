@@ -263,7 +263,7 @@
                 <mat-icon class="text-neutral-500">link</mat-icon>
                 <span class="absolute bottom-1 text-[8px] text-neutral-500">YouTube Link</span>
               } @else {
-                @if (youtubeThumbnailUrl; as thumb) {
+                @if (youtubeThumbnailUrl(); as thumb) {
                   <div class="relative h-full w-full rounded-lg overflow-hidden flex items-center justify-center bg-black">
                     <img [src]="thumb" class="h-full w-full object-cover opacity-80" alt="YouTube preview" />
                     <div class="absolute inset-0 flex items-center justify-center pointer-events-none">

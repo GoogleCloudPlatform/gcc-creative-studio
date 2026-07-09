@@ -228,13 +228,13 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy, OnChanges {
         .length > 0,
   );
 
-  get youtubeVideoId(): string | null {
-    return extractYouTubeVideoId(this.referenceVideoYoutubeUrl);
-  }
+  youtubeVideoId = computed(() =>
+    extractYouTubeVideoId(this.referenceVideoYoutubeUrl),
+  );
 
-  get youtubeThumbnailUrl(): string | null {
-    return getYouTubeThumbnailUrl(this.youtubeVideoId);
-  }
+  youtubeThumbnailUrl = computed(() =>
+    getYouTubeThumbnailUrl(this.youtubeVideoId()),
+  );
 
   // --- Lifecycle Hooks ---
   ngOnInit(): void {

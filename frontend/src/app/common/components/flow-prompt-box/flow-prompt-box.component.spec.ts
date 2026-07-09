@@ -50,27 +50,27 @@ describe('FlowPromptBoxComponent', () => {
   describe('YouTube preview helpers', () => {
     it('should return null when referenceVideoYoutubeUrl is null or empty', () => {
       component.referenceVideoYoutubeUrl = null;
-      expect(component.youtubeVideoId).toBeNull();
-      expect(component.youtubeThumbnailUrl).toBeNull();
+      expect(component.youtubeVideoId()).toBeNull();
+      expect(component.youtubeThumbnailUrl()).toBeNull();
 
       component.referenceVideoYoutubeUrl = '';
-      expect(component.youtubeVideoId).toBeNull();
-      expect(component.youtubeThumbnailUrl).toBeNull();
+      expect(component.youtubeVideoId()).toBeNull();
+      expect(component.youtubeThumbnailUrl()).toBeNull();
     });
 
     it('should extract video ID and generate thumbnail URL for standard youtube watch URLs', () => {
       component.referenceVideoYoutubeUrl =
         'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
-      expect(component.youtubeVideoId).toBe('dQw4w9WgXcQ');
-      expect(component.youtubeThumbnailUrl).toBe(
+      expect(component.youtubeVideoId()).toBe('dQw4w9WgXcQ');
+      expect(component.youtubeThumbnailUrl()).toBe(
         'https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg',
       );
     });
 
     it('should extract video ID for youtu.be short URLs', () => {
       component.referenceVideoYoutubeUrl = 'https://youtu.be/dQw4w9WgXcQ';
-      expect(component.youtubeVideoId).toBe('dQw4w9WgXcQ');
-      expect(component.youtubeThumbnailUrl).toBe(
+      expect(component.youtubeVideoId()).toBe('dQw4w9WgXcQ');
+      expect(component.youtubeThumbnailUrl()).toBe(
         'https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg',
       );
     });
@@ -78,8 +78,8 @@ describe('FlowPromptBoxComponent', () => {
     it('should extract video ID for shorts URLs', () => {
       component.referenceVideoYoutubeUrl =
         'https://youtube.com/shorts/dQw4w9WgXcQ?feature=share';
-      expect(component.youtubeVideoId).toBe('dQw4w9WgXcQ');
-      expect(component.youtubeThumbnailUrl).toBe(
+      expect(component.youtubeVideoId()).toBe('dQw4w9WgXcQ');
+      expect(component.youtubeThumbnailUrl()).toBe(
         'https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg',
       );
     });
