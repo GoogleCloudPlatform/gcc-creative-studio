@@ -159,7 +159,15 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   @Input() referenceImagesType: 'ASSET' | 'STYLE' = 'ASSET';
   @Input() referenceVideo: any | null = null;
   @Input() referenceAudio: any | null = null;
-  @Input() referenceVideoYoutubeUrl: string | null = null;
+  private _referenceVideoYoutubeUrl: string | null = null;
+  private referenceVideoYoutubeUrlSignal = signal<string | null>(null);
+  @Input() set referenceVideoYoutubeUrl(val: string | null) {
+    this._referenceVideoYoutubeUrl = val;
+    this.referenceVideoYoutubeUrlSignal.set(val);
+  }
+  get referenceVideoYoutubeUrl(): string | null {
+    return this._referenceVideoYoutubeUrl;
+  }
 
   @ViewChild('modeTrigger') modeTrigger!: ElementRef;
   @ViewChild('modeMenu') modeMenu!: ElementRef;
@@ -229,7 +237,7 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   );
 
   youtubeVideoId = computed(() =>
-    extractYouTubeVideoId(this.referenceVideoYoutubeUrl),
+    extractYouTubeVideoId(this.referenceVideoYoutubeUrlSignal()),
   );
 
   youtubeThumbnailUrl = computed(() =>

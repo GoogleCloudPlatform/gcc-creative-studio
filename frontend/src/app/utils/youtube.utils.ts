@@ -25,10 +25,14 @@ export function extractYouTubeVideoId(
   try {
     const parsed = new URL(trimmed);
     const hostname = parsed.hostname.toLowerCase();
-    if (
-      hostname.includes('youtube.com') ||
-      hostname.includes('youtube-nocookie.com')
-    ) {
+    const isYouTube =
+      hostname === 'youtube.com' ||
+      hostname.endsWith('.youtube.com') ||
+      hostname === 'youtube-nocookie.com' ||
+      hostname.endsWith('.youtube-nocookie.com');
+    const isYoutuBe = hostname === 'youtu.be' || hostname.endsWith('.youtu.be');
+
+    if (isYouTube) {
       if (
         parsed.pathname.startsWith('/embed/') ||
         parsed.pathname.startsWith('/shorts/') ||
@@ -40,7 +44,7 @@ export function extractYouTubeVideoId(
       }
       const v = parsed.searchParams.get('v');
       if (v && v.length === 11) return v;
-    } else if (hostname.includes('youtu.be')) {
+    } else if (isYoutuBe) {
       const id = parsed.pathname.slice(1).split('/')[0];
       if (id && id.length === 11) return id;
     } else {
