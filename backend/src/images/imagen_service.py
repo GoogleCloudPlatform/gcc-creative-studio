@@ -464,6 +464,7 @@ def gemini_generate_image(
     model: GenerationModelEnum,
     bucket_name: str,
     reference_images: list[types.Image] | None = None,
+    reference_parts: list[types.Part] | None = None,
     aspect_ratio: str | None = None,
     google_search: bool = False,
     resolution: str | None = None,
@@ -496,6 +497,8 @@ def gemini_generate_image(
                                 mime_type=img.mime_type,
                             ),
                         )
+            if reference_parts:
+                parts.extend(reference_parts)
 
             contents: list[types.ContentUnionDict] = [
                 types.Content(role="user", parts=parts),
@@ -660,7 +663,9 @@ def _process_image_in_background(
                         rewritten_prompt = request_dto.prompt
 
                     source_assets: list[SourceAssetLink] = []
+                    source_media_items_list: list[SourceMediaItemLink] = []
                     reference_images_for_api: list[types.Image] = []
+                    reference_parts_for_api: list[types.Part] = []
                     grounding_metadata = None
 
                     if request_dto.source_asset_ids:
@@ -689,6 +694,7 @@ def _process_image_in_background(
 
                     if request_dto.source_media_items:
                         for gen_input in request_dto.source_media_items:
+                            source_media_items_list.append(gen_input)
                             parent_item = await media_repo.get_by_id(
                                 gen_input.media_item_id,
                             )
@@ -715,11 +721,73 @@ def _process_image_in_background(
                                     gen_input.media_index,
                                 )
 
+                    if request_dto.reference_video:
+                        ref = request_dto.reference_video
+                        if ref.type == "media_item":
+                            parent_item = await media_repo.get_by_id(ref.id)
+                            if parent_item and parent_item.gcs_uris:
+                                index = ref.index or 0
+                                if 0 <= index < len(parent_item.gcs_uris):
+                                    ref_uri = parent_item.gcs_uris[index]
+                                else:
+                                    ref_uri = parent_item.gcs_uris[0]
+                                reference_parts_for_api.append(
+                                    types.Part.from_uri(
+                                        file_uri=ref_uri,
+                                        mime_type=parent_item.mime_type,
+                                    )
+                                )
+                                source_media_items_list.append(
+                                    SourceMediaItemLink(
+                                        media_item_id=ref.id,
+                                        media_index=index,
+                                        role=AssetRoleEnum.VIDEO_REFERENCE,
+                                    )
+                                )
+                            else:
+                                worker_logger.warning(
+                                    "Reference media item %s not found or has no uris.",
+                                    ref.id,
+                                )
+                        else:
+                            video_asset = await source_asset_repo.get_by_id(
+                                ref.id
+                            )
+                            if video_asset and video_asset.gcs_uri:
+                                reference_parts_for_api.append(
+                                    types.Part.from_uri(
+                                        file_uri=video_asset.gcs_uri,
+                                        mime_type=video_asset.mime_type,
+                                    )
+                                )
+                                source_assets.append(
+                                    SourceAssetLink(
+                                        asset_id=ref.id,
+                                        role=AssetRoleEnum.VIDEO_REFERENCE,
+                                    )
+                                )
+                            else:
+                                worker_logger.warning(
+                                    "Reference video asset %s not found.",
+                                    ref.id,
+                                )
+
+                    if request_dto.reference_video_youtube_url:
+                        reference_parts_for_api.append(
+                            types.Part.from_uri(
+                                file_uri=request_dto.reference_video_youtube_url,
+                                mime_type="video/*",
+                            )
+                        )
+
                     all_generated_images: list[types.GeneratedImage] = []
 
                     try:
                         # --- PATH 1: TEXT-TO-IMAGE GENERATION ---
-                        if not reference_images_for_api:
+                        if (
+                            not reference_images_for_api
+                            and not reference_parts_for_api
+                        ):
                             model = request_dto.generation_model
                             if model.is_gemini_image_model:
                                 # --- GEMINI FLASH TEXT-TO-IMAGE ---
@@ -808,6 +876,7 @@ def _process_image_in_background(
                                     prompt=request_dto.prompt,
                                     bucket_name=gcs_service.bucket_name,
                                     reference_images=reference_images_for_api,
+                                    reference_parts=reference_parts_for_api,
                                     aspect_ratio=request_dto.aspect_ratio,
                                     google_search=request_dto.google_search,
                                     resolution=request_dto.resolution,
@@ -968,9 +1037,9 @@ def _process_image_in_background(
                             "source_media_items": (
                                 [
                                     smi.model_dump()
-                                    for smi in request_dto.source_media_items
+                                    for smi in source_media_items_list
                                 ]
-                                if request_dto.source_media_items
+                                if source_media_items_list
                                 else None
                             ),
                             "mime_type": mime_type,

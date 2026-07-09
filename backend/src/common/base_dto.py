@@ -16,7 +16,7 @@
 
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 
@@ -261,4 +261,15 @@ class BaseDto(BaseModel):
         extra="forbid",
         populate_by_name=True,
         from_attributes=True,
+    )
+
+
+class AssetReferenceDto(BaseDto):
+    id: int = Field(description="The ID of the asset.")
+    type: str = Field(
+        description="The type of asset: 'source_asset' or 'media_item'."
+    )
+    index: int | None = Field(
+        default=0,
+        description="The index of the media in the media item (if applicable).",
     )

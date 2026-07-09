@@ -19,6 +19,7 @@ from pydantic import Field, field_validator, model_validator
 
 from src.common.base_dto import (
     AspectRatioEnum,
+    AssetReferenceDto,
     BaseDto,
     ColorAndToneEnum,
     CompositionEnum,
@@ -112,6 +113,14 @@ class CreateImagenDto(BaseDto):
         default=None,
         description="Optional name for the generated media.",
     )
+    reference_video: AssetReferenceDto | None = Field(
+        default=None,
+        description="Optional video asset reference for Video to Image generation.",
+    )
+    reference_video_youtube_url: str | None = Field(
+        default=None,
+        description="Optional YouTube video URL for Video to Image generation.",
+    )
 
     @field_validator("prompt")
     def prompt_must_not_be_empty(cls, value: str) -> str:
@@ -152,13 +161,23 @@ class CreateImagenDto(BaseDto):
         generated_inputs_count = (
             len(self.source_media_items) if self.source_media_items else 0
         )
-        total_inputs = source_assets_count + generated_inputs_count
+        video_refs_count = (1 if self.reference_video else 0) + (
+            1 if self.reference_video_youtube_url else 0
+        )
+        total_inputs = (
+            source_assets_count + generated_inputs_count + video_refs_count
+        )
         model = self.generation_model
 
         # Aspect Ratio Validation
         if self.aspect_ratio not in model.valid_aspect_ratios:
             raise ValueError(
                 f"Aspect ratio {self.aspect_ratio} is not supported for model {model.value}.",
+            )
+
+        if video_refs_count > 0 and not model.is_gemini_image_model:
+            raise ValueError(
+                f"Model '{model.value}' does not support video references."
             )
 
         if total_inputs == 0:
