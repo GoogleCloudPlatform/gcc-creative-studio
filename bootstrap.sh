@@ -150,11 +150,18 @@ start_sql_proxy() {
 
     export INSTANCE_CONNECTION_NAME="$DB_INSTANCE_NAME"
 
-    # 2. Download Proxy (if missing)
-    if [ ! -f "cloud-sql-proxy" ]; then
-        curl -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64
-        chmod +x cloud-sql-proxy
+    # 2. Download Proxy (if missing or wrong platform)
+    local PLATFORM_ARCH=$(get_platform_arch | tr '_' '.')
+    local PROXY_URL="https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.${PLATFORM_ARCH}"
+    
+    # Always re-download if we are debugging to be safe, or check if it's executable for the right platform
+    if [ -f "cloud-sql-proxy" ]; then
+        rm "cloud-sql-proxy"
     fi
+    
+    info "Downloading Cloud SQL Proxy for ${PLATFORM_ARCH}..."
+    curl -o cloud-sql-proxy "$PROXY_URL"
+    chmod +x cloud-sql-proxy
 
     # 3. Start Proxy in Background (Port 5432)
     ./cloud-sql-proxy --address 0.0.0.0 --port 5432 "$DB_INSTANCE_NAME" > /dev/null 2>&1 &
@@ -320,14 +327,45 @@ setup_project() {
         info "Linking billing account '$BILLING_ACCOUNT_ID'..."; gcloud beta billing projects link "$GCP_PROJECT_ID" --billing-account="$BILLING_ACCOUNT_ID"
     fi
     info "Setting gcloud config to use project '$GCP_PROJECT_ID'..."; gcloud config set project "$GCP_PROJECT_ID"
+    write_state "GCP_PROJECT_ID" "$GCP_PROJECT_ID"
     success "Project '$GCP_PROJECT_ID' is configured."
 }
 
 setup_repo() {
     step 4 "Configuring Git Repository"
 
-    # Since the script is run via curl, it never starts inside a repo. We must clone it.
+    # --- Ask for Repo URL ---
     warn "Please fork the main repository first: ${UPSTREAM_REPO_URL}/fork"
+    
+    # Try to detect if we are already in a valid repo
+    if [[ -d "infra" && -f "bootstrap.sh" ]]; then
+        prompt "It looks like you are already inside the repository. Use current directory? (y/n)"
+        read -r REPLY < /dev/tty
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            REPO_ROOT=$(pwd)
+            export REPO_ROOT
+            success "Using current directory as repository root: $REPO_ROOT"
+            
+            # Still need the URL for identifying owner/name
+            prompt "What is the git URL of YOUR forked repository? (e.g., https://github.com/user/repo.git)"
+            read -p "   Git URL: " GITHUB_REPO_URL < /dev/tty
+            
+            # --- Ask for Branch ---
+            prompt "Which git branch would you like to use? (default: main)"
+            read -p "   Branch Name: " SELECTED_BRANCH < /dev/tty
+            SELECTED_BRANCH=${SELECTED_BRANCH:-main}
+            DEFAULT_BRANCH_NAME="$SELECTED_BRANCH"
+            
+            GITHUB_REPO_OWNER=$(echo "$GITHUB_REPO_URL" | sed -n 's/.*github.com\/\([^\/]*\)\/.*/\1/p')
+            GITHUB_REPO_NAME=$(basename "$GITHUB_REPO_URL" .git)
+            
+            info "Detected GitHub owner: $GITHUB_REPO_OWNER"
+            info "Detected GitHub repo name: $GITHUB_REPO_NAME"
+            write_state "GITHUB_REPO_URL" "$GITHUB_REPO_URL"
+            return
+        fi
+    fi
+
     while true; do
         prompt "What is the git URL of YOUR forked repository? (e.g., https://github.com/user/repo.git)"
         read -p "   Git URL: " GITHUB_REPO_URL < /dev/tty
@@ -498,6 +536,9 @@ setup_firebase_app() {
     else info "Firebase web app '$FE_SERVICE_NAME' already exists."; fi
 
     info "Fetching Firebase SDK configuration to store in memory...";
+    name="$FE_SERVICE_NAME"
+    echo "firebase apps:list --project="$GCP_PROJECT_ID" --json | jq -r --arg name "$FE_SERVICE_NAME" '.result[] | select(.displayName == $name) | .appId'"
+
 	local APP_ID=$(firebase apps:list --project="$GCP_PROJECT_ID" --json | jq -r --arg name "$FE_SERVICE_NAME" '.result[] | select(.displayName == $name) | .appId')
     local SDK_CONFIG_JSON=$(firebase apps:sdkconfig WEB "$APP_ID" --project="$GCP_PROJECT_ID" --json)
 
@@ -514,7 +555,7 @@ setup_firebase_app() {
 }
 
 populate_oauth_secrets() {
-    step 8 "Automating OAuth Secret Population"
+    step 10 "Automating OAuth Secret Population"
     cd "$REPO_ROOT"
     info "Looking for the OAuth 2.0 Web Client ID using the Firebase Management API..."
 
@@ -561,7 +602,7 @@ populate_oauth_secrets() {
 }
 
 setup_db_secrets() {
-    step 9 "Configuring Database Secrets" # Renumber subsequent steps
+    step 8 "Configuring Database Secrets" # Renumber subsequent steps
     
     # 1. Enable required APIs first
     info "Enabling Secret Manager and SQL Admin APIs..."
@@ -592,7 +633,7 @@ setup_db_secrets() {
 }
 
 run_terraform() {
-    step 10 "Deploying Infrastructure with Terraform";
+    step 9 "Deploying Infrastructure with Terraform";
 	TFVARS_FILE_PATH="$REPO_ROOT/infra/environments/$ENV_NAME/$ENV_NAME.tfvars"; info "Navigating to $REPO_ROOT/infra/environments/$ENV_NAME..."; cd "$REPO_ROOT/infra/environments/$ENV_NAME"
     info "Initializing Terraform..."; terraform init -reconfigure
     info "Planning Terraform changes..."; terraform plan -var-file="$TFVARS_FILE_PATH"
@@ -604,7 +645,18 @@ run_terraform() {
 update_oauth_client() {
     step 11 "Configuring OAuth Client URIs"; cd "$REPO_ROOT"
     if [ -z "$AUTO_OAUTH_CLIENT_ID" ]; then warn "Could not find OAuth Client ID automatically. Skipping URI update."; return; fi
-    info "Fetching full OAuth client name..."; local OAUTH_CLIENT_FULL_NAME=$(gcloud iap oauth-clients list "$GCP_PROJECT_ID" --format="json" | jq -r --arg clientid "$AUTO_OAUTH_CLIENT_ID" '.[] | select(.name | contains($clientid)) | .name')
+    info "Fetching full OAuth client name..."
+    
+    # 1. Find the IAP brand for the project
+    local OAUTH_BRAND=$(gcloud iap oauth-brands list --project="$GCP_PROJECT_ID" --format="value(name)" | head -n 1)
+    if [ -z "$OAUTH_BRAND" ]; then
+        warn "Could not find an IAP brand in project '$GCP_PROJECT_ID'. Skipping URI update."
+        return
+    fi
+    
+    # 2. List clients for that brand
+    local OAUTH_CLIENT_FULL_NAME=$(gcloud iap oauth-clients list "$OAUTH_BRAND" --format="json" | jq -r --arg clientid "$AUTO_OAUTH_CLIENT_ID" '.[] | select(.name | contains($clientid)) | .name')
+    
     if [ -z "$OAUTH_CLIENT_FULL_NAME" ]; then warn "Could not resolve the full name for the OAuth client. Skipping URI update."; return; fi
     info "Ensuring OAuth Client has all required origins and redirect URIs..."; local PROJECT_DOMAIN_BASE=$(gcloud projects describe "$GCP_PROJECT_ID" --format='value(projectId)')
     local FIREBASEAPP_ORIGIN="https://${PROJECT_DOMAIN_BASE}.firebaseapp.com"; local WEBAPP_ORIGIN="https://${PROJECT_DOMAIN_BASE}.web.app"
@@ -729,13 +781,14 @@ seed_data() {
         fail "Python project file not found at '$PYPROJECT_FILE'."
     fi
 
-    # Create venv if it doesn't exist
-    uv venv "$VENV_DIR" --python python3
+    # Create venv if it doesn't exist, or clear it if it does
+    uv venv "$VENV_DIR" --python python3 --clear
 
     # Install dependencies from pyproject.toml into the virtual environment
     info "Installing Python project and its dependencies from 'backend/pyproject.toml'..."
     # Use an editable install (-e) to ensure all project dependencies are installed.
-    uv pip install --python "$VENV_DIR/bin/python" -e backend
+    # Force use of PyPI to avoid issues with unauthorized private indices
+    uv pip install --index-url https://pypi.org/simple --python "$VENV_DIR/bin/python" -e backend pyOpenSSL
 
     info "Executing Python bootstrap script..."
     # We `cd` into the backend directory so that relative paths to assets inside the python script resolve correctly.
