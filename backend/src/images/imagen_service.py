@@ -755,6 +755,9 @@ def _process_image_in_background(
                                     "Reference media item %s not found or has no uris.",
                                     ref.id,
                                 )
+                                raise ValueError(
+                                    f"Reference media item {ref.id} not found or has no uris."
+                                )
                         else:
                             video_asset = await source_asset_repo.get_by_id(
                                 ref.id
@@ -776,6 +779,9 @@ def _process_image_in_background(
                                 worker_logger.warning(
                                     "Reference video asset %s not found.",
                                     ref.id,
+                                )
+                                raise ValueError(
+                                    f"Reference video asset {ref.id} not found."
                                 )
 
                     if request_dto.reference_video_youtube_url:

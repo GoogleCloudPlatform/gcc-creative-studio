@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from typing import Annotated, Literal
+from urllib.parse import urlparse
 
 from fastapi import Query
 from pydantic import Field, field_validator, model_validator
@@ -124,11 +125,27 @@ class CreateImagenDto(BaseDto):
 
     @field_validator("reference_video_youtube_url")
     def validate_youtube_url(cls, value: str | None) -> str | None:
-        if value is not None and not any(
-            host in value.lower() for host in ["youtube.com/", "youtu.be/"]
+        if not value:
+            return value
+        try:
+            parsed = urlparse(value.strip())
+        except Exception:
+            raise ValueError("Invalid YouTube URL provided.")
+        valid_hosts = {
+            "youtube.com",
+            "www.youtube.com",
+            "m.youtube.com",
+            "youtu.be",
+            "youtube-nocookie.com",
+            "www.youtube-nocookie.com",
+        }
+        if (
+            parsed.scheme not in ("http", "https")
+            or not parsed.hostname
+            or parsed.hostname.lower() not in valid_hosts
         ):
             raise ValueError("Invalid YouTube URL provided.")
-        return value
+        return value.strip()
 
     @field_validator("prompt")
     def prompt_must_not_be_empty(cls, value: str) -> str:
