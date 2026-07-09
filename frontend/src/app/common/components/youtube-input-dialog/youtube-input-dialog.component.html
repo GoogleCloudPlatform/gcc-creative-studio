@@ -1,0 +1,113 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<div class="bg-neutral-900 text-white rounded-2xl p-6 min-w-[420px]">
+  <div class="flex items-start justify-between mb-8">
+    <div class="flex items-center gap-2">
+      <mat-icon class="text-red-500 !h-6 !w-6 flex items-center justify-center">play_circle</mat-icon>
+      <h2 class="text-lg font-semibold text-white !m-0">{{ data?.title || 'Add YouTube Video' }}</h2>
+    </div>
+    <button (click)="cancel()" class="text-neutral-400 hover:text-white transition-colors">
+      <mat-icon>close</mat-icon>
+    </button>
+  </div>
+
+  <p class="text-sm text-neutral-400 mb-5">
+    {{ data?.message || 'Enter or paste a YouTube video URL to use as reference.' }}
+  </p>
+
+  <!-- Clipboard confirmation card -->
+  @if (clipboardUrl() && !inputValue()) {
+    <div class="mb-5 p-3.5 rounded-xl bg-neutral-800 border border-neutral-700/80 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-3 min-w-0">
+        @if (clipboardVideoId(); as clipId) {
+          <div class="relative h-12 w-20 flex-shrink-0 rounded-lg overflow-hidden bg-black flex items-center justify-center">
+            <img [src]="'https://img.youtube.com/vi/' + clipId + '/mqdefault.jpg'" class="h-full w-full object-cover opacity-80" alt="Clipboard video preview" />
+            <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div class="flex items-center justify-center w-6 h-4 bg-red-600/90 rounded text-white shadow">
+                <mat-icon class="!h-3.5 !w-3.5 !text-xs !flex !items-center !justify-center">play_arrow</mat-icon>
+              </div>
+            </div>
+          </div>
+        }
+        <div class="min-w-0">
+          <div class="text-xs font-medium text-blue-400 mb-0.5">Found link in clipboard</div>
+          <div class="text-xs text-neutral-300 truncate">{{ clipboardUrl() }}</div>
+        </div>
+      </div>
+      <button mat-stroked-button color="primary" (click)="useClipboardUrl()" class="!flex-shrink-0 !rounded-lg !text-xs !px-3 !py-1">
+        Use this
+      </button>
+    </div>
+  }
+
+  <!-- URL Input field -->
+  <div class="mb-4">
+    <mat-form-field appearance="outline" class="w-full">
+      <mat-label>YouTube URL</mat-label>
+      <input
+        matInput
+        [ngModel]="inputValue()"
+        (ngModelChange)="onInputChange($event)"
+        (keyup.enter)="isValid() && submit()"
+        placeholder="https://www.youtube.com/watch?v=..."
+        autofocus
+      />
+      @if (inputValue()) {
+        <button matSuffix mat-icon-button aria-label="Clear" (click)="onInputChange('')">
+          <mat-icon class="text-neutral-400">close</mat-icon>
+        </button>
+      }
+    </mat-form-field>
+  </div>
+
+  <!-- Live preview card -->
+  @if (activeThumbnailUrl(); as thumbUrl) {
+    <div class="mb-6 rounded-xl overflow-hidden border border-neutral-700 bg-neutral-800 shadow-lg">
+      <div class="relative w-full aspect-video bg-black flex items-center justify-center group">
+        <img [src]="thumbUrl" class="w-full h-full object-cover opacity-90 transition-opacity group-hover:opacity-100" alt="Video thumbnail" />
+        <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div class="flex items-center justify-center w-12 h-8 bg-red-600/90 rounded-lg text-white shadow-xl transition-transform group-hover:scale-110">
+            <mat-icon class="!h-6 !w-6 !text-xl !flex !items-center !justify-center">play_arrow</mat-icon>
+          </div>
+        </div>
+      </div>
+      <div class="p-3 bg-neutral-800/90 flex items-center justify-between text-xs text-neutral-300">
+        <span class="flex items-center gap-1.5 font-medium text-emerald-400">
+          <mat-icon class="!h-4 !w-4 !text-sm !flex !items-center !justify-center">check_circle</mat-icon>
+          Valid YouTube Video
+        </span>
+        <span class="text-neutral-400 font-mono">ID: {{ activeVideoId() }}</span>
+      </div>
+    </div>
+  }
+
+  <!-- Dialog Actions -->
+  <div class="flex items-center justify-end gap-3 mt-4">
+    <button mat-button (click)="cancel()" class="!rounded-lg !text-neutral-300 hover:!text-white">
+      Cancel
+    </button>
+    <button
+      mat-raised-button
+      color="primary"
+      (click)="submit()"
+      [disabled]="!isValid()"
+      class="!rounded-lg !px-6"
+    >
+      Add Video
+    </button>
+  </div>
+</div>

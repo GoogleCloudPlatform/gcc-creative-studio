@@ -1,0 +1,137 @@
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import {
+  Component,
+  OnInit,
+  signal,
+  computed,
+  Inject,
+  Optional,
+} from '@angular/core';
+import {CommonModule} from '@angular/common';
+import {FormsModule} from '@angular/forms';
+import {
+  MatDialogRef,
+  MAT_DIALOG_DATA,
+  MatDialogModule,
+} from '@angular/material/dialog';
+import {MatFormFieldModule} from '@angular/material/form-field';
+import {MatInputModule} from '@angular/material/input';
+import {MatButtonModule} from '@angular/material/button';
+import {MatIconModule} from '@angular/material/icon';
+import {MatProgressSpinnerModule} from '@angular/material/progress-spinner';
+
+export interface YouTubeInputData {
+  title?: string;
+  message?: string;
+  placeholder?: string;
+}
+
+@Component({
+  selector: 'app-youtube-input-dialog',
+  standalone: true,
+  imports: [
+    CommonModule,
+    FormsModule,
+    MatDialogModule,
+    MatFormFieldModule,
+    MatInputModule,
+    MatButtonModule,
+    MatIconModule,
+    MatProgressSpinnerModule,
+  ],
+  templateUrl: './youtube-input-dialog.component.html',
+  styleUrls: ['./youtube-input-dialog.component.scss'],
+})
+export class YouTubeInputComponent implements OnInit {
+  inputValue = signal<string>('');
+  clipboardUrl = signal<string | null>(null);
+  isCheckingClipboard = signal<boolean>(true);
+
+  clipboardVideoId = computed(() => this.extractVideoId(this.clipboardUrl()));
+  inputVideoId = computed(() => this.extractVideoId(this.inputValue()));
+  isValid = computed(() => !!this.inputVideoId());
+
+  activeVideoId = computed(
+    () => this.inputVideoId() || this.clipboardVideoId(),
+  );
+  activeThumbnailUrl = computed(() => {
+    const id = this.activeVideoId();
+    return id ? `https://img.youtube.com/vi/${id}/mqdefault.jpg` : null;
+  });
+
+  constructor(
+    public dialogRef: MatDialogRef<YouTubeInputComponent>,
+    @Optional() @Inject(MAT_DIALOG_DATA) public data?: YouTubeInputData,
+  ) {}
+
+  ngOnInit(): void {
+    void this.checkClipboard();
+  }
+
+  async checkClipboard(): Promise<void> {
+    try {
+      if (
+        typeof navigator !== 'undefined' &&
+        navigator.clipboard &&
+        navigator.clipboard.readText
+      ) {
+        const text = await navigator.clipboard.readText();
+        if (text && this.extractVideoId(text)) {
+          this.clipboardUrl.set(text.trim());
+        }
+      }
+    } catch (error) {
+      // Clipboard access might be denied or unavailable in secure/test contexts
+      console.warn('Could not read clipboard text for YouTube link:', error);
+    } finally {
+      this.isCheckingClipboard.set(false);
+    }
+  }
+
+  extractVideoId(url: string | null): string | null {
+    if (!url) return null;
+    const cleanUrl = url.trim().split('&')[0];
+    const regExp =
+      /^.*(youtu\.be\/|v\/|u\/\w\/|embed\/|shorts\/|watch\?v=|&v=)([^#&?]*).*/;
+    const match = cleanUrl.match(regExp);
+    return match && match[2].length === 11 ? match[2] : null;
+  }
+
+  onInputChange(value: string): void {
+    this.inputValue.set(value);
+  }
+
+  useClipboardUrl(): void {
+    const clip = this.clipboardUrl();
+    if (clip) {
+      this.inputValue.set(clip);
+    }
+  }
+
+  submit(): void {
+    const id = this.inputVideoId();
+    if (id) {
+      const normalizedUrl = `https://www.youtube.com/watch?v=${id}`;
+      this.dialogRef.close(normalizedUrl);
+    }
+  }
+
+  cancel(): void {
+    this.dialogRef.close();
+  }
+}

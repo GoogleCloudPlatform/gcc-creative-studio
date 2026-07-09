@@ -69,7 +69,7 @@ import {
   handleInfoSnackbar,
   handleSuccessSnackbar,
 } from '../utils/handleMessageSnackbar';
-import {PromptDialogComponent} from '../common/components/prompt-dialog/prompt-dialog.component';
+import {YouTubeInputComponent} from '../common/components/youtube-input-dialog/youtube-input-dialog.component';
 
 @Component({
   selector: 'app-home',
@@ -1345,13 +1345,13 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   openVideoUrlInputForReference(): void {
-    const dialogRef = this.dialog.open(PromptDialogComponent, {
+    const dialogRef = this.dialog.open(YouTubeInputComponent, {
       width: '50vw',
       disableClose: true,
       data: {
         title: 'YouTube URL',
-        message: 'Enter YouTube URL',
-        placeholder: 'YouTube URL',
+        message: 'Enter or paste a YouTube video URL to use as reference.',
+        placeholder: 'https://www.youtube.com/watch?v=...',
       },
     });
 
@@ -1360,7 +1360,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
 
       const cleanUrl = url.split('&')[0];
       const youtubePattern =
-        /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]+)$/;
+        /^.*(youtu\.be\/|v\/|u\/\w\/|embed\/|shorts\/|watch\?v=|&v=)([^#&?]*).*/;
       if (youtubePattern.test(cleanUrl)) {
         this.referenceVideoYoutubeUrl = cleanUrl;
         handleInfoSnackbar(this._snackBar, 'YouTube URL added');
