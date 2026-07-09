@@ -113,8 +113,8 @@ resource "google_compute_backend_service" "be_service" {
   dynamic "iap" {
     for_each = (var.iap_oauth2_client_id != "" && var.iap_oauth2_client_secret != "") ? [1] : []
     content {
-      oauth2_client_id     = var.iap_oauth2_client_id
-      oauth2_client_secret = var.iap_oauth2_client_secret
+      oauth2_client_id     = local.use_workforce ? null : var.iap_oauth2_client_id
+      oauth2_client_secret = local.use_workforce ? null : var.iap_oauth2_client_secret
       enabled              = true
     }
   }
@@ -133,8 +133,8 @@ resource "google_compute_backend_service" "fe_service" {
   dynamic "iap" {
     for_each = (var.iap_oauth2_client_id != "" && var.iap_oauth2_client_secret != "") ? [1] : []
     content {
-      oauth2_client_id     = var.iap_oauth2_client_id
-      oauth2_client_secret = var.iap_oauth2_client_secret
+      oauth2_client_id     = local.use_workforce ? null : var.iap_oauth2_client_id
+      oauth2_client_secret = local.use_workforce ? null : var.iap_oauth2_client_secret
       enabled              = true
     }
   }
