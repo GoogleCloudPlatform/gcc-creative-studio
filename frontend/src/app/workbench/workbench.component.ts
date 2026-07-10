@@ -442,12 +442,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     this.playbackService.stopLoop();
     if (this.hasPendingSave) {
       this.saveTimeline();
+    } else if (this.activeSaveSubscription) {
+      this.activeSaveSubscription.unsubscribe();
     }
     if (this.saveSubscription) {
       this.saveSubscription.unsubscribe();
-    }
-    if (this.activeSaveSubscription) {
-      this.activeSaveSubscription.unsubscribe();
     }
   }
 
@@ -1605,6 +1604,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
     const timelineUpdate = {
       timeline_id: sb.timeline_id,
+      storyboard_id: sb.id,
       workspace_id: workspaceId || 1,
       title: 'Timeline',
       video_clips: videoClips,

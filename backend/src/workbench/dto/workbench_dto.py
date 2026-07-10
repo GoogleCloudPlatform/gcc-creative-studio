@@ -124,6 +124,7 @@ class VideoTimeline(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     timeline_id: Optional[str | int] = None
+    storyboard_id: Optional[str | int] = None
     workspace_id: str | int
     user_id: Optional[str | int] = None
     session_id: Optional[str] = None

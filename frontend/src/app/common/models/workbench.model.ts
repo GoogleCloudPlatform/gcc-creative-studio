@@ -86,6 +86,7 @@ export interface AudioClipDTO {
 
 export interface TimelineDTO {
   timeline_id?: number | string;
+  storyboard_id?: number | string;
   workspace_id: number | string;
   user_id?: number | string;
   session_id?: string;

@@ -178,6 +178,7 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
 
         return VideoTimeline(
             timeline_id=db_timeline.id,
+            storyboard_id=db_timeline.storyboard_id,
             workspace_id=db_timeline.workspace_id
             or str(db_timeline.storyboard_id or 1),
             user_id=db_timeline.user_id,
@@ -346,7 +347,12 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
         self, timeline_create: TimelineCreate
     ) -> TimelineResponse:
         """Creates a new timeline along with its video and audio clips."""
-        sb_id = getattr(timeline_create, "storyboard_id", None)
+        sb_id = None
+        if getattr(timeline_create, "storyboard_id", None) is not None:
+            try:
+                sb_id = int(timeline_create.storyboard_id)  # type: ignore
+            except (ValueError, TypeError):
+                sb_id = None
         db_timeline = Timeline(
             storyboard_id=sb_id,
             workspace_id=str(timeline_create.workspace_id),
@@ -411,6 +417,12 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
 
         if timeline_update.title is not None:
             db_timeline.title = timeline_update.title
+
+        if getattr(timeline_update, "storyboard_id", None) is not None:
+            try:
+                db_timeline.storyboard_id = int(timeline_update.storyboard_id)  # type: ignore
+            except (ValueError, TypeError):
+                pass
 
         db_timeline.workspace_id = str(timeline_update.workspace_id)
         if timeline_update.user_id is not None:

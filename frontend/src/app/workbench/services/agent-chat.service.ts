@@ -60,6 +60,7 @@ export class AgentChatService {
   private apiUrl = `${environment.backendURL}/agent`;
   private http = inject(HttpClient);
   private authService = inject(AuthService);
+  private activePollInterval: any = null;
 
   // Global parsed storyboard
   currentStoryboard = signal<any>(null);
@@ -176,6 +177,7 @@ export class AgentChatService {
   }
 
   startPolling(sessionId: string, callbacks: SSECallbacks<any>): any {
+    this.stopPolling();
     const pollUrl = `${this.apiUrl}/sessions/${sessionId}/poll`;
     const pollInterval = setInterval(async () => {
       try {
@@ -204,6 +206,9 @@ export class AgentChatService {
               if (data.trim() === '[DONE]') {
                 if (callbacks.onClose) callbacks.onClose();
                 clearInterval(pollInterval);
+                if (this.activePollInterval === pollInterval) {
+                  this.activePollInterval = null;
+                }
                 return;
               }
               try {
@@ -212,6 +217,9 @@ export class AgentChatService {
                   if (callbacks.onError)
                     callbacks.onError(new Error(parsed.error));
                   clearInterval(pollInterval);
+                  if (this.activePollInterval === pollInterval) {
+                    this.activePollInterval = null;
+                  }
                   return;
                 }
                 if (callbacks.onMessage) callbacks.onMessage(parsed);
@@ -236,6 +244,14 @@ export class AgentChatService {
         console.error('Polling tick failed:', pollErr);
       }
     }, 2500);
+    this.activePollInterval = pollInterval;
     return pollInterval;
+  }
+
+  stopPolling() {
+    if (this.activePollInterval) {
+      clearInterval(this.activePollInterval);
+      this.activePollInterval = null;
+    }
   }
 }
