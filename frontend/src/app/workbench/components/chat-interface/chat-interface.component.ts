@@ -1068,20 +1068,29 @@ export class ChatInterfaceComponent
   }
 
   checkAndResumePolling(res: SessionDetailResponse) {
-    if (res.session && res.session.events && res.session.events.length > 0) {
-      const events = res.session.events;
-      const lastEvent = events[events.length - 1];
-      const role = lastEvent.content?.role || lastEvent.author;
+    if (res.session) {
+      // If the session hasn't been updated in over 20 minutes, do not poll
+      const nowSeconds = Date.now() / 1000;
+      const lastUpdateSeconds = res.session.lastUpdateTime;
+      if (lastUpdateSeconds && nowSeconds - lastUpdateSeconds > 1200) {
+        return;
+      }
 
-      const isLastEventUser = role === 'user';
-      const isLastEventPendingTool = this.hasPendingToolCall(lastEvent);
-      const isLastEventToolResponse = this.isToolResponse(lastEvent);
+      if (res.session.events && res.session.events.length > 0) {
+        const events = res.session.events;
+        const lastEvent = events[events.length - 1];
+        const role = lastEvent.content?.role || lastEvent.author;
 
-      if (
-        (isLastEventUser && !isLastEventToolResponse) ||
-        isLastEventPendingTool
-      ) {
-        this.resumePolling(res.session.id);
+        const isLastEventUser = role === 'user';
+        const isLastEventPendingTool = this.hasPendingToolCall(lastEvent);
+        const isLastEventToolResponse = this.isToolResponse(lastEvent);
+
+        if (
+          (isLastEventUser && !isLastEventToolResponse) ||
+          isLastEventPendingTool
+        ) {
+          this.resumePolling(res.session.id);
+        }
       }
     }
   }
