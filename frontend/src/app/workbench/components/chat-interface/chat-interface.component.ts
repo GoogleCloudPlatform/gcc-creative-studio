@@ -367,28 +367,8 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
               );
             }
 
-            if (sessions && sessions.length > 0) {
-              const latestSession = sessions[0];
-              if (Number(this.currentSessionId) === Number(latestSession.id)) {
-                this.isLoadingHistory.set(false);
-                return;
-              }
-              this.currentSessionId = latestSession.id;
-              this.agentChatService.selectedSessionId.set(latestSession.id);
-              this.lastWorkspaceId = workspaceId;
-              this.loadChatMessages(latestSession.id);
-            } else {
-              this.lastWorkspaceId = workspaceId;
-              this.startNewChat();
-              void this.router.navigate([], {
-                relativeTo: this.route,
-                queryParams: {
-                  sessionId: null,
-                  storyboardId: null,
-                },
-                queryParamsHandling: 'merge',
-              });
-            }
+            this.lastWorkspaceId = workspaceId;
+            this.startNewChat();
           }
         },
         error: err => {
@@ -585,6 +565,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     }
   }
   startNewChat() {
+    this.isLoadingHistory.set(false);
     this.currentSessionId = null;
     this.agentChatService.selectedSessionId.set(null);
     this.chatMessages.set([]);
@@ -1041,6 +1022,35 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     return false;
   }
 
+  private isToolResponse(event: any): boolean {
+    if (!event) return false;
+    const content = event.content || {};
+    const parts = content.parts || [];
+    for (const part of parts) {
+      if (
+        part.functionResponse ||
+        part.function_response ||
+        part.toolResponse ||
+        part.tool_response
+      ) {
+        return true;
+      }
+    }
+    const rawEvent = event.raw_event || {};
+    const rawParts = rawEvent.content?.parts || [];
+    for (const part of rawParts) {
+      if (
+        part.functionResponse ||
+        part.function_response ||
+        part.toolResponse ||
+        part.tool_response
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   checkAndResumePolling(res: SessionDetailResponse) {
     if (res.session && res.session.events && res.session.events.length > 0) {
       const events = res.session.events;
@@ -1049,8 +1059,12 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
 
       const isLastEventUser = role === 'user';
       const isLastEventPendingTool = this.hasPendingToolCall(lastEvent);
+      const isLastEventToolResponse = this.isToolResponse(lastEvent);
 
-      if (isLastEventUser || isLastEventPendingTool) {
+      if (
+        (isLastEventUser && !isLastEventToolResponse) ||
+        isLastEventPendingTool
+      ) {
         this.resumePolling(res.session.id);
       }
     }

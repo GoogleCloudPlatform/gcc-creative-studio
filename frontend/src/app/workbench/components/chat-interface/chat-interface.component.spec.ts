@@ -772,23 +772,17 @@ describe('ChatInterfaceComponent', () => {
     });
   });
 
-  it('should auto-select the latest session when sessionId is not provided in query params and sessions exist', () => {
+  it('should start a new conversation by default when sessionId is not provided in query params and sessions exist', () => {
     spyOn(router, 'navigate');
     agentChatService.getSessions.and.returnValue(
       of([{id: 'latest-session-id', lastUpdateTime: 123}]),
-    );
-    agentChatService.getSessionDetail.and.returnValue(
-      of({
-        session: {id: 'latest-session-id', events: []},
-        storyboard: null,
-      }),
     );
     component['lastWorkspaceId'] = 999;
 
     queryParamsSubject.next({random: Math.random()});
 
-    expect(component.currentSessionId).toBe('latest-session-id');
-    expect(agentChatService.selectedSessionId()).toBe('latest-session-id');
+    expect(component.currentSessionId).toBeNull();
+    expect(agentChatService.selectedSessionId()).toBeNull();
     expect(router.navigate).toHaveBeenCalledWith([], {
       relativeTo: component['route'],
       queryParams: {sessionId: null, storyboardId: null},
