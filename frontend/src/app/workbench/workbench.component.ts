@@ -420,12 +420,15 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           this.timelineState.loadedTimelineId.set(tId);
           this.workbenchService.getTimeline(tId).subscribe({
             next: (timeline: TimelineDTO) => {
-              console.log('Loading timeline from API via queryParam:', timeline);
+              console.log(
+                'Loading timeline from API via queryParam:',
+                timeline,
+              );
               this.processGeneratedData(timeline);
               this.lastSavedText.set('Saved');
 
               if (timeline.storyboard_id || timeline.session_id) {
-                this.router.navigate([], {
+                void this.router.navigate([], {
                   relativeTo: this.route,
                   queryParams: {
                     storyboardId: timeline.storyboard_id || null,
@@ -485,12 +488,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     this.playbackService.stopLoop();
     if (this.hasPendingSave) {
       this.saveTimeline();
+    } else if (this.activeSaveSubscription) {
+      this.activeSaveSubscription.unsubscribe();
     }
     if (this.saveSubscription) {
       this.saveSubscription.unsubscribe();
-    }
-    if (this.activeSaveSubscription) {
-      this.activeSaveSubscription.unsubscribe();
     }
   }
 
@@ -1681,7 +1683,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           if (sb) {
             sb.timeline_id = res.timeline_id;
           }
-          this.router.navigate([], {
+          void this.router.navigate([], {
             relativeTo: this.route,
             queryParams: {timelineId: res.timeline_id},
             queryParamsHandling: 'merge',

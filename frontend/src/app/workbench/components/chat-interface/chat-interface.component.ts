@@ -25,6 +25,7 @@ import {
   ElementRef,
   AfterViewChecked,
   TemplateRef,
+  OnDestroy,
 } from '@angular/core';
 import {
   AgentChatService,
@@ -71,7 +72,9 @@ interface DropdownOption {
   templateUrl: './chat-interface.component.html',
   styleUrls: ['./chat-interface.component.scss'],
 })
-export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
+export class ChatInterfaceComponent
+  implements OnInit, AfterViewChecked, OnDestroy
+{
   private agentChatService = inject(AgentChatService);
   private workspaceStateService = inject(WorkspaceStateService);
   private projectStateService = inject(ProjectStateService);
@@ -207,6 +210,10 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     });
   }
 
+  ngOnDestroy() {
+    this.agentChatService.stopPolling();
+  }
+
   ngAfterViewChecked() {
     if (this.shouldScrollToBottom) {
       this.scrollToBottom();
@@ -282,7 +289,12 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
             const sessionExistsInWorkspace =
               sessions &&
               sessions.some(s => {
-                if (sessionId && s.id?.toString() === sessionId?.toString()) {
+                if (
+                  sessionId &&
+                  (s.id === sessionId ||
+                    s.id?.toString() === sessionId?.toString() ||
+                    Number(s.id) === Number(sessionId))
+                ) {
                   return true;
                 }
                 if (
@@ -303,7 +315,9 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
             if (shouldLoadDetail) {
               const isDifferentSession =
                 (sessionId &&
-                  sessionId.toString() !== this.currentSessionId?.toString()) ||
+                  (Number(sessionId) !== Number(this.currentSessionId) ||
+                    sessionId.toString() !==
+                      this.currentSessionId?.toString())) ||
                 (storyboardId &&
                   Number(storyboardId) !==
                     Number(this.agentChatService.currentStoryboard()?.id));
@@ -349,6 +363,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                           queryParams: {
                             sessionId: null,
                             storyboardId: res.storyboard?.id || null,
+                            timelineId: res.storyboard?.timeline_id || null,
                           },
                           queryParamsHandling: 'merge',
                         });
@@ -365,6 +380,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                           queryParams: {
                             sessionId: null,
                             storyboardId: res.storyboard.id,
+                            timelineId: res.storyboard.timeline_id || null,
                           },
                           queryParamsHandling: 'merge',
                         });
@@ -401,34 +417,18 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
                 );
               }
 
-              if (sessions && sessions.length > 0) {
-                const latestSession = sessions[0];
-                if (
-                  isSameProject &&
-                  this.currentSessionId?.toString() ===
-                    latestSession.id?.toString()
-                ) {
-                  this.isLoadingHistory.set(false);
-                  return;
-                }
-                this.currentSessionId = latestSession.id;
-                this.agentChatService.selectedSessionId.set(latestSession.id);
-                this.lastWorkspaceId = workspaceId;
-                this.lastProjectId = projectId;
-                this.loadChatMessages(latestSession.id);
-              } else {
-                this.lastWorkspaceId = workspaceId;
-                this.lastProjectId = projectId;
-                this.startNewChat();
-                void this.router.navigate([], {
-                  relativeTo: this.route,
-                  queryParams: {
-                    sessionId: null,
-                    storyboardId: null,
-                  },
-                  queryParamsHandling: 'merge',
-                });
-              }
+              this.lastWorkspaceId = workspaceId;
+              this.lastProjectId = projectId;
+              this.startNewChat();
+              void this.router.navigate([], {
+                relativeTo: this.route,
+                queryParams: {
+                  sessionId: null,
+                  storyboardId: null,
+                  timelineId: null,
+                },
+                queryParamsHandling: 'merge',
+              });
             }
           },
           error: err => {
@@ -442,6 +442,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   }
 
   loadChatMessages(sessionId: string, storyboardId?: number) {
+    this.agentChatService.stopPolling();
     this.isLoadingHistory.set(true);
 
     const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
@@ -625,6 +626,8 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     }
   }
   startNewChat() {
+    this.agentChatService.stopPolling();
+    this.isLoadingHistory.set(false);
     this.currentSessionId = null;
     this.agentChatService.selectedSessionId.set(null);
     this.chatMessages.set([]);
@@ -652,6 +655,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     }
   }
   onAgentChange(agentValue: string) {
+    this.agentChatService.stopPolling();
     this.agentChatService.activeAgent.set(agentValue);
     this.currentSessionId = null;
     this.chatMessages.set([]);
@@ -1091,17 +1095,65 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     return false;
   }
 
+  private isToolResponse(event: any): boolean {
+    if (!event) return false;
+    const content = event.content || {};
+    const parts = content.parts;
+    if (Array.isArray(parts)) {
+      for (const part of parts) {
+        if (
+          part &&
+          (part.functionResponse ||
+            part.function_response ||
+            part.toolResponse ||
+            part.tool_response)
+        ) {
+          return true;
+        }
+      }
+    }
+    const rawEvent = event.raw_event || {};
+    const rawParts = rawEvent.content?.parts;
+    if (Array.isArray(rawParts)) {
+      for (const part of rawParts) {
+        if (
+          part &&
+          (part.functionResponse ||
+            part.function_response ||
+            part.toolResponse ||
+            part.tool_response)
+        ) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   checkAndResumePolling(res: SessionDetailResponse) {
-    if (res.session && res.session.events && res.session.events.length > 0) {
-      const events = res.session.events;
-      const lastEvent = events[events.length - 1];
-      const role = lastEvent.content?.role || lastEvent.author;
+    if (res.session) {
+      // If the session hasn't been updated in over 20 minutes, do not poll
+      const nowSeconds = Date.now() / 1000;
+      const lastUpdateSeconds = res.session.lastUpdateTime;
+      if (lastUpdateSeconds && nowSeconds - lastUpdateSeconds > 1200) {
+        return;
+      }
 
-      const isLastEventUser = role === 'user';
-      const isLastEventPendingTool = this.hasPendingToolCall(lastEvent);
+      if (res.session.events && res.session.events.length > 0) {
+        const events = res.session.events;
+        const lastEvent = events[events.length - 1];
+        const role = lastEvent.content?.role || lastEvent.author;
 
-      if (isLastEventUser || isLastEventPendingTool) {
-        this.resumePolling(res.session.id);
+        const isLastEventUser = role === 'user';
+        const isLastEventPendingTool = this.hasPendingToolCall(lastEvent);
+        const isLastEventToolResponse = this.isToolResponse(lastEvent);
+
+        if (
+          (isLastEventUser && !isLastEventToolResponse) ||
+          isLastEventPendingTool
+        ) {
+          this.resumePolling(res.session.id);
+        }
       }
     }
   }

@@ -179,9 +179,9 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
 
         return VideoTimeline(
             timeline_id=db_timeline.id,
+            storyboard_id=db_timeline.storyboard_id,
             workspace_id=db_timeline.workspace_id
             or str(db_timeline.storyboard_id or 1),
-            storyboard_id=db_timeline.storyboard_id,
             user_id=db_timeline.user_id,
             session_id=db_timeline.session_id,
             title=db_timeline.title or "",
@@ -350,8 +350,14 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
         self, timeline_create: TimelineCreate
     ) -> TimelineResponse:
         """Creates a new timeline along with its video and audio clips."""
+        sb_id = None
+        if getattr(timeline_create, "storyboard_id", None) is not None:
+            try:
+                sb_id = int(timeline_create.storyboard_id)  # type: ignore
+            except (ValueError, TypeError):
+                sb_id = None
+
         # Resolve project_id
-        sb_id = getattr(timeline_create, "storyboard_id", None)
         project_id = getattr(timeline_create, "project_id", None)
         if sb_id and not project_id:
             stmt = select(Storyboard).where(Storyboard.id == sb_id)
@@ -364,7 +370,6 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
             raise ValueError(
                 "project_id or a valid storyboard_id is required to create a new timeline"
             )
-
         db_timeline = Timeline(
             storyboard_id=sb_id,
             project_id=project_id,
@@ -431,6 +436,12 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
 
         if timeline_update.title is not None:
             db_timeline.title = timeline_update.title
+
+        if getattr(timeline_update, "storyboard_id", None) is not None:
+            try:
+                db_timeline.storyboard_id = int(timeline_update.storyboard_id)  # type: ignore
+            except (ValueError, TypeError):
+                pass
 
         db_timeline.workspace_id = str(timeline_update.workspace_id)
         if timeline_update.user_id is not None:
