@@ -25,6 +25,7 @@ import {
   ElementRef,
   AfterViewChecked,
   TemplateRef,
+  OnDestroy,
 } from '@angular/core';
 import {
   AgentChatService,
@@ -70,7 +71,9 @@ interface DropdownOption {
   templateUrl: './chat-interface.component.html',
   styleUrls: ['./chat-interface.component.scss'],
 })
-export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
+export class ChatInterfaceComponent
+  implements OnInit, AfterViewChecked, OnDestroy
+{
   private agentChatService = inject(AgentChatService);
   private workspaceStateService = inject(WorkspaceStateService);
   private dialog = inject(MatDialog);
@@ -195,6 +198,10 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
         );
       }
     });
+  }
+
+  ngOnDestroy() {
+    this.agentChatService.stopPolling();
   }
 
   ngAfterViewChecked() {
@@ -382,6 +389,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   }
 
   loadChatMessages(sessionId: string, storyboardId?: number) {
+    this.agentChatService.stopPolling();
     this.isLoadingHistory.set(true);
 
     const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
@@ -565,6 +573,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     }
   }
   startNewChat() {
+    this.agentChatService.stopPolling();
     this.isLoadingHistory.set(false);
     this.currentSessionId = null;
     this.agentChatService.selectedSessionId.set(null);
@@ -590,6 +599,7 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
     }
   }
   onAgentChange(agentValue: string) {
+    this.agentChatService.stopPolling();
     this.agentChatService.activeAgent.set(agentValue);
     this.currentSessionId = null;
     this.chatMessages.set([]);
@@ -1025,27 +1035,33 @@ export class ChatInterfaceComponent implements OnInit, AfterViewChecked {
   private isToolResponse(event: any): boolean {
     if (!event) return false;
     const content = event.content || {};
-    const parts = content.parts || [];
-    for (const part of parts) {
-      if (
-        part.functionResponse ||
-        part.function_response ||
-        part.toolResponse ||
-        part.tool_response
-      ) {
-        return true;
+    const parts = content.parts;
+    if (Array.isArray(parts)) {
+      for (const part of parts) {
+        if (
+          part &&
+          (part.functionResponse ||
+            part.function_response ||
+            part.toolResponse ||
+            part.tool_response)
+        ) {
+          return true;
+        }
       }
     }
     const rawEvent = event.raw_event || {};
-    const rawParts = rawEvent.content?.parts || [];
-    for (const part of rawParts) {
-      if (
-        part.functionResponse ||
-        part.function_response ||
-        part.toolResponse ||
-        part.tool_response
-      ) {
-        return true;
+    const rawParts = rawEvent.content?.parts;
+    if (Array.isArray(rawParts)) {
+      for (const part of rawParts) {
+        if (
+          part &&
+          (part.functionResponse ||
+            part.function_response ||
+            part.toolResponse ||
+            part.tool_response)
+        ) {
+          return true;
+        }
       }
     }
     return false;

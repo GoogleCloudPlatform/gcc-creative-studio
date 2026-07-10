@@ -116,6 +116,7 @@ describe('ChatInterfaceComponent', () => {
             sseCallbacks = callbacks;
           },
         ),
+      stopPolling: jasmine.createSpy('stopPolling'),
     };
 
     const mockWorkspaceStateService = {
@@ -923,5 +924,83 @@ describe('ChatInterfaceComponent', () => {
     expect(agentChatService.currentStoryboard()).toEqual(
       jasmine.objectContaining({id: 123, timeline_id: 42}),
     );
+  });
+
+  describe('isToolResponse', () => {
+    it('should return false if event is null or undefined', () => {
+      expect(component['isToolResponse'](null)).toBeFalse();
+      expect(component['isToolResponse'](undefined)).toBeFalse();
+    });
+
+    it('should return false if parts is not an array', () => {
+      const event = {
+        content: {
+          parts: 'not-an-array',
+        },
+      };
+      expect(component['isToolResponse'](event)).toBeFalse();
+    });
+
+    it('should return false if rawParts is not an array', () => {
+      const event = {
+        raw_event: {
+          content: {
+            parts: 'not-an-array',
+          },
+        },
+      };
+      expect(component['isToolResponse'](event)).toBeFalse();
+    });
+
+    it('should return false if parts or rawParts array contains null or undefined elements', () => {
+      const event = {
+        content: {
+          parts: [null, undefined],
+        },
+      };
+      expect(component['isToolResponse'](event)).toBeFalse();
+    });
+
+    it('should return true if content.parts has functionResponse', () => {
+      const event = {
+        content: {
+          parts: [{functionResponse: {}}],
+        },
+      };
+      expect(component['isToolResponse'](event)).toBeTrue();
+    });
+
+    it('should return true if raw_event.content.parts has tool_response', () => {
+      const event = {
+        raw_event: {
+          content: {
+            parts: [{tool_response: {}}],
+          },
+        },
+      };
+      expect(component['isToolResponse'](event)).toBeTrue();
+    });
+  });
+
+  describe('Polling lifecycle', () => {
+    it('should call stopPolling on destroy', () => {
+      component.ngOnDestroy();
+      expect(agentChatService.stopPolling).toHaveBeenCalled();
+    });
+
+    it('should call stopPolling on startNewChat', () => {
+      component.startNewChat();
+      expect(agentChatService.stopPolling).toHaveBeenCalled();
+    });
+
+    it('should call stopPolling on loadChatMessages', () => {
+      component.loadChatMessages('session-123');
+      expect(agentChatService.stopPolling).toHaveBeenCalled();
+    });
+
+    it('should call stopPolling on onAgentChange', () => {
+      component.onAgentChange('script_writer');
+      expect(agentChatService.stopPolling).toHaveBeenCalled();
+    });
   });
 });
