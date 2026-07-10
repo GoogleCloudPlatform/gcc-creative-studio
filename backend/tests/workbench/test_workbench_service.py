@@ -143,7 +143,6 @@ async def test_create_get_list_update_delete_timeline(service):
     assert d is True
 
 
-
 @pytest.mark.anyio
 async def test_render_timeline_success(service):
     mock_timeline = VideoTimeline(
@@ -288,7 +287,9 @@ async def test_render_timeline_success_video_only(service):
             )
             mock_run.side_effect = [mock_process_ffprobe, mock_process_ffmpeg]
 
-            output_path, temp_dir = await service.render_timeline_legacy(request)
+            output_path, temp_dir = await service.render_timeline_legacy(
+                request
+            )
             assert output_path.endswith("output.mp4")
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)

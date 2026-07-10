@@ -54,9 +54,6 @@ export class WorkbenchService {
   }
 
   createTimeline(timeline: TimelineDTO): Observable<TimelineDTO> {
-    return this.http.post<TimelineDTO>(
-      `${this.apiUrl}/timelines`,
-      timeline,
-    );
+    return this.http.post<TimelineDTO>(`${this.apiUrl}/timelines`, timeline);
   }
 }

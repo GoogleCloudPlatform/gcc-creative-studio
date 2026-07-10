@@ -720,7 +720,7 @@ describe('ChatInterfaceComponent', () => {
     expect(component.chatMessages().length).toBe(1);
     expect(router.navigate).toHaveBeenCalledWith([], {
       relativeTo: component['route'],
-      queryParams: {sessionId: null, storyboardId: null},
+      queryParams: {sessionId: null, storyboardId: null, timelineId: null},
       queryParamsHandling: 'merge',
     });
   });
@@ -799,7 +799,7 @@ describe('ChatInterfaceComponent', () => {
     expect(agentChatService.selectedSessionId()).toBeNull();
     expect(router.navigate).toHaveBeenCalledWith([], {
       relativeTo: component['route'],
-      queryParams: {sessionId: null, storyboardId: null},
+      queryParams: {sessionId: null, storyboardId: null, timelineId: null},
       queryParamsHandling: 'merge',
     });
   });

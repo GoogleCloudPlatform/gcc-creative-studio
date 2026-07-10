@@ -28,21 +28,25 @@ export class ProjectStateService {
     this.activeProjectIdSubject.asObservable();
 
   constructor() {
-    const storedProjectId = localStorage.getItem('activeProjectId');
-    if (storedProjectId) {
-      const parsed = parseInt(storedProjectId, 10);
-      if (!isNaN(parsed)) {
-        this.activeProjectIdSubject.next(parsed);
+    if (typeof localStorage !== 'undefined') {
+      const storedProjectId = localStorage.getItem('activeProjectId');
+      if (storedProjectId) {
+        const parsed = parseInt(storedProjectId, 10);
+        if (!isNaN(parsed)) {
+          this.activeProjectIdSubject.next(parsed);
+        }
       }
     }
   }
 
   setActiveProjectId(projectId: number | null) {
     this.activeProjectIdSubject.next(projectId);
-    if (projectId !== null) {
-      localStorage.setItem('activeProjectId', projectId.toString());
-    } else {
-      localStorage.removeItem('activeProjectId');
+    if (typeof localStorage !== 'undefined') {
+      if (projectId !== null) {
+        localStorage.setItem('activeProjectId', projectId.toString());
+      } else {
+        localStorage.removeItem('activeProjectId');
+      }
     }
   }
 

@@ -641,6 +641,7 @@ export class ChatInterfaceComponent
       queryParams: {
         sessionId: null,
         storyboardId: null,
+        timelineId: null,
       },
       queryParamsHandling: 'merge',
     });

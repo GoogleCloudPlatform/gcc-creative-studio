@@ -57,7 +57,6 @@ export class ProjectSwitcherComponent implements OnInit, OnDestroy {
       this.workspaceStateService.activeWorkspaceId$.subscribe(workspaceId => {
         this.activeWorkspaceId = workspaceId;
         this.selectedProjectId = null;
-        this.projectStateService.setActiveProjectId(null);
         if (workspaceId) {
           this.loadProjects(workspaceId);
         } else {
@@ -101,9 +100,9 @@ export class ProjectSwitcherComponent implements OnInit, OnDestroy {
         const matched = this.projects.find(p => p.id === targetProjectId);
 
         if (matched) {
-          this.setActiveProject(matched);
+          this.setActiveProject(matched, false);
         } else {
-          this.setActiveProject(this.projects[0]);
+          this.setActiveProject(this.projects[0], true);
         }
       },
       error: err => {
@@ -178,7 +177,7 @@ export class ProjectSwitcherComponent implements OnInit, OnDestroy {
       .subscribe({
         next: (project: ProjectResponse) => {
           this.projects = [project];
-          this.setActiveProject(project);
+          this.setActiveProject(project, false);
         },
         error: err => {
           console.error('Failed to create default project:', err);
@@ -188,18 +187,21 @@ export class ProjectSwitcherComponent implements OnInit, OnDestroy {
       });
   }
 
-  private setActiveProject(project: ProjectResponse): void {
+  private setActiveProject(project: ProjectResponse, clearParams = true): void {
     this.selectedProjectId = project.id;
     this.projectStateService.setActiveProjectId(project.id);
 
-    void this.router.navigate([], {
-      relativeTo: this.route,
-      queryParams: {
-        projectId: null,
-        storyboardId: null,
-        sessionId: null,
-      },
-      queryParamsHandling: 'merge',
-    });
+    if (clearParams) {
+      void this.router.navigate([], {
+        relativeTo: this.route,
+        queryParams: {
+          projectId: null,
+          storyboardId: null,
+          sessionId: null,
+          timelineId: null,
+        },
+        queryParamsHandling: 'merge',
+      });
+    }
   }
 }

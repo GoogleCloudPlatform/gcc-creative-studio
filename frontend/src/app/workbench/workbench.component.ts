@@ -78,6 +78,8 @@ import {debounceTime, switchMap, takeWhile, catchError} from 'rxjs/operators';
 import {StoryboardService} from '../services/storyboard/storyboard.service';
 import {GalleryService} from '../gallery/gallery.service';
 import {MediaItem} from '../common/models/media-item.model';
+import {MatSnackBar} from '@angular/material/snack-bar';
+import {handleErrorSnackbar} from '../utils/handleMessageSnackbar';
 
 @Component({
   selector: 'app-workbench',
@@ -176,6 +178,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   private router = inject(Router);
   private storyboardService = inject(StoryboardService);
   private galleryService = inject(GalleryService);
+  private snackBar = inject(MatSnackBar);
 
   private workspaceStateService = inject(WorkspaceStateService);
   private sourceAssetService = inject(SourceAssetService);
@@ -256,17 +259,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
             return;
           }
 
-          console.log(
-            'No storyboard or timeline ID found, clearing timeline clips.',
-          );
-          this.timelineState.loadedTimelineId.set(undefined);
-          this.timelineState.timelineClips.set([]);
-          this.timelineState.selectedClipId.set(null);
-          this.timelineState.assets.set([]);
-          this.timelineState.currentTime.set(0);
-          this.timelineState.isPlaying.set(false);
-          this.timelineState.scrollOffset.set(0);
-          this.lastSavedText.set('');
+          this.clearTimeline();
         }
       },
       {allowSignalWrites: true},
@@ -391,7 +384,23 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     return this.mutedTracks().has(trackIndex);
   }
 
+  clearTimeline() {
+    console.log('Clearing timeline clips and assets.');
+    this.timelineState.loadedTimelineId.set(undefined);
+    this.timelineState.timelineClips.set([]);
+    this.timelineState.selectedClipId.set(null);
+    this.timelineState.assets.set([]);
+    this.timelineState.currentTime.set(0);
+    this.timelineState.isPlaying.set(false);
+    this.timelineState.scrollOffset.set(0);
+    this.lastSavedText.set('');
+  }
+
   ngOnInit() {
+    this.projectStateService.activeProjectId$.subscribe(projectId => {
+      this.clearTimeline();
+    });
+
     // save timeline after 10 seconds of inactivity
     this.saveSubscription = this.saveSubject
       .pipe(debounceTime(10000))
@@ -416,14 +425,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       if (timelineId) {
         const tId = Number(timelineId);
         if (this.timelineState.loadedTimelineId() !== tId) {
-          console.log('Fetching timeline for query parameter timelineId:', tId);
           this.timelineState.loadedTimelineId.set(tId);
           this.workbenchService.getTimeline(tId).subscribe({
             next: (timeline: TimelineDTO) => {
-              console.log(
-                'Loading timeline from API via queryParam:',
-                timeline,
-              );
               this.processGeneratedData(timeline);
               this.lastSavedText.set('Saved');
 
@@ -441,6 +445,17 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
             error: err => {
               console.error('Failed to fetch timeline from queryParam:', err);
               this.lastSavedText.set('Failed to load timeline');
+              handleErrorSnackbar(this.snackBar, err, 'Load Timeline');
+              this.clearTimeline();
+              void this.router.navigate([], {
+                relativeTo: this.route,
+                queryParams: {
+                  sessionId: null,
+                  storyboardId: null,
+                  timelineId: null,
+                },
+                queryParamsHandling: 'merge',
+              });
             },
           });
         }
@@ -889,7 +904,6 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       });
     }
 
-    console.log('Setting timelineClips to:', newClips);
     this.timelineState.timelineClips.set(newClips);
     this.refreshTimelineLayout();
   }

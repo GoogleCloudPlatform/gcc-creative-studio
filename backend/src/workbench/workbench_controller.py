@@ -62,9 +62,7 @@ async def render_timeline_by_id(
             status_code=403, detail="Not authorized to access this timeline"
         )
     executor = request.app.state.executor
-    result = await service.render_timeline(
-        timeline, current_user, executor
-    )
+    result = await service.render_timeline(timeline, current_user, executor)
     if not result:
         raise HTTPException(status_code=404, detail="Timeline not found")
     return result
@@ -88,9 +86,7 @@ async def render_timeline(
             status_code=403, detail="Not authorized to access this timeline"
         )
     executor = request.app.state.executor
-    result = await service.render_timeline(
-        timeline, current_user, executor
-    )
+    result = await service.render_timeline(timeline, current_user, executor)
     if not result:
         raise HTTPException(status_code=404, detail="Timeline not found")
     return result
