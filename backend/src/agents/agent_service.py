@@ -697,12 +697,19 @@ class AgentService:
                 def producer():
                     try:
                         for chunk in response_stream:
-                            logger.info(f"[Agent Stream Chunk Received] Raw chunk: {chunk}")
+                            logger.info(
+                                f"[Agent Stream Chunk Received] Raw chunk: {chunk}"
+                            )
                             loop.call_soon_threadsafe(queue.put_nowait, chunk)
                         loop.call_soon_threadsafe(queue.put_nowait, None)
                     except ValueError as val_err:
-                        logger.warning(f"[Agent Stream ValueError] {val_err}", exc_info=True)
-                        if "Can only parse array of JSON objects" in str(val_err):
+                        logger.warning(
+                            f"[Agent Stream ValueError] {val_err}",
+                            exc_info=True,
+                        )
+                        if "Can only parse array of JSON objects" in str(
+                            val_err
+                        ):
                             logger.info(
                                 "Gracefully handled trailing REST stream error from Agent Engine."
                             )
@@ -710,7 +717,10 @@ class AgentService:
                         else:
                             loop.call_soon_threadsafe(queue.put_nowait, val_err)
                     except Exception as prod_err:
-                        logger.error(f"[Agent Stream Exception] {prod_err}", exc_info=True)
+                        logger.error(
+                            f"[Agent Stream Exception] {prod_err}",
+                            exc_info=True,
+                        )
                         loop.call_soon_threadsafe(queue.put_nowait, prod_err)
 
                 threading.Thread(target=producer, daemon=True).start()
@@ -737,7 +747,9 @@ class AgentService:
                                 else:
                                     chunk_text = json.dumps(str(chunk))
                             except Exception as parse_err:
-                                logger.warning(f"Failed standard JSON parse/dump for chunk, falling back: {parse_err}")
+                                logger.warning(
+                                    f"Failed standard JSON parse/dump for chunk, falling back: {parse_err}"
+                                )
                                 chunk_text = json.dumps(str(chunk))
 
                         logger.info(f"[Agent Stream Parsed JSON] {chunk_text}")
