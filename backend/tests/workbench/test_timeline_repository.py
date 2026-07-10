@@ -101,6 +101,7 @@ class TestTimelineRepository:
         res = await timeline_repo.get_by_id_with_details(1)
         assert res is not None
         assert res.timeline_id == 1
+        assert res.storyboard_id == 10
         assert res.workspace_id == "ws1"
         assert len(res.video_clips) == 2
         assert len(res.audio_clips) == 1
@@ -138,6 +139,7 @@ class TestTimelineRepository:
         res = await timeline_repo.find_by_storyboard(20)
         assert len(res) == 1
         assert res[0].timeline_id == 2
+        assert res[0].storyboard_id == 20
 
     @pytest.mark.anyio
     async def test_create_timeline(self, timeline_repo, db_session_mock):
@@ -175,6 +177,7 @@ class TestTimelineRepository:
 
         data = VideoTimeline(
             timeline_id=None,
+            storyboard_id=30,
             workspace_id="ws1",
             session_id="30",
             title="Created",
@@ -196,6 +199,8 @@ class TestTimelineRepository:
         )
         res = await timeline_repo.create_timeline(data)
         assert res.timeline_id == 3
+        assert res.storyboard_id == 30
+        assert db_session_mock.add.call_args[0][0].storyboard_id == 30
         db_session_mock.add.assert_called_once()
         db_session_mock.commit.assert_called_once()
 
@@ -227,6 +232,7 @@ class TestTimelineRepository:
         db_session_mock.execute.return_value = mock_result
 
         update_data = VideoTimeline(
+            storyboard_id=45,
             workspace_id="ws1",
             title="New Title",
             video_clips=[
@@ -251,6 +257,8 @@ class TestTimelineRepository:
         res = await timeline_repo.update_timeline(4, update_data)
         assert res is not None
         assert res.title == "New Title"
+        assert res.storyboard_id == 45
+        assert mock_timeline.storyboard_id == 45
         assert len(mock_timeline.video_clips) == 1
         assert len(mock_timeline.audio_clips) == 1
         assert mock_timeline.transition_in_type == "fade"

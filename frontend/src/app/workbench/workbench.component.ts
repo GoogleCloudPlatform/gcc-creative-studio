@@ -1605,6 +1605,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
     const timelineUpdate = {
       timeline_id: sb.timeline_id,
+      storyboard_id: sb.id,
       workspace_id: workspaceId || 1,
       title: 'Timeline',
       video_clips: videoClips,

@@ -21,9 +21,12 @@ import pytest
 from fastapi import status
 
 from main import app
-from src.workbench.dto.workbench_dto import (
-    TimelineResponse,
-    RenderTimelineResponse,
+from src.workbench.dto.workbench_dto import TimelineResponse
+from src.galleries.dto.gallery_response_dto import MediaItemResponse
+from src.common.base_dto import (
+    GenerationModelEnum,
+    MimeTypeEnum,
+    AspectRatioEnum,
 )
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.common.schema.media_item_model import (
@@ -87,11 +90,12 @@ class TestWorkbenchController:
 
     def test_create_timeline(self, api_client, mock_workbench_service):
         mock_res = TimelineResponse(
-            timeline_id=1, workspace_id="ws1", title="New"
+            timeline_id=1, storyboard_id=5, workspace_id="ws1", title="New"
         )
         mock_workbench_service.create_timeline.return_value = mock_res
 
         payload = {
+            "storyboardId": 5,
             "workspace_id": "ws1",
             "title": "New",
             "video_clips": [],
@@ -102,6 +106,10 @@ class TestWorkbenchController:
         assert response.status_code == status.HTTP_201_CREATED
         assert response.json()["timeline_id"] == 1
         assert response.json()["title"] == "New"
+        assert (
+            response.json().get("storyboard_id") == 5
+            or response.json().get("storyboardId") == 5
+        )
 
     def test_get_timeline_found(self, api_client, mock_workbench_service):
         mock_res = TimelineResponse(
@@ -135,11 +143,12 @@ class TestWorkbenchController:
 
     def test_update_timeline_found(self, api_client, mock_workbench_service):
         mock_res = TimelineResponse(
-            timeline_id=4, workspace_id="ws1", title="Updated"
+            timeline_id=4, storyboard_id=10, workspace_id="ws1", title="Updated"
         )
         mock_workbench_service.update_timeline.return_value = mock_res
 
         payload = {
+            "storyboard_id": 10,
             "workspace_id": "ws1",
             "title": "Updated",
             "video_clips": [],
@@ -149,6 +158,10 @@ class TestWorkbenchController:
         response = api_client.put("/api/workbench/timelines/4", json=payload)
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["title"] == "Updated"
+        assert (
+            response.json().get("storyboard_id") == 10
+            or response.json().get("storyboardId") == 10
+        )
 
     def test_update_timeline_not_found(
         self, api_client, mock_workbench_service
