@@ -150,6 +150,7 @@ def _process_timeline_in_background(
                             timeline
                         )
 
+                        thumbnail_path = None
                         try:
                             final_gcs_uri = await asyncio.to_thread(
                                 gcs_service.upload_file_to_gcs,

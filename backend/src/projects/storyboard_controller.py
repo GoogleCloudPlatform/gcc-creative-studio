@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from src.auth.auth_guard import get_current_user
 from src.users.user_model import UserModel
 from src.projects.project_service import ProjectService
+from src.workspaces.workspace_auth_guard import WorkspaceAuth
 from src.projects.dto.project_dto import (
     StoryboardCreate,
     StoryboardUpdate,
@@ -68,7 +69,9 @@ async def list_storyboards(
     session_id: str | None = None,
     current_user: UserModel = Depends(get_current_user),
     project_service: ProjectService = Depends(),
+    workspace_auth: WorkspaceAuth = Depends(),
 ):
+    await workspace_auth.authorize(workspace_id, current_user)
     storyboards = await project_service.list_storyboards(
         workspace_id, session_id
     )
