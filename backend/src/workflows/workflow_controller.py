@@ -33,9 +33,6 @@ router = APIRouter(
     prefix="/api/workflows",
     tags=["Workflows"],
     responses={404: {"description": "Not found"}},
-    dependencies=[
-        Depends(RoleChecker([UserRoleEnum.WORKFLOWS, UserRoleEnum.ADMIN]))
-    ],
 )
 
 
@@ -190,6 +187,9 @@ async def batch_execute_workflow(
     authorization: str | None = Header(default=None),
     current_user: UserModel = Depends(get_current_user),
     workflow_service: WorkflowService = Depends(),
+    _: None = Depends(
+        RoleChecker([UserRoleEnum.WORKFLOWS, UserRoleEnum.ADMIN])
+    ),
 ):
     """Executes a batch of workflow runs based on the provided items."""
     # Inject user_auth_header into each item's args

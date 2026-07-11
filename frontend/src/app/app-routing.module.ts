@@ -86,7 +86,6 @@ const routes: Routes = [
   {
     path: 'workflows',
     canActivate: [AuthGuardService],
-    data: {requiredRoles: [UserRolesEnum.WORKFLOWS, UserRolesEnum.ADMIN]},
     children: [
       {path: '', component: WorkflowListComponent, pathMatch: 'full'},
       {

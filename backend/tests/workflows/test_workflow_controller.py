@@ -178,3 +178,65 @@ def test_list_executions_success(client, mock_service):
 
     assert response.status_code == 200
     assert len(response.json()) == 1
+
+
+def test_batch_execute_success(client, mock_service):
+    mock_service.batch_execute_workflow.return_value = {
+        "results": [
+            {"row_index": 0, "execution_id": "exec_1", "status": "SUCCESS"}
+        ]
+    }
+
+    payload = {"items": [{"row_index": 0, "args": {"param1": "val1"}}]}
+    response = client.post("/api/workflows/wf1/batch-execute", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["results"][0]["execution_id"] == "exec_1"
+    mock_service.batch_execute_workflow.assert_called_once()
+
+
+def test_batch_execute_forbidden_for_regular_user(mock_service):
+    # Setup app with a regular user
+    app = FastAPI()
+    app.include_router(router)
+
+    regular_user = UserModel(
+        id=2,
+        email="user@example.com",
+        name="Regular User",
+        roles=[UserRoleEnum.USER],
+    )
+    app.dependency_overrides[get_current_user] = lambda: regular_user
+    app.dependency_overrides[WorkflowService] = lambda: mock_service
+
+    client = TestClient(app)
+
+    payload = {"items": [{"row_index": 0, "args": {"param1": "val1"}}]}
+    response = client.post("/api/workflows/wf1/batch-execute", json=payload)
+
+    assert response.status_code == 403
+    mock_service.batch_execute_workflow.assert_not_called()
+
+
+def test_regular_user_can_access_other_endpoints(mock_service):
+    app = FastAPI()
+    app.include_router(router)
+
+    regular_user = UserModel(
+        id=2,
+        email="user@example.com",
+        name="Regular User",
+        roles=[UserRoleEnum.USER],
+    )
+    app.dependency_overrides[get_current_user] = lambda: regular_user
+    app.dependency_overrides[WorkflowService] = lambda: mock_service
+
+    client = TestClient(app)
+
+    mock_service.execute_workflow.return_value = "exec_id_123"
+    payload = {"args": {"param1": "val1"}}
+    response = client.post("/api/workflows/wf1/workflow-execute", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["execution_id"] == "exec_id_123"
+    mock_service.execute_workflow.assert_called_once()
