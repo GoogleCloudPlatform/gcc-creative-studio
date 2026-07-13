@@ -26,7 +26,7 @@ class Timeline(Base):
         ForeignKey("storyboards.id"), nullable=True
     )
     project_id: Mapped[int] = mapped_column(
-        ForeignKey("projects.id"), nullable=False
+        ForeignKey("projects.id"), unique=True, nullable=False
     )
     title: Mapped[str | None] = mapped_column(String, nullable=True)
     user_id: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -46,7 +46,7 @@ class Timeline(Base):
     )
 
     project: Mapped["Project"] = relationship(
-        "Project", back_populates="timelines"
+        "Project", back_populates="timeline"
     )
     storyboard: Mapped["Storyboard"] = relationship(
         "Storyboard", back_populates="timeline"

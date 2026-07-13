@@ -20,6 +20,7 @@ from src.database import Base
 
 if TYPE_CHECKING:
     from src.workspaces.schema.workspace_model import Workspace
+    from src.workbench.schema.timeline_model import Timeline
 
 
 class Project(Base):
@@ -53,10 +54,13 @@ class Project(Base):
 
     # Relationships
     workspace: Mapped["Workspace"] = relationship(back_populates="projects")
-    storyboards: Mapped[list["Storyboard"]] = relationship(
-        back_populates="project", cascade="all, delete-orphan"
+    storyboard: Mapped["Storyboard"] = relationship(
+        back_populates="project", uselist=False, cascade="all, delete-orphan"
     )
-    timelines: Mapped[list["Timeline"]] = relationship(
+    timeline: Mapped["Timeline"] = relationship(
+        back_populates="project", uselist=False, cascade="all, delete-orphan"
+    )
+    sessions: Mapped[list["Session"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
 
@@ -66,7 +70,6 @@ class Storyboard(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
-    session_id: Mapped[str | None] = mapped_column(String, nullable=True)
     template_name: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Background Music Prompt
@@ -78,10 +81,10 @@ class Storyboard(Base):
     )
 
     project_id: Mapped[int] = mapped_column(
-        ForeignKey("projects.id"), nullable=False
+        ForeignKey("projects.id"), unique=True, nullable=False
     )
 
-    project: Mapped["Project"] = relationship(back_populates="storyboards")
+    project: Mapped["Project"] = relationship(back_populates="storyboard")
     scenes: Mapped[list["Scene"]] = relationship(
         back_populates="storyboard", cascade="all, delete-orphan"
     )
@@ -171,3 +174,16 @@ class Scene(Base):
 #     html_content: Mapped[str | None] = mapped_column(String, nullable=True)
 #
 #     project: Mapped["Project"] = relationship(back_populates="canvas")
+
+
+class Session(Base):
+    __tablename__ = "sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    session_id: Mapped[str] = mapped_column(String, nullable=False)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    project: Mapped["Project"] = relationship(back_populates="sessions")
