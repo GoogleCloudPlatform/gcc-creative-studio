@@ -183,7 +183,7 @@ describe('WorkbenchComponent', () => {
     expect(assets[0].name).toBe('Cloud Media');
   });
 
-  it('should process generated data', () => {
+  it('should process generated data and position audio using video_clip_index', () => {
     const stateService = TestBed.inject(TimelineStateService);
     const mockData: TimelineDTO = {
       timeline_id: 2,
@@ -197,11 +197,18 @@ describe('WorkbenchComponent', () => {
           volume: 1.0,
           speed: 1.0,
         },
+        {
+          asset_ref: {id: 3, type: 'media_item'},
+          trim: {offset_seconds: 0, duration_seconds: 10},
+          presigned_url: 'video2.mp4',
+          volume: 1.0,
+          speed: 1.0,
+        },
       ],
       audio_clips: [
         {
           asset_ref: {id: 2, type: 'media_item'},
-          start_at: {video_clip_index: 0, offset_seconds: 0},
+          start_at: {video_clip_index: 1, offset_seconds: 2},
           trim: {offset_seconds: 0, duration_seconds: 10},
           presigned_url: 'audio1.mp3',
           volume: 1.0,
@@ -212,12 +219,20 @@ describe('WorkbenchComponent', () => {
     component.processGeneratedData(mockData);
 
     const assets = stateService.assets();
-    expect(assets.length).toBe(2);
+    expect(assets.length).toBe(3);
 
     const clips = stateService.timelineClips();
-    expect(clips.length).toBe(2);
-    expect(clips[0].trackIndex).toBe(0);
-    expect(clips[1].trackIndex).toBe(1);
+    expect(clips.length).toBe(3);
+    // Since refreshTimelineLayout is called at the end of processGeneratedData,
+    // it will re-order/layout video clips sequentially.
+    // video clip 0 starts at 0.
+    // video clip 1 starts at 5.
+    const vClips = clips.filter(c => c.trackIndex === 0);
+    expect(vClips[0].startTime).toBe(0);
+    expect(vClips[1].startTime).toBe(5);
+
+    const aClips = clips.filter(c => c.trackIndex > 0);
+    expect(aClips[0].startTime).toBe(7); // video_clip_index 1 starts at 5s + offset 2s = 7s
   });
 
   describe('Metadata Extraction', () => {

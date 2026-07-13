@@ -708,6 +708,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   processGeneratedData(data: TimelineDTO) {
     const newClips: TimelineClip[] = [];
+    const videoStartTimes: number[] = [];
 
     // Save transitions metadata
     this.timelineState.transitions.set(data.transitions || []);
@@ -764,6 +765,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           last_frame_asset_ref: clip.last_frame_asset_ref || null,
           placeholder: clip.placeholder || null,
         });
+        videoStartTimes.push(currentVideoTime);
         currentVideoTime += trimDuration;
       });
     }
@@ -781,7 +783,18 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
             : undefined;
         const trimDuration = clip.trim?.duration_seconds || 5;
         const trimOffset = clip.trim?.offset_seconds || 0;
-        const startTime = clip.start_at?.offset_seconds || 0;
+
+        let startTime = clip.start_at?.offset_seconds || 0;
+        const vClipIndex = clip.start_at?.video_clip_index;
+        if (
+          vClipIndex !== undefined &&
+          vClipIndex !== null &&
+          vClipIndex >= 0 &&
+          vClipIndex < videoStartTimes.length
+        ) {
+          startTime =
+            videoStartTimes[vClipIndex] + (clip.start_at?.offset_seconds || 0);
+        }
 
         const assetId = clip.presigned_url || '';
 
@@ -1116,12 +1129,13 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
                 return throwError(() => err);
               }),
               takeWhile(item => {
-                if (item.status === 'FAILED') {
+                const status = item.status?.toUpperCase();
+                if (status === 'FAILED') {
                   this.isDownloading.set(false);
                   this.lastSavedText.set('Render failed');
                   return false;
                 }
-                if (item.status === 'COMPLETED') {
+                if (status === 'COMPLETED') {
                   return false;
                 }
                 return true;
@@ -1129,7 +1143,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
             )
             .subscribe({
               next: item => {
-                if (item.status === 'COMPLETED') {
+                if (item.status?.toUpperCase() === 'COMPLETED') {
                   this.isDownloading.set(false);
                   this.lastSavedText.set('Render complete');
 
@@ -1151,6 +1165,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
                           'Failed to download video file blob',
                           err,
                         );
+                        // Fallback: Open the presigned URL directly in a new tab if blob download fails (e.g., due to CORS)
+                        window.open(url, '_blank');
                       },
                     });
                   }
