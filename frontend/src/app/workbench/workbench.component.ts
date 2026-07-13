@@ -580,6 +580,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   private extractVideoMetadataFromUrl(asset: MediaAsset) {
     const video = document.createElement('video');
     video.preload = 'metadata';
+    video.crossOrigin = 'anonymous';
     video.src = asset.url;
     video.onloadedmetadata = () => {
       this.updateAssetDuration(asset.id, video.duration);
@@ -613,6 +614,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   private extractAudioMetadataFromUrl(asset: MediaAsset) {
     const audio = document.createElement('audio');
+    audio.crossOrigin = 'anonymous';
     audio.muted = true;
     audio.volume = 0; // Double safety
     audio.autoplay = false;
@@ -672,7 +674,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       clips.map(clip => {
         if (clip.assetId === id) {
           if (clip.duration === 0 || clip.isDurationPlaceholder) {
-            const updated = { ...clip, duration };
+            const updated = {...clip, duration};
             delete updated.isDurationPlaceholder;
             return updated;
           }
