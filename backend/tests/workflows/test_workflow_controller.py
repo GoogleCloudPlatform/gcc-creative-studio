@@ -32,7 +32,7 @@ def fixture_mock_user():
         id=1,
         email="test@example.com",
         name="Test User",
-        roles=[UserRoleEnum.WORKFLOWS],
+        roles=[UserRoleEnum.USER, UserRoleEnum.WORKFLOWS],
     )
 
 

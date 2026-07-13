@@ -33,6 +33,15 @@ router = APIRouter(
     prefix="/api/workflows",
     tags=["Workflows"],
     responses={404: {"description": "Not found"}},
+    dependencies=[
+        Depends(
+            RoleChecker(
+                [
+                    UserRoleEnum.USER,
+                ]
+            )
+        )
+    ],
 )
 
 
