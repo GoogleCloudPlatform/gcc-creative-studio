@@ -580,7 +580,6 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   private extractVideoMetadataFromUrl(asset: MediaAsset) {
     const video = document.createElement('video');
     video.preload = 'metadata';
-    video.crossOrigin = 'anonymous';
     video.src = asset.url;
     video.onloadedmetadata = () => {
       this.updateAssetDuration(asset.id, video.duration);
@@ -614,7 +613,6 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   private extractAudioMetadataFromUrl(asset: MediaAsset) {
     const audio = document.createElement('audio');
-    audio.crossOrigin = 'anonymous';
     audio.muted = true;
     audio.volume = 0; // Double safety
     audio.autoplay = false;
@@ -671,7 +669,16 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       items.map(i => (i.id === id ? {...i, duration} : i)),
     );
     this.timelineState.timelineClips.update(clips =>
-      clips.map(clip => (clip.assetId === id ? {...clip, duration} : clip)),
+      clips.map(clip => {
+        if (clip.assetId === id) {
+          if (clip.duration === 0 || clip.isDurationPlaceholder) {
+            const updated = { ...clip, duration };
+            delete updated.isDurationPlaceholder;
+            return updated;
+          }
+        }
+        return clip;
+      }),
     );
     this.refreshTimelineLayout();
   }
@@ -704,6 +711,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   processGeneratedData(data: TimelineDTO) {
     const newClips: TimelineClip[] = [];
     const videoStartTimes: number[] = [];
+    const assetsToExtract: MediaAsset[] = [];
 
     // Save transitions metadata
     this.timelineState.transitions.set(data.transitions || []);
@@ -726,13 +734,14 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         const trimOffset = clip.trim?.offset_seconds || 0;
 
         const assetId = String(mediaItemId || sourceAssetId || '');
+        const isPlaceholder = !clip.trim?.duration_seconds;
 
         // Populate assets signal so lookup works
-        const existingAsset: MediaAsset | undefined = this.timelineState
+        let existingAsset = this.timelineState
           .assets()
           .find(a => a.id === assetId);
         if (!existingAsset && clip.presigned_url) {
-          const newAsset: MediaAsset = {
+          existingAsset = {
             id: assetId,
             name: 'Clip ' + assetId,
             type: 'video',
@@ -743,7 +752,13 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
             mediaItemId: mediaItemId,
             sourceAssetId: sourceAssetId,
           };
-          this.timelineState.assets.update(prev => [...prev, newAsset]);
+          this.timelineState.assets.update(prev => [...prev, existingAsset!]);
+        }
+
+        if (isPlaceholder && existingAsset) {
+          if (!assetsToExtract.some(a => a.id === existingAsset!.id)) {
+            assetsToExtract.push(existingAsset);
+          }
         }
 
         newClips.push({
@@ -759,6 +774,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           first_frame_asset_ref: clip.first_frame_asset_ref || null,
           last_frame_asset_ref: clip.last_frame_asset_ref || null,
           placeholder: clip.placeholder || null,
+          isDurationPlaceholder: isPlaceholder || undefined,
         });
         videoStartTimes.push(currentVideoTime);
         currentVideoTime += trimDuration;
@@ -792,13 +808,14 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         }
 
         const assetId = clip.presigned_url || '';
+        const isPlaceholder = !clip.trim?.duration_seconds;
 
         // Populate assets signal
-        const existingAsset: MediaAsset | undefined = this.timelineState
+        let existingAsset = this.timelineState
           .assets()
           .find(a => a.id === assetId);
         if (!existingAsset && clip.presigned_url) {
-          const newAsset: MediaAsset = {
+          existingAsset = {
             id: assetId,
             name: 'Audio ' + assetId,
             type: 'audio',
@@ -808,7 +825,13 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
             mediaItemId: mediaItemId,
             sourceAssetId: sourceAssetId,
           };
-          this.timelineState.assets.update(prev => [...prev, newAsset]);
+          this.timelineState.assets.update(prev => [...prev, existingAsset!]);
+        }
+
+        if (isPlaceholder && existingAsset) {
+          if (!assetsToExtract.some(a => a.id === existingAsset!.id)) {
+            assetsToExtract.push(existingAsset);
+          }
         }
 
         // Find available track among newClips
@@ -847,6 +870,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           color: '#10b981',
           mediaItemId: mediaItemId,
           sourceAssetId: sourceAssetId,
+          isDurationPlaceholder: isPlaceholder || undefined,
         });
       });
     }
@@ -854,6 +878,14 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     console.log('Setting timelineClips to:', newClips);
     this.timelineState.timelineClips.set(newClips);
     this.refreshTimelineLayout();
+
+    assetsToExtract.forEach(asset => {
+      if (asset.type === 'video') {
+        this.extractVideoMetadataFromUrl(asset);
+      } else {
+        this.extractAudioMetadataFromUrl(asset);
+      }
+    });
   }
 
   getAssetThumbnail(id: string): string | undefined {
