@@ -230,11 +230,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           ) {
             return;
           }
-          console.log('Fetching timeline for ID:', storyboard.timeline_id);
           this.timelineState.loadedTimelineId.set(storyboard.timeline_id);
           this.workbenchService.getTimeline(storyboard.timeline_id).subscribe({
             next: (timeline: TimelineDTO) => {
-              console.log('Loading timeline from API:', timeline);
               this.processGeneratedData(timeline);
               this.lastSavedText.set('Saved');
             },
@@ -244,9 +242,6 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
             },
           });
         } else {
-          console.log(
-            'No storyboard or timeline ID found, clearing timeline clips.',
-          );
           this.timelineState.loadedTimelineId.set(undefined);
           this.timelineState.timelineClips.set([]);
           this.timelineState.selectedClipId.set(null);
