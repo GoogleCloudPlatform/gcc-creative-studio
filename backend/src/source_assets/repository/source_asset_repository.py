@@ -52,6 +52,23 @@ class SourceAssetRepository(BaseRepository[SourceAsset, SourceAssetModel]):
             return None
         return self.schema.model_validate(asset)
 
+    async def find_by_youtube_url(
+        self,
+        user_id: int,
+        youtube_url: str,
+    ) -> SourceAssetModel | None:
+        """Finds a user asset by its YouTube URL to prevent duplicates."""
+        result = await self.db.execute(
+            select(self.model)
+            .where(self.model.user_id == user_id)
+            .where(self.model.youtube_url == youtube_url)
+            .limit(1),
+        )
+        asset = result.scalar_one_or_none()
+        if not asset:
+            return None
+        return self.schema.model_validate(asset)
+
     async def query(
         self,
         search_dto: SourceAssetSearchDto,

@@ -50,6 +50,8 @@ from src.images.repository.media_item_repository import MediaRepository
 from src.source_assets.repository.source_asset_repository import (
     SourceAssetRepository,
 )
+from src.common.media_utils import extract_youtube_video_id
+from src.source_assets.schema.source_asset_model import AssetTypeEnum
 from src.users.repository.user_repository import UserRepository
 from src.users.user_model import UserModel, UserRoleEnum
 from src.workspaces.repository.workspace_repository import WorkspaceRepository
@@ -96,6 +98,32 @@ class GalleryService:
 
         if not asset_doc:
             return None
+
+        is_youtube = False
+        if (
+            getattr(asset_doc, "asset_type", None)
+            == AssetTypeEnum.YOUTUBE_VIDEO
+        ):
+            is_youtube = True
+        elif isinstance(getattr(asset_doc, "youtube_url", None), str):
+            is_youtube = True
+
+        if is_youtube:
+            video_id = extract_youtube_video_id(asset_doc.youtube_url)
+            presigned_url = asset_doc.youtube_url or ""
+            presigned_thumbnail_url = (
+                f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg"
+                if video_id
+                else None
+            )
+            return SourceAssetLinkResponse(
+                **link.model_dump(),
+                presigned_url=presigned_url,
+                presigned_thumbnail_url=presigned_thumbnail_url,
+                gcs_uri=None,
+                mime_type=asset_doc.mime_type,
+                youtube_url=asset_doc.youtube_url,
+            )
 
         tasks = [
             asyncio.to_thread(

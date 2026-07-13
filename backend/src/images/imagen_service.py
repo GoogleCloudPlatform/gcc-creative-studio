@@ -38,7 +38,10 @@ from src.common.base_dto import (
     GenerationModelEnum,
     MimeTypeEnum,
 )
-from src.common.media_utils import generate_image_thumbnail_from_gcs
+from src.common.media_utils import (
+    extract_youtube_video_id,
+    generate_image_thumbnail_from_gcs,
+)
 from src.common.schema.genai_model_setup import GenAIModelSetup
 from src.common.schema.media_item_model import (
     AssetRoleEnum,
@@ -66,7 +69,9 @@ from src.source_assets.repository.source_asset_repository import (
 from src.source_assets.schema.source_asset_model import (
     AssetScopeEnum,
     AssetTypeEnum,
+    SourceAssetModel,
 )
+from src.users.repository.user_repository import UserRepository
 from src.users.user_model import UserModel
 
 logger = logging.getLogger(__name__)
@@ -635,6 +640,7 @@ def _process_image_in_background(
                     # Create new instances of dependencies within this process
                     media_repo = MediaRepository(db)
                     source_asset_repo = SourceAssetRepository(db)
+                    user_repo = UserRepository(db)
                     brand_guideline_repo = BrandGuidelineRepository(db)
                     gemini_service = GeminiService(
                         brand_guideline_repo=brand_guideline_repo,
@@ -785,9 +791,74 @@ def _process_image_in_background(
                                 )
 
                     if request_dto.reference_video_youtube_url:
+                        youtube_url = request_dto.reference_video_youtube_url
+
+                        # Retrieve user_id and workspace_id from the MediaItem being created
+                        media_item_obj = await media_repo.get_by_id(
+                            media_item_id
+                        )
+                        if not media_item_obj:
+                            worker_logger.error(
+                                "MediaItem %s not found in background task.",
+                                media_item_id,
+                            )
+                            raise ValueError(
+                                f"MediaItem {media_item_id} not found."
+                            )
+
+                        user_id = media_item_obj.user_id
+                        if not user_id and media_item_obj.user_email:
+                            user = await asyncio.to_thread(
+                                user_repo.get_by_email,
+                                media_item_obj.user_email,
+                            )
+                            if user:
+                                user_id = user.id
+
+                        if not user_id:
+                            worker_logger.error(
+                                "User ID could not be determined for MediaItem %s.",
+                                media_item_id,
+                            )
+                            raise ValueError("User ID could not be determined.")
+
+                        # Find if there is an existing YouTube SourceAsset for this user
+                        youtube_asset = (
+                            await source_asset_repo.find_by_youtube_url(
+                                user_id=user_id,
+                                youtube_url=youtube_url,
+                            )
+                        )
+                        if not youtube_asset:
+                            # Create a new SourceAsset for this YouTube video
+                            from src.common.base_dto import AspectRatioEnum
+
+                            new_asset_model = SourceAssetModel(
+                                workspace_id=media_item_obj.workspace_id,
+                                user_id=user_id,
+                                gcs_uri=None,
+                                original_filename="YouTube Video",
+                                mime_type=MimeTypeEnum.VIDEO_MP4,
+                                aspect_ratio=AspectRatioEnum.RATIO_1_1,
+                                file_hash=None,
+                                scope=AssetScopeEnum.PRIVATE,
+                                asset_type=AssetTypeEnum.YOUTUBE_VIDEO,
+                                youtube_url=youtube_url,
+                            )
+                            youtube_asset = await source_asset_repo.create(
+                                new_asset_model
+                            )
+
+                        source_assets.append(
+                            SourceAssetLink(
+                                asset_id=youtube_asset.id,
+                                role=AssetRoleEnum.YOUTUBE_VIDEO_REFERENCE,
+                            )
+                        )
+
                         reference_parts_for_api.append(
                             types.Part.from_uri(
-                                file_uri=request_dto.reference_video_youtube_url,
+                                file_uri=youtube_url,
                                 mime_type="video/*",
                             )
                         )

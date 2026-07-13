@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import subprocess
 
 from PIL import Image as PILImage
@@ -237,3 +238,17 @@ def get_video_dimensions(video_path: str) -> tuple[int, int]:
     width = data["streams"][0]["width"]
     height = data["streams"][0]["height"]
     return width, height
+
+
+def extract_youtube_video_id(url: str | None) -> str | None:
+    """Extracts the 11-character video ID from a YouTube URL."""
+    if not url:
+        return None
+    # Support various youtube URL formats:
+    # https://www.youtube.com/watch?v=dQw4w9WgXcQ
+    # https://youtu.be/dQw4w9WgXcQ
+    # https://www.youtube.com/embed/dQw4w9WgXcQ
+    # https://www.youtube.com/shorts/dQw4w9WgXcQ
+    pattern = r"(?:https?://)?(?:www\.)?(?:youtube\.com/(?:watch\?v=|embed/|shorts/)|youtu\.be/)([a-zA-Z0-9_-]{11})"
+    match = re.search(pattern, url)
+    return match.group(1) if match else None

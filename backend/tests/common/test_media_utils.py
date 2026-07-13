@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 
 from src.common.media_utils import (
     concatenate_videos,
+    extract_youtube_video_id,
     generate_image_thumbnail_bytes,
     generate_image_thumbnail_from_gcs,
     generate_thumbnail,
@@ -189,3 +190,24 @@ def test_concatenate_videos_called_process_error():
                 ["/tmp/v1.mp4", "/tmp/v2.mp4"], "/tmp/output.mp4"
             )
             assert res is None
+
+
+def test_extract_youtube_video_id_valid_and_invalid():
+    assert (
+        extract_youtube_video_id("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        == "dQw4w9WgXcQ"
+    )
+    assert (
+        extract_youtube_video_id("https://youtu.be/dQw4w9WgXcQ")
+        == "dQw4w9WgXcQ"
+    )
+    assert (
+        extract_youtube_video_id("https://www.youtube.com/shorts/dQw4w9WgXcQ")
+        == "dQw4w9WgXcQ"
+    )
+    assert (
+        extract_youtube_video_id("https://www.youtube.com/embed/dQw4w9WgXcQ")
+        == "dQw4w9WgXcQ"
+    )
+    assert extract_youtube_video_id("not a youtube url") is None
+    assert extract_youtube_video_id(None) is None

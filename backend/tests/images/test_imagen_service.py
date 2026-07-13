@@ -1498,10 +1498,30 @@ def test_process_image_in_background_sync_video_ref_youtube_url(
             patch(
                 "src.images.imagen_service.MediaRepository"
             ) as mock_media_repo_class,
+            patch(
+                "src.images.imagen_service.SourceAssetRepository"
+            ) as mock_source_asset_repo_class,
+            patch(
+                "src.images.imagen_service.UserRepository"
+            ) as mock_user_repo_class,
             patch("src.images.imagen_service.GcsService") as mock_gcs_class,
         ):
             mock_media_repo = AsyncMock()
             mock_media_repo_class.return_value = mock_media_repo
+            mock_media_item = MagicMock()
+            mock_media_item.user_id = 1
+            mock_media_item.workspace_id = 1
+            mock_media_item.user_email = "test@example.com"
+            mock_media_repo.get_by_id.return_value = mock_media_item
+
+            mock_source_asset_repo = AsyncMock()
+            mock_source_asset_repo_class.return_value = mock_source_asset_repo
+            mock_source_asset_repo.find_by_youtube_url.return_value = None
+            mock_source_asset_repo.create.return_value = MagicMock(id=987)
+
+            mock_user_repo = AsyncMock()
+            mock_user_repo_class.return_value = mock_user_repo
+            mock_user_repo.get_by_email.return_value = sample_user
 
             mock_gcs = AsyncMock()
             mock_gcs.bucket_name = "test-bucket"
