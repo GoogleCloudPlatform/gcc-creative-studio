@@ -91,6 +91,11 @@ class AgentService:
         return AGENT_REASONING_ENGINES.get(appName, default_config)
 
     def _get_remote_agent(self, appName: str = APP_NAME) -> Any:
+        vertexai.init(
+            project=config_service.PROJECT_ID,
+            location=config_service.WORKFLOWS_LOCATION,
+            api_transport="grpc",
+        )
         agent_config = self._get_agent_config(appName)
         agent_name = agent_config.get("resource_name")
         return agent_engines.get(agent_name)
