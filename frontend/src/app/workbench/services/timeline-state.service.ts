@@ -31,6 +31,7 @@ export interface TimelineClip {
   first_frame_asset_ref?: AssetRef | null;
   last_frame_asset_ref?: AssetRef | null;
   placeholder?: string | null;
+  isDurationPlaceholder?: boolean;
 }
 
 export interface MediaAsset {
