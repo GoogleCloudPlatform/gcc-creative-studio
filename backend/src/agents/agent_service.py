@@ -91,6 +91,11 @@ class AgentService:
         return AGENT_REASONING_ENGINES.get(appName, default_config)
 
     def _get_remote_agent(self, appName: str = APP_NAME) -> Any:
+        vertexai.init(
+            project=config_service.PROJECT_ID,
+            location=config_service.WORKFLOWS_LOCATION,
+            api_transport="grpc",
+        )
         agent_config = self._get_agent_config(appName)
         agent_name = agent_config.get("resource_name")
         return agent_engines.get(agent_name)
@@ -695,26 +700,38 @@ class AgentService:
                 loop = asyncio.get_running_loop()
 
                 def producer():
+                    has_yielded_chunks = False
                     try:
                         for chunk in response_stream:
+                            has_yielded_chunks = True
+                            chunk_details = ""
+                            try:
+                                if hasattr(chunk, "model_dump"):
+                                    chunk_details = f"model_dump: {chunk.model_dump()}"
+                                elif hasattr(chunk, "dict"):
+                                    chunk_details = f"dict: {chunk.dict()}"
+                                elif hasattr(chunk, "__dict__"):
+                                    chunk_details = f"__dict__: {chunk.__dict__}"
+                                else:
+                                    chunk_details = f"str: {str(chunk)}"
+                            except Exception as parse_err:
+                                chunk_details = f"str: {str(chunk)} (error formatting: {parse_err})"
                             logger.info(
-                                f"[Agent Stream Chunk Received] Raw chunk: {chunk}"
+                                f"[Agent Stream Chunk Received] Type: {type(chunk)}, Details: {chunk_details}"
                             )
                             loop.call_soon_threadsafe(queue.put_nowait, chunk)
                         loop.call_soon_threadsafe(queue.put_nowait, None)
                     except ValueError as val_err:
-                        logger.warning(
-                            f"[Agent Stream ValueError] {val_err}",
-                            exc_info=True,
-                        )
-                        if "Can only parse array of JSON objects" in str(
-                            val_err
-                        ):
+                        if "Can only parse array of JSON objects" in str(val_err) and has_yielded_chunks:
                             logger.info(
                                 "Gracefully handled trailing REST stream error from Agent Engine."
                             )
                             loop.call_soon_threadsafe(queue.put_nowait, None)
                         else:
+                            logger.error(
+                                f"[Agent Stream ValueError] Initial/Startup stream error from Agent Engine: {val_err}",
+                                exc_info=True,
+                            )
                             loop.call_soon_threadsafe(queue.put_nowait, val_err)
                     except Exception as prod_err:
                         logger.error(
