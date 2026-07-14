@@ -38,6 +38,26 @@ export class PlayheadSyncService {
   private loadedClips = new Map<'A' | 'B', string>(); // map element to clipId
 
   constructor() {
+    // Eagerly preload the first two clips when timeline is loaded
+    effect(() => {
+      const els = this.elements();
+      if (!els) return;
+
+      const clips = this.timelineState.videoClips();
+      if (clips.length > 0) {
+        const firstClip = clips[0];
+        if (this.loadedClips.get('A') !== firstClip.id) {
+          this.loadClipInElement('A', firstClip);
+        }
+        if (clips.length > 1) {
+          const secondClip = clips[1];
+          if (this.loadedClips.get('B') !== secondClip.id) {
+            this.loadClipInElement('B', secondClip);
+          }
+        }
+      }
+    });
+
     effect(() => {
       const els = this.elements();
       if (!els) return;
@@ -72,9 +92,23 @@ export class PlayheadSyncService {
 
         // 3. Sync and Play Active Video
         if (activeEl) {
-          const fileTime = curTime - currentClip.startTime + currentClip.offset;
+          const targetVolume =
+            currentClip.volume !== undefined ? currentClip.volume : 1.0;
+          const targetSpeed =
+            currentClip.speed !== undefined ? currentClip.speed : 1.0;
+
+          const fileTime =
+            (curTime - currentClip.startTime) * targetSpeed +
+            currentClip.offset;
           if (Math.abs(activeEl.currentTime - fileTime) > 0.5) {
             activeEl.currentTime = fileTime;
+          }
+
+          if (activeEl.volume !== targetVolume) {
+            activeEl.volume = targetVolume;
+          }
+          if (activeEl.playbackRate !== targetSpeed) {
+            activeEl.playbackRate = targetSpeed;
           }
 
           if (isPlaying && activeEl.paused) {
@@ -109,9 +143,21 @@ export class PlayheadSyncService {
           const aClip = activeAClips[index];
 
           if (aud && aClip) {
-            const fileTime = curTime - aClip.startTime + aClip.offset;
+            const targetVolume =
+              aClip.volume !== undefined ? aClip.volume : 1.0;
+            const targetSpeed = aClip.speed !== undefined ? aClip.speed : 1.0;
+
+            const fileTime =
+              (curTime - aClip.startTime) * targetSpeed + aClip.offset;
             if (Math.abs(aud.currentTime - fileTime) > 0.5) {
               aud.currentTime = fileTime;
+            }
+
+            if (aud.volume !== targetVolume) {
+              aud.volume = targetVolume;
+            }
+            if (aud.playbackRate !== targetSpeed) {
+              aud.playbackRate = targetSpeed;
             }
 
             if (isPlaying && aud.paused) {

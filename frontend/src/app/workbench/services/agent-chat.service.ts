@@ -16,7 +16,8 @@
 
 import {Injectable, inject, signal} from '@angular/core';
 import {HttpClient} from '@angular/common/http';
-import {Observable, firstValueFrom, Subject} from 'rxjs';
+import {Observable, firstValueFrom, Subject, of} from 'rxjs';
+import {tap} from 'rxjs/operators';
 import {environment} from '../../../environments/environment';
 import {AuthService} from '../../common/services/auth.service';
 import {
@@ -78,12 +79,48 @@ export class AgentChatService {
   // Broadcasts a fully generated video asset from the chat processor
   videoGenerated$ = new Subject<any>();
 
-  getSessions(workspaceId?: number): Observable<ChatSession[]> {
-    let url = `${this.apiUrl}/sessions?appName=${this.activeAgent()}`;
+  // Shared sessions state & caching
+  sessions = signal<ChatSession[]>([]);
+  chatMessages = signal<any[]>([]);
+  private lastLoadedWorkspaceId: number | null = null;
+  private lastLoadedAgent = '';
+  private lastLoadedSessionId: string | null = null;
+  private lastLoadedStoryboardId: number | string | null = null;
+
+  getSessions(
+    workspaceId?: number,
+    forceRefresh = false,
+    sessionId?: string | null,
+    storyboardId?: number | string | null,
+  ): Observable<ChatSession[]> {
+    const currentAgent = this.activeAgent();
+    const targetSessionId = sessionId ?? null;
+    const targetStoryboardId = storyboardId ?? null;
+
+    if (
+      !forceRefresh &&
+      this.sessions().length > 0 &&
+      this.lastLoadedWorkspaceId === workspaceId &&
+      this.lastLoadedAgent === currentAgent &&
+      this.lastLoadedSessionId === targetSessionId &&
+      this.lastLoadedStoryboardId === targetStoryboardId
+    ) {
+      return of(this.sessions());
+    }
+
+    let url = `${this.apiUrl}/sessions?appName=${currentAgent}`;
     if (workspaceId) {
       url += `&workspace_id=${workspaceId}`;
     }
-    return this.http.get<ChatSession[]>(url);
+    return this.http.get<ChatSession[]>(url).pipe(
+      tap((sessions: ChatSession[]) => {
+        this.sessions.set(sessions || []);
+        this.lastLoadedWorkspaceId = workspaceId ?? null;
+        this.lastLoadedAgent = currentAgent;
+        this.lastLoadedSessionId = targetSessionId;
+        this.lastLoadedStoryboardId = targetStoryboardId;
+      }),
+    );
   }
 
   createSession(workspaceId?: number): Observable<ChatSession> {
