@@ -234,7 +234,14 @@ export class SourceAssetService {
   ): Observable<MediaItem> {
     const formData = new FormData();
 
-    formData.append('id', String(asset.id));
+    if (
+      (asset as any).itemType === 'media_item' ||
+      (asset as any).isMediaItem
+    ) {
+      formData.append('mediaItemId', String(asset.id));
+    } else {
+      formData.append('id', String(asset.id));
+    }
     formData.append('gcsUri', asset.gcsUri);
     formData.append('originalFilename', asset.originalFilename);
     formData.append('mimeType', asset.mimeType);
