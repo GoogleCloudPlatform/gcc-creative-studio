@@ -1,0 +1,184 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<div
+  class="card-root"
+  [class.selected]="isSelected"
+  [class.any-selected]="anyItemSelected"
+  (mouseenter)="onMouseEnter()"
+  (mouseleave)="onMouseLeave()"
+>
+  <a
+    [routerLink]="(isSelectionMode || anyItemSelected) ? null : getRoute()"
+    [state]="{mediaItem: item}"
+    (click)="onCardClick($event)"
+    class="card-link"
+    [class.selection-mode]="isSelectionMode"
+  >
+    <ng-container *ngIf="item.mimeType?.startsWith('image/')">
+      <img
+        *ngFor="let url of displayUrls; let i = index"
+        class="media-element"
+        loading="lazy"
+        [src]="url"
+        [alt]="getShortPrompt(item.prompt)"
+        [class.active]="currentImageIndex === i"
+        [class.inactive]="currentImageIndex !== i"
+        (load)="onMediaLoad(i)"
+      />
+      <!-- A "spacer" div that defines the aspect ratio of the container -->
+      <div
+        class="spacer"
+        [style.padding-bottom]="displayPaddingBottom"
+      ></div>
+    </ng-container>
+
+    <ng-container *ngIf="item.mimeType?.startsWith('video/')">
+      <!-- Show video on hover -->
+      <ng-container *ngIf="hoveredVideoId === item.id">
+        <video
+          *ngFor="let url of item.presignedUrls; let i = index"
+          class="media-element"
+          [class.active]="currentImageIndex === i"
+          [class.inactive]="currentImageIndex !== i"
+          oncanplay="this.play()"
+          onloadedmetadata="this.muted = true"
+          muted
+          playsinline
+          loop
+          autoplay
+        >
+          <source [src]="url" [type]="item.mimeType" />
+        </video>
+      </ng-container>
+
+      <!-- Show thumbnail by default -->
+      <ng-container *ngIf="hoveredVideoId !== item.id">
+        <img
+          *ngFor="let url of displayUrls; let i = index"
+          class="media-element"
+          loading="lazy"
+          [src]="url"
+          [alt]="getShortPrompt(item.prompt)"
+          [class.active]="currentImageIndex === i"
+          [class.inactive]="currentImageIndex !== i"
+          (load)="onMediaLoad(i)"
+        />
+        <!-- Play Button Overlay -->
+        <div class="video-play-overlay">
+          <svg
+            fill="currentColor"
+            viewBox="0 0 20 20"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              fill-rule="evenodd"
+              d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z"
+              clip-rule="evenodd"
+            ></path>
+          </svg>
+        </div>
+      </ng-container>
+
+      <!-- A "spacer" div that defines the aspect ratio of the container -->
+      <div
+        class="spacer"
+        [style.padding-bottom]="displayPaddingBottom"
+      ></div>
+    </ng-container>
+
+    <ng-container *ngIf="item.mimeType?.startsWith('audio/')">
+      <div class="audio-card-preview">
+        <mat-icon [class.playing-icon]="hoveredAudioId === item.id">
+          graphic_eq
+        </mat-icon>
+      </div>
+      <div
+        class="spacer"
+        [style.padding-bottom]="displayPaddingBottom"
+      ></div>
+    </ng-container>
+
+    <!-- Glassmorphism Overlay -->
+    <app-gallery-item-overlay
+      [itemType]="item.itemType"
+      [mimeType]="item.mimeType"
+    ></app-gallery-item-overlay>
+    <div
+    class="selection-indicator"
+    [class.selected]="isSelected"
+    (click)="toggleSelection($event)"
+  >
+    <mat-icon *ngIf="isSelected">check</mat-icon>
+  </div>
+  
+  <!-- Tags Section -->
+  <div class="tags-section" *ngIf="(item.tags?.length ?? 0) > 0 || isAdmin">
+    <mat-chip-set>
+      <mat-chip *ngFor="let tag of displayedTags" class="!min-h-[16px] !text-[9px] !px-1" [style.--tag-color]="tag.color || '#E8EAED'">
+        {{ tag.name }}
+      </mat-chip>
+      <mat-chip *ngIf="hiddenTagsCount > 0" class="!min-h-[16px] !text-[9px] !px-1 !bg-neutral-800 !text-white">
+        +{{ hiddenTagsCount }} more
+      </mat-chip>
+    </mat-chip-set>
+  </div>
+  
+  </a>
+
+  <!-- Carousel Controls: Only show if there's more than one image -->
+  <ng-container *ngIf="displayUrls && displayUrls.length > 1">
+    <!-- Previous Button -->
+    <button (click)="prevImageItem($event)" class="carousel-control prev">
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        stroke-width="2"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          d="M15 19l-7-7 7-7"
+        />
+      </svg>
+    </button>
+
+    <!-- Next Button -->
+    <button (click)="nextImageItem($event)" class="carousel-control next">
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        stroke-width="2"
+      >
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+      </svg>
+    </button>
+
+    <!-- Dots Indicator -->
+    <div class="dots-indicator">
+      <span
+        *ngFor="let url of displayUrls; let i = index"
+        class="dot"
+        [class.active]="currentImageIndex === i"
+        [class.inactive]="currentImageIndex !== i"
+      ></span>
+    </div>
+  </ng-container>
+</div>

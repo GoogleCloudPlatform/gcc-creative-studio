@@ -1,0 +1,225 @@
+/**
+ * Copyright 2025 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+:host {
+  display: block;
+  font-family: 'Google Sans', sans-serif;
+  background-color: transparent;
+  color: #E3E3E3;
+}
+
+.workbench-container {
+   position: relative;
+   --max-container-width: 1400px;
+   background-color: transparent;
+   padding: 20px 40px;
+   max-width: var(--max-container-width);
+   margin: 0 auto;
+   margin-top: calc(10vh + 0px);
+   margin-left: max(calc(5vw + 4.5rem), calc(50% - var(--max-container-width) / 2));
+}
+
+.main-app-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px; /* Spacing between cards */
+}
+
+::ng-deep .mat-mdc-chip-action,
+::ng-deep .mat-mdc-chip-action-label {
+   overflow: hidden !important;
+   text-overflow: ellipsis;
+}
+
+
+.beta-label {
+   position: absolute;
+   top: -2rem;
+   right: 0;
+   display: flex;
+   align-items: center;
+   gap: 6px;
+   padding: 6px 16px;
+   background: rgba(255, 171, 64, 0.15); /* Amber A400 equivalent transparency */
+   border: 1px solid rgba(255, 171, 64, 0.3);
+   border-radius: 99px;
+   color: #ffab40; /* Amber A400 */
+   font-size: 0.75rem;
+   font-weight: 700;
+   letter-spacing: 0.05em;
+   backdrop-filter: blur(8px);
+   box-shadow: 0 4px 20px rgba(255, 171, 64, 0.1);
+   z-index: 100;
+   user-select: none;
+   transition: all 0.3s ease;
+
+   &:hover {
+      background: rgba(255, 171, 64, 0.25);
+      border-color: rgba(255, 171, 64, 0.5);
+      box-shadow: 0 4px 25px rgba(255, 171, 64, 0.2);
+   }
+}
+
+
+.zoom-slider {
+   border: 1px solid rgba(193, 193, 193, 0.80);
+   background: linear-gradient(180deg, rgba(126, 126, 126, 0.45) 0%, rgba(60, 60, 60, 0.16) 100%);
+   box-shadow: 2px 2px 12px 0 rgba(0, 0, 0, 0.10);
+   backdrop-filter: blur(7.5px);
+}
+
+.icon-btn {
+   background: radial-gradient(2373.18% 103.37% at 50% -3.37%, rgba(102, 102, 102, 0.38) 0%, rgba(60, 60, 60, 0.10) 100%);
+   box-shadow: 0 10px 15px 0 rgba(0, 0, 0, 0.25), 0 1px 2.3px 0 rgba(255, 255, 255, 0.70) inset;
+   backdrop-filter: blur(12px);
+   transition: all 0.1s ease;
+   border-radius: 50%;
+   height: 2.5rem;
+   width: 2.5rem;
+   padding:8px;
+}
+
+.icon-btn.active {
+   background-color: #E3E3E3;
+   border-radius: 10px;
+   padding:8px
+}
+
+::ng-deep .icon-btn.active mat-icon {
+   color: #444746 !important;
+}
+
+::ng-deep .icon-btn.active mat-icon svg {
+   fill: #444746 !important;
+}
+
+::ng-deep .icon-btn.active mat-icon svg path {
+   fill: #444746 !important;
+}
+
+.glass-bg-effect {
+   /* Matching .workflow-card style */
+   background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+   border: 1px solid rgba(255, 255, 255, 0.1);
+   border-radius: 12px;
+   box-shadow: none; /* Workflow card has no shadow by default, only hover */
+   backdrop-filter: blur(12px); /* Kept some blur as it looks good, though workflow card doesn't explicitly have it in the snippet provided, but it might be nice. */
+}
+
+.side-panel {
+   @extend .glass-bg-effect;
+   display: flex;
+   flex-direction: column;
+   padding: 24px;
+   min-width: 20rem;
+   max-width: 24rem;
+   min-height: 500px;
+   max-height: 600px;
+   border-radius: 12px;
+   overflow-y: scroll;
+   scroll-behavior: smooth;
+}
+
+.drop-zone {
+   border: 2px dashed #666;
+   border-radius: 8px;
+   padding: 0.5rem;
+   color: white;
+   display: flex;
+   align-items: center;
+   justify-content: center;
+   cursor: pointer;
+   transition:
+      border-color 0.3s,
+      background-color 0.3s;
+   background-color: #333;
+
+   &:hover {
+      border-color: #007bff;
+      background-color: #444;
+   }
+
+   img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      border-radius: 6px;
+   }
+}
+
+/* Custom Scrollbar for dark theme */
+.custom-scrollbar::-webkit-scrollbar {
+   width: 4px;
+   height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+   background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+   background: #333;
+   border-radius: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+   background: #555;
+}
+
+
+// Media Queries for responsiveness
+@media (min-width: 375px) {
+   .title-font {
+      font-size: 1.4rem;
+   }
+}
+
+@media (min-width: 425px) {
+   .title-font {
+      font-size: 1.7rem;
+   }
+}
+
+@media (min-width: 576px) {
+   .title-font {
+      font-size: 1.5rem;
+   }
+}
+
+@media (min-width: 768px) {
+   .video-container {
+      height: 45vh;
+   }
+}
+
+@media (min-width: 1200px) {
+   .home-margin {
+      margin: 2rem auto 0 auto;
+   }
+
+   ::ng-deep .image-selector-dialog {
+      width: 70vw !important;
+      max-width: 70vw !important;
+   }
+}
+
+
+
+//boreders
+.border {
+   border: 1px solid white;
+}
+

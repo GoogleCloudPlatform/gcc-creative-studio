@@ -1,0 +1,92 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<div
+  class="dropdown-container"
+  [class.expanded]="isOpen"
+  [ngClass]="'size-' + size"
+>
+  <!-- Trigger Button -->
+  <button
+    mat-flat-button
+    class="dropdown-header"
+    (click)="toggleDropdown($event)"
+    [class.active]="isOpen"
+  >
+    <mat-icon class="trailing-icon">keyboard_arrow_down</mat-icon>
+    <span class="label truncate">{{ selectedLabel }}</span>
+  </button>
+
+  <!-- Animated Dropdown Panel -->
+  <div
+    class="dropdown-panel"
+    *ngIf="isOpen"
+    [@dropdownAnimation]
+  >
+    <div
+      class="menu-header"
+      *ngIf="menuTitle"
+      (click)="$event.stopPropagation()"
+    >
+      {{ menuTitle }}
+    </div>
+
+    <!-- Search Input -->
+    <div class="search-container" *ngIf="searchable" (click)="$event.stopPropagation()">
+      <mat-icon>search</mat-icon>
+      <input [value]="searchQuery" (input)="onSearchInput($event)" placeholder="Search tags...">
+    </div>
+
+    <!-- Generic Checkbox -->
+    <div class="checkbox-container px-4 py-2 text-white text-xs" *ngIf="showCheckbox" (click)="$event.stopPropagation()">
+      <mat-checkbox [checked]="checkboxChecked" (change)="checkboxChange.emit($event.checked)">
+        {{ checkboxLabel }}
+      </mat-checkbox>
+    </div>
+
+    <div class="menu-items">
+      <button
+        mat-button
+        *ngFor="let option of options; trackBy: trackByOption"
+        (click)="selectOption(option)"
+        [class.selected]="multiple ? value?.includes(option.value) : option.value === value"
+        class="studio-menu-item"
+      >
+        <div
+          class="flex items-center justify-start gap-4 w-full h-full relative text-left"
+        >
+          <mat-icon *ngIf="multiple && value?.includes(option.value)" class="text-primary">check</mat-icon>
+          <!-- Color Dot -->
+          <span *ngIf="option.color" class="color-dot" [style.backgroundColor]="option.color"></span>
+          <!-- Label in the Middle -->
+          <span class="option-label truncate text-left">{{
+            option.label
+          }}</span>
+          <!-- Delete Button -->
+          <!-- <button mat-icon-button *ngIf="deletable && option.deletable !== false" (click)="onDeleteOption(option, $event)"
+                      class="delete-btn">
+            <mat-icon>delete</mat-icon>
+          </button> -->
+          </div>
+      </button>
+      <!-- Load More Button -->
+      <button mat-button *ngIf="hasMore" (click)="loadMore.emit(); $event.stopPropagation();"
+        class="studio-menu-item justify-center" style="color: #a8c7fa !important;">
+        Load More
+      </button>
+    </div>
+  </div>
+</div>

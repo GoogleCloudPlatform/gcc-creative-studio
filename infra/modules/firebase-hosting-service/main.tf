@@ -27,6 +27,7 @@ resource "google_service_account" "trigger_sa" {
 
 # 3. Create the build trigger
 resource "google_cloudbuild_trigger" "this" {
+  count = 0
   name            = "${var.service_name}-trigger"
   location        = var.gcp_region
   service_account = google_service_account.trigger_sa.id
@@ -45,6 +46,7 @@ resource "google_cloudbuild_trigger" "this" {
 
 # 4. Give the trigger SA permission to deploy to Firebase Hosting
 resource "google_project_iam_member" "firebase_admin" {
+  count = 0
   project = var.gcp_project_id
   role    = "roles/firebasehosting.admin"
   member  = "serviceAccount:${google_service_account.trigger_sa.email}"
@@ -52,6 +54,7 @@ resource "google_project_iam_member" "firebase_admin" {
 
 # 5. Give the trigger SA permission to write logs
 resource "google_project_iam_member" "logging_writer" {
+  count = 0
   project = var.gcp_project_id
   role    = "roles/logging.logWriter"
   member  = "serviceAccount:${google_service_account.trigger_sa.email}"

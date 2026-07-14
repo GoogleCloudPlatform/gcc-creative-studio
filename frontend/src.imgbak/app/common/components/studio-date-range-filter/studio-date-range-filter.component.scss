@@ -1,0 +1,203 @@
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+:host {
+  display: block;
+}
+
+.studio-date-range {
+  border: 1px solid transparent !important;
+  background-image: linear-gradient(180deg,
+      rgba(60, 60, 60, 0.7),
+      rgba(40, 40, 40, 0.9)),
+    linear-gradient(180deg,
+      rgba(255, 255, 255, 0.5) 0%,
+      rgba(255, 255, 255, 0.2) 100%) !important;
+
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  backdrop-filter: blur(10px);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
+  border-radius: 9999px !important; // Pill shape
+  padding: 0 12px !important;
+  height: 32px; // Match size-small
+  width: 280px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+
+  &.size-small {
+    height: 32px;
+    width: 280px !important;
+  }
+
+  &.size-medium {
+    height: 38px;
+    width: 320px !important;
+  }
+
+  &.size-large {
+    height: 56px;
+    width: 400px !important;
+  }
+
+  ::ng-deep {
+    .mat-mdc-form-field-flex {
+      background-color: transparent !important;
+      padding: 0 !important;
+      display: flex !important;
+      align-items: center !important;
+      flex-wrap: nowrap !important;
+      height: 100% !important;
+    }
+
+    .mat-mdc-text-field-wrapper {
+      padding: 0 !important;
+    }
+
+    .mdc-notched-outline {
+      display: none !important; // Hide standard outline
+    }
+
+    .mat-mdc-form-field-infix {
+      display: flex !important;
+      align-items: center !important;
+      padding: 0 !important;
+      min-height: unset !important;
+      flex: 1 !important;
+      min-width: 0 !important;
+    }
+
+    .mat-mdc-form-field-icon-suffix {
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      height: 32px !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      gap: 4px !important; // Space between clear button and calendar icon
+    }
+
+    button[matSuffix] {
+      width: 32px !important;
+      height: 32px !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      position: relative !important;
+
+      &::before {
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        border-radius: 50% !important;
+        width: 32px !important;
+        height: 32px !important;
+      }
+
+      mat-icon {
+        width: 18px !important;
+        height: 18px !important;
+        font-size: 18px !important;
+        line-height: 18px !important;
+        margin: 0 !important;
+      }
+    }
+
+    .mat-mdc-button-touch-target {
+      display: none !important; // Prevent overflow pushing down
+    }
+
+    .mat-mdc-form-field-subscript-wrapper {
+      display: none !important; // Avoid spacing shifts
+    }
+
+    .mat-date-range-input {
+      font-size: 13px !important;
+      height: 32px !important;
+      display: flex !important;
+      align-items: center !important;
+      width: 100% !important;
+
+      .mat-date-range-input-wrapper {
+        overflow: visible !important;
+        max-width: none !important;
+        flex: 1 !important;
+        display: flex !important;
+        align-items: center !important;
+      }
+
+      .mat-date-range-input-container {
+        display: flex !important;
+        align-items: center !important;
+        width: 100% !important;
+        justify-content: center !important;
+      }
+
+      .mat-date-range-input-inner {
+        text-align: center !important;
+      }
+
+      .mat-date-range-input-separator {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        margin: 0 4px !important;
+      }
+    }
+
+    .mat-datepicker-toggle {
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      height: 32px !important;
+      width: 32px !important;
+      margin: 0 !important;
+      padding: 0 !important;
+
+      .mat-mdc-button-base {
+        width: 32px !important;
+        height: 32px !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        position: relative !important;
+
+        &::before {
+          top: 0 !important;
+          left: 0 !important;
+          right: 0 !important;
+          bottom: 0 !important;
+          border-radius: 50% !important;
+          width: 32px !important;
+          height: 32px !important;
+        }
+
+        mat-icon {
+          width: 18px !important;
+          height: 18px !important;
+          font-size: 18px !important;
+          line-height: 18px !important;
+          margin: 0 !important;
+        }
+      }
+    }
+  }
+}

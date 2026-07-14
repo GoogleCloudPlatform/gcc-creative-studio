@@ -1,0 +1,159 @@
+/**
+ * Copyright 2025 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+.copy-dialog-container {
+  padding: 1.5rem;
+  max-width: 450px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  color: white;
+
+  .dialog-header {
+    margin-bottom: 1.5rem;
+
+    .dialog-title {
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin: 0 0 0.5rem 0;
+    }
+
+    .dialog-subtitle {
+      font-size: 0.875rem;
+      color: rgba(255, 255, 255, 0.6);
+      margin: 0;
+    }
+  }
+
+  .dialog-content {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    min-height: 300px;
+    max-height: 400px;
+
+    .search-container {
+      width: 100%;
+    }
+
+    .workspace-list {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      padding-right: 0.5rem;
+
+      .workspace-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.75rem 1rem;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        cursor: pointer;
+        transition: all 0.2s ease;
+
+        &:hover {
+          background: rgba(255, 255, 255, 0.1);
+          border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        &.selected {
+          background: rgba(var(--studio-primary-rgb), 0.2);
+          border-color: var(--studio-primary);
+
+          mat-icon {
+            color: var(--studio-primary);
+          }
+        }
+
+        .workspace-info {
+          display: flex;
+          flex-direction: column;
+
+          .workspace-name {
+            font-weight: 500;
+            font-size: 1rem;
+          }
+
+          .workspace-scope {
+            font-size: 0.75rem;
+            color: rgba(255, 255, 255, 0.5);
+            text-transform: capitalize;
+          }
+        }
+
+        mat-icon {
+          font-size: 20px;
+          width: 20px;
+          height: 20px;
+          color: rgba(255, 255, 255, 0.3);
+        }
+      }
+
+      .no-results {
+        text-align: center;
+        color: rgba(255, 255, 255, 0.4);
+        padding: 2rem;
+        font-style: italic;
+      }
+    }
+  }
+
+  .dialog-footer {
+    margin-top: 1.5rem;
+    display: flex;
+    justify-content: flex-end;
+    gap: 1rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding-top: 1rem;
+
+    .inline-spinner {
+      display: inline-block;
+      margin-right: 8px;
+    }
+  }
+}
+
+// Glassmorphism effect
+.glass-morphism {
+  background: rgba(15, 15, 25, 0.7);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+.custom-scrollbar {
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+
+    &:hover {
+      background: rgba(var(--studio-primary-rgb), 0.3);
+    }
+  }
+}

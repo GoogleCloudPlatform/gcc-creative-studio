@@ -51,7 +51,7 @@ export interface GenerationModelConfig {
 export const MODEL_CONFIGS: GenerationModelConfig[] = [
   // --- Image Models ---
   {
-    value: 'gemini-3.1-flash-image',
+    value: 'gemini-2.5-flash-image',
     viewValue: 'Nano Banana 2',
     type: 'IMAGE',
     imageSrc: 'assets/images/banana-peel.png',
@@ -79,7 +79,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
     },
   },
   {
-    value: 'gemini-3-pro-image',
+    value: 'gemini-2.5-flash-image',
     viewValue: 'Nano Banana Pro',
     type: 'IMAGE',
     imageSrc: 'assets/images/banana-peel.png',

@@ -1,0 +1,215 @@
+<!--
+ Copyright 2025 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<div class="lg:container lg:mx-auto">
+  <div class="home-margin grid grid-cols-1">
+
+    <div class="video-container mb-8">
+      <div class="hidden md:flex justify-center items-center w-full h-full absolute flex-col">
+        <h1 class="text-center justify-center text-white text-2xl font-bold !m-0 !z-[50]">
+          Creative Studio Imagen Upscale
+        </h1>
+        <p class="mt-4 text-lg leading-8 text-white !z-[50]">
+          An AI tool for generating high-quality image ✨
+        </p>
+      </div>
+
+      <div class="gradient-bg hidden md:block !relative !w-full !h-full !z-[10]">
+        <svg xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <filter id="goo">
+              <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="blur" />
+              <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 18 -8"
+                result="goo" />
+              <feBlend in="SourceGraphic" in2="goo" />
+            </filter>
+          </defs>
+        </svg>
+        <div class="gradients-container absolute top-0 left-0">
+          <div class="g1"></div>
+          <div class="g2"></div>
+          <div class="g3"></div>
+          <div class="g4"></div>
+          <div class="g5"></div>
+          <div #interactiveBubble class="interactive"></div>
+        </div>
+      </div>
+
+      <div class="flex flex-col justify-center items-center w-full h-full md:hidden">
+        <div class="flex">
+          <mat-icon svgIcon="mobile-white-gemini-spark-icon" class="!w-6 !h-6 mr-2 md:mr-[1rem]"></mat-icon>
+          <div class="text-center justify-center text-white title-font font-bold">
+            Creative Studio Imagen Upscale
+          </div>
+        </div>
+        <p class="mt-4 text-white text-center md:text-lg md:leading-8">
+          An AI tool for high-quality image enhancement ✨
+        </p>
+      </div>
+    </div>
+
+    <ng-container *ngIf="activeUpscaleJob$ | async as job">
+      <div *ngIf="job.status === JobStatus.PROCESSING"
+        class="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black bg-opacity-70 text-center p-4">
+        <mat-progress-spinner color="primary" mode="indeterminate" [diameter]="50"></mat-progress-spinner>
+        <p class="!mt-6 text-white text-lg">Your upscaled image is being generated...</p>
+        <p class="text-gray-400 text-sm">This may take a few moments. You can safely navigate away.</p>
+      </div>
+
+      <div *ngIf="job.status === JobStatus.FAILED && showErrorOverlay"
+        class="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black bg-opacity-70 text-center p-4">
+        <mat-icon class="text-red-500 !w-16 !h-16 !text-6xl">error_outline</mat-icon>
+        <p class="mt-4 text-white text-lg font-bold">Upscale Generation Failed</p>
+        <p class="text-gray-400 text-sm max-w-md">{{ job.errorMessage || 'An error occurred' }}</p>
+        <button mat-raised-button color="primary" (click)="closeErrorOverlay()" class="mt-4">
+          Close
+        </button>
+      </div>
+    </ng-container>
+
+    <div class="step-progress-container">
+      <div class="step-header-container">
+        <div class="step-header">
+          <span class="step-number-upscaler completed">1</span>
+          <h3 class="step-title-upscaler !text-white !m-0">Upload Image to Upscale</h3>
+        </div>
+        <div class="progress-line-wrapper">
+          <div class="progress-line" [class.active]="assetPair.upscaled || isLoadingUpscale"></div>
+        </div>
+        <div class="step-header">
+          <span class="step-number-upscaler" [class.completed]="assetPair.upscaled"
+            [class.active]="isLoadingUpscale">2</span>
+          <h3 class="step-title-upscaler !text-white !m-0">Upscaled Result</h3>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-8 mt-4">
+        <div class="upload-panel-upscaler col-span-1 flex flex-col gap-6">
+          
+          
+
+          <div class="drop-zone-upscaler !w-full !max-w-full !min-h-[200px]" (click)="openUploaderDialog()" (dragover)="onDragOver($event)"
+            (drop)="onDrop($event)">
+            
+            <div *ngIf="!isLoadingUpscale && !assetPair.original" class="drop-zone-placeholder">
+              <mat-icon class="text-4xl text-gray-400">add_photo_alternate</mat-icon>
+              <span class="text-white mt-4 text-center">Drop your photo or click to select</span>
+            </div>
+
+            <div *ngIf="!isLoadingUpscale && assetPair.original" class="relative w-full h-full flex justify-center items-center overflow-hidden rounded-lg group">
+                 <img [src]="assetPair.original.url" class="max-w-full max-h-[350px] object-contain" />
+                 
+                 <div class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex justify-center items-center gap-4">
+                    <button mat-raised-button (click)="openUploaderDialog($event)">Change</button>
+                    <button mat-icon-button color="warn" (click)="clearImage($event)"><mat-icon>delete</mat-icon></button>
+                 </div>
+            </div>
+
+            <div *ngIf="isLoadingUpscale" class="placeholder-state">
+              <mat-progress-spinner mode="indeterminate" [diameter]="30" class="mx-auto mb-4"></mat-progress-spinner>
+              <p class="text-lg text-gray-400 mt-4">Processing...</p>
+            </div>
+          </div>
+
+          <!-- Settings Controls -->
+          <div class="bg-[#404040] p-4 rounded-lg border-2 border-[#e0e0e0]">
+            <div class="mb-4">
+              <h4 class="text-white mb-2 !text-sm">Upscale Factor</h4>
+              <div class="flex gap-2">
+                <button *ngFor="let factor of upscaleFactors" 
+                        (click)="setUpscaleFactor(factor)"
+                        [class.bg-blue-600]="upscaleFactor === factor"
+                        [class.text-white]="upscaleFactor === factor"
+                        [class.bg-gray-700]="upscaleFactor !== factor"
+                        [class.text-gray-300]="upscaleFactor !== factor"
+                        class="px-3 py-1 rounded transition-colors text-sm">
+                  {{ factor }}
+                </button>
+              </div>
+            </div>
+            
+            <div class="mb-6">
+              <h4 class="text-white mb-2 !text-sm">Enhance Input Image</h4>
+              <mat-checkbox [(ngModel)]="enhanceInputImage">
+                <span class="text-white">Enable Enhancement</span>
+              </mat-checkbox>
+            </div>
+
+            <div class="mb-6">
+              <h4 class="text-white mb-2 !text-sm">Image Preservation Factor</h4>
+              <div class="flex items-center gap-4">
+                <mat-slider min="0" max="1" step="0.1" showTickMarks discrete class="w-full">
+                  <input matSliderThumb [(ngModel)]="imagePreservationFactor">
+                </mat-slider>
+                <span class="text-white w-12 text-right">{{ imagePreservationFactor === null ? 'Auto' : imagePreservationFactor }}</span>
+              </div>
+              <p class="text-xs text-gray-400 mt-1">
+                Higher values respect original pixels more. Lower values allow more detail generation.
+              </p>
+            </div>
+
+            <button mat-raised-button 
+                    class="w-full !py-1 !text-lg !font-bold !rounded-full !bg-gradient-to-r from-blue-500 via-violet-500 to-red-400 !text-white" 
+                    [disabled]="!selectedAsset || isLoadingUpscale"
+                    (click)="startUpscale()">
+               <mat-icon class="mr-2">auto_awesome</mat-icon> Upscale
+            </button>
+          </div>
+
+        </div>
+
+        <div class="result-panel-upscaler col-span-3">
+          <div class="result-box-upscaler !h-full">
+            <div *ngIf="isLoadingUpscale" class="placeholder-state loading-state">
+              <div class="text-3xl text-gray-400 mb-4 loading-indicator">...</div>
+              <p class="text-lg text-gray-400 mt-4">Upscaling initiated...</p>
+            </div>
+
+            <div *ngIf="!assetPair.upscaled && !isLoadingUpscale" class="placeholder-state">
+              <p class="text-white mt-4">Comparison results will appear here.</p>
+            </div>
+
+            <div *ngIf="assetPair.upscaled && assetPair.original && !isLoadingUpscale"
+              class="slider-comparison-container"
+              [style.aspect-ratio]="(assetPair.aspectRatio || '1:1').replace(':', ' / ')"
+              [style.width]="'min(100%, calc(50vh * ' + aspectRatioValue + '))'">
+              <img [src]="assetPair.original.url" alt="Original" class="comparison-image original-img"
+                [style.clipPath]="'inset(0 ' + (100 - sliderValue) + '% 0 0)'" />
+              <img [src]="assetPair.upscaled.url" alt="Upscaled" class="comparison-image upscaled-img"
+                [style.clipPath]="'inset(0 0 0 ' + sliderValue + '%)'" />
+              <input type="range" min="0" max="100" [(ngModel)]="sliderValue" class="comparison-slider" />
+              <div class="slider-handle" [style.left.%]="sliderValue"><mat-icon
+                  class="handle-icon">compare_arrows</mat-icon></div>
+              <div class="slider-label before-label" *ngIf="sliderValue > 10">Before</div>
+              <div class="slider-label after-label" *ngIf="sliderValue < 90">After</div>
+            </div>
+          </div>
+
+          <div class="flex justify-center gap-4 mt-6" *ngIf="assetPair.upscaled && !isLoadingUpscale">
+            <button mat-raised-button class="download-btn-upscaler" (click)="downloadUpscaled()">
+              <mat-icon class="mr-2">download</mat-icon>Download
+            </button>
+            
+            <button mat-stroked-button color="primary" class="!rounded-full !px-6 !py-1 !font-bold" 
+                    (click)="navigateToDetails()" *ngIf="completedJobId">
+               <mat-icon class="mr-2">info</mat-icon> See more info
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,98 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<div class="dialog-container">
+  <div class="dialog-header">
+    <h2>Manage Tags</h2>
+    <button mat-icon-button (click)="close()">
+      <mat-icon>close</mat-icon>
+    </button>
+  </div>
+
+  <div class="dialog-content">
+    <!-- Create Tag -->
+    <div class="create-tag-section mb-4 ml-1 flex gap-2 items-center">
+      <input type="text" [(ngModel)]="newTagName" class="name-input bg-neutral-800 text-white p-1 rounded"
+        placeholder="New tag name" (keyup.enter)="createTag()">
+      <button mat-icon-button (click)="createTag()" [disabled]="!newTagName.trim()" title="Create Tag" class="create-btn">
+        <mat-icon>add</mat-icon>
+      </button>
+    </div>
+    
+    <!-- Search Bar -->
+    <div class="search-container mb-4 flex gap-2 items-center">
+      <mat-icon>search</mat-icon>
+      <input type="text" [(ngModel)]="searchQuery" (input)="onSearch()" class="search-input" placeholder="Search tags..."
+        cdkFocusInitial>
+    </div>
+    
+    <!-- My Tags Filter -->
+    <div class="flex items-center mb-4 text-white">
+      <mat-checkbox [checked]="onlyMyTags" (change)="toggleOnlyMyTags($event.checked)">
+        Show only My tags
+      </mat-checkbox>
+    </div>
+
+    <div *ngIf="isLoading" class="loading-container">
+      <mat-spinner diameter="40"></mat-spinner>
+    </div>
+
+    <div *ngIf="!isLoading">
+      <div class="tags-list">
+        <div *ngFor="let tag of displayedTags" class="tag-item">
+          <!-- View Mode -->
+          <ng-container *ngIf="editingTagId !== tag.id">
+            <div class="tag-color" [style.backgroundColor]="tag.color || '#1D8DF8'"></div>
+            <span class="tag-name">{{ tag.name }}</span>
+            <div class="tag-actions">
+              <button mat-icon-button (click)="startEdit(tag)" title="Edit">
+                <mat-icon>edit</mat-icon>
+              </button>
+              <button mat-icon-button (click)="deleteTag(tag)" title="Delete" class="delete-btn">
+                <mat-icon>delete</mat-icon>
+              </button>
+            </div>
+            </ng-container>
+
+          <!-- Edit Mode -->
+          <ng-container *ngIf="editingTagId === tag.id">
+            <input type="color" [(ngModel)]="editColor" class="color-input">
+            <input type="text" [(ngModel)]="editName" class="name-input" placeholder="Tag name">
+            <div class="edit-actions">
+              <button mat-icon-button (click)="saveEdit(tag)" title="Save" class="save-btn">
+                <mat-icon>check</mat-icon>
+              </button>
+              <button mat-icon-button (click)="cancelEdit()" title="Cancel">
+                <mat-icon>close</mat-icon>
+              </button>
+            </div>
+          </ng-container>
+          </div>
+
+        <div *ngIf="tags.length === 0" class="no-tags">
+          No tags found in this workspace.
+        </div>
+        </div>
+        
+        <!-- Load More Button -->
+        <div *ngIf="tags.length < totalTags" class="load-more-container flex justify-center mt-4">
+          <button mat-button (click)="loadMore()" class="load-more-btn">
+            Load More
+          </button>
+      </div>
+    </div>
+  </div>
+</div>

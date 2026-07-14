@@ -1,0 +1,89 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<!-- MIXED MODE (Grid Layout) - NOW DEFAULT FOR ALL -->
+<div class="input-container-mixed">
+  <!-- Counter -->
+  <div class="text-xs text-neutral-500 mb-2 font-medium">
+    {{ items.length }}/{{ maxItems }} item{{ maxItems === 1 ? '' : 's' }} selected
+  </div>
+
+  <!-- List of current items -->
+  <div class="flex flex-wrap gap-2 mb-2" *ngIf="items.length">
+    <div *ngFor="let item of items; let i = index" 
+         class="relative h-20 w-20 flex-shrink-0 group rounded-lg overflow-hidden border border-neutral-700 bg-neutral-800">
+      
+      <!-- Case 1: Fixed Image/Video -->
+      <ng-container *ngIf="!isStepOutputReference(item)">
+        <img *ngIf="$any(item).previewUrl" [src]="$any(item).previewUrl" class="h-full w-full object-cover" />
+        <div *ngIf="!$any(item).previewUrl" class="h-full w-full flex items-center justify-center">
+          <mat-icon class="text-neutral-500">{{ type === 'video' ? 'video' : 'image' }}</mat-icon>
+        </div>
+      </ng-container>
+
+      <!-- Case 2: Linked Output -->
+      <ng-container *ngIf="isStepOutputReference(item)">
+        <div class="h-full w-full flex flex-col items-center justify-center p-1 text-center bg-blue-900/20">
+          <mat-icon class="text-blue-400 !w-5 !h-5 !text-lg">link</mat-icon>
+          <span class="text-[9px] text-blue-200 leading-tight mt-1 line-clamp-2">
+            {{ getLinkedOutputLabel(item) }}
+          </span>
+        </div>
+      </ng-container>
+
+      <!-- Delete Button -->
+      <button
+        (click)="clearReferenceImage(i)"
+        class="absolute top-0 right-0 p-0.5 bg-black/50 text-white hover:bg-red-500 rounded-bl-lg opacity-0 group-hover:opacity-100 transition-opacity"
+      >
+        <mat-icon class="!h-4 !w-4 !text-sm">close</mat-icon>
+      </button>
+    </div>
+  </div>
+
+  <!-- Add Buttons (Always on new row) -->
+  <div class="flex gap-2" *ngIf="items.length < maxItems">
+    <!-- Add Fixed -->
+    <div 
+      class="h-10 w-10 flex flex-col items-center justify-center cursor-pointer rounded-lg border-2 border-dashed border-neutral-700 hover:border-neutral-500 hover:bg-neutral-800 transition-colors gap-1"
+      (click)="openImageSelectorForReference()"
+      matTooltip="Add {{ type === 'video' ? 'Video' : 'Image' }}">
+      <mat-icon class="text-neutral-400 !w-5 !h-5 !text-xl">{{ type === 'video' ? 'video_library' :
+        'add_photo_alternate' }}</mat-icon>
+    </div>
+  
+    <!-- Add Linked -->
+    <div 
+      class="h-10 w-10 flex flex-col items-center justify-center cursor-pointer rounded-lg border-2 border-dashed border-neutral-700 hover:border-blue-500/50 hover:bg-blue-900/10 transition-colors gap-1"
+      [matMenuTriggerFor]="outputMenu"
+      matTooltip="Add Output Reference">
+      <mat-icon class="text-blue-400 !w-5 !h-5 !text-xl">link</mat-icon>
+    </div>
+  
+    <mat-menu #outputMenu="matMenu">
+      <button mat-menu-item *ngFor="let out of compatibleOutputs" (click)="addLinkedOutput(out)">
+        {{ out.label }}
+      </button>
+      <div *ngIf="!compatibleOutputs?.length" class="px-4 py-2 text-sm text-neutral-500">
+        No compatible outputs
+      </div>
+    </mat-menu>
+  </div>
+  
+   <mat-error *ngIf="control.invalid && (control.touched || showValidationErrors) && items.length === 0">
+       At least one input is required
+   </mat-error>
+</div>

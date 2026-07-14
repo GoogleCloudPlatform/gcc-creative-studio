@@ -1,0 +1,98 @@
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+:host {
+  display: block;
+  width: 100%;
+}
+
+.studio-slider-container {
+  width: 100%;
+}
+
+// Ensure the label/value texts look clean
+.studio-slider-container .flex {
+  font-family: 'Google Sans Text', sans-serif;
+}
+
+.studio-slider {
+  width: calc(100% - 12px) !important; // 100% minus knob size/2
+
+  .mdc-slider__track {
+    position: absolute !important;
+    height: 10px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+    margin: 0 !important;
+  }
+
+  // The inactive track (the background line)
+  .mdc-slider__track--inactive {
+    height: 10px !important;
+    border-radius: 5px !important;
+    background: rgba(255, 255, 255, 0.1) !important; // Dark transparent track
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.5) !important; // inner shadow for depth
+  }
+
+  // Active track container
+  .mdc-slider__track--active {
+    height: 10px !important;
+  }
+
+  // Active track fill (glowing blue)
+  .mdc-slider__track--active_fill {
+    border-radius: 5px !important;
+    background: linear-gradient(90deg, #1A73E8 0%, #66B2FF 100%) !important; // Bright blue gradient
+    border: none !important;
+    box-shadow: 0 0 8px rgba(26, 115, 232, 0.8) !important; // Blue glow
+  }
+
+  // Force the 48x48 thumb knob parent container to perfectly center vertically 
+  // without overriding its inline horizontal translateX movement
+  .mdc-slider__thumb {
+    top: 50% !important;
+    margin-top: -24px !important;
+  }
+
+  // Thumb knob styling (Frosted glass pill)
+  .mdc-slider__thumb-knob {
+    width: 24px !important; 
+    height: 16px !important;
+    border-radius: 8px !important;
+    
+    // Force absolute vertical and horizontal centering
+    position: absolute !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    
+    // Glass styling
+    background: rgba(255, 255, 255, 0.2) !important;
+    border: 1px solid rgba(255, 255, 255, 0.3) !important;
+    backdrop-filter: blur(4px) !important;
+    
+    // Slight shadow to separate from track
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.4) !important;
+  }
+
+  // Hide the focus/hover ripple circle
+  .mdc-slider__thumb::before, .mdc-slider__thumb::after, .mat-ripple {
+    display: none !important;
+    opacity: 0 !important;
+    background: transparent !important;
+  }
+}
+  

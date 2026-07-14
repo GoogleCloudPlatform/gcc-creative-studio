@@ -96,8 +96,8 @@ export enum CompositionEnum {
 
 export enum GenerationModelEnum {
   // Image-Specific Models
-  GEMINI_3_1_FLASH = 'gemini-3.1-flash-image',
-  GEMINI_3_PRO = 'gemini-3-pro-image',
+  GEMINI_3_1_FLASH = 'gemini-2.5-flash-image',
+  GEMINI_3_PRO = 'gemini-2.5-flash-image',
   GEMINI_2_5_FLASH = 'gemini-2.5-flash-image',
 
   // Video-Specific Models

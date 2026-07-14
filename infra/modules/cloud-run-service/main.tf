@@ -126,6 +126,7 @@ resource "google_cloud_run_v2_service" "this" {
 }
 
 resource "google_cloudbuild_trigger" "this" {
+  count = 0
   name            = "${var.service_name}-trigger"
   location        = var.gcp_region
   service_account = google_service_account.trigger_sa.id
@@ -146,6 +147,7 @@ resource "google_cloudbuild_trigger" "this" {
 
 # --- Common IAM Bindings ---
 resource "google_project_iam_member" "logging_writer_binding" {
+  count = 0
   project = var.gcp_project_id
   role    = "roles/logging.logWriter"
   member  = "serviceAccount:${google_service_account.trigger_sa.email}"
@@ -172,24 +174,28 @@ resource "google_service_account_iam_member" "run_sa_user_binding" {
 }
 
 resource "google_project_iam_member" "aiplatform_user_binding" {
+  count = 0
   project = var.gcp_project_id
   role    = "roles/aiplatform.user"
   member  = "serviceAccount:${google_service_account.run_sa.email}"
 }
 
 resource "google_project_iam_member" "storage_object_admin_binding" {
+  count = 0
   project = var.gcp_project_id
   role    = "roles/storage.objectAdmin"
   member  = "serviceAccount:${google_service_account.run_sa.email}"
 }
 
 resource "google_project_iam_member" "firestore_developer_binding" {
+  count = 0
   project = var.gcp_project_id
   role    = "roles/firebase.developAdmin"
   member  = "serviceAccount:${google_service_account.run_sa.email}"
 }
 
 resource "google_project_iam_member" "sa_token_creator_binding" {
+  count = 0
   project = var.gcp_project_id
   role    = "roles/iam.serviceAccountTokenCreator"
   member  = "serviceAccount:${google_service_account.run_sa.email}"
@@ -203,18 +209,21 @@ resource "google_secret_manager_secret_iam_member" "db_password_access" {
 
 # This is required for the Cloud Run instance to talk to the Cloud SQL Auth Proxy
 resource "google_project_iam_member" "cloudsql_client" {
+  count = 0
   project = var.gcp_project_id
   role    = "roles/cloudsql.client"
   member  = "serviceAccount:${google_service_account.run_sa.email}"
 }
 
 resource "google_project_iam_member" "workflows_editor" {
+  count = 0
   project = var.gcp_project_id
   role    = "roles/workflows.editor"
   member  = "serviceAccount:${google_service_account.run_sa.email}"
 }
 
 resource "google_project_iam_member" "workflows_invoker" {
+  count = 0
   project = var.gcp_project_id
   role    = "roles/workflows.invoker"
   member  = "serviceAccount:${google_service_account.run_sa.email}"

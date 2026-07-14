@@ -43,7 +43,7 @@ export class ImageStateService {
     prompt: '',
     negativePrompt: '',
     aspectRatio: '1:1',
-    model: 'gemini-3.1-flash-image',
+    model: 'gemini-2.5-flash-image',
     lighting: '',
     watermark: false,
     googleSearch: false,

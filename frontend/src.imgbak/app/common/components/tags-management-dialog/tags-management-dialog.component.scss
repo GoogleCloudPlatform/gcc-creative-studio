@@ -1,0 +1,221 @@
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+.dialog-container {
+  padding: 16px;
+  display: flex;
+    flex-direction: column;
+    max-height: 80vh;
+  }
+  
+  .dialog-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+  
+    h2 {
+      color: white;
+      margin: 0;
+      font-size: 24px;
+      font-weight: 500;
+    }
+  
+    button {
+      color: rgba(255, 255, 255, 0.5);
+  
+      &:hover {
+        color: white;
+      }
+    }
+  }
+  
+  .dialog-content {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    overflow: hidden;
+  }
+  
+  .search-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    margin: 4px 4px 8px 4px;
+  
+    mat-icon {
+      color: rgba(255, 255, 255, 0.5);
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
+    }
+  
+    .search-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: white;
+      font-size: 13px;
+      outline: none;
+  
+      &::placeholder {
+        color: rgba(255, 255, 255, 0.3);
+      }
+    }
+  
+    &:focus-within {
+      border-color: #a8c7fa;
+      background: rgba(255, 255, 255, 0.08);
+    }
+  }
+  
+  .loading-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+}
+
+.tags-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+    max-height: 250px;
+    overflow-y: auto;
+    padding-right: 4px;
+  
+    &::-webkit-scrollbar {
+      width: 6px;
+    }
+  
+    &::-webkit-scrollbar-track {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 3px;
+    }
+  
+    &::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 3px;
+  
+      &:hover {
+        background: rgba(255, 255, 255, 0.3);
+      }
+    }
+}
+
+.tag-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+    transition: background 0.2s ease;
+  
+    &:hover {
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+  .tag-color {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .tag-name {
+    flex: 1;
+    font-size: 14px;
+    color: white;
+  }
+
+  .tag-actions {
+    display: flex;
+    gap: 4px;
+
+    button {
+      color: rgba(255, 255, 255, 0.5);
+
+      &:hover {
+        color: white;
+      }
+
+      &.delete-btn:hover {
+        color: #f28b82; // Light red
+      }
+    }
+  }
+
+  .color-input {
+    width: 32px;
+    height: 32px;
+    border-radius: 4px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .name-input {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    color: white;
+    padding: 6px 8px;
+    font-size: 14px;
+    outline: none;
+
+    &:focus {
+      border-color: #a8c7fa;
+    }
+  }
+
+  .edit-actions {
+    display: flex;
+    gap: 4px;
+
+    button {
+      color: rgba(255, 255, 255, 0.5);
+
+      &.save-btn:hover {
+        color: #81c995; // Light green
+      }
+
+      &:hover {
+        color: white;
+      }
+    }
+  }
+}
+
+.no-tags {
+  color: rgba(255, 255, 255, 0.5);
+  text-align: center;
+  padding: 16px;
+}
+
+.load-more-container {
+  .load-more-btn {
+    color: #a8c7fa;
+    font-weight: 500;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.05);
+    }
+  }
+}

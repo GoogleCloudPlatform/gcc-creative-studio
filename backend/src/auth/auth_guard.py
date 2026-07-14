@@ -28,6 +28,8 @@ from google.oauth2 import id_token
 from src.config.config_service import config_service
 from src.users.user_model import UserModel, UserRoleEnum
 from src.users.user_service import UserService
+from src.workspaces.workspace_service import WorkspaceService
+from src.workspaces.dto.create_workspace_dto import CreateWorkspaceDto
 
 # Initialize the service once to be used by dependencies.
 # user_service = UserService()  <-- REMOVED
@@ -44,6 +46,7 @@ logger = logging.getLogger(__name__)
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
     user_service: UserService = Depends(UserService),
+    workspace_service: WorkspaceService = Depends(WorkspaceService),
 ) -> UserModel:
     """Dependency that handles the entire authentication and user
     provisioning flow.
@@ -56,16 +59,18 @@ async def get_current_user(
     """
     try:
         decoded_token = {}
-        if config_service.ENVIRONMENT == "local":
-            # --- Local: Use Firebase Auth ---
-            # Verifies the token using the standard Firebase Admin SDK method.
+        # Try Firebase Admin SDK first (frontend uses signInWithPopup ->
+        # Firebase ID tokens). Fall back to Google OIDC for Identity
+        # Platform tokens.
+        try:
             logger.info("Verifying token using Firebase Admin SDK...")
-            decoded_token = await asyncio.to_thread(auth.verify_id_token, token)
-        else:
-            # --- Development/Production: Use Google Identity Platform
-            # (OIDC) ---
-            # Verifies the Google-issued OIDC ID token. The audience must be the
-            # OAuth 2.0 client ID of the Identity Platform-protected resource.
+            decoded_token = await asyncio.to_thread(
+                auth.verify_id_token, token
+            )
+        except Exception as fb_err:  # noqa: BLE001
+            logger.info(
+                "Firebase verify failed (%s); trying Google OIDC...", fb_err
+            )
             google_token_audience = config_service.GOOGLE_TOKEN_AUDIENCE
             decoded_token = await asyncio.to_thread(
                 id_token.verify_oauth2_token,
@@ -90,10 +95,14 @@ async def get_current_user(
             )
 
         # If ALLOWED_ORGS is configured, check the user's organization.
+        # Firebase tokens lack 'hd', so derive domain from email.
+        effective_hd = token_info_hd
+        if not effective_hd and email:
+            effective_hd = email.split("@")[-1].lower()
         if config_service.ALLOWED_ORGS:
             if (
-                not token_info_hd
-                or token_info_hd not in config_service.ALLOWED_ORGS
+                not effective_hd
+                or effective_hd not in config_service.ALLOWED_ORGS
             ):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -124,6 +133,28 @@ async def get_current_user(
                 await user_service.user_repo.update(
                     user_doc.id, {"picture": picture}
                 )
+
+        # Auto-provision a default workspace on first login so every
+        # colleague can start immediately (no "select a workspace" error).
+        try:
+            existing_ws = await workspace_service.list_workspaces_for_user(
+                user_doc
+            )
+            if not existing_ws:
+                ws_name = f"{(user_doc.name or 'My').strip()} Workspace"
+                if len(ws_name) < 3:
+                    ws_name = "My Workspace"
+                await workspace_service.create_workspace(
+                    user_doc,
+                    CreateWorkspaceDto(name=ws_name),
+                )
+                logger.info(
+                    "Auto-created default workspace for user: %s", email
+                )
+        except Exception as ws_exc:  # noqa: BLE001
+            logger.warning(
+                "Could not auto-create workspace for %s: %s", email, ws_exc
+            )
 
         return user_doc
 

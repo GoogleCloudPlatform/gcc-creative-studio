@@ -1,6 +1,6 @@
 {
   "hosting": {
-    "site": "SITE_ID_PLACEHOLDER",
+    "site": "ltm-craftstudio-poc",
     "public": "dist/creative-studio/browser",
     "ignore": [
       "firebase.json",
@@ -11,7 +11,7 @@
       {
         "source": "/api/**",
         "run": {
-          "serviceId": "BACKEND_SERVICE_ID_PLACEHOLDER",
+          "serviceId": "cstudio-be",
           "region": "us-central1"
         }
       },
@@ -27,6 +27,15 @@
           {
             "key": "Cache-Control",
             "value": "no-store, no-cache, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "**",
+        "headers": [
+          {
+            "key": "Cross-Origin-Opener-Policy",
+            "value": "same-origin-allow-popups"
           }
         ]
       }

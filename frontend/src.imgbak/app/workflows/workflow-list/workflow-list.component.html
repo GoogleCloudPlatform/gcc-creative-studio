@@ -1,0 +1,137 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<div class="workflow-list-container">
+  <!-- Header -->
+  <div class="header-section">
+    <div class="in-line-wrapper">
+      <div class="title-group">
+        <h1 class="page-title">My Workflows</h1>
+      </div>
+      <studio-button variant="cta" size="medium"
+        mat-flat-button
+        *ngIf="authService.isUserAdmin() || authService.isUserWorkflows()"
+        (click)="createNewWorkflow()"
+      >
+        <mat-icon>add</mat-icon>
+        New
+      </studio-button>
+    </div>
+
+  </div>
+
+  <!-- Error Message -->
+  <div
+    *ngIf="errorMessage && !isLoading"
+    class="bg-red-500/20 border border-red-500/50 text-red-200 px-4 py-3 rounded relative mb-4 backdrop-blur-md"
+    role="alert"
+  >
+    <strong class="font-bold">Error! </strong>
+    <span class="block sm:inline">{{ errorMessage }}</span>
+  </div>
+
+  <div
+    class="workflows-list"
+    *ngIf="!errorMessage"
+  >
+    <div class="workflows-filter">
+      <studio-search-filter
+        [(value)]="currentFilter"
+        (valueChange)="onFilterValueChange($event)"
+        placeholder="Filter workflows..."
+        icon="filter_list"
+        [expandable]="true"
+      ></studio-search-filter>
+    </div>
+
+    <!-- Loading Indicator (Initial or empty) -->
+    <div
+      *ngIf="isLoading && dataSource.data.length === 0"
+      class="flex justify-center items-center py-20"
+    >
+      <mat-spinner
+        diameter="50"
+        color="accent"
+      ></mat-spinner>
+    </div>
+
+    <div *ngIf="dataSource.data.length > 0 || !isLoading">
+
+    <div
+      *ngFor="let wf of obs$ | async"
+      class="workflow-card"
+      (click)="navigateToHistory(wf)"
+    >
+      <!-- Double click to view history -->
+
+      <div class="card-content">
+        <!-- Info Left -->
+        <div class="info-group">
+          <h2>{{ wf.name }}</h2>
+          <p class="description">{{ wf.description || 'No description provided' }}</p>
+
+          <div class="meta-row">
+            <span>Created: {{ wf.createdAt | date:'longDate' }}</span>
+
+            <div class="time-ago">
+              <mat-icon class="tiny-icon">schedule</mat-icon>
+              <span> {{ formatTimeAgo(wf.updatedAt) }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Actions Right (Always visible or hover? Screenshot shows them clearly) -->
+        <div
+          class="actions-group"
+          *ngIf="authService.isUserAdmin() || authService.isUserWorkflows()"
+        >
+          <button
+            mat-icon-button
+            (click)="$event.stopPropagation()"
+            [routerLink]="['/workflows/edit', wf.id]"
+            [queryParams]="{ returnUrl: '/workflows' }"
+            matTooltip="Edit Definition"
+          >
+            <mat-icon>edit</mat-icon>
+          </button>
+          <button
+            mat-icon-button
+            (click)="deleteWorkflow(wf, $event)"
+            matTooltip="Delete Workflow"
+          >
+            <mat-icon>delete</mat-icon>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Empty State -->
+    <div
+      *ngIf="(obs$ | async)?.length === 0"
+      class="empty-state"
+    >
+      <mat-icon>toc</mat-icon>
+      <p>No workflows found.</p>
+    </div>
+  </div>
+
+  <mat-paginator
+    class="!bg-transparent text-gray-400 mt-4"
+    [pageSizeOptions]="[5, 10, 25, 100]"
+    showFirstLastButtons
+  >
+  </mat-paginator>
+</div>

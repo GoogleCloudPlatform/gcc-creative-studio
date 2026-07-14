@@ -1,0 +1,179 @@
+/**
+ * Copyright 2025 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+:host {
+  display: block;
+  height: 100%;
+  width: 100%;
+  max-width: 100vw;
+  max-height: 100vh;
+  background: transparent;
+}
+
+.image-selector-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  color: #f8f9fa;
+  font-family: 'Google Sans', sans-serif;
+  overflow: hidden; /* Ensure anything beyond its borders is hidden */
+  box-sizing: border-box;
+  
+  /* Glassmorphism background for the whole dialog content */
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  position: relative;
+}
+
+.selector-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 24px 32px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+
+  .selector-title {
+    font-size: 24px;
+    font-weight: 500;
+    margin: 0;
+    letter-spacing: 0.25px;
+  }
+}
+
+.gallery-wrapper {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  position: relative;
+  padding: 24px 32px;
+
+  &.dragging {
+    .drop-overlay {
+      display: flex;
+    }
+  }
+
+  /* Custom scrollbar */
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    &:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+  }
+}
+
+.drop-overlay {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: 100;
+  justify-content: center;
+  align-items: center;
+  border: 2px dashed rgba(255, 255, 255, 0.4);
+  border-radius: 12px;
+  margin: 16px;
+
+  .drop-message {
+    text-align: center;
+    color: white;
+    
+    mat-icon {
+      font-size: 48px;
+      width: 48px;
+      height: 48px;
+      margin-bottom: 12px;
+    }
+    
+    p {
+      font-size: 18px;
+      margin: 0;
+    }
+  }
+}
+
+.inline-spinner {
+  margin-right: 8px;
+}
+
+.selector-footer {
+  display: flex;
+  align-items: center;
+  padding: 16px 32px;
+  background: rgba(0, 0, 0, 0.2);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  gap: 12px;
+  
+  .selection-info {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 14px;
+    font-weight: 500;
+  }
+}
+
+/* Ensure MediaGallery occupies full width and handles its own layout */
+::ng-deep app-media-gallery {
+  display: block;
+  width: 100%;
+}
+
+/* Override dialog content padding */
+::ng-deep .mat-mdc-dialog-content {
+  padding: 0 !important;
+  max-height: none !important;
+  overflow: hidden !important; /* Critical: prevent horizontal scrollbar on the dialog itself */
+}
+
+::ng-deep .image-selector-dialog .mat-mdc-dialog-container .mdc-dialog__surface {
+  background: transparent !important;
+  border-radius: 20px !important;
+  overflow: hidden !important; /* Ensure the dialog shell doesn't show scrollbars */
+  box-shadow: none !important; /* Let the container handle the shadow */
+}
+
+/* Ensure global horizontal scroll is disabled for the dialog */
+::ng-deep .image-selector-dialog {
+  overflow: hidden !important;
+  
+  .mat-mdc-dialog-container {
+    padding: 0 !important;
+  }
+}
+
+::ng-deep .mat-mdc-tab-body-content {
+  overflow: visible !important;
+}
+
+::ng-deep .gallery-wrapper mat-tab-group,
+::ng-deep .gallery-wrapper .mat-mdc-tab-body-wrapper {
+  height: 100% !important;
+}

@@ -51,8 +51,8 @@ class GenerationModelEnum(str, Enum):
     GEMINI_2_5_FLASH_IMAGE_PREVIEW = "gemini-2.5-flash-image-preview"
     GEMINI_2_5_FLASH_IMAGE = "gemini-2.5-flash-image"
     GEMINI_3_PRO_PREVIEW = "gemini-3-pro-preview"
-    GEMINI_3_PRO_IMAGE = "gemini-3-pro-image"
-    GEMINI_3_1_FLASH_IMAGE = "gemini-3.1-flash-image"
+    GEMINI_3_PRO_IMAGE = "gemini-2.5-flash-image"
+    GEMINI_3_1_FLASH_IMAGE = "gemini-2.5-flash-image"
     GEMINI_3_FLASH_PREVIEW = "gemini-3-flash-preview"
     VTO = "virtual-try-on-001"
 
@@ -76,8 +76,8 @@ class GenerationModelEnum(str, Enum):
 
     # Deprecated models (For old generations only, do not use)
     _DEPRECATED_VTO = "virtual-try-on-preview-08-04"
-    GEMINI_3_PRO_IMAGE_PREVIEW = "gemini-3-pro-image-preview"
-    GEMINI_3_1_FLASH_IMAGE_PREVIEW = "gemini-3.1-flash-image-preview"
+    GEMINI_3_PRO_IMAGE_PREVIEW = "gemini-2.5-flash-image"
+    GEMINI_3_1_FLASH_IMAGE_PREVIEW = "gemini-2.5-flash-image"
     IMAGEN_4_001 = "imagen-4.0-generate-001"
     IMAGEN_4_ULTRA = "imagen-4.0-ultra-generate-001"
     IMAGEN_4_ULTRA_PREVIEW = "imagen-4.0-ultra-generate-preview-06-06"
