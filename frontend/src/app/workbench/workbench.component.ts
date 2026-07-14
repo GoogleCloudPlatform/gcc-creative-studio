@@ -670,19 +670,73 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     this.timelineState.assets.update(items =>
       items.map(i => (i.id === id ? {...i, duration} : i)),
     );
-    this.timelineState.timelineClips.update(clips =>
-      clips.map(clip => {
+    this.timelineState.timelineClips.update(clips => {
+      const updated = clips.map(clip => {
         if (clip.assetId === id) {
           if (clip.duration === 0 || clip.isDurationPlaceholder) {
-            const updated = {...clip, duration};
-            delete updated.isDurationPlaceholder;
-            return updated;
+            const clipSpeed = clip.speed !== undefined ? clip.speed : 1.0;
+            const targetDuration = duration / clipSpeed;
+            const updatedClip = {...clip, duration: targetDuration};
+            delete updatedClip.isDurationPlaceholder;
+            return updatedClip;
           }
         }
         return clip;
-      }),
-    );
+      });
+      return this.recalculateAudioTracks(updated);
+    });
     this.refreshTimelineLayout();
+  }
+
+  private recalculateAudioTracks(clips: TimelineClip[]): TimelineClip[] {
+    const videoClips = clips.filter(c => c.trackIndex === 0);
+    const audioClips = clips.filter(c => c.trackIndex > 0);
+
+    // Sort audio clips by startTime to ensure deterministic and clean layout
+    audioClips.sort((a, b) => a.startTime - b.startTime);
+
+    const updatedAudioClips: TimelineClip[] = [];
+
+    audioClips.forEach(clip => {
+      const targetTrack = this.findNextAvailableTrackForClip(
+        clip.startTime,
+        clip.duration,
+        updatedAudioClips,
+      );
+      updatedAudioClips.push({
+        ...clip,
+        trackIndex: targetTrack,
+      });
+    });
+
+    return [...videoClips, ...updatedAudioClips];
+  }
+
+  private findNextAvailableTrackForClip(
+    startTime: number,
+    duration: number,
+    existingAudioClips: TimelineClip[],
+  ): number {
+    let targetTrack = 1;
+    let placed = false;
+
+    while (!placed) {
+      const trackClips = existingAudioClips.filter(
+        c => c.trackIndex === targetTrack,
+      );
+      const hasOverlap = trackClips.some(c => {
+        const cEnd = c.startTime + c.duration;
+        const newEnd = startTime + duration;
+        return startTime < cEnd && newEnd > c.startTime;
+      });
+
+      if (!hasOverlap) {
+        placed = true;
+      } else {
+        targetTrack++;
+      }
+    }
+    return targetTrack;
   }
 
   onThumbnailError(asset: MediaAsset) {
@@ -716,6 +770,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     const assetsToExtract: MediaAsset[] = [];
 
     // Save transitions metadata
+
     this.timelineState.transitions.set(data.transitions || []);
     this.timelineState.transitionIn.set(data.transition_in || null);
     this.timelineState.transitionOut.set(data.transition_out || null);
@@ -732,7 +787,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           clip.asset_ref?.type === 'source_asset'
             ? Number(clip.asset_ref.id)
             : undefined;
-        const trimDuration = clip.trim?.duration_seconds || 5;
+        const speed =
+          clip.speed !== undefined && clip.speed !== null ? clip.speed : 1.0;
+        const trimDuration = (clip.trim?.duration_seconds || 5) / speed;
         const trimOffset = clip.trim?.offset_seconds || 0;
 
         const assetId = String(mediaItemId || sourceAssetId || '');
@@ -777,6 +834,12 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           last_frame_asset_ref: clip.last_frame_asset_ref || null,
           placeholder: clip.placeholder || null,
           isDurationPlaceholder: isPlaceholder || undefined,
+          volume:
+            clip.volume !== undefined && clip.volume !== null
+              ? clip.volume
+              : 1.0,
+          speed:
+            clip.speed !== undefined && clip.speed !== null ? clip.speed : 1.0,
         });
         videoStartTimes.push(currentVideoTime);
         currentVideoTime += trimDuration;
@@ -794,7 +857,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           clip.asset_ref?.type === 'source_asset'
             ? Number(clip.asset_ref.id)
             : undefined;
-        const trimDuration = clip.trim?.duration_seconds || 5;
+        const speed =
+          clip.speed !== undefined && clip.speed !== null ? clip.speed : 1.0;
+        const trimDuration = (clip.trim?.duration_seconds || 5) / speed;
         const trimOffset = clip.trim?.offset_seconds || 0;
 
         let startTime = clip.start_at?.offset_seconds || 0;
@@ -873,6 +938,12 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           mediaItemId: mediaItemId,
           sourceAssetId: sourceAssetId,
           isDurationPlaceholder: isPlaceholder || undefined,
+          volume:
+            clip.volume !== undefined && clip.volume !== null
+              ? clip.volume
+              : 1.0,
+          speed:
+            clip.speed !== undefined && clip.speed !== null ? clip.speed : 1.0,
         });
       });
     }
@@ -1004,26 +1075,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     const allAudioClips = this.timelineState
       .timelineClips()
       .filter(c => c.trackIndex > 0);
-    let targetTrack = 1;
-    let placed = false;
-
-    while (!placed) {
-      const trackClips = allAudioClips.filter(
-        c => c.trackIndex === targetTrack,
-      );
-      const hasOverlap = trackClips.some(c => {
-        const cEnd = c.startTime + c.duration;
-        const newEnd = startTime + duration;
-        return startTime < cEnd && newEnd > c.startTime;
-      });
-
-      if (!hasOverlap) {
-        placed = true;
-      } else {
-        targetTrack++;
-      }
-    }
-    return targetTrack;
+    return this.findNextAvailableTrackForClip(
+      startTime,
+      duration,
+      allAudioClips,
+    );
   }
 
   // Start dragging a clip horizontally on the timeline
@@ -1476,25 +1532,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         c => c.trackIndex > 0 && c.id !== movedClipId,
       );
 
-      let targetTrack = 1;
-      let placed = false;
-      const duration = movedClip.duration;
-      const startTime = movedClip.startTime; // Keep the user's dragged time
-
-      while (!placed) {
-        const trackClips = audioClips.filter(c => c.trackIndex === targetTrack);
-        const hasOverlap = trackClips.some(c => {
-          const cEnd = c.startTime + c.duration;
-          const newEnd = startTime + duration;
-          return startTime < cEnd && newEnd > c.startTime;
-        });
-
-        if (!hasOverlap) {
-          placed = true;
-        } else {
-          targetTrack++;
-        }
-      }
+      const targetTrack = this.findNextAvailableTrackForClip(
+        movedClip.startTime,
+        movedClip.duration,
+        audioClips,
+      );
 
       // Update the clip with the new track index
       this.timelineState.timelineClips.update(prev =>

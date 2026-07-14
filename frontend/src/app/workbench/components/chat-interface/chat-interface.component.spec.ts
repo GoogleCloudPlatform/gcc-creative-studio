@@ -50,6 +50,8 @@ describe('ChatInterfaceComponent', () => {
       currentStoryboard: signal(null),
       activeAgent: signal('director'),
       isGeneratingStoryboard: signal(false),
+      sessions: signal([]),
+      chatMessages: signal([]),
       generateVideoRequest$: new Subject<void>(),
       videoGenerated$: new Subject<any>(),
       getSessions: jasmine.createSpy('getSessions').and.returnValue(of([])),
@@ -119,10 +121,17 @@ describe('ChatInterfaceComponent', () => {
       stopPolling: jasmine.createSpy('stopPolling'),
     };
 
+    let isFirstCall = true;
     const mockWorkspaceStateService = {
       getActiveWorkspaceId: jasmine
         .createSpy('getActiveWorkspaceId')
-        .and.returnValue(1),
+        .and.callFake(() => {
+          if (isFirstCall) {
+            isFirstCall = false;
+            return null;
+          }
+          return 1;
+        }),
       activeWorkspaceId$: of(1),
     };
 
@@ -184,7 +193,12 @@ describe('ChatInterfaceComponent', () => {
   });
 
   it('should initialize and load sessions', () => {
-    expect(agentChatService.getSessions).toHaveBeenCalledWith(1);
+    expect(agentChatService.getSessions).toHaveBeenCalledWith(
+      1,
+      false,
+      undefined,
+      undefined,
+    );
   });
 
   it('should start a new chat', () => {

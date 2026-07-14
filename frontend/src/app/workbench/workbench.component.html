@@ -524,6 +524,7 @@
           <!-- Video Elements (Double Buffering) -->
           <video
             #videoA
+            preload="auto"
             class="max-w-full max-h-full object-contain shadow-2xl rounded-lg absolute transition-opacity duration-200"
             [class.hidden]="!timelineState.activeVideoClip()"
             [class.invisible]="isVideoHidden()"
@@ -532,6 +533,7 @@
           ></video>
           <video
             #videoB
+            preload="auto"
             class="max-w-full max-h-full object-contain shadow-2xl rounded-lg absolute transition-opacity duration-200"
             [class.hidden]="!timelineState.activeVideoClip()"
             [class.invisible]="isVideoHidden()"
@@ -816,7 +818,7 @@
 
             <div class="flex-1 flex flex-col md:w-[calc(100%-18rem)]">
               <!-- Main Scrollable Timeline -->
-              <div #timelineContainer class="relative !pl-4 overflow-hidden" (mousedown)="onTimelineMouseDown($event)">
+              <div #timelineContainer class="relative !pl-5 overflow-hidden" (mousedown)="onTimelineMouseDown($event)">
                 <div class="relative h-full" [style.width.px]="timelineWidth()" [style.transform]="
                                   'translateX(-' + timelineState.scrollOffset() + 'px)'
                   "
