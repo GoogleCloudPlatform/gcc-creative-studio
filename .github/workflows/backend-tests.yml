@@ -50,7 +50,7 @@ jobs:
       DB_HOST: 'localhost'
       DB_PORT: '5432'
       DB_USER: 'studio_user'
-      DB_PASSWORD: 'studio_password'
+      DB_PASS: 'studio_password'
       DB_NAME: 'creative_studio'
       USE_CLOUD_SQL_AUTH_PROXY: 'false'
       isLocal: 'True'
