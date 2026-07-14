@@ -975,6 +975,38 @@ def _process_image_in_background(
                             ),
                             "mime_type": mime_type,
                         }
+
+                        if (
+                            request_dto.metadata_generation_model
+                            and permanent_gcs_uris
+                        ):
+                            try:
+                                metadata = await asyncio.to_thread(
+                                    gemini_service.generate_media_metadata,
+                                    prompt=(
+                                        "Describe these generated images based"
+                                        f" on prompt: {rewritten_prompt}"
+                                    ),
+                                    media_uris=permanent_gcs_uris,
+                                    model_name=request_dto.metadata_generation_model,
+                                    mime_type=(
+                                        mime_type.value
+                                        if hasattr(mime_type, "value")
+                                        else mime_type
+                                    ),
+                                )
+                                if "titles" in metadata:
+                                    update_data["titles"] = metadata["titles"]
+                                if "descriptions" in metadata:
+                                    update_data["descriptions"] = metadata[
+                                        "descriptions"
+                                    ]
+                            except Exception as e:
+                                worker_logger.warning(
+                                    "Failed to generate media metadata: %s",
+                                    e,
+                                )
+
                         await media_repo.update(media_item_id, update_data)
                         worker_logger.info(
                             "Successfully processed image job %s",
@@ -1512,6 +1544,8 @@ class ImagenService:
             google_search=request_dto.google_search,
             resolution=request_dto.resolution,
             comment=request_dto.file_name,
+            titles=request_dto.titles,
+            descriptions=request_dto.descriptions,
             gcs_uris=[],
         )
 

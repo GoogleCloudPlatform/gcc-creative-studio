@@ -39,12 +39,14 @@ class SourceAssetRepository(BaseRepository[SourceAsset, SourceAssetModel]):
         self,
         user_id: int,
         file_hash: str,
+        workspace_id: int,
     ) -> SourceAssetModel | None:
-        """Finds a user asset by its file hash to prevent duplicates."""
+        """Finds a user asset by its file hash and workspace ID to prevent duplicates."""
         result = await self.db.execute(
             select(self.model)
             .where(self.model.user_id == user_id)
             .where(self.model.file_hash == file_hash)
+            .where(self.model.workspace_id == workspace_id)
             .limit(1),
         )
         asset = result.scalar_one_or_none()

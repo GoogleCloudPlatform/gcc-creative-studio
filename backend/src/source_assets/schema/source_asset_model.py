@@ -17,6 +17,7 @@ from enum import Enum
 
 from pydantic import Field
 from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.common.base_dto import AspectRatioEnum, MimeTypeEnum
@@ -60,6 +61,12 @@ class SourceAsset(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     gcs_uri: Mapped[str] = mapped_column(String, nullable=False)
     original_filename: Mapped[str] = mapped_column(String, nullable=False)
+    titles: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String), default=[], nullable=True
+    )
+    descriptions: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String), default=[], nullable=True
+    )
     mime_type: Mapped[MimeTypeEnum] = mapped_column(String, nullable=False)
     aspect_ratio: Mapped[AspectRatioEnum] = mapped_column(
         String,
@@ -115,6 +122,8 @@ class SourceAssetModel(BaseDocument):
     original_gcs_uri: str | None = None
     gcs_uri: str
     original_filename: str
+    titles: list[str] | None = Field(default_factory=list)
+    descriptions: list[str] | None = Field(default_factory=list)
     mime_type: MimeTypeEnum
     aspect_ratio: AspectRatioEnum = AspectRatioEnum.RATIO_1_1
     file_hash: str  # SHA-256 hash of the original file for de-duplication

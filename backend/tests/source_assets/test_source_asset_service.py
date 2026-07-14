@@ -140,6 +140,12 @@ async def test_upload_asset_success_image(
 
     assert response.id == 10
     assert response.presigned_url == "https://signed.url"
+    import hashlib
+
+    expected_hash = hashlib.sha256(contents).hexdigest()
+    mock_dependencies["repo"].find_by_hash.assert_called_once_with(
+        sample_user.id, expected_hash, 1
+    )
     mock_dependencies["repo"].create.assert_called_once()
     mock_dependencies["gcs_service"].store_to_gcs.assert_called_once()
 
@@ -172,6 +178,12 @@ async def test_upload_asset_duplicate(service, mock_dependencies, sample_user):
     )
 
     assert response.id == 5
+    import hashlib
+
+    expected_hash = hashlib.sha256(contents).hexdigest()
+    mock_dependencies["repo"].find_by_hash.assert_called_once_with(
+        sample_user.id, expected_hash, 1
+    )
     mock_dependencies["repo"].create.assert_not_called()  # Did not save new
     mock_dependencies[
         "gcs_service"

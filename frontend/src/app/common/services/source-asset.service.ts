@@ -44,6 +44,8 @@ export interface SourceAssetResponseDto {
   userId: string;
   gcsUri: string;
   originalFilename: string;
+  titles?: string[];
+  descriptions?: string[];
   mimeType: string;
   aspectRatio: string;
   fileHash: string;

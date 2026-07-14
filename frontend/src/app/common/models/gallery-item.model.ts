@@ -26,7 +26,9 @@ export interface BaseGalleryItem {
   deletedAt?: string;
   tags?: TagModel[];
 
-  // Display fields (optional fallbacks for backward compatibility)
+  // Display fields
+  titles?: string[];
+  descriptions?: string[];
   mimeType?: string;
   aspectRatio?: string;
   prompt?: string;
@@ -76,6 +78,8 @@ export interface BaseGalleryItem {
 
 export interface MediaItemMetadata {
   tags?: string[];
+  titles?: string[];
+  descriptions?: string[];
   model?: string;
   style?: string;
   prompt?: string;
@@ -104,6 +108,8 @@ export interface MediaItemMetadata {
 
 export interface SourceAssetMetadata {
   tags?: string[];
+  titles?: string[];
+  descriptions?: string[];
   isAudio?: boolean;
   isVideo?: boolean;
   mimeType?: string;

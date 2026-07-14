@@ -41,6 +41,19 @@ class CreateAudioDto(BaseDto):
         description="The ID of the workspace for this generation.",
     )
 
+    metadata_generation_model: GenerationModelEnum | str | None = Field(
+        default=GenerationModelEnum.GEMINI_3_5_FLASH,
+        description="The Gemini model to use for synchronous metadata generation.",
+    )
+    titles: list[str] | None = Field(
+        default=None,
+        description="Optional titles for the generated audio.",
+    )
+    descriptions: list[str] | None = Field(
+        default=None,
+        description="Optional descriptions for the generated audio.",
+    )
+
     # --- Lyria Specific Fields ---
     negative_prompt: str | None = Field(
         default=None,
@@ -77,6 +90,7 @@ class CreateAudioDto(BaseDto):
     )
 
     @field_validator("model")
+    @classmethod
     def validate_audio_model(
         cls, value: GenerationModelEnum
     ) -> GenerationModelEnum:

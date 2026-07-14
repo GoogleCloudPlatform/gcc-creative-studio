@@ -48,6 +48,8 @@ class GenerationModelEnum(str, Enum):
     IMAGEN_4_UPSCALE_PREVIEW = "imagen-4.0-upscale-preview"
     GEMINI_2_5_PRO = "gemini-2.5-pro"
     GEMINI_2_5_FLASH = "gemini-2.5-flash"
+    GEMINI_3_5_FLASH = "gemini-3.5-flash"
+    GEMINI_1_5_FLASH = "gemini-1.5-flash"
     GEMINI_2_5_FLASH_IMAGE_PREVIEW = "gemini-2.5-flash-image-preview"
     GEMINI_2_5_FLASH_IMAGE = "gemini-2.5-flash-image"
     GEMINI_3_PRO_PREVIEW = "gemini-3-pro-preview"
