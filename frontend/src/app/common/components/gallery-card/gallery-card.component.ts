@@ -80,6 +80,13 @@ export class GalleryCardComponent implements OnDestroy {
     return this.item.presignedUrls || [];
   }
 
+  get hasThumbnail(): boolean {
+    return (
+      !!this.item.presignedThumbnailUrls &&
+      this.item.presignedThumbnailUrls.length > 0
+    );
+  }
+
   get displayPaddingBottom(): string {
     const rawRatio =
       this.item.aspectRatio ||

@@ -67,16 +67,31 @@
 
       <!-- Show thumbnail by default -->
       <ng-container *ngIf="hoveredVideoId !== item.id">
-        <img
-          *ngFor="let url of displayUrls; let i = index"
-          class="media-element"
-          loading="lazy"
-          [src]="url"
-          [alt]="getShortPrompt(item.prompt)"
-          [class.active]="currentImageIndex === i"
-          [class.inactive]="currentImageIndex !== i"
-          (load)="onMediaLoad(i)"
-        />
+        <ng-container *ngIf="hasThumbnail">
+          <img
+            *ngFor="let url of item.presignedThumbnailUrls; let i = index"
+            class="media-element"
+            loading="lazy"
+            [src]="url"
+            [alt]="getShortPrompt(item.prompt)"
+            [class.active]="currentImageIndex === i"
+            [class.inactive]="currentImageIndex !== i"
+            (load)="onMediaLoad(i)"
+          />
+        </ng-container>
+        <ng-container *ngIf="!hasThumbnail">
+          <video
+            *ngFor="let url of item.presignedUrls; let i = index"
+            class="media-element"
+            [class.active]="currentImageIndex === i"
+            [class.inactive]="currentImageIndex !== i"
+            preload="metadata"
+            muted
+            playsinline
+          >
+            <source [src]="url" [type]="item.mimeType" />
+          </video>
+        </ng-container>
         <!-- Play Button Overlay -->
         <div class="video-play-overlay">
           <svg
