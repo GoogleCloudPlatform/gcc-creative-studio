@@ -19,6 +19,7 @@ import {HttpClientTestingModule} from '@angular/common/http/testing';
 import {ElementRef, NO_ERRORS_SCHEMA} from '@angular/core';
 import {DomSanitizer} from '@angular/platform-browser';
 import {MatIconModule} from '@angular/material/icon';
+import {MatMenuModule} from '@angular/material/menu';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {of} from 'rxjs';
 import {MediaGalleryComponent} from './media-gallery.component';
@@ -27,6 +28,7 @@ import {UserService} from '../../common/services/user.service';
 import {WorkspaceStateService} from '../../services/workspace/workspace-state.service';
 import {TagsService} from '../../common/services/tags.service';
 import {MediaUploadService} from '../../common/services/media-upload/media-upload.service';
+import {GoogleDriveService} from '../../common/services/google-drive/google-drive.service';
 
 describe('MediaGalleryComponent', () => {
   let component: MediaGalleryComponent;
@@ -36,10 +38,21 @@ describe('MediaGalleryComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [MediaGalleryComponent],
-      imports: [HttpClientTestingModule, MatIconModule, NoopAnimationsModule],
+      imports: [
+        HttpClientTestingModule,
+        MatIconModule,
+        MatMenuModule,
+        NoopAnimationsModule,
+      ],
       schemas: [NO_ERRORS_SCHEMA],
       providers: [
         MediaUploadService,
+        {
+          provide: GoogleDriveService,
+          useValue: {
+            openPicker: () => of([]),
+          },
+        },
         {
           provide: GalleryService,
           useValue: {
@@ -116,6 +129,17 @@ describe('MediaGalleryComponent', () => {
     } as unknown as Event;
 
     component.onFilesSelected(mockEvent);
+    expect(uploadService.uploadFiles).toHaveBeenCalledWith(1, [dummyFile]);
+  });
+
+  it('should trigger MediaUploadService.uploadFiles when files are selected from Google Drive', () => {
+    const driveService = TestBed.inject(GoogleDriveService);
+    const dummyFile = new File(['test'], 'drive-demo.png', {type: 'image/png'});
+    spyOn(driveService, 'openPicker').and.returnValue(of([dummyFile]));
+    spyOn(uploadService, 'uploadFiles');
+
+    component.openGoogleDrivePicker();
+    expect(driveService.openPicker).toHaveBeenCalled();
     expect(uploadService.uploadFiles).toHaveBeenCalledWith(1, [dummyFile]);
   });
 
