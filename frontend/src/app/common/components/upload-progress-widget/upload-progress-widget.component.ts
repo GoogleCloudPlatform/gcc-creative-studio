@@ -15,13 +15,14 @@
  */
 
 import {Component, signal} from '@angular/core';
-import {Router} from '@angular/router';
+import {NavigationEnd, Router} from '@angular/router';
 import {
   MediaUploadService,
   UploadStatus,
 } from '../../services/media-upload/media-upload.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
 import {takeUntilDestroyed} from '@angular/core/rxjs-interop';
+import {filter} from 'rxjs';
 
 @Component({
   selector: 'app-upload-progress-widget',
@@ -39,7 +40,12 @@ export class UploadProgressWidgetComponent {
     private router: Router,
   ) {
     this.router.events
-      .pipe(takeUntilDestroyed())
+      .pipe(
+        filter(
+          (event): event is NavigationEnd => event instanceof NavigationEnd,
+        ),
+        takeUntilDestroyed(),
+      )
       .subscribe(() =>
         this.isLoginRoute.set(this.router.url.startsWith('/login')),
       );

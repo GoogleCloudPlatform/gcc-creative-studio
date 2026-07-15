@@ -747,7 +747,11 @@ export class MediaUploadService implements OnDestroy {
   private restoreQueueFromSessionStorage(): void {
     try {
       const stored = sessionStorage.getItem(this.getSessionStorageKey());
-      if (!stored) return;
+      if (!stored) {
+        this.uploadQueue.set([]);
+        this.lastUploadCompleteNotified.set(0);
+        return;
+      }
 
       const items: UploadItem[] = JSON.parse(stored);
       if (Array.isArray(items) && items.length > 0) {
