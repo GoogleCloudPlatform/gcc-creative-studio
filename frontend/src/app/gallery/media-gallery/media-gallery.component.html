@@ -133,12 +133,22 @@
               variant="primary"
               size="small"
               [disabled]="uploadService.inProgressCount() > 0"
-              (click)="fileInput.click()"
+              [matMenuTriggerFor]="uploadMenu"
               title="Upload media files"
             >
               <mat-icon class="mr-1">add</mat-icon>
               <span>Add to Gallery</span>
             </studio-button>
+            <mat-menu #uploadMenu="matMenu">
+              <button mat-menu-item class="add-to-gallery-option" (click)="fileInput.click()">
+                <mat-icon>laptop</mat-icon>
+                <span>From this device</span>
+              </button>
+              <button mat-menu-item class="add-to-gallery-option" (click)="openGoogleDrivePicker()">
+                <mat-icon svgIcon="drive-icon"></mat-icon>
+                <span>From Google Drive</span>
+              </button>
+            </mat-menu>
           </div>
 
           <!-- Select All Button -->

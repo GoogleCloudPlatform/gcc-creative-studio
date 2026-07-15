@@ -55,6 +55,7 @@ import {TagsManagementDialogComponent} from '../../common/components/tags-manage
 import {ConfirmationDialogComponent} from '../../common/components/confirmation-dialog/confirmation-dialog.component';
 import {MediaUploadService} from '../../common/services/media-upload/media-upload.service';
 import {ACCEPTED_MEDIA_UPLOAD_FORMATS} from '../../common/services/media-upload/media-upload.constants';
+import {GoogleDriveService} from '../../common/services/google-drive/google-drive.service';
 
 @Component({
   selector: 'app-media-gallery',
@@ -216,8 +217,6 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     this.searchTerm(); // Trigger search
   }
 
-  private autoSlideIntervals: {[id: string]: any} = {};
-
   isBrowser: boolean;
 
   constructor(
@@ -232,6 +231,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     public dialog: MatDialog,
     private tagsService: TagsService,
     public uploadService: MediaUploadService,
+    private googleDriveService: GoogleDriveService,
     @Inject(PLATFORM_ID) platformId: Object,
   ) {
     this.isBrowser = isPlatformBrowser(platformId);
@@ -243,7 +243,8 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
       .addSvgIcon(
         'gemini-spark-icon',
         this.setPath(`${this.path}/gemini-spark-icon.svg`),
-      );
+      )
+      .addSvgIcon('drive-icon', this.setPath(`${this.path}/drive-icon.svg`));
     const user = this.userService.getUserDetails();
     this.userId = user?.id as number;
   }
@@ -292,7 +293,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
       if (images) {
         // Find only the new images that have been added
         const newImages = images.slice(this.images.length);
-        newImages.forEach(image => {
+        newImages.forEach(() => {
           // Intervals now handled by child component
         });
         this.images = images as GalleryItem[]; // Cast to GalleryItem[]
@@ -427,6 +428,17 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     }
   }
 
+  openGoogleDrivePicker(): void {
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    if (workspaceId === null) return;
+
+    this.googleDriveService.openPicker().subscribe(files => {
+      if (files && files.length > 0) {
+        this.uploadService.uploadFiles(workspaceId, files);
+      }
+    });
+  }
+
   public trackByImage(index: number, image: GalleryItem): number | string {
     return `${image.itemType}:${image.id}`;
   }
@@ -442,7 +454,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   @HostListener('window:keydown.escape', ['$event'])
-  onEscapePressed(event: Event): void {
+  onEscapePressed(_event: Event): void {
     this.deselectAll();
   }
 
