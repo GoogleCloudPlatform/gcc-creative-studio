@@ -522,7 +522,7 @@ class GeminiService:
                 ),
             )
             raw_result = json.loads(response.text or "{}")
-            items = raw_result.get("items", [])
+            items = raw_result.get("items") or []
             titles = [
                 item.get("title", "")
                 for item in items

@@ -111,7 +111,7 @@ class BaseRepositoryMixin(Generic[ModelT, SchemaT, IdT]):
 
         # Filter out extra fields not present on the SQLAlchemy model
         data = {
-            k: v for k, v in data.items() if k in self.model.__mapper__.attrs
+            k: v for k, v in data.items() if k in self.model.__mapper__.columns
         }
 
         db_item = self.model(**data)
@@ -144,7 +144,7 @@ class BaseRepositoryMixin(Generic[ModelT, SchemaT, IdT]):
         for key, value in data.items():
             if key in restricted_fields:
                 continue
-            if key in self.model.__mapper__.attrs:
+            if key in self.model.__mapper__.columns:
                 setattr(db_item, key, value)
 
         # Update timestamp
