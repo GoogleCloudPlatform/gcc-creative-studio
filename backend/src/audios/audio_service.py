@@ -95,7 +95,7 @@ def _process_audio_in_background(
 
                     try:
                         vertexai.init(
-                            project=cfg.PROJECT_ID, location=cfg.LOCATION
+                            project=cfg.PROJECT_ID, location=cfg.REGIONAL_LOCATION
                         )
                         start_time = time.monotonic()
 

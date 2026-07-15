@@ -41,6 +41,7 @@ class ConfigService(BaseSettings):
     # --- Core Project Settings ---
     PROJECT_ID: str = ""
     LOCATION: str = "global"
+    REGIONAL_LOCATION: str = "us-central1"
     ENVIRONMENT: str = "development"
     FRONTEND_URL: str = "http://localhost:4200"
     BACKEND_URL: str = "http://localhost:8080"

@@ -29,7 +29,6 @@ import {
 import {Observable, from, throwError, of} from 'rxjs';
 import {catchError, tap, map, switchMap} from 'rxjs/operators';
 import {isPlatformBrowser} from '@angular/common';
-import {SettingsService} from '../../services/settings.service';
 
 // Declare the 'google' global object from the Google Identity Services script
 declare const google: any;
@@ -60,7 +59,6 @@ export class AuthService {
     private router: Router,
     private httpClient: HttpClient,
     private userService: UserService,
-    private settingsService: SettingsService,
   ) {
     this.provider.setCustomParameters({
       // Set custom params for the provider
@@ -98,7 +96,6 @@ export class AuthService {
 
         // Call the backend to get or create the user profile.
         return this.syncUserWithBackend$(token).pipe(
-          switchMap(() => from(this.settingsService.loadSettings())),
           map(() => token), // Pass the token along for the final result.
         );
       }),
@@ -174,7 +171,6 @@ export class AuthService {
 
         // Call the backend to get or create the user profile.
         return this.syncUserWithBackend$(idToken).pipe(
-          switchMap(() => from(this.settingsService.loadSettings())),
           map(() => idToken), // Pass the token along for the final result.
         );
       }),
@@ -278,7 +274,6 @@ export class AuthService {
   }
 
   async logout(route: string = LOGIN_ROUTE) {
-    this.settingsService.reset();
     return this.auth
       .signOut()
       .then(() => {
@@ -293,7 +288,6 @@ export class AuthService {
       })
       .catch(e => {
         console.error('Sign Out Error', e);
-        this.settingsService.reset();
         localStorage.removeItem(FIREBASE_SESSION_KEY);
         localStorage.removeItem(USER_DETAILS);
         localStorage.removeItem('showTooltip');

@@ -82,6 +82,7 @@ export type VeoRequest = {
   referenceVideo?: AssetReferenceDto | null;
   referenceAudio?: AssetReferenceDto | null;
   parentMediaItemId?: number | null;
+  resolution?: '1K' | '2K' | '4K';
 };
 
 export type SearchResponse = {

@@ -57,9 +57,6 @@ from src.workflows_executor.workflows_executor_controller import (
     router as workflows_executor_router,
 )
 from src.workspaces.workspace_controller import router as workspace_router
-from src.system_settings.system_settings_controller import (
-    router as system_settings_router,
-)
 
 
 def configure_cors(app):
@@ -184,4 +181,3 @@ app.include_router(brand_guideline_router)
 app.include_router(workflow_router)
 app.include_router(workflows_executor_router)
 app.include_router(workbench_router)
-app.include_router(system_settings_router)

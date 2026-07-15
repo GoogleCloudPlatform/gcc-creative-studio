@@ -66,12 +66,13 @@ import {
 import {VideoStateService} from '../services/video-state.service';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
 import {GalleryService} from '../gallery/gallery.service';
-import {SettingsService} from '../services/settings.service';
+
 import {
   handleErrorSnackbar,
   handleInfoSnackbar,
   handleSuccessSnackbar,
 } from '../utils/handleMessageSnackbar';
+import {NumPos} from '../common/components/flow-prompt-box/flow-prompt-box.component';
 
 @Component({
   selector: 'app-video',
@@ -134,7 +135,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
   searchRequest: VeoRequest = {
     prompt: '',
-    generationModel: 'veo-3.1-generate-001',
+    generationModel: 'gemini-omni-flash-preview',
     aspectRatio: '16:9',
     numberOfMedia: 4,
     style: null,
@@ -147,6 +148,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
     useBrandGuidelines: false,
     enhancePrompt: false,
     referenceImages: [],
+    resolution: '1K',
   };
 
   // --- Negative Prompt Chips ---
@@ -197,7 +199,6 @@ export class VideoComponent implements OnInit, AfterViewInit {
     'Warm',
   ];
   numberOfVideosOptions = [1, 2, 3, 4];
-  durationOptions = [8];
   compositions = [
     'Closeup',
     'Knolling',
@@ -221,24 +222,16 @@ export class VideoComponent implements OnInit, AfterViewInit {
     private workspaceStateService: WorkspaceStateService,
     private sourceAssetService: SourceAssetService,
     private videoStateService: VideoStateService,
-    private settingsService: SettingsService,
+
     @Inject(GalleryService)
     private galleryService: GalleryService,
     @Inject(PLATFORM_ID) private platformId: Object,
   ) {
-    const showOmni = this.settingsService.getShowGeminiOmni();
-    this.generationModels = MODEL_CONFIGS.filter(
-      m =>
-        m.type === 'VIDEO' &&
-        (m.value !== 'gemini-omni-generate-preview' || showOmni),
-    );
-    this.searchRequest.generationModel = showOmni
-      ? 'gemini-omni-generate-preview'
-      : 'veo-3.1-generate-001';
+    this.generationModels = MODEL_CONFIGS.filter(m => m.type === 'VIDEO');
+    this.searchRequest.generationModel = 'gemini-omni-flash-preview';
     this.selectedGenerationModel =
-      this.generationModels.find(
-        m => m.value === 'gemini-omni-generate-preview',
-      )?.viewValue || this.generationModels[0].viewValue;
+      this.generationModels.find(m => m.value === 'gemini-omni-flash-preview')
+        ?.viewValue || this.generationModels[0].viewValue;
 
     this.isBrowser = isPlatformBrowser(this.platformId);
     this.activeVideoJob$ = this.service.activeVideoJob$.pipe(
@@ -306,6 +299,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.videoStateService.updateState({
       prompt: this.searchRequest.prompt,
       aspectRatio: this.searchRequest.aspectRatio,
+      resolution: this.searchRequest.resolution,
       model: this.searchRequest.generationModel,
       style: this.searchRequest.style,
       colorAndTone: this.searchRequest.colorAndTone,
@@ -329,12 +323,13 @@ export class VideoComponent implements OnInit, AfterViewInit {
     const state = this.videoStateService.getState();
     this.searchRequest.prompt = state.prompt;
     this.searchRequest.aspectRatio = state.aspectRatio;
+    this.searchRequest.resolution = state.resolution || '1K';
     this.searchRequest.generationModel = state.model;
     this.searchRequest.style = state.style;
     this.searchRequest.colorAndTone = state.colorAndTone;
     this.searchRequest.lighting = state.lighting;
     this.searchRequest.numberOfMedia =
-      state.model === 'gemini-omni-generate-preview' ? 1 : state.numberOfMedia;
+      state.model === 'gemini-omni-flash-preview' ? 1 : state.numberOfMedia;
     this.selectedOutputs.set(this.searchRequest.numberOfMedia || 2);
     this.searchRequest.durationSeconds = state.durationSeconds;
     this.searchRequest.composition = state.composition;
@@ -405,7 +400,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
       this.selectedAspectRatio = landscapeOption.viewValue;
     }
 
-    if (model.value === 'gemini-omni-generate-preview') {
+    if (model.value === 'gemini-omni-flash-preview') {
       this.searchRequest.numberOfMedia = 1;
       this.selectedOutputs.set(1);
     }
@@ -433,6 +428,16 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.saveState();
   }
 
+  onResolutionChanged(resolution: '1K' | '2K' | '4K') {
+    this.searchRequest.resolution = resolution;
+    this.saveState();
+  }
+
+  onDurationChanged(duration: number) {
+    this.searchRequest.durationSeconds = duration;
+    this.saveState();
+  }
+
   selectVideoStyle(style: string): void {
     this.searchRequest.style === style
       ? (this.searchRequest.style = null)
@@ -456,11 +461,6 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
   selectNumberOfVideos(num: number): void {
     this.searchRequest.numberOfMedia = num;
-    this.saveState();
-  }
-
-  selectDuration(seconds: number): void {
-    this.searchRequest.durationSeconds = seconds;
     this.saveState();
   }
 
@@ -650,7 +650,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
       !this.isConcatenateMode
     ) {
       const omniModel = this.generationModels.find(
-        m => m.value === 'gemini-omni-generate-preview',
+        m => m.value === 'gemini-omni-flash-preview',
       );
       if (omniModel) {
         this.selectModel(omniModel);
@@ -899,7 +899,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.saveState();
   }
 
-  openImageSelector(imageNumber: 1 | 2): void {
+  openImageSelector(imageNumber: NumPos): void {
     const dialogRef = this.dialog.open(ImageSelectorComponent, {
       width: '90vw',
       height: '80vh',
@@ -926,7 +926,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
   private processInput(
     result: MediaItemSelection | SourceAssetResponseDto,
-    imageNumber: 1 | 2,
+    imageNumber: NumPos,
   ) {
     // 1. Determine if the new input is a video
     const isVideo =
@@ -946,7 +946,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
       if (isVeo30) {
         const omniModel = this.generationModels.find(
-          m => m.value === 'gemini-omni-generate-preview',
+          m => m.value === 'gemini-omni-flash-preview',
         );
         if (omniModel) {
           this.selectModel(omniModel);
@@ -998,7 +998,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
   }
 
   private setInputSource(
-    imageNumber: 1 | 2,
+    imageNumber: NumPos,
     result: MediaItemSelection | SourceAssetResponseDto,
     role: string,
   ) {
@@ -1026,7 +1026,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
   }
 
   // This method is called by both click and drop events
-  handleFileUpload(file: File, imageNumber: 1 | 2): void {
+  handleFileUpload(file: File, imageNumber: NumPos): void {
     if (file.type.startsWith('image/')) {
       // If it's an image, upload directly
       this.uploadImageDirectly(file, imageNumber);
@@ -1042,7 +1042,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
     }
   }
 
-  uploadImageDirectly(file: File, imageNumber: 1 | 2) {
+  uploadImageDirectly(file: File, imageNumber: NumPos) {
     this.isLoading = true;
     this.sourceAssetService
       .uploadAsset(file, {assetType: AssetTypeEnum.GENERIC_IMAGE})
@@ -1059,25 +1059,43 @@ export class VideoComponent implements OnInit, AfterViewInit {
       });
   }
 
-  openCropperDialog(file: File, imageNumber: 1 | 2) {
-    const dialogRef = this.dialog.open(ImageCropperDialogComponent, {
-      data: {
-        imageFile: file,
-        assetType: AssetTypeEnum.GENERIC_IMAGE,
+  openCropperDialog(file: File, imageNumber: NumPos) {
+    ImageCropperDialogComponent.open(this.dialog, {imageFile: file}).subscribe(
+      result => {
+        if (result && result.id) {
+          this.processInput(result, imageNumber);
+          this.updateModeAndNotify();
+          this.clearOtherImage(imageNumber);
+        }
       },
-      width: '600px',
-    });
+    );
+  }
 
-    dialogRef.afterClosed().subscribe((result: SourceAssetResponseDto) => {
+  onEditPromptImage(data: {num: NumPos}) {
+    const previewUrl = data.num === 1 ? this.image1Preview : this.image2Preview;
+    if (!previewUrl) return;
+
+    ImageCropperDialogComponent.open(this.dialog, {
+      imageUrl: previewUrl,
+    }).subscribe(result => {
       if (result && result.id) {
-        this.processInput(result, imageNumber);
+        this.processInput(result, data.num);
         this.updateModeAndNotify();
-        this.clearOtherImage(imageNumber);
+        this.saveState();
       }
     });
   }
 
-  uploadVideoDirectly(file: File, imageNumber: 1 | 2) {
+  onEditPromptReferenceImage(data: {index: number; ref: ReferenceImage}) {
+    ImageCropperDialogComponent.openEditPromptReferenceImage(
+      this.dialog,
+      data,
+      this.referenceImages,
+      () => this.saveState(),
+    );
+  }
+
+  uploadVideoDirectly(file: File, imageNumber: NumPos) {
     this.isLoading = true;
     // No aspectRatio is sent for videos, so we don't pass the second argument
     this.sourceAssetService
@@ -1095,7 +1113,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
       });
   }
 
-  onDrop(event: DragEvent, imageNumber: 1 | 2) {
+  onDrop(event: DragEvent, imageNumber: NumPos) {
     event.preventDefault();
     const file = event.dataTransfer?.files[0];
     if (file) {
@@ -1115,7 +1133,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
     }
   }
 
-  clearInput(imageNumber: 1 | 2) {
+  clearInput(imageNumber: NumPos) {
     if (imageNumber === 1) {
       this.startImageAssetId = null;
       this.image1Preview = null;
@@ -1141,30 +1159,30 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.updateModeAndNotify();
   }
 
-  clearVideo(imageNumber: 1 | 2) {
+  clearVideo(imageNumber: NumPos) {
     this.clearInput(imageNumber);
   }
 
-  onClearImage(data: {num: 1 | 2; event: Event}) {
+  onClearImage(data: {num: NumPos; event: Event}) {
     data.event.stopPropagation();
     this.clearInput(data.num);
   }
 
-  private clearImageAssetId(imageNumber: 1 | 2) {
+  private clearImageAssetId(imageNumber: NumPos) {
     const targetAssetId =
       imageNumber === 1 ? 'startImageAssetId' : 'endImageAssetId';
     this[targetAssetId] = null;
     this.clearSourceMediaItem(imageNumber); // Clear the corresponding media item slot
   }
 
-  private clearSourceMediaItem(imageNumber: 1 | 2) {
+  private clearSourceMediaItem(imageNumber: NumPos) {
     // Set the specific index to null to clear the slot for that image.
     if (this.sourceMediaItems.length >= imageNumber) {
       this.sourceMediaItems[imageNumber - 1] = null;
     }
   }
 
-  private clearOtherImage(imageNumberJustSet: 1 | 2) {
+  private clearOtherImage(imageNumberJustSet: NumPos) {
     const isVeo3 = [
       'veo-3.0-fast-generate-001',
       'veo-3.0-generate-001',
@@ -1418,7 +1436,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.selectedMode.set('Ingredients to Video');
 
     const omniModel = this.generationModels.find(
-      m => m.value === 'gemini-omni-generate-preview',
+      m => m.value === 'gemini-omni-flash-preview',
     );
     if (omniModel) {
       this.selectModel(omniModel);
@@ -1569,7 +1587,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
   private handleOmniModelSwitch(): void {
     if (this.referenceVideo || this.referenceAudio) {
       const omniModel = this.generationModels.find(
-        m => m.value === 'gemini-omni-generate-preview',
+        m => m.value === 'gemini-omni-flash-preview',
       );
       if (omniModel) {
         if (this.searchRequest.generationModel !== omniModel.value) {
@@ -1657,15 +1675,9 @@ export class VideoComponent implements OnInit, AfterViewInit {
     const file = event.dataTransfer?.files[0];
     if (file && file.type.startsWith('image/')) {
       // For a direct drop, go straight to the cropper
-      const dialogRef = this.dialog.open(ImageCropperDialogComponent, {
-        data: {
-          imageFile: file,
-          assetType: AssetTypeEnum.GENERIC_IMAGE,
-        },
-        width: '600px',
-      });
-
-      dialogRef.afterClosed().subscribe((result: SourceAssetResponseDto) => {
+      ImageCropperDialogComponent.open(this.dialog, {
+        imageFile: file,
+      }).subscribe(result => {
         if (result && result.id) {
           this.referenceImages.push({
             sourceAssetId: result.id,
@@ -1698,7 +1710,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
       }
 
       const omniModel = this.generationModels.find(
-        m => m.value === 'gemini-omni-generate-preview',
+        m => m.value === 'gemini-omni-flash-preview',
       );
       if (omniModel) {
         if (this.searchRequest.generationModel !== omniModel.value) {

@@ -100,7 +100,38 @@ class GenAIModelSetup:
                 raise
         return cls._omni_client
 
+    _regional_client: Client | None = None
+
+    @classmethod
+    def get_regional_client(cls) -> Client:
+        """Regional client (us-central1) for models NOT on the global
+        endpoint - e.g. Veo video and Lyria/Chirp audio."""
+        if cls._regional_client is None:
+            config = config_service
+            project_id = config.PROJECT_ID
+            region = getattr(config, "REGIONAL_LOCATION", None) or "us-central1"
+            logger.info(
+                "Initializing REGIONAL GenAI client for '%s' in '%s'",
+                project_id, region,
+            )
+            cls._regional_client = Client(
+                vertexai=True,
+                project=project_id,
+                location=region,
+                http_options={
+                    "headers": {
+                        "user-agent": f"creative-studio/{VERSION} (+https://github.com/GoogleCloudPlatform/gcc-creative-studio)"
+                    }
+                },
+            )
+        return cls._regional_client
+
     @staticmethod
     def init() -> Client:
         """Returns the shared client instance."""
         return GenAIModelSetup.get_client()
+
+    @staticmethod
+    def init_regional() -> Client:
+        """Returns the regional client (Veo/audio)."""
+        return GenAIModelSetup.get_regional_client()
