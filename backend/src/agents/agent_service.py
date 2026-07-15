@@ -297,6 +297,7 @@ class AgentService:
                 )
 
             agent_name = self._get_validated_agent_name(appName)
+            agent_config = self._get_agent_config(appName)
             auth_header = request.headers.get("Authorization", "")
             auth_key = agent_config.get("token_key", "user_auth_token")
 
@@ -391,6 +392,7 @@ class AgentService:
                             f"Session {resolved_session_id} not found. Re-creating dynamic session."
                         )
                         auth_header = request.headers.get("Authorization", "")
+                        agent_config = self._get_agent_config(appName)
                         auth_key = agent_config.get(
                             "token_key", "user_auth_token"
                         )
