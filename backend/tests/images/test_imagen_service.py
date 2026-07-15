@@ -1516,7 +1516,7 @@ def test_process_image_in_background_sync_video_ref_youtube_url(
 
             mock_source_asset_repo = AsyncMock()
             mock_source_asset_repo_class.return_value = mock_source_asset_repo
-            mock_source_asset_repo.find_by_youtube_url.return_value = None
+            mock_source_asset_repo.find_by_external_url.return_value = None
             mock_source_asset_repo.create.return_value = MagicMock(id=987)
 
             mock_user_repo = AsyncMock()

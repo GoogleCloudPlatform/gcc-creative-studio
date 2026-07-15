@@ -101,12 +101,12 @@ class MediaTemplateService:
             == AssetTypeEnum.YOUTUBE_VIDEO
         ):
             is_youtube = True
-        elif isinstance(getattr(asset_doc, "youtube_url", None), str):
+        elif isinstance(getattr(asset_doc, "external_url", None), str):
             is_youtube = True
 
         if is_youtube:
-            video_id = extract_youtube_video_id(asset_doc.youtube_url)
-            presigned_url = asset_doc.youtube_url or ""
+            video_id = extract_youtube_video_id(asset_doc.external_url)
+            presigned_url = asset_doc.external_url or ""
             presigned_thumbnail_url = (
                 f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg"
                 if video_id
@@ -118,7 +118,7 @@ class MediaTemplateService:
                 presigned_thumbnail_url=presigned_thumbnail_url,
                 gcs_uri=None,
                 mime_type=asset_doc.mime_type,
-                youtube_url=asset_doc.youtube_url,
+                external_url=asset_doc.external_url,
             )
 
         presigned_url = await asyncio.to_thread(

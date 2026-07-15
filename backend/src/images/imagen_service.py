@@ -824,9 +824,9 @@ def _process_image_in_background(
 
                         # Find if there is an existing YouTube SourceAsset for this user
                         youtube_asset = (
-                            await source_asset_repo.find_by_youtube_url(
+                            await source_asset_repo.find_by_external_url(
                                 user_id=user_id,
-                                youtube_url=youtube_url,
+                                external_url=youtube_url,
                             )
                         )
                         if not youtube_asset:
@@ -847,7 +847,7 @@ def _process_image_in_background(
                                 file_hash=None,
                                 scope=AssetScopeEnum.PRIVATE,
                                 asset_type=AssetTypeEnum.YOUTUBE_VIDEO,
-                                youtube_url=youtube_url,
+                                external_url=youtube_url,
                             )
                             youtube_asset = await source_asset_repo.create(
                                 new_asset_model

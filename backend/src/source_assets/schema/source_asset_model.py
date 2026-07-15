@@ -79,7 +79,7 @@ class SourceAsset(Base):
     )
     thumbnail_gcs_uri: Mapped[str | None] = mapped_column(String, nullable=True)
     original_gcs_uri: Mapped[str | None] = mapped_column(String, nullable=True)
-    youtube_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    external_url: Mapped[str | None] = mapped_column(String, nullable=True)
 
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True),
@@ -127,6 +127,6 @@ class SourceAssetModel(BaseDocument):
     scope: AssetScopeEnum = AssetScopeEnum.PRIVATE
     asset_type: AssetTypeEnum = AssetTypeEnum.GENERIC_IMAGE
     thumbnail_gcs_uri: str | None = None  # In case of uploading a video
-    youtube_url: str | None = None
+    external_url: str | None = None
     deleted_at: datetime.datetime | None = None
     deleted_by: int | None = None

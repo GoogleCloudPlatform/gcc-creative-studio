@@ -28,7 +28,7 @@ class SourceAssetLinkResponse(SourceAssetLink):
     gcs_uri: str | None = None
     presigned_thumbnail_url: str | None = None
     mime_type: str | None = None
-    youtube_url: str | None = None
+    external_url: str | None = None
 
 
 class SourceMediaItemLinkResponse(SourceMediaItemLink):
