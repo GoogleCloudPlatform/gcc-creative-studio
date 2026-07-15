@@ -296,14 +296,29 @@ class GalleryService:
     ) -> UnifiedGalleryItemResponse:
         """Enriches a UnifiedGalleryItemResponse with presigned URLs."""
 
-        # Helper to safely get list or string as list
-        def as_list(val):
-            if isinstance(val, list):
-                return val
-            return [val] if val else []
+        is_youtube = False
+        external_url = None
+        if item.metadata:
+            asset_type = item.metadata.get("assetType") or item.metadata.get(
+                "asset_type"
+            )
+            external_url = item.metadata.get(
+                "externalUrl"
+            ) or item.metadata.get("external_url")
+            if asset_type == AssetTypeEnum.YOUTUBE_VIDEO or (
+                isinstance(external_url, str) and external_url
+            ):
+                is_youtube = True
 
-        uris_to_sign = []
-        thumbnail_uris_to_sign = []
+        if is_youtube and external_url:
+            video_id = extract_youtube_video_id(external_url)
+            item.presigned_urls = [external_url]
+            item.presigned_thumbnail_urls = (
+                [f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg"]
+                if video_id
+                else []
+            )
+            return item
 
         uris_to_sign = item.gcs_uris or []
         thumbnail_uris_to_sign = item.thumbnail_uris or []

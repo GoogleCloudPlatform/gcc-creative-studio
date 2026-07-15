@@ -601,3 +601,25 @@ async def test_upload_asset_upscale_failure(
     )
 
     assert response.id == 80
+
+
+@pytest.mark.anyio
+async def test_create_asset_response_youtube(service):
+    asset = SourceAssetModel(
+        id=90,
+        workspace_id=1,
+        user_id=1,
+        external_url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        asset_type=AssetTypeEnum.YOUTUBE_VIDEO,
+    )
+
+    res = await service._create_asset_response(
+        asset, user_email="test@example.com"
+    )
+
+    assert res.presigned_url == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    assert (
+        res.presigned_thumbnail_url
+        == "https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg"
+    )
+    assert res.user_email == "test@example.com"
