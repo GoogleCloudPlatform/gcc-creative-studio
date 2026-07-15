@@ -405,6 +405,10 @@ export class MediaLightboxComponent
     return this.mediaItem?.mimeType?.startsWith('video/') ?? false;
   }
 
+  get isYoutubeVideo(): boolean {
+    return (this.mediaItem as any)?.metadata?.assetType === 'youtube_video';
+  }
+
   get isAudio(): boolean {
     return this.mediaItem?.mimeType?.startsWith('audio/') ?? false;
   }

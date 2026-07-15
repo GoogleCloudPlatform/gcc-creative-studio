@@ -556,46 +556,48 @@
               </div>
             </section>
 
-            <!-- Storage -->
-            <section class="space-y-3">
-              <h3 class="text-lg font-semibold border-b border-gray-700 pb-2">
-                Storage
-              </h3>
-              <div class="text-sm space-y-3">
-                <div *ngIf="mediaItem.gcsUris?.length">
-                  <strong class="font-semibold text-gray-400 block mb-1">GCS URIs:</strong>
-                  <ul class="space-y-1">
-                    <li *ngFor="let uri of mediaItem.gcsUris">
-                      <a [href]="getGcsLink(uri)" target="_blank" rel="noopener noreferrer"
-                        class="p-3 rounded-md bg-gray-800 block break-all hover:bg-gray-700 transition-colors">
-                        {{ uri }}
-                      </a>
-                    </li>
-                  </ul>
+            @if (!isYoutubeVideo) {
+              <!-- Storage -->
+              <section class="space-y-3">
+                <h3 class="text-lg font-semibold border-b border-gray-700 pb-2">
+                  Storage
+                </h3>
+                <div class="text-sm space-y-3">
+                  <div *ngIf="mediaItem.gcsUris?.length">
+                    <strong class="font-semibold text-gray-400 block mb-1">GCS URIs:</strong>
+                    <ul class="space-y-1">
+                      <li *ngFor="let uri of mediaItem.gcsUris">
+                        <a [href]="getGcsLink(uri)" target="_blank" rel="noopener noreferrer"
+                          class="p-3 rounded-md bg-gray-800 block break-all hover:bg-gray-700 transition-colors">
+                          {{ uri }}
+                        </a>
+                      </li>
+                    </ul>
+                  </div>
                 </div>
-            </div>
-            </section>
-
-            <!-- Other -->
-            <section class="space-y-3">
-              <h3 class="text-lg font-semibold border-b border-gray-700 pb-2">
-                Other
-              </h3>
-              <div class="text-sm space-y-3">
-                <div *ngIf="mediaItem.comment">
-                  <strong class="font-semibold text-gray-400 block mb-1">Comment:</strong>
-                  <p class="p-3 rounded-md bg-gray-800 text-gray-300">
-                    {{ mediaItem.comment }}
-                  </p>
-                </div>
-                <div *ngIf="mediaItem.critique">
-                  <strong class="font-semibold text-gray-400 block mb-1">Critique:</strong>
-                  <p class="p-3 rounded-md bg-gray-800 text-gray-300">
-                    {{ mediaItem.critique }}
-                  </p>
-                </div>
-              </div>
               </section>
+
+              <!-- Other -->
+              <section class="space-y-3">
+                <h3 class="text-lg font-semibold border-b border-gray-700 pb-2">
+                  Other
+                </h3>
+                <div class="text-sm space-y-3">
+                  <div *ngIf="mediaItem.comment">
+                    <strong class="font-semibold text-gray-400 block mb-1">Comment:</strong>
+                    <p class="p-3 rounded-md bg-gray-800 text-gray-300">
+                      {{ mediaItem.comment }}
+                    </p>
+                  </div>
+                  <div *ngIf="mediaItem.critique">
+                    <strong class="font-semibold text-gray-400 block mb-1">Critique:</strong>
+                    <p class="p-3 rounded-md bg-gray-800 text-gray-300">
+                      {{ mediaItem.critique }}
+                    </p>
+                  </div>
+                </div>
+              </section>
+            }
           </div>
           </mat-tab>
           

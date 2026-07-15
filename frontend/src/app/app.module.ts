@@ -113,6 +113,7 @@ import {WorkflowStatusPipe} from './workflows/workflow-status.pipe';
 import {UpscaleComponent} from './upscale/upscale.component';
 import {StoryboardComponent} from './workbench/components/storyboard/storyboard.component';
 import {TimeRulerComponent} from './workbench/components/time-ruler/time-ruler.component';
+import {SafeUrlPipe} from './common/pipes/safe-url.pipe';
 
 @NgModule({
   declarations: [
@@ -195,6 +196,7 @@ import {TimeRulerComponent} from './workbench/components/time-ruler/time-ruler.c
     StoryboardComponent,
     TimeRulerComponent,
     TextFieldModule,
+    SafeUrlPipe,
   ],
   providers: [
     provideClientHydration(),
