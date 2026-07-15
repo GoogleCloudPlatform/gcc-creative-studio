@@ -32,7 +32,7 @@ def fixture_mock_user():
         id=1,
         email="test@example.com",
         name="Test User",
-        roles=[UserRoleEnum.WORKFLOWS],
+        roles=[UserRoleEnum.USER, UserRoleEnum.WORKFLOWS],
     )
 
 
@@ -117,6 +117,9 @@ def test_get_workflow_not_found(client, mock_service):
 
 
 def test_execute_workflow_success(client, mock_service):
+    mock_workflow = MagicMock()
+    mock_workflow.user_id = 1
+    mock_service.get_workflow.return_value = mock_workflow
     mock_service.execute_workflow.return_value = "exec_id_123"
 
     payload = {"args": {"param1": "val1"}}
@@ -125,6 +128,16 @@ def test_execute_workflow_success(client, mock_service):
 
     assert response.status_code == 200
     assert response.json()["execution_id"] == "exec_id_123"
+
+
+def test_execute_workflow_unauthorized(client, mock_service):
+    mock_service.get_workflow.return_value = None
+
+    payload = {"args": {"param1": "val1"}}
+    response = client.post("/api/workflows/wf1/workflow-execute", json=payload)
+
+    assert response.status_code == 404
+    mock_service.execute_workflow.assert_not_called()
 
 
 def test_update_workflow_success(client, mock_service):
@@ -178,3 +191,83 @@ def test_list_executions_success(client, mock_service):
 
     assert response.status_code == 200
     assert len(response.json()) == 1
+
+
+def test_batch_execute_success(client, mock_service):
+    mock_workflow = MagicMock()
+    mock_workflow.user_id = 1
+    mock_service.get_workflow.return_value = mock_workflow
+
+    mock_service.batch_execute_workflow.return_value = {
+        "results": [
+            {"row_index": 0, "execution_id": "exec_1", "status": "SUCCESS"}
+        ]
+    }
+
+    payload = {"items": [{"row_index": 0, "args": {"param1": "val1"}}]}
+    response = client.post("/api/workflows/wf1/batch-execute", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["results"][0]["execution_id"] == "exec_1"
+    mock_service.batch_execute_workflow.assert_called_once()
+
+
+def test_batch_execute_unauthorized(client, mock_service):
+    mock_service.get_workflow.return_value = None
+
+    payload = {"items": [{"row_index": 0, "args": {"param1": "val1"}}]}
+    response = client.post("/api/workflows/wf1/batch-execute", json=payload)
+
+    assert response.status_code == 404
+    mock_service.batch_execute_workflow.assert_not_called()
+
+
+def test_batch_execute_forbidden_for_regular_user(mock_service):
+    # Setup app with a regular user
+    app = FastAPI()
+    app.include_router(router)
+
+    regular_user = UserModel(
+        id=2,
+        email="user@example.com",
+        name="Regular User",
+        roles=[UserRoleEnum.USER],
+    )
+    app.dependency_overrides[get_current_user] = lambda: regular_user
+    app.dependency_overrides[WorkflowService] = lambda: mock_service
+
+    client = TestClient(app)
+
+    payload = {"items": [{"row_index": 0, "args": {"param1": "val1"}}]}
+    response = client.post("/api/workflows/wf1/batch-execute", json=payload)
+
+    assert response.status_code == 403
+    mock_service.batch_execute_workflow.assert_not_called()
+
+
+def test_regular_user_can_access_other_endpoints(mock_service):
+    app = FastAPI()
+    app.include_router(router)
+
+    regular_user = UserModel(
+        id=2,
+        email="user@example.com",
+        name="Regular User",
+        roles=[UserRoleEnum.USER],
+    )
+    app.dependency_overrides[get_current_user] = lambda: regular_user
+    app.dependency_overrides[WorkflowService] = lambda: mock_service
+
+    client = TestClient(app)
+
+    mock_workflow = MagicMock()
+    mock_workflow.user_id = 2
+    mock_service.get_workflow.return_value = mock_workflow
+    mock_service.execute_workflow.return_value = "exec_id_123"
+
+    payload = {"args": {"param1": "val1"}}
+    response = client.post("/api/workflows/wf1/workflow-execute", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["execution_id"] == "exec_id_123"
+    mock_service.execute_workflow.assert_called_once()

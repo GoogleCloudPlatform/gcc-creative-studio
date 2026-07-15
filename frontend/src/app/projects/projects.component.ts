@@ -19,7 +19,7 @@ import {Router} from '@angular/router';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
 import {ProjectService} from '../services/project/project.service';
 import {Subscription} from 'rxjs';
-import {StoryboardResponse} from '../common/models/storyboard.model';
+import {StoryboardResponse} from '../common/models/workbench.model';
 
 @Component({
   selector: 'app-projects',

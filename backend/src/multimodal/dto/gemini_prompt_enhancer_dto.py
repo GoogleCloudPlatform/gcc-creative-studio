@@ -68,3 +68,20 @@ class GenerateTitleRequestDto(BaseDto):
 class GenerateTitleResponseDto(BaseDto):
     title: str
     summary: str | None = None
+
+
+class MediaItemMetadataItemDto(BaseDto):
+    title: str = Field(description="Title for this specific media variation.")
+    description: str = Field(
+        description="Description for this specific media variation."
+    )
+
+
+class GenerateMediaMetadataResponseDto(BaseDto):
+    items: list[MediaItemMetadataItemDto] = Field(
+        default_factory=list,
+        description=(
+            "List of title and description objects corresponding to each media"
+            " item in order."
+        ),
+    )

@@ -129,15 +129,19 @@ export class AuthService {
       // Ideal case: Auth is ready, so we can force a token refresh to ensure it's fresh.
       return from(currentUser.getIdToken(true)).pipe(
         tap((token: string) => {
-          // Update the in-memory cache and localStorage with the refreshed token info.
-          const payload = JSON.parse(atob(token.split('.')[1]));
-          const expiry = payload.exp * 1000;
+          try {
+            // Update the in-memory cache and localStorage with the refreshed token info.
+            const payload = this.decodeJwtPayload(token);
+            const expiry = payload.exp * 1000;
 
-          this.firebaseIdToken = token;
-          this.firebaseTokenExpiry = expiry;
+            this.firebaseIdToken = token;
+            this.firebaseTokenExpiry = expiry;
 
-          const session: FirebaseSession = {token, expiry};
-          localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
+            const session: FirebaseSession = {token, expiry};
+            localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
+          } catch (error) {
+            console.error('Error decoding refreshed token payload:', error);
+          }
         }),
       );
     }
@@ -374,5 +378,25 @@ export class AuthService {
     // refresh requires re-authentication or more complex flows not covered here.
     // For a simple deploy button click, getting a fresh token on sign-in might suffice.
     return this.currentOAuthAccessToken;
+  }
+
+  decodeJwtPayload(token: string): any {
+    const base64Url = token.split('.')[1];
+    if (!base64Url) {
+      throw new Error('Invalid JWT token');
+    }
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64.padEnd(
+      base64.length + ((4 - (base64.length % 4)) % 4),
+      '=',
+    );
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    // eslint-disable-next-line n/no-unsupported-features/node-builtins
+    const decoded = new TextDecoder().decode(bytes);
+    return JSON.parse(decoded);
   }
 }

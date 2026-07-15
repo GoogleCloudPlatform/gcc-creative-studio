@@ -16,7 +16,12 @@
 
 <button
   mat-flat-button
-  [ngClass]="classes"
+  [class.btn-cta]="variant === 'cta'"
+  [class.btn-glass-primary]="variant !== 'cta'"
+  [class.btn-glass-circle]="shape === 'circle'"
+  [class.btn-small]="size === 'small'"
+  [class.btn-medium]="size === 'medium'"
+  [class.btn-large]="size === 'large'"
   [disabled]="disabled"
 >
 

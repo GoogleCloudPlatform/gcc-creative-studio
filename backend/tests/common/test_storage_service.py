@@ -29,7 +29,7 @@ def fixture_gcs_service():
         mock_client_cls.return_value = mock_client
         service = GcsService(bucket_name="test-bucket")
         service.mock_client = mock_client
-        return service
+        yield service
 
 
 def test_download_from_gcs_success(gcs_service):

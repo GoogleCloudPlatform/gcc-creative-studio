@@ -18,8 +18,8 @@
   <!-- Beta Label Row -->
   <div class="flex justify-end w-full">
     <div
-      matTooltip="This is currenty under development, it does not save content so use at your own risk, make sure to download your work before you leave this page!"
-      class="beta-label"
+      matTooltip="This is currently under development, it does not save content so use at your own risk, make sure to download your work before you leave this page!"
+      class="beta-label mb-2"
     >
       BETA
     </div>
@@ -677,7 +677,7 @@
           </div>
 
           <div
-            class="flex flex-row w-[calc(100%-18rem)] items-center gap-2 mt-[0.5rem] !pl-4 min-w-[32rem]"
+            class="flex flex-row w-[calc(100%-18rem)] items-center gap-2 !pl-4 min-w-[32rem]"
           >
             <app-time-ruler class="flex-1 min-w-0" [totalDuration]="timelineState.totalDuration()"
               [pixelsPerSecond]="timelineState.pixelsPerSecond()" [scrollOffset]="timelineState.scrollOffset()"
@@ -702,7 +702,7 @@
               <!-- <input type="range" [(ngModel)]="pixelsPerSecond" min="5" max="100" step="5"
                                                                                                                                                                     class="w-20 h-1 bg-gray-700 rounded-full appearance-none cursor-pointer accent-gray-400"> -->
               <!-- Split Button -->
-              <!-- <studio-button variant="primary" size="small" shape="circle"
+              <studio-button variant="primary" size="small" shape="circle"
                 mat-button
                 (click)="splitSelectedClip()"
                 [disabled]="!canSplit()"
@@ -718,7 +718,7 @@
                 
               >
                 <mat-icon class="!w-5 !h-5">delete</mat-icon>
-              </studio-button> -->
+              </studio-button>
             </div>
           </div>
         </div>
@@ -883,12 +883,14 @@
                         </svg>
                       </div>
 
-                      <!-- Trim Handles -->
+                      <!-- Trim Handles for video -->
                       <div *ngIf="timelineState.selectedClipId() === clip.id"
-                        class="absolute left-0 top-[35%] bottom-[35%] w-2 bg-white/80 cursor-ew-resize rounded-full transform -translate-x-1/2">
+                        class="absolute left-0 top-[35%] bottom-[35%] w-2 bg-white/80 cursor-ew-resize rounded-full transform -translate-x-1/2"
+                        (mousedown)="startTrim($event, clip, 'start')">
                       </div>
                       <div *ngIf="timelineState.selectedClipId() === clip.id"
-                        class="absolute right-0 top-[35%] bottom-[35%] w-2 bg-white/80 cursor-ew-resize rounded-full transform translate-x-1/2">
+                        class="absolute right-0 top-[35%] bottom-[35%] w-2 bg-white/80 cursor-ew-resize rounded-full transform translate-x-1/2"
+                        (mousedown)="startTrim($event, clip, 'end')">
                       </div>
                       </div>
                       </div>
@@ -937,8 +939,12 @@
                       </div>
 
                       <!-- Trim Handles for Audio -->
-                      <div class="absolute left-0 top-0 bottom-0 w-1.5 bg-white/20 cursor-ew-resize"></div>
-                      <div class="absolute right-0 top-0 bottom-0 w-1.5 bg-white/20 cursor-ew-resize"></div>
+                      <div *ngIf="timelineState.selectedClipId() === clip.id"
+                        class="absolute left-0 top-0 bottom-0 w-1.5 bg-white/80 cursor-ew-resize"
+                        (mousedown)="startTrim($event, clip, 'start')"></div>
+                      <div *ngIf="timelineState.selectedClipId() === clip.id"
+                        class="absolute right-0 top-0 bottom-0 w-1.5 bg-white/80 cursor-ew-resize"
+                        (mousedown)="startTrim($event, clip, 'end')"></div>
                       </div>
                       </div>
                       </div>

@@ -51,7 +51,7 @@ from src.source_assets.source_asset_controller import (
 from src.tags.tags_controller import router as tags_router
 from src.users.user_controller import router as user_router
 from src.videos.veo_controller import router as video_router
-from src.workbench.router import router as workbench_router
+from src.workbench.workbench_controller import router as workbench_router
 from src.workflows.workflow_controller import router as workflow_router
 from src.workflows_executor.workflows_executor_controller import (
     router as workflows_executor_router,

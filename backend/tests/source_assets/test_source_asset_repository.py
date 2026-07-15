@@ -61,7 +61,9 @@ async def test_find_by_hash_success():
     mock_db.execute.return_value = mock_result
 
     repo = SourceAssetRepository(db=mock_db)
-    response = await repo.find_by_hash(user_id=1, file_hash="hash123")
+    response = await repo.find_by_hash(
+        user_id=1, file_hash="hash123", workspace_id=1
+    )
 
     assert response is not None
     assert response.id == 1
@@ -76,7 +78,9 @@ async def test_find_by_hash_not_found():
     mock_db.execute.return_value = mock_result
 
     repo = SourceAssetRepository(db=mock_db)
-    response = await repo.find_by_hash(user_id=1, file_hash="absent")
+    response = await repo.find_by_hash(
+        user_id=1, file_hash="absent", workspace_id=1
+    )
 
     assert response is None
 

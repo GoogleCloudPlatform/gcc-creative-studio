@@ -19,6 +19,10 @@ import {HttpClient} from '@angular/common/http';
 import {Observable, firstValueFrom, Subject} from 'rxjs';
 import {environment} from '../../../environments/environment';
 import {AuthService} from '../../common/services/auth.service';
+import {
+  ChatSession,
+  SessionDetailResponse,
+} from '../../common/models/workbench.model';
 
 export interface SSECallbacks<T> {
   onClose?: () => void;
@@ -56,6 +60,7 @@ export class AgentChatService {
   private apiUrl = `${environment.backendURL}/agent`;
   private http = inject(HttpClient);
   private authService = inject(AuthService);
+  private activePollInterval: any = null;
 
   // Global parsed storyboard
   currentStoryboard = signal<any>(null);
@@ -73,27 +78,27 @@ export class AgentChatService {
   // Broadcasts a fully generated video asset from the chat processor
   videoGenerated$ = new Subject<any>();
 
-  getSessions(workspaceId?: number): Observable<any> {
+  getSessions(workspaceId?: number): Observable<ChatSession[]> {
     let url = `${this.apiUrl}/sessions?appName=${this.activeAgent()}`;
     if (workspaceId) {
       url += `&workspace_id=${workspaceId}`;
     }
-    return this.http.get(url);
+    return this.http.get<ChatSession[]>(url);
   }
 
-  createSession(workspaceId?: number): Observable<any> {
+  createSession(workspaceId?: number): Observable<ChatSession> {
     let url = `${this.apiUrl}/sessions?appName=${this.activeAgent()}`;
     if (workspaceId) {
       url += `&workspace_id=${workspaceId}`;
     }
-    return this.http.post(url, {});
+    return this.http.post<ChatSession>(url, {});
   }
 
   getSessionDetail(
     workspaceId: number,
     sessionId?: string,
     storyboardId?: number,
-  ): Observable<any> {
+  ): Observable<SessionDetailResponse> {
     let params = `workspace_id=${workspaceId}`;
     if (sessionId) {
       params += `&session_id=${sessionId}`;
@@ -101,15 +106,17 @@ export class AgentChatService {
     if (storyboardId) {
       params += `&storyboard_id=${storyboardId}`;
     }
-    return this.http.get(`${this.apiUrl}/sessions/detail?${params}`);
+    return this.http.get<SessionDetailResponse>(
+      `${this.apiUrl}/sessions/detail?${params}`,
+    );
   }
 
-  deleteSession(sessionId: string, workspaceId?: number): Observable<any> {
+  deleteSession(sessionId: string, workspaceId?: number): Observable<void> {
     let url = `${this.apiUrl}/sessions/${sessionId}?appName=${this.activeAgent()}`;
     if (workspaceId) {
       url += `&workspace_id=${workspaceId}`;
     }
-    return this.http.delete(url);
+    return this.http.delete<void>(url);
   }
 
   generateTitle(text: string): Observable<any> {
@@ -163,68 +170,88 @@ export class AgentChatService {
       }
 
       // Start Event Polling Loop
-      const pollUrl = `${this.apiUrl}/sessions/${sessionId}/poll`;
-      const pollInterval = setInterval(async () => {
-        try {
-          const pollToken = await firstValueFrom(
-            this.authService.getValidIdentityPlatformToken$(),
-          );
+      this.startPolling(sessionId, callbacks);
+    } catch (error) {
+      if (callbacks.onError) callbacks.onError(error);
+    }
+  }
 
-          const pollResp = await fetch(pollUrl, {
-            method: 'GET',
-            headers: {
-              Authorization: `Bearer ${pollToken}`,
-              'Content-Type': 'application/json',
-            },
-          });
+  startPolling(sessionId: string, callbacks: SSECallbacks<any>): any {
+    this.stopPolling();
+    const pollUrl = `${this.apiUrl}/sessions/${sessionId}/poll`;
+    const pollInterval = setInterval(async () => {
+      try {
+        const pollToken = await firstValueFrom(
+          this.authService.getValidIdentityPlatformToken$(),
+        );
 
-          if (!pollResp.ok) {
-            console.warn('Poll failed with status', pollResp.status);
-            return;
-          }
+        const pollResp = await fetch(pollUrl, {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${pollToken}`,
+            'Content-Type': 'application/json',
+          },
+        });
 
-          const pollData = await pollResp.json();
-          if (pollData && pollData.events) {
-            for (const line of pollData.events) {
-              if (line.startsWith('data: ')) {
-                const data = line.substring(6);
-                if (data.trim() === '[DONE]') {
-                  if (callbacks.onClose) callbacks.onClose();
+        if (!pollResp.ok) {
+          console.warn('Poll failed with status', pollResp.status);
+          return;
+        }
+
+        const pollData = await pollResp.json();
+        if (pollData && pollData.events) {
+          for (const line of pollData.events) {
+            if (line.startsWith('data: ')) {
+              const data = line.substring(6);
+              if (data.trim() === '[DONE]') {
+                if (callbacks.onClose) callbacks.onClose();
+                clearInterval(pollInterval);
+                if (this.activePollInterval === pollInterval) {
+                  this.activePollInterval = null;
+                }
+                return;
+              }
+              try {
+                const parsed = JSON.parse(data);
+                if (parsed.error) {
+                  if (callbacks.onError)
+                    callbacks.onError(new Error(parsed.error));
                   clearInterval(pollInterval);
+                  if (this.activePollInterval === pollInterval) {
+                    this.activePollInterval = null;
+                  }
                   return;
                 }
-                try {
-                  const parsed = JSON.parse(data);
-                  if (parsed.error) {
-                    if (callbacks.onError)
-                      callbacks.onError(new Error(parsed.error));
-                    clearInterval(pollInterval);
-                    return;
-                  }
-                  if (callbacks.onMessage) callbacks.onMessage(parsed);
-                } catch (e) {
-                  console.warn(
-                    'Polled data is not JSON, treating as text:',
-                    data,
-                  );
-                  // Treat as text chunk
-                  if (callbacks.onMessage) {
-                    callbacks.onMessage({
-                      content: {
-                        parts: [{text: data}],
-                      },
-                    });
-                  }
+                if (callbacks.onMessage) callbacks.onMessage(parsed);
+              } catch (e) {
+                console.warn(
+                  'Polled data is not JSON, treating as text:',
+                  data,
+                );
+                // Treat as text chunk
+                if (callbacks.onMessage) {
+                  callbacks.onMessage({
+                    content: {
+                      parts: [{text: data}],
+                    },
+                  });
                 }
               }
             }
           }
-        } catch (pollErr) {
-          console.error('Polling tick failed:', pollErr);
         }
-      }, 2500);
-    } catch (error) {
-      if (callbacks.onError) callbacks.onError(error);
+      } catch (pollErr) {
+        console.error('Polling tick failed:', pollErr);
+      }
+    }, 2500);
+    this.activePollInterval = pollInterval;
+    return pollInterval;
+  }
+
+  stopPolling() {
+    if (this.activePollInterval) {
+      clearInterval(this.activePollInterval);
+      this.activePollInterval = null;
     }
   }
 }

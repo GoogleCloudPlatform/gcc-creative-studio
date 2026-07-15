@@ -51,8 +51,8 @@ $border-radius-pill: 99px;
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 24px;
-  gap: 24px;
+  padding: 1rem;
+    gap: 0.5rem;
 }
 // Top Navigation Bar
 .sb-header {
@@ -123,10 +123,10 @@ $border-radius-pill: 99px;
 // Main Container
 .sb-main-scroll {
   display: flex;
-  gap: 24px;
+  gap: 1rem;
   overflow-x: auto;
   overflow-y: hidden;
-  padding-bottom: 24px;
+  padding-bottom: 1rem;
   flex: 1;
   &::-webkit-scrollbar {
     height: 8px;
@@ -143,17 +143,18 @@ $border-radius-pill: 99px;
   background-color: $bg-surface;
   border: 1px solid $border-color;
   border-radius: $border-radius-lg;
-  padding: 24px;
+  padding: 0.5rem;
   min-width: max-content;
   flex-shrink: 0;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+  height: 100%;
 }
 // Scene Header
 .sb-scene-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 20px;
+  margin-bottom: 0.5rem;
   gap: 32px;
 }
 .sb-scene-title-group {
@@ -266,7 +267,8 @@ $border-radius-pill: 99px;
 .sb-shots-list {
   display: flex;
   gap: 16px;
-  height: 100%;
+  flex-grow: 1;
+    min-height: 0;
 }
 .sb-shot-card {
   width: 250px;
@@ -277,6 +279,7 @@ $border-radius-pill: 99px;
   border: 1px solid $border-color;
   border-radius: $border-radius-md;
   overflow: hidden;
+  min-height: 0;
 }
 .sb-shot-thumb {
   height: 140px;
@@ -359,7 +362,7 @@ $border-radius-pill: 99px;
   line-height: 1.5;
   resize: none;
   font-family: inherit;
-  min-height: 150px;
+  min-height: 50px;
   max-height: 300px;
   overflow-y: auto;
 
@@ -431,7 +434,7 @@ $border-radius-pill: 99px;
   width: 100%;
   display: flex;
   justify-content: center;
-  transform: translateY(50%);
+  transform: translateY(-25%);
 }
 .sb-add-circle {
   background: $text-primary;
@@ -448,12 +451,12 @@ $border-radius-pill: 99px;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0 16px;
+  padding: 0 0.5rem;
   color: $text-secondary;
 }
 // Utilities
 .sb-icon-sm {
   font-size: 20px;
-  width: 26px;
-  height: 26px;
+  width: 20px;
+    height: 20px;
 }

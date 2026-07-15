@@ -40,7 +40,7 @@
       <div class="actions-wrapper">
         <studio-button variant="primary" size="medium"
           mat-flat-button
-          
+          *ngIf="authService.isUserAdmin() || authService.isUserWorkflows()"
           (click)="openBatchExecution()"
           [disabled]="isLoading"
           style="margin-right: 8px;"
