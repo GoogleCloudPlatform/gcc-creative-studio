@@ -90,14 +90,26 @@ class AgentService:
         }
         return AGENT_REASONING_ENGINES.get(appName, default_config)
 
+    def _get_validated_agent_name(self, appName: str) -> str:
+        agent_config = self._get_agent_config(appName)
+        agent_name = agent_config.get("resource_name")
+        if not agent_name:
+            logger.error(
+                "Agent resource name is not configured for app %s.", appName
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Agent Engine Resource Name is not configured in the backend environment.",
+            )
+        return agent_name
+
     def _get_remote_agent(self, appName: str = APP_NAME) -> Any:
         vertexai.init(
             project=config_service.PROJECT_ID,
             location=config_service.WORKFLOWS_LOCATION,
             api_transport="grpc",
         )
-        agent_config = self._get_agent_config(appName)
-        agent_name = agent_config.get("resource_name")
+        agent_name = self._get_validated_agent_name(appName)
         return agent_engines.get(agent_name)
 
     def _map_session_to_dto(
@@ -232,8 +244,7 @@ class AgentService:
                     user=current_user,
                 )
 
-            agent_config = self._get_agent_config(appName)
-            agent_name = agent_config.get("resource_name")
+            agent_name = self._get_validated_agent_name(appName)
 
             raw_sessions = self.client.agent_engines.sessions.list(
                 name=agent_name, config={"filter": f'user_id="{user_id}"'}
@@ -285,8 +296,7 @@ class AgentService:
                     user=current_user,
                 )
 
-            agent_config = self._get_agent_config(appName)
-            agent_name = agent_config.get("resource_name")
+            agent_name = self._get_validated_agent_name(appName)
             auth_header = request.headers.get("Authorization", "")
             auth_key = agent_config.get("token_key", "user_auth_token")
 
@@ -362,8 +372,7 @@ class AgentService:
         session_dto = None
         if resolved_session_id is not None:
             try:
-                agent_config = self._get_agent_config(appName)
-                agent_name = agent_config.get("resource_name")
+                agent_name = self._get_validated_agent_name(appName)
                 full_session_name = (
                     f"{agent_name}/sessions/{resolved_session_id}"
                 )
@@ -455,8 +464,7 @@ class AgentService:
                     user=current_user,
                 )
 
-            agent_config = self._get_agent_config(appName)
-            agent_name = agent_config.get("resource_name")
+            agent_name = self._get_validated_agent_name(appName)
             full_session_name = f"{agent_name}/sessions/{session_id}"
             session = self.client.agent_engines.sessions.get(
                 name=full_session_name
@@ -518,8 +526,7 @@ class AgentService:
                     user=current_user,
                 )
 
-            agent_config = self._get_agent_config(appName)
-            agent_name = agent_config.get("resource_name")
+            agent_name = self._get_validated_agent_name(appName)
             full_session_name = f"{agent_name}/sessions/{session_id}"
 
             # Fetch session to extract workspace_id and authorize
@@ -665,7 +672,7 @@ class AgentService:
                 auth_key = agent_config.get("token_key", "user_auth_token")
 
                 if session_id and auth_header:
-                    agent_name = agent_config.get("resource_name")
+                    agent_name = self._get_validated_agent_name(app_name)
                     full_session_name = f"{agent_name}/sessions/{session_id}"
                     try:
                         self.client.agent_engines.sessions.events.append(

@@ -92,6 +92,7 @@ export class ChatInterfaceComponent
   selectedImages = signal<(SourceAssetResponseDto | MediaItemSelection)[]>([]);
   isTyping = signal<boolean>(false);
   isLoadingHistory = signal<boolean>(false);
+  agentUnavailable = signal<boolean>(false);
   currentSessionId: string | null = null;
   private lastWorkspaceId: number | null = null;
 
@@ -353,7 +354,7 @@ export class ChatInterfaceComponent
                     console.error('Failed to preload workspace state:', err);
                     handleErrorSnackbar(
                       this.snackBar,
-                      err,
+                      err as any,
                       'Preload Session Details',
                     );
                     this.isLoadingHistory.set(false);
@@ -380,7 +381,14 @@ export class ChatInterfaceComponent
         },
         error: err => {
           console.error('Error fetching sessions:', err);
-          handleErrorSnackbar(this.snackBar, err, 'Fetch Sessions');
+          if ((err as any)?.status === 503) {
+            console.warn(
+              'Backend returned 503: Agent Engine is likely missing AGENT_ENGINE_RESOURCE_NAME in environment.',
+            );
+            this.agentUnavailable.set(true);
+          } else {
+            handleErrorSnackbar(this.snackBar, err, 'Fetch Sessions');
+          }
           this.isLoadingHistory.set(false);
           this.startNewChat();
         },
@@ -435,7 +443,14 @@ export class ChatInterfaceComponent
           },
           error: err => {
             console.error('Error loading session details:', err);
-            handleErrorSnackbar(this.snackBar, err, 'Load Session Details');
+            if ((err as any)?.status === 503) {
+              console.warn(
+                'Backend returned 503: Agent Engine is likely missing AGENT_ENGINE_RESOURCE_NAME in environment.',
+              );
+              this.agentUnavailable.set(true);
+            } else {
+              handleErrorSnackbar(this.snackBar, err, 'Load Session Details');
+            }
             this.isLoadingHistory.set(false);
           },
         });
@@ -908,9 +923,16 @@ export class ChatInterfaceComponent
       },
       onError: err => {
         console.error('SSE Error:', err);
+        if ((err as any)?.status === 503) {
+          console.warn(
+            'Backend returned 503: Agent Engine is likely missing AGENT_ENGINE_RESOURCE_NAME in environment.',
+          );
+          this.agentUnavailable.set(true);
+        } else {
+          handleErrorSnackbar(this.snackBar, err, 'Storyboard Generation');
+        }
         this.isTyping.set(false);
         this.agentChatService.isGeneratingStoryboard.set(false);
-        handleErrorSnackbar(this.snackBar, err, 'Storyboard Generation');
       },
       onClose: () => {
         this.isTyping.set(false);
@@ -1301,9 +1323,16 @@ export class ChatInterfaceComponent
       },
       onError: err => {
         console.error('SSE Error:', err);
+        if ((err as any)?.status === 503) {
+          console.warn(
+            'Backend returned 503: Agent Engine is likely missing AGENT_ENGINE_RESOURCE_NAME in environment.',
+          );
+          this.agentUnavailable.set(true);
+        } else {
+          handleErrorSnackbar(this.snackBar, err, 'Storyboard Generation');
+        }
         this.isTyping.set(false);
         this.agentChatService.isGeneratingStoryboard.set(false);
-        handleErrorSnackbar(this.snackBar, err, 'Storyboard Generation');
       },
       onClose: () => {
         this.isTyping.set(false);
