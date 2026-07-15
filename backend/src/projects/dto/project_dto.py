@@ -57,41 +57,6 @@ class StoryboardDTO(BaseModel):
 
 
 # Clip DTOs
-class VideoClipDTO(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: Optional[int] = None
-    media_item_id: Optional[int] = None
-    source_asset_id: Optional[int] = None
-    trim_offset: float
-    trim_duration: Optional[float] = None
-    volume: float
-    speed: float
-    presigned_url: Optional[str] = None
-    presigned_thumbnail_url: Optional[str] = None
-
-
-class AudioClipDTO(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: Optional[int] = None
-    media_item_id: Optional[int] = None
-    source_asset_id: Optional[int] = None
-    start_offset: float
-    trim_offset: float
-    trim_duration: Optional[float] = None
-    volume: float
-    presigned_url: Optional[str] = None
-
-
-# Timeline DTO
-class TimelineDTO(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: Optional[int] = None
-    title: Optional[str] = None
-    video_clips: List[VideoClipDTO] = []
-    audio_clips: List[AudioClipDTO] = []
 
 
 # Canvas DTO
@@ -148,4 +113,4 @@ class StoryboardResponse(BaseModel):
     bg_music_asset_id: Optional[int] = None
 
     scenes: List[SceneDTO] = []
-    timeline: Optional[TimelineDTO] = None
+    timeline_id: Optional[int] = None

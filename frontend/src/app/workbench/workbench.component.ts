@@ -31,6 +31,7 @@ import {
   PLATFORM_ID,
 } from '@angular/core';
 import {isPlatformBrowser} from '@angular/common';
+import {HttpClient} from '@angular/common/http';
 import {MatIconRegistry} from '@angular/material/icon';
 import {
   DomSanitizer,
@@ -42,9 +43,12 @@ import {
   ImageSelectorComponent,
   MediaItemSelection,
 } from '../common/components/image-selector/image-selector.component';
-import {SourceAssetResponseDto} from '../common/services/source-asset.service';
+import {
+  SourceAssetResponseDto,
+  SourceAssetService,
+} from '../common/services/source-asset.service';
 // --- Interfaces ---
-import {WorkbenchService, TimelineRequest, Clip} from './workbench.service';
+import {WorkbenchService, RenderTimelineRequest} from './workbench.service';
 import {AgentChatService} from './services/agent-chat.service';
 import {TimeRulerComponent} from './components/time-ruler/time-ruler.component';
 import {
@@ -58,12 +62,21 @@ import {
   VideoClipDTO,
   AudioClipDTO,
   StoryboardResponse,
-} from '../common/models/storyboard.model';
+} from '../common/models/workbench.model';
 import {ActivatedRoute} from '@angular/router';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
-import {Subject, Subscription} from 'rxjs';
-import {debounceTime} from 'rxjs/operators';
+import {
+  Subject,
+  Subscription,
+  of,
+  Observable,
+  interval,
+  throwError,
+} from 'rxjs';
+import {debounceTime, switchMap, takeWhile, catchError} from 'rxjs/operators';
 import {StoryboardService} from '../services/storyboard/storyboard.service';
+import {GalleryService} from '../gallery/gallery.service';
+import {MediaItem} from '../common/models/media-item.model';
 
 @Component({
   selector: 'app-workbench',
@@ -154,13 +167,16 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   // Services
   private sanitizer = inject(DomSanitizer);
   private workbenchService = inject(WorkbenchService);
+  private http = inject(HttpClient);
   private agentChatService = inject(AgentChatService);
   protected timelineState = inject(TimelineStateService);
   protected playbackService = inject(PlayheadSyncService);
   private route = inject(ActivatedRoute);
   private storyboardService = inject(StoryboardService);
+  private galleryService = inject(GalleryService);
 
   private workspaceStateService = inject(WorkspaceStateService);
+  private sourceAssetService = inject(SourceAssetService);
 
   isDownloading = signal(false);
 
@@ -173,6 +189,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     initialStart: number;
     initialDur: number;
     initialOffset: number;
+    hasMoved?: boolean;
   } | null = null;
 
   // Drag state for moving clips along the timeline
@@ -181,6 +198,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     clipId: string;
     startX: number;
     initialStartTime: number;
+    hasMoved?: boolean;
   } | null = null;
 
   isBrowser: boolean;
@@ -188,6 +206,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   private saveSubject = new Subject<void>();
   private saveSubscription?: Subscription;
+  private activeSaveSubscription?: Subscription;
+  private hasPendingSave = false;
   private isSaving = false;
 
   constructor(
@@ -204,19 +224,31 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         if (this.isSaving) {
           return;
         }
-        if (storyboard && storyboard.timeline) {
-          console.log(
-            'Loading timeline from AgentChatService signal:',
-            storyboard.timeline,
-          );
-          this.processGeneratedData(storyboard.timeline);
-          this.lastSavedText.set('Saved');
+        if (storyboard && storyboard.timeline_id) {
+          if (
+            this.timelineState.loadedTimelineId() === storyboard.timeline_id
+          ) {
+            return;
+          }
+          this.timelineState.loadedTimelineId.set(storyboard.timeline_id);
+          this.workbenchService.getTimeline(storyboard.timeline_id).subscribe({
+            next: (timeline: TimelineDTO) => {
+              this.processGeneratedData(timeline);
+              this.lastSavedText.set('Saved');
+            },
+            error: err => {
+              console.error('Failed to fetch timeline:', err);
+              this.lastSavedText.set('Failed to load timeline');
+            },
+          });
         } else {
-          console.log(
-            'No storyboard or timeline found, clearing timeline clips.',
-          );
+          this.timelineState.loadedTimelineId.set(undefined);
           this.timelineState.timelineClips.set([]);
           this.timelineState.selectedClipId.set(null);
+          this.timelineState.assets.set([]);
+          this.timelineState.currentTime.set(0);
+          this.timelineState.isPlaying.set(false);
+          this.timelineState.scrollOffset.set(0);
           this.lastSavedText.set('');
         }
       },
@@ -347,6 +379,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     this.saveSubscription = this.saveSubject
       .pipe(debounceTime(10000))
       .subscribe(() => {
+        this.hasPendingSave = false;
         this.saveTimeline();
       });
 
@@ -402,6 +435,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     this.playbackService.stopLoop();
+    if (this.hasPendingSave) {
+      this.saveTimeline();
+    } else if (this.activeSaveSubscription) {
+      this.activeSaveSubscription.unsubscribe();
+    }
     if (this.saveSubscription) {
       this.saveSubscription.unsubscribe();
     }
@@ -664,85 +702,117 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   }
 
   processGeneratedData(data: TimelineDTO) {
-    console.log('processGeneratedData called with:', data);
     const newClips: TimelineClip[] = [];
+    const videoStartTimes: number[] = [];
+
+    // Save transitions metadata
+    this.timelineState.transitions.set(data.transitions || []);
+    this.timelineState.transitionIn.set(data.transition_in || null);
+    this.timelineState.transitionOut.set(data.transition_out || null);
 
     // Handle Video Clips
     let currentVideoTime = 0;
     if (data.video_clips) {
       data.video_clips.forEach((clip: VideoClipDTO) => {
-        const assetId = String(
-          clip.media_item_id || clip.source_asset_id || '',
-        );
+        const mediaItemId =
+          clip.asset_ref?.type === 'media_item'
+            ? Number(clip.asset_ref.id)
+            : undefined;
+        const sourceAssetId =
+          clip.asset_ref?.type === 'source_asset'
+            ? Number(clip.asset_ref.id)
+            : undefined;
+        const trimDuration = clip.trim?.duration_seconds || 5;
+        const trimOffset = clip.trim?.offset_seconds || 0;
+
+        const assetId = String(mediaItemId || sourceAssetId || '');
 
         // Populate assets signal so lookup works
-        const existingAsset = this.timelineState
+        const existingAsset: MediaAsset | undefined = this.timelineState
           .assets()
           .find(a => a.id === assetId);
         if (!existingAsset && clip.presigned_url) {
-          this.timelineState.assets.update(prev => [
-            ...prev,
-            {
-              id: assetId,
-              name: 'Clip ' + assetId,
-              type: 'video',
-              url: clip.presigned_url!,
-              safeUrl: this.sanitizer.bypassSecurityTrustUrl(
-                clip.presigned_url!,
-              ),
-              duration: clip.trim_duration || 5,
-              thumbnail: clip.presigned_thumbnail_url,
-              mediaItemId: clip.media_item_id,
-              sourceAssetId: clip.source_asset_id,
-            },
-          ]);
+          const newAsset: MediaAsset = {
+            id: assetId,
+            name: 'Clip ' + assetId,
+            type: 'video',
+            url: clip.presigned_url!,
+            safeUrl: this.sanitizer.bypassSecurityTrustUrl(clip.presigned_url!),
+            duration: trimDuration,
+            thumbnail: clip.presigned_thumbnail_url || undefined,
+            mediaItemId: mediaItemId,
+            sourceAssetId: sourceAssetId,
+          };
+          this.timelineState.assets.update(prev => [...prev, newAsset]);
         }
 
         newClips.push({
           id: Math.random().toString(36).substr(2, 9),
           assetId: assetId,
           startTime: currentVideoTime,
-          duration: clip.trim_duration || 5,
-          offset: clip.trim_offset || 0,
+          duration: trimDuration,
+          offset: trimOffset,
           trackIndex: 0,
           color: '#3b82f6',
-          mediaItemId: clip.media_item_id,
-          sourceAssetId: clip.source_asset_id,
+          mediaItemId: mediaItemId,
+          sourceAssetId: sourceAssetId,
+          first_frame_asset_ref: clip.first_frame_asset_ref || null,
+          last_frame_asset_ref: clip.last_frame_asset_ref || null,
+          placeholder: clip.placeholder || null,
         });
-        currentVideoTime += clip.trim_duration || 5;
+        videoStartTimes.push(currentVideoTime);
+        currentVideoTime += trimDuration;
       });
     }
 
     // Handle Audio Clips
     if (data.audio_clips) {
       data.audio_clips.forEach((clip: AudioClipDTO) => {
+        const mediaItemId =
+          clip.asset_ref?.type === 'media_item'
+            ? Number(clip.asset_ref.id)
+            : undefined;
+        const sourceAssetId =
+          clip.asset_ref?.type === 'source_asset'
+            ? Number(clip.asset_ref.id)
+            : undefined;
+        const trimDuration = clip.trim?.duration_seconds || 5;
+        const trimOffset = clip.trim?.offset_seconds || 0;
+
+        let startTime = clip.start_at?.offset_seconds || 0;
+        const vClipIndex = clip.start_at?.video_clip_index;
+        if (
+          vClipIndex !== undefined &&
+          vClipIndex !== null &&
+          vClipIndex >= 0 &&
+          vClipIndex < videoStartTimes.length
+        ) {
+          startTime =
+            videoStartTimes[vClipIndex] + (clip.start_at?.offset_seconds || 0);
+        }
+
         const assetId = clip.presigned_url || '';
 
         // Populate assets signal
-        const existingAsset = this.timelineState
+        const existingAsset: MediaAsset | undefined = this.timelineState
           .assets()
           .find(a => a.id === assetId);
         if (!existingAsset && clip.presigned_url) {
-          this.timelineState.assets.update(prev => [
-            ...prev,
-            {
-              id: assetId,
-              name: 'Audio ' + assetId,
-              type: 'audio',
-              url: clip.presigned_url!,
-              safeUrl: this.sanitizer.bypassSecurityTrustUrl(
-                clip.presigned_url!,
-              ),
-              duration: clip.trim_duration || 5,
-              mediaItemId: clip.media_item_id,
-              sourceAssetId: clip.source_asset_id,
-            },
-          ]);
+          const newAsset: MediaAsset = {
+            id: assetId,
+            name: 'Audio ' + assetId,
+            type: 'audio',
+            url: clip.presigned_url!,
+            safeUrl: this.sanitizer.bypassSecurityTrustUrl(clip.presigned_url!),
+            duration: trimDuration,
+            mediaItemId: mediaItemId,
+            sourceAssetId: sourceAssetId,
+          };
+          this.timelineState.assets.update(prev => [...prev, newAsset]);
         }
 
         // Find available track among newClips
-        const startTime = clip.start_offset || 0;
-        const duration = clip.trim_duration || 5;
+        const duration = trimDuration;
         const allAudioClips = newClips.filter(c => c.trackIndex > 0);
         let targetTrack = 1;
         let found = false;
@@ -772,11 +842,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           assetId: assetId,
           startTime: startTime,
           duration: duration,
-          offset: clip.trim_offset || 0,
+          offset: trimOffset,
           trackIndex: targetTrack,
           color: '#10b981',
-          mediaItemId: clip.media_item_id,
-          sourceAssetId: clip.source_asset_id,
+          mediaItemId: mediaItemId,
+          sourceAssetId: sourceAssetId,
         });
       });
     }
@@ -1011,6 +1081,12 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       }
     } else {
       // Playing
+      if (
+        this.activeToolButton() === 'agent' &&
+        this.timelineState.timelineClips().length > 0
+      ) {
+        this.activeToolButton.set(null);
+      }
       this.timelineState.isPlaying.set(true);
       this.playbackService.runGameLoop();
     }
@@ -1021,54 +1097,103 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   // --- Download / Render ---
   downloadVideo() {
-    // Only allow download if there are clips and not already downloading
-    if (this.timelineState.timelineClips().length === 0 || this.isDownloading())
+    const storyboard = this.agentChatService.currentStoryboard();
+    if (!storyboard || !storyboard.timeline_id || this.isDownloading()) {
+      console.warn('Cannot download: missing storyboard or timeline ID');
       return;
+    }
 
-    this.isDownloading.set(true);
+    const runRender = () => {
+      this.isDownloading.set(true);
 
-    // Map timeline clips to request format
-    const requestClips: Clip[] = this.timelineState
-      .timelineClips()
-      .filter(clip => !this.isTrackMuted(clip.trackIndex))
-      .map(clip => {
-        const asset = this.timelineState
-          .assets()
-          .find(a => a.id === clip.assetId);
-        return {
-          assetId: clip.assetId,
-          url: asset?.url || '',
-          startTime: clip.startTime,
-          duration: clip.duration,
-          offset: clip.offset,
-          trackIndex: clip.trackIndex,
-          type: clip.trackIndex === 0 ? 'video' : 'audio',
-        };
+      const request: RenderTimelineRequest = {
+        timeline_id: storyboard.timeline_id,
+      };
+
+      this.workbenchService.renderVideo(request).subscribe({
+        next: (res: MediaItem) => {
+          // Poll for completion
+          const pollInterval = 2000;
+          this.lastSavedText.set('Rendering video...');
+
+          interval(pollInterval)
+            .pipe(
+              switchMap(() => this.galleryService.getMedia(res.id as number)),
+              catchError(err => {
+                console.error('Error polling rendered media', err);
+                return throwError(() => err);
+              }),
+              takeWhile(item => {
+                const status = item.status?.toUpperCase();
+                if (status === 'FAILED') {
+                  this.isDownloading.set(false);
+                  this.lastSavedText.set('Render failed');
+                  return false;
+                }
+                if (status === 'COMPLETED') {
+                  return false;
+                }
+                return true;
+              }, true), // inclusive to emit the last item
+            )
+            .subscribe({
+              next: item => {
+                if (item.status?.toUpperCase() === 'COMPLETED') {
+                  this.isDownloading.set(false);
+                  this.lastSavedText.set('Render complete');
+
+                  if (item.presignedUrls && item.presignedUrls.length > 0) {
+                    const url = item.presignedUrls[0];
+                    this.http.get(url, {responseType: 'blob'}).subscribe({
+                      next: blob => {
+                        const localUrl = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = localUrl;
+                        a.download = `creative-studio-export-${new Date().getTime()}.mp4`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        window.URL.revokeObjectURL(localUrl);
+                      },
+                      error: err => {
+                        console.error(
+                          'Failed to download video file blob',
+                          err,
+                        );
+                        // Fallback: Open the presigned URL directly in a new tab if blob download fails (e.g., due to CORS)
+                        window.open(url, '_blank');
+                      },
+                    });
+                  }
+                }
+              },
+              error: err => {
+                console.error('Polling failed', err);
+                this.isDownloading.set(false);
+                this.lastSavedText.set('Render failed');
+              },
+            });
+        },
+        error: err => {
+          console.error('Render request failed', err);
+          this.isDownloading.set(false);
+          this.lastSavedText.set('Render failed');
+        },
       });
-
-    const request: TimelineRequest = {
-      clips: requestClips,
-      hide_video: this.isVideoHidden(),
     };
 
-    this.workbenchService.renderVideo(request).subscribe({
-      next: blob => {
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `creative-studio-export-${new Date().getTime()}.mp4`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url);
-        this.isDownloading.set(false);
-      },
-      error: err => {
-        console.error('Download failed', err);
-        this.isDownloading.set(false);
-        // Ideally show a snackbar here
-      },
-    });
+    if (this.hasPendingSave) {
+      this.saveTimeline().subscribe({
+        next: () => {
+          runRender();
+        },
+        error: err => {
+          console.error('Save failed before download, aborting render', err);
+        },
+      });
+    } else {
+      runRender();
+    }
   }
 
   // Scrubbing State
@@ -1192,6 +1317,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     if (!this.trimState || !this.trimState.active) return;
 
     const deltaX = event.clientX - this.trimState.startX;
+    if (Math.abs(deltaX) < 1) return; // Ignore micro-jitters
+    this.trimState.hasMoved = true;
+
     const deltaTime = deltaX / this.timelineState.pixelsPerSecond();
     const {clipId, type, initialDur, initialOffset} = this.trimState;
 
@@ -1232,9 +1360,12 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   onTrimEnd() {
     if (this.trimState && this.trimState.active) {
+      const hasMoved = this.trimState.hasMoved;
       this.refreshTimelineLayout();
       this.trimState = null;
-      this.triggerAutoSave();
+      if (hasMoved) {
+        this.triggerAutoSave();
+      }
     }
   }
 
@@ -1244,6 +1375,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     if (!this.dragState || !this.dragState.active) return;
 
     const deltaX = event.clientX - this.dragState.startX;
+    if (Math.abs(deltaX) < 1) return; // Ignore micro-jitters
+    this.dragState.hasMoved = true;
+
     const deltaTime = deltaX / this.timelineState.pixelsPerSecond();
     let newStartTime = this.dragState.initialStartTime + deltaTime;
     if (newStartTime < 0) newStartTime = 0;
@@ -1267,8 +1401,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   onDragEnd() {
     if (this.dragState && this.dragState.active) {
       const clipId = this.dragState.clipId;
+      const hasMoved = this.dragState.hasMoved;
       this.dragState = null;
-      this.resolveOverlaps(clipId);
+      if (hasMoved) {
+        this.resolveOverlaps(clipId);
+      }
     }
   }
 
@@ -1386,15 +1523,23 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   }
 
   triggerAutoSave() {
+    this.hasPendingSave = true;
     this.lastSavedText.set('Saving...');
     this.saveSubject.next();
   }
 
-  saveTimeline() {
+  saveTimeline(): Observable<TimelineDTO | null> {
+    this.hasPendingSave = false;
     const sb = this.agentChatService.currentStoryboard();
-    if (!sb || !sb.id) {
-      console.warn('Cannot auto-save timeline: missing storyboard or ID');
-      return;
+    if (!sb || !sb.id || !sb.timeline_id) {
+      console.warn(
+        'Cannot auto-save timeline: missing storyboard, ID, or timeline ID',
+      );
+      return of(null);
+    }
+
+    if (this.activeSaveSubscription) {
+      this.activeSaveSubscription.unsubscribe();
     }
 
     this.lastSavedText.set('Saving...');
@@ -1404,13 +1549,30 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       .filter(c => c.trackIndex === 0)
       .map(c => {
         const asset = this.timelineState.assets().find(a => a.id === c.assetId);
+        let assetRef = null;
+        const mediaItemId = c.mediaItemId || asset?.mediaItemId;
+        const sourceAssetId = c.sourceAssetId || asset?.sourceAssetId;
+        if (mediaItemId) {
+          assetRef = {
+            id: mediaItemId,
+            type: 'media_item' as const,
+          };
+        } else if (sourceAssetId) {
+          assetRef = {
+            id: sourceAssetId,
+            type: 'source_asset' as const,
+          };
+        }
+
         return {
-          media_item_id: c.mediaItemId || asset?.mediaItemId || null,
-          source_asset_id: c.sourceAssetId || asset?.sourceAssetId || null,
+          asset_ref: assetRef,
           trim: {
-            offset: c.offset,
-            duration: c.duration,
+            offset_seconds: c.offset,
+            duration_seconds: c.duration,
           },
+          first_frame_asset_ref: c.first_frame_asset_ref || null,
+          last_frame_asset_ref: c.last_frame_asset_ref || null,
+          placeholder: c.placeholder || null,
           volume: 1.0,
           speed: 1.0,
         };
@@ -1420,39 +1582,68 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       .filter(c => c.trackIndex > 0)
       .map(c => {
         const asset = this.timelineState.assets().find(a => a.id === c.assetId);
+        let assetRef = null;
+        const mediaItemId = c.mediaItemId || asset?.mediaItemId;
+        const sourceAssetId = c.sourceAssetId || asset?.sourceAssetId;
+        if (mediaItemId) {
+          assetRef = {
+            id: mediaItemId,
+            type: 'media_item' as const,
+          };
+        } else if (sourceAssetId) {
+          assetRef = {
+            id: sourceAssetId,
+            type: 'source_asset' as const,
+          };
+        }
+
         return {
-          media_item_id: c.mediaItemId || asset?.mediaItemId || null,
-          source_asset_id: c.sourceAssetId || asset?.sourceAssetId || null,
-          start_offset: c.startTime,
+          start_at: {
+            video_clip_index: -1,
+            offset_seconds: c.startTime,
+          },
+          asset_ref: assetRef,
           trim: {
-            offset: c.offset,
-            duration: c.duration,
+            offset_seconds: c.offset,
+            duration_seconds: c.duration,
           },
           volume: 1.0,
         };
       });
 
-    const updateData = {
-      timeline_data: {
-        title: sb.timeline?.title || 'Timeline',
-        video_clips: videoClips,
-        audio_clips: audioClips,
-      },
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+
+    const timelineUpdate = {
+      timeline_id: sb.timeline_id,
+      storyboard_id: sb.id,
+      workspace_id: workspaceId || 1,
+      title: 'Timeline',
+      video_clips: videoClips,
+      audio_clips: audioClips,
+      transitions: this.timelineState.transitions(),
+      transition_in: this.timelineState.transitionIn() || undefined,
+      transition_out: this.timelineState.transitionOut() || undefined,
     };
 
     this.isSaving = true;
-    this.storyboardService.updateStoryboard(sb.id, updateData).subscribe({
-      next: (res: StoryboardResponse) => {
-        console.log('Storyboard timeline updated successfully', res);
-        this.agentChatService.currentStoryboard.set(res);
-        this.lastSavedText.set('Saved');
-        this.isSaving = false;
-      },
-      error: (err: unknown) => {
-        console.error('Error updating storyboard timeline', err);
-        this.lastSavedText.set('Failed to save changes');
-        this.isSaving = false;
-      },
-    });
+    const subject = new Subject<TimelineDTO>();
+    this.activeSaveSubscription = this.workbenchService
+      .updateTimeline(sb.timeline_id, timelineUpdate)
+      .subscribe({
+        next: (res: TimelineDTO) => {
+          console.log('Timeline updated successfully', res);
+          this.lastSavedText.set('Saved');
+          this.isSaving = false;
+          subject.next(res);
+          subject.complete();
+        },
+        error: err => {
+          console.error('Error updating timeline', err);
+          this.lastSavedText.set('Failed to save changes');
+          this.isSaving = false;
+          subject.error(err);
+        },
+      });
+    return subject.asObservable();
   }
 }

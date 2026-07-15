@@ -19,18 +19,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.common.base_repository import BaseRepository
 from src.database import get_db
 
-from src.projects.schema.project_model import (
-    Storyboard,
-    Timeline,
-    Scene,
-    VideoClip,
-    AudioClip,
-)
+from src.projects.schema.project_model import Storyboard, Scene
+from src.workbench.schema.timeline_model import Timeline, VideoClip, AudioClip
 from src.projects.dto.project_dto import (
     StoryboardResponse,
     StoryboardCreateResponse,
     SceneDTO,
-    TimelineDTO,
 )
 
 
@@ -81,12 +75,7 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
             .where(self.model.id == storyboard_id)
             .options(
                 selectinload(self.model.scenes),
-                selectinload(self.model.timeline).selectinload(
-                    Timeline.video_clips
-                ),
-                selectinload(self.model.timeline).selectinload(
-                    Timeline.audio_clips
-                ),
+                selectinload(self.model.timeline),
             )
         )
         result = await self.db.execute(query)
@@ -104,12 +93,7 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
             .where(self.model.workspace_id == workspace_id)
             .options(
                 selectinload(self.model.scenes),
-                selectinload(self.model.timeline).selectinload(
-                    Timeline.video_clips
-                ),
-                selectinload(self.model.timeline).selectinload(
-                    Timeline.audio_clips
-                ),
+                selectinload(self.model.timeline),
             )
         )
         if session_id:
@@ -123,7 +107,6 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
         storyboard_id: int,
         bg_music_description: str | None = None,
         scenes: list[SceneDTO] | None = None,
-        timeline: TimelineDTO | None = None,
     ) -> StoryboardResponse | None:
         """Updates or creates related data for a storyboard."""
         query = (
@@ -131,12 +114,7 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
             .where(self.model.id == storyboard_id)
             .options(
                 selectinload(self.model.scenes),
-                selectinload(self.model.timeline).selectinload(
-                    Timeline.video_clips
-                ),
-                selectinload(self.model.timeline).selectinload(
-                    Timeline.audio_clips
-                ),
+                selectinload(self.model.timeline),
             )
         )
         result = await self.db.execute(query)
@@ -156,34 +134,6 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
                     **scene_dto.model_dump(exclude={"id"}, exclude_none=True)
                 )
                 storyboard.scenes.append(new_scene)
-
-        if timeline is not None:
-            if not storyboard.timeline:
-                storyboard.timeline = Timeline()
-            storyboard.timeline.title = timeline.title
-
-            storyboard.timeline.video_clips.clear()
-            for clip_dto in timeline.video_clips:
-                new_clip = VideoClip(
-                    **clip_dto.model_dump(
-                        exclude={
-                            "id",
-                            "presigned_url",
-                            "presigned_thumbnail_url",
-                        },
-                        exclude_none=True,
-                    )
-                )
-                storyboard.timeline.video_clips.append(new_clip)
-
-            storyboard.timeline.audio_clips.clear()
-            for clip_dto in timeline.audio_clips:
-                new_clip = AudioClip(
-                    **clip_dto.model_dump(
-                        exclude={"id", "presigned_url"}, exclude_none=True
-                    )
-                )
-                storyboard.timeline.audio_clips.append(new_clip)
 
         await self.db.commit()
         return await self.get_by_id_with_details(storyboard_id)
