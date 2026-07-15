@@ -23,6 +23,7 @@ from src.common.media_utils import (
     generate_image_thumbnail_from_gcs,
     generate_thumbnail,
     get_video_dimensions,
+    get_youtube_aspect_ratio,
 )
 
 
@@ -211,3 +212,17 @@ def test_extract_youtube_video_id_valid_and_invalid():
     )
     assert extract_youtube_video_id("not a youtube url") is None
     assert extract_youtube_video_id(None) is None
+
+
+def test_get_youtube_aspect_ratio():
+    assert (
+        get_youtube_aspect_ratio("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        == "16:9"
+    )
+    assert get_youtube_aspect_ratio("https://youtu.be/dQw4w9WgXcQ") == "16:9"
+    assert (
+        get_youtube_aspect_ratio("https://www.youtube.com/shorts/dQw4w9WgXcQ")
+        == "9:16"
+    )
+    assert get_youtube_aspect_ratio("not a youtube url") == "16:9"
+    assert get_youtube_aspect_ratio(None) == "16:9"

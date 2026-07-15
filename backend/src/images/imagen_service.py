@@ -831,7 +831,9 @@ def _process_image_in_background(
                         )
                         if not youtube_asset:
                             # Create a new SourceAsset for this YouTube video
-                            from src.common.base_dto import AspectRatioEnum
+                            from src.common.media_utils import (
+                                get_youtube_aspect_ratio,
+                            )
 
                             new_asset_model = SourceAssetModel(
                                 workspace_id=media_item_obj.workspace_id,
@@ -839,7 +841,9 @@ def _process_image_in_background(
                                 gcs_uri=None,
                                 original_filename="YouTube Video",
                                 mime_type=MimeTypeEnum.VIDEO_MP4,
-                                aspect_ratio=AspectRatioEnum.RATIO_1_1,
+                                aspect_ratio=get_youtube_aspect_ratio(
+                                    youtube_url
+                                ),
                                 file_hash=None,
                                 scope=AssetScopeEnum.PRIVATE,
                                 asset_type=AssetTypeEnum.YOUTUBE_VIDEO,

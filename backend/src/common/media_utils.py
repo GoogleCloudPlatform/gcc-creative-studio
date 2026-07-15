@@ -252,3 +252,14 @@ def extract_youtube_video_id(url: str | None) -> str | None:
     pattern = r"(?:https?://)?(?:www\.)?(?:youtube\.com/(?:watch\?v=|embed/|shorts/)|youtu\.be/)([a-zA-Z0-9_-]{11})"
     match = re.search(pattern, url)
     return match.group(1) if match else None
+
+
+def get_youtube_aspect_ratio(url: str | None) -> str:
+    """Determines the aspect ratio of a YouTube video based on its URL (e.g., 9:16 for Shorts)."""
+    from src.common.base_dto import AspectRatioEnum
+
+    if not url:
+        return AspectRatioEnum.RATIO_16_9.value
+    if "/shorts/" in url:
+        return AspectRatioEnum.RATIO_9_16.value
+    return AspectRatioEnum.RATIO_16_9.value
