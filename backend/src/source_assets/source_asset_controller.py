@@ -27,7 +27,11 @@ from fastapi import (
 )
 
 from src.auth.auth_guard import RoleChecker, get_current_user
-from src.common.base_dto import AspectRatioEnum, GenerationModelEnum
+from src.common.base_dto import (
+    AspectRatioEnum,
+    GenerationModelEnum,
+    MimeTypeEnum,
+)
 from src.common.dto.pagination_response_dto import PaginationResponseDto
 from src.source_assets.dto.finalize_upload_dto import (
     FinalizeSourceAssetUploadDto,
@@ -51,6 +55,19 @@ from src.users.user_model import UserModel, UserRoleEnum
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
 MAX_UPLOAD_SIZE_BYTES = 500 * 1024 * 1024  # 500 MB
+
+ALLOWED_MIME_TYPES = {
+    MimeTypeEnum.IMAGE_PNG.value,
+    MimeTypeEnum.IMAGE_JPEG.value,
+    "image/jpg",
+    MimeTypeEnum.IMAGE_WEBP.value,
+    MimeTypeEnum.VIDEO_MP4.value,
+    MimeTypeEnum.AUDIO_WAV.value,
+    MimeTypeEnum.AUDIO_MPEG.value,
+    MimeTypeEnum.AUDIO_MP3.value,
+    MimeTypeEnum.AUDIO_OGG.value,
+    MimeTypeEnum.AUDIO_WEBM.value,
+}
 
 router = APIRouter(
     prefix="/api/source_assets",
@@ -88,20 +105,8 @@ async def generate_source_asset_upload_url(
             detail=f"File is too large. Maximum size is {MAX_UPLOAD_SIZE_BYTES // (1024 * 1024)}MB.",
         )
 
-    allowed_mime_types = {
-        "image/png",
-        "image/jpeg",
-        "image/jpg",
-        "image/webp",
-        "video/mp4",
-        "audio/wav",
-        "audio/mpeg",
-        "audio/mp3",
-        "audio/ogg",
-        "audio/webm",
-    }
     content_type = request_dto.content_type.split(";")[0].strip().lower()
-    if content_type not in allowed_mime_types:
+    if content_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Unsupported file format.",

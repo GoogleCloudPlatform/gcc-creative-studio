@@ -84,6 +84,9 @@ export class GoogleDriveService {
   }
 
   private requestAccessToken(): Promise<string> {
+    if (this.cachedAccessToken) {
+      return Promise.resolve(this.cachedAccessToken);
+    }
     return new Promise<string>((resolve, reject) => {
       if (typeof google === 'undefined' || !google.accounts?.oauth2) {
         reject(new Error('Google Identity Services (GIS) library not loaded.'));
@@ -244,6 +247,9 @@ export class GoogleDriveService {
         map(blob => new File([blob], doc.name, {type: doc.mimeType})),
         catchError(err => {
           console.error(`Failed to download file ${doc.name} from Drive:`, err);
+          if (err.status === 401) {
+            this.cachedAccessToken = null;
+          }
           this.openSnackBar(`Failed to download ${doc.name}`, 'Close', 3000);
           return of(null);
         }),
