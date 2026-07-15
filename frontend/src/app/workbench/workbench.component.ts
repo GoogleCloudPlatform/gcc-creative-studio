@@ -155,8 +155,18 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   });
 
   // View Children
-  @ViewChild('videoA') videoA!: ElementRef<HTMLVideoElement>;
-  @ViewChild('videoB') videoB!: ElementRef<HTMLVideoElement>;
+  private _videoA?: ElementRef<HTMLVideoElement>;
+  private _videoB?: ElementRef<HTMLVideoElement>;
+
+  @ViewChild('videoA') set videoA(el: ElementRef<HTMLVideoElement> | undefined) {
+    this._videoA = el;
+    this.registerPlaybackElements();
+  }
+
+  @ViewChild('videoB') set videoB(el: ElementRef<HTMLVideoElement> | undefined) {
+    this._videoB = el;
+    this.registerPlaybackElements();
+  }
   @ViewChildren('bgAudio') bgAudios!: QueryList<ElementRef<HTMLAudioElement>>;
   @ViewChild(TimeRulerComponent) timeRuler!: TimeRulerComponent;
   @ViewChild('timelineContainer')
@@ -254,6 +264,18 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       },
       {allowSignalWrites: true},
     );
+
+    // Pause playback when switching away from video player to agent view
+    effect(() => {
+      if (this.activeToolButton() === 'agent' && this.timelineState.isPlaying()) {
+        const lastScroll = this.timelineState.scrollOffset();
+        this.timelineState.isPlaying.set(false);
+        this.playbackService.stopLoop();
+        if (this.dummyScrollContainer?.nativeElement) {
+          this.dummyScrollContainer.nativeElement.scrollLeft = lastScroll;
+        }
+      }
+    }, {allowSignalWrites: true});
 
     this.matIconRegistry
       .addSvgIcon(
@@ -415,8 +437,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   private registerPlaybackElements() {
     this.playbackService.registerElements({
-      videoA: this.videoA?.nativeElement,
-      videoB: this.videoB?.nativeElement,
+      videoA: this._videoA?.nativeElement,
+      videoB: this._videoB?.nativeElement,
       audios: this.bgAudios?.toArray().map(e => e.nativeElement) || [],
       timeline: this.timelineContainer?.nativeElement,
       dummyScroll: this.dummyScrollContainer?.nativeElement,

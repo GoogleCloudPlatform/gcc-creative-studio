@@ -23,10 +23,11 @@ import {TimeRulerComponent} from '../components/time-ruler/time-ruler.component'
 })
 export class PlayheadSyncService {
   private timelineState = inject(TimelineStateService);
+  isVideoLoading = signal<boolean>(false);
 
   private elements = signal<{
-    videoA: HTMLVideoElement;
-    videoB: HTMLVideoElement;
+    videoA?: HTMLVideoElement;
+    videoB?: HTMLVideoElement;
     audios: HTMLAudioElement[];
     timeline: HTMLDivElement;
     dummyScroll: HTMLDivElement;
@@ -204,29 +205,97 @@ export class PlayheadSyncService {
   }
 
   registerElements(elements: {
-    videoA: HTMLVideoElement;
-    videoB: HTMLVideoElement;
+    videoA?: HTMLVideoElement;
+    videoB?: HTMLVideoElement;
     audios: HTMLAudioElement[];
     timeline: HTMLDivElement;
     dummyScroll: HTMLDivElement;
     timeRuler: TimeRulerComponent;
   }) {
+    const current = this.elements();
+    if (current) {
+      if (current.videoA !== elements.videoA) {
+        this.loadedClips.delete('A');
+      }
+      if (current.videoB !== elements.videoB) {
+        this.loadedClips.delete('B');
+      }
+    }
     this.elements.set(elements);
   }
 
   runGameLoop() {
-    const els = this.elements();
-    if (!els) return;
-
     let lastTime: number | null = null;
     const loop = (now: number) => {
       if (!this.timelineState.isPlaying()) return;
+
+      const els = this.elements();
+      if (!els) {
+        this.animationFrameId = requestAnimationFrame(loop);
+        return;
+      }
 
       if (lastTime === null) {
         lastTime = now;
         this.animationFrameId = requestAnimationFrame(loop);
         return;
       }
+
+      // Check if active video is ready (only for the very first clip)!
+      const currentClip = this.timelineState.activeVideoClip();
+      const firstClip = this.timelineState.videoClips()[0];
+      let isReady = true;
+
+      if (currentClip) {
+        const activeKey = this.activeVideoElement;
+        const activeVideoEl = activeKey === 'A' ? els.videoA : els.videoB;
+        if (activeVideoEl) {
+          if (activeVideoEl.error) {
+            console.error('[VideoSync] Active video element encountered an error:', activeVideoEl.error);
+            this.timelineState.isPlaying.set(false);
+            this.stopLoop();
+            this.isVideoLoading.set(false);
+            return;
+          }
+
+          if (currentClip.id === firstClip?.id && activeVideoEl.readyState < 3) {
+            isReady = false;
+          }
+        }
+      }
+
+      this.isVideoLoading.set(!isReady);
+
+      if (!isReady) {
+        lastTime = now;
+        els.audios.forEach(aud => {
+          if (aud && !aud.paused) {
+            aud.pause();
+          }
+        });
+        const activeKey = this.activeVideoElement;
+        const activeVideoEl = activeKey === 'A' ? els.videoA : els.videoB;
+        if (activeVideoEl && !activeVideoEl.paused) {
+          activeVideoEl.pause();
+        }
+
+        this.animationFrameId = requestAnimationFrame(loop);
+        return;
+      }
+
+      // Resume playing if isPlaying is true and elements were paused
+      const activeKey = this.activeVideoElement;
+      const activeVideoEl = activeKey === 'A' ? els.videoA : els.videoB;
+      if (activeVideoEl && activeVideoEl.paused && this.timelineState.isPlaying()) {
+        activeVideoEl.play().catch(e => console.error('[VideoSync] Play failed', e));
+      }
+      els.audios.forEach((aud, index) => {
+        const activeAClips = this.timelineState.activeAudioClips();
+        const aClip = activeAClips[index];
+        if (aud && aClip && aud.paused && this.timelineState.isPlaying()) {
+          aud.play().catch(e => console.error('Audio play failed', e));
+        }
+      });
 
       const dt = (now - lastTime) / 1000;
       lastTime = now;
@@ -246,7 +315,7 @@ export class PlayheadSyncService {
           if (dummyScroll) {
             dummyScroll.scrollLeft = newScrollLeft;
           }
-          timeRuler.setScrollLeft(newScrollLeft);
+          timeRuler?.setScrollLeft(newScrollLeft);
         }
       }
 
@@ -256,7 +325,7 @@ export class PlayheadSyncService {
         if (timeline) {
           timeline.scrollLeft = 0;
         }
-        timeRuler.setScrollLeft(0);
+        timeRuler?.setScrollLeft(0);
         if (dummyScroll) {
           dummyScroll.scrollLeft = 0;
         }
@@ -270,6 +339,7 @@ export class PlayheadSyncService {
   }
 
   stopLoop() {
+    this.isVideoLoading.set(false);
     if (this.animationFrameId) {
       cancelAnimationFrame(this.animationFrameId);
     }

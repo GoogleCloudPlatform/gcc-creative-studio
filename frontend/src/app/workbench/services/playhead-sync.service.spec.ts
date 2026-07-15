@@ -79,6 +79,8 @@ describe('PlayheadSyncService', () => {
       dummyScroll: document.createElement('div'),
       timeRuler: mockRuler,
     };
+    Object.defineProperty(mockElements.videoA, 'readyState', {get: () => 4});
+    Object.defineProperty(mockElements.videoB, 'readyState', {get: () => 4});
 
     stateService.timelineClips.set([
       {
@@ -202,4 +204,121 @@ describe('PlayheadSyncService', () => {
         (mockVideoB.pause as jasmine.Spy).calls.any(),
     ).toBeTrue();
   }));
+
+  it('should set isVideoLoading to true and pause playback in loop if readyState < 3 for the first clip', fakeAsync(() => {
+    const mockRuler = jasmine.createSpyObj<TimeRulerComponent>(
+      'TimeRulerComponent',
+      ['setScrollLeft'],
+    );
+    const mockVideoA = document.createElement('video');
+    const mockElements = {
+      videoA: mockVideoA,
+      videoB: document.createElement('video'),
+      audios: [],
+      timeline: document.createElement('div'),
+      dummyScroll: document.createElement('div'),
+      timeRuler: mockRuler,
+    };
+    // set readyState < 3
+    Object.defineProperty(mockElements.videoA, 'readyState', {get: () => 1});
+    Object.defineProperty(mockElements.videoB, 'readyState', {get: () => 4});
+
+    stateService.timelineClips.set([
+      {
+        id: '1',
+        assetId: 'a1',
+        startTime: 0,
+        duration: 10,
+        offset: 0,
+        trackIndex: 0,
+        color: 'red',
+      },
+    ]);
+
+    service.registerElements(mockElements);
+    stateService.isPlaying.set(true);
+
+    service.runGameLoop();
+
+    tick(50); // run multiple frames
+
+    expect(service.isVideoLoading()).toBeTrue();
+
+    service.stopLoop();
+  }));
+
+  it('should stop playback and loop if active video element encounters an error', fakeAsync(() => {
+    const mockRuler = jasmine.createSpyObj<TimeRulerComponent>(
+      'TimeRulerComponent',
+      ['setScrollLeft'],
+    );
+    const mockVideoA = document.createElement('video');
+    // Mock the error property
+    Object.defineProperty(mockVideoA, 'error', {get: () => ({} as MediaError)});
+
+    const mockElements = {
+      videoA: mockVideoA,
+      videoB: document.createElement('video'),
+      audios: [],
+      timeline: document.createElement('div'),
+      dummyScroll: document.createElement('div'),
+      timeRuler: mockRuler,
+    };
+
+    stateService.timelineClips.set([
+      {
+        id: '1',
+        assetId: 'a1',
+        startTime: 0,
+        duration: 10,
+        offset: 0,
+        trackIndex: 0,
+        color: 'red',
+      },
+    ]);
+
+    service.registerElements(mockElements);
+    stateService.isPlaying.set(true);
+
+    spyOn(service, 'stopLoop').and.callThrough();
+
+    service.runGameLoop();
+
+    tick(50);
+
+    expect(stateService.isPlaying()).toBeFalse();
+    expect(service.stopLoop).toHaveBeenCalled();
+    expect(service.isVideoLoading()).toBeFalse();
+  }));
+
+  it('should invalidate loadedClips cache when video elements are changed in registerElements', () => {
+    const mockElements1 = {
+      videoA: document.createElement('video'),
+      videoB: document.createElement('video'),
+      audios: [],
+      timeline: document.createElement('div'),
+      dummyScroll: document.createElement('div'),
+      timeRuler: jasmine.createSpyObj<TimeRulerComponent>('TimeRulerComponent', ['setScrollLeft']),
+    };
+
+    const mockElements2 = {
+      videoA: document.createElement('video'),
+      videoB: document.createElement('video'),
+      audios: [],
+      timeline: document.createElement('div'),
+      dummyScroll: document.createElement('div'),
+      timeRuler: jasmine.createSpyObj<TimeRulerComponent>('TimeRulerComponent', ['setScrollLeft']),
+    };
+
+    service.registerElements(mockElements1);
+    // Simulate loaded clip cache
+    service['loadedClips'].set('A', 'clip1');
+    service['loadedClips'].set('B', 'clip2');
+
+    // Register again with new elements
+    service.registerElements(mockElements2);
+
+    expect(service['loadedClips'].has('A')).toBeFalse();
+    expect(service['loadedClips'].has('B')).toBeFalse();
+  });
 });

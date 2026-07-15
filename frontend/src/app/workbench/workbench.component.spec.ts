@@ -771,4 +771,20 @@ describe('WorkbenchComponent', () => {
       expect(stateService.loadedTimelineId()).toBeUndefined();
     });
   });
+
+  it('should pause timeline and stop loop when activeToolButton is set to agent', () => {
+    const stateService = TestBed.inject(TimelineStateService);
+    const playbackService = TestBed.inject(PlayheadSyncService);
+    spyOn(playbackService, 'stopLoop').and.callThrough();
+
+    stateService.isPlaying.set(true);
+    component.activeToolButton.set(null);
+    fixture.detectChanges();
+
+    component.activeToolButton.set('agent');
+    fixture.detectChanges();
+
+    expect(stateService.isPlaying()).toBeFalse();
+    expect(playbackService.stopLoop).toHaveBeenCalled();
+  });
 });

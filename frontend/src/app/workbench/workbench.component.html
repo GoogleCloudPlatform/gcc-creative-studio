@@ -541,6 +541,12 @@
             [muted]="true"
           ></video>
 
+          <!-- Loading Spinner Overlay -->
+          <div *ngIf="playbackService.isVideoLoading() && timelineState.activeVideoClip()"
+            class="absolute inset-0 flex items-center justify-center bg-black/40 rounded-lg z-10">
+            <mat-spinner diameter="40"></mat-spinner>
+          </div>
+
           <!-- Hidden Audio (Multi-track) -->
           <ng-container *ngFor="let src of activeAudioSrcs(); let i = index">
             <audio #bgAudio [src]="src" [muted]="isTrackMuted(i + 1)"></audio>

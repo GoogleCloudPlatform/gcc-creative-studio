@@ -44,14 +44,14 @@
       >
         <mat-icon class="sb-icon-sm">add</mat-icon> Add Scene
       </button>
-      <button
+      <!-- <button
         *ngIf="!isGenerating()"
         class="sb-btn-glow"
         (click)="onGenerateVideo()"
         [disabled]="scenes().length === 0 || scenes()[0].id === 'scene-welcome'"
       >
         <mat-icon class="sb-icon-sm">auto_awesome</mat-icon> Generate Video
-      </button>
+      </button> -->
       <button
         *ngIf="showSeeVideoBtn() && !isGenerating()"
         class="sb-btn-glow-gold ml-2"
