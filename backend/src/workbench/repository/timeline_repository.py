@@ -91,6 +91,8 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
                     last_frame_asset_ref=last_frame_ref,
                     placeholder=c.placeholder,
                     presigned_url=getattr(c, "presigned_url", None),
+                    transition_to_next_type=c.transition_to_next_type,
+                    transition_to_next_duration=c.transition_to_next_duration,
                 )
             )
 

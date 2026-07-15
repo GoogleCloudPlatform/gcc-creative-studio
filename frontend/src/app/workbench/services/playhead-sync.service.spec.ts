@@ -254,7 +254,7 @@ describe('PlayheadSyncService', () => {
     );
     const mockVideoA = document.createElement('video');
     // Mock the error property
-    Object.defineProperty(mockVideoA, 'error', {get: () => ({} as MediaError)});
+    Object.defineProperty(mockVideoA, 'error', {get: () => ({}) as MediaError});
 
     const mockElements = {
       videoA: mockVideoA,
@@ -298,7 +298,10 @@ describe('PlayheadSyncService', () => {
       audios: [],
       timeline: document.createElement('div'),
       dummyScroll: document.createElement('div'),
-      timeRuler: jasmine.createSpyObj<TimeRulerComponent>('TimeRulerComponent', ['setScrollLeft']),
+      timeRuler: jasmine.createSpyObj<TimeRulerComponent>(
+        'TimeRulerComponent',
+        ['setScrollLeft'],
+      ),
     };
 
     const mockElements2 = {
@@ -307,7 +310,10 @@ describe('PlayheadSyncService', () => {
       audios: [],
       timeline: document.createElement('div'),
       dummyScroll: document.createElement('div'),
-      timeRuler: jasmine.createSpyObj<TimeRulerComponent>('TimeRulerComponent', ['setScrollLeft']),
+      timeRuler: jasmine.createSpyObj<TimeRulerComponent>(
+        'TimeRulerComponent',
+        ['setScrollLeft'],
+      ),
     };
 
     service.registerElements(mockElements1);

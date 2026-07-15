@@ -158,12 +158,16 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   private _videoA?: ElementRef<HTMLVideoElement>;
   private _videoB?: ElementRef<HTMLVideoElement>;
 
-  @ViewChild('videoA') set videoA(el: ElementRef<HTMLVideoElement> | undefined) {
+  @ViewChild('videoA') set videoA(
+    el: ElementRef<HTMLVideoElement> | undefined,
+  ) {
     this._videoA = el;
     this.registerPlaybackElements();
   }
 
-  @ViewChild('videoB') set videoB(el: ElementRef<HTMLVideoElement> | undefined) {
+  @ViewChild('videoB') set videoB(
+    el: ElementRef<HTMLVideoElement> | undefined,
+  ) {
     this._videoB = el;
     this.registerPlaybackElements();
   }
@@ -266,16 +270,22 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     );
 
     // Pause playback when switching away from video player to agent view
-    effect(() => {
-      if (this.activeToolButton() === 'agent' && this.timelineState.isPlaying()) {
-        const lastScroll = this.timelineState.scrollOffset();
-        this.timelineState.isPlaying.set(false);
-        this.playbackService.stopLoop();
-        if (this.dummyScrollContainer?.nativeElement) {
-          this.dummyScrollContainer.nativeElement.scrollLeft = lastScroll;
+    effect(
+      () => {
+        if (
+          this.activeToolButton() === 'agent' &&
+          this.timelineState.isPlaying()
+        ) {
+          const lastScroll = this.timelineState.scrollOffset();
+          this.timelineState.isPlaying.set(false);
+          this.playbackService.stopLoop();
+          if (this.dummyScrollContainer?.nativeElement) {
+            this.dummyScrollContainer.nativeElement.scrollLeft = lastScroll;
+          }
         }
-      }
-    }, {allowSignalWrites: true});
+      },
+      {allowSignalWrites: true},
+    );
 
     this.matIconRegistry
       .addSvgIcon(

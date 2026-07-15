@@ -251,14 +251,20 @@ export class PlayheadSyncService {
         const activeVideoEl = activeKey === 'A' ? els.videoA : els.videoB;
         if (activeVideoEl) {
           if (activeVideoEl.error) {
-            console.error('[VideoSync] Active video element encountered an error:', activeVideoEl.error);
+            console.error(
+              '[VideoSync] Active video element encountered an error:',
+              activeVideoEl.error,
+            );
             this.timelineState.isPlaying.set(false);
             this.stopLoop();
             this.isVideoLoading.set(false);
             return;
           }
 
-          if (currentClip.id === firstClip?.id && activeVideoEl.readyState < 3) {
+          if (
+            currentClip.id === firstClip?.id &&
+            activeVideoEl.readyState < 3
+          ) {
             isReady = false;
           }
         }
@@ -286,8 +292,14 @@ export class PlayheadSyncService {
       // Resume playing if isPlaying is true and elements were paused
       const activeKey = this.activeVideoElement;
       const activeVideoEl = activeKey === 'A' ? els.videoA : els.videoB;
-      if (activeVideoEl && activeVideoEl.paused && this.timelineState.isPlaying()) {
-        activeVideoEl.play().catch(e => console.error('[VideoSync] Play failed', e));
+      if (
+        activeVideoEl &&
+        activeVideoEl.paused &&
+        this.timelineState.isPlaying()
+      ) {
+        activeVideoEl
+          .play()
+          .catch(e => console.error('[VideoSync] Play failed', e));
       }
       els.audios.forEach((aud, index) => {
         const activeAClips = this.timelineState.activeAudioClips();

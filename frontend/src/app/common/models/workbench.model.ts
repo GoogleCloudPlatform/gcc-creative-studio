@@ -64,6 +64,8 @@ export interface VideoClipDTO {
   placeholder?: string | null;
   presigned_url?: string | null;
   presigned_thumbnail_url?: string | null;
+  transition_to_next_type?: string | null;
+  transition_to_next_duration?: number | null;
 }
 
 export interface AudioPlacement {
