@@ -208,10 +208,21 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
 
   // --- Computed Values ---
   isExtendVideo = computed(() => this.selectedMode() === 'Extend Video');
+  isConcatenateVideo = computed(
+    () => this.selectedMode() === 'Concatenate Video',
+  );
+  isFramesToVideo = computed(() => this.selectedMode() === 'Frames to Video');
+  isIngredientsToVideo = computed(
+    () => this.selectedMode() === 'Ingredients to Video',
+  );
   isIngredientsToImage = computed(
     () => this.selectedMode() === 'Ingredients to Image',
   );
   isTextToVideo = computed(() => this.selectedMode() === 'Text to Video');
+  isImageMode = computed(() => this.selectedMode().includes('Image'));
+  canEditImgSlot = computed(
+    () => !this.isExtendVideo() && !this.isConcatenateVideo(),
+  );
   hasResolutionOptions = computed(() => this.supportedResolutions().length > 0);
   hasDurationOptions = computed(
     () =>
