@@ -243,7 +243,10 @@ export class ChatInterfaceComponent
       const sessionId = params['sessionId'];
 
       const isExplicitNewChat =
-        !sessionId && !storyboardId && this.lastWorkspaceId === workspaceId;
+        !sessionId &&
+        !storyboardId &&
+        this.lastWorkspaceId === workspaceId &&
+        this.sessions().length > 0;
 
       if (isExplicitNewChat) {
         this.isLoadingHistory.set(false);

@@ -150,5 +150,7 @@ async def test_stitch_timeline_wipe_left_transition(ffmpeg_service):
             called_args = mock_sub.call_args[0][0]
             filter_str = "".join(called_args)
             assert "transition=wipeleft" in filter_str
+            assert "duration=0.5" in filter_str
+            assert "offset=1.75" in filter_str
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)

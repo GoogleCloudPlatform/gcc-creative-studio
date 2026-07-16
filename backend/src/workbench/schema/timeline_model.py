@@ -137,7 +137,6 @@ class AudioClip(Base):
     fade_in_duration_seconds: Mapped[float] = mapped_column(Float, default=0.0)
     fade_out_duration_seconds: Mapped[float] = mapped_column(Float, default=0.0)
     placeholder: Mapped[str | None] = mapped_column(String, nullable=True)
-
     timeline: Mapped["Timeline"] = relationship(back_populates="audio_clips")
 
     @property

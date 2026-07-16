@@ -456,7 +456,7 @@ class FFmpegService:
                     and transition.type.value != "none"
                 ):
                     t_dur = transition.duration_seconds
-                accumulated_duration += clip_durations[i] - t_dur
+                accumulated_duration += clip_durations[i] - t_dur / 2
 
             if num_video_files > 1:
                 last_v_stream = normalized_streams[0]
