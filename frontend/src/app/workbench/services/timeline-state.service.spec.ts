@@ -15,7 +15,8 @@
  */
 
 import {TestBed} from '@angular/core/testing';
-import {TimelineStateService, TimelineClip} from './timeline-state.service';
+import {TimelineStateService} from './timeline-state.service';
+import {TimelineClip} from '../../common/models/workbench.model';
 
 describe('TimelineStateService', () => {
   let service: TimelineStateService;

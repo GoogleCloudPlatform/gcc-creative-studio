@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import {SafeResourceUrl} from '@angular/platform-browser';
 
 export interface SceneDTO {
   id: number;
@@ -48,8 +49,15 @@ export interface Trim {
   duration_seconds?: number | null;
 }
 
+export enum TransitionType {
+  FADE = 'fade',
+  NONE = 'none',
+  WIPE_LEFT = 'wipe_left',
+  WIPE_RIGHT = 'wipe_right',
+}
+
 export interface Transition {
-  type: 'fade' | 'none' | 'wipe_left' | 'wipe_right';
+  type: TransitionType;
   duration_seconds: number;
 }
 
@@ -64,8 +72,6 @@ export interface VideoClipDTO {
   placeholder?: string | null;
   presigned_url?: string | null;
   presigned_thumbnail_url?: string | null;
-  transition_to_next_type?: string | null;
-  transition_to_next_duration?: number | null;
 }
 
 export interface AudioPlacement {
@@ -80,8 +86,6 @@ export interface AudioClipDTO {
   trim?: Trim | null;
   volume: number;
   speed?: number;
-  fade_in_duration_seconds?: number;
-  fade_out_duration_seconds?: number;
   placeholder?: string | null;
   presigned_url?: string | null;
 }
@@ -154,4 +158,36 @@ export interface ChatSession {
 export interface SessionDetailResponse {
   session?: ChatSession;
   storyboard?: StoryboardResponse;
+}
+
+export interface TimelineClip {
+  id: string;
+  assetId: string;
+  startTime: number; // absolute time on timeline
+  duration: number; // duration of this specific clip (could be trimmed later)
+  offset: number; // offset into the original source file
+  trackIndex: number; // 0 for video, 1 for audio
+  color: string;
+  mediaItemId?: number;
+  sourceAssetId?: number;
+  first_frame_asset_ref?: AssetRef | null;
+  last_frame_asset_ref?: AssetRef | null;
+  placeholder?: string | null;
+  isDurationPlaceholder?: boolean;
+  volume?: number;
+  speed?: number;
+  transition_to_next_type?: TransitionType | null;
+  transition_to_next_duration?: number | null;
+}
+
+export interface MediaAsset {
+  id: string;
+  name: string;
+  type: 'video' | 'audio';
+  url: string;
+  safeUrl: SafeResourceUrl;
+  duration: number;
+  thumbnail?: string;
+  mediaItemId?: number;
+  sourceAssetId?: number;
 }

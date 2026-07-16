@@ -97,8 +97,6 @@ class VideoClip(BaseModel):
     placeholder: Optional[str] = None
     presigned_url: Optional[str] = None
     presigned_thumbnail_url: Optional[str] = None
-    transition_to_next_type: Optional[str] = None
-    transition_to_next_duration: Optional[float] = None
 
 
 class AudioPlacement(BaseModel):

@@ -15,8 +15,12 @@
  */
 
 import {Injectable, inject, signal, effect} from '@angular/core';
-import {TimelineStateService, TimelineClip} from './timeline-state.service';
+import {TimelineStateService} from './timeline-state.service';
 import {TimeRulerComponent} from '../components/time-ruler/time-ruler.component';
+import {
+  TransitionType,
+  TimelineClip,
+} from '../../common/models/workbench.model';
 
 @Injectable({
   providedIn: 'root',
@@ -26,8 +30,7 @@ export class PlayheadSyncService {
   isVideoLoading = signal<boolean>(false);
 
   private elements = signal<{
-    videoA?: HTMLVideoElement;
-    videoB?: HTMLVideoElement;
+    videos: HTMLVideoElement[];
     audios: HTMLAudioElement[];
     timeline: HTMLDivElement;
     dummyScroll: HTMLDivElement;
@@ -35,30 +38,8 @@ export class PlayheadSyncService {
   } | null>(null);
 
   private animationFrameId: number | undefined;
-  private activeVideoElement: 'A' | 'B' = 'A';
-  private loadedClips = new Map<'A' | 'B', string>(); // map element to clipId
 
   constructor() {
-    // Eagerly preload the first two clips when timeline is loaded
-    effect(() => {
-      const els = this.elements();
-      if (!els) return;
-
-      const clips = this.timelineState.videoClips();
-      if (clips.length > 0) {
-        const firstClip = clips[0];
-        if (this.loadedClips.get('A') !== firstClip.id) {
-          this.loadClipInElement('A', firstClip);
-        }
-        if (clips.length > 1) {
-          const secondClip = clips[1];
-          if (this.loadedClips.get('B') !== secondClip.id) {
-            this.loadClipInElement('B', secondClip);
-          }
-        }
-      }
-    });
-
     effect(() => {
       const els = this.elements();
       if (!els) return;
@@ -66,73 +47,207 @@ export class PlayheadSyncService {
       const curTime = this.timelineState.currentTime();
       const isPlaying = this.timelineState.isPlaying();
 
-      const currentClip = this.timelineState.activeVideoClip();
-      const nextClip = this.getNextVideoClip();
+      const activeTransition = this.getActiveTransition(curTime);
+      const clips = this.timelineState.videoClips();
 
-      if (currentClip) {
-        // 1. Manage Active Element
-        if (this.loadedClips.get('A') === currentClip.id) {
-          this.activeVideoElement = 'A';
-        } else if (this.loadedClips.get('B') === currentClip.id) {
-          this.activeVideoElement = 'B';
-        } else {
-          // Not loaded in either! Load it in the INACTIVE one!
-          const inactiveEl = this.activeVideoElement === 'A' ? 'B' : 'A';
-          this.loadClipInElement(inactiveEl, currentClip);
-          this.activeVideoElement = inactiveEl;
-        }
+      if (activeTransition) {
+        // --- Transition Flow ---
+        const outgoingClip = activeTransition.outgoingClip;
+        const incomingClip = activeTransition.incomingClip;
 
-        const activeEl =
-          this.activeVideoElement === 'A' ? els.videoA : els.videoB;
-        const inactiveEl =
-          this.activeVideoElement === 'A' ? els.videoB : els.videoA;
+        const outgoingIdx = clips.findIndex(c => c.id === outgoingClip.id);
+        const incomingIdx = clips.findIndex(c => c.id === incomingClip.id);
 
-        // 2. Show/Hide Videos (using opacity for smoother transitions)
-        if (activeEl) activeEl.style.opacity = '1';
-        if (inactiveEl) inactiveEl.style.opacity = '0';
+        const outgoingEl = outgoingIdx !== -1 ? els.videos[outgoingIdx] : null;
+        const incomingEl = incomingIdx !== -1 ? els.videos[incomingIdx] : null;
 
-        // 3. Sync and Play Active Video
-        if (activeEl) {
+        // 1. Sync and Play Outgoing Video (plays until endTime and then freezes)
+        if (outgoingEl) {
+          const speed = outgoingClip.speed || 1.0;
+          let fileTime: number;
+          let shouldPlay = isPlaying;
+
+          if (curTime <= outgoingClip.startTime + outgoingClip.duration) {
+            fileTime =
+              (curTime - outgoingClip.startTime) * speed + outgoingClip.offset;
+          } else {
+            fileTime = outgoingClip.duration * speed + outgoingClip.offset;
+            shouldPlay = false;
+          }
+
+          if (shouldPlay && Math.abs(outgoingEl.currentTime - fileTime) > 0.5) {
+            outgoingEl.currentTime = fileTime;
+          }
           const targetVolume =
-            currentClip.volume !== undefined ? currentClip.volume : 1.0;
-          const targetSpeed =
-            currentClip.speed !== undefined ? currentClip.speed : 1.0;
-
-          const fileTime =
-            (curTime - currentClip.startTime) * targetSpeed +
-            currentClip.offset;
-          if (Math.abs(activeEl.currentTime - fileTime) > 0.5) {
-            activeEl.currentTime = fileTime;
+            outgoingClip.volume !== undefined ? outgoingClip.volume : 1.0;
+          if (outgoingEl.volume !== targetVolume) {
+            outgoingEl.volume = targetVolume;
+          }
+          if (outgoingEl.playbackRate !== speed) {
+            outgoingEl.playbackRate = speed;
           }
 
-          if (activeEl.volume !== targetVolume) {
-            activeEl.volume = targetVolume;
-          }
-          if (activeEl.playbackRate !== targetSpeed) {
-            activeEl.playbackRate = targetSpeed;
-          }
-
-          if (isPlaying && activeEl.paused) {
-            activeEl
+          if (shouldPlay && outgoingEl.paused) {
+            outgoingEl
               .play()
-              .catch(e => console.error('[VideoSync] Play failed', e));
-          }
-          if (!isPlaying && !activeEl.paused) {
-            activeEl.pause();
+              .catch(e => console.error('[VideoSync] Outgoing play failed', e));
+          } else if (!shouldPlay && !outgoingEl.paused) {
+            outgoingEl.pause();
           }
         }
 
-        // 4. Preload Next Clip in Inactive Element
-        if (nextClip) {
-          const inactiveKey = this.activeVideoElement === 'A' ? 'B' : 'A';
-          if (this.loadedClips.get(inactiveKey) !== nextClip.id) {
-            this.loadClipInElement(inactiveKey, nextClip);
+        // 2. Sync and Play Incoming Video
+        if (incomingEl) {
+          const speed = incomingClip.speed || 1.0;
+          const targetTime =
+            (curTime - incomingClip.startTime) * speed + incomingClip.offset;
+          const fileTime = Math.max(0, targetTime);
+          const shouldPlay = isPlaying && targetTime >= 0;
+
+          if (Math.abs(incomingEl.currentTime - fileTime) > 0.5) {
+            incomingEl.currentTime = fileTime;
+          }
+          const targetVolume =
+            incomingClip.volume !== undefined ? incomingClip.volume : 1.0;
+          if (incomingEl.volume !== targetVolume) {
+            incomingEl.volume = targetVolume;
+          }
+          if (incomingEl.playbackRate !== speed) {
+            incomingEl.playbackRate = speed;
+          }
+
+          if (shouldPlay && incomingEl.paused) {
+            incomingEl
+              .play()
+              .catch(e => console.error('[VideoSync] Incoming play failed', e));
+          } else if (!shouldPlay && !incomingEl.paused) {
+            incomingEl.pause();
           }
         }
+
+        // 3. Apply Transition CSS Classes & Styles, and hide all other videos
+        const progress =
+          (curTime - activeTransition.startTime) / activeTransition.duration;
+
+        els.videos.forEach((videoEl, idx) => {
+          if (idx === outgoingIdx) {
+            const outgoingClass = `transition-${activeTransition.type}`;
+            if (
+              !videoEl.classList.contains('transition-outgoing') ||
+              !videoEl.classList.contains(outgoingClass)
+            ) {
+              this.clearTransitionStyles(videoEl);
+              videoEl.classList.add(outgoingClass);
+              videoEl.classList.add('transition-outgoing');
+            }
+            videoEl.style.setProperty(
+              '--transition-progress',
+              progress.toString(),
+            );
+          } else if (idx === incomingIdx) {
+            const incomingClass = `transition-${activeTransition.type}`;
+            if (
+              !videoEl.classList.contains('transition-incoming') ||
+              !videoEl.classList.contains(incomingClass)
+            ) {
+              this.clearTransitionStyles(videoEl);
+              videoEl.classList.add(incomingClass);
+              videoEl.classList.add('transition-incoming');
+            }
+            videoEl.style.setProperty(
+              '--transition-progress',
+              progress.toString(),
+            );
+          } else {
+            // Hide and pause all other video elements
+            if (
+              videoEl.classList.contains('transition-outgoing') ||
+              videoEl.classList.contains('transition-incoming') ||
+              videoEl.style.opacity !== '0'
+            ) {
+              this.clearTransitionStyles(videoEl);
+              videoEl.style.opacity = '0';
+              videoEl.style.transform = 'none';
+            }
+            if (!videoEl.paused) {
+              videoEl.pause();
+            }
+          }
+        });
       } else {
-        // No active clip, hide both
-        if (els.videoA) els.videoA.style.opacity = '0';
-        if (els.videoB) els.videoB.style.opacity = '0';
+        // --- Normal (No Transition) Flow ---
+        const currentClip = this.timelineState.activeVideoClip();
+
+        if (currentClip) {
+          const activeIdx = clips.findIndex(c => c.id === currentClip.id);
+
+          els.videos.forEach((videoEl, idx) => {
+            if (idx === activeIdx) {
+              // Active element: visible
+              if (
+                videoEl.classList.contains('transition-outgoing') ||
+                videoEl.classList.contains('transition-incoming') ||
+                videoEl.style.opacity !== '1'
+              ) {
+                this.clearTransitionStyles(videoEl);
+                videoEl.style.opacity = '1';
+                videoEl.style.transform = 'none';
+              }
+
+              const targetVolume =
+                currentClip.volume !== undefined ? currentClip.volume : 1.0;
+              const targetSpeed =
+                currentClip.speed !== undefined ? currentClip.speed : 1.0;
+
+              const fileTime =
+                (curTime - currentClip.startTime) * targetSpeed +
+                currentClip.offset;
+              if (Math.abs(videoEl.currentTime - fileTime) > 0.5) {
+                videoEl.currentTime = fileTime;
+              }
+
+              if (videoEl.volume !== targetVolume) {
+                videoEl.volume = targetVolume;
+              }
+              if (videoEl.playbackRate !== targetSpeed) {
+                videoEl.playbackRate = targetSpeed;
+              }
+
+              if (isPlaying && videoEl.paused) {
+                videoEl
+                  .play()
+                  .catch(e => console.error('[VideoSync] Play failed', e));
+              }
+              if (!isPlaying && !videoEl.paused) {
+                videoEl.pause();
+              }
+            } else {
+              // Inactive elements: hidden and paused
+              if (
+                videoEl.classList.contains('transition-outgoing') ||
+                videoEl.classList.contains('transition-incoming') ||
+                videoEl.style.opacity !== '0'
+              ) {
+                this.clearTransitionStyles(videoEl);
+                videoEl.style.opacity = '0';
+                videoEl.style.transform = 'none';
+              }
+              if (!videoEl.paused) {
+                videoEl.pause();
+              }
+            }
+          });
+        } else {
+          // No active clip: hide all videos
+          els.videos.forEach(videoEl => {
+            this.clearTransitionStyles(videoEl);
+            videoEl.style.opacity = '0';
+            videoEl.style.transform = 'none';
+            if (!videoEl.paused) {
+              videoEl.pause();
+            }
+          });
+        }
       }
 
       // Audio Sync (Multi-track)
@@ -177,51 +292,92 @@ export class PlayheadSyncService {
     });
   }
 
+  private getActiveTransition(curTime: number) {
+    const clips = this.timelineState.videoClips();
+    for (let i = 0; i < clips.length - 1; i++) {
+      const clipI = clips[i];
+      const clipJ = clips[i + 1];
+      const tType = clipI.transition_to_next_type;
+      const tDuration = clipI.transition_to_next_duration;
+
+      if (
+        tType &&
+        tType !== TransitionType.NONE &&
+        tDuration &&
+        tDuration > 0
+      ) {
+        const endTime = clipI.startTime + clipI.duration;
+        const startTrans = endTime - tDuration / 2;
+        const endTrans = endTime + tDuration / 2;
+
+        if (curTime >= startTrans && curTime <= endTrans) {
+          return {
+            outgoingClip: clipI,
+            incomingClip: clipJ,
+            type: tType,
+            duration: tDuration,
+            startTime: startTrans,
+            endTime: endTrans,
+          };
+        }
+      }
+    }
+    return null;
+  }
+
+  private clearTransitionStyles(el: HTMLVideoElement) {
+    el.classList.remove(
+      'transition-fade',
+      'transition-wipe_left',
+      'transition-wipe_right',
+      'transition-outgoing',
+      'transition-incoming',
+    );
+    el.style.removeProperty('--transition-progress');
+    el.style.removeProperty('opacity');
+    el.style.removeProperty('transform');
+  }
+
   private getNextVideoClip(): TimelineClip | undefined {
     const currentClip = this.timelineState.activeVideoClip();
     const clips = this.timelineState.videoClips();
 
     if (!currentClip) {
-      return clips[0]; // Preload first clip if none active
+      return clips[0];
     }
 
     const index = clips.findIndex(c => c.id === currentClip.id);
     return clips[index + 1];
   }
 
-  private loadClipInElement(el: 'A' | 'B', clip: TimelineClip) {
-    const els = this.elements();
-    if (!els) return;
-
-    const videoEl = el === 'A' ? els.videoA : els.videoB;
-    if (!videoEl) return;
-
-    const asset = this.timelineState.assets().find(a => a.id === clip.assetId);
-    if (asset) {
-      videoEl.src = asset.url;
-      videoEl.load(); // Force browser to start loading!
-    }
-    this.loadedClips.set(el, clip.id);
+  private initializeVideoSources(videos: HTMLVideoElement[]) {
+    const clips = this.timelineState.videoClips();
+    clips.forEach((clip, idx) => {
+      const videoEl = videos[idx];
+      if (videoEl) {
+        const asset = this.timelineState
+          .assets()
+          .find(a => a.id === clip.assetId);
+        if (asset && videoEl.src !== asset.url) {
+          videoEl.src = asset.url;
+          videoEl.load();
+          videoEl.currentTime = clip.offset;
+        }
+      }
+    });
   }
 
   registerElements(elements: {
-    videoA?: HTMLVideoElement;
-    videoB?: HTMLVideoElement;
+    videos: HTMLVideoElement[];
     audios: HTMLAudioElement[];
     timeline: HTMLDivElement;
     dummyScroll: HTMLDivElement;
     timeRuler: TimeRulerComponent;
   }) {
-    const current = this.elements();
-    if (current) {
-      if (current.videoA !== elements.videoA) {
-        this.loadedClips.delete('A');
-      }
-      if (current.videoB !== elements.videoB) {
-        this.loadedClips.delete('B');
-      }
-    }
     this.elements.set(elements);
+    if (elements.videos.length > 0) {
+      this.initializeVideoSources(elements.videos);
+    }
   }
 
   runGameLoop() {
@@ -241,14 +397,15 @@ export class PlayheadSyncService {
         return;
       }
 
-      // Check if active video is ready (only for the very first clip)!
+      // Check if all preloaded videos are ready (or first clip ready)
       const currentClip = this.timelineState.activeVideoClip();
       const firstClip = this.timelineState.videoClips()[0];
       let isReady = true;
 
       if (currentClip) {
-        const activeKey = this.activeVideoElement;
-        const activeVideoEl = activeKey === 'A' ? els.videoA : els.videoB;
+        const clips = this.timelineState.videoClips();
+        const activeIdx = clips.findIndex(c => c.id === currentClip.id);
+        const activeVideoEl = els.videos[activeIdx];
         if (activeVideoEl) {
           if (activeVideoEl.error) {
             console.error(
@@ -279,27 +436,73 @@ export class PlayheadSyncService {
             aud.pause();
           }
         });
-        const activeKey = this.activeVideoElement;
-        const activeVideoEl = activeKey === 'A' ? els.videoA : els.videoB;
-        if (activeVideoEl && !activeVideoEl.paused) {
-          activeVideoEl.pause();
-        }
+        els.videos.forEach(vid => {
+          if (vid && !vid.paused) {
+            vid.pause();
+          }
+        });
 
         this.animationFrameId = requestAnimationFrame(loop);
         return;
       }
 
       // Resume playing if isPlaying is true and elements were paused
-      const activeKey = this.activeVideoElement;
-      const activeVideoEl = activeKey === 'A' ? els.videoA : els.videoB;
-      if (
-        activeVideoEl &&
-        activeVideoEl.paused &&
-        this.timelineState.isPlaying()
-      ) {
-        activeVideoEl
-          .play()
-          .catch(e => console.error('[VideoSync] Play failed', e));
+      const curTime = this.timelineState.currentTime();
+      const activeTransition = this.getActiveTransition(curTime);
+      const clips = this.timelineState.videoClips();
+
+      if (activeTransition) {
+        const outgoingClip = activeTransition.outgoingClip;
+        const incomingClip = activeTransition.incomingClip;
+
+        const outgoingIdx = clips.findIndex(c => c.id === outgoingClip.id);
+        const incomingIdx = clips.findIndex(c => c.id === incomingClip.id);
+
+        const outgoingVideoEl =
+          outgoingIdx !== -1 ? els.videos[outgoingIdx] : null;
+        const incomingVideoEl =
+          incomingIdx !== -1 ? els.videos[incomingIdx] : null;
+
+        if (this.timelineState.isPlaying()) {
+          if (
+            outgoingVideoEl &&
+            outgoingVideoEl.paused &&
+            curTime <= outgoingClip.startTime + outgoingClip.duration
+          ) {
+            outgoingVideoEl
+              .play()
+              .catch(e => console.error('[VideoSync] Play failed', e));
+          }
+          if (incomingVideoEl) {
+            const speed = incomingClip.speed || 1.0;
+            const targetTime =
+              (curTime - incomingClip.startTime) * speed + incomingClip.offset;
+            const shouldPlayIncoming = targetTime >= 0;
+
+            if (shouldPlayIncoming && incomingVideoEl.paused) {
+              incomingVideoEl
+                .play()
+                .catch(e => console.error('[VideoSync] Play failed', e));
+            } else if (!shouldPlayIncoming && !incomingVideoEl.paused) {
+              incomingVideoEl.pause();
+            }
+          }
+        }
+      } else {
+        const currentClip = this.timelineState.activeVideoClip();
+        if (currentClip) {
+          const activeIdx = clips.findIndex(c => c.id === currentClip.id);
+          const activeVideoEl = els.videos[activeIdx];
+          if (
+            activeVideoEl &&
+            activeVideoEl.paused &&
+            this.timelineState.isPlaying()
+          ) {
+            activeVideoEl
+              .play()
+              .catch(e => console.error('[VideoSync] Play failed', e));
+          }
+        }
       }
       els.audios.forEach((aud, index) => {
         const activeAClips = this.timelineState.activeAudioClips();

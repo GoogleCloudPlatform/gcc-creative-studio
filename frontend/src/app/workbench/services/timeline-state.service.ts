@@ -15,38 +15,13 @@
  */
 
 import {Injectable, signal, computed} from '@angular/core';
-import {SafeResourceUrl} from '@angular/platform-browser';
-import {AssetRef, Transition} from '../../common/models/workbench.model';
-
-export interface TimelineClip {
-  id: string;
-  assetId: string;
-  startTime: number; // absolute time on timeline
-  duration: number; // duration of this specific clip (could be trimmed later)
-  offset: number; // offset into the original source file
-  trackIndex: number; // 0 for video, 1 for audio
-  color: string;
-  mediaItemId?: number;
-  sourceAssetId?: number;
-  first_frame_asset_ref?: AssetRef | null;
-  last_frame_asset_ref?: AssetRef | null;
-  placeholder?: string | null;
-  isDurationPlaceholder?: boolean;
-  volume?: number;
-  speed?: number;
-}
-
-export interface MediaAsset {
-  id: string;
-  name: string;
-  type: 'video' | 'audio';
-  url: string;
-  safeUrl: SafeResourceUrl;
-  duration: number;
-  thumbnail?: string;
-  mediaItemId?: number;
-  sourceAssetId?: number;
-}
+import {
+  AssetRef,
+  Transition,
+  TransitionType,
+  TimelineClip,
+  MediaAsset,
+} from '../../common/models/workbench.model';
 
 @Injectable({
   providedIn: 'root',

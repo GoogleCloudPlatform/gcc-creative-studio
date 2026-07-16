@@ -51,17 +51,15 @@ import {
 import {WorkbenchService, RenderTimelineRequest} from './workbench.service';
 import {AgentChatService} from './services/agent-chat.service';
 import {TimeRulerComponent} from './components/time-ruler/time-ruler.component';
-import {
-  TimelineStateService,
-  TimelineClip,
-  MediaAsset,
-} from './services/timeline-state.service';
+import {TimelineStateService} from './services/timeline-state.service';
 import {PlayheadSyncService} from './services/playhead-sync.service';
 import {
   TimelineDTO,
   VideoClipDTO,
   AudioClipDTO,
-  StoryboardResponse,
+  TransitionType,
+  TimelineClip,
+  MediaAsset,
 } from '../common/models/workbench.model';
 import {ActivatedRoute} from '@angular/router';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
@@ -155,21 +153,17 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   });
 
   // View Children
-  private _videoA?: ElementRef<HTMLVideoElement>;
-  private _videoB?: ElementRef<HTMLVideoElement>;
+  @ViewChildren('timelineVideo') timelineVideos!: QueryList<
+    ElementRef<HTMLVideoElement>
+  >;
 
-  @ViewChild('videoA') set videoA(
-    el: ElementRef<HTMLVideoElement> | undefined,
-  ) {
-    this._videoA = el;
-    this.registerPlaybackElements();
-  }
-
-  @ViewChild('videoB') set videoB(
-    el: ElementRef<HTMLVideoElement> | undefined,
-  ) {
-    this._videoB = el;
-    this.registerPlaybackElements();
+  private applyVideoFilter() {
+    const filterValue = this.videoFilter();
+    this.timelineVideos?.forEach(video => {
+      if (video.nativeElement) {
+        video.nativeElement.style.filter = filterValue;
+      }
+    });
   }
   @ViewChildren('bgAudio') bgAudios!: QueryList<ElementRef<HTMLAudioElement>>;
   @ViewChild(TimeRulerComponent) timeRuler!: TimeRulerComponent;
@@ -230,6 +224,10 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     @Inject(PLATFORM_ID) platformId: Object,
   ) {
     this.isBrowser = isPlatformBrowser(platformId);
+
+    effect(() => {
+      this.applyVideoFilter();
+    });
 
     // Setup an effect to handle storyboard loading from signal
     effect(
@@ -435,6 +433,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       this.registerPlaybackElements();
     });
 
+    this.timelineVideos.changes.subscribe(() => {
+      this.registerPlaybackElements();
+      this.applyVideoFilter();
+    });
+
     // Set initial container width for timeline
     if (this.timelineContainer?.nativeElement) {
       this.containerWidthSignal.set(
@@ -446,9 +449,10 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   }
 
   private registerPlaybackElements() {
+    const videoElements =
+      this.timelineVideos?.toArray().map(e => e.nativeElement) || [];
     this.playbackService.registerElements({
-      videoA: this._videoA?.nativeElement,
-      videoB: this._videoB?.nativeElement,
+      videos: videoElements,
       audios: this.bgAudios?.toArray().map(e => e.nativeElement) || [],
       timeline: this.timelineContainer?.nativeElement,
       dummyScroll: this.dummyScrollContainer?.nativeElement,
@@ -810,7 +814,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     // Handle Video Clips
     let currentVideoTime = 0;
     if (data.video_clips) {
-      data.video_clips.forEach((clip: VideoClipDTO) => {
+      data.video_clips.forEach((clip: VideoClipDTO, idx: number) => {
         const mediaItemId =
           clip.asset_ref?.type === 'media_item'
             ? Number(clip.asset_ref.id)
@@ -852,6 +856,14 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           }
         }
 
+        const transitionInfo = data.transitions && data.transitions[idx];
+        const transitionType = transitionInfo
+          ? transitionInfo.type
+          : TransitionType.NONE;
+        const transitionDuration = transitionInfo
+          ? transitionInfo.duration_seconds
+          : 0;
+
         newClips.push({
           id: Math.random().toString(36).substr(2, 9),
           assetId: assetId,
@@ -872,9 +884,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
               : 1.0,
           speed:
             clip.speed !== undefined && clip.speed !== null ? clip.speed : 1.0,
+          transition_to_next_type: transitionType,
+          transition_to_next_duration: transitionDuration,
         });
         videoStartTimes.push(currentVideoTime);
-        currentVideoTime += trimDuration;
+        currentVideoTime += trimDuration - transitionDuration / 2;
       });
     }
 
@@ -1548,7 +1562,15 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       let currentTime = 0;
       const newVideoClips = videoClips.map(clip => {
         const newClip = {...clip, startTime: currentTime};
-        currentTime += clip.duration;
+        const transitionType =
+          clip.transition_to_next_type || TransitionType.NONE;
+        const transitionDuration =
+          transitionType !== TransitionType.NONE &&
+          clip.transition_to_next_duration !== undefined &&
+          clip.transition_to_next_duration !== null
+            ? clip.transition_to_next_duration
+            : 0;
+        currentTime += clip.duration - transitionDuration / 2;
         return newClip;
       });
 
