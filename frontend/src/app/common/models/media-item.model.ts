@@ -55,6 +55,8 @@ export interface MediaItem {
   // itemType and assetType removed as per refactoring
 
   // Common fields across media types
+  titles?: string[];
+  descriptions?: string[];
   prompt?: string;
   originalPrompt?: string;
   rewrittenPrompt?: string;

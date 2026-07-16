@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Controller for handling source asset API requests."""
 
 import asyncio
 
@@ -26,7 +27,7 @@ from fastapi import (
 )
 
 from src.auth.auth_guard import RoleChecker, get_current_user
-from src.common.base_dto import AspectRatioEnum
+from src.common.base_dto import AspectRatioEnum, GenerationModelEnum
 from src.common.dto.pagination_response_dto import PaginationResponseDto
 from src.source_assets.dto.source_asset_response_dto import (
     SourceAssetResponseDto,
@@ -57,11 +58,16 @@ router = APIRouter(
 @router.post("/upload", response_model=SourceAssetResponseDto)
 async def upload_source_asset(
     file: UploadFile = File(),
-    workspaceId: int = Form(),
+    workspace_id: int = Form(..., alias="workspaceId"),
     scope: AssetScopeEnum | None = Form(None),
-    assetType: AssetTypeEnum | None = Form(None),
-    aspectRatio: AspectRatioEnum | None = Form(None),
-    upscaleFactor: str | None = Form(None),
+    asset_type: AssetTypeEnum | None = Form(None, alias="assetType"),
+    aspect_ratio: AspectRatioEnum | None = Form(None, alias="aspectRatio"),
+    upscale_factor: str | None = Form(None, alias="upscaleFactor"),
+    metadata_generation_model: GenerationModelEnum | str | None = Form(
+        GenerationModelEnum.GEMINI_3_5_FLASH
+    ),
+    title: str | None = Form(None),
+    description: str | None = Form(None),
     current_user: UserModel = Depends(get_current_user),
     service: SourceAssetService = Depends(SourceAssetService),
     workspace_auth: WorkspaceAuth = Depends(),
@@ -76,7 +82,7 @@ async def upload_source_asset(
     # Use our centralized dependency to authorize the user for the workspace
     # before proceeding with the upload.
     await workspace_auth.authorize(
-        workspace_id=workspaceId,
+        workspace_id=workspace_id,
         user=current_user,
     )
 
@@ -87,10 +93,13 @@ async def upload_source_asset(
         filename=file.filename,
         mime_type=file.content_type,
         scope=scope,
-        workspace_id=workspaceId,
-        asset_type=assetType,
-        aspect_ratio=aspectRatio,
-        upscale_factor=upscaleFactor,
+        workspace_id=workspace_id,
+        asset_type=asset_type,
+        aspect_ratio=aspect_ratio,
+        upscale_factor=upscale_factor,
+        metadata_generation_model=metadata_generation_model,
+        title=title,
+        description=description,
     )
 
 
@@ -98,7 +107,9 @@ async def upload_source_asset(
 async def convert_image_to_png(
     file: UploadFile = File(),
     # Keep auth dependencies to protect the endpoint
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(
+        get_current_user
+    ),  # pylint: disable=unused-argument
     service: SourceAssetService = Depends(),
 ):
     """Accepts any image file, converts it to PNG, and returns the binary data.

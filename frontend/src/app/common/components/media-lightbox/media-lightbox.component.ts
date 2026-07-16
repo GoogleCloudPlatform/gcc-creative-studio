@@ -96,6 +96,7 @@ export class MediaLightboxComponent
   }>();
   @Output() deleteClicked = new EventEmitter<number>();
   @Output() tagsChanged = new EventEmitter<any>();
+  @Output() slideChanged = new EventEmitter<number>();
 
   selectedIndex = 0;
   selectedUrl: string | undefined;
@@ -352,6 +353,7 @@ export class MediaLightboxComponent
       this.selectedIndex = index;
       this.selectedUrl = this.mediaItem.presignedUrls[index];
       this.updateUrlWithImageIndex(index);
+      this.slideChanged.emit(index);
 
       // If Audio, we need to reload the player
       if (this.isAudio) {

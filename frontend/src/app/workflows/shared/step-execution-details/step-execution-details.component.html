@@ -22,14 +22,15 @@
         <div *ngIf="isImageInput(input.key)" class="col-span-full">
             <div *ngIf="input.value" class="grid gap-2 grid-cols-[repeat(auto-fit,minmax(150px,1fr))] p-2 bg-neutral-700/50 rounded-lg">
                 <ng-container *ngFor="let img of getResolvedValues(input.value)">
-                    <div class="relative group rounded-lg overflow-hidden border border-neutral-700 bg-neutral-900 aspect-square">
-                        <div class="relative w-full h-full cursor-pointer" (dblclick)="navigateToGallery(img)">
+                    <div class="relative group rounded-lg overflow-hidden border border-neutral-700 bg-neutral-900 flex justify-center items-center">
+                        <div class="relative w-full h-full cursor-pointer flex justify-center items-center" (click)="navigateToGallery(img)"
+                            matTooltip="Open in Gallery">
                             <!-- Loading Spinner -->
                             <div *ngIf="!isLoaded(img)" class="absolute inset-0 flex items-center justify-center bg-neutral-800 z-10">
                                 <div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
                             </div>
                             <img [src]="getMediaUrl(img)" 
-                                 class="w-full h-full object-cover transition-opacity duration-300" 
+                                 class="w-full h-auto object-contain transition-opacity duration-300" 
                                  [class.opacity-0]="!isLoaded(img)"
                                  [class.opacity-100]="isLoaded(img)"
                                  (load)="onMediaLoaded(img)"
@@ -103,20 +104,20 @@
        <div *ngIf="isImageOutput(output.key)" class="col-span-full">
            <div *ngIf="output.value" class="grid gap-2 grid-cols-[repeat(auto-fit,minmax(150px,1fr))] p-2 bg-neutral-700/50 rounded-lg">
                <ng-container *ngFor="let img of getResolvedValues(output.value)">
-                   <div class="relative group rounded-lg overflow-hidden border border-neutral-700 bg-neutral-900 aspect-square">
+                   <div class="relative group rounded-lg overflow-hidden border border-neutral-700 bg-neutral-900 flex justify-center items-center">
                        <!-- Loading Spinner -->
                        <div *ngIf="!isLoaded(img)" class="absolute inset-0 flex items-center justify-center bg-neutral-800 z-10">
                            <div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
                        </div>
 
                        <img [src]="getMediaUrl(img)" 
-                            class="w-full h-full object-cover transition-opacity duration-300" 
+                            class="w-full h-auto object-contain transition-opacity duration-300 cursor-pointer" 
                             [class.opacity-0]="!isLoaded(img)"
                             [class.opacity-100]="isLoaded(img)"
                             (load)="onMediaLoaded(img)"
                             alt="Generated Image"
-                            (dblclick)="navigateToGallery(img)"
-                            class="cursor-pointer">
+                            (click)="navigateToGallery(img)"
+                            matTooltip="Open in Gallery">
                        
                        <div class="absolute bottom-0 left-0 right-0 bg-black/60 p-1 text-[10px] text-white truncate px-2 opacity-0 group-hover:opacity-100 transition-opacity">
                          {{ output.key }}

@@ -112,13 +112,13 @@ We use `pytest` and `pytest-cov`.
 
 ```bash
 cd backend
-uv run pytest tests -v --cov=src --cov-fail-under=80
+uv run pytest tests -v --asyncio-mode=auto --cov=src --cov-fail-under=80
 ```
 
 **Run Specific Tests**:
 
 ```bash
-uv run pytest tests/users -v
+uv run pytest tests/users -v --asyncio-mode=auto
 ```
 
 ---
