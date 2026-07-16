@@ -70,10 +70,12 @@
             [id]="'retry-btn-' + item.id"
             class="retry-item-btn"
             type="button"
-            title="Retry uploading file"
+            [disabled]="!item.file"
+            [class.!cursor-not-allowed]="!item.file"
+            [attr.title]="item.file ? 'Retry uploading file' : 'File binary payload missing from memory. Please re-upload from your device.'"
             (click)="onRetryItem(item.id)"
           >
-            <mat-icon>refresh</mat-icon>
+            <mat-icon [style.opacity]="item.file ? 1 : 0.5">refresh</mat-icon>
           </button>
           <button
             *ngIf="

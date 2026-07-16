@@ -110,10 +110,17 @@ describe('MediaUploadService', () => {
     const mp4File = createDummyFile('test.mp4', 'video/mp4');
     const wavFile = createDummyFile('test.wav', 'audio/wav');
     const pdfFile = createDummyFile('test.pdf', 'application/pdf');
+    const octetPngFile = createDummyFile(
+      'test.png',
+      'application/octet-stream',
+    );
+    const emptyTypeMp4 = createDummyFile('test.mp4', '');
 
     expect(service.isAllowedFileType(pngFile)).toBeTrue();
     expect(service.isAllowedFileType(mp4File)).toBeTrue();
     expect(service.isAllowedFileType(wavFile)).toBeTrue();
+    expect(service.isAllowedFileType(octetPngFile)).toBeTrue();
+    expect(service.isAllowedFileType(emptyTypeMp4)).toBeTrue();
     expect(service.isAllowedFileType(pdfFile)).toBeFalse();
   });
 
@@ -126,6 +133,23 @@ describe('MediaUploadService', () => {
     expect(service.uploadQueue()[0].errorMessage).toContain(
       'Unsupported format',
     );
+  });
+
+  it('should deduce mimeType from extension when file.type is empty or application/octet-stream', () => {
+    const unknownTypeFile = createDummyFile('sample.mp4', '');
+    const octetStreamFile = createDummyFile(
+      'track.mp3',
+      'application/octet-stream',
+    );
+
+    service.uploadFiles(mockWorkspaceId, [unknownTypeFile, octetStreamFile]);
+
+    const reqs = httpMock.match(`${apiUrl}/generate-upload-url`);
+    expect(reqs.length).toBe(2);
+
+    const items = service.uploadQueue();
+    expect(items[0].mimeType).toBe('video/mp4');
+    expect(items[1].mimeType).toBe('audio/mpeg');
   });
 
   describe('Concurrency & Queue Throttling (Max 5 Concurrent Uploads)', () => {
@@ -572,7 +596,7 @@ describe('MediaUploadService', () => {
       const failedItem = freshService.uploadQueue().find(i => i.id === '2');
       expect(failedItem?.status).toBe(UploadStatus.FAILED);
       expect(failedItem?.errorMessage).toBe(
-        'Upload interrupted by page reload.',
+        'File binary payload missing from memory. Please re-upload from your device.',
       );
     });
 

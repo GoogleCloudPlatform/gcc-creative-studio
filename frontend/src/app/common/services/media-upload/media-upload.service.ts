@@ -264,26 +264,37 @@ export class MediaUploadService implements OnDestroy {
   readonly ALLOWED_MIME_TYPES = ALLOWED_MIME_TYPES;
 
   isAllowedFileType(file: File): boolean {
-    if (this.ALLOWED_MIME_TYPES.includes(file.type)) return true;
-    const ext = file.name.split('.').pop()?.toLowerCase();
-    if (ext === 'png' && (file.type === 'image/png' || !file.type)) return true;
-    if (
-      ['jpg', 'jpeg'].includes(ext || '') &&
-      (file.type === 'image/jpeg' || file.type === 'image/jpg' || !file.type)
-    )
-      return true;
-    if (ext === 'webp' && (file.type === 'image/webp' || !file.type))
-      return true;
-    if (['heic', 'heif', 'avif'].includes(ext || '')) return true;
-    if (ext === 'mp4' && (file.type === 'video/mp4' || !file.type)) return true;
-    if (['wav', 'mp3', 'ogg', 'webm', 'mpeg'].includes(ext || '')) return true;
-    return false;
+    const deducedType = this.getFileType(file);
+    return this.ALLOWED_MIME_TYPES.includes(deducedType);
   }
 
   allowedFileTypeMessage(file: File): string | null {
     return this.isAllowedFileType(file)
       ? null
       : 'Unsupported format. Allowed: Images (PNG, JPG, WEBP, HEIC, HEIF, AVIF), MP4, Audio (WAV, MP3, OGG, WEBM)';
+  }
+
+  private getFileType(file: File): string {
+    let deducedMime = file.type;
+    if (!deducedMime || deducedMime === 'application/octet-stream') {
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      const extMap: Record<string, string> = {
+        png: 'image/png',
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        webp: 'image/webp',
+        heic: 'image/heic',
+        heif: 'image/heif',
+        avif: 'image/avif',
+        mp4: 'video/mp4',
+        wav: 'audio/wav',
+        mp3: 'audio/mpeg',
+        ogg: 'audio/ogg',
+        webm: 'audio/webm',
+      };
+      deducedMime = extMap[ext || ''] || 'application/octet-stream';
+    }
+    return deducedMime;
   }
 
   /**
@@ -301,7 +312,7 @@ export class MediaUploadService implements OnDestroy {
         filename: file.name,
         originalFilename: file.name,
         size: file.size,
-        mimeType: file.type || 'application/octet-stream',
+        mimeType: this.getFileType(file),
         status: !errorMessage ? UploadStatus.QUEUED : UploadStatus.FAILED,
         progress: 0,
         errorMessage: errorMessage || undefined,
@@ -448,7 +459,9 @@ export class MediaUploadService implements OnDestroy {
     this.lastUploadCompleteNotified.set(0);
     this.isBatchRunning = false;
     try {
-      sessionStorage.removeItem(this.getSessionStorageKey());
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.removeItem(this.getSessionStorageKey());
+      }
     } catch (e) {
       console.error('Failed to clear sessionStorage upload key:', e);
     }
@@ -723,6 +736,7 @@ export class MediaUploadService implements OnDestroy {
 
   private syncSessionStorage(): void {
     try {
+      if (typeof sessionStorage === 'undefined') return;
       const queueToStore = this.uploadQueue().map(item => ({
         id: item.id,
         filename: item.filename,
@@ -746,6 +760,11 @@ export class MediaUploadService implements OnDestroy {
 
   private restoreQueueFromSessionStorage(): void {
     try {
+      if (typeof sessionStorage === 'undefined') {
+        this.uploadQueue.set([]);
+        this.lastUploadCompleteNotified.set(0);
+        return;
+      }
       const stored = sessionStorage.getItem(this.getSessionStorageKey());
       if (!stored) {
         this.uploadQueue.set([]);
@@ -769,7 +788,9 @@ export class MediaUploadService implements OnDestroy {
             return {
               ...item,
               status: UploadStatus.FAILED,
-              errorMessage: 'Upload interrupted by page reload.',
+              errorMessage: item.file
+                ? 'Upload interrupted by page reload.'
+                : 'File binary payload missing from memory. Please re-upload from your device.',
             };
           }
           return item;
