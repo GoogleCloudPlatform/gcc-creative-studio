@@ -152,12 +152,16 @@ if (
         "postgresql+asyncpg://",
         async_creator=get_connection,
         echo=config_service.LOG_LEVEL == "DEBUG",
+        pool_pre_ping=True,
+        pool_recycle=1800,
     )
 else:
     # Use standard connection string (Local)
     engine = create_async_engine(
         get_conn_string(),
         echo=config_service.LOG_LEVEL == "DEBUG",
+        pool_pre_ping=True,
+        pool_recycle=1800,
     )
 
 # Create the Session Factory
@@ -203,12 +207,16 @@ class WorkerDatabase:
                 "postgresql+asyncpg://",
                 async_creator=get_conn,
                 echo=config_service.LOG_LEVEL == "DEBUG",
+                pool_pre_ping=True,
+                pool_recycle=1800,
             )
         else:
             # Use standard connection string
             self.engine = create_async_engine(
                 get_conn_string(),
                 echo=config_service.LOG_LEVEL == "DEBUG",
+                pool_pre_ping=True,
+                pool_recycle=1800,
             )
 
         self.sessionmaker = async_sessionmaker(
