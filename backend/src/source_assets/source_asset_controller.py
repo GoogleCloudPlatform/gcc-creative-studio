@@ -81,7 +81,6 @@ router = APIRouter(
 )
 
 
-# code similar to: backend/src/brand_guidelines/brand_guideline_controller.py
 @router.post(
     "/generate-upload-url",
     response_model=GenerateSourceAssetUploadUrlResponseDto,
@@ -93,7 +92,10 @@ async def generate_source_asset_upload_url(
     service: SourceAssetService = Depends(),
     workspace_auth: WorkspaceAuth = Depends(),
 ):
-    """Generates a secure, short-lived signed URL to upload a source asset directly to GCS."""
+    """Generates a secure, short-lived signed URL to upload a source asset directly to GCS.
+
+    Uses same strategy as: backend/src/brand_guidelines/brand_guideline_controller.py
+    """
     await workspace_auth.authorize(
         workspace_id=request_dto.workspace_id,
         user=current_user,

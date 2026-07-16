@@ -518,13 +518,15 @@ class SourceAssetService:
 
         return await self._create_asset_response(new_asset)
 
-    # code similar to: backend/src/brand_guidelines/brand_guideline_service.py
     async def generate_signed_upload_url(
         self,
         request_dto: GenerateSourceAssetUploadUrlDto,
         current_user: UserModel,
     ) -> GenerateSourceAssetUploadUrlResponseDto:
-        """Generates a GCS v4 signed URL for a client-side direct source asset upload."""
+        """Generates a GCS v4 signed URL for a client-side direct source asset upload.
+
+        Uses same strategy as: backend/src/brand_guidelines/brand_guideline_service.py
+        """
         file_uuid = str(uuid.uuid4())
         destination_blob_name = f"source_assets/{current_user.id}/uploads/{file_uuid}/{os.path.basename(request_dto.filename)}"
 
