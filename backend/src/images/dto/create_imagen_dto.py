@@ -41,6 +41,20 @@ class CreateImagenDto(BaseDto):
         ge=1,
         description="The ID of the workspace for this generation.",
     )
+
+    metadata_generation_model: GenerationModelEnum | str | None = Field(
+        default=GenerationModelEnum.GEMINI_3_5_FLASH,
+        description="The Gemini model to use for synchronous metadata generation.",
+    )
+    titles: list[str] | None = Field(
+        default=None,
+        description="Optional titles for the generated images.",
+    )
+    descriptions: list[str] | None = Field(
+        default=None,
+        description="Optional descriptions for the generated images.",
+    )
+
     generation_model: GenerationModelEnum = Field(
         default=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE_PREVIEW,
         description="Model used for image generation.",
@@ -114,12 +128,14 @@ class CreateImagenDto(BaseDto):
     )
 
     @field_validator("prompt")
+    @classmethod
     def prompt_must_not_be_empty(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("Prompt cannot be empty or whitespace only")
         return value
 
     @field_validator("generation_model")
+    @classmethod
     def validate_imagen_generation_model(
         cls,
         value: GenerationModelEnum,

@@ -66,6 +66,20 @@ class CreateVeoDto(BaseDto):
         ge=1,
         description="The ID of the workspace for this generation.",
     )
+
+    metadata_generation_model: GenerationModelEnum | str | None = Field(
+        default=GenerationModelEnum.GEMINI_3_5_FLASH,
+        description="The Gemini model to use for synchronous metadata generation.",
+    )
+    titles: list[str] | None = Field(
+        default=None,
+        description="Optional titles for the generated video.",
+    )
+    descriptions: list[str] | None = Field(
+        default=None,
+        description="Optional descriptions for the generated video.",
+    )
+
     generation_model: GenerationModelEnum = Field(
         default=GenerationModelEnum.VEO_3_1_GENERATE_001,
         description="Model used for image generation.",
@@ -253,6 +267,7 @@ class CreateVeoDto(BaseDto):
         return self
 
     @field_validator("aspect_ratio")
+    @classmethod
     def validate_video_aspect_ratio(
         cls, value: AspectRatioEnum
     ) -> AspectRatioEnum:
@@ -268,6 +283,7 @@ class CreateVeoDto(BaseDto):
         return value
 
     @field_validator("generation_model")
+    @classmethod
     def validate_video_generation_model(
         cls,
         value: GenerationModelEnum,

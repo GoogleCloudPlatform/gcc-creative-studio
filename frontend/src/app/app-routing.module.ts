@@ -31,7 +31,6 @@ import {WorkflowEditorComponent} from './workflows/workflow-editor/workflow-edit
 import {WorkflowListComponent} from './workflows/workflow-list/workflow-list.component';
 import {WorkbenchComponent} from './workbench/workbench.component';
 import {UpscaleComponent} from './upscale/upscale.component';
-import {UserRolesEnum} from './common/models/user.model';
 import {ProjectsComponent} from './projects/projects.component';
 
 const routes: Routes = [
@@ -86,7 +85,6 @@ const routes: Routes = [
   {
     path: 'workflows',
     canActivate: [AuthGuardService],
-    data: {requiredRoles: [UserRolesEnum.WORKFLOWS, UserRolesEnum.ADMIN]},
     children: [
       {path: '', component: WorkflowListComponent, pathMatch: 'full'},
       {

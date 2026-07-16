@@ -30,6 +30,7 @@ import {
   MODEL_CONFIGS,
 } from '../../../../common/config/model-config';
 import {StepConfig} from './step.model';
+import {StepStatusEnum} from '../../../workflow.models';
 
 @Component({
   selector: 'app-generic-step',
@@ -55,6 +56,8 @@ export class GenericStepComponent implements OnInit, OnChanges {
     mouseEvent: MouseEvent;
   }>();
   @Output() portDrop = new EventEmitter<{stepId: string; inputName: string}>();
+
+  StepStatusEnum = StepStatusEnum;
 
   localConfig!: StepConfig;
   private settingsSubscription?: Subscription;
