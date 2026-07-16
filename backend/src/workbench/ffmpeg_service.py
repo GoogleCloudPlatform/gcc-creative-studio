@@ -83,6 +83,7 @@ class FFmpegService:
             (
                 audio_input_params,
                 audio_files,
+                audio_durations,
             ) = await self._prepare_audio_inputs(
                 timeline, temp_dir, download_asset_fn
             )
@@ -95,6 +96,7 @@ class FFmpegService:
                     video_durations,
                     audio_files,
                     video_metadata,
+                    audio_durations,
                 )
             )
 
@@ -266,9 +268,10 @@ class FFmpegService:
         timeline: VideoTimeline,
         temp_dir: str,
         download_asset_fn: Callable,
-    ) -> tuple[list[str], list[str]]:
+    ) -> tuple[list[str], list[str], list[float]]:
         audio_input_params = []
         audio_files = []
+        audio_durations = []
         if timeline.audio_clips:
             for i, audio_clip in enumerate(timeline.audio_clips):
                 url = audio_clip.presigned_url
@@ -288,6 +291,7 @@ class FFmpegService:
                         temp_dir, f"audio_src_{i}{ext}"
                     )
                     await download_asset_fn(url, download_path)
+                    dur = 0.0
                     try:
                         info = await self.get_media_info(download_path)
                         has_audio = any(
@@ -296,6 +300,13 @@ class FFmpegService:
                         )
                         if has_audio:
                             audio_path = download_path
+                            dur_str = info.get("format", {}).get(
+                                "duration", "4.0"
+                            )
+                            try:
+                                dur = float(dur_str)
+                            except ValueError:
+                                dur = 4.0
                         else:
                             logger.warning(
                                 "Audio clip %d (%s) contains no audio stream. "
@@ -308,6 +319,9 @@ class FFmpegService:
                             "Could not probe audio clip %s: %s", i, e
                         )
 
+                    if audio_path:
+                        audio_durations.append(dur)
+
                 if not audio_path:
                     dur = (
                         audio_clip.trim.duration_seconds
@@ -319,6 +333,7 @@ class FFmpegService:
                     audio_path = await asyncio.to_thread(
                         self._create_silent_audio_clip, temp_dir, i, dur
                     )
+                    audio_durations.append(dur)
 
                 audio_files.append(audio_path)
                 params = []
@@ -326,7 +341,7 @@ class FFmpegService:
                     params.extend(["-ss", str(audio_clip.trim.offset_seconds)])
                 params.extend(["-i", audio_path])
                 audio_input_params.extend(params)
-        return audio_input_params, audio_files
+        return audio_input_params, audio_files, audio_durations
 
     def _create_placeholder_clip(
         self,
@@ -411,6 +426,7 @@ class FFmpegService:
         video_durations: list[float],
         audio_files: list[str],
         video_metadata: list,
+        audio_durations: list[float],
     ) -> tuple[str, str, str]:
         video_filters = []
         audio_filters = []
@@ -456,8 +472,11 @@ class FFmpegService:
                     else None
                 )
                 dur = video_durations[i]
-                if clip and clip.trim and clip.trim.duration_seconds:
-                    dur = clip.trim.duration_seconds
+                if clip and clip.trim:
+                    if clip.trim.duration_seconds:
+                        dur = clip.trim.duration_seconds
+                    elif clip.trim.offset_seconds > 0:
+                        dur = max(0.1, dur - clip.trim.offset_seconds)
                 speed = clip.speed if (clip and clip.speed) else 1.0
                 if speed != 1.0:
                     dur = dur / speed
@@ -547,11 +566,26 @@ class FFmpegService:
                 current_stream = f"[{audio_stream_idx}:a]"
                 chain = []
 
+                original_audio_dur = (
+                    audio_durations[i] if i < len(audio_durations) else 4.0
+                )
+                eff_dur = original_audio_dur
+
+                if audio_clip.trim:
+                    if audio_clip.trim.duration_seconds:
+                        eff_dur = audio_clip.trim.duration_seconds
+                    elif audio_clip.trim.offset_seconds > 0:
+                        eff_dur = max(
+                            0.1,
+                            eff_dur - audio_clip.trim.offset_seconds,
+                        )
+
                 if audio_clip.trim and audio_clip.trim.duration_seconds:
                     trimmed_stream = f"[a{i}_trimmed]"
                     chain.append(
                         f"{current_stream}atrim=duration="
-                        f"{audio_clip.trim.duration_seconds}{trimmed_stream}"
+                        f"{audio_clip.trim.duration_seconds},"
+                        f"asetpts=PTS-STARTPTS{trimmed_stream}"
                     )
                     current_stream = trimmed_stream
 
@@ -562,6 +596,8 @@ class FFmpegService:
                         f"{audio_clip.speed}{tempo_stream}"
                     )
                     current_stream = tempo_stream
+                    if eff_dur is not None:
+                        eff_dur = eff_dur / audio_clip.speed
 
                 if audio_clip.fade_in_duration_seconds > 0:
                     fadein_stream = f"[a{i}_fadein]"
@@ -573,13 +609,11 @@ class FFmpegService:
 
                 if (
                     audio_clip.fade_out_duration_seconds > 0
-                    and audio_clip.trim
-                    and audio_clip.trim.duration_seconds
+                    and eff_dur is not None
                 ):
                     fadeout_stream = f"[a{i}_fadeout]"
                     fade_out_start = (
-                        audio_clip.trim.duration_seconds
-                        - audio_clip.fade_out_duration_seconds
+                        eff_dur - audio_clip.fade_out_duration_seconds
                     )
                     if fade_out_start >= 0:
                         chain.append(
@@ -592,8 +626,8 @@ class FFmpegService:
                 delayed_stream = f"[a{i}_delayed]"
                 delay_ms = max(0, int(start_time * 1000))
                 chain.append(
-                    f"{current_stream}adelay="
-                    f"{delay_ms}|{delay_ms}{delayed_stream}"
+                    f"{current_stream}adelay={delay_ms}:all=1"
+                    f"{delayed_stream}"
                 )
                 current_stream = delayed_stream
 
@@ -604,12 +638,20 @@ class FFmpegService:
                 joined_audio = "".join(audio_outputs)
                 audio_filters.append(
                     f"{joined_audio}amix=inputs={len(audio_outputs)}:"
-                    "duration=longest[audio_mix]"
+                    "duration=longest:normalize=0[audio_mix]"
                 )
                 audio_output_stream = "[audio_mix]"
             elif len(audio_outputs) == 1:
                 audio_filters.append(f"{audio_outputs[0]}acopy[audio_mix]")
                 audio_output_stream = "[audio_mix]"
+
+            if audio_output_stream and accumulated_duration > 0:
+                audio_filters.append(
+                    f"{audio_output_stream}atrim="
+                    f"duration={accumulated_duration},"
+                    f"asetpts=PTS-STARTPTS[audio_final]"
+                )
+                audio_output_stream = "[audio_final]"
 
         return (
             ";".join(video_filters + audio_filters),
