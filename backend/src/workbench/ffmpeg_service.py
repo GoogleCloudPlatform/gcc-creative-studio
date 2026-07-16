@@ -11,7 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Service for handling FFmpeg video stitching, media probing, and filter graph processing."""
+"""Service for handling FFmpeg video stitching, media probing, and filter graph
+processing.
+"""
 
 import asyncio
 import gc
@@ -36,7 +38,9 @@ TRANSITION_MAP = {
 
 
 class FFmpegService:
-    """A service dedicated to FFmpeg video processing, filter assembly, and clip stitching."""
+    """A service dedicated to FFmpeg video processing, filter assembly, and
+    clip stitching.
+    """
 
     async def get_media_info(self, path: str) -> dict:
         """Runs ffprobe on a media file and returns parsed JSON metadata."""
@@ -63,7 +67,9 @@ class FFmpegService:
     async def stitch_timeline(
         self, timeline: VideoTimeline, download_asset_fn: Callable
     ) -> tuple[str, str]:
-        """Stitches a VideoTimeline object using FFmpeg and returns (output_path, temp_dir)."""
+        """Stitches a VideoTimeline object using FFmpeg and returns
+        (output_path, temp_dir).
+        """
         temp_dir = tempfile.mkdtemp(prefix="workbench_stitch_")
         try:
             (
@@ -169,8 +175,10 @@ class FFmpegService:
                                 h,
                                 fps_eval,
                             )
-                    except Exception as e:
-                        logger.warning(f"Could not probe video clip {i}: {e}")
+                    except Exception as e:  # pylint: disable=broad-except
+                        logger.warning(
+                            "Could not probe video clip %s: %s", i, e
+                        )
 
         if downloaded_info:
             first_idx = sorted(downloaded_info.keys())[0]
@@ -290,10 +298,15 @@ class FFmpegService:
                             audio_path = download_path
                         else:
                             logger.warning(
-                                f"Audio clip {i} ({download_path}) contains no audio stream. Using silent audio placeholder."
+                                "Audio clip %d (%s) contains no audio stream. "
+                                "Using silent audio placeholder.",
+                                i,
+                                download_path,
                             )
-                    except Exception as e:
-                        logger.warning(f"Could not probe audio clip {i}: {e}")
+                    except Exception as e:  # pylint: disable=broad-except
+                        logger.warning(
+                            "Could not probe audio clip %s: %s", i, e
+                        )
 
                 if not audio_path:
                     dur = (
@@ -377,7 +390,11 @@ class FFmpegService:
             "-pix_fmt",
             "yuv420p",
             "-vf",
-            f"scale=w={width}:h={height}:force_original_aspect_ratio=decrease,pad=w={width}:h={height}:x=(ow-iw)/2:y=(oh-ih)/2",
+            (
+                f"scale=w={width}:h={height}:"
+                "force_original_aspect_ratio=decrease,"
+                f"pad=w={width}:h={height}:x=(ow-iw)/2:y=(oh-ih)/2"
+            ),
             "-r",
             str(fps),
             output_path,
@@ -425,7 +442,8 @@ class FFmpegService:
                 )
                 video_filters.append(
                     f"[{i}:v]{pts_filter}fps={fps},"
-                    f"scale=w={width}:h={height}:force_original_aspect_ratio=decrease,"
+                    f"scale=w={width}:h={height}:"
+                    "force_original_aspect_ratio=decrease,"
                     f"pad=w={width}:h={height}:x=(ow-iw)/2:y=(oh-ih)/2,"
                     f"format=yuv420p,settb=AVTB{norm_str}"
                 )
@@ -479,12 +497,15 @@ class FFmpegService:
                             transition.type.value, transition.type.value
                         )
                         video_filters.append(
-                            f"{last_v_stream}{next_v_stream}xfade=transition={t_type}:"
-                            f"duration={transition.duration_seconds}:offset={offset}{output_v_stream}"
+                            f"{last_v_stream}{next_v_stream}xfade="
+                            f"transition={t_type}:"
+                            f"duration={transition.duration_seconds}:"
+                            f"offset={offset}{output_v_stream}"
                         )
                     else:
                         video_filters.append(
-                            f"{last_v_stream}{next_v_stream}concat=n=2:v=1:a=0{output_v_stream}"
+                            f"{last_v_stream}{next_v_stream}"
+                            f"concat=n=2:v=1:a=0{output_v_stream}"
                         )
 
                     last_v_stream = output_v_stream
@@ -494,7 +515,8 @@ class FFmpegService:
 
             if timeline.transition_in:
                 video_filters.append(
-                    f"{video_output_stream}fade=t=in:st=0:d={timeline.transition_in.duration_seconds}[v_fadein]"
+                    f"{video_output_stream}fade=t=in:st=0:d="
+                    f"{timeline.transition_in.duration_seconds}[v_fadein]"
                 )
                 video_output_stream = "[v_fadein]"
             if timeline.transition_out:
@@ -504,7 +526,8 @@ class FFmpegService:
                     - timeline.transition_out.duration_seconds,
                 )
                 video_filters.append(
-                    f"{video_output_stream}fade=t=out:st={st_out}:d={timeline.transition_out.duration_seconds}[v_fadeout]"
+                    f"{video_output_stream}fade=t=out:st={st_out}:d="
+                    f"{timeline.transition_out.duration_seconds}[v_fadeout]"
                 )
                 video_output_stream = "[v_fadeout]"
 
@@ -527,21 +550,24 @@ class FFmpegService:
                 if audio_clip.trim and audio_clip.trim.duration_seconds:
                     trimmed_stream = f"[a{i}_trimmed]"
                     chain.append(
-                        f"{current_stream}atrim=duration={audio_clip.trim.duration_seconds}{trimmed_stream}"
+                        f"{current_stream}atrim=duration="
+                        f"{audio_clip.trim.duration_seconds}{trimmed_stream}"
                     )
                     current_stream = trimmed_stream
 
                 if audio_clip.speed != 1.0:
                     tempo_stream = f"[a{i}_tempo]"
                     chain.append(
-                        f"{current_stream}atempo={audio_clip.speed}{tempo_stream}"
+                        f"{current_stream}atempo="
+                        f"{audio_clip.speed}{tempo_stream}"
                     )
                     current_stream = tempo_stream
 
                 if audio_clip.fade_in_duration_seconds > 0:
                     fadein_stream = f"[a{i}_fadein]"
                     chain.append(
-                        f"{current_stream}afade=t=in:st=0:d={audio_clip.fade_in_duration_seconds}{fadein_stream}"
+                        f"{current_stream}afade=t=in:st=0:d="
+                        f"{audio_clip.fade_in_duration_seconds}{fadein_stream}"
                     )
                     current_stream = fadein_stream
 
@@ -557,14 +583,17 @@ class FFmpegService:
                     )
                     if fade_out_start >= 0:
                         chain.append(
-                            f"{current_stream}afade=t=out:st={fade_out_start}:d={audio_clip.fade_out_duration_seconds}{fadeout_stream}"
+                            f"{current_stream}afade=t=out:st={fade_out_start}:"
+                            f"d={audio_clip.fade_out_duration_seconds}"
+                            f"{fadeout_stream}"
                         )
                         current_stream = fadeout_stream
 
                 delayed_stream = f"[a{i}_delayed]"
                 delay_ms = max(0, int(start_time * 1000))
                 chain.append(
-                    f"{current_stream}adelay={delay_ms}|{delay_ms}{delayed_stream}"
+                    f"{current_stream}adelay="
+                    f"{delay_ms}|{delay_ms}{delayed_stream}"
                 )
                 current_stream = delayed_stream
 
@@ -572,8 +601,10 @@ class FFmpegService:
                 audio_outputs.append(current_stream)
 
             if len(audio_outputs) > 1:
+                joined_audio = "".join(audio_outputs)
                 audio_filters.append(
-                    f"{''.join(audio_outputs)}amix=inputs={len(audio_outputs)}:duration=longest[audio_mix]"
+                    f"{joined_audio}amix=inputs={len(audio_outputs)}:"
+                    "duration=longest[audio_mix]"
                 )
                 audio_output_stream = "[audio_mix]"
             elif len(audio_outputs) == 1:
@@ -629,7 +660,8 @@ class FFmpegService:
             ffmpeg_command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            check=False,
         )
         if process.returncode != 0:
-            logger.error(f"FFmpeg failed: {process.stderr.decode()}")
+            logger.error("FFmpeg failed: %s", process.stderr.decode())
             raise RuntimeError(f"FFmpeg failed: {process.stderr.decode()}")
