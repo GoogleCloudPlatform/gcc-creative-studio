@@ -56,6 +56,7 @@ dependencies = [
     "google-cloud-workflows>=1.19.0",
     "google-api-python-client>=2.187.0",
     "httpx>=0.27.0",
+    "heic2png>=1.0.0",
 ]
 
 [project.optional-dependencies]

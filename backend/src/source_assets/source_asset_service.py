@@ -37,6 +37,13 @@ from src.common.storage_service import GcsService
 from src.images.dto.upscale_imagen_dto import UpscaleImagenDto
 from src.images.imagen_service import ImagenService
 from src.multimodal.gemini_service import GeminiService
+from src.source_assets.dto.finalize_upload_dto import (
+    FinalizeSourceAssetUploadDto,
+)
+from src.source_assets.dto.generate_upload_url_dto import (
+    GenerateSourceAssetUploadUrlDto,
+    GenerateSourceAssetUploadUrlResponseDto,
+)
 from src.source_assets.dto.source_asset_response_dto import (
     SourceAssetResponseDto,
 )
@@ -146,6 +153,26 @@ class SourceAssetService:
 
         logger.info("Deduced aspect ratio as %s", closest_enum.value)
         return closest_enum
+
+    def _determine_mime_type_enum(self, content_type: str) -> MimeTypeEnum:
+        """Determines the appropriate MimeTypeEnum for a given content type string."""
+        if content_type.startswith("video/"):
+            return MimeTypeEnum.VIDEO_MP4
+        if content_type.startswith("audio/"):
+            if content_type in ["audio/mpeg", "audio/mp3"]:
+                return MimeTypeEnum.AUDIO_MPEG
+            if content_type == "audio/wav":
+                return MimeTypeEnum.AUDIO_WAV
+            if content_type == "audio/ogg":
+                return MimeTypeEnum.AUDIO_OGG
+            if content_type == "audio/webm":
+                return MimeTypeEnum.AUDIO_WEBM
+            return MimeTypeEnum.AUDIO_MPEG
+        if content_type in ["image/jpeg", "image/jpg"]:
+            return MimeTypeEnum.IMAGE_JPEG
+        if content_type == "image/webp":
+            return MimeTypeEnum.IMAGE_WEBP
+        return MimeTypeEnum.IMAGE_PNG
 
     async def _create_asset_response(
         self,
@@ -428,23 +455,7 @@ class SourceAssetService:
         # 4. Create and save the new UserAsset document
         # Determine mime_type based on content_type
         content_type = mime_type or ""
-        if content_type.startswith("video/"):
-            mime_type = MimeTypeEnum.VIDEO_MP4
-        elif content_type.startswith("audio/"):
-            # Map common audio types to enum values
-            if content_type in ["audio/mpeg", "audio/mp3"]:
-                mime_type = MimeTypeEnum.AUDIO_MPEG
-            elif content_type == "audio/wav":
-                mime_type = MimeTypeEnum.AUDIO_WAV
-            elif content_type == "audio/ogg":
-                mime_type = MimeTypeEnum.AUDIO_OGG
-            elif content_type == "audio/webm":
-                mime_type = MimeTypeEnum.AUDIO_WEBM
-            else:
-                # Default to MPEG for unknown audio types
-                mime_type = MimeTypeEnum.AUDIO_MPEG
-        else:
-            mime_type = MimeTypeEnum.IMAGE_PNG
+        mime_type = self._determine_mime_type_enum(content_type)
 
         is_admin = UserRoleEnum.ADMIN in user.roles
         final_scope = AssetScopeEnum.PRIVATE
@@ -504,8 +515,102 @@ class SourceAssetService:
 
         return await self._create_asset_response(new_asset)
 
+    async def generate_signed_upload_url(
+        self,
+        request_dto: GenerateSourceAssetUploadUrlDto,
+        current_user: UserModel,
+    ) -> GenerateSourceAssetUploadUrlResponseDto:
+        """Generates a GCS v4 signed URL for a client-side direct source asset upload.
+
+        Uses same strategy as: backend/src/brand_guidelines/brand_guideline_service.py
+        """
+        file_uuid = str(uuid.uuid4())
+        destination_blob_name = f"source_assets/{current_user.id}/uploads/{file_uuid}/{os.path.basename(request_dto.filename)}"
+
+        signed_url, gcs_uri = await asyncio.to_thread(
+            self.iam_signer.generate_v4_upload_signed_url,
+            destination_blob_name,
+            request_dto.content_type,
+            self.gcs_service.bucket_name,
+        )
+
+        if not signed_url or not gcs_uri:
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "Could not generate upload URL.",
+            )
+
+        return GenerateSourceAssetUploadUrlResponseDto(
+            upload_url=signed_url,
+            gcs_uri=gcs_uri,
+            file_uuid=file_uuid,
+        )
+
+    async def finalize_direct_upload(
+        self,
+        request_dto: FinalizeSourceAssetUploadDto,
+        current_user: UserModel,
+    ) -> SourceAssetResponseDto:
+        """Finalizes registration of a source asset uploaded directly to GCS."""
+        expected_prefix = f"gs://{self.gcs_service.bucket_name}/source_assets/{current_user.id}/"
+        if (
+            not request_dto.gcs_uri.startswith(expected_prefix)
+            or ".." in request_dto.gcs_uri
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid GCS URI path.",
+            )
+        content_type = request_dto.mime_type or ""
+        mime_type_enum = self._determine_mime_type_enum(content_type)
+
+        is_admin = UserRoleEnum.ADMIN in current_user.roles
+        final_scope = AssetScopeEnum.PRIVATE
+        if is_admin:
+            final_scope = request_dto.scope or AssetScopeEnum.PRIVATE
+        elif request_dto.scope and request_dto.scope != AssetScopeEnum.PRIVATE:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only administrators can set a non-private scope.",
+            )
+
+        if request_dto.asset_type:
+            final_asset_type = request_dto.asset_type
+        elif content_type.startswith("video/"):
+            final_asset_type = AssetTypeEnum.GENERIC_VIDEO
+        else:
+            final_asset_type = AssetTypeEnum.GENERIC_IMAGE
+
+        final_aspect_ratio = (
+            request_dto.aspect_ratio or AspectRatioEnum.RATIO_1_1
+        )
+
+        # Fallback to hashing the GCS URI as a unique placeholder because the file content is not available on the server
+        file_hash = hashlib.sha256(
+            request_dto.gcs_uri.encode("utf-8")
+        ).hexdigest()
+
+        new_asset = SourceAssetModel(
+            workspace_id=request_dto.workspace_id,
+            user_id=current_user.id,
+            aspect_ratio=final_aspect_ratio,
+            original_gcs_uri=request_dto.gcs_uri,
+            gcs_uri=request_dto.gcs_uri,
+            thumbnail_gcs_uri=None,
+            original_filename=request_dto.filename or "untitled",
+            mime_type=mime_type_enum,
+            file_hash=file_hash,
+            scope=final_scope,
+            asset_type=final_asset_type,
+        )
+
+        created_asset = await self.repo.create(new_asset)
+        new_asset.id = created_asset.id
+
+        return await self._create_asset_response(new_asset)
+
     async def convert_to_png(self, file: UploadFile) -> bytes:
-        """Converts an uploaded image file to PNG format in memory."""
+        """Converts an uploaded image file (including HEIC/HEIF) to PNG format in memory."""
         try:
             contents = await file.read()
             if not contents:
@@ -513,6 +618,40 @@ class SourceAssetService:
                     status.HTTP_400_BAD_REQUEST,
                     "Cannot convert an empty file.",
                 )
+
+            filename = file.filename or ""
+            content_type = file.content_type or ""
+            is_heic = filename.lower().endswith(
+                (".heic", ".heif")
+            ) or content_type.lower() in ["image/heic", "image/heif"]
+
+            if is_heic:
+                import tempfile
+                from heic2png import HEIC2PNG
+
+                with tempfile.NamedTemporaryFile(
+                    suffix=".heic", delete=False
+                ) as temp_in:
+                    temp_in.write(contents)
+                    temp_in_path = temp_in.name
+
+                try:
+                    heic_img = HEIC2PNG(temp_in_path, overwrite=True)
+                    with tempfile.NamedTemporaryFile(
+                        suffix=".png", delete=False
+                    ) as temp_out:
+                        temp_out_path = temp_out.name
+
+                    try:
+                        heic_img.save(temp_out_path)
+                        with open(temp_out_path, "rb") as f:
+                            return f.read()
+                    finally:
+                        if os.path.exists(temp_out_path):
+                            os.remove(temp_out_path)
+                finally:
+                    if os.path.exists(temp_in_path):
+                        os.remove(temp_in_path)
 
             pil_image = PILImage.open(io.BytesIO(contents))
 
@@ -527,6 +666,8 @@ class SourceAssetService:
             with io.BytesIO() as output:
                 pil_image.save(output, format="PNG")
                 return output.getvalue()
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error("Failed to convert image to PNG: %s", e, exc_info=True)
             raise HTTPException(

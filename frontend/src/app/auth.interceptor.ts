@@ -35,6 +35,15 @@ export class AuthInterceptor implements HttpInterceptor {
     request: HttpRequest<unknown>,
     next: HttpHandler,
   ): Observable<HttpEvent<unknown>> {
+    const isBackendUrl =
+      request.url.startsWith('/') ||
+      (environment.backendURL.startsWith('http') &&
+        request.url.startsWith(environment.backendURL));
+    // Add validation for not intercepting the Google account url
+    if (!isBackendUrl) {
+      return next.handle(request);
+    }
+
     // Asynchronously get a valid token. This will use the cache or trigger a silent refresh.
     return this.authService.getValidIdentityPlatformToken$().pipe(
       switchMap(token => {
