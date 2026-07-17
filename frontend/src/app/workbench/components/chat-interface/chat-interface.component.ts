@@ -246,7 +246,6 @@ export class ChatInterfaceComponent
 
       const isWorkspaceChanged =
         this.lastWorkspaceId !== null && this.lastWorkspaceId !== workspaceId;
-      this.lastWorkspaceId = workspaceId;
 
       if (isWorkspaceChanged) {
         if (this.isProgrammaticWorkspaceSwitch) {
@@ -271,6 +270,7 @@ export class ChatInterfaceComponent
           this.shouldScrollToBottom = true;
 
           if (storyboardId || sessionId) {
+            this.lastWorkspaceId = workspaceId;
             void this.router.navigate([], {
               relativeTo: this.route,
               queryParams: {
