@@ -160,8 +160,9 @@ class SourceAssetService:
         """Generates presigned URLs for the asset and its thumbnail."""
         is_youtube = getattr(
             asset, "asset_type", None
-        ) == AssetTypeEnum.YOUTUBE_VIDEO or isinstance(
-            getattr(asset, "external_url", None), str
+        ) == AssetTypeEnum.YOUTUBE_VIDEO or (
+            isinstance(getattr(asset, "external_url", None), str)
+            and bool(extract_youtube_video_id(asset.external_url))
         )
 
         if is_youtube and asset.external_url:

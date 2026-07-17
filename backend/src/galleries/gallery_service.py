@@ -308,7 +308,8 @@ class GalleryService:
                 "externalUrl"
             ) or item.metadata.get("external_url")
             if asset_type == AssetTypeEnum.YOUTUBE_VIDEO or (
-                isinstance(external_url, str) and external_url
+                isinstance(external_url, str)
+                and extract_youtube_video_id(external_url)
             ):
                 is_youtube = True
 

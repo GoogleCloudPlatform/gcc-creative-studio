@@ -273,9 +273,11 @@ def extract_youtube_video_id(url: str | None) -> str | None:
     except Exception:
         pass
     # Regex fallback
-    pattern = r"(?:youtu\.be\/|v\/|u\/\w\/|embed\/|shorts\/|watch\?v=|&v=)([a-zA-Z0-9_-]{11})"
-    match = re.search(pattern, trimmed)
-    return match.group(1) if match else None
+    if "youtube" in trimmed or "youtu.be" in trimmed:
+        pattern = r"(?:youtu\.be\/|v\/|u\/\w\/|embed\/|shorts\/|watch\?v=|&v=)([a-zA-Z0-9_-]{11})"
+        match = re.search(pattern, trimmed)
+        return match.group(1) if match else None
+    return None
 
 
 def get_youtube_aspect_ratio(url: str | None) -> str:
