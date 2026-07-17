@@ -40,4 +40,20 @@ describe('AuthService', () => {
   it('should be created', () => {
     expect(service).toBeTruthy();
   });
+
+  it('should decode JWT payload with Base64URL and UTF-8 characters correctly', () => {
+    const base64UrlPayload =
+      'eyJuYW1lIjoiVG9tYXN6IMWad2l0b8WEIiwic3ViIjoiMTIzLTQ1Nl83ODkifQ';
+    const fakeToken = `header.${base64UrlPayload}.signature`;
+
+    const decoded = service.decodeJwtPayload(fakeToken);
+    expect(decoded.name).toEqual('Tomasz Świtoń');
+    expect(decoded.sub).toEqual('123-456_789');
+  });
+
+  it('should throw an error for invalid JWT structure', () => {
+    expect(() =>
+      service.decodeJwtPayload('invalid_token_without_dots'),
+    ).toThrow(new Error('Invalid JWT token'));
+  });
 });

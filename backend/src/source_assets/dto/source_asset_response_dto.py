@@ -26,4 +26,5 @@ class SourceAssetResponseDto(SourceAssetModel):
     presigned_original_url: str | None = None
     presigned_thumbnail_url: str | None = None
     user_email: str | None = None
+    user_picture: str | None = None
     tags: list[TagModel] | None = None

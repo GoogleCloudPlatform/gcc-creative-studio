@@ -41,6 +41,8 @@ class UnifiedGalleryItemResponse(BaseModel):
     workspace_name: str | None = None
     user_picture: str | None = None
     user_email: str | None = None
+    titles: list[str] | None = Field(default_factory=list)
+    descriptions: list[str] | None = Field(default_factory=list)
     # Map from 'metadata_' in SQLAlchemy model to 'metadata' in Pydantic
     metadata: dict[str, Any] = Field(
         default_factory=dict, validation_alias="metadata_"

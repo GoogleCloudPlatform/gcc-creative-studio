@@ -21,7 +21,7 @@ import {environment} from '../../../environments/environment';
 import {
   StoryboardResponse,
   StoryboardUpdate,
-} from '../../common/models/storyboard.model';
+} from '../../common/models/workbench.model';
 
 @Injectable({
   providedIn: 'root',

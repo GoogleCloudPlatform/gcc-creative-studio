@@ -90,9 +90,26 @@ class AgentService:
         }
         return AGENT_REASONING_ENGINES.get(appName, default_config)
 
-    def _get_remote_agent(self, appName: str = APP_NAME) -> Any:
+    def _get_validated_agent_name(self, appName: str) -> str:
         agent_config = self._get_agent_config(appName)
         agent_name = agent_config.get("resource_name")
+        if not agent_name:
+            logger.error(
+                "Agent resource name is not configured for app %s.", appName
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Agent Engine Resource Name is not configured in the backend environment.",
+            )
+        return agent_name
+
+    def _get_remote_agent(self, appName: str = APP_NAME) -> Any:
+        vertexai.init(
+            project=config_service.PROJECT_ID,
+            location=config_service.WORKFLOWS_LOCATION,
+            api_transport="grpc",
+        )
+        agent_name = self._get_validated_agent_name(appName)
         return agent_engines.get(agent_name)
 
     def _map_session_to_dto(
@@ -227,8 +244,7 @@ class AgentService:
                     user=current_user,
                 )
 
-            agent_config = self._get_agent_config(appName)
-            agent_name = agent_config.get("resource_name")
+            agent_name = self._get_validated_agent_name(appName)
 
             raw_sessions = self.client.agent_engines.sessions.list(
                 name=agent_name, config={"filter": f'user_id="{user_id}"'}
@@ -280,8 +296,8 @@ class AgentService:
                     user=current_user,
                 )
 
+            agent_name = self._get_validated_agent_name(appName)
             agent_config = self._get_agent_config(appName)
-            agent_name = agent_config.get("resource_name")
             auth_header = request.headers.get("Authorization", "")
             auth_key = agent_config.get("token_key", "user_auth_token")
 
@@ -357,8 +373,7 @@ class AgentService:
         session_dto = None
         if resolved_session_id is not None:
             try:
-                agent_config = self._get_agent_config(appName)
-                agent_name = agent_config.get("resource_name")
+                agent_name = self._get_validated_agent_name(appName)
                 full_session_name = (
                     f"{agent_name}/sessions/{resolved_session_id}"
                 )
@@ -377,6 +392,7 @@ class AgentService:
                             f"Session {resolved_session_id} not found. Re-creating dynamic session."
                         )
                         auth_header = request.headers.get("Authorization", "")
+                        agent_config = self._get_agent_config(appName)
                         auth_key = agent_config.get(
                             "token_key", "user_auth_token"
                         )
@@ -450,8 +466,7 @@ class AgentService:
                     user=current_user,
                 )
 
-            agent_config = self._get_agent_config(appName)
-            agent_name = agent_config.get("resource_name")
+            agent_name = self._get_validated_agent_name(appName)
             full_session_name = f"{agent_name}/sessions/{session_id}"
             session = self.client.agent_engines.sessions.get(
                 name=full_session_name
@@ -513,8 +528,7 @@ class AgentService:
                     user=current_user,
                 )
 
-            agent_config = self._get_agent_config(appName)
-            agent_name = agent_config.get("resource_name")
+            agent_name = self._get_validated_agent_name(appName)
             full_session_name = f"{agent_name}/sessions/{session_id}"
 
             # Fetch session to extract workspace_id and authorize
@@ -559,6 +573,7 @@ class AgentService:
         request: Request,
     ) -> dict:
         body = payload.model_dump(exclude_unset=True)
+        injections = []
         if "appName" not in body:
             body["appName"] = APP_NAME
 
@@ -614,21 +629,17 @@ class AgentService:
                     s_asset_id = p.pop("sourceAssetId", None)
                     s_media = p.pop("sourceMediaItem", None)
                     if s_asset_id is not None:
-                        attached_assets.append(f"source_asset:{s_asset_id}")
+                        attached_assets.append(
+                            f'<creative_studio_asset id={s_asset_id} type="source_asset" />'
+                        )
                     if s_media is not None:
                         media_id = s_media.get("mediaItemId")
-                        attached_assets.append(f"media_item:{media_id}")
+                        attached_assets.append(
+                            f'<creative_studio_asset id={media_id} type="media_item" />'
+                        )
                     if p:
                         sanitized_parts.append(p)
-                injections = []
-                if workspace_id:
-                    injections.append(
-                        f"Use Workspace ID {workspace_id} for any tool calls that require a workspace_id"
-                    )
-                if session_id:
-                    injections.append(
-                        f"Use Session ID {session_id} for any tool calls that require a session_id"
-                    )
+
                 if attached_assets:
                     asset_list = "\n".join(
                         [f"- {aid}" for aid in attached_assets]
@@ -663,7 +674,7 @@ class AgentService:
                 auth_key = agent_config.get("token_key", "user_auth_token")
 
                 if session_id and auth_header:
-                    agent_name = agent_config.get("resource_name")
+                    agent_name = self._get_validated_agent_name(app_name)
                     full_session_name = f"{agent_name}/sessions/{session_id}"
                     try:
                         self.client.agent_engines.sessions.events.append(
@@ -692,33 +703,62 @@ class AgentService:
                     message=msg_payload,
                 )
                 import json
+                import threading
 
-                for chunk in response_stream:
-                    if isinstance(chunk, str):
-                        chunk_text = chunk
-                    elif isinstance(chunk, dict):
-                        chunk_text = json.dumps(chunk)
-                    else:
-                        try:
-                            if hasattr(chunk, "model_dump"):
-                                chunk_text = json.dumps(chunk.model_dump())
-                            elif hasattr(chunk, "to_dict"):
-                                chunk_text = json.dumps(chunk.to_dict())
-                            else:
+                queue = asyncio.Queue()
+                loop = asyncio.get_running_loop()
+
+                def producer():
+                    try:
+                        for chunk in response_stream:
+                            logger.info(
+                                f"[Agent Stream Chunk Received] Raw chunk: {chunk}"
+                            )
+                            loop.call_soon_threadsafe(queue.put_nowait, chunk)
+                        loop.call_soon_threadsafe(queue.put_nowait, None)
+                    except Exception as prod_err:
+                        logger.error(
+                            f"[Agent Stream Exception] {prod_err}",
+                            exc_info=True,
+                        )
+                        loop.call_soon_threadsafe(queue.put_nowait, prod_err)
+
+                threading.Thread(target=producer, daemon=True).start()
+
+                async with async_session_local() as db_session:
+                    repo = AgentRepository(db_session)
+                    while True:
+                        chunk = await queue.get()
+                        if chunk is None:
+                            break
+                        if isinstance(chunk, Exception):
+                            raise chunk
+
+                        if isinstance(chunk, str):
+                            chunk_text = chunk
+                        elif isinstance(chunk, dict):
+                            chunk_text = json.dumps(chunk)
+                        else:
+                            try:
+                                if hasattr(chunk, "model_dump"):
+                                    chunk_text = json.dumps(chunk.model_dump())
+                                elif hasattr(chunk, "to_dict"):
+                                    chunk_text = json.dumps(chunk.to_dict())
+                                else:
+                                    chunk_text = json.dumps(str(chunk))
+                            except Exception as parse_err:
+                                logger.warning(
+                                    f"Failed standard JSON parse/dump for chunk, falling back: {parse_err}"
+                                )
                                 chunk_text = json.dumps(str(chunk))
-                        except Exception:
-                            chunk_text = json.dumps(str(chunk))
 
-                    async with async_session_local() as db_session:
-                        repo = AgentRepository(db_session)
+                        logger.info(f"[Agent Stream Parsed JSON] {chunk_text}")
                         await repo.add_chat_event(
                             user_id=user_id,
                             session_id=session_id,
                             payload={"raw": f"data: {chunk_text}\n\n"},
                         )
 
-                async with async_session_local() as db_session:
-                    repo = AgentRepository(db_session)
                     await repo.add_chat_event(
                         user_id=user_id,
                         session_id=session_id,

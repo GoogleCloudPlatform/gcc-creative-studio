@@ -28,9 +28,32 @@ jobs:
   test:
     name: Lint & Test
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: creative_studio
+          POSTGRES_USER: studio_user
+          POSTGRES_PASSWORD: studio_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     env:
       PROJECT_ID: 'dummy-project-id'
-
+      ENVIRONMENT: 'local'
+      DATABASE_URL: 'postgresql+asyncpg://studio_user:studio_password@localhost:5432/creative_studio'
+      DB_HOST: 'localhost'
+      DB_PORT: '5432'
+      DB_USER: 'studio_user'
+      DB_PASS: 'studio_password'
+      DB_NAME: 'creative_studio'
+      USE_CLOUD_SQL_AUTH_PROXY: 'false'
+      isLocal: 'True'
 
     steps:
     - name: Checkout code
@@ -61,6 +84,11 @@ jobs:
       run: |
         cd backend
         uvx pylint --rcfile=pylintrc --fail-under=9.0 src tests
+
+    - name: Run database migrations
+      run: |
+        cd backend
+        uv run alembic upgrade head
 
     - name: Run tests
       run: |

@@ -1131,6 +1131,38 @@ def _process_image_in_background(
                             ),
                             "mime_type": mime_type,
                         }
+
+                        if (
+                            request_dto.metadata_generation_model
+                            and permanent_gcs_uris
+                        ):
+                            try:
+                                metadata = await asyncio.to_thread(
+                                    gemini_service.generate_media_metadata,
+                                    prompt=(
+                                        "Describe these generated images based"
+                                        f" on prompt: {rewritten_prompt}"
+                                    ),
+                                    media_uris=permanent_gcs_uris,
+                                    model_name=request_dto.metadata_generation_model,
+                                    mime_type=(
+                                        mime_type.value
+                                        if hasattr(mime_type, "value")
+                                        else mime_type
+                                    ),
+                                )
+                                if "titles" in metadata:
+                                    update_data["titles"] = metadata["titles"]
+                                if "descriptions" in metadata:
+                                    update_data["descriptions"] = metadata[
+                                        "descriptions"
+                                    ]
+                            except Exception as e:
+                                worker_logger.warning(
+                                    "Failed to generate media metadata: %s",
+                                    e,
+                                )
+
                         await media_repo.update(media_item_id, update_data)
                         worker_logger.info(
                             "Successfully processed image job %s",
@@ -1256,6 +1288,9 @@ def _process_upload_upscale_in_background(
                     final_original_uri = gcs_uri
                     used_source_asset_id = source_asset_id
 
+                    inherited_titles = None
+                    inherited_descriptions = None
+
                     try:
                         start_time = time.monotonic()
 
@@ -1290,6 +1325,8 @@ def _process_upload_upscale_in_background(
                             final_upscaled_uri = asset_response.gcs_uri
                             final_original_uri = asset_response.original_gcs_uri
                             used_source_asset_id = asset_response.id
+                            inherited_titles = asset_response.titles
+                            inherited_descriptions = asset_response.descriptions
 
                         # --- Case 2: Existing SourceAsset ---
                         elif source_asset_id:
@@ -1302,6 +1339,15 @@ def _process_upload_upscale_in_background(
                                 )
                             final_original_uri = existing_asset.gcs_uri
                             used_source_asset_id = existing_asset.id
+                            inherited_titles = existing_asset.titles
+                            inherited_descriptions = existing_asset.descriptions
+                            if (
+                                not inherited_titles
+                                and existing_asset.original_filename
+                            ):
+                                inherited_titles = [
+                                    existing_asset.original_filename
+                                ]
 
                         # --- Case 3: Existing MediaItem ---
                         elif media_item_id_existing:
@@ -1327,6 +1373,8 @@ def _process_upload_upscale_in_background(
                                     f"Media item {media_item_id_existing} "
                                     f"has no usable URIs",
                                 )
+                            inherited_titles = existing_media.titles
+                            inherited_descriptions = existing_media.descriptions
 
                         # --- Perform Upscaling ---
                         if not final_original_uri and not final_upscaled_uri:
@@ -1400,6 +1448,39 @@ def _process_upload_upscale_in_background(
                             else:
                                 thumbnail_uris.append(final_upscaled_uri)
 
+                        # Determine titles & descriptions
+                        final_titles = inherited_titles
+                        final_descriptions = inherited_descriptions
+
+                        uri_for_metadata = (
+                            final_original_uri or final_upscaled_uri
+                        )
+                        if (
+                            not final_titles or not final_descriptions
+                        ) and uri_for_metadata:
+                            try:
+                                metadata = await asyncio.to_thread(
+                                    gemini_service.generate_media_metadata,
+                                    prompt="Describe this image in detail.",
+                                    media_uris=[uri_for_metadata],
+                                    model_name="gemini-2.5-pro",
+                                    mime_type=MimeTypeEnum.IMAGE_PNG.value,
+                                )
+                                if not final_titles and "titles" in metadata:
+                                    final_titles = metadata["titles"]
+                                if (
+                                    not final_descriptions
+                                    and "descriptions" in metadata
+                                ):
+                                    final_descriptions = metadata[
+                                        "descriptions"
+                                    ]
+                            except Exception as e:
+                                worker_logger.warning(
+                                    "Failed to generate media metadata for upscaled image: %s",
+                                    e,
+                                )
+
                         end_time = time.monotonic()
                         generation_time = end_time - start_time
 
@@ -1415,6 +1496,8 @@ def _process_upload_upscale_in_background(
                             "generation_time": generation_time,
                             "num_media": 1,
                             "mime_type": MimeTypeEnum.IMAGE_PNG,
+                            "titles": final_titles,
+                            "descriptions": final_descriptions,
                             "source_assets": (
                                 source_assets_list
                                 if source_assets_list
@@ -1668,6 +1751,8 @@ class ImagenService:
             google_search=request_dto.google_search,
             resolution=request_dto.resolution,
             comment=request_dto.file_name,
+            titles=request_dto.titles,
+            descriptions=request_dto.descriptions,
             gcs_uris=[],
         )
 

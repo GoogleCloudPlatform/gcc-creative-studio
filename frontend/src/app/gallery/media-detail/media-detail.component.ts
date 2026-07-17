@@ -51,6 +51,7 @@ export class MediaDetailComponent implements OnDestroy {
   public mediaItem: GalleryItem | undefined;
   public isAdmin = false;
   public initialSlideIndex = 0;
+  public currentImageIndex = 0;
   promptJson: any | undefined;
   isPromptExpanded = false;
   public isIdentityExpanded = false;
@@ -238,8 +239,29 @@ export class MediaDetailComponent implements OnDestroy {
         index < (this.mediaItem?.presignedUrls?.length || 0)
       ) {
         this.initialSlideIndex = index;
+        this.currentImageIndex = index;
       }
     }
+  }
+
+  get currentTitle(): string {
+    if (!this.mediaItem) return 'Details';
+    const index = this.currentImageIndex;
+    const titles = this.mediaItem.titles;
+    if (titles && titles[index]) {
+      return titles[index];
+    }
+    return titles?.[0] || 'Details';
+  }
+
+  get currentDescription(): string | undefined {
+    if (!this.mediaItem) return undefined;
+    const index = this.currentImageIndex;
+    const descriptions = this.mediaItem.descriptions;
+    if (descriptions && descriptions[index]) {
+      return descriptions[index];
+    }
+    return descriptions?.[0];
   }
 
   /**

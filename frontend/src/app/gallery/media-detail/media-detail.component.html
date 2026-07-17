@@ -40,6 +40,7 @@
     <div class="lg:col-span-2">
       <app-media-lightbox [mediaItem]="mediaItem" [initialIndex]="initialSlideIndex"
         [showDeleteButton]="true"
+        (slideChanged)="currentImageIndex = $event"
         (editClicked)="generateWithThisImage($event)"
         (generateVideoClicked)="generateVideoWithImage($event)"
         (sendToVtoClicked)="sendToVto($event)"
@@ -54,12 +55,14 @@
 
     <!-- Right Column: The Metadata -->
     <div class="lg:col-span-1 text-white">
-      <h2 class="text-3xl font-bold mb-4">Details</h2>
+      <h2 class="text-3xl font-bold mb-4 break-words">{{ currentTitle }}</h2>
+      <p *ngIf="currentDescription" class="text-gray-400 text-sm mb-6 break-words whitespace-pre-line">{{ currentDescription }}</p>
 
       <mat-tab-group mat-align-tabs="start" animationDuration="0ms">
         <!-- Generation Details Tab -->
         <mat-tab label="Details">
           <div class="py-4 space-y-6">
+
             <!-- Parameters Section -->
             <section class="space-y-3">
               <h3 class="text-lg font-semibold border-b border-gray-700">Parameters</h3>

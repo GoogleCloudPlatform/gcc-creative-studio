@@ -1569,7 +1569,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
         this.referenceAudio = {
           id: res.mediaItem.id,
           type: 'media_item',
-          name: res.mediaItem.title || 'Audio Reference',
+          name: res.mediaItem.titles?.[0] || 'Audio Reference',
           index: res.selectedIndex,
         };
       }

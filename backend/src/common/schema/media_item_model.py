@@ -157,6 +157,12 @@ class MediaItem(Base):
     )
 
     # Common fields
+    titles: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String), default=[], nullable=True
+    )
+    descriptions: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String), default=[], nullable=True
+    )
     prompt: Mapped[str | None] = mapped_column(String, nullable=True)
     original_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
     rewritten_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -259,6 +265,8 @@ class MediaItemModel(BaseDocument):
     model: GenerationModelEnum | str
 
     # Common fields across media types
+    titles: list[str] | None = Field(default_factory=list)
+    descriptions: list[str] | None = Field(default_factory=list)
     prompt: str | None = None
     original_prompt: str | None = None
     rewritten_prompt: str | None = None
