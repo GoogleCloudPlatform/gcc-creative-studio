@@ -244,13 +244,37 @@ def extract_youtube_video_id(url: str | None) -> str | None:
     """Extracts the 11-character video ID from a YouTube URL."""
     if not url:
         return None
-    # Support various youtube URL formats:
-    # https://www.youtube.com/watch?v=dQw4w9WgXcQ
-    # https://youtu.be/dQw4w9WgXcQ
-    # https://www.youtube.com/embed/dQw4w9WgXcQ
-    # https://www.youtube.com/shorts/dQw4w9WgXcQ
-    pattern = r"(?:https?://)?(?:www\.)?(?:youtube\.com/(?:watch\?v=|embed/|shorts/)|youtu\.be/)([a-zA-Z0-9_-]{11})"
-    match = re.search(pattern, url)
+    trimmed = url.strip()
+    try:
+        from urllib.parse import urlparse, parse_qs
+
+        parsed = urlparse(trimmed)
+        hostname = parsed.hostname.lower() if parsed.hostname else ""
+
+        is_youtube = any(
+            h in hostname for h in ("youtube.com", "youtube-nocookie.com")
+        )
+        is_short = "youtu.be" in hostname
+
+        if is_youtube:
+            if any(p in parsed.path for p in ("/embed/", "/shorts/", "/v/")):
+                parts = parsed.path.split("/")
+                for p in parts:
+                    if len(p) == 11:
+                        return p
+            query_params = parse_qs(parsed.query)
+            v_list = query_params.get("v")
+            if v_list and len(v_list[0]) == 11:
+                return v_list[0]
+        elif is_short:
+            path_parts = parsed.path.strip("/").split("/")
+            if path_parts and len(path_parts[0]) == 11:
+                return path_parts[0]
+    except Exception:
+        pass
+    # Regex fallback
+    pattern = r"(?:youtu\.be\/|v\/|u\/\w\/|embed\/|shorts\/|watch\?v=|&v=)([a-zA-Z0-9_-]{11})"
+    match = re.search(pattern, trimmed)
     return match.group(1) if match else None
 
 

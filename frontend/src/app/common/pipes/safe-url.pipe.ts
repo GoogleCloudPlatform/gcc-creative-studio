@@ -24,7 +24,10 @@ import {DomSanitizer, SafeResourceUrl} from '@angular/platform-browser';
 export class SafeUrlPipe implements PipeTransform {
   constructor(private sanitizer: DomSanitizer) {}
 
-  transform(url: string, type?: string): SafeResourceUrl {
+  transform(url: string | null | undefined, type?: string): SafeResourceUrl {
+    if (!url) {
+      return this.sanitizer.bypassSecurityTrustResourceUrl('');
+    }
     // If type is "youtube" extract videoId and return youtube embed url
     if (type === 'youtube') {
       const regExp =

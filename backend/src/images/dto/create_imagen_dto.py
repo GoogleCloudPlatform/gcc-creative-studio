@@ -18,6 +18,8 @@ from urllib.parse import urlparse
 from fastapi import Query
 from pydantic import Field, field_validator, model_validator
 
+from src.common.media_utils import extract_youtube_video_id
+
 from src.common.base_dto import (
     AspectRatioEnum,
     AssetReferenceDto,
@@ -159,6 +161,11 @@ class CreateImagenDto(BaseDto):
             or parsed.hostname.lower() not in valid_hosts
         ):
             raise ValueError("Invalid YouTube URL provided.")
+
+        if not extract_youtube_video_id(value):
+            raise ValueError(
+                "YouTube URL does not contain a valid 11-character video ID."
+            )
         return value.strip()
 
     @field_validator("prompt")
