@@ -93,9 +93,9 @@
       <textarea
         (input)="onPromptInput($event)"
         [ngModel]="prompt"
-        [disabled]="mode === 'Concatenate Video'"
+        [disabled]="isConcatenateVideo()"
         class="w-full h-24 bg-transparent text-xl text-neutral-400 placeholder:text-neutral-600 focus:outline-none resize-none disabled:opacity-50 disabled:cursor-not-allowed"
-        [placeholder]="mode === 'Concatenate Video' ? 'Prompt not needed for concatenation' : (mode.includes('Image') ? 'Generate an image with text...' : 'Generate a video with text...')"
+        [placeholder]="isConcatenateVideo() ? 'Prompt not needed for concatenation' : (isImageMode() ? 'Generate an image with text...' : 'Generate a video with text...')"
       ></textarea>
     </div>
 
@@ -104,7 +104,7 @@
       <!-- Left: Drag-and-drop areas -->
       <div class="flex flex-wrap items-center gap-3">
         <!-- Frames to Video / Concatenate / Extend Inputs -->
-        <ng-container *ngIf="mode === 'Frames to Video' || mode === 'Concatenate Video' || mode === 'Extend Video'">
+        <ng-container *ngIf="isFramesToVideo() || isConcatenateVideo() || isExtendVideo()">
           <!-- Slot 1: Always shown for these modes -->
           <div
             class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex items-center justify-center"
@@ -118,7 +118,9 @@
             <ng-container *ngIf="image1Preview">
               <div class="group absolute inset-0 rounded-lg overflow-hidden">
                 <img [src]="image1Preview" class="h-full w-full object-cover" />
-                <ng-container *ngTemplateOutlet="editOverlay; context: { num: 1 }"></ng-container>
+                <ng-container *ngIf="canEditImgSlot()">
+                  <ng-container *ngTemplateOutlet="editOverlay; context: { num: 1 }"></ng-container>
+                </ng-container>
               </div>
               <button
                 (click)="$event.stopPropagation(); clearImage.emit({num: 1, event: $event})"
@@ -130,11 +132,11 @@
           </div>
 
           <!-- Arrow: Shown only if we have a second slot -->
-          <mat-icon *ngIf="mode !== 'Extend Video'" class="text-neutral-500">compare_arrows</mat-icon>
+          <mat-icon *ngIf="!isExtendVideo()" class="text-neutral-500">compare_arrows</mat-icon>
 
           <!-- Slot 2: Shown for Frames to Video and Concatenate Video -->
           <div
-            *ngIf="mode !== 'Extend Video'"
+            *ngIf="!isExtendVideo()"
             class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex items-center justify-center"
             (click)="openImageSelector.emit(2)"
             (dragover)="$event.preventDefault()"
@@ -146,7 +148,9 @@
             <ng-container *ngIf="image2Preview">
               <div class="group absolute inset-0 rounded-lg overflow-hidden">
                 <img [src]="image2Preview" class="h-full w-full object-cover" />
-                <ng-container *ngTemplateOutlet="editOverlay; context: { num: 2 }"></ng-container>
+                <ng-container *ngIf="canEditImgSlot()">
+                  <ng-container *ngTemplateOutlet="editOverlay; context: { num: 2 }"></ng-container>
+                </ng-container>
               </div>
               <button
                 (click)="$event.stopPropagation(); clearImage.emit({num: 2, event: $event})"
@@ -159,7 +163,7 @@
         </ng-container>
 
         <!-- Unified Ingredients Mode Inputs -->
-        <ng-container *ngIf="mode === 'Ingredients to Video' || mode === 'Ingredients to Image'">
+        <ng-container *ngIf="isIngredientsToVideo() || isIngredientsToImage()">
           <ng-container *ngIf="getSelectedModelObject() as model">
             <div
               class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex items-center justify-center"
@@ -187,7 +191,7 @@
           </ng-container>
 
             <!-- Video Reference Slot (only for Ingredients to Video mode AND only for Gemini Omni) -->
-            <div *ngIf="mode === 'Ingredients to Video' && getSelectedModelObject()?.value === 'gemini-omni-flash-preview'"
+            <div *ngIf="isIngredientsToVideo() && getSelectedModelObject()?.value === 'gemini-omni-flash-preview'"
               class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
               (click)="!referenceVideo && openVideoSelectorForReference.emit()"
             >
@@ -208,7 +212,7 @@
             </div>
 
             <!-- Audio Reference Slot (only for Ingredients to Video mode AND only for Gemini Omni) -->
-            <div *ngIf="mode === 'Ingredients to Video' && getSelectedModelObject()?.value === 'gemini-omni-flash-preview'"
+            <div *ngIf="isIngredientsToVideo() && getSelectedModelObject()?.value === 'gemini-omni-flash-preview'"
               class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
               (click)="!referenceAudio && openAudioSelectorForReference.emit()"
             >
@@ -276,24 +280,24 @@
       } @else {
         <button (click)="selectMode('Text to Video')"
           class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left font-medium transition-colors"
-          [class.bg-neutral-700]="mode === 'Text to Video'"
-          [class.hover:bg-neutral-700]="mode !== 'Text to Video'">
+          [class.bg-neutral-700]="isTextToVideo()"
+          [class.hover:bg-neutral-700]="!isTextToVideo()">
           <!-- Mode Icon 1 -->
           <mat-icon>text_fields</mat-icon>
           <span>Text to Video</span>
         </button>
         <button (click)="selectMode('Frames to Video')"
           class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left font-medium transition-colors"
-          [class.bg-neutral-700]="mode === 'Frames to Video'"
-          [class.hover:bg-neutral-700]="mode !== 'Frames to Video'">
+          [class.bg-neutral-700]="isFramesToVideo()"
+          [class.hover:bg-neutral-700]="!isFramesToVideo()">
           <!-- Mode Icon 2 -->
           <mat-icon fontIcon="image"></mat-icon>
           <span>Frames to Video</span>
         </button>
         <button (click)="selectMode('Ingredients to Video')"
           class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left font-medium transition-colors"
-          [class.bg-neutral-700]="mode === 'Ingredients to Video'"
-          [class.hover:bg-neutral-700]="mode !== 'Ingredients to Video'">
+          [class.bg-neutral-700]="isIngredientsToVideo()"
+          [class.hover:bg-neutral-700]="!isIngredientsToVideo()">
           <!-- Mode Icon 3 -->
           <mat-icon fontIcon="image_search"></mat-icon>
           <span>Ingredients to Video</span>
