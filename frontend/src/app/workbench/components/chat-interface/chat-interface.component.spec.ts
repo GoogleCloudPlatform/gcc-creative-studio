@@ -132,6 +132,7 @@ describe('ChatInterfaceComponent', () => {
           }
           return 1;
         }),
+      setActiveWorkspaceId: jasmine.createSpy('setActiveWorkspaceId'),
       activeWorkspaceId$: of(1),
     };
 
@@ -150,7 +151,11 @@ describe('ChatInterfaceComponent', () => {
     };
 
     const mockTimelineStateService = {
-      loadedTimelineId: signal(undefined),
+      loadedTimelineId: signal<any>(undefined),
+      timelineClips: signal<any>([]),
+      transitions: signal<any>([]),
+      transitionIn: signal<any>(null),
+      transitionOut: signal<any>(null),
     };
 
     queryParamsSubject = new BehaviorSubject<any>({});
@@ -833,7 +838,7 @@ describe('ChatInterfaceComponent', () => {
     agentChatService.getSessionDetail.and.returnValue(
       of({
         session: {id: 's1', events: []},
-        storyboard: {id: 202, timeline_id: 42},
+        storyboard: {id: 202, timeline_id: 42, workspace_id: 1},
       }),
     );
 
