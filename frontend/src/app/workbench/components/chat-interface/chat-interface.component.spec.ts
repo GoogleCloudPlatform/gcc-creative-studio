@@ -50,6 +50,8 @@ describe('ChatInterfaceComponent', () => {
       currentStoryboard: signal(null),
       activeAgent: signal('director'),
       isGeneratingStoryboard: signal(false),
+      sessions: signal([]),
+      chatMessages: signal([]),
       generateVideoRequest$: new Subject<void>(),
       videoGenerated$: new Subject<any>(),
       getSessions: jasmine.createSpy('getSessions').and.returnValue(of([])),
@@ -119,10 +121,18 @@ describe('ChatInterfaceComponent', () => {
       stopPolling: jasmine.createSpy('stopPolling'),
     };
 
+    let isFirstCall = true;
     const mockWorkspaceStateService = {
       getActiveWorkspaceId: jasmine
         .createSpy('getActiveWorkspaceId')
-        .and.returnValue(1),
+        .and.callFake(() => {
+          if (isFirstCall) {
+            isFirstCall = false;
+            return null;
+          }
+          return 1;
+        }),
+      setActiveWorkspaceId: jasmine.createSpy('setActiveWorkspaceId'),
       activeWorkspaceId$: of(1),
     };
 
@@ -141,7 +151,11 @@ describe('ChatInterfaceComponent', () => {
     };
 
     const mockTimelineStateService = {
-      loadedTimelineId: signal(undefined),
+      loadedTimelineId: signal<any>(undefined),
+      timelineClips: signal<any>([]),
+      transitions: signal<any>([]),
+      transitionIn: signal<any>(null),
+      transitionOut: signal<any>(null),
     };
 
     queryParamsSubject = new BehaviorSubject<any>({});
@@ -184,7 +198,12 @@ describe('ChatInterfaceComponent', () => {
   });
 
   it('should initialize and load sessions', () => {
-    expect(agentChatService.getSessions).toHaveBeenCalledWith(1);
+    expect(agentChatService.getSessions).toHaveBeenCalledWith(
+      1,
+      false,
+      undefined,
+      undefined,
+    );
   });
 
   it('should start a new chat', () => {
@@ -819,7 +838,7 @@ describe('ChatInterfaceComponent', () => {
     agentChatService.getSessionDetail.and.returnValue(
       of({
         session: {id: 's1', events: []},
-        storyboard: {id: 202, timeline_id: 42},
+        storyboard: {id: 202, timeline_id: 42, workspace_id: 1},
       }),
     );
 

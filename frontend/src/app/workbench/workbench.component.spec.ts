@@ -28,13 +28,10 @@ import {MatDialogModule} from '@angular/material/dialog';
 import {signal, CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
 import {Subject, of} from 'rxjs';
 import {AgentChatService} from './services/agent-chat.service';
-import {
-  TimelineStateService,
-  MediaAsset,
-} from './services/timeline-state.service';
+import {TimelineStateService} from './services/timeline-state.service';
 import {PlayheadSyncService} from './services/playhead-sync.service';
 
-import {TimelineDTO} from '../common/models/workbench.model';
+import {TimelineDTO, MediaAsset} from '../common/models/workbench.model';
 import {MediaItemSelection} from '../common/components/image-selector/image-selector.component';
 import {StoryboardService} from '../services/storyboard/storyboard.service';
 import {WorkbenchService} from './workbench.service';
@@ -492,6 +489,7 @@ describe('WorkbenchComponent', () => {
 
       expect(workbenchService.updateTimeline).toHaveBeenCalledWith(2, {
         timeline_id: 2,
+        storyboard_id: 1,
         workspace_id: 1,
         title: 'Timeline',
         video_clips: [
@@ -769,5 +767,21 @@ describe('WorkbenchComponent', () => {
       expect(stateService.timelineClips()).toEqual([]);
       expect(stateService.loadedTimelineId()).toBeUndefined();
     });
+  });
+
+  it('should pause timeline and stop loop when activeToolButton is set to agent', () => {
+    const stateService = TestBed.inject(TimelineStateService);
+    const playbackService = TestBed.inject(PlayheadSyncService);
+    spyOn(playbackService, 'stopLoop').and.callThrough();
+
+    stateService.isPlaying.set(true);
+    component.activeToolButton.set(null);
+    fixture.detectChanges();
+
+    component.activeToolButton.set('agent');
+    fixture.detectChanges();
+
+    expect(stateService.isPlaying()).toBeFalse();
+    expect(playbackService.stopLoop).toHaveBeenCalled();
   });
 });

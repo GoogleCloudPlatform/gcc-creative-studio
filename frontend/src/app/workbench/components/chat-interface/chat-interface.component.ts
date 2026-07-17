@@ -83,9 +83,9 @@ export class ChatInterfaceComponent
   private router = inject(Router);
   private timelineState = inject(TimelineStateService);
 
-  sessions = signal<ChatSession[]>([]);
+  sessions = this.agentChatService.sessions;
   topics = signal<{[key: string]: any}>({});
-  chatMessages = signal<any[]>([]);
+  chatMessages = this.agentChatService.chatMessages;
   filteredChatMessages = computed(() => {
     return this.chatMessages().filter(msg => !msg.isHidden);
   });
@@ -93,12 +93,14 @@ export class ChatInterfaceComponent
   isTyping = signal<boolean>(false);
   isLoadingHistory = signal<boolean>(false);
   agentUnavailable = signal<boolean>(false);
-  currentSessionId: string | null = null;
-  private lastWorkspaceId: number | null = null;
+  currentSessionId: string | null = this.agentChatService.selectedSessionId();
+  private lastWorkspaceId: number | null =
+    this.workspaceStateService.getActiveWorkspaceId();
+  private isProgrammaticWorkspaceSwitch = false;
 
   private sessionSelectorEffect = effect(() => {
     const sessionId = this.agentChatService.selectedSessionId();
-    if (sessionId && Number(sessionId) !== Number(this.currentSessionId)) {
+    if (sessionId && sessionId !== this.currentSessionId) {
       this.currentSessionId = sessionId;
       this.loadChatMessages(sessionId);
     }
@@ -242,8 +244,52 @@ export class ChatInterfaceComponent
       const storyboardId = params['storyboardId'];
       const sessionId = params['sessionId'];
 
+      const isWorkspaceChanged =
+        this.lastWorkspaceId !== null && this.lastWorkspaceId !== workspaceId;
+
+      if (isWorkspaceChanged) {
+        if (this.isProgrammaticWorkspaceSwitch) {
+          this.isProgrammaticWorkspaceSwitch = false;
+          this.lastWorkspaceId = workspaceId;
+        } else {
+          // Clean timeline
+          this.timelineState.loadedTimelineId.set(undefined);
+          this.timelineState.timelineClips.set([]);
+          this.timelineState.transitions.set([]);
+          this.timelineState.transitionIn.set(null);
+          this.timelineState.transitionOut.set(null);
+
+          // Reset chat interface
+          this.agentChatService.stopPolling();
+          this.isLoadingHistory.set(false);
+          this.currentSessionId = null;
+          this.agentChatService.selectedSessionId.set(null);
+          this.chatMessages.set([]);
+          this.sessions.set([]);
+          this.agentChatService.currentStoryboard.set(null);
+          this.addWelcomeMessage();
+          this.shouldScrollToBottom = true;
+          this.lastWorkspaceId = workspaceId;
+
+          if (storyboardId || sessionId) {
+            void this.router.navigate([], {
+              relativeTo: this.route,
+              queryParams: {
+                sessionId: null,
+                storyboardId: null,
+              },
+              queryParamsHandling: 'merge',
+            });
+            return;
+          }
+        }
+      }
+
       const isExplicitNewChat =
-        !sessionId && !storyboardId && this.lastWorkspaceId === workspaceId;
+        !sessionId &&
+        !storyboardId &&
+        this.lastWorkspaceId === workspaceId &&
+        this.sessions().length > 0;
 
       if (isExplicitNewChat) {
         this.isLoadingHistory.set(false);
@@ -253,146 +299,159 @@ export class ChatInterfaceComponent
       this.isLoadingHistory.set(true);
 
       // Always load sessions first to populate the sessions dropdown
-      this.agentChatService.getSessions(workspaceId).subscribe({
-        next: (sessions: ChatSession[]) => {
-          this.sessions.set(sessions || []);
+      this.agentChatService
+        .getSessions(workspaceId, false, sessionId, storyboardId)
+        .subscribe({
+          next: (sessions: ChatSession[]) => {
+            this.sessions.set(sessions || []);
 
-          // Check if the query parameter sessionId or storyboardId belongs to this workspace
-          const sessionExistsInWorkspace =
-            sessions &&
-            sessions.some(s => {
-              if (
-                sessionId &&
-                (s.id === sessionId || Number(s.id) === Number(sessionId))
-              ) {
-                return true;
-              }
-              if (
-                storyboardId &&
-                (Number(s.state?.current_storyboard_id) ===
-                  Number(storyboardId) ||
-                  Number(s.state?.currentStoryboardId) === Number(storyboardId))
-              ) {
-                return true;
-              }
-              return false;
-            });
+            // Check if the query parameter sessionId or storyboardId belongs to this workspace
+            const sessionExistsInWorkspace =
+              sessions &&
+              sessions.some(s => {
+                if (sessionId && s.id === sessionId) {
+                  return true;
+                }
+                if (
+                  storyboardId &&
+                  (Number(s.state?.current_storyboard_id) ===
+                    Number(storyboardId) ||
+                    Number(s.state?.currentStoryboardId) ===
+                      Number(storyboardId))
+                ) {
+                  return true;
+                }
+                return false;
+              });
 
-          const shouldLoadDetail =
-            (sessionId && sessionExistsInWorkspace) || !!storyboardId;
+            const shouldLoadDetail =
+              (sessionId && sessionExistsInWorkspace) || !!storyboardId;
 
-          if (shouldLoadDetail) {
-            const isDifferentSession =
-              (sessionId &&
-                Number(sessionId) !== Number(this.currentSessionId)) ||
-              (storyboardId &&
-                Number(storyboardId) !==
-                  Number(this.agentChatService.currentStoryboard()?.id));
-            const isDifferentWorkspace = workspaceId !== this.lastWorkspaceId;
+            if (shouldLoadDetail) {
+              const isDifferentSession =
+                (sessionId && sessionId !== this.currentSessionId) ||
+                (storyboardId &&
+                  Number(storyboardId) !==
+                    Number(this.agentChatService.currentStoryboard()?.id));
+              const isDifferentWorkspace = workspaceId !== this.lastWorkspaceId;
 
-            if (isDifferentSession || isDifferentWorkspace) {
-              this.lastWorkspaceId = workspaceId;
-              this.agentChatService
-                .getSessionDetail(
-                  workspaceId,
-                  sessionId || undefined,
-                  storyboardId ? Number(storyboardId) : undefined,
-                )
-                .subscribe({
-                  next: (res: SessionDetailResponse) => {
-                    if (res.storyboard) {
-                      if (res.storyboard.timeline_id) {
-                        this.timelineState.loadedTimelineId.set(undefined);
+              if (isDifferentSession || isDifferentWorkspace) {
+                this.lastWorkspaceId = workspaceId;
+                this.agentChatService
+                  .getSessionDetail(
+                    workspaceId,
+                    sessionId || undefined,
+                    storyboardId ? Number(storyboardId) : undefined,
+                  )
+                  .subscribe({
+                    next: (res: SessionDetailResponse) => {
+                      if (
+                        res.storyboard &&
+                        res.storyboard.workspace_id !== workspaceId
+                      ) {
+                        this.isProgrammaticWorkspaceSwitch = true;
+                        this.workspaceStateService.setActiveWorkspaceId(
+                          res.storyboard.workspace_id,
+                        );
+                        return;
                       }
-                      this.agentChatService.currentStoryboard.set(
-                        res.storyboard,
+                      if (res.storyboard) {
+                        if (res.storyboard.timeline_id) {
+                          this.timelineState.loadedTimelineId.set(undefined);
+                        }
+                        this.agentChatService.currentStoryboard.set(
+                          res.storyboard,
+                        );
+                      }
+                      if (res.session && res.session.id) {
+                        this.currentSessionId = res.session.id;
+                        this.agentChatService.selectedSessionId.set(
+                          res.session.id,
+                        );
+
+                        const messages = res.session.events || [];
+                        const mappedMessages =
+                          this.mapEventsToMessages(messages);
+                        this.chatMessages.set(mappedMessages);
+                        this.shouldScrollToBottom = true;
+                        this.checkAndResumePolling(res);
+
+                        // Synchronize URL: clear sessionId, set storyboardId
+                        void this.router.navigate([], {
+                          relativeTo: this.route,
+                          queryParams: {
+                            sessionId: null,
+                            storyboardId: res.storyboard?.id || null,
+                          },
+                          queryParamsHandling: 'merge',
+                        });
+                      } else if (res.storyboard) {
+                        // Storyboard exists but has no active session/conversation
+                        this.currentSessionId = null;
+                        this.agentChatService.selectedSessionId.set(null);
+                        this.chatMessages.set([]);
+                        this.addWelcomeMessage();
+                        this.shouldScrollToBottom = true;
+
+                        void this.router.navigate([], {
+                          relativeTo: this.route,
+                          queryParams: {
+                            sessionId: null,
+                            storyboardId: res.storyboard.id,
+                          },
+                          queryParamsHandling: 'merge',
+                        });
+                      } else {
+                        this.startNewChat();
+                      }
+                      this.isLoadingHistory.set(false);
+                    },
+                    error: err => {
+                      console.error('Failed to preload workspace state:', err);
+                      handleErrorSnackbar(
+                        this.snackBar,
+                        err as any,
+                        'Preload Session Details',
                       );
-                    }
-                    if (res.session && res.session.id) {
-                      this.currentSessionId = res.session.id;
-                      this.agentChatService.selectedSessionId.set(
-                        res.session.id,
-                      );
-
-                      const messages = res.session.events || [];
-                      const mappedMessages = this.mapEventsToMessages(messages);
-                      this.chatMessages.set(mappedMessages);
-                      this.shouldScrollToBottom = true;
-                      this.checkAndResumePolling(res);
-
-                      // Synchronize URL: clear sessionId, set storyboardId
-                      void this.router.navigate([], {
-                        relativeTo: this.route,
-                        queryParams: {
-                          sessionId: null,
-                          storyboardId: res.storyboard?.id || null,
-                        },
-                        queryParamsHandling: 'merge',
-                      });
-                    } else if (res.storyboard) {
-                      // Storyboard exists but has no active session/conversation
-                      this.currentSessionId = null;
-                      this.agentChatService.selectedSessionId.set(null);
-                      this.chatMessages.set([]);
-                      this.addWelcomeMessage();
-                      this.shouldScrollToBottom = true;
-
-                      void this.router.navigate([], {
-                        relativeTo: this.route,
-                        queryParams: {
-                          sessionId: null,
-                          storyboardId: res.storyboard.id,
-                        },
-                        queryParamsHandling: 'merge',
-                      });
-                    } else {
+                      this.isLoadingHistory.set(false);
                       this.startNewChat();
-                    }
-                    this.isLoadingHistory.set(false);
-                  },
-                  error: err => {
-                    console.error('Failed to preload workspace state:', err);
-                    handleErrorSnackbar(
-                      this.snackBar,
-                      err as any,
-                      'Preload Session Details',
-                    );
-                    this.isLoadingHistory.set(false);
-                    this.startNewChat();
-                  },
-                });
+                    },
+                  });
+              } else {
+                this.isLoadingHistory.set(false);
+              }
             } else {
-              this.isLoadingHistory.set(false);
-            }
-          } else {
-            if ((sessionId || storyboardId) && this.lastWorkspaceId === null) {
-              handleErrorSnackbar(
-                this.snackBar,
-                new Error(
-                  'The requested session or storyboard does not exist in this workspace.',
-                ),
-                'Workspace Sync',
-              );
-            }
+              if (
+                (sessionId || storyboardId) &&
+                this.lastWorkspaceId === null
+              ) {
+                handleErrorSnackbar(
+                  this.snackBar,
+                  new Error(
+                    'The requested session or storyboard does not exist in this workspace.',
+                  ),
+                  'Workspace Sync',
+                );
+              }
 
-            this.lastWorkspaceId = workspaceId;
+              this.lastWorkspaceId = workspaceId;
+              this.startNewChat();
+            }
+          },
+          error: err => {
+            console.error('Error fetching sessions:', err);
+            if ((err as any)?.status === 503) {
+              console.warn(
+                'Backend returned 503: Agent Engine is likely missing AGENT_ENGINE_RESOURCE_NAME in environment.',
+              );
+              this.agentUnavailable.set(true);
+            } else {
+              handleErrorSnackbar(this.snackBar, err as any, 'Fetch Sessions');
+            }
+            this.isLoadingHistory.set(false);
             this.startNewChat();
-          }
-        },
-        error: err => {
-          console.error('Error fetching sessions:', err);
-          if ((err as any)?.status === 503) {
-            console.warn(
-              'Backend returned 503: Agent Engine is likely missing AGENT_ENGINE_RESOURCE_NAME in environment.',
-            );
-            this.agentUnavailable.set(true);
-          } else {
-            handleErrorSnackbar(this.snackBar, err, 'Fetch Sessions');
-          }
-          this.isLoadingHistory.set(false);
-          this.startNewChat();
-        },
-      });
+          },
+        });
     });
   }
 
@@ -608,7 +667,7 @@ export class ChatInterfaceComponent
     });
   }
   onSessionChange(sessionId: string) {
-    if (sessionId && Number(sessionId) !== Number(this.currentSessionId)) {
+    if (sessionId && sessionId !== this.currentSessionId) {
       this.currentSessionId = sessionId;
       this.loadChatMessages(sessionId);
     }

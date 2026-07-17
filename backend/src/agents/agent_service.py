@@ -645,7 +645,7 @@ class AgentService:
                         [f"- {aid}" for aid in attached_assets]
                     )
                     injections.append(
-                        f"The user has attached the following reference assets:\n{asset_list}\nUse the load_asset_and_save_as_artifact tool to load them if needed."
+                        f"The user has attached the following reference assets:\n{asset_list}"
                     )
 
                 if injections:

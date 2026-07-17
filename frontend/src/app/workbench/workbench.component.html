@@ -523,21 +523,19 @@
           <!-- The Video Element -->
           <!-- Video Elements (Double Buffering) -->
           <video
-            #videoA
-            class="max-w-full max-h-full object-contain shadow-2xl rounded-lg absolute transition-opacity duration-200"
+            *ngFor="let clip of timelineState.videoClips(); let idx = index"
+            #timelineVideo
+            preload="auto"
+            class="max-w-full max-h-full object-contain shadow-2xl rounded-lg absolute"
             [class.hidden]="!timelineState.activeVideoClip()"
             [class.invisible]="isVideoHidden()"
-            [style.filter]="videoFilter()"
             [muted]="true"
           ></video>
-          <video
-            #videoB
-            class="max-w-full max-h-full object-contain shadow-2xl rounded-lg absolute transition-opacity duration-200"
-            [class.hidden]="!timelineState.activeVideoClip()"
-            [class.invisible]="isVideoHidden()"
-            [style.filter]="videoFilter()"
-            [muted]="true"
-          ></video>
+
+          <div *ngIf="playbackService.isVideoLoading() && timelineState.activeVideoClip() && timelineState.activeVideoClip()?.id === timelineState.videoClips()[0]?.id"
+            class="absolute inset-0 flex items-center justify-center bg-black/40 rounded-lg z-10">
+            <mat-spinner diameter="40"></mat-spinner>
+          </div>
 
           <!-- Hidden Audio (Multi-track) -->
           <ng-container *ngFor="let src of activeAudioSrcs(); let i = index">
@@ -816,7 +814,7 @@
 
             <div class="flex-1 flex flex-col md:w-[calc(100%-18rem)]">
               <!-- Main Scrollable Timeline -->
-              <div #timelineContainer class="relative !pl-4 overflow-hidden" (mousedown)="onTimelineMouseDown($event)">
+              <div #timelineContainer class="relative !pl-5 overflow-hidden" (mousedown)="onTimelineMouseDown($event)">
                 <div class="relative h-full" [style.width.px]="timelineWidth()" [style.transform]="
                                   'translateX(-' + timelineState.scrollOffset() + 'px)'
                   "
@@ -923,7 +921,7 @@
                     >
                       <!-- Waveform Graphic -->
                       <div
-                        class="flex items-center gap-0.5 h-full w-full justify-center px-2 opacity-80"
+                        class="flex items-center gap-0.5 h-full w-full justify-center px-0.5 opacity-80"
                       >
                         <div
                           *ngFor="
