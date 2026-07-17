@@ -1316,6 +1316,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
       data: {
         mimeType: 'video/*',
         multiSelect: false,
+        includeExternal: true,
       },
       panelClass: 'image-selector-dialog',
     });

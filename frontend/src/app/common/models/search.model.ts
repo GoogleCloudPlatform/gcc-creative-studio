@@ -130,6 +130,7 @@ export interface GallerySearchDto {
   status?: string;
   workspaceId?: number;
   includeDeleted?: boolean;
+  includeExternal?: boolean;
   startDate?: string;
   endDate?: string;
   itemType?: string;
