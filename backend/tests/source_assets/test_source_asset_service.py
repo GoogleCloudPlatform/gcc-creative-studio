@@ -360,6 +360,8 @@ async def test_get_all_vto_assets(service, mock_dependencies, sample_user):
 async def test_convert_to_png_success(service):
     # Setup mock UploadFile
     mock_file = AsyncMock()
+    mock_file.filename = "image.png"
+    mock_file.content_type = "image/png"
     mock_file.read.return_value = get_dummy_image_bytes()
 
     png_bytes = await service.convert_to_png(mock_file)
@@ -790,18 +792,38 @@ async def test_finalize_direct_upload_non_admin_scope_error(
 
 
 @pytest.mark.anyio
-async def test_convert_to_png_heic_heif_success(service):
-    import pillow_heif
+async def test_convert_to_png_heic_heif_success(service, monkeypatch):
     from fastapi import UploadFile
 
-    img = PILImage.new("RGB", (20, 20), color="green")
-    buf = io.BytesIO()
-    try:
-        img.save(buf, format="HEIF")
-    except Exception:
-        pillow_heif.from_pillow(img).save(buf, format="HEIF")
-    buf.seek(0)
+    class MockHEIC2PNG:
+        def __init__(self, path, quality=None, overwrite=False):
+            self.path = path
+            self.overwrite = overwrite
+
+        def save(self, output_path):
+            img = PILImage.new("RGB", (20, 20), color="green")
+            img.save(output_path, format="PNG")
+
+    monkeypatch.setattr("heic2png.HEIC2PNG", MockHEIC2PNG)
+
+    buf = io.BytesIO(b"fake_heic_bytes")
     upload_file = UploadFile(file=buf, filename="test.heic")
+    png_bytes = await service.convert_to_png(upload_file)
+    assert png_bytes is not None
+    out_img = PILImage.open(io.BytesIO(png_bytes))
+    assert out_img.format == "PNG"
+    assert out_img.size == (20, 20)
+
+
+@pytest.mark.anyio
+async def test_convert_to_png_standard_image_success(service):
+    from fastapi import UploadFile
+
+    img = PILImage.new("RGB", (20, 20), color="blue")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    buf.seek(0)
+    upload_file = UploadFile(file=buf, filename="test.jpg")
     png_bytes = await service.convert_to_png(upload_file)
     assert png_bytes is not None
     out_img = PILImage.open(io.BytesIO(png_bytes))

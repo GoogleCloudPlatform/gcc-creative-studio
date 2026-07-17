@@ -24,9 +24,6 @@ import uuid
 
 from fastapi import Depends, HTTPException, UploadFile, status
 from PIL import Image as PILImage
-import pillow_heif
-
-pillow_heif.register_heif_opener()
 
 from src.auth.iam_signer_credentials_service import IamSignerCredentials
 from src.common.base_dto import (
@@ -579,11 +576,10 @@ class SourceAssetService:
 
         if request_dto.asset_type:
             final_asset_type = request_dto.asset_type
+        elif content_type.startswith("video/"):
+            final_asset_type = AssetTypeEnum.GENERIC_VIDEO
         else:
-            if content_type.startswith("video/"):
-                final_asset_type = AssetTypeEnum.GENERIC_VIDEO
-            else:
-                final_asset_type = AssetTypeEnum.GENERIC_IMAGE
+            final_asset_type = AssetTypeEnum.GENERIC_IMAGE
 
         final_aspect_ratio = (
             request_dto.aspect_ratio or AspectRatioEnum.RATIO_1_1
@@ -614,7 +610,7 @@ class SourceAssetService:
         return await self._create_asset_response(new_asset)
 
     async def convert_to_png(self, file: UploadFile) -> bytes:
-        """Converts an uploaded image file to PNG format in memory."""
+        """Converts an uploaded image file (including HEIC/HEIF) to PNG format in memory."""
         try:
             contents = await file.read()
             if not contents:
@@ -622,6 +618,40 @@ class SourceAssetService:
                     status.HTTP_400_BAD_REQUEST,
                     "Cannot convert an empty file.",
                 )
+
+            filename = file.filename or ""
+            content_type = file.content_type or ""
+            is_heic = filename.lower().endswith(
+                (".heic", ".heif")
+            ) or content_type.lower() in ["image/heic", "image/heif"]
+
+            if is_heic:
+                import tempfile
+                from heic2png import HEIC2PNG
+
+                with tempfile.NamedTemporaryFile(
+                    suffix=".heic", delete=False
+                ) as temp_in:
+                    temp_in.write(contents)
+                    temp_in_path = temp_in.name
+
+                try:
+                    heic_img = HEIC2PNG(temp_in_path, overwrite=True)
+                    with tempfile.NamedTemporaryFile(
+                        suffix=".png", delete=False
+                    ) as temp_out:
+                        temp_out_path = temp_out.name
+
+                    try:
+                        heic_img.save(temp_out_path)
+                        with open(temp_out_path, "rb") as f:
+                            return f.read()
+                    finally:
+                        if os.path.exists(temp_out_path):
+                            os.remove(temp_out_path)
+                finally:
+                    if os.path.exists(temp_in_path):
+                        os.remove(temp_in_path)
 
             pil_image = PILImage.open(io.BytesIO(contents))
 
@@ -636,6 +666,8 @@ class SourceAssetService:
             with io.BytesIO() as output:
                 pil_image.save(output, format="PNG")
                 return output.getvalue()
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error("Failed to convert image to PNG: %s", e, exc_info=True)
             raise HTTPException(

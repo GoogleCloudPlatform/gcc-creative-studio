@@ -642,11 +642,11 @@ dependencies = [
     { name = "google-cloud-workflows" },
     { name = "google-genai" },
     { name = "gunicorn" },
+    { name = "heic2png" },
     { name = "httpx" },
     { name = "mediapy" },
     { name = "numpy" },
     { name = "pandas" },
-    { name = "pillow-heif" },
     { name = "pydantic", extra = ["email"] },
     { name = "pydantic-settings" },
     { name = "pypdf" },
@@ -696,11 +696,11 @@ requires-dist = [
     { name = "google-cloud-workflows", specifier = ">=1.19.0" },
     { name = "google-genai", specifier = ">=1.52.0" },
     { name = "gunicorn", specifier = ">=23.0.0" },
+    { name = "heic2png", specifier = ">=1.0.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "mediapy", specifier = ">=1.2.4" },
     { name = "numpy", specifier = ">=2.3.3" },
     { name = "pandas", specifier = ">=2.3.3" },
-    { name = "pillow-heif", specifier = ">=0.18.0" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.11.10" },
     { name = "pydantic-settings", specifier = ">=2.11.0" },
     { name = "pypdf", specifier = ">=6.1.1" },
@@ -1670,6 +1670,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/1d/17/afa56379f94ad0fe8defd37d6eb3f89a25404ffc71d4d848893d270325fc/h2-4.3.0.tar.gz", hash = "sha256:6c59efe4323fa18b47a632221a1888bd7fde6249819beda254aeca909f221bf1", size = 2152026, upload-time = "2025-08-23T18:12:19.778Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/69/b2/119f6e6dcbd96f9069ce9a2665e0146588dc9f88f29549711853645e736a/h2-4.3.0-py3-none-any.whl", hash = "sha256:c438f029a25f7945c69e0ccf0fb951dc3f73a5f6412981daee861431b70e2bdd", size = 61779, upload-time = "2025-08-23T18:12:17.779Z" },
+]
+
+[[package]]
+name = "heic2png"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pillow" },
+    { name = "pillow-heif" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/91/2a/0bc5c742368a15ae8469af742ac2b6a01739b5c58468a2662781d639925e/heic2png-1.2.0.tar.gz", hash = "sha256:2c95313b99fcd45aed3b5b5e6b48137e86d68d30d288fef575480fa587e4604b", size = 11604, upload-time = "2025-09-23T08:38:37.271Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/64/72/3184fbc08287199f0530c790fe29fc6e111a1516db80f2d530300ca196cd/heic2png-1.2.0-py3-none-any.whl", hash = "sha256:32e9ce0c1349bdbd435d69b6626063962be73fb9b39fed2c562d8ef8a55f1f57", size = 9603, upload-time = "2025-09-23T08:38:36.123Z" },
 ]
 
 [[package]]
