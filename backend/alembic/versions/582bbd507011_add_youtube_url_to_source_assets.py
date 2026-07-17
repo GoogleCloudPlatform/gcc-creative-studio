@@ -15,7 +15,7 @@
 """add_external_url_to_source_assets
 
 Revision ID: 582bbd507011
-Revises: f7df23ff0c1d
+Revises: 7ec3aed70c3f
 Create Date: 2026-07-13 16:06:40.894364
 
 """
@@ -27,7 +27,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "582bbd507011"
-down_revision: Union[str, None] = "f7df23ff0c1d"
+down_revision: Union[str, None] = "7ec3aed70c3f"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
