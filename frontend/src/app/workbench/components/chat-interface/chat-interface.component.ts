@@ -250,6 +250,7 @@ export class ChatInterfaceComponent
       if (isWorkspaceChanged) {
         if (this.isProgrammaticWorkspaceSwitch) {
           this.isProgrammaticWorkspaceSwitch = false;
+          this.lastWorkspaceId = workspaceId;
         } else {
           // Clean timeline
           this.timelineState.loadedTimelineId.set(undefined);
@@ -268,9 +269,9 @@ export class ChatInterfaceComponent
           this.agentChatService.currentStoryboard.set(null);
           this.addWelcomeMessage();
           this.shouldScrollToBottom = true;
+          this.lastWorkspaceId = workspaceId;
 
           if (storyboardId || sessionId) {
-            this.lastWorkspaceId = workspaceId;
             void this.router.navigate([], {
               relativeTo: this.route,
               queryParams: {
