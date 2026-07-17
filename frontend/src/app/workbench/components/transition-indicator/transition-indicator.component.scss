@@ -1,0 +1,13 @@
+.transition-icon-wrapper {
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+  &.active-transition {
+    border-color: rgba(59, 130, 246, 0.5);
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.5), 0 2px 5px rgba(59, 130, 246, 0.1);
+  }
+
+  &:hover {
+    border-color: #3b82f6; /* blue-500 */
+    background-color: #27272a; /* zinc-700 */
+  }
+}

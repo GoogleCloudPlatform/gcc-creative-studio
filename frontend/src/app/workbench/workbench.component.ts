@@ -1776,4 +1776,43 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       });
     return subject.asObservable();
   }
+
+  onTransitionChange(event: {
+    role: 'in' | 'out' | 'middle';
+    index?: number;
+    type: TransitionType;
+    duration_seconds: number;
+  }) {
+    if (event.role === 'in') {
+      this.timelineState.transitionIn.set({
+        type: event.type,
+        duration_seconds: event.duration_seconds,
+      });
+    } else if (event.role === 'out') {
+      this.timelineState.transitionOut.set({
+        type: event.type,
+        duration_seconds: event.duration_seconds,
+      });
+    } else if (event.role === 'middle' && event.index !== undefined) {
+      this.timelineState.transitions.update(transitions => {
+        const updated = [...transitions];
+        while (updated.length <= event.index!) {
+          updated.push({type: TransitionType.NONE, duration_seconds: 0});
+        }
+        updated[event.index!] = {
+          type: event.type,
+          duration_seconds: event.duration_seconds,
+        };
+        return updated;
+      });
+    }
+    this.saveTimeline().subscribe();
+  }
+
+  getLastVideoClipEndTime(): number {
+    const clips = this.timelineState.videoClips();
+    if (clips.length === 0) return 0;
+    const lastClip = clips[clips.length - 1];
+    return lastClip.startTime + lastClip.duration;
+  }
 }
