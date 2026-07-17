@@ -33,7 +33,7 @@ export class SafeUrlPipe implements PipeTransform {
     if (type === 'youtube') {
       const videoId = extractYouTubeVideoId(url);
       return this.sanitizer.bypassSecurityTrustResourceUrl(
-        `https://www.youtube.com/embed/${videoId}`,
+        videoId ? `https://www.youtube.com/embed/${videoId}` : '',
       );
     }
     return this.sanitizer.bypassSecurityTrustResourceUrl(url);

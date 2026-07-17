@@ -707,7 +707,7 @@ def _process_image_in_background(
                                             mime_type="video/*",
                                         )
                                     )
-                                else:
+                                elif source_asset.gcs_uri:
                                     source_assets.append(
                                         SourceAssetLink(
                                             asset_id=asset_id,
@@ -719,6 +719,11 @@ def _process_image_in_background(
                                             gcs_uri=source_asset.gcs_uri,
                                             mime_type=source_asset.mime_type,
                                         ),
+                                    )
+                                else:
+                                    worker_logger.warning(
+                                        "Source asset with ID %s has no GCS URI or external URL.",
+                                        asset_id,
                                     )
                             else:
                                 worker_logger.warning(
