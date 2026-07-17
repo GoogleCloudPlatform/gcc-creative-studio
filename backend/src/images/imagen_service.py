@@ -704,7 +704,7 @@ def _process_image_in_background(
                                     reference_parts_for_api.append(
                                         types.Part.from_uri(
                                             file_uri=source_asset.external_url,
-                                            mime_type="video/*",
+                                            mime_type="video/mp4",
                                         )
                                     )
                                 elif source_asset.gcs_uri:
@@ -754,7 +754,7 @@ def _process_image_in_background(
                                     reference_parts_for_api.append(
                                         types.Part.from_uri(
                                             file_uri=gcs_uri,
-                                            mime_type="video/*",
+                                            mime_type="video/mp4",
                                         )
                                     )
                                 else:
@@ -794,7 +794,7 @@ def _process_image_in_background(
                                     reference_parts_for_api.append(
                                         types.Part.from_uri(
                                             file_uri=ref_uri,
-                                            mime_type="video/*",
+                                            mime_type="video/mp4",
                                         )
                                     )
                                     source_media_items_list.append(
@@ -849,7 +849,7 @@ def _process_image_in_background(
                                     reference_parts_for_api.append(
                                         types.Part.from_uri(
                                             file_uri=video_asset.external_url,
-                                            mime_type="video/*",
+                                            mime_type="video/mp4",
                                         )
                                     )
                                     source_assets.append(
@@ -960,7 +960,7 @@ def _process_image_in_background(
                         reference_parts_for_api.append(
                             types.Part.from_uri(
                                 file_uri=youtube_url,
-                                mime_type="video/*",
+                                mime_type="video/mp4",
                             )
                         )
 
