@@ -140,6 +140,7 @@ class CreateImagenDto(BaseDto):
     )
 
     @field_validator("external_url")
+    @classmethod
     def validate_youtube_url(cls, value: str | None) -> str | None:
         if not value:
             return value

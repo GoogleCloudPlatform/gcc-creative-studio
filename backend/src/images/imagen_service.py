@@ -901,8 +901,7 @@ def _process_image_in_background(
 
                         user_id = media_item_obj.user_id
                         if not user_id and media_item_obj.user_email:
-                            user = await asyncio.to_thread(
-                                user_repo.get_by_email,
+                            user = await user_repo.get_by_email(
                                 media_item_obj.user_email,
                             )
                             if user:

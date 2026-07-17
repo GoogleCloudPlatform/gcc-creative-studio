@@ -105,7 +105,9 @@ class GalleryService:
             == AssetTypeEnum.YOUTUBE_VIDEO
         ):
             is_youtube = True
-        elif isinstance(getattr(asset_doc, "external_url", None), str):
+        elif isinstance(
+            getattr(asset_doc, "external_url", None), str
+        ) and extract_youtube_video_id(asset_doc.external_url):
             is_youtube = True
 
         if is_youtube:
