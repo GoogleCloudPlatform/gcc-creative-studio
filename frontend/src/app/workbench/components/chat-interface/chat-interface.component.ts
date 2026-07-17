@@ -96,10 +96,11 @@ export class ChatInterfaceComponent
   currentSessionId: string | null = this.agentChatService.selectedSessionId();
   private lastWorkspaceId: number | null =
     this.workspaceStateService.getActiveWorkspaceId();
+  private isProgrammaticWorkspaceSwitch = false;
 
   private sessionSelectorEffect = effect(() => {
     const sessionId = this.agentChatService.selectedSessionId();
-    if (sessionId && Number(sessionId) !== Number(this.currentSessionId)) {
+    if (sessionId && sessionId !== this.currentSessionId) {
       this.currentSessionId = sessionId;
       this.loadChatMessages(sessionId);
     }
@@ -243,6 +244,46 @@ export class ChatInterfaceComponent
       const storyboardId = params['storyboardId'];
       const sessionId = params['sessionId'];
 
+      const isWorkspaceChanged =
+        this.lastWorkspaceId !== null && this.lastWorkspaceId !== workspaceId;
+      this.lastWorkspaceId = workspaceId;
+
+      if (isWorkspaceChanged) {
+        if (this.isProgrammaticWorkspaceSwitch) {
+          this.isProgrammaticWorkspaceSwitch = false;
+        } else {
+          // Clean timeline
+          this.timelineState.loadedTimelineId.set(undefined);
+          this.timelineState.timelineClips.set([]);
+          this.timelineState.transitions.set([]);
+          this.timelineState.transitionIn.set(null);
+          this.timelineState.transitionOut.set(null);
+
+          // Reset chat interface
+          this.agentChatService.stopPolling();
+          this.isLoadingHistory.set(false);
+          this.currentSessionId = null;
+          this.agentChatService.selectedSessionId.set(null);
+          this.chatMessages.set([]);
+          this.sessions.set([]);
+          this.agentChatService.currentStoryboard.set(null);
+          this.addWelcomeMessage();
+          this.shouldScrollToBottom = true;
+
+          if (storyboardId || sessionId) {
+            void this.router.navigate([], {
+              relativeTo: this.route,
+              queryParams: {
+                sessionId: null,
+                storyboardId: null,
+              },
+              queryParamsHandling: 'merge',
+            });
+            return;
+          }
+        }
+      }
+
       const isExplicitNewChat =
         !sessionId &&
         !storyboardId &&
@@ -267,10 +308,7 @@ export class ChatInterfaceComponent
             const sessionExistsInWorkspace =
               sessions &&
               sessions.some(s => {
-                if (
-                  sessionId &&
-                  (s.id === sessionId || Number(s.id) === Number(sessionId))
-                ) {
+                if (sessionId && s.id === sessionId) {
                   return true;
                 }
                 if (
@@ -290,8 +328,7 @@ export class ChatInterfaceComponent
 
             if (shouldLoadDetail) {
               const isDifferentSession =
-                (sessionId &&
-                  Number(sessionId) !== Number(this.currentSessionId)) ||
+                (sessionId && sessionId !== this.currentSessionId) ||
                 (storyboardId &&
                   Number(storyboardId) !==
                     Number(this.agentChatService.currentStoryboard()?.id));
@@ -307,6 +344,16 @@ export class ChatInterfaceComponent
                   )
                   .subscribe({
                     next: (res: SessionDetailResponse) => {
+                      if (
+                        res.storyboard &&
+                        res.storyboard.workspace_id !== workspaceId
+                      ) {
+                        this.isProgrammaticWorkspaceSwitch = true;
+                        this.workspaceStateService.setActiveWorkspaceId(
+                          res.storyboard.workspace_id,
+                        );
+                        return;
+                      }
                       if (res.storyboard) {
                         if (res.storyboard.timeline_id) {
                           this.timelineState.loadedTimelineId.set(undefined);
@@ -619,7 +666,7 @@ export class ChatInterfaceComponent
     });
   }
   onSessionChange(sessionId: string) {
-    if (sessionId && Number(sessionId) !== Number(this.currentSessionId)) {
+    if (sessionId && sessionId !== this.currentSessionId) {
       this.currentSessionId = sessionId;
       this.loadChatMessages(sessionId);
     }
