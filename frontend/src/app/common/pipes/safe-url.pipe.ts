@@ -27,11 +27,12 @@ export class SafeUrlPipe implements PipeTransform {
   transform(url: string, type?: string): SafeResourceUrl {
     // If type is "youtube" extract videoId and return youtube embed url
     if (type === 'youtube') {
-      const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+      const regExp =
+        /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
       const match = url.match(regExp);
       const videoId = match ? match[2] : null;
       return this.sanitizer.bypassSecurityTrustResourceUrl(
-        `https://www.youtube.com/embed/${videoId}`
+        `https://www.youtube.com/embed/${videoId}`,
       );
     }
     return this.sanitizer.bypassSecurityTrustResourceUrl(url);
