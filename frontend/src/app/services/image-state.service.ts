@@ -38,7 +38,7 @@ export interface ImageState {
   enhancePrompt: boolean;
   mode: string;
   referenceVideo: ReferenceVideo | null;
-  referenceVideoYoutubeUrl: string | null;
+  externalUrl: string | null;
 }
 
 @Injectable({
@@ -67,7 +67,7 @@ export class ImageStateService {
       enhancePrompt: false,
       mode: 'Text to Image',
       referenceVideo: null,
-      referenceVideoYoutubeUrl: null,
+      externalUrl: null,
     };
 
     let savedState: ImageState | null = null;
@@ -92,7 +92,7 @@ export class ImageStateService {
               ...parsed,
               model: loadedModel,
               referenceVideo: null,
-              referenceVideoYoutubeUrl: null,
+              externalUrl: null,
             };
           }
         }
@@ -116,7 +116,7 @@ export class ImageStateService {
         // Don't save reference files to localStorage
         const partialState: Partial<ImageState> = {...updated};
         delete partialState.referenceVideo;
-        delete partialState.referenceVideoYoutubeUrl;
+        delete partialState.externalUrl;
         localStorage.setItem(STORAGE_KEY, JSON.stringify(partialState));
       } catch (e) {
         console.error('Failed to save image state to localStorage', e);

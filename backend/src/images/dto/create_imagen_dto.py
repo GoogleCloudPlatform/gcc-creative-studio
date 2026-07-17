@@ -132,12 +132,12 @@ class CreateImagenDto(BaseDto):
         default=None,
         description="Optional video asset reference for Video to Image generation.",
     )
-    reference_video_youtube_url: str | None = Field(
+    external_url: str | None = Field(
         default=None,
-        description="Optional YouTube video URL for Video to Image generation.",
+        description="Optional external URL (e.g. YouTube video URL) for Video to Image generation.",
     )
 
-    @field_validator("reference_video_youtube_url")
+    @field_validator("external_url")
     def validate_youtube_url(cls, value: str | None) -> str | None:
         if not value:
             return value
@@ -203,7 +203,7 @@ class CreateImagenDto(BaseDto):
             len(self.source_media_items) if self.source_media_items else 0
         )
         video_refs_count = (1 if self.reference_video else 0) + (
-            1 if self.reference_video_youtube_url else 0
+            1 if self.external_url else 0
         )
         total_inputs = (
             source_assets_count + generated_inputs_count + video_refs_count
@@ -216,9 +216,9 @@ class CreateImagenDto(BaseDto):
                 f"Aspect ratio {self.aspect_ratio} is not supported for model {model.value}.",
             )
 
-        if self.reference_video and self.reference_video_youtube_url:
+        if self.reference_video and self.external_url:
             raise ValueError(
-                "Cannot provide both a reference video file and a YouTube URL simultaneously."
+                "Cannot provide both a reference video file and an external URL simultaneously."
             )
 
         if video_refs_count > 0 and not model.is_gemini_image_model:

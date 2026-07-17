@@ -34,7 +34,7 @@ export type ImagenRequest = {
   googleSearch?: boolean;
   resolution?: '1K' | '2K' | '4K';
   referenceVideo?: AssetReferenceDto | null;
-  referenceVideoYoutubeUrl?: string | null;
+  externalUrl?: string | null;
 };
 
 export type SourceMediaItemLink = {

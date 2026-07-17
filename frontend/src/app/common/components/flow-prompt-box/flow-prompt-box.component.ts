@@ -151,7 +151,7 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   @Output() openAudioSelectorForReference = new EventEmitter<void>();
   @Output() clearReferenceAudio = new EventEmitter<Event>();
   @Output() openVideoUrlInputForReference = new EventEmitter<void>();
-  @Output() clearReferenceVideoYoutubeUrl = new EventEmitter<void>();
+  @Output() clearExternalUrl = new EventEmitter<void>();
 
   @Input() image1Preview: string | null = null;
   @Input() image2Preview: string | null = null;
@@ -159,14 +159,14 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   @Input() referenceImagesType: 'ASSET' | 'STYLE' = 'ASSET';
   @Input() referenceVideo: any | null = null;
   @Input() referenceAudio: any | null = null;
-  private _referenceVideoYoutubeUrl: string | null = null;
-  private referenceVideoYoutubeUrlSignal = signal<string | null>(null);
-  @Input() set referenceVideoYoutubeUrl(val: string | null) {
-    this._referenceVideoYoutubeUrl = val;
-    this.referenceVideoYoutubeUrlSignal.set(val);
+  private _externalUrl: string | null = null;
+  private externalUrlSignal = signal<string | null>(null);
+  @Input() set externalUrl(val: string | null) {
+    this._externalUrl = val;
+    this.externalUrlSignal.set(val);
   }
-  get referenceVideoYoutubeUrl(): string | null {
-    return this._referenceVideoYoutubeUrl;
+  get externalUrl(): string | null {
+    return this._externalUrl;
   }
 
   @ViewChild('modeTrigger') modeTrigger!: ElementRef;
@@ -237,7 +237,7 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   );
 
   youtubeVideoId = computed(() =>
-    extractYouTubeVideoId(this.referenceVideoYoutubeUrlSignal()),
+    extractYouTubeVideoId(this.externalUrlSignal()),
   );
 
   youtubeThumbnailUrl = computed(() =>

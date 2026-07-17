@@ -232,7 +232,7 @@
         <!-- Only for Video to Image mode -->
         @if (mode === 'Video to Image') {
           <!-- Video Reference Slot -->
-          @if (!referenceVideoYoutubeUrl) {
+          @if (!externalUrl) {
             <div class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
             (click)="!referenceVideo && openVideoSelectorForReference.emit()">
               @if (!referenceVideo) {
@@ -257,9 +257,9 @@
           <!-- Video Reference YouTube Link Slot -->
           @if (!referenceVideo) {
             <div class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
-            (click)="!referenceVideoYoutubeUrl && openVideoUrlInputForReference.emit()"
-            [matTooltip]="referenceVideoYoutubeUrl || ''">
-              @if (!referenceVideoYoutubeUrl) {
+            (click)="!externalUrl && openVideoUrlInputForReference.emit()"
+            [matTooltip]="externalUrl || ''">
+              @if (!externalUrl) {
                 <mat-icon class="text-neutral-500">link</mat-icon>
                 <span class="absolute bottom-1 text-[8px] text-neutral-500">YouTube Link</span>
               } @else {
@@ -277,7 +277,7 @@
                   <span class="absolute bottom-1 text-[8px] text-neutral-300 max-w-[64px] truncate">YouTube</span>
                 }
                 <button
-                  (click)="$event.stopPropagation(); clearReferenceVideoYoutubeUrl.emit()"
+                  (click)="$event.stopPropagation(); clearExternalUrl.emit()"
                   class="absolute -right-2 -top-2 z-10 rounded-full bg-neutral-900 p-0.5 text-neutral-400 hover:text-white"
                 >
                   <mat-icon class="!h-4 !w-4 text-sm">close</mat-icon>

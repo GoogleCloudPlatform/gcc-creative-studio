@@ -88,7 +88,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
   sourceMediaItems: (SourceMediaItemLink | null)[] = [];
   activeWorkspaceId$: Observable<number | null>;
   referenceVideo: ReferenceVideo | null = null;
-  referenceVideoYoutubeUrl: string | null = null;
+  externalUrl: string | null = null;
 
   @HostListener('window:keydown.control.enter', ['$event'])
   handleCtrlEnter(event: Event) {
@@ -449,7 +449,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
           ?.viewValue || 'No';
       this.service.imagePrompt = state.prompt;
       this.referenceVideo = state.referenceVideo;
-      this.referenceVideoYoutubeUrl = state.referenceVideoYoutubeUrl;
+      this.externalUrl = state.externalUrl;
     });
   }
 
@@ -471,7 +471,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
       enhancePrompt: this.searchRequest.enhancePrompt || false,
       mode: this.currentMode,
       referenceVideo: this.referenceVideo,
-      referenceVideoYoutubeUrl: this.referenceVideoYoutubeUrl,
+      externalUrl: this.externalUrl,
     });
   }
 
@@ -831,7 +831,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
           : undefined,
       workspaceId: activeWorkspaceId ?? undefined,
       referenceVideo,
-      referenceVideoYoutubeUrl: this.referenceVideoYoutubeUrl,
+      externalUrl: this.externalUrl,
     };
 
     this.isImageGenerating = true;
@@ -1347,7 +1347,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
         }
       }
 
-      this.referenceVideoYoutubeUrl = null;
+      this.externalUrl = null;
       this.saveState();
     });
   }
@@ -1369,7 +1369,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
 
       const videoId = extractYouTubeVideoId(url);
       if (videoId) {
-        this.referenceVideoYoutubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
+        this.externalUrl = `https://www.youtube.com/watch?v=${videoId}`;
         this.referenceVideo = null;
         handleInfoSnackbar(this._snackBar, 'YouTube URL added');
       } else {
@@ -1383,8 +1383,8 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     });
   }
 
-  clearReferenceVideoYoutubeUrl(): void {
-    this.referenceVideoYoutubeUrl = null;
+  clearExternalUrl(): void {
+    this.externalUrl = null;
     this.saveState();
   }
 }

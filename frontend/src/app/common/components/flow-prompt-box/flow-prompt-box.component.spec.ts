@@ -48,19 +48,18 @@ describe('FlowPromptBoxComponent', () => {
   });
 
   describe('YouTube preview helpers', () => {
-    it('should return null when referenceVideoYoutubeUrl is null or empty', () => {
-      component.referenceVideoYoutubeUrl = null;
+    it('should return null when externalUrl is null or empty', () => {
+      component.externalUrl = null;
       expect(component.youtubeVideoId()).toBeNull();
       expect(component.youtubeThumbnailUrl()).toBeNull();
 
-      component.referenceVideoYoutubeUrl = '';
+      component.externalUrl = '';
       expect(component.youtubeVideoId()).toBeNull();
       expect(component.youtubeThumbnailUrl()).toBeNull();
     });
 
     it('should extract video ID and generate thumbnail URL for standard youtube watch URLs', () => {
-      component.referenceVideoYoutubeUrl =
-        'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+      component.externalUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
       expect(component.youtubeVideoId()).toBe('dQw4w9WgXcQ');
       expect(component.youtubeThumbnailUrl()).toBe(
         'https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg',
@@ -68,7 +67,7 @@ describe('FlowPromptBoxComponent', () => {
     });
 
     it('should extract video ID for youtu.be short URLs', () => {
-      component.referenceVideoYoutubeUrl = 'https://youtu.be/dQw4w9WgXcQ';
+      component.externalUrl = 'https://youtu.be/dQw4w9WgXcQ';
       expect(component.youtubeVideoId()).toBe('dQw4w9WgXcQ');
       expect(component.youtubeThumbnailUrl()).toBe(
         'https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg',
@@ -76,7 +75,7 @@ describe('FlowPromptBoxComponent', () => {
     });
 
     it('should extract video ID for shorts URLs', () => {
-      component.referenceVideoYoutubeUrl =
+      component.externalUrl =
         'https://youtube.com/shorts/dQw4w9WgXcQ?feature=share';
       expect(component.youtubeVideoId()).toBe('dQw4w9WgXcQ');
       expect(component.youtubeThumbnailUrl()).toBe(
@@ -91,8 +90,8 @@ describe('FlowPromptBoxComponent', () => {
       fixture.detectChanges();
     });
 
-    it('should render link icon placeholder when referenceVideoYoutubeUrl is not set', () => {
-      component.referenceVideoYoutubeUrl = null;
+    it('should render link icon placeholder when externalUrl is not set', () => {
+      component.externalUrl = null;
       fixture.detectChanges();
 
       const spanEls = fixture.debugElement.queryAll(
@@ -104,9 +103,8 @@ describe('FlowPromptBoxComponent', () => {
       expect(youtubeSpan).toBeTruthy();
     });
 
-    it('should render thumbnail image preview when referenceVideoYoutubeUrl is valid', () => {
-      component.referenceVideoYoutubeUrl =
-        'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+    it('should render thumbnail image preview when externalUrl is valid', () => {
+      component.externalUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
       fixture.detectChanges();
 
       const imgEl = fixture.debugElement.query(
@@ -118,17 +116,16 @@ describe('FlowPromptBoxComponent', () => {
       );
     });
 
-    it('should emit clearReferenceVideoYoutubeUrl when close button is clicked', () => {
-      spyOn(component.clearReferenceVideoYoutubeUrl, 'emit');
-      component.referenceVideoYoutubeUrl =
-        'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+    it('should emit clearExternalUrl when close button is clicked', () => {
+      spyOn(component.clearExternalUrl, 'emit');
+      component.externalUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
       fixture.detectChanges();
 
       const closeBtn = fixture.debugElement.query(
         By.css('button.absolute.-right-2.-top-2'),
       );
       closeBtn.triggerEventHandler('click', {stopPropagation: () => {}});
-      expect(component.clearReferenceVideoYoutubeUrl.emit).toHaveBeenCalled();
+      expect(component.clearExternalUrl.emit).toHaveBeenCalled();
     });
   });
 });
