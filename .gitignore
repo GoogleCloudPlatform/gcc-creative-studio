@@ -10,6 +10,7 @@ local/
 
 # Terraform state and providers
 /.terraform/
+.terraform/
 
 # Ignore all content inside environments directories...
 **/environments/*
