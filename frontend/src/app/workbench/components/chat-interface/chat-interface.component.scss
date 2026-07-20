@@ -98,3 +98,14 @@ textarea {
   -ms-overflow-style: none;  /* IE and Edge */
   scrollbar-width: none;  /* Firefox */
 }
+
+::ng-deep .markdown-link {
+  color: #3b82f6 !important;
+  text-decoration: underline !important;
+  cursor: pointer;
+
+  &:hover {
+    color: #60a5fa !important;
+  }
+}
+

@@ -16,7 +16,7 @@
 
 import {Injectable} from '@angular/core';
 import {HttpClient} from '@angular/common/http';
-import {Observable} from 'rxjs';
+import {Observable, of} from 'rxjs';
 import {environment} from '../../environments/environment';
 import {TimelineDTO} from '../common/models/workbench.model';
 import {MediaItem} from '../common/models/media-item.model';
