@@ -522,15 +522,21 @@
 
           <!-- The Video Element -->
           <!-- Video Elements (Double Buffering) -->
-          <video
-            *ngFor="let clip of timelineState.videoClips(); let idx = index"
-            #timelineVideo
-            preload="auto"
-            class="max-w-full max-h-full object-contain shadow-2xl rounded-lg absolute"
+          <div
+            class="grid overflow-hidden rounded-lg shadow-2xl max-w-full max-h-full"
+            [style.aspect-ratio]="videoAspectRatio()"
             [class.hidden]="!timelineState.activeVideoClip()"
-            [class.invisible]="isVideoHidden()"
-            [muted]="true"
-          ></video>
+          >
+            <video
+              *ngFor="let clip of timelineState.videoClips(); let idx = index"
+              #timelineVideo
+              preload="auto"
+              class="col-start-1 row-start-1 max-w-full max-h-full object-contain"
+              [class.invisible]="isVideoHidden()"
+              (loadedmetadata)="onVideoMetadataLoaded($event)"
+              [muted]="true"
+            ></video>
+          </div>
 
           <div *ngIf="playbackService.isVideoLoading() && timelineState.activeVideoClip() && timelineState.activeVideoClip()?.id === timelineState.videoClips()[0]?.id"
             class="absolute inset-0 flex items-center justify-center bg-black/40 rounded-lg z-10">

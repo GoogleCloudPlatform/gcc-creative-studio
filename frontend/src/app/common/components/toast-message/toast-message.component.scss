@@ -17,6 +17,12 @@
 .toast-content {
   color: #ffffff;
   font-family: 'Google Sans', sans-serif !important;
+
+  a {
+    color: #93c5fd !important;
+    text-decoration: underline !important;
+    font-weight: bold !important;
+  }
 }
 
 .close-toast {

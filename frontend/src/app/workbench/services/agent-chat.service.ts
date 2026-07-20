@@ -201,8 +201,26 @@ export class AgentChatService {
       });
 
       if (!response.ok) {
-        if (callbacks.onError)
-          callbacks.onError(new Error('Failed to start chat session'));
+        let errorMsg = 'Failed to start chat session';
+        try {
+          const errData = await response.json();
+          if (errData && errData.detail) {
+            errorMsg =
+              typeof errData.detail === 'string'
+                ? errData.detail
+                : JSON.stringify(errData.detail);
+          }
+        } catch (e) {
+          try {
+            const rawText = await response.text();
+            if (rawText) errorMsg = rawText;
+          } catch (ex) {
+            // Ignore
+          }
+        }
+        if (callbacks.onError) {
+          callbacks.onError(new Error(errorMsg));
+        }
         return;
       }
 

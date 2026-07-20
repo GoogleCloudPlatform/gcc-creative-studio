@@ -532,7 +532,10 @@ class FFmpegService:
             else:
                 video_output_stream = normalized_streams[0]
 
-            if timeline.transition_in and timeline.transition_in.type.value != "none":
+            if (
+                timeline.transition_in
+                and timeline.transition_in.type.value != "none"
+            ):
                 t_in = timeline.transition_in
                 t_type = TRANSITION_MAP.get(t_in.type.value, t_in.type.value)
                 d = t_in.duration_seconds
@@ -549,7 +552,10 @@ class FFmpegService:
                     )
                 video_output_stream = "[v_fadein]"
 
-            if timeline.transition_out and timeline.transition_out.type.value != "none":
+            if (
+                timeline.transition_out
+                and timeline.transition_out.type.value != "none"
+            ):
                 t_out = timeline.transition_out
                 t_type = TRANSITION_MAP.get(t_out.type.value, t_out.type.value)
                 d = t_out.duration_seconds

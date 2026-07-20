@@ -61,7 +61,12 @@ import {
   TimelineClip,
   MediaAsset,
 } from '../common/models/workbench.model';
-import {ActivatedRoute} from '@angular/router';
+import {ActivatedRoute, Router} from '@angular/router';
+import {MatSnackBar} from '@angular/material/snack-bar';
+import {
+  handleErrorSnackbar,
+  handleSuccessSnackbar,
+} from '../utils/handleMessageSnackbar';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
 import {
   Subject,
@@ -180,8 +185,10 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   protected timelineState = inject(TimelineStateService);
   protected playbackService = inject(PlayheadSyncService);
   private route = inject(ActivatedRoute);
+  private router = inject(Router);
   private storyboardService = inject(StoryboardService);
   private galleryService = inject(GalleryService);
+  private snackBar = inject(MatSnackBar);
 
   private workspaceStateService = inject(WorkspaceStateService);
   private sourceAssetService = inject(SourceAssetService);
@@ -211,6 +218,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   isBrowser: boolean;
   lastSavedText = signal<string>('');
+  videoAspectRatio = signal<string>('16/9');
 
   private saveSubject = new Subject<void>();
   private saveSubscription?: Subscription;
@@ -1229,7 +1237,13 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   }
 
   onVideoEnded() {}
-  onMetadataLoaded() {}
+  onVideoMetadataLoaded(event: Event) {
+    const video = event.target as HTMLVideoElement;
+    if (video && video.videoWidth && video.videoHeight) {
+      const ratio = video.videoWidth / video.videoHeight;
+      this.videoAspectRatio.set(ratio.toString());
+    }
+  }
 
   // --- Download / Render ---
   downloadVideo() {
@@ -1264,6 +1278,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
                 if (status === 'FAILED') {
                   this.isDownloading.set(false);
                   this.lastSavedText.set('Render failed');
+                  handleErrorSnackbar(
+                    this.snackBar,
+                    {message: 'Video rendering failed.'},
+                    'Video Rendering',
+                  );
                   return false;
                 }
                 if (status === 'COMPLETED') {
@@ -1277,6 +1296,10 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
                 if (item.status?.toUpperCase() === 'COMPLETED') {
                   this.isDownloading.set(false);
                   this.lastSavedText.set('Render complete');
+
+                  const galleryUrl = `${window.location.origin}/gallery/${item.id}`;
+                  const message = `Video rendered successfully! <a href="${galleryUrl}" target="_blank">View in Gallery</a>`;
+                  handleSuccessSnackbar(this.snackBar, message, 20000);
 
                   if (item.presignedUrls && item.presignedUrls.length > 0) {
                     const url = item.presignedUrls[0];
@@ -1307,6 +1330,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
                 console.error('Polling failed', err);
                 this.isDownloading.set(false);
                 this.lastSavedText.set('Render failed');
+                handleErrorSnackbar(this.snackBar, err, 'Video Rendering');
               },
             });
         },
@@ -1314,6 +1338,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           console.error('Render request failed', err);
           this.isDownloading.set(false);
           this.lastSavedText.set('Render failed');
+          handleErrorSnackbar(this.snackBar, err, 'Start Video Rendering');
         },
       });
     };

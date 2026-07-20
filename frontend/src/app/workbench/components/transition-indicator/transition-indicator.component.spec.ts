@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { TransitionIndicatorComponent } from './transition-indicator.component';
-import { MatDialog } from '@angular/material/dialog';
-import { TransitionType } from '../../../common/models/workbench.model';
-import { NO_ERRORS_SCHEMA } from '@angular/core';
+import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {TransitionIndicatorComponent} from './transition-indicator.component';
+import {MatDialog} from '@angular/material/dialog';
+import {TransitionType} from '../../../common/models/workbench.model';
+import {NO_ERRORS_SCHEMA} from '@angular/core';
 
 describe('TransitionIndicatorComponent', () => {
   let component: TransitionIndicatorComponent;
@@ -30,23 +30,21 @@ describe('TransitionIndicatorComponent', () => {
 
     await TestBed.configureTestingModule({
       imports: [TransitionIndicatorComponent],
-      providers: [
-        { provide: MatDialog, useValue: mockMatDialog }
-      ],
-      schemas: [NO_ERRORS_SCHEMA]
-    }).overrideComponent(TransitionIndicatorComponent, {
-      set: {
-        providers: [
-          { provide: MatDialog, useValue: mockMatDialog }
-        ]
-      }
-    }).compileComponents();
+      providers: [{provide: MatDialog, useValue: mockMatDialog}],
+      schemas: [NO_ERRORS_SCHEMA],
+    })
+      .overrideComponent(TransitionIndicatorComponent, {
+        set: {
+          providers: [{provide: MatDialog, useValue: mockMatDialog}],
+        },
+      })
+      .compileComponents();
 
     fixture = TestBed.createComponent(TransitionIndicatorComponent);
     component = fixture.componentInstance;
     component.left = 100;
     component.transitionIndex = 0;
-    component.transition = { type: TransitionType.NONE, duration_seconds: 0 };
+    component.transition = {type: TransitionType.NONE, duration_seconds: 0};
     component.role = 'middle';
     fixture.detectChanges();
   });
@@ -62,22 +60,28 @@ describe('TransitionIndicatorComponent', () => {
     });
 
     it('should return blur_on for FADE transition type', () => {
-      component.transition = { type: TransitionType.FADE, duration_seconds: 1.0 };
+      component.transition = {type: TransitionType.FADE, duration_seconds: 1.0};
       expect(component.transitionIcon).toBe('blur_on');
     });
 
     it('should return keyboard_double_arrow_left for WIPE_LEFT transition type', () => {
-      component.transition = { type: TransitionType.WIPE_LEFT, duration_seconds: 1.0 };
+      component.transition = {
+        type: TransitionType.WIPE_LEFT,
+        duration_seconds: 1.0,
+      };
       expect(component.transitionIcon).toBe('keyboard_double_arrow_left');
     });
 
     it('should return keyboard_double_arrow_right for WIPE_RIGHT transition type', () => {
-      component.transition = { type: TransitionType.WIPE_RIGHT, duration_seconds: 1.0 };
+      component.transition = {
+        type: TransitionType.WIPE_RIGHT,
+        duration_seconds: 1.0,
+      };
       expect(component.transitionIcon).toBe('keyboard_double_arrow_right');
     });
 
     it('should return swap_horiz for NONE transition type', () => {
-      component.transition = { type: TransitionType.NONE, duration_seconds: 0 };
+      component.transition = {type: TransitionType.NONE, duration_seconds: 0};
       expect(component.transitionIcon).toBe('swap_horiz');
     });
   });
@@ -89,33 +93,33 @@ describe('TransitionIndicatorComponent', () => {
     });
 
     it('should return false if transition type is NONE', () => {
-      component.transition = { type: TransitionType.NONE, duration_seconds: 0 };
+      component.transition = {type: TransitionType.NONE, duration_seconds: 0};
       expect(component.hasActiveTransition).toBeFalse();
     });
 
     it('should return true if transition type is not NONE', () => {
-      component.transition = { type: TransitionType.FADE, duration_seconds: 1.0 };
+      component.transition = {type: TransitionType.FADE, duration_seconds: 1.0};
       expect(component.hasActiveTransition).toBeTrue();
     });
   });
 
   describe('hasChanges getter', () => {
     it('should return false initially when selected matches transition', () => {
-      component.transition = { type: TransitionType.FADE, duration_seconds: 1.5 };
+      component.transition = {type: TransitionType.FADE, duration_seconds: 1.5};
       component.selectedType = TransitionType.FADE;
       component.durationSeconds = 1.5;
       expect(component.hasChanges).toBeFalse();
     });
 
     it('should return true if selectedType has changed', () => {
-      component.transition = { type: TransitionType.FADE, duration_seconds: 1.5 };
+      component.transition = {type: TransitionType.FADE, duration_seconds: 1.5};
       component.selectedType = TransitionType.WIPE_LEFT;
       component.durationSeconds = 1.5;
       expect(component.hasChanges).toBeTrue();
     });
 
     it('should return true if durationSeconds has changed', () => {
-      component.transition = { type: TransitionType.FADE, duration_seconds: 1.5 };
+      component.transition = {type: TransitionType.FADE, duration_seconds: 1.5};
       component.selectedType = TransitionType.FADE;
       component.durationSeconds = 2.0;
       expect(component.hasChanges).toBeTrue();
@@ -138,11 +142,14 @@ describe('TransitionIndicatorComponent', () => {
 
   describe('openModal method', () => {
     it('should initialize selectedType and durationSeconds and open the dialog', () => {
-      component.transition = { type: TransitionType.FADE, duration_seconds: 2.5 };
+      component.transition = {type: TransitionType.FADE, duration_seconds: 2.5};
       component.openModal();
       expect(component.selectedType).toBe(TransitionType.FADE);
       expect(component.durationSeconds).toBe(2.5);
-      expect(mockMatDialog.open).toHaveBeenCalledWith(component.transitionModal, jasmine.any(Object));
+      expect(mockMatDialog.open).toHaveBeenCalledWith(
+        component.transitionModal,
+        jasmine.any(Object),
+      );
     });
 
     it('should initialize to default NONE/0 if transition is null', () => {
@@ -167,7 +174,7 @@ describe('TransitionIndicatorComponent', () => {
         role: 'middle',
         index: 5,
         type: TransitionType.FADE,
-        duration_seconds: 1.8
+        duration_seconds: 1.8,
       });
     });
 
@@ -183,7 +190,7 @@ describe('TransitionIndicatorComponent', () => {
         role: 'in',
         index: undefined,
         type: TransitionType.FADE,
-        duration_seconds: 1.5
+        duration_seconds: 1.5,
       });
     });
 
@@ -200,7 +207,7 @@ describe('TransitionIndicatorComponent', () => {
         role: 'middle',
         index: 2,
         type: TransitionType.NONE,
-        duration_seconds: 0
+        duration_seconds: 0,
       });
     });
   });

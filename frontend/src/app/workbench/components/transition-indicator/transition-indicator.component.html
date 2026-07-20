@@ -1,3 +1,19 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
 <div class="transition-indicator-container absolute z-40 flex items-center justify-center cursor-pointer"
   [style.left.px]="left" style="width: 24px; height: 24px; top: calc(50% - 12px);"
   (mousedown)="$event.stopPropagation()" (click)="$event.stopPropagation(); openModal()">
@@ -19,7 +35,7 @@
       <p class="text-sm">Configure transition settings here.</p>
       <div class="bg-black/20 rounded-lg p-4 text-xs space-y-4 font-mono">
         <div class="space-y-1.5">
-          <div class="text-[10px] text-white/50 uppercase font-bold tracking-wider mb-1">Transition Type:</div>
+          <div class="text-[10px] text-white/50 uppercase font-bold tracking-wider mb-4">Transition Type:</div>
           <div class="grid grid-cols-2 gap-2">
             <div *ngFor="let opt of transitionOptions" (click)="selectType(opt.type)"
               class="flex items-center gap-2 p-2 rounded-lg border bg-[#1c1c1f] transition-all hover:bg-zinc-800 cursor-pointer"
@@ -33,10 +49,14 @@
           </div>
         </div>
 
-        <div class="flex items-center justify-between">
-          <div class="text-[10px] text-white/50 uppercase font-bold tracking-wider mb-1">Duration (s):</div>
-          <input type="number" step="0.1" min="0" [(ngModel)]="durationSeconds"
-            class="bg-zinc-800 border border-white/10 rounded px-2 py-1 text-white w-20 outline-none focus:border-blue-500 font-mono text-xs" />
+        <div class="space-y-1 !mt-6">
+          <div class="text-[10px] text-white/50 uppercase font-bold tracking-wider">Duration (s):</div>
+          <div class="flex items-center gap-3">
+            <studio-slider [min]="0" [max]="4" [step]="0.1" [(ngModel)]="durationSeconds"
+              class="flex-grow w-full"></studio-slider>
+            <input type="number" step="0.1" min="0" max="4" [(ngModel)]="durationSeconds"
+              class="bg-zinc-800 border border-white/10 rounded px-2 py-1 text-white w-14 outline-none focus:border-blue-500 font-mono text-xs no-spinners" />
+          </div>
         </div>
       </div>
     </div>
