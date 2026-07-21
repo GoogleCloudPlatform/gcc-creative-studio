@@ -581,6 +581,7 @@ class AgentService:
         workspace_id = body.get("workspaceId")
 
         if workspace_id is not None:
+            injections.append(f"Active Workspace ID: {workspace_id}")
             await self.workspace_auth.authorize(
                 workspace_id=workspace_id,
                 user=current_user,
