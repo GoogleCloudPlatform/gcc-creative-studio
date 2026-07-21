@@ -522,15 +522,21 @@
 
           <!-- The Video Element -->
           <!-- Video Elements (Double Buffering) -->
-          <video
-            *ngFor="let clip of timelineState.videoClips(); let idx = index"
-            #timelineVideo
-            preload="auto"
-            class="max-w-full max-h-full object-contain shadow-2xl rounded-lg absolute"
+          <div
+            class="grid overflow-hidden rounded-lg shadow-2xl max-w-full max-h-full"
+            [style.aspect-ratio]="videoAspectRatio()"
             [class.hidden]="!timelineState.activeVideoClip()"
-            [class.invisible]="isVideoHidden()"
-            [muted]="true"
-          ></video>
+          >
+            <video
+              *ngFor="let clip of timelineState.videoClips(); let idx = index"
+              #timelineVideo
+              preload="auto"
+              class="col-start-1 row-start-1 max-w-full max-h-full object-contain"
+              [class.invisible]="isVideoHidden()"
+              (loadedmetadata)="onVideoMetadataLoaded($event)"
+              [muted]="true"
+            ></video>
+          </div>
 
           <div *ngIf="playbackService.isVideoLoading() && timelineState.activeVideoClip() && timelineState.activeVideoClip()?.id === timelineState.videoClips()[0]?.id"
             class="absolute inset-0 flex items-center justify-center bg-black/40 rounded-lg z-10">
@@ -890,8 +896,36 @@
                         class="absolute right-0 top-[35%] bottom-[35%] w-2 bg-white/80 cursor-ew-resize rounded-full transform translate-x-1/2"
                         (mousedown)="startTrim($event, clip, 'end')">
                       </div>
-                      </div>
-                      </div>
+                    </div>
+                      
+                    <!-- Transition Indicators -->
+                    <app-transition-indicator
+                      *ngIf="timelineState.videoClips().length > 0"
+                      [left]="-12"
+                      [transition]="timelineState.transitionIn() || null"
+                      [role]="'in'"
+                      (transitionChange)="onTransitionChange($event)"
+                    ></app-transition-indicator>
+
+                    <ng-container *ngFor="let clip of timelineState.videoClips(); let idx = index">
+                      <app-transition-indicator
+                        *ngIf="idx < timelineState.videoClips().length - 1"
+                        [left]="timelineState.videoClips()[idx + 1].startTime * timelineState.pixelsPerSecond() - 12"
+                        [transitionIndex]="idx"
+                        [transition]="timelineState.transitions()[idx] || null"
+                        [role]="'middle'"
+                        (transitionChange)="onTransitionChange($event)"
+                      ></app-transition-indicator>
+                    </ng-container>
+
+                    <app-transition-indicator
+                      *ngIf="timelineState.videoClips().length > 0"
+                      [left]="getLastVideoClipEndTime() * timelineState.pixelsPerSecond() - 12"
+                      [transition]="timelineState.transitionOut() || null"
+                      [role]="'out'"
+                      (transitionChange)="onTransitionChange($event)"
+                    ></app-transition-indicator>
+                  </div>
 
                   <!-- AUDIO TRACKS (draggable clips) -->
                   <div
