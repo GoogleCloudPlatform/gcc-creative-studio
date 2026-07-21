@@ -58,7 +58,9 @@ export class HeaderComponent implements OnDestroy {
   isDesktop = false;
   private readonly destroy$ = new Subject<void>();
   toolsMenuHovered = false;
+  generationMenuHovered = false;
   private menuTimeout: any;
+  private genMenuTimeout: any;
   isBrowser: boolean;
 
   constructor(
@@ -129,6 +131,19 @@ export class HeaderComponent implements OnDestroy {
     return this.menuFixed
       ? `Hey there ${this.currentUser?.name?.split(' ')?.[0] || ''}! Click to make the menu dynamic`
       : 'Click to make the menu fixed';
+  }
+
+  onGenEnter() {
+    if (this.genMenuTimeout) {
+      clearTimeout(this.genMenuTimeout);
+    }
+    this.generationMenuHovered = true;
+  }
+
+  onGenLeave() {
+    this.genMenuTimeout = setTimeout(() => {
+      this.generationMenuHovered = false;
+    }, 200);
   }
 
   onToolsEnter() {

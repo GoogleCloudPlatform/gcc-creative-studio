@@ -13,10 +13,8 @@
 # limitations under the License.
 
 import asyncio
-import io
 
-from fastapi import Depends, HTTPException, UploadFile, status
-from starlette.datastructures import Headers
+from fastapi import Depends, HTTPException, status
 
 from src.auth.iam_signer_credentials_service import IamSignerCredentials
 from src.common.base_dto import MimeTypeEnum
@@ -274,20 +272,13 @@ class MediaTemplateService:
                         blob.download_as_bytes
                     )
 
-                    # Create a mock UploadFile to use the existing service logic
-                    upload_file = UploadFile(
-                        filename=source_asset.original_filename,
-                        file=io.BytesIO(content_bytes),
-                        headers=Headers(
-                            {"content-type": source_asset.mime_type}
-                        ),
-                    )
-
                     # Create a new system-level asset
                     new_asset_response = (
                         await self.source_asset_service.upload_asset(
                             user=user,
-                            file=upload_file,
+                            file_bytes=content_bytes,
+                            filename=source_asset.original_filename,
+                            mime_type=source_asset.mime_type,
                             workspace_id=public_workspace.id,
                             scope=AssetScopeEnum.SYSTEM,
                             asset_type=source_asset.asset_type,
@@ -322,23 +313,15 @@ class MediaTemplateService:
                         blob.download_as_bytes
                     )
 
-                    upload_file = UploadFile(
+                    new_asset_response = await self.source_asset_service.upload_asset(
+                        user=user,
+                        file_bytes=content_bytes,
                         filename=f"{source_media_item.id}_{link.media_index}.png",
-                        file=io.BytesIO(content_bytes),
-                        headers=Headers(
-                            {"content-type": source_media_item.mime_type}
-                        ),
-                    )
-
-                    new_asset_response = (
-                        await self.source_asset_service.upload_asset(
-                            user=user,
-                            file=upload_file,
-                            workspace_id=public_workspace.id,
-                            scope=AssetScopeEnum.SYSTEM,
-                            asset_type=AssetTypeEnum.GENERIC_IMAGE,
-                            aspect_ratio=source_media_item.aspect_ratio,
-                        )
+                        mime_type=source_media_item.mime_type,
+                        workspace_id=public_workspace.id,
+                        scope=AssetScopeEnum.SYSTEM,
+                        asset_type=AssetTypeEnum.GENERIC_IMAGE,
+                        aspect_ratio=source_media_item.aspect_ratio,
                     )
                     new_source_asset_links.append(
                         SourceAssetLink(
