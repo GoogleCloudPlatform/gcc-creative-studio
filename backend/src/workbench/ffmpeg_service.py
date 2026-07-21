@@ -532,22 +532,45 @@ class FFmpegService:
             else:
                 video_output_stream = normalized_streams[0]
 
-            if timeline.transition_in:
-                video_filters.append(
-                    f"{video_output_stream}fade=t=in:st=0:d="
-                    f"{timeline.transition_in.duration_seconds}[v_fadein]"
-                )
+            if (
+                timeline.transition_in
+                and timeline.transition_in.type.value != "none"
+            ):
+                t_in = timeline.transition_in
+                t_type = TRANSITION_MAP.get(t_in.type.value, t_in.type.value)
+                d = t_in.duration_seconds
+                if t_type == "fade":
+                    video_filters.append(
+                        f"{video_output_stream}fade=t=in:st=0:d={d}[v_fadein]"
+                    )
+                else:
+                    video_filters.append(
+                        f"color=c=black:s={width}x{height}:d={d},"
+                        f"fps={fps},format=yuv420p[v_in_black];"
+                        f"[v_in_black]{video_output_stream}xfade="
+                        f"transition={t_type}:duration={d}:offset=0[v_fadein]"
+                    )
                 video_output_stream = "[v_fadein]"
-            if timeline.transition_out:
-                st_out = max(
-                    0.0,
-                    accumulated_duration
-                    - timeline.transition_out.duration_seconds,
-                )
-                video_filters.append(
-                    f"{video_output_stream}fade=t=out:st={st_out}:d="
-                    f"{timeline.transition_out.duration_seconds}[v_fadeout]"
-                )
+
+            if (
+                timeline.transition_out
+                and timeline.transition_out.type.value != "none"
+            ):
+                t_out = timeline.transition_out
+                t_type = TRANSITION_MAP.get(t_out.type.value, t_out.type.value)
+                d = t_out.duration_seconds
+                st_out = max(0.0, accumulated_duration - d)
+                if t_type == "fade":
+                    video_filters.append(
+                        f"{video_output_stream}fade=t=out:st={st_out}:d={d}[v_fadeout]"
+                    )
+                else:
+                    video_filters.append(
+                        f"color=c=black:s={width}x{height}:d={d},"
+                        f"fps={fps},format=yuv420p[v_out_black];"
+                        f"{video_output_stream}[v_out_black]xfade="
+                        f"transition={t_type}:duration={d}:offset={st_out}[v_fadeout]"
+                    )
                 video_output_stream = "[v_fadeout]"
 
         if audio_files:

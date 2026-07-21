@@ -25,6 +25,7 @@ import {HttpClient} from '@angular/common/http';
 import {HttpClientTestingModule} from '@angular/common/http/testing';
 import {RouterTestingModule} from '@angular/router/testing';
 import {MatDialogModule} from '@angular/material/dialog';
+import {MatSnackBar} from '@angular/material/snack-bar';
 import {signal, CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
 import {Subject, of} from 'rxjs';
 import {AgentChatService} from './services/agent-chat.service';
@@ -47,10 +48,19 @@ describe('WorkbenchComponent', () => {
       currentStoryboard: signal(null),
     };
 
+    const mockMatSnackBar = {
+      open: jasmine.createSpy('open').and.returnValue({
+        onAction: () => of(),
+      }),
+    };
+
     await TestBed.configureTestingModule({
       declarations: [WorkbenchComponent],
       imports: [HttpClientTestingModule, RouterTestingModule, MatDialogModule],
-      providers: [{provide: AgentChatService, useValue: mockAgentChatService}],
+      providers: [
+        {provide: AgentChatService, useValue: mockAgentChatService},
+        {provide: MatSnackBar, useValue: mockMatSnackBar},
+      ],
       schemas: [CUSTOM_ELEMENTS_SCHEMA],
     }).compileComponents();
 
