@@ -172,7 +172,10 @@ class CreateImagenDto(BaseDto):
         model = self.generation_model
 
         # Aspect Ratio Validation
-        if self.aspect_ratio not in model.valid_aspect_ratios:
+        if (
+            self.aspect_ratio != AspectRatioEnum.AUTO
+            and self.aspect_ratio not in model.valid_aspect_ratios
+        ):
             raise ValueError(
                 f"Aspect ratio {self.aspect_ratio} is not supported for model {model.value}.",
             )

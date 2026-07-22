@@ -313,6 +313,20 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
     this.isSettingsDropdownOpen.set(null);
   }
 
+  getAspectRatioIcon(aspectRatio: string): string {
+    if (!aspectRatio) return 'crop_landscape';
+    const matched = this.aspectRatioOptions.find(
+      o => o.viewValue === aspectRatio || o.value === aspectRatio,
+    );
+    if (matched && matched.icon) {
+      return matched.icon;
+    }
+    if (aspectRatio.toLowerCase().includes('auto')) {
+      return 'hdr_auto';
+    }
+    return aspectRatio.includes('16:9') ? 'crop_landscape' : 'crop_portrait';
+  }
+
   selectOutputs(count: number) {
     this.outputsChanged.emit(count);
     this.isSettingsDropdownOpen.set(null);

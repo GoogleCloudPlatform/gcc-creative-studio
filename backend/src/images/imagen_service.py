@@ -501,8 +501,16 @@ def gemini_generate_image(
                 types.Content(role="user", parts=parts),
             ]
 
+            aspect_ratio_val = (
+                aspect_ratio.value
+                if isinstance(aspect_ratio, AspectRatioEnum)
+                else aspect_ratio
+            )
+            if aspect_ratio_val in ("auto", AspectRatioEnum.AUTO):
+                aspect_ratio_val = None
+
             image_config = types.ImageConfig(
-                aspect_ratio=aspect_ratio,
+                aspect_ratio=aspect_ratio_val,
                 image_size=resolution,
             )
 
@@ -773,7 +781,13 @@ def _process_image_in_background(
                                                     gcs_output_directory
                                                 ),
                                                 aspect_ratio=(
-                                                    request_dto.aspect_ratio
+                                                    None
+                                                    if request_dto.aspect_ratio
+                                                    in (
+                                                        "auto",
+                                                        AspectRatioEnum.AUTO,
+                                                    )
+                                                    else request_dto.aspect_ratio
                                                 ),
                                                 negative_prompt=(
                                                     request_dto.negative_prompt
