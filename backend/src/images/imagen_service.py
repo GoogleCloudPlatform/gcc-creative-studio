@@ -784,7 +784,11 @@ def _process_image_in_background(
                                                         "auto",
                                                         AspectRatioEnum.AUTO,
                                                     )
-                                                    else request_dto.aspect_ratio
+                                                    else getattr(
+                                                        request_dto.aspect_ratio,
+                                                        "value",
+                                                        request_dto.aspect_ratio,
+                                                    )
                                                 ),
                                                 negative_prompt=(
                                                     request_dto.negative_prompt

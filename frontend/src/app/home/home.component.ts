@@ -527,7 +527,9 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     // Enable/Disable aspect ratios based on capabilities and mode
     this.aspectRatioOptions.forEach(r => {
       if (r.value === 'auto') {
-        r.disabled = this.currentMode !== 'Ingredients to Image';
+        r.disabled =
+          this.currentMode !== 'Ingredients to Image' ||
+          !model.value.startsWith('gemini-');
       } else {
         r.disabled = !capabilities.supportedAspectRatios.includes(r.value);
       }

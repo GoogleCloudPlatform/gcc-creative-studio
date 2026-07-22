@@ -321,8 +321,12 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
     if (matched && matched.icon) {
       return matched.icon;
     }
-    if (aspectRatio.toLowerCase().includes('auto')) {
+    const lowerRatio = aspectRatio.toLowerCase();
+    if (lowerRatio.includes('auto')) {
       return 'hdr_auto';
+    }
+    if (lowerRatio.includes('1:1') || lowerRatio.includes('square')) {
+      return 'crop_square';
     }
     return aspectRatio.includes('16:9') ? 'crop_landscape' : 'crop_portrait';
   }
