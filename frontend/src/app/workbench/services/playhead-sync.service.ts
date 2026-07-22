@@ -16,11 +16,14 @@
 
 import {Injectable, inject, signal, effect} from '@angular/core';
 import {TimelineStateService} from './timeline-state.service';
-import {TimeRulerComponent} from '../components/time-ruler/time-ruler.component';
 import {
   TransitionType,
   TimelineClip,
 } from '../../common/models/workbench.model';
+
+export interface TimeRulerInterface {
+  setScrollLeft(left: number): void;
+}
 
 @Injectable({
   providedIn: 'root',
@@ -34,7 +37,7 @@ export class PlayheadSyncService {
     audios: HTMLAudioElement[];
     timeline: HTMLDivElement;
     dummyScroll: HTMLDivElement;
-    timeRuler: TimeRulerComponent;
+    timeRuler: TimeRulerInterface;
   } | null>(null);
 
   private animationFrameId: number | undefined;
@@ -148,6 +151,13 @@ export class PlayheadSyncService {
               '--transition-progress',
               progress.toString(),
             );
+            let translateX = '0%';
+            if (activeTransition.type === TransitionType.WIPE_LEFT) {
+              translateX = `${(1 - progress) * 100}%`;
+            } else if (activeTransition.type === TransitionType.WIPE_RIGHT) {
+              translateX = `${(progress - 1) * 100}%`;
+            }
+            videoEl.style.setProperty('--transition-translateX', translateX);
           } else if (incomingIdx !== -1 && idx === incomingIdx) {
             const incomingClass = `transition-${activeTransition.type}`;
             if (
@@ -162,6 +172,13 @@ export class PlayheadSyncService {
               '--transition-progress',
               progress.toString(),
             );
+            let translateX = '0%';
+            if (activeTransition.type === TransitionType.WIPE_LEFT) {
+              translateX = `${(1 - progress) * 100}%`;
+            } else if (activeTransition.type === TransitionType.WIPE_RIGHT) {
+              translateX = `${(progress - 1) * 100}%`;
+            }
+            videoEl.style.setProperty('--transition-translateX', translateX);
           } else {
             // Hide and pause all other video elements
             if (
@@ -385,6 +402,7 @@ export class PlayheadSyncService {
       'transition-incoming',
     );
     el.style.removeProperty('--transition-progress');
+    el.style.removeProperty('--transition-translateX');
     el.style.removeProperty('opacity');
     el.style.removeProperty('transform');
   }
@@ -409,10 +427,14 @@ export class PlayheadSyncService {
         const asset = this.timelineState
           .assets()
           .find(a => a.id === clip.assetId);
-        if (asset && videoEl.src !== asset.url) {
-          videoEl.src = asset.url;
-          videoEl.load();
-          videoEl.currentTime = clip.offset;
+        if (asset) {
+          const loadedAssetId = videoEl.getAttribute('data-loaded-asset-id');
+          if (loadedAssetId !== asset.id) {
+            videoEl.src = asset.url;
+            videoEl.setAttribute('data-loaded-asset-id', asset.id);
+            videoEl.load();
+            videoEl.currentTime = clip.offset;
+          }
         }
       }
     });
@@ -423,7 +445,7 @@ export class PlayheadSyncService {
     audios: HTMLAudioElement[];
     timeline: HTMLDivElement;
     dummyScroll: HTMLDivElement;
-    timeRuler: TimeRulerComponent;
+    timeRuler: TimeRulerInterface;
   }) {
     this.elements.set(elements);
     if (elements.videos.length > 0) {

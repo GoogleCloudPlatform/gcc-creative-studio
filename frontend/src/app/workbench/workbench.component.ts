@@ -33,11 +33,7 @@ import {
 import {isPlatformBrowser} from '@angular/common';
 import {HttpClient} from '@angular/common/http';
 import {MatIconRegistry} from '@angular/material/icon';
-import {
-  DomSanitizer,
-  SafeResourceUrl,
-  SafeUrl,
-} from '@angular/platform-browser';
+import {DomSanitizer, SafeResourceUrl} from '@angular/platform-browser';
 import {MatDialog} from '@angular/material/dialog';
 import {
   ImageSelectorComponent,
@@ -237,24 +233,56 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       this.applyVideoFilter();
     });
 
-    // Setup an effect to handle storyboard loading from signal
+    // Sync loadedTimelineId with storyboard's timeline_id
     effect(
       () => {
         const storyboard = this.agentChatService.currentStoryboard();
+        if (storyboard && storyboard.timeline_id) {
+          this.timelineState.loadedTimelineId.set(storyboard.timeline_id);
+        } else {
+          const hasTimelineParam =
+            this.route.snapshot.queryParams['timelineId'];
+          if (!hasTimelineParam) {
+            this.timelineState.loadedTimelineId.set(undefined);
+          }
+        }
+      },
+      {allowSignalWrites: true},
+    );
+
+    // Load timeline when loadedTimelineId changes
+    effect(
+      () => {
+        const timelineId = this.timelineState.loadedTimelineId();
         if (this.isSaving) {
           return;
         }
-        if (storyboard && storyboard.timeline_id) {
-          if (
-            this.timelineState.loadedTimelineId() === storyboard.timeline_id
-          ) {
-            return;
-          }
-          this.timelineState.loadedTimelineId.set(storyboard.timeline_id);
-          this.workbenchService.getTimeline(storyboard.timeline_id).subscribe({
+        if (timelineId) {
+          this.workbenchService.getTimeline(timelineId).subscribe({
             next: (timeline: TimelineDTO) => {
               this.processGeneratedData(timeline);
               this.lastSavedText.set('Saved');
+
+              // If the timeline is associated with a session/storyboard, update URL and show agent panel
+              if (timeline.storyboard_id || timeline.session_id) {
+                void this.router.navigate([], {
+                  relativeTo: this.route,
+                  queryParams: {
+                    sessionId: timeline.session_id || null,
+                    storyboardId: timeline.storyboard_id || null,
+                  },
+                  queryParamsHandling: 'merge',
+                });
+                this.activeToolButton.set('agent');
+              } else {
+                // Manual timeline: clear agent chat state
+                this.agentChatService.currentStoryboard.set(null);
+                this.agentChatService.selectedSessionId.set(null);
+                this.agentChatService.chatMessages.set([]);
+                if (this.activeToolButton() === 'agent') {
+                  this.activeToolButton.set(null);
+                }
+              }
             },
             error: err => {
               console.error('Failed to fetch timeline:', err);
@@ -262,7 +290,6 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
             },
           });
         } else {
-          this.timelineState.loadedTimelineId.set(undefined);
           this.timelineState.timelineClips.set([]);
           this.timelineState.selectedClipId.set(null);
           this.timelineState.assets.set([]);
@@ -424,9 +451,14 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     this.route.queryParams.subscribe(params => {
       const sessionId = params['sessionId'];
       const storyboardId = params['storyboardId'];
+      const timelineId = params['timelineId'];
 
       if (sessionId) {
         this.agentChatService.selectedSessionId.set(sessionId);
+      }
+
+      if (timelineId) {
+        this.timelineState.loadedTimelineId.set(timelineId);
       }
 
       if (sessionId || storyboardId) {
@@ -1247,17 +1279,23 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   // --- Download / Render ---
   downloadVideo() {
-    const storyboard = this.agentChatService.currentStoryboard();
-    if (!storyboard || !storyboard.timeline_id || this.isDownloading()) {
-      console.warn('Cannot download: missing storyboard or timeline ID');
+    const timelineId = this.timelineState.loadedTimelineId();
+    const hasClips = this.timelineState.timelineClips().length > 0;
+
+    if (this.isDownloading()) {
       return;
     }
 
-    const runRender = () => {
+    if (!timelineId && !hasClips) {
+      console.warn('Cannot download: missing timeline ID and no clips present');
+      return;
+    }
+
+    const runRender = (resolvedTimelineId: number | string) => {
       this.isDownloading.set(true);
 
       const request: RenderTimelineRequest = {
-        timeline_id: storyboard.timeline_id,
+        timeline_id: Number(resolvedTimelineId),
       };
 
       this.workbenchService.renderVideo(request).subscribe({
@@ -1343,17 +1381,28 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       });
     };
 
-    if (this.hasPendingSave) {
+    const shouldSave = this.hasPendingSave || !timelineId;
+
+    if (shouldSave) {
+      this.isDownloading.set(true);
       this.saveTimeline().subscribe({
-        next: () => {
-          runRender();
+        next: savedTimeline => {
+          const newTimelineId =
+            savedTimeline?.timeline_id || this.timelineState.loadedTimelineId();
+          if (newTimelineId) {
+            runRender(newTimelineId);
+          } else {
+            console.error('Failed to resolve timeline ID after saving');
+            this.isDownloading.set(false);
+          }
         },
         error: err => {
           console.error('Save failed before download, aborting render', err);
+          this.isDownloading.set(false);
         },
       });
-    } else {
-      runRender();
+    } else if (timelineId) {
+      runRender(timelineId);
     }
   }
 
@@ -1686,9 +1735,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   saveTimeline(): Observable<TimelineDTO | null> {
     this.hasPendingSave = false;
     const sb = this.agentChatService.currentStoryboard();
-    if (!sb || !sb.id || !sb.timeline_id) {
+    const timelineId = this.timelineState.loadedTimelineId() || sb?.timeline_id;
+
+    if (!timelineId && this.timelineState.timelineClips().length === 0) {
       console.warn(
-        'Cannot auto-save timeline: missing storyboard, ID, or timeline ID',
+        'Cannot auto-save timeline: no timeline ID and no clips to save',
       );
       return of(null);
     }
@@ -1768,9 +1819,13 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
     const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
 
-    const timelineUpdate = {
-      timeline_id: sb.timeline_id,
-      storyboard_id: sb.id,
+    const timelineData: TimelineDTO = {
+      timeline_id: timelineId || undefined,
+      storyboard_id: sb?.id || undefined,
+      session_id:
+        sb?.session_id ||
+        this.agentChatService.selectedSessionId() ||
+        undefined,
       workspace_id: workspaceId || 1,
       title: 'Timeline',
       video_clips: videoClips,
@@ -1782,23 +1837,39 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
     this.isSaving = true;
     const subject = new Subject<TimelineDTO>();
-    this.activeSaveSubscription = this.workbenchService
-      .updateTimeline(sb.timeline_id, timelineUpdate)
-      .subscribe({
-        next: (res: TimelineDTO) => {
-          console.log('Timeline updated successfully', res);
-          this.lastSavedText.set('Saved');
-          this.isSaving = false;
-          subject.next(res);
-          subject.complete();
-        },
-        error: err => {
-          console.error('Error updating timeline', err);
-          this.lastSavedText.set('Failed to save changes');
-          this.isSaving = false;
-          subject.error(err);
-        },
-      });
+
+    const request$ = timelineId
+      ? this.workbenchService.updateTimeline(timelineId, timelineData)
+      : this.workbenchService.createTimeline(timelineData);
+    this.activeSaveSubscription = request$.subscribe({
+      next: (res: TimelineDTO) => {
+        console.log('Timeline saved successfully', res);
+        this.lastSavedText.set('Saved');
+        if (res.timeline_id) {
+          this.timelineState.loadedTimelineId.set(res.timeline_id);
+          if (!res.storyboard_id && !res.session_id) {
+            void this.router.navigate([], {
+              relativeTo: this.route,
+              queryParams: {
+                timelineId: res.timeline_id,
+                sessionId: null,
+                storyboardId: null,
+              },
+              queryParamsHandling: 'merge',
+            });
+          }
+        }
+        this.isSaving = false;
+        subject.next(res);
+        subject.complete();
+      },
+      error: err => {
+        console.error('Error saving timeline', err);
+        this.lastSavedText.set('Failed to save changes');
+        this.isSaving = false;
+        subject.error(err);
+      },
+    });
     return subject.asObservable();
   }
 
