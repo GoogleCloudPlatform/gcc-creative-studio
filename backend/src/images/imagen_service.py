@@ -501,11 +501,8 @@ def gemini_generate_image(
                 types.Content(role="user", parts=parts),
             ]
 
-            aspect_ratio_val = (
-                aspect_ratio.value
-                if isinstance(aspect_ratio, AspectRatioEnum)
-                else aspect_ratio
-            )
+            aspect_ratio_val = getattr(aspect_ratio, "value", aspect_ratio)
+
             if aspect_ratio_val in ("auto", AspectRatioEnum.AUTO):
                 aspect_ratio_val = None
 
