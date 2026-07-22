@@ -266,7 +266,61 @@ export class ChatInterfaceComponent
         text = arg3 || '';
       }
 
-      return `<a href="${href}" title="${title}" target="_blank" rel="noopener noreferrer" class="markdown-link">${text}</a>`;
+      let isSafe = false;
+      let sanitizedHref = '';
+      const baseOrigin =
+        typeof window !== 'undefined' ? window.location.origin : '';
+      let URLConstructor = typeof window !== 'undefined' ? window.URL : null;
+      if (!URLConstructor) {
+        try {
+          const g = Function('return this')();
+          URLConstructor = g ? g.URL : null;
+        } catch (e) {
+          // Fallback if dynamic function execution is blocked by CSP
+        }
+      }
+
+      if (href) {
+        href = href.trim().replace(/[\t\n\r]/g, '');
+        if (URLConstructor) {
+          try {
+            const parsedUrl = baseOrigin
+              ? new URLConstructor(href, baseOrigin)
+              : new URLConstructor(href);
+            const protocolSafe =
+              parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:';
+            const originMatches =
+              !baseOrigin || parsedUrl.origin === baseOrigin;
+
+            if (protocolSafe && originMatches) {
+              isSafe = true;
+              sanitizedHref = parsedUrl.href;
+            }
+          } catch (e) {
+            // URL parsing failed
+          }
+        }
+
+        // Fallback check if it's a relative path and wasn't successfully resolved/verified above
+        if (!isSafe) {
+          const hasProtocol = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href);
+          const hasBackslash = href.includes('\\');
+          if (!hasProtocol && !href.startsWith('//') && !hasBackslash) {
+            isSafe = true;
+            sanitizedHref = href;
+          }
+        }
+      }
+
+      if (!isSafe) {
+        return text;
+      }
+
+      const escapedTitle = title ? title.replace(/"/g, '&quot;') : '';
+      const escapedHref = sanitizedHref
+        ? sanitizedHref.replace(/"/g, '&quot;')
+        : '';
+      return `<a href="${escapedHref}" title="${escapedTitle}" target="_blank" rel="noopener noreferrer" class="markdown-link">${text}</a>`;
     };
     this.initializeAgentChat();
     this.loadChatSessions();
