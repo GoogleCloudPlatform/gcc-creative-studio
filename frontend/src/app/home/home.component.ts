@@ -307,32 +307,6 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     private sourceAssetService: SourceAssetService,
     @Inject(PLATFORM_ID) private platformId: Object,
   ) {
-    this.matIconRegistry
-      .addSvgIcon(
-        'content-type-icon',
-        this.setPath(`${this.path}/content-type-icon.svg`),
-      )
-      .addSvgIcon(
-        'lighting-icon',
-        this.setPath(`${this.path}/lighting-icon.svg`),
-      )
-      .addSvgIcon(
-        'number-of-images-icon',
-        this.setPath(`${this.path}/number-of-images-icon.svg`),
-      )
-      .addSvgIcon(
-        'gemini-spark-icon',
-        this.setPath(`${this.path}/gemini-spark-icon.svg`),
-      )
-      .addSvgIcon(
-        'white-gemini-spark-icon',
-        this.setPath(`${this.path}/white-gemini-spark-icon.svg`),
-      )
-      .addSvgIcon(
-        'mobile-white-gemini-spark-icon',
-        this.setPath(`${this.path}/mobile-white-gemini-spark-icon.svg`),
-      );
-
     const navigation = this.router.getCurrentNavigation();
     const remixState = navigation?.extras.state?.['remixState'];
     const sourceAssets = navigation?.extras.state?.[
@@ -364,12 +338,6 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
         }
       }
     });
-  }
-
-  private path = '../../assets/images';
-
-  private setPath(url: string): SafeResourceUrl {
-    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   }
 
   ngAfterViewInit(): void {

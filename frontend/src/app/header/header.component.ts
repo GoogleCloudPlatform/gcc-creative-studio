@@ -64,8 +64,6 @@ export class HeaderComponent implements OnDestroy {
   isBrowser: boolean;
 
   constructor(
-    private sanitizer: DomSanitizer,
-    public matIconRegistry: MatIconRegistry,
     public router: Router,
     public userService: UserService,
     public authService: AuthService,
@@ -78,20 +76,6 @@ export class HeaderComponent implements OnDestroy {
       const storedMenuFixed = localStorage.getItem('menuFixed');
       this.menuFixed = storedMenuFixed === 'true';
     }
-
-    this.matIconRegistry
-      .addSvgIcon(
-        'creative-studio-icon',
-        this.setPath(`${this.path}/creative-studio-icon.svg`),
-      )
-      .addSvgIcon(
-        'fun-templates-icon',
-        this.setPath(`${this.path}/fun-templates-icon.svg`),
-      )
-      .addSvgIcon(
-        'audio-generation-icon',
-        this.setPath(`${this.path}/audio-generation-icon.svg`),
-      );
 
     this.currentUser = this.userService.getUserDetails();
 
@@ -106,12 +90,6 @@ export class HeaderComponent implements OnDestroy {
   ngOnDestroy(): void {
     this.destroy$.next();
     this.destroy$.complete();
-  }
-
-  private path = '../../assets/images';
-
-  private setPath(url: string): SafeResourceUrl {
-    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   }
 
   logout() {
