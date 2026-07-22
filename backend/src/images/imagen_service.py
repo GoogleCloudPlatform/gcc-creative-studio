@@ -777,18 +777,10 @@ def _process_image_in_background(
                                                 output_gcs_uri=(
                                                     gcs_output_directory
                                                 ),
-                                                aspect_ratio=(
-                                                    None
-                                                    if request_dto.aspect_ratio
-                                                    in (
-                                                        "auto",
-                                                        AspectRatioEnum.AUTO,
-                                                    )
-                                                    else getattr(
-                                                        request_dto.aspect_ratio,
-                                                        "value",
-                                                        request_dto.aspect_ratio,
-                                                    )
+                                                aspect_ratio=getattr(
+                                                    request_dto.aspect_ratio,
+                                                    "value",
+                                                    request_dto.aspect_ratio,
                                                 ),
                                                 negative_prompt=(
                                                     request_dto.negative_prompt

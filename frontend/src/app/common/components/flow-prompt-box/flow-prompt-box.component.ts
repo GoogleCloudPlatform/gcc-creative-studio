@@ -315,7 +315,7 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
 
   getAspectRatioIcon(aspectRatio: string): string {
     if (!aspectRatio) return 'crop_landscape';
-    const matched = this.aspectRatioOptions.find(
+    const matched = this.aspectRatioOptions?.find(
       o => o.viewValue === aspectRatio || o.value === aspectRatio,
     );
     if (matched && matched.icon) {
