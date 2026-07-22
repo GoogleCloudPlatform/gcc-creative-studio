@@ -242,24 +242,6 @@ export class VideoComponent implements OnInit, AfterViewInit {
       ),
     );
 
-    this.matIconRegistry
-      .addSvgIcon(
-        'content-type-icon',
-        this.setPath(`${this.path}/content-type-icon.svg`),
-      )
-      .addSvgIcon(
-        'lighting-icon',
-        this.setPath(`${this.path}/lighting-icon.svg`),
-      )
-      .addSvgIcon(
-        'number-of-images-icon',
-        this.setPath(`${this.path}/number-of-images-icon.svg`),
-      )
-      .addSvgIcon(
-        'gemini-spark-icon',
-        this.setPath(`${this.path}/gemini-spark-icon.svg`),
-      );
-
     const navigation = this.router.getCurrentNavigation();
     this.templateParams =
       navigation?.extras.state?.['templateParams'] ||
@@ -372,12 +354,6 @@ export class VideoComponent implements OnInit, AfterViewInit {
         }
       }, 1500);
     }
-  }
-
-  private path = '../../assets/images';
-
-  private setPath(url: string): SafeResourceUrl {
-    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   }
 
   selectModel(model: {value: string; viewValue: string}): void {

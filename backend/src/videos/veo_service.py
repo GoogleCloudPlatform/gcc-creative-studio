@@ -34,7 +34,10 @@ from src.common.base_dto import (
     MimeTypeEnum,
     ReferenceImageTypeEnum,
 )
-from src.common.media_utils import concatenate_videos, generate_thumbnail
+from src.common.media_utils import (
+    concatenate_videos,
+    generate_thumbnail,
+)
 from src.common.schema.genai_model_setup import GenAIModelSetup
 from src.common.schema.media_item_model import (
     AssetRoleEnum,
@@ -641,6 +644,16 @@ def _process_video_in_background(
                                             attempt + 1,
                                             e,
                                         )
+                                        err_str = str(e)
+                                        if (
+                                            "content_blocked" in err_str
+                                            or "restricted individuals"
+                                            in err_str
+                                        ):
+                                            worker_logger.error(
+                                                "Gemini Omni interactions API call blocked by policy/content filter. Stopping retries."
+                                            )
+                                            break
                                         if attempt < max_retries - 1:
                                             await asyncio.sleep(2)
 
@@ -915,16 +928,20 @@ def _process_video_in_background(
                         end_time = time.monotonic()
                         generation_time = end_time - start_time
 
-                        valid_generated_videos = [
-                            img
-                            for img in all_generated_videos
-                            if img.video and img.video.uri
-                        ]
-                        final_gcs_uris = [
-                            img.video.uri
-                            for img in valid_generated_videos
-                            if img.video and img.video.uri
-                        ]
+                        if request_dto.generation_model not in [
+                            GenerationModelEnum.GEMINI_OMNI,
+                            GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+                        ]:
+                            valid_generated_videos = [
+                                img
+                                for img in all_generated_videos
+                                if img.video and img.video.uri
+                            ]
+                            final_gcs_uris = [
+                                img.video.uri
+                                for img in valid_generated_videos
+                                if img.video and img.video.uri
+                            ]
 
                         # --- WHEN COMPLETE, UPDATE THE RECORD IN POSTGRESQL ---
                         update_data = {

@@ -41,6 +41,7 @@ describe('PlayheadSyncService', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [TestComponent],
+      providers: [PlayheadSyncService],
     }).compileComponents();
 
     fixture = TestBed.createComponent(TestComponent);

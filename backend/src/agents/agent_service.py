@@ -581,6 +581,7 @@ class AgentService:
         workspace_id = body.get("workspaceId")
 
         if workspace_id is not None:
+            injections.append(f"Active Workspace ID: {workspace_id}")
             await self.workspace_auth.authorize(
                 workspace_id=workspace_id,
                 user=current_user,
@@ -771,12 +772,12 @@ class AgentService:
                 )
                 async with async_session_local() as db_session:
                     repo = AgentRepository(db_session)
+                    error_msg = f"Internal error streaming from agent: {str(e)}"
+                    error_event = json.dumps({"error": error_msg})
                     await repo.add_chat_event(
                         user_id=user_id,
                         session_id=session_id,
-                        payload={
-                            "raw": f'data: {{"error": "Internal error streaming from agent: {str(e)}"}}\n\n'
-                        },
+                        payload={"raw": f"data: {error_event}\n\n"},
                     )
 
         asyncio.create_task(process_stream())
