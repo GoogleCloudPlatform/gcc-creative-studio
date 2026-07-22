@@ -16,7 +16,7 @@
 
 import {Injectable} from '@angular/core';
 import {HttpClient} from '@angular/common/http';
-import {Observable, of} from 'rxjs';
+import {Observable} from 'rxjs';
 import {environment} from '../../environments/environment';
 import {TimelineDTO} from '../common/models/workbench.model';
 import {MediaItem} from '../common/models/media-item.model';
@@ -50,5 +50,9 @@ export class WorkbenchService {
       `${this.apiUrl}/timelines/${timelineId}`,
       timeline,
     );
+  }
+
+  createTimeline(timeline: TimelineDTO): Observable<TimelineDTO> {
+    return this.http.post<TimelineDTO>(`${this.apiUrl}/timelines`, timeline);
   }
 }

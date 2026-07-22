@@ -27,6 +27,7 @@ import {RouterTestingModule} from '@angular/router/testing';
 import {MatDialogModule} from '@angular/material/dialog';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {signal, CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
+import {ActivatedRoute} from '@angular/router';
 import {Subject, of} from 'rxjs';
 import {AgentChatService} from './services/agent-chat.service';
 import {TimelineStateService} from './services/timeline-state.service';
@@ -45,7 +46,9 @@ describe('WorkbenchComponent', () => {
 
   beforeEach(async () => {
     const mockAgentChatService = {
-      currentStoryboard: signal(null),
+      currentStoryboard: signal<any>(null),
+      selectedSessionId: signal<any>(null),
+      chatMessages: signal<any[]>([]),
     };
 
     const mockMatSnackBar = {
@@ -54,12 +57,21 @@ describe('WorkbenchComponent', () => {
       }),
     };
 
+    const mockQueryParams = new Subject<any>();
+    const mockActivatedRoute = {
+      queryParams: mockQueryParams.asObservable(),
+      snapshot: {
+        queryParams: {},
+      },
+    };
+
     await TestBed.configureTestingModule({
       declarations: [WorkbenchComponent],
       imports: [HttpClientTestingModule, RouterTestingModule, MatDialogModule],
       providers: [
         {provide: AgentChatService, useValue: mockAgentChatService},
         {provide: MatSnackBar, useValue: mockMatSnackBar},
+        {provide: ActivatedRoute, useValue: mockActivatedRoute},
       ],
       schemas: [CUSTOM_ELEMENTS_SCHEMA],
     }).compileComponents();
@@ -500,6 +512,7 @@ describe('WorkbenchComponent', () => {
       expect(workbenchService.updateTimeline).toHaveBeenCalledWith(2, {
         timeline_id: 2,
         storyboard_id: 1,
+        session_id: undefined,
         workspace_id: 1,
         title: 'Timeline',
         video_clips: [
@@ -554,6 +567,9 @@ describe('WorkbenchComponent', () => {
     });
 
     it('should call renderVideo and then getAsset to trigger file download', fakeAsync(() => {
+      const stateService = TestBed.inject(TimelineStateService);
+      stateService.loadedTimelineId.set(2);
+
       const mockStoryboard = {id: 1, timeline_id: 2};
       agentChatService.currentStoryboard.set(mockStoryboard as any);
 
@@ -603,6 +619,9 @@ describe('WorkbenchComponent', () => {
     }));
 
     it('should call saveTimeline first if hasPendingSave is true before rendering', fakeAsync(() => {
+      const stateService = TestBed.inject(TimelineStateService);
+      stateService.loadedTimelineId.set(2);
+
       const mockStoryboard = {id: 1, timeline_id: 2};
       agentChatService.currentStoryboard.set(mockStoryboard as any);
 
@@ -719,9 +738,10 @@ describe('WorkbenchComponent', () => {
       workbenchService = TestBed.inject(WorkbenchService);
     });
 
-    it('should fetch timeline when currentStoryboard is updated with a new timeline_id', () => {
+    it('should fetch timeline when currentStoryboard is updated with a new timeline_id', fakeAsync(() => {
       const mockTimeline: TimelineDTO = {
         timeline_id: 42,
+        storyboard_id: 1,
         workspace_id: 1,
         title: 'Mock Timeline',
         video_clips: [],
@@ -741,17 +761,22 @@ describe('WorkbenchComponent', () => {
 
       // Trigger effect execution
       fixture.detectChanges();
+      tick();
 
       expect(workbenchService.getTimeline).toHaveBeenCalledWith(42);
       expect(component.processGeneratedData).toHaveBeenCalledWith(mockTimeline);
       expect(stateService.loadedTimelineId()).toBe(42);
       expect(component.lastSavedText()).toBe('Saved');
-    });
+    }));
 
-    it('should not fetch timeline if loadedTimelineId already matches storyboard.timeline_id', () => {
+    it('should not fetch timeline if loadedTimelineId already matches storyboard.timeline_id', fakeAsync(() => {
       spyOn(workbenchService, 'getTimeline').and.callThrough();
 
       stateService.loadedTimelineId.set(42);
+      fixture.detectChanges();
+      tick();
+
+      (workbenchService.getTimeline as jasmine.Spy).calls.reset();
 
       agentChatService.currentStoryboard.set({
         id: 1,
@@ -760,23 +785,26 @@ describe('WorkbenchComponent', () => {
       } as any);
 
       fixture.detectChanges();
+      tick();
 
       expect(workbenchService.getTimeline).not.toHaveBeenCalled();
-    });
+    }));
 
-    it('should clear timeline state if storyboard is null', () => {
+    it('should clear timeline state if storyboard is null', fakeAsync(() => {
       agentChatService.currentStoryboard.set({id: 1, timeline_id: 42} as any);
       fixture.detectChanges();
+      tick();
 
       stateService.timelineClips.set([{id: 'c1'} as any]);
       expect(stateService.timelineClips().length).toBe(1);
 
       agentChatService.currentStoryboard.set(null);
       fixture.detectChanges();
+      tick();
 
       expect(stateService.timelineClips()).toEqual([]);
       expect(stateService.loadedTimelineId()).toBeUndefined();
-    });
+    }));
   });
 
   it('should pause timeline and stop loop when activeToolButton is set to agent', () => {

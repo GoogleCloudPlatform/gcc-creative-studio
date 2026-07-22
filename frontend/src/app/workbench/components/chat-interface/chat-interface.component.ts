@@ -459,12 +459,16 @@ export class ChatInterfaceComponent
                         this.shouldScrollToBottom = true;
                         this.checkAndResumePolling(res);
 
-                        // Synchronize URL: clear sessionId, set storyboardId
+                        // Synchronize URL: clear sessionId only if storyboard is present, otherwise keep sessionId
+                        const targetSessionId = res.storyboard?.id
+                          ? null
+                          : res.session.id;
+                        const targetStoryboardId = res.storyboard?.id || null;
                         void this.router.navigate([], {
                           relativeTo: this.route,
                           queryParams: {
-                            sessionId: null,
-                            storyboardId: res.storyboard?.id || null,
+                            sessionId: targetSessionId,
+                            storyboardId: targetStoryboardId,
                           },
                           queryParamsHandling: 'merge',
                         });
@@ -574,11 +578,13 @@ export class ChatInterfaceComponent
             this.shouldScrollToBottom = true;
 
             // Sync URL query parameters
+            const targetSessionId = res.storyboard?.id ? null : activeSessionId;
+            const targetStoryboardId = res.storyboard?.id || null;
             void this.router.navigate([], {
               relativeTo: this.route,
               queryParams: {
-                sessionId: null,
-                storyboardId: res.storyboard?.id || null,
+                sessionId: targetSessionId,
+                storyboardId: targetStoryboardId,
               },
               queryParamsHandling: 'merge',
             });
