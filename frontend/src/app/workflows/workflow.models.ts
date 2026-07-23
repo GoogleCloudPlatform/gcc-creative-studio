@@ -23,6 +23,7 @@ export enum NodeTypes {
   CROP_IMAGE = 'crop_image',
   VIRTUAL_TRY_ON = 'virtual_try_on',
   GENERATE_AUDIO = 'generate_audio',
+  UPSCALE_IMAGE = 'upscale_image',
 }
 
 export interface StepOutputReference {

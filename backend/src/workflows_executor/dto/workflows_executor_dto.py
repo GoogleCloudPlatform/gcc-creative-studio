@@ -25,6 +25,8 @@ from src.workflows.schema.workflow_model import (
     GenerateTextSettings,
     GenerateVideoInputs,
     GenerateVideoSettings,
+    UpscaleImageInputs,
+    UpscaleImageSettings,
     VirtualTryOnInputs,
     VirtualTryOnSettings,
 )
@@ -45,6 +47,12 @@ class EditImageRequest(BaseModel):
     workspace_id: int
     inputs: EditImageInputs
     config: EditImageSettings
+
+
+class UpscaleImageRequest(BaseModel):
+    workspace_id: int
+    inputs: UpscaleImageInputs
+    config: UpscaleImageSettings
 
 
 class GenerateVideoRequest(BaseModel):
