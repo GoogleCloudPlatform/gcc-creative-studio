@@ -335,3 +335,51 @@ async def test_generate_audio(service):
         assert result["generated_audio"] == 555
         service.mock_rest_client.post.assert_called_once()
         mock_poll.assert_called_once_with(555, None)
+
+
+@pytest.mark.anyio
+async def test_upscale_image_success(service):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.input_image = 123
+    request.config.upscale_factor = "x4"
+    request.config.enhance_input_image = True
+    request.config.image_preservation_factor = 0.8
+
+    service.mock_rest_client.post.return_value = Response(200, json={"id": 444})
+
+    with (
+        patch.object(
+            service,
+            "_normalize_asset_inputs",
+            return_value=([{"media_item_id": 123}], []),
+        ),
+        patch.object(
+            service,
+            "_poll_job_status",
+            AsyncMock(return_value=True),
+        ) as mock_poll,
+    ):
+        result = await service.upscale_image(request)
+        assert result["upscaled_image"] == 444
+        service.mock_rest_client.post.assert_called_once()
+        mock_poll.assert_called_once_with(444, None)
+
+
+@pytest.mark.anyio
+async def test_upscale_image_missing_input(service):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.input_image = None
+    request.config.upscale_factor = "x2"
+    request.config.enhance_input_image = None
+    request.config.image_preservation_factor = None
+
+    with patch.object(
+        service,
+        "_normalize_asset_inputs",
+        return_value=([], []),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await service.upscale_image(request)
+        assert exc.value.status_code == 400
