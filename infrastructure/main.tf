@@ -16,14 +16,14 @@ terraform {
   required_providers {
     google      = { 
       source = "hashicorp/google" 
-      version = "~> 7.32.0"
+      version = "~> 6.50.0"
     }
     google-beta = { 
       source = "hashicorp/google-beta" 
-      version = "~> 7.32.0"
+      version = "~> 6.50.0"
     }
   }
-  required_version = "~> 1.15.1"
+  required_version = ">= 1.13.0"
   
   # File-per-environment state pattern: configuration details are passed
   # via the CLI backend-config flag during execution.  

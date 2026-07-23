@@ -19,8 +19,10 @@ module "compute" {
   
   # The deployment script dynamically sets this value (e.g., "latest" or "v1.2.0")
   app_version     = var.app_version
+  service_name    = "${var.resource_prefix}-${var.environment}-backend"
 
   # Direct VPC routing configurations
+  vpc_network_name = module.network.network_name
   vpc_subnet_name = module.network.cloud_run_subnet_name
   database_ip     = module.database.private_ip_address
   
@@ -29,4 +31,16 @@ module "compute" {
 
   # References the list keys to configure secret environment block mappings
   secret_ids      = var.application_secrets
+
+  container_env_vars = {
+    DB_NAME                          = module.database.database_name
+    DB_USER                          = module.database.user_name
+    AGENT_ENGINE_RESOURCE_NAME       = var.agent_engine_resource_name
+    AGENT_LOCATION                   = var.agent_location
+    AGENT_ENGINE_USER_AUTH_TOKEN_KEY = var.agent_engine_user_auth_token_key
+  }
+
+  runtime_secrets = {
+    "DB_PASS" = module.database.secret_id
+  }
 }

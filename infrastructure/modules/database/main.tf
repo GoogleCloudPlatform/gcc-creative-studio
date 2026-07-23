@@ -37,8 +37,6 @@ resource "google_sql_database_instance" "default" {
   region           = var.region
   project          = var.project_id
 
-  # Ensure networking PSA is established before instance creation
-  depends_on = [var.psa_connection_dependency]
 
   settings {
     tier              = var.db_tier # "db-perf-optimized-N-2"

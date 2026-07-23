@@ -37,11 +37,6 @@ variable "vpc_id" {
   description = "The VPC network ID where the Cloud SQL instance will be connected via Private Services Access."
 }
 
-variable "psa_connection_dependency" {
-  type        = any
-  description = "Dependency on the Private Services Access connection resource to ensure networking is established before instance creation."
-  default     = null
-}
 
 variable "database_version" {
   type        = string

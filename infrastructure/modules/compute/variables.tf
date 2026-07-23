@@ -42,24 +42,24 @@ variable "image_url" {
   description = "The URL of the container image to deploy."
 }
 
-variable "ar_repo_id" {
+variable "vpc_subnet_name" {
   type        = string
-  description = "The Artifact Registry repository ID."
+  description = "The name of the subnet allocated for Cloud Run Direct VPC Egress."
 }
 
-variable "github_org_or_user" {
+variable "vpc_network_name" {
   type        = string
-  description = "The GitHub organization or user name."
+  description = "The simple name of the VPC network."
 }
 
-variable "github_repo_name" {
+variable "database_ip" {
   type        = string
-  description = "The GitHub repository name."
+  description = "The private IP address of the Cloud SQL instance."
 }
 
-variable "image_tag" {
-  type        = string
-  description = "The image tag to deploy."
+variable "secret_ids" {
+  type        = set(string)
+  description = "List of Secret Manager secret IDs to map to environment variables."
 }
 
 variable "custom_audiences" {
@@ -68,25 +68,7 @@ variable "custom_audiences" {
   default     = []
 }
 
-variable "cloud_sql_connection_name" {
-  type        = string
-  description = "The connection name of the Cloud SQL instance to mount."
-}
 
-variable "db_name" {
-  type        = string
-  description = "The name of the database to connect to."
-}
-
-variable "db_user" {
-  type        = string
-  description = "The database user for connection."
-}
-
-variable "db_secret_id" {
-  type        = string
-  description = "The Secret Manager secret ID containing the database password."
-}
 
 variable "cpu" {
   type        = string
@@ -132,7 +114,6 @@ variable "run_sa_project_roles" {
     "roles/storage.objectAdmin",
     "roles/firebase.developAdmin",
     "roles/iam.serviceAccountTokenCreator",
-    "roles/cloudsql.client", # for Cloud SQL Auth Proxy
     "roles/workflows.editor",
     "roles/workflows.invoker",
     "roles/secretmanager.secretAccessor",

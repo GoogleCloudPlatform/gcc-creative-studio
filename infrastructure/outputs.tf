@@ -41,5 +41,10 @@ output "cloud_run_subnet_name" {
   value       = module.network.cloud_run_subnet_name
 }
 
+output "agent_service_account_email" {
+  description = "The email address of the dedicated AI Agent service account."
+  value       = module.compute.agent_service_account_email
+}
+
 
 

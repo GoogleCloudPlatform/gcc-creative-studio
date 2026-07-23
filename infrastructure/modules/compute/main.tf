@@ -14,18 +14,10 @@
 
 locals {
 
-  # The format requires: REGION-docker.pkg.dev / PROJECT_ID / PROXY_REPO_ID / GH_ORG / GH_REPO / IMAGE_NAME
-  # Notice we omit 'ghcr.io/' because the remote repo configuration handles that root domain mapping automatically.
-  cloud_run_image_url = "${var.region}-docker.pkg.dev/${var.project_id}/${var.ar_repo_id}/${var.github_org_or_user}/${var.github_repo_name}/backend:${var.image_tag}"
-
-  
   # Merge hardcoded standard env vars with user-provided ones
   all_env_vars = merge(
     {
-      "INSTANCE_CONNECTION_NAME"      = var.cloud_sql_connection_name
-      "DB_HOST"                       = "/cloudsql/${var.cloud_sql_connection_name}"
-      "DB_NAME"                       = var.db_name
-      "DB_USER"                       = var.db_user
+      "DB_HOST"                       = var.database_ip
       "BACKEND_SERVICE_ACCOUNT_EMAIL" = google_service_account.run_sa.email
     },
     var.container_env_vars
@@ -33,9 +25,7 @@ locals {
 
   # Merge hardcoded secrets with user-provided ones
   all_secrets = merge(
-    {
-      "DB_PASS" = var.db_secret_id
-    },
+    { for s in var.secret_ids : upper(s) => s },
     var.runtime_secrets
   )
 }
@@ -57,15 +47,16 @@ resource "google_cloud_run_v2_service" "backend" {
       "run.googleapis.com/invoker-iam-disabled" = "true"
     }
 
-    volumes {
-      name = "cloudsql"
-      cloud_sql_instance {
-        instances = [var.cloud_sql_connection_name]
+    vpc_access {
+      network_interfaces {
+        network = var.vpc_network_name
+        subnetwork = var.vpc_subnet_name
       }
+      egress = "PRIVATE_RANGES_ONLY"
     }
 
     containers {
-      image = local.cloud_run_image_url
+      image = var.image_url
 
       resources {
         limits = {
@@ -97,10 +88,6 @@ resource "google_cloud_run_v2_service" "backend" {
         }
       }
 
-      volume_mounts {
-        name = "cloudsql"
-        mount_path = "/cloudsql"
-      }
 
       # Startup and Liveness Probes
       startup_probe {
@@ -161,4 +148,18 @@ resource "google_compute_region_network_endpoint_group" "serverless_neg" {
   cloud_run {
     service = google_cloud_run_v2_service.backend.name
   }
+}
+
+resource "google_service_account" "agent_sa" {
+  account_id   = "${var.resource_prefix}-${var.environment}-agent"
+  display_name = "Dedicated SA for AI Agents (${var.environment})"
+}
+
+# Grant Cloud Run Invoker role to the dedicated AI Agent Service Account
+resource "google_cloud_run_v2_service_iam_member" "agent_engine_invoker" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.backend.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.agent_sa.email}"
 }

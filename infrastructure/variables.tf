@@ -26,7 +26,8 @@ variable "apis_to_enable" {
     "aiplatform.googleapis.com",
     "firestore.googleapis.com",
     "texttospeech.googleapis.com",
-    "workflows.googleapis.com"
+    "workflows.googleapis.com",
+    "drive.googleapis.com"
   ]
 }
 
@@ -39,7 +40,7 @@ variable "custom_domain" {
 variable "application_secrets" {
   type        = set(string)
   description = "The list of application secret identifiers required by the backend application layer."
-  default     = ["database_url", "firebase_jwt_secret", "third_party_api_key"]
+  default     = ["database_url", "third_party_api_key", "agent_engine_resource_name", "agent_engine_user_auth_token_key"]
 }
 
 variable "resource_prefix" {
@@ -86,4 +87,22 @@ variable "app_version" {
   type = string
   description = "version of the creative studio app we're deploying"
   default = "latest"
+}
+
+variable "agent_engine_resource_name" {
+  type        = string
+  description = "Resource name of the Agent Engine"
+  default     = ""
+}
+
+variable "agent_location" {
+  type        = string
+  description = "Location for the Agent Engine"
+  default     = ""
+}
+
+variable "agent_engine_user_auth_token_key" {
+  type        = string
+  description = "Auth token key for Agent Engine"
+  default     = ""
 }

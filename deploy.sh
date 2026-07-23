@@ -173,7 +173,10 @@ check_prerequisites() {
     if ! command -v npm &> /dev/null; then
         fail "npm is not found. Please install it."
     fi
-    success "Prerequisites met: gcloud, git, jq, firebase, node, npm."
+    if ! command -v uv &> /dev/null; then
+        fail "uv is not found. Please install it (curl -LsSf https://astral.sh/uv/install.sh | sh)."
+    fi
+    success "Prerequisites met: gcloud, git, jq, firebase, node, npm, uv."
 }
 
 check_and_install_terraform() {
@@ -436,7 +439,16 @@ populate_oauth_secrets() {
     
     echo -n "$AUTO_OAUTH_CLIENT_ID" | gcloud secrets versions add GOOGLE_CLIENT_ID --data-file="-" --project="$GCP_PROJECT_ID" --quiet
     echo -n "$AUTO_OAUTH_CLIENT_ID" | gcloud secrets versions add GOOGLE_TOKEN_AUDIENCE --data-file="-" --project="$GCP_PROJECT_ID" --quiet
-    success "Secure OAuth environment bindings successfully populated."
+
+    if ! gcloud secrets describe agent_engine_user_auth_token_key --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
+        local AGENT_TOKEN=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32)
+        printf "%s" "$AGENT_TOKEN" | gcloud secrets create agent_engine_user_auth_token_key --data-file="-" --replication-policy="automatic" --project="$GCP_PROJECT_ID" --quiet
+    fi
+    if ! gcloud secrets describe agent_engine_resource_name --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
+        printf "" | gcloud secrets create agent_engine_resource_name --data-file="-" --replication-policy="automatic" --project="$GCP_PROJECT_ID" --quiet
+    fi
+
+    success "Secure OAuth and Agent environment bindings successfully populated."
 }
 
 run_terraform() {
@@ -450,6 +462,9 @@ run_terraform() {
     info "Running Terraform Plan..."
     terraform plan -var-file="$ENV_DIR/terraform.tfvars"
     
+    warn "ℹ️  Database Upgrade Notice: If upgrading an existing installation, Terraform will provision a new Private PostgreSQL instance while keeping your existing database online."
+    warn "   After provisioning completes, the script will automatically transfer your data to the new private instance."
+
     prompt "\nReady to apply state modifications. Provision resources? (y/n)"
     read -r REPLY < /dev/tty
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then fail "Deployment halted by user."; fi
@@ -457,6 +472,49 @@ run_terraform() {
     info "Applying infrastructure deployment configuration..."
     terraform apply -auto-approve -var-file="$ENV_DIR/terraform.tfvars"
     success "Infrastructure provisioned successfully."
+}
+
+auto_migrate_database() {
+    step 10 "Checking Database Migration Requirements"
+    info "Checking if an existing database migration is required..."
+
+    local ENV_TF_DIR="$REPO_ROOT/infrastructure/environments/$ENV_NAME"
+    if [ ! -d "$ENV_TF_DIR" ]; then
+        ENV_TF_DIR="$REPO_ROOT/infra/environments/$ENV_NAME"
+    fi
+
+    pushd "$ENV_TF_DIR" > /dev/null
+    local TARGET_INSTANCE=$(terraform output -raw cloud_sql_connection_name 2>/dev/null | cut -d':' -f3 || echo "")
+    popd > /dev/null
+
+    if [ -z "$TARGET_INSTANCE" ]; then
+        info "No active Cloud SQL instance found in Terraform outputs. Skipping migration."
+        return 0
+    fi
+
+    local SOURCE_INSTANCE=$(gcloud sql instances list --project="$GCP_PROJECT_ID" --format="value(name)" | grep -v "$TARGET_INSTANCE" | head -n 1 || echo "")
+
+    if [ -n "$SOURCE_INSTANCE" ]; then
+        warn "Detected existing database instance: ${C_YELLOW}${SOURCE_INSTANCE}${C_RESET}"
+        info "Checking if automatic data migration to target instance '${TARGET_INSTANCE}' is needed..."
+
+        local ASSET_BUCKET="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
+        local MIGRATE_SCRIPT="$REPO_ROOT/infrastructure/migration/migrate_to_private_db.sh"
+        if [ ! -f "$MIGRATE_SCRIPT" ]; then
+            MIGRATE_SCRIPT="$REPO_ROOT/infra/migration/migrate_to_private_db.sh"
+        fi
+
+        if [ -f "$MIGRATE_SCRIPT" ]; then
+            info "Starting automatic data migration from ${SOURCE_INSTANCE} to ${TARGET_INSTANCE}..."
+            SOURCE_INSTANCE="$SOURCE_INSTANCE" \
+            TARGET_INSTANCE="$TARGET_INSTANCE" \
+            DATABASE_NAME="creative_studio" \
+            BUCKET_NAME="$ASSET_BUCKET" \
+            bash "$MIGRATE_SCRIPT" || warn "Automatic database migration produced warnings or skipped (target database may already contain data)."
+        fi
+    else
+        info "No legacy database instance found. Proceeding with fresh deployment."
+    fi
 }
 
 build_and_deploy_frontend() {
@@ -595,11 +653,72 @@ seed_database() {
     success "Temporary serverless seeding infrastructure securely dismantled."
 }
 
+deploy_izumi_agent() {
+    step 12 "Automated Izumi Agent Deployment"
+    info "Deploying Izumi Agent..."
+
+    rm -rf /tmp/izumi-agent
+    trap 'rm -rf /tmp/izumi-agent' EXIT INT TERM
+
+    IZUMI_BRANCH="${IZUMI_AGENT_BRANCH:-feat/unified-mediagent-interface}"
+    info "Cloning Izumi Agent repository (branch: ${IZUMI_BRANCH})..."
+    git clone -b "$IZUMI_BRANCH" https://github.com/GoogleCloudPlatform/genmedia-izumi-agent.git /tmp/izumi-agent
+
+    info "Setting up Python virtual environment and installing dependencies using uv..."
+    pushd /tmp/izumi-agent > /dev/null
+    uv venv .venv
+    uv pip install --python .venv/bin/python -e .
+
+    if [ "$MOCK_IZUMI_DEPLOY" = "true" ]; then
+        info "MOCK_IZUMI_DEPLOY is set to true. Skipping real GCP connection."
+        info "Mock execution of deploy_to_agent_engine.py successful."
+    else
+        info "Executing deployment script..."
+        AGENT_SA_EMAIL=""
+        if [ -d "$REPO_ROOT/infrastructure/environments/$ENV_NAME" ]; then
+            AGENT_SA_EMAIL=$(cd "$REPO_ROOT/infrastructure/environments/$ENV_NAME" && terraform output -raw agent_service_account_email 2>/dev/null || echo "")
+        fi
+
+        AGENT_AUTH_TOKEN=$(gcloud secrets versions access latest --secret="agent_engine_user_auth_token_key" --project="$GCP_PROJECT_ID" 2>/dev/null || echo "")
+        if [ -n "$AGENT_AUTH_TOKEN" ]; then
+            export AGENT_ENGINE_USER_AUTH_TOKEN_KEY="$AGENT_AUTH_TOKEN"
+        fi
+
+        CMD=".venv/bin/python scripts/deploy_to_agent_engine.py"
+        if [ -n "$AGENT_SA_EMAIL" ] && [ "$AGENT_SA_EMAIL" != "null" ]; then
+            info "Using dedicated AI Agent Service Account: $AGENT_SA_EMAIL"
+            CMD="$CMD --service-account=$AGENT_SA_EMAIL"
+        fi
+
+        DEPLOY_LOG=$(mktemp)
+        if $CMD 2>&1 | tee "$DEPLOY_LOG"; then
+            RESOURCE_NAME=$(grep -oE "projects/[^/]+/locations/[^/]+/reasoningEngines/[0-9]+" "$DEPLOY_LOG" | tail -n 1 || echo "")
+            if [ -n "$RESOURCE_NAME" ]; then
+                info "Captured Agent Engine Resource Name: ${C_YELLOW}${RESOURCE_NAME}${C_RESET}"
+                echo -n "$RESOURCE_NAME" | gcloud secrets versions add agent_engine_resource_name --data-file="-" --project="$GCP_PROJECT_ID" --quiet
+                success "Stored agent_engine_resource_name in Secret Manager."
+            fi
+        else
+            rm -f "$DEPLOY_LOG"
+            fail "Izumi Agent deployment failed."
+        fi
+        rm -f "$DEPLOY_LOG"
+    fi
+    popd > /dev/null
+    rm -rf /tmp/izumi-agent
+    trap - EXIT INT TERM
+    success "Izumi Agent deployed successfully."
+}
+
 # --- Main Execution ---
 main() {
     echo -e "${C_GREEN}============================================================${C_RESET}"
     echo -e "${C_GREEN}  🚀 Creative Studio Enterprise Deployer (Secure SPA) 🚀   ${C_RESET}"
     echo -e "${C_GREEN}============================================================${C_RESET}"
+
+    info "ℹ️  Network & Database Update Notice: Creative Studio deploys PostgreSQL inside a Private VPC by default for enterprise security."
+    info "   If upgrading an existing installation, data will be migrated automatically to the new private instance during deployment."
+    echo ""
 
     check_prerequisites
     check_and_install_terraform
@@ -610,10 +729,12 @@ main() {
     setup_firebase_app
     populate_oauth_secrets
     run_terraform
+    auto_migrate_database
     build_and_deploy_frontend
     seed_database
+    deploy_izumi_agent
 
-    step 12 "🎉 Deployment Completed Successfully! 🎉"
+    step 13 "🎉 Deployment Completed Successfully! 🎉"
     
     cd "$REPO_ROOT/infrastructure"
     local FRONTEND_URL=$(terraform output -raw frontend_service_url 2>/dev/null || echo "")

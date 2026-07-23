@@ -41,3 +41,8 @@ output "serverless_neg_id" {
   description = "The fully qualified ID of the serverless network endpoint group."
   value       = google_compute_region_network_endpoint_group.serverless_neg.id
 }
+
+output "agent_service_account_email" {
+  description = "The email address of the dedicated AI Agent service account."
+  value       = google_service_account.agent_sa.email
+}
