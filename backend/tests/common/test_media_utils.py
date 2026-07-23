@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 
 from src.common.media_utils import (
     concatenate_videos,
+    format_api_error_message,
     generate_image_thumbnail_bytes,
     generate_image_thumbnail_from_gcs,
     generate_thumbnail,
@@ -189,3 +190,28 @@ def test_concatenate_videos_called_process_error():
                 ["/tmp/v1.mp4", "/tmp/v2.mp4"], "/tmp/output.mp4"
             )
             assert res is None
+
+
+def test_format_api_error_message_content_blocked():
+    raw_error = "Error code: 400 - {'error': {'message': \"Unable to show the generated video. The output contains certain restricted individuals that violate Google's Responsible AI practices. Try rephrasing the prompt. If you think this was an error, send feedback.\", 'code': 'content_blocked'}}"
+    msg = format_api_error_message(Exception(raw_error))
+    assert (
+        msg
+        == "Unable to show the generated video. The output contains certain restricted individuals that violate Google's Responsible AI practices. Try rephrasing the prompt. If you think this was an error, send feedback."
+    )
+
+
+def test_format_api_error_message_restricted_individuals_fallback():
+    raw_error = "error: restricted individuals present"
+    msg = format_api_error_message(raw_error)
+    assert "restricted individuals" in msg
+
+
+def test_format_api_error_message_none():
+    msg = format_api_error_message(None)
+    assert "Unknown error" in msg
+
+
+def test_format_api_error_message_plain():
+    msg = format_api_error_message(Exception("Standard failure message"))
+    assert msg == "Standard failure message"

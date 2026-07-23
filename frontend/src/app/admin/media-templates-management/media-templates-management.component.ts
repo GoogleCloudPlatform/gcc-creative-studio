@@ -28,6 +28,8 @@ import {MatDialog} from '@angular/material/dialog';
 import {MediaTemplateFormComponent} from './media-template-form/media-template-form.component';
 import {MediaTemplate} from '../../fun-templates/media-template.model';
 
+import {ConfirmationDialogComponent} from '../../common/components/confirmation-dialog/confirmation-dialog.component';
+
 @Component({
   selector: 'app-media-templates-management',
   templateUrl: './media-templates-management.component.html',
@@ -149,19 +151,31 @@ export class MediaTemplatesManagementComponent
   }
 
   deleteTemplate(template: MediaTemplate): void {
-    if (
-      template.id &&
-      confirm(`Are you sure you want to delete template "${template.name}"?`)
-    ) {
-      this.mediaTemplatesService.deleteMediaTemplate(template.id).subscribe({
-        next: () => {
-          this.fetchTemplates();
-          handleSuccessSnackbar(this.snackBar, 'Template deleted successfully');
-        },
-        error: (err: Error) => {
-          handleErrorSnackbar(this.snackBar, err, 'Delete template');
-        },
-      });
-    }
+    if (!template.id) return;
+
+    const dialogRef = this.dialog.open(ConfirmationDialogComponent, {
+      width: '400px',
+      data: {
+        title: 'Confirm Deletion',
+        message: `Are you sure you want to delete template "${template.name}"?`,
+      },
+    });
+
+    dialogRef.afterClosed().subscribe(result => {
+      if (result && template.id) {
+        this.mediaTemplatesService.deleteMediaTemplate(template.id).subscribe({
+          next: () => {
+            this.fetchTemplates();
+            handleSuccessSnackbar(
+              this.snackBar,
+              'Template deleted successfully',
+            );
+          },
+          error: (err: Error) => {
+            handleErrorSnackbar(this.snackBar, err, 'Delete template');
+          },
+        });
+      }
+    });
   }
 }

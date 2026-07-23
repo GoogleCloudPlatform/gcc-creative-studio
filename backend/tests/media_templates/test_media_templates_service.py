@@ -194,3 +194,136 @@ async def test_create_template_from_media_item_no_item(service):
 
     result = await service.create_template_from_media_item(123, current_user)
     assert result is None
+
+
+@pytest.mark.anyio
+async def test_create_template_from_media_item_with_source_assets(service):
+    from src.source_assets.schema.source_asset_model import (
+        AssetScopeEnum,
+        AssetTypeEnum,
+    )
+
+    current_user = UserModel(id=1, email="admin@test.com", name="Admin")
+    from src.common.base_dto import GenerationModelEnum
+
+    source_asset = MagicMock(
+        gcs_uri="gs://bucket/asset1.png",
+        original_filename="asset1.png",
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+        asset_type=AssetTypeEnum.GENERIC_IMAGE,
+        aspect_ratio=AspectRatioEnum.RATIO_1_1,
+    )
+    service.mock_source_asset_repo.get_by_id.return_value = source_asset
+
+    blob_mock = MagicMock()
+    blob_mock.download_as_bytes.return_value = b"fake_bytes"
+    service.mock_gcs_service.bucket_name = "bucket"
+    service.mock_gcs_service.bucket.blob.return_value = blob_mock
+
+    mock_uploaded_asset = MagicMock(id=500)
+    service.mock_source_asset_service.upload_asset.return_value = (
+        mock_uploaded_asset
+    )
+
+    media_item = MediaItemModel(
+        workspace_id=99,
+        user_email="admin@test.com",
+        model=GenerationModelEnum.IMAGEN_3_001,
+        prompt="Generate dog with asset",
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+        aspect_ratio=AspectRatioEnum.RATIO_1_1,
+        gcs_uris=["gs://bucket/dog.png"],
+        source_assets=[SourceAssetLink(asset_id=10, role="input")],
+    )
+    service.mock_media_item_repo.get_by_id.return_value = media_item
+    service.mock_gemini_service.generate_structured_prompt.return_value = (
+        '{"name": "Dog with Asset", "description": "Desc"}'
+    )
+
+    mock_workspace = MagicMock(id=88)
+    service.mock_workspace_repo.get_public_workspace.return_value = (
+        mock_workspace
+    )
+
+    result = await service.create_template_from_media_item(123, current_user)
+    assert result is not None
+    service.mock_source_asset_service.upload_asset.assert_called_once_with(
+        user=current_user,
+        file_bytes=b"fake_bytes",
+        filename="asset1.png",
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+        workspace_id=88,
+        scope=AssetScopeEnum.SYSTEM,
+        asset_type=AssetTypeEnum.GENERIC_IMAGE,
+        aspect_ratio=AspectRatioEnum.RATIO_1_1,
+    )
+
+
+@pytest.mark.anyio
+async def test_create_template_from_media_item_with_source_media_items(
+    service,
+):
+    from src.common.schema.media_item_model import SourceMediaItemLink
+    from src.source_assets.schema.source_asset_model import (
+        AssetScopeEnum,
+        AssetTypeEnum,
+    )
+
+    current_user = UserModel(id=1, email="admin@test.com", name="Admin")
+    from src.common.base_dto import GenerationModelEnum
+
+    source_media_item = MagicMock(
+        id=20,
+        gcs_uris=["gs://bucket/media20.png"],
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+        aspect_ratio=AspectRatioEnum.RATIO_16_9,
+    )
+
+    media_item = MediaItemModel(
+        workspace_id=99,
+        user_email="admin@test.com",
+        model=GenerationModelEnum.IMAGEN_3_001,
+        prompt="Generate dog with media item",
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+        aspect_ratio=AspectRatioEnum.RATIO_16_9,
+        gcs_uris=["gs://bucket/dog.png"],
+        source_media_items=[
+            SourceMediaItemLink(media_item_id=20, media_index=0, role="input")
+        ],
+    )
+
+    service.mock_media_item_repo.get_by_id.side_effect = lambda media_id: (
+        media_item if media_id == 123 else source_media_item
+    )
+
+    blob_mock = MagicMock()
+    blob_mock.download_as_bytes.return_value = b"media_bytes"
+    service.mock_gcs_service.bucket_name = "bucket"
+    service.mock_gcs_service.bucket.blob.return_value = blob_mock
+
+    mock_uploaded_asset = MagicMock(id=600)
+    service.mock_source_asset_service.upload_asset.return_value = (
+        mock_uploaded_asset
+    )
+
+    service.mock_gemini_service.generate_structured_prompt.return_value = (
+        '{"name": "Dog with Media", "description": "Desc"}'
+    )
+
+    mock_workspace = MagicMock(id=88)
+    service.mock_workspace_repo.get_public_workspace.return_value = (
+        mock_workspace
+    )
+
+    result = await service.create_template_from_media_item(123, current_user)
+    assert result is not None
+    service.mock_source_asset_service.upload_asset.assert_called_once_with(
+        user=current_user,
+        file_bytes=b"media_bytes",
+        filename="20_0.png",
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+        workspace_id=88,
+        scope=AssetScopeEnum.SYSTEM,
+        asset_type=AssetTypeEnum.GENERIC_IMAGE,
+        aspect_ratio=AspectRatioEnum.RATIO_16_9,
+    )

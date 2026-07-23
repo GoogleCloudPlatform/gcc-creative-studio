@@ -75,18 +75,7 @@ export class FunTemplatesComponent implements OnInit, OnDestroy {
     [IndustryEnum.OTHER, '!bg-gray-500/20 !text-gray-300'],
   ]);
 
-  constructor() {
-    const iconPath = '../../assets/images';
-    this.matIconRegistry
-      .addSvgIcon(
-        'gemini-spark-icon',
-        this.setPath(`${iconPath}/gemini-spark-icon.svg`),
-      )
-      .addSvgIcon(
-        'mobile-white-gemini-spark-icon',
-        this.setPath(`${iconPath}/mobile-white-gemini-spark-icon.svg`),
-      );
-  }
+  constructor() {}
 
   ngOnInit(): void {
     this.fetchTemplates();
@@ -230,10 +219,6 @@ export class FunTemplatesComponent implements OnInit, OnDestroy {
       name: null,
     };
     this.applyFilters();
-  }
-
-  private setPath(url: string): SafeResourceUrl {
-    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   }
 
   public nextImage(templateId: number, totalImages: number): void {

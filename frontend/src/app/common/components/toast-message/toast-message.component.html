@@ -28,6 +28,6 @@
       alt="icon inside toast message"
     />
     <mat-icon *ngIf="matIcon">{{ matIcon }}</mat-icon>
-    <span class="toast-content" style="margin: 0 1.5rem">{{ text }}</span>
+    <span class="toast-content" style="margin: 0 1.5rem" [innerHTML]="text"></span>
   </div>
 </div>

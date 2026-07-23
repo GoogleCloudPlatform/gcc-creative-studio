@@ -16,11 +16,14 @@
 
 import {Injectable, inject, signal, effect} from '@angular/core';
 import {TimelineStateService} from './timeline-state.service';
-import {TimeRulerComponent} from '../components/time-ruler/time-ruler.component';
 import {
   TransitionType,
   TimelineClip,
 } from '../../common/models/workbench.model';
+
+export interface TimeRulerInterface {
+  setScrollLeft(left: number): void;
+}
 
 @Injectable({
   providedIn: 'root',
@@ -34,7 +37,7 @@ export class PlayheadSyncService {
     audios: HTMLAudioElement[];
     timeline: HTMLDivElement;
     dummyScroll: HTMLDivElement;
-    timeRuler: TimeRulerComponent;
+    timeRuler: TimeRulerInterface;
   } | null>(null);
 
   private animationFrameId: number | undefined;
@@ -55,14 +58,18 @@ export class PlayheadSyncService {
         const outgoingClip = activeTransition.outgoingClip;
         const incomingClip = activeTransition.incomingClip;
 
-        const outgoingIdx = clips.findIndex(c => c.id === outgoingClip.id);
-        const incomingIdx = clips.findIndex(c => c.id === incomingClip.id);
+        const outgoingIdx = outgoingClip
+          ? clips.findIndex(c => c.id === outgoingClip.id)
+          : -1;
+        const incomingIdx = incomingClip
+          ? clips.findIndex(c => c.id === incomingClip.id)
+          : -1;
 
         const outgoingEl = outgoingIdx !== -1 ? els.videos[outgoingIdx] : null;
         const incomingEl = incomingIdx !== -1 ? els.videos[incomingIdx] : null;
 
         // 1. Sync and Play Outgoing Video (plays until endTime and then freezes)
-        if (outgoingEl) {
+        if (outgoingEl && outgoingClip) {
           const speed = outgoingClip.speed || 1.0;
           let fileTime: number;
           let shouldPlay = isPlaying;
@@ -97,7 +104,7 @@ export class PlayheadSyncService {
         }
 
         // 2. Sync and Play Incoming Video
-        if (incomingEl) {
+        if (incomingEl && incomingClip) {
           const speed = incomingClip.speed || 1.0;
           const targetTime =
             (curTime - incomingClip.startTime) * speed + incomingClip.offset;
@@ -130,7 +137,7 @@ export class PlayheadSyncService {
           (curTime - activeTransition.startTime) / activeTransition.duration;
 
         els.videos.forEach((videoEl, idx) => {
-          if (idx === outgoingIdx) {
+          if (outgoingIdx !== -1 && idx === outgoingIdx) {
             const outgoingClass = `transition-${activeTransition.type}`;
             if (
               !videoEl.classList.contains('transition-outgoing') ||
@@ -144,7 +151,14 @@ export class PlayheadSyncService {
               '--transition-progress',
               progress.toString(),
             );
-          } else if (idx === incomingIdx) {
+            let translateX = '0%';
+            if (activeTransition.type === TransitionType.WIPE_LEFT) {
+              translateX = `${(1 - progress) * 100}%`;
+            } else if (activeTransition.type === TransitionType.WIPE_RIGHT) {
+              translateX = `${(progress - 1) * 100}%`;
+            }
+            videoEl.style.setProperty('--transition-translateX', translateX);
+          } else if (incomingIdx !== -1 && idx === incomingIdx) {
             const incomingClass = `transition-${activeTransition.type}`;
             if (
               !videoEl.classList.contains('transition-incoming') ||
@@ -158,6 +172,13 @@ export class PlayheadSyncService {
               '--transition-progress',
               progress.toString(),
             );
+            let translateX = '0%';
+            if (activeTransition.type === TransitionType.WIPE_LEFT) {
+              translateX = `${(1 - progress) * 100}%`;
+            } else if (activeTransition.type === TransitionType.WIPE_RIGHT) {
+              translateX = `${(progress - 1) * 100}%`;
+            }
+            videoEl.style.setProperty('--transition-translateX', translateX);
           } else {
             // Hide and pause all other video elements
             if (
@@ -294,6 +315,28 @@ export class PlayheadSyncService {
 
   private getActiveTransition(curTime: number) {
     const clips = this.timelineState.videoClips();
+    if (clips.length === 0) return null;
+
+    // 1. Check transition_in
+    const transitionIn = this.timelineState.transitionIn();
+    if (
+      transitionIn &&
+      transitionIn.type !== TransitionType.NONE &&
+      transitionIn.duration_seconds > 0
+    ) {
+      const duration = transitionIn.duration_seconds;
+      if (curTime >= 0 && curTime <= duration) {
+        return {
+          incomingClip: clips[0],
+          type: transitionIn.type,
+          duration: duration,
+          startTime: 0,
+          endTime: duration,
+        };
+      }
+    }
+
+    // 2. Check in-between transitions
     for (let i = 0; i < clips.length - 1; i++) {
       const clipI = clips[i];
       const clipJ = clips[i + 1];
@@ -322,6 +365,31 @@ export class PlayheadSyncService {
         }
       }
     }
+
+    // 3. Check transition_out
+    const transitionOut = this.timelineState.transitionOut();
+    if (
+      transitionOut &&
+      transitionOut.type !== TransitionType.NONE &&
+      transitionOut.duration_seconds > 0
+    ) {
+      const lastClip = clips[clips.length - 1];
+      const lastVideoEndTime = lastClip.startTime + lastClip.duration;
+      if (lastVideoEndTime > 0) {
+        const duration = transitionOut.duration_seconds;
+        const startTrans = lastVideoEndTime - duration;
+        if (curTime >= startTrans && curTime <= lastVideoEndTime) {
+          return {
+            outgoingClip: lastClip,
+            type: transitionOut.type,
+            duration: duration,
+            startTime: startTrans,
+            endTime: lastVideoEndTime,
+          };
+        }
+      }
+    }
+
     return null;
   }
 
@@ -334,6 +402,7 @@ export class PlayheadSyncService {
       'transition-incoming',
     );
     el.style.removeProperty('--transition-progress');
+    el.style.removeProperty('--transition-translateX');
     el.style.removeProperty('opacity');
     el.style.removeProperty('transform');
   }
@@ -358,10 +427,14 @@ export class PlayheadSyncService {
         const asset = this.timelineState
           .assets()
           .find(a => a.id === clip.assetId);
-        if (asset && videoEl.src !== asset.url) {
-          videoEl.src = asset.url;
-          videoEl.load();
-          videoEl.currentTime = clip.offset;
+        if (asset) {
+          const loadedAssetId = videoEl.getAttribute('data-loaded-asset-id');
+          if (loadedAssetId !== asset.id) {
+            videoEl.src = asset.url;
+            videoEl.setAttribute('data-loaded-asset-id', asset.id);
+            videoEl.load();
+            videoEl.currentTime = clip.offset;
+          }
         }
       }
     });
@@ -372,7 +445,7 @@ export class PlayheadSyncService {
     audios: HTMLAudioElement[];
     timeline: HTMLDivElement;
     dummyScroll: HTMLDivElement;
-    timeRuler: TimeRulerComponent;
+    timeRuler: TimeRulerInterface;
   }) {
     this.elements.set(elements);
     if (elements.videos.length > 0) {
@@ -455,8 +528,12 @@ export class PlayheadSyncService {
         const outgoingClip = activeTransition.outgoingClip;
         const incomingClip = activeTransition.incomingClip;
 
-        const outgoingIdx = clips.findIndex(c => c.id === outgoingClip.id);
-        const incomingIdx = clips.findIndex(c => c.id === incomingClip.id);
+        const outgoingIdx = outgoingClip
+          ? clips.findIndex(c => c.id === outgoingClip.id)
+          : -1;
+        const incomingIdx = incomingClip
+          ? clips.findIndex(c => c.id === incomingClip.id)
+          : -1;
 
         const outgoingVideoEl =
           outgoingIdx !== -1 ? els.videos[outgoingIdx] : null;
@@ -466,6 +543,7 @@ export class PlayheadSyncService {
         if (this.timelineState.isPlaying()) {
           if (
             outgoingVideoEl &&
+            outgoingClip &&
             outgoingVideoEl.paused &&
             curTime <= outgoingClip.startTime + outgoingClip.duration
           ) {
@@ -473,7 +551,7 @@ export class PlayheadSyncService {
               .play()
               .catch(e => console.error('[VideoSync] Play failed', e));
           }
-          if (incomingVideoEl) {
+          if (incomingVideoEl && incomingClip) {
             const speed = incomingClip.speed || 1.0;
             const targetTime =
               (curTime - incomingClip.startTime) * speed + incomingClip.offset;
