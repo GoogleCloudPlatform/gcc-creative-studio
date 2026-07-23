@@ -44,6 +44,7 @@ class NodeTypes(str, Enum):
     CROP_IMAGE = "crop_image"
     VIRTUAL_TRY_ON = "virtual_try_on"
     GENERATE_AUDIO = "generate_audio"
+    UPSCALE_IMAGE = "upscale_image"
 
 
 # =========================================
@@ -266,6 +267,24 @@ class GenerateAudioStep(BaseStep[GenerateAudioInputs, GenerateAudioSettings]):
     settings: GenerateAudioSettings
 
 
+# --- Upscale Image ---
+class UpscaleImageInputs(BaseModel):
+    input_image: WorkflowInputItem
+
+
+class UpscaleImageSettings(BaseModel):
+    model: str = "imagen-4-upscale-preview"
+    upscale_factor: Literal["x2", "x3", "x4"] = "x2"
+    enhance_input_image: bool = False
+    image_preservation_factor: float | None = None
+
+
+class UpscaleImageStep(BaseStep[UpscaleImageInputs, UpscaleImageSettings]):
+    type: Literal[NodeTypes.UPSCALE_IMAGE] = NodeTypes.UPSCALE_IMAGE
+    inputs: UpscaleImageInputs
+    settings: UpscaleImageSettings = Field(default_factory=UpscaleImageSettings)
+
+
 # =========================================
 # Workflow Step Union
 # =========================================
@@ -278,6 +297,7 @@ WorkflowStepUnion = Union[
     GenerateVideoStep,
     VirtualTryOnStep,
     GenerateAudioStep,
+    UpscaleImageStep,
 ]
 
 # Discriminated union based on the 'type' field in each step

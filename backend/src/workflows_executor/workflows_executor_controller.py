@@ -22,6 +22,7 @@ from src.workflows_executor.dto.workflows_executor_dto import (
     GenerateImageRequest,
     GenerateTextRequest,
     GenerateVideoRequest,
+    UpscaleImageRequest,
     VirtualTryOnRequest,
 )
 from src.workflows_executor.workflows_executor_service import (
@@ -60,6 +61,15 @@ async def edit_image(
     service: WorkflowsExecutorService = Depends(),
 ):
     return await service.edit_image(request, authorization)
+
+
+@router.post("/upscale_image")
+async def upscale_image(
+    request: UpscaleImageRequest,
+    authorization: Annotated[str | None, Header()] = None,
+    service: WorkflowsExecutorService = Depends(),
+):
+    return await service.upscale_image(request, authorization)
 
 
 @router.post("/generate_video")

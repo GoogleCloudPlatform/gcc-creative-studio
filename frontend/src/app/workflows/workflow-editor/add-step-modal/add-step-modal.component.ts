@@ -70,6 +70,13 @@ export class AddStepModalComponent {
       description: 'Generates audio (music or speech) from a text prompt.',
       icon: 'music_note',
     },
+    {
+      type: 'upscale_image',
+      label: 'Image Upscaler',
+      description:
+        'Upscales image resolution by 2x, 3x, or 4x using Imagen AI.',
+      icon: 'high_quality',
+    },
   ];
 
   constructor(public dialogRef: MatDialogRef<AddStepModalComponent>) {}

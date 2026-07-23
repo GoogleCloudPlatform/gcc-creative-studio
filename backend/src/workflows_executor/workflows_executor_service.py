@@ -29,6 +29,7 @@ from src.workflows_executor.dto.workflows_executor_dto import (
     GenerateImageRequest,
     GenerateTextRequest,
     GenerateVideoRequest,
+    UpscaleImageRequest,
     VirtualTryOnRequest,
 )
 
@@ -602,3 +603,68 @@ class WorkflowsExecutorService:
         await self._poll_job_status(audio_id, authorization)
 
         return {"generated_audio": audio_id}
+
+    async def upscale_image(
+        self,
+        request: UpscaleImageRequest,
+        authorization: str | None = None,
+    ):
+        logger.info("Upscale image execution")
+        media_items, asset_ids = self._normalize_asset_inputs(
+            request.inputs.input_image,
+        )
+
+        source_asset_id = asset_ids[0] if asset_ids else None
+        media_item_id = media_items[0]["media_item_id"] if media_items else None
+
+        if not source_asset_id and not media_item_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Input image is required for Image Upscaling",
+            )
+
+        url = self.backend_url + "/api/images/upload-upscale"
+        headers = {"Authorization": authorization} if authorization else {}
+
+        data = {
+            "workspaceId": str(request.workspace_id),
+        }
+        if source_asset_id:
+            data["id"] = str(source_asset_id)
+        if media_item_id:
+            data["mediaItemId"] = str(media_item_id)
+        if request.config.upscale_factor:
+            data["upscaleFactor"] = request.config.upscale_factor
+        if request.config.enhance_input_image is not None:
+            data["enhance_input_image"] = str(
+                request.config.enhance_input_image
+            ).lower()
+        if request.config.image_preservation_factor is not None:
+            data["image_preservation_factor"] = str(
+                request.config.image_preservation_factor
+            )
+
+        logger.info(
+            f"Call backend with url: {url}, data: {data}, headers: {headers}"
+        )
+
+        response = await self.rest_client.post(url, data=data, headers=headers)
+
+        if response.status_code != 200:
+            logger.error("Backend error: %s", response.text)
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Backend error: {response.text}",
+            )
+
+        dict_response = response.json()
+        upscaled_id = dict_response.get("id", None)
+        if not upscaled_id:
+            raise HTTPException(
+                status_code=500, detail="Couldn't create upscale job"
+            )
+
+        # Poll for completion
+        await self._poll_job_status(upscaled_id, authorization)
+
+        return {"upscaled_image": upscaled_id}

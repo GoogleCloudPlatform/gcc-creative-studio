@@ -138,6 +138,7 @@
 
   .step-title {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 12px;
     font-size: 16px;
@@ -312,4 +313,8 @@
   0% { box-shadow: 0 0 10px 2px #4ade80, 0 10px 30px rgba(0, 0, 0, 0.3); }
   50% { box-shadow: 0 0 20px 6px #4ade80, 0 10px 30px rgba(0, 0, 0, 0.3); }
   100% { box-shadow: 0 0 10px 2px #4ade80, 0 10px 30px rgba(0, 0, 0, 0.3); }
+}
+
+.step-actions {
+  display: flex;
 }

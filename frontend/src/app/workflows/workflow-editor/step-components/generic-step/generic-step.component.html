@@ -92,7 +92,7 @@
           <div *ngIf="setting.type === 'checkbox'" class="checkbox-group">
             <mat-checkbox [formControlName]="setting.name">{{ setting.label }}</mat-checkbox>
           </div>
-          <div *ngIf="setting.type === 'slider'" class="slider-group">
+          <div *ngIf="setting.type === 'slider'" class="slider-group" (mousedown)="$event.stopPropagation()" (pointerdown)="$event.stopPropagation()">
             <studio-slider
               label="{{ setting.label }}"
               [valueText]="stepForm.get('settings')?.get(setting.name)?.value"
