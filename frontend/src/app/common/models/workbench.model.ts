@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import {SafeResourceUrl} from '@angular/platform-browser';
 
 export interface SceneDTO {
   id: number;
@@ -48,8 +49,15 @@ export interface Trim {
   duration_seconds?: number | null;
 }
 
+export enum TransitionType {
+  FADE = 'fade',
+  NONE = 'none',
+  WIPE_LEFT = 'wipe_left',
+  WIPE_RIGHT = 'wipe_right',
+}
+
 export interface Transition {
-  type: 'fade' | 'none' | 'wipe_left' | 'wipe_right';
+  type: TransitionType;
   duration_seconds: number;
 }
 
@@ -78,8 +86,6 @@ export interface AudioClipDTO {
   trim?: Trim | null;
   volume: number;
   speed?: number;
-  fade_in_duration_seconds?: number;
-  fade_out_duration_seconds?: number;
   placeholder?: string | null;
   presigned_url?: string | null;
 }
@@ -89,7 +95,6 @@ export interface TimelineDTO {
   storyboard_id?: number | string;
   workspace_id: number | string;
   user_id?: number | string;
-  project_id?: number;
   session_id?: string;
   title: string;
   video_clips: VideoClipDTO[];
@@ -105,15 +110,6 @@ export interface StoryboardCreate {
   template_name?: string;
   bg_music_description?: string;
   bg_music_asset_id?: number;
-}
-
-export interface ProjectCreate {
-  workspace_id: number;
-  name: string;
-  description?: string;
-  thumbnail_media_item_id?: number;
-  thumbnail_source_asset_id?: number;
-  thumbnail_url?: string;
 }
 
 export interface StoryboardUpdate {
@@ -164,15 +160,34 @@ export interface SessionDetailResponse {
   storyboard?: StoryboardResponse;
 }
 
-export interface ProjectResponse {
-  id: number;
-  workspace_id: number;
-  owner_id: number;
+export interface TimelineClip {
+  id: string;
+  assetId: string;
+  startTime: number; // absolute time on timeline
+  duration: number; // duration of this specific clip (could be trimmed later)
+  offset: number; // offset into the original source file
+  trackIndex: number; // 0 for video, 1 for audio
+  color: string;
+  mediaItemId?: number;
+  sourceAssetId?: number;
+  first_frame_asset_ref?: AssetRef | null;
+  last_frame_asset_ref?: AssetRef | null;
+  placeholder?: string | null;
+  isDurationPlaceholder?: boolean;
+  volume?: number;
+  speed?: number;
+  transition_to_next_type?: TransitionType | null;
+  transition_to_next_duration?: number | null;
+}
+
+export interface MediaAsset {
+  id: string;
   name: string;
-  description?: string;
-  thumbnail_url?: string;
-  thumbnail_media_item_id?: number;
-  thumbnail_source_asset_id?: number;
-  created_at: string;
-  updated_at: string;
+  type: 'video' | 'audio';
+  url: string;
+  safeUrl: SafeResourceUrl;
+  duration: number;
+  thumbnail?: string;
+  mediaItemId?: number;
+  sourceAssetId?: number;
 }

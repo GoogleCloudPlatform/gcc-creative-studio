@@ -13,6 +13,9 @@
 # limitations under the License.
 
 
+from pydantic import field_validator
+
+from src.common.media_utils import format_api_error_message
 from src.common.schema.media_item_model import (
     MediaItemModel,
     SourceAssetLink,
@@ -52,3 +55,10 @@ class MediaItemResponse(MediaItemModel):
     enriched_source_media_items: list[SourceMediaItemLinkResponse] | None = None
     tags: list[TagModel] | None = None
     user_picture: str | None = None
+
+    @field_validator("error_message", mode="before")
+    @classmethod
+    def format_error_message_for_user(cls, v: str | None) -> str | None:
+        if v:
+            return format_api_error_message(v)
+        return v

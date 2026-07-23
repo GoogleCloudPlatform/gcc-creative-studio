@@ -26,6 +26,9 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__) + "/../"))
 
 # Set environment for tests
 os.environ["ENVIRONMENT"] = "local"
+os.environ["AGENT_ENGINE_RESOURCE_NAME"] = (
+    "projects/mock/locations/mock/reasoningEngines/mock"
+)
 
 import google.auth
 

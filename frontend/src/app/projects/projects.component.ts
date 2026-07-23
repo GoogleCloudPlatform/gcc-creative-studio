@@ -19,9 +19,7 @@ import {Router} from '@angular/router';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
 import {ProjectService} from '../services/project/project.service';
 import {Subscription} from 'rxjs';
-import {ProjectResponse} from '../common/models/workbench.model';
-
-import {ProjectStateService} from '../services/project/project-state.service';
+import {StoryboardResponse} from '../common/models/workbench.model';
 
 @Component({
   selector: 'app-projects',
@@ -29,7 +27,7 @@ import {ProjectStateService} from '../services/project/project-state.service';
   styleUrl: './projects.component.scss',
 })
 export class ProjectsComponent implements OnInit, OnDestroy {
-  projects: ProjectResponse[] = [];
+  projects: StoryboardResponse[] = [];
   isLoading = false;
   activeWorkspaceId: number | null = null;
   private subscription: Subscription = new Subscription();
@@ -38,7 +36,6 @@ export class ProjectsComponent implements OnInit, OnDestroy {
     private projectService: ProjectService,
     private router: Router,
     private workspaceStateService: WorkspaceStateService,
-    private projectStateService: ProjectStateService,
   ) {}
 
   ngOnInit(): void {
@@ -71,8 +68,9 @@ export class ProjectsComponent implements OnInit, OnDestroy {
   }
 
   goToWorkbench(projectId: number): void {
-    this.projectStateService.setActiveProjectId(projectId);
-    void this.router.navigate(['/workbench']);
+    void this.router.navigate(['/workbench'], {
+      queryParams: {projectId: projectId},
+    });
   }
 
   createProject(): void {
@@ -82,11 +80,11 @@ export class ProjectsComponent implements OnInit, OnDestroy {
       this.projectService
         .createProject({
           workspace_id: this.activeWorkspaceId,
-          name: name,
+          template_name: name,
         })
         .subscribe({
-          next: () => {
-            this.loadProjects(this.activeWorkspaceId!);
+          next: project => {
+            this.projects.push({...project, scenes: []});
           },
           error: err => console.error('Failed to create project', err),
         });

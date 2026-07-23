@@ -1538,5 +1538,83 @@ class TestBackgroundWorkers:
                 user_email="test@user.com",
             )
 
+            from src.common.schema.media_item_model import JobStatusEnum
+
             mock_media_repo.update.assert_called_once()
             mock_vertex_client.interactions.create.assert_called_once()
+            call_args = mock_media_repo.update.call_args[0]
+            update_dict = call_args[1]
+            assert update_dict["status"] == JobStatusEnum.COMPLETED
+            assert update_dict["gcs_uris"] == ["gs://bucket/uploaded.mp4"]
+            assert update_dict["num_media"] == 1
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.videos.veo_service.GenAIModelSetup.get_omni_client")
+    def test_process_video_in_background_omni_content_blocked(
+        self,
+        mock_omni_client_init,
+        mock_worker_db_class,
+    ):
+        from src.common.schema.media_item_model import JobStatusEnum
+
+        sample_dto = CreateVeoDto(
+            workspace_id=1,
+            prompt="Test Omni Restricted",
+            generation_model=GenerationModelEnum.GEMINI_OMNI,
+        )
+
+        mock_db_context = AsyncMock()
+        mock_db_factory = MagicMock(return_value=mock_db_context)
+        mock_worker_db_class.return_value.__aenter__.return_value = (
+            mock_db_factory
+        )
+
+        mock_vertex_client = MagicMock()
+        mock_omni_client_init.return_value = mock_vertex_client
+
+        raw_error_str = "Error code: 400 - {'error': {'message': \"Unable to show the generated video. The output contains certain restricted individuals that violate Google's Responsible AI practices. Try rephrasing the prompt. If you think this was an error, send feedback.\", 'code': 'content_blocked'}}"
+        mock_vertex_client.interactions.create.side_effect = Exception(
+            raw_error_str
+        )
+
+        with patch(
+            "src.videos.veo_service.MediaRepository"
+        ) as mock_media_repo_class:
+            mock_media_repo = AsyncMock()
+            mock_media_repo_class.return_value = mock_media_repo
+
+            _process_video_in_background(
+                media_item_id=1234,
+                request_dto=sample_dto,
+                user_email="test@user.com",
+            )
+
+            assert mock_vertex_client.interactions.create.call_count == 1
+            mock_media_repo.update.assert_called_once()
+            call_args = mock_media_repo.update.call_args[0]
+            assert call_args[0] == 1234
+            update_dict = call_args[1]
+            assert update_dict["status"] == JobStatusEnum.FAILED
+            # DB receives the complete raw exception string for developer insights
+            assert update_dict["error_message"] == raw_error_str
+
+            # MediaItemResponse automatically formats error_message for the frontend user
+            from src.galleries.dto.gallery_response_dto import MediaItemResponse
+
+            response_dto = MediaItemResponse(
+                id=1234,
+                workspace_id=1,
+                user_email="test@user.com",
+                mime_type="video/mp4",
+                model=GenerationModelEnum.GEMINI_OMNI,
+                aspect_ratio="16:9",
+                status=JobStatusEnum.FAILED,
+                error_message=raw_error_str,
+                gcs_uris=[],
+            )
+            assert response_dto.error_message == (
+                "Unable to show the generated video. The output contains "
+                "certain restricted individuals that violate Google's Responsible "
+                "AI practices. Try rephrasing the prompt. If you think this was an "
+                "error, send feedback."
+            )

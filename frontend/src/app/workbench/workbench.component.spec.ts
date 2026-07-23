@@ -25,16 +25,15 @@ import {HttpClient} from '@angular/common/http';
 import {HttpClientTestingModule} from '@angular/common/http/testing';
 import {RouterTestingModule} from '@angular/router/testing';
 import {MatDialogModule} from '@angular/material/dialog';
+import {MatSnackBar} from '@angular/material/snack-bar';
 import {signal, CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
+import {ActivatedRoute} from '@angular/router';
 import {Subject, of} from 'rxjs';
 import {AgentChatService} from './services/agent-chat.service';
-import {
-  TimelineStateService,
-  MediaAsset,
-} from './services/timeline-state.service';
+import {TimelineStateService} from './services/timeline-state.service';
 import {PlayheadSyncService} from './services/playhead-sync.service';
 
-import {TimelineDTO} from '../common/models/workbench.model';
+import {TimelineDTO, MediaAsset} from '../common/models/workbench.model';
 import {MediaItemSelection} from '../common/components/image-selector/image-selector.component';
 import {StoryboardService} from '../services/storyboard/storyboard.service';
 import {WorkbenchService} from './workbench.service';
@@ -47,13 +46,33 @@ describe('WorkbenchComponent', () => {
 
   beforeEach(async () => {
     const mockAgentChatService = {
-      currentStoryboard: signal(null),
+      currentStoryboard: signal<any>(null),
+      selectedSessionId: signal<any>(null),
+      chatMessages: signal<any[]>([]),
+    };
+
+    const mockMatSnackBar = {
+      open: jasmine.createSpy('open').and.returnValue({
+        onAction: () => of(),
+      }),
+    };
+
+    const mockQueryParams = new Subject<any>();
+    const mockActivatedRoute = {
+      queryParams: mockQueryParams.asObservable(),
+      snapshot: {
+        queryParams: {},
+      },
     };
 
     await TestBed.configureTestingModule({
       declarations: [WorkbenchComponent],
       imports: [HttpClientTestingModule, RouterTestingModule, MatDialogModule],
-      providers: [{provide: AgentChatService, useValue: mockAgentChatService}],
+      providers: [
+        {provide: AgentChatService, useValue: mockAgentChatService},
+        {provide: MatSnackBar, useValue: mockMatSnackBar},
+        {provide: ActivatedRoute, useValue: mockActivatedRoute},
+      ],
       schemas: [CUSTOM_ELEMENTS_SCHEMA],
     }).compileComponents();
 
@@ -183,7 +202,7 @@ describe('WorkbenchComponent', () => {
     expect(assets[0].name).toBe('Cloud Media');
   });
 
-  it('should process generated data', () => {
+  it('should process generated data and position audio using video_clip_index', () => {
     const stateService = TestBed.inject(TimelineStateService);
     const mockData: TimelineDTO = {
       timeline_id: 2,
@@ -197,11 +216,18 @@ describe('WorkbenchComponent', () => {
           volume: 1.0,
           speed: 1.0,
         },
+        {
+          asset_ref: {id: 3, type: 'media_item'},
+          trim: {offset_seconds: 0, duration_seconds: 10},
+          presigned_url: 'video2.mp4',
+          volume: 1.0,
+          speed: 1.0,
+        },
       ],
       audio_clips: [
         {
           asset_ref: {id: 2, type: 'media_item'},
-          start_at: {video_clip_index: 0, offset_seconds: 0},
+          start_at: {video_clip_index: 1, offset_seconds: 2},
           trim: {offset_seconds: 0, duration_seconds: 10},
           presigned_url: 'audio1.mp3',
           volume: 1.0,
@@ -212,12 +238,20 @@ describe('WorkbenchComponent', () => {
     component.processGeneratedData(mockData);
 
     const assets = stateService.assets();
-    expect(assets.length).toBe(2);
+    expect(assets.length).toBe(3);
 
     const clips = stateService.timelineClips();
-    expect(clips.length).toBe(2);
-    expect(clips[0].trackIndex).toBe(0);
-    expect(clips[1].trackIndex).toBe(1);
+    expect(clips.length).toBe(3);
+    // Since refreshTimelineLayout is called at the end of processGeneratedData,
+    // it will re-order/layout video clips sequentially.
+    // video clip 0 starts at 0.
+    // video clip 1 starts at 5.
+    const vClips = clips.filter(c => c.trackIndex === 0);
+    expect(vClips[0].startTime).toBe(0);
+    expect(vClips[1].startTime).toBe(5);
+
+    const aClips = clips.filter(c => c.trackIndex > 0);
+    expect(aClips[0].startTime).toBe(7); // video_clip_index 1 starts at 5s + offset 2s = 7s
   });
 
   describe('Metadata Extraction', () => {
@@ -477,9 +511,9 @@ describe('WorkbenchComponent', () => {
 
       expect(workbenchService.updateTimeline).toHaveBeenCalledWith(2, {
         timeline_id: 2,
-        workspace_id: 1,
-        project_id: undefined,
         storyboard_id: 1,
+        session_id: undefined,
+        workspace_id: 1,
         title: 'Timeline',
         video_clips: [
           {
@@ -533,6 +567,9 @@ describe('WorkbenchComponent', () => {
     });
 
     it('should call renderVideo and then getAsset to trigger file download', fakeAsync(() => {
+      const stateService = TestBed.inject(TimelineStateService);
+      stateService.loadedTimelineId.set(2);
+
       const mockStoryboard = {id: 1, timeline_id: 2};
       agentChatService.currentStoryboard.set(mockStoryboard as any);
 
@@ -582,6 +619,9 @@ describe('WorkbenchComponent', () => {
     }));
 
     it('should call saveTimeline first if hasPendingSave is true before rendering', fakeAsync(() => {
+      const stateService = TestBed.inject(TimelineStateService);
+      stateService.loadedTimelineId.set(2);
+
       const mockStoryboard = {id: 1, timeline_id: 2};
       agentChatService.currentStoryboard.set(mockStoryboard as any);
 
@@ -698,9 +738,10 @@ describe('WorkbenchComponent', () => {
       workbenchService = TestBed.inject(WorkbenchService);
     });
 
-    it('should fetch timeline when currentStoryboard is updated with a new timeline_id', () => {
+    it('should fetch timeline when currentStoryboard is updated with a new timeline_id', fakeAsync(() => {
       const mockTimeline: TimelineDTO = {
         timeline_id: 42,
+        storyboard_id: 1,
         workspace_id: 1,
         title: 'Mock Timeline',
         video_clips: [],
@@ -720,17 +761,22 @@ describe('WorkbenchComponent', () => {
 
       // Trigger effect execution
       fixture.detectChanges();
+      tick();
 
       expect(workbenchService.getTimeline).toHaveBeenCalledWith(42);
       expect(component.processGeneratedData).toHaveBeenCalledWith(mockTimeline);
       expect(stateService.loadedTimelineId()).toBe(42);
       expect(component.lastSavedText()).toBe('Saved');
-    });
+    }));
 
-    it('should not fetch timeline if loadedTimelineId already matches storyboard.timeline_id', () => {
+    it('should not fetch timeline if loadedTimelineId already matches storyboard.timeline_id', fakeAsync(() => {
       spyOn(workbenchService, 'getTimeline').and.callThrough();
 
       stateService.loadedTimelineId.set(42);
+      fixture.detectChanges();
+      tick();
+
+      (workbenchService.getTimeline as jasmine.Spy).calls.reset();
 
       agentChatService.currentStoryboard.set({
         id: 1,
@@ -739,22 +785,41 @@ describe('WorkbenchComponent', () => {
       } as any);
 
       fixture.detectChanges();
+      tick();
 
       expect(workbenchService.getTimeline).not.toHaveBeenCalled();
-    });
+    }));
 
-    it('should clear timeline state if storyboard is null', () => {
+    it('should clear timeline state if storyboard is null', fakeAsync(() => {
       agentChatService.currentStoryboard.set({id: 1, timeline_id: 42} as any);
       fixture.detectChanges();
+      tick();
 
       stateService.timelineClips.set([{id: 'c1'} as any]);
       expect(stateService.timelineClips().length).toBe(1);
 
       agentChatService.currentStoryboard.set(null);
       fixture.detectChanges();
+      tick();
 
       expect(stateService.timelineClips()).toEqual([]);
       expect(stateService.loadedTimelineId()).toBeUndefined();
-    });
+    }));
+  });
+
+  it('should pause timeline and stop loop when activeToolButton is set to agent', () => {
+    const stateService = TestBed.inject(TimelineStateService);
+    const playbackService = TestBed.inject(PlayheadSyncService);
+    spyOn(playbackService, 'stopLoop').and.callThrough();
+
+    stateService.isPlaying.set(true);
+    component.activeToolButton.set(null);
+    fixture.detectChanges();
+
+    component.activeToolButton.set('agent');
+    fixture.detectChanges();
+
+    expect(stateService.isPlaying()).toBeFalse();
+    expect(playbackService.stopLoop).toHaveBeenCalled();
   });
 });

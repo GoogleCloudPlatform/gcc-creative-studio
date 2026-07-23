@@ -33,7 +33,6 @@ import {
 } from '../../services/agent-chat.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
 import {StoryboardService} from '../../../services/storyboard/storyboard.service';
-import {ProjectStateService} from '../../../services/project/project-state.service';
 import {TimelineStateService} from '../../services/timeline-state.service';
 import {ActivatedRoute, Router} from '@angular/router';
 import {combineLatest} from 'rxjs';
@@ -41,7 +40,7 @@ import {CommonModule} from '@angular/common';
 import {FormsModule} from '@angular/forms';
 import {MatIconModule} from '@angular/material/icon';
 import {MatButtonModule} from '@angular/material/button';
-import {MarkdownModule} from 'ngx-markdown';
+import {MarkdownModule, MarkdownService} from 'ngx-markdown';
 
 import {ConfirmationDialogComponent} from '../../../common/components/confirmation-dialog/confirmation-dialog.component';
 import {MatDialog, MatDialogRef} from '@angular/material/dialog';
@@ -49,6 +48,7 @@ import {
   ImageSelectorComponent,
   MediaItemSelection,
 } from '../../../common/components/image-selector/image-selector.component';
+import {GalleryService} from '../../../gallery/gallery.service';
 import {SourceAssetResponseDto} from '../../../common/services/source-asset.service';
 import {environment} from '../../../../environments/environment';
 import {MatSnackBar} from '@angular/material/snack-bar';
@@ -77,33 +77,33 @@ export class ChatInterfaceComponent
 {
   private agentChatService = inject(AgentChatService);
   private workspaceStateService = inject(WorkspaceStateService);
-  private projectStateService = inject(ProjectStateService);
   private dialog = inject(MatDialog);
   private snackBar = inject(MatSnackBar);
   private storyboardService = inject(StoryboardService);
   private route = inject(ActivatedRoute);
   private router = inject(Router);
   private timelineState = inject(TimelineStateService);
+  private galleryService = inject(GalleryService);
+  private markdownService = inject(MarkdownService);
 
-  sessions = signal<ChatSession[]>([]);
+  sessions = this.agentChatService.sessions;
   topics = signal<{[key: string]: any}>({});
-  chatMessages = signal<any[]>([]);
+  chatMessages = this.agentChatService.chatMessages;
   filteredChatMessages = computed(() => {
     return this.chatMessages().filter(msg => !msg.isHidden);
   });
   selectedImages = signal<(SourceAssetResponseDto | MediaItemSelection)[]>([]);
   isTyping = signal<boolean>(false);
   isLoadingHistory = signal<boolean>(false);
-  currentSessionId: string | null = null;
-  private lastWorkspaceId: number | null = null;
-  private lastProjectId: number | null | undefined = undefined;
+  agentUnavailable = signal<boolean>(false);
+  currentSessionId: string | null = this.agentChatService.selectedSessionId();
+  private lastWorkspaceId: number | null =
+    this.workspaceStateService.getActiveWorkspaceId();
+  private isProgrammaticWorkspaceSwitch = false;
 
   private sessionSelectorEffect = effect(() => {
     const sessionId = this.agentChatService.selectedSessionId();
-    if (
-      sessionId &&
-      sessionId.toString() !== this.currentSessionId?.toString()
-    ) {
+    if (sessionId && sessionId !== this.currentSessionId) {
       this.currentSessionId = sessionId;
       this.loadChatMessages(sessionId);
     }
@@ -138,6 +138,65 @@ export class ChatInterfaceComponent
     }
   });
 
+  private resolvingAssetIds = new Set<string>();
+
+  private resolveMessageImagesEffect = effect(
+    () => {
+      const messages = this.chatMessages();
+      messages.forEach(msg => {
+        if (msg.images) {
+          msg.images.forEach((img: any) => {
+            const isMediaItem = 'mediaItem' in img;
+            const assetId = isMediaItem
+              ? String(img.mediaItem.id)
+              : String(img.id);
+
+            if (this.resolvingAssetIds.has(assetId)) {
+              return;
+            }
+
+            if (isMediaItem) {
+              if (!img.mediaItem.presignedUrls) {
+                this.resolvingAssetIds.add(assetId);
+                const id = Number(assetId);
+                this.galleryService.getMedia(id).subscribe({
+                  next: res => {
+                    img.mediaItem.presignedUrls = res.presignedUrls;
+                    img.mediaItem.presignedThumbnailUrls =
+                      res.presignedThumbnailUrls;
+                    this.chatMessages.update(msgs => [...msgs]);
+                  },
+                  error: err => {
+                    console.error('Failed to resolve media item:', id, err);
+                    this.resolvingAssetIds.delete(assetId);
+                  },
+                });
+              }
+            } else {
+              if (!img.presignedUrl) {
+                this.resolvingAssetIds.add(assetId);
+                const id = Number(assetId);
+                this.galleryService.getAsset(id).subscribe({
+                  next: res => {
+                    img.presignedUrl = res.presignedUrls?.[0] || '';
+                    img.presignedThumbnailUrl =
+                      res.presignedThumbnailUrls?.[0] || '';
+                    this.chatMessages.update(msgs => [...msgs]);
+                  },
+                  error: err => {
+                    console.error('Failed to resolve source asset:', id, err);
+                    this.resolvingAssetIds.delete(assetId);
+                  },
+                });
+              }
+            }
+          });
+        }
+      });
+    },
+    {allowSignalWrites: true},
+  );
+
   chatInputValue = signal<string>('');
   isInputExpanded = signal<boolean>(false);
 
@@ -148,10 +207,6 @@ export class ChatInterfaceComponent
 
   get currentAgent(): string {
     return this.agentChatService.activeAgent();
-  }
-
-  get projectId(): number | undefined {
-    return this.projectStateService.getActiveProjectId() || undefined;
   }
 
   isBrowser = true;
@@ -192,6 +247,27 @@ export class ChatInterfaceComponent
 
   ngOnInit() {
     this.isBrowser = typeof window !== 'undefined';
+    this.markdownService.renderer.link = (
+      arg1: any,
+      arg2?: any,
+      arg3?: any,
+    ) => {
+      let href = '';
+      let title = '';
+      let text = '';
+
+      if (typeof arg1 === 'object' && arg1 !== null) {
+        href = arg1.href || '';
+        title = arg1.title || '';
+        text = arg1.text || '';
+      } else {
+        href = arg1 || '';
+        title = arg2 || '';
+        text = arg3 || '';
+      }
+
+      return `<a href="${href}" title="${title}" target="_blank" rel="noopener noreferrer" class="markdown-link">${text}</a>`;
+    };
     this.initializeAgentChat();
     this.loadChatSessions();
 
@@ -240,47 +316,74 @@ export class ChatInterfaceComponent
   }
 
   loadChatSessions() {
+    this.isLoadingHistory.set(true);
+
     combineLatest([
       this.route.queryParams,
       this.workspaceStateService.activeWorkspaceId$,
-      this.projectStateService.activeProjectId$,
-    ]).subscribe(([params, workspaceId, projectId]) => {
-      if (!workspaceId || !projectId) return;
+    ]).subscribe(([params, workspaceId]) => {
+      if (!workspaceId) return;
 
       const storyboardId = params['storyboardId'];
       const sessionId = params['sessionId'];
 
-      const isSameProject = this.lastProjectId === projectId;
+      const isWorkspaceChanged =
+        this.lastWorkspaceId !== null && this.lastWorkspaceId !== workspaceId;
+
+      if (isWorkspaceChanged) {
+        if (this.isProgrammaticWorkspaceSwitch) {
+          this.isProgrammaticWorkspaceSwitch = false;
+          this.lastWorkspaceId = workspaceId;
+        } else {
+          // Clean timeline
+          this.timelineState.loadedTimelineId.set(undefined);
+          this.timelineState.timelineClips.set([]);
+          this.timelineState.transitions.set([]);
+          this.timelineState.transitionIn.set(null);
+          this.timelineState.transitionOut.set(null);
+
+          // Reset chat interface
+          this.agentChatService.stopPolling();
+          this.isLoadingHistory.set(false);
+          this.currentSessionId = null;
+          this.agentChatService.selectedSessionId.set(null);
+          this.chatMessages.set([]);
+          this.sessions.set([]);
+          this.agentChatService.currentStoryboard.set(null);
+          this.addWelcomeMessage();
+          this.shouldScrollToBottom = true;
+          this.lastWorkspaceId = workspaceId;
+
+          if (storyboardId || sessionId) {
+            void this.router.navigate([], {
+              relativeTo: this.route,
+              queryParams: {
+                sessionId: null,
+                storyboardId: null,
+              },
+              queryParamsHandling: 'merge',
+            });
+            return;
+          }
+        }
+      }
 
       const isExplicitNewChat =
-        isSameProject &&
         !sessionId &&
         !storyboardId &&
-        this.lastWorkspaceId === workspaceId;
+        this.lastWorkspaceId === workspaceId &&
+        this.sessions().length > 0;
 
       if (isExplicitNewChat) {
         this.isLoadingHistory.set(false);
         return;
       }
 
-      const isSameSession =
-        isSameProject &&
-        workspaceId === this.lastWorkspaceId &&
-        ((!sessionId && !storyboardId && this.currentSessionId !== null) ||
-          (sessionId &&
-            sessionId.toString() === this.currentSessionId?.toString()) ||
-          (storyboardId &&
-            Number(storyboardId) ===
-              Number(this.agentChatService.currentStoryboard()?.id)));
-
-      if (isSameSession) {
-        this.isLoadingHistory.set(false);
-        return;
-      }
+      this.isLoadingHistory.set(true);
 
       // Always load sessions first to populate the sessions dropdown
       this.agentChatService
-        .getSessions(workspaceId, projectId || undefined)
+        .getSessions(workspaceId, false, sessionId, storyboardId)
         .subscribe({
           next: (sessions: ChatSession[]) => {
             this.sessions.set(sessions || []);
@@ -289,12 +392,7 @@ export class ChatInterfaceComponent
             const sessionExistsInWorkspace =
               sessions &&
               sessions.some(s => {
-                if (
-                  sessionId &&
-                  (s.id === sessionId ||
-                    s.id?.toString() === sessionId?.toString() ||
-                    Number(s.id) === Number(sessionId))
-                ) {
+                if (sessionId && s.id === sessionId) {
                   return true;
                 }
                 if (
@@ -314,28 +412,32 @@ export class ChatInterfaceComponent
 
             if (shouldLoadDetail) {
               const isDifferentSession =
-                (sessionId &&
-                  (Number(sessionId) !== Number(this.currentSessionId) ||
-                    sessionId.toString() !==
-                      this.currentSessionId?.toString())) ||
+                (sessionId && sessionId !== this.currentSessionId) ||
                 (storyboardId &&
                   Number(storyboardId) !==
                     Number(this.agentChatService.currentStoryboard()?.id));
-              const isDifferentWorkspace =
-                workspaceId !== this.lastWorkspaceId || !isSameProject;
+              const isDifferentWorkspace = workspaceId !== this.lastWorkspaceId;
 
               if (isDifferentSession || isDifferentWorkspace) {
                 this.lastWorkspaceId = workspaceId;
-                this.lastProjectId = projectId;
                 this.agentChatService
                   .getSessionDetail(
                     workspaceId,
                     sessionId || undefined,
                     storyboardId ? Number(storyboardId) : undefined,
-                    projectId || undefined,
                   )
                   .subscribe({
                     next: (res: SessionDetailResponse) => {
+                      if (
+                        res.storyboard &&
+                        res.storyboard.workspace_id !== workspaceId
+                      ) {
+                        this.isProgrammaticWorkspaceSwitch = true;
+                        this.workspaceStateService.setActiveWorkspaceId(
+                          res.storyboard.workspace_id,
+                        );
+                        return;
+                      }
                       if (res.storyboard) {
                         if (res.storyboard.timeline_id) {
                           this.timelineState.loadedTimelineId.set(undefined);
@@ -357,13 +459,16 @@ export class ChatInterfaceComponent
                         this.shouldScrollToBottom = true;
                         this.checkAndResumePolling(res);
 
-                        // Synchronize URL: clear sessionId, set storyboardId
+                        // Synchronize URL: clear sessionId only if storyboard is present, otherwise keep sessionId
+                        const targetSessionId = res.storyboard?.id
+                          ? null
+                          : res.session.id;
+                        const targetStoryboardId = res.storyboard?.id || null;
                         void this.router.navigate([], {
                           relativeTo: this.route,
                           queryParams: {
-                            sessionId: null,
-                            storyboardId: res.storyboard?.id || null,
-                            timelineId: res.storyboard?.timeline_id || null,
+                            sessionId: targetSessionId,
+                            storyboardId: targetStoryboardId,
                           },
                           queryParamsHandling: 'merge',
                         });
@@ -380,7 +485,6 @@ export class ChatInterfaceComponent
                           queryParams: {
                             sessionId: null,
                             storyboardId: res.storyboard.id,
-                            timelineId: res.storyboard.timeline_id || null,
                           },
                           queryParamsHandling: 'merge',
                         });
@@ -393,7 +497,7 @@ export class ChatInterfaceComponent
                       console.error('Failed to preload workspace state:', err);
                       handleErrorSnackbar(
                         this.snackBar,
-                        err,
+                        err as any,
                         'Preload Session Details',
                       );
                       this.isLoadingHistory.set(false);
@@ -418,22 +522,19 @@ export class ChatInterfaceComponent
               }
 
               this.lastWorkspaceId = workspaceId;
-              this.lastProjectId = projectId;
               this.startNewChat();
-              void this.router.navigate([], {
-                relativeTo: this.route,
-                queryParams: {
-                  sessionId: null,
-                  storyboardId: null,
-                  timelineId: null,
-                },
-                queryParamsHandling: 'merge',
-              });
             }
           },
           error: err => {
             console.error('Error fetching sessions:', err);
-            handleErrorSnackbar(this.snackBar, err, 'Fetch Sessions');
+            if ((err as any)?.status === 503) {
+              console.warn(
+                'Backend returned 503: Agent Engine is likely missing AGENT_ENGINE_RESOURCE_NAME in environment.',
+              );
+              this.agentUnavailable.set(true);
+            } else {
+              handleErrorSnackbar(this.snackBar, err as any, 'Fetch Sessions');
+            }
             this.isLoadingHistory.set(false);
             this.startNewChat();
           },
@@ -449,7 +550,7 @@ export class ChatInterfaceComponent
 
     if (workspaceId) {
       this.agentChatService
-        .getSessionDetail(workspaceId, sessionId, storyboardId, this.projectId)
+        .getSessionDetail(workspaceId, sessionId, storyboardId)
         .subscribe({
           next: (res: SessionDetailResponse) => {
             const activeSessionId =
@@ -477,18 +578,27 @@ export class ChatInterfaceComponent
             this.shouldScrollToBottom = true;
 
             // Sync URL query parameters
+            const targetSessionId = res.storyboard?.id ? null : activeSessionId;
+            const targetStoryboardId = res.storyboard?.id || null;
             void this.router.navigate([], {
               relativeTo: this.route,
               queryParams: {
-                sessionId: null,
-                storyboardId: res.storyboard?.id || null,
+                sessionId: targetSessionId,
+                storyboardId: targetStoryboardId,
               },
               queryParamsHandling: 'merge',
             });
           },
           error: err => {
             console.error('Error loading session details:', err);
-            handleErrorSnackbar(this.snackBar, err, 'Load Session Details');
+            if ((err as any)?.status === 503) {
+              console.warn(
+                'Backend returned 503: Agent Engine is likely missing AGENT_ENGINE_RESOURCE_NAME in environment.',
+              );
+              this.agentUnavailable.set(true);
+            } else {
+              handleErrorSnackbar(this.snackBar, err, 'Load Session Details');
+            }
             this.isLoadingHistory.set(false);
           },
         });
@@ -641,16 +751,12 @@ export class ChatInterfaceComponent
       queryParams: {
         sessionId: null,
         storyboardId: null,
-        timelineId: null,
       },
       queryParamsHandling: 'merge',
     });
   }
   onSessionChange(sessionId: string) {
-    if (
-      sessionId &&
-      sessionId.toString() !== this.currentSessionId?.toString()
-    ) {
+    if (sessionId && sessionId !== this.currentSessionId) {
       this.currentSessionId = sessionId;
       this.loadChatMessages(sessionId);
     }
@@ -675,11 +781,7 @@ export class ChatInterfaceComponent
       if (result) {
         const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
         this.agentChatService
-          .deleteSession(
-            this.currentSessionId!,
-            workspaceId ?? undefined,
-            this.projectId,
-          )
+          .deleteSession(this.currentSessionId!, workspaceId ?? undefined)
           .subscribe({
             next: () => {
               this.sessions.update(s =>
@@ -712,24 +814,22 @@ export class ChatInterfaceComponent
     if (!this.currentSessionId) {
       this.isTyping.set(true);
       const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
-      this.agentChatService
-        .createSession(workspaceId ?? undefined, this.projectId)
-        .subscribe({
-          next: (session: ChatSession) => {
-            this.sessions.update(s => [session, ...s]);
-            this.currentSessionId = session.id;
-            this.agentChatService.selectedSessionId.set(session.id);
-            this.executeSendMessage(text);
-          },
-          error: err => {
-            console.error(
-              'Error starting new chat session on first message:',
-              err,
-            );
-            this.isTyping.set(false);
-            handleErrorSnackbar(this.snackBar, err, 'Start Chat');
-          },
-        });
+      this.agentChatService.createSession(workspaceId ?? undefined).subscribe({
+        next: (session: ChatSession) => {
+          this.sessions.update(s => [session, ...s]);
+          this.currentSessionId = session.id;
+          this.agentChatService.selectedSessionId.set(session.id);
+          this.executeSendMessage(text);
+        },
+        error: err => {
+          console.error(
+            'Error starting new chat session on first message:',
+            err,
+          );
+          this.isTyping.set(false);
+          handleErrorSnackbar(this.snackBar, err, 'Start Chat');
+        },
+      });
       return;
     }
 
@@ -971,9 +1071,16 @@ export class ChatInterfaceComponent
       },
       onError: err => {
         console.error('SSE Error:', err);
+        if ((err as any)?.status === 503) {
+          console.warn(
+            'Backend returned 503: Agent Engine is likely missing AGENT_ENGINE_RESOURCE_NAME in environment.',
+          );
+          this.agentUnavailable.set(true);
+        } else {
+          handleErrorSnackbar(this.snackBar, err, 'Storyboard Generation');
+        }
         this.isTyping.set(false);
         this.agentChatService.isGeneratingStoryboard.set(false);
-        handleErrorSnackbar(this.snackBar, err, 'Storyboard Generation');
       },
       onClose: () => {
         this.isTyping.set(false);
@@ -1053,7 +1160,6 @@ export class ChatInterfaceComponent
       partsParams.length > 0 ? partsParams : text,
       workspaceId,
       callbacks,
-      this.projectId,
     );
     this.selectedImages.set([]);
   }
@@ -1365,9 +1471,16 @@ export class ChatInterfaceComponent
       },
       onError: err => {
         console.error('SSE Error:', err);
+        if ((err as any)?.status === 503) {
+          console.warn(
+            'Backend returned 503: Agent Engine is likely missing AGENT_ENGINE_RESOURCE_NAME in environment.',
+          );
+          this.agentUnavailable.set(true);
+        } else {
+          handleErrorSnackbar(this.snackBar, err, 'Storyboard Generation');
+        }
         this.isTyping.set(false);
         this.agentChatService.isGeneratingStoryboard.set(false);
-        handleErrorSnackbar(this.snackBar, err, 'Storyboard Generation');
       },
       onClose: () => {
         this.isTyping.set(false);

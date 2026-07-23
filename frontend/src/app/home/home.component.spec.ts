@@ -85,6 +85,7 @@ describe('HomeComponent', () => {
     mockWorkspaceStateService = jasmine.createSpyObj('WorkspaceStateService', [
       'getActiveWorkspaceId',
     ]);
+    mockWorkspaceStateService.getActiveWorkspaceId.and.returnValue(1);
     mockRouter = jasmine.createSpyObj('Router', [
       'navigate',
       'getCurrentNavigation',

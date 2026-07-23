@@ -1277,3 +1277,76 @@ def test_vto_dto_validation_failures():
     with pytest.raises(ValidationError) as exc_info:
         VtoDto(workspace_id=1, person_image=valid_input)
     assert "At least one garment" in str(exc_info.value)
+
+
+@patch("src.images.imagen_service.generate_image_thumbnail_from_gcs")
+@patch("src.common.media_utils.generate_image_thumbnail_from_gcs")
+@patch("src.database.WorkerDatabase")
+@patch("src.images.imagen_service.GenAIModelSetup.init")
+def test_process_image_in_background_with_metadata_generation(
+    mock_genai_init,
+    mock_worker_db_class,
+    mock_thumb_mu,
+    mock_thumb_is,
+    sample_create_imagen_dto,
+    sample_user,
+):
+    _ = (mock_thumb_mu, mock_thumb_is)
+    sample_create_imagen_dto.metadata_generation_model = "gemini-3.5-flash"
+
+    mock_db_context = AsyncMock()
+    mock_db_factory = MagicMock(return_value=mock_db_context)
+    mock_worker_db_class.return_value.__aenter__.return_value = mock_db_factory
+
+    mock_client = MagicMock()
+    mock_genai_init.return_value = mock_client
+
+    with (
+        patch(
+            "src.images.imagen_service.MediaRepository",
+        ) as mock_media_repo_class,
+        patch(
+            "src.images.imagen_service.GeminiService",
+        ) as mock_gemini_service_class,
+        patch(
+            "src.images.imagen_service.GcsService",
+        ) as mock_gcs_class,
+        patch(
+            "src.images.imagen_service.gemini_generate_image",
+        ) as mock_gemini_gen,
+    ):
+        mock_media_repo = AsyncMock()
+        mock_media_repo_class.return_value = mock_media_repo
+
+        mock_gemini_service = MagicMock()
+        mock_gemini_service.enhance_prompt_from_dto = AsyncMock(
+            return_value="Enhanced Prompt"
+        )
+        mock_gemini_service.generate_media_metadata.return_value = {
+            "titles": ["Generated Image Title"],
+            "descriptions": ["Generated Image Description"],
+        }
+        mock_gemini_service_class.return_value = mock_gemini_service
+
+        mock_gcs = AsyncMock()
+        mock_gcs.bucket_name = "test-bucket"
+        mock_gcs_class.return_value = mock_gcs
+
+        mock_result = MagicMock()
+        mock_result.image.gcs_uri = "gs://bucket/output_0.png"
+        mock_result.image.mime_type = MimeTypeEnum.IMAGE_PNG
+        mock_gemini_gen.return_value = (mock_result, None)
+
+        _process_image_in_background(
+            media_item_id=123,
+            request_dto=sample_create_imagen_dto,
+            current_user=sample_user,
+        )
+
+        mock_media_repo.update.assert_called_once()
+        args, kwargs = mock_media_repo.update.call_args
+        assert args[0] == 123
+        update_data = args[1]
+        assert update_data["status"] == JobStatusEnum.COMPLETED
+        assert update_data["titles"] == ["Generated Image Title"]
+        assert update_data["descriptions"] == ["Generated Image Description"]

@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import subprocess
 
 from PIL import Image as PILImage
@@ -237,3 +238,42 @@ def get_video_dimensions(video_path: str) -> tuple[int, int]:
     width = data["streams"][0]["width"]
     height = data["streams"][0]["height"]
     return width, height
+
+
+def format_api_error_message(e: Exception | str | None) -> str:
+    """Extracts the exact, human-readable error message from API exceptions or error strings,
+    handling Google GenAI, Vertex AI, and Gemini Omni error payloads.
+    """
+    if e is None:
+        return "Unknown error occurred during media generation."
+
+    err_str = str(e)
+
+    # 1. Try regex extraction for 'message': "..." or 'message': '...' inside API error payloads
+    msg_match = re.search(r"['\"]message['\"]:\s*\"([^\"]+)\"", err_str)
+    if not msg_match:
+        msg_match = re.search(r"['\"]message['\"]:\s*'([^']+)'", err_str)
+
+    if msg_match:
+        return msg_match.group(1).strip()
+
+    # 2. Try parsing string as JSON if it contains a JSON-like object
+    if "{" in err_str and "}" in err_str:
+        try:
+            start_idx = err_str.index("{")
+            end_idx = err_str.rindex("}") + 1
+            json_substr = err_str[start_idx:end_idx].replace("'", '"')
+            parsed = json.loads(json_substr)
+            if isinstance(parsed, dict):
+                if (
+                    "error" in parsed
+                    and isinstance(parsed["error"], dict)
+                    and "message" in parsed["error"]
+                ):
+                    return str(parsed["error"]["message"])
+                if "message" in parsed:
+                    return str(parsed["message"])
+        except Exception:
+            pass
+
+    return err_str

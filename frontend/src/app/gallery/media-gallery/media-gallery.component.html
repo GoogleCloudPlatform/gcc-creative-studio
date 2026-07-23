@@ -119,6 +119,36 @@
               <mat-icon class="mr-1">{{ showAdvancedFilters ? 'expand_less' : 'filter_list' }}</mat-icon>
               <span>Filters</span>
             </studio-button>
+
+            <!-- Upload Media Button & Hidden Input -->
+            <input
+              #fileInput
+              type="file"
+              multiple
+              [accept]="acceptedMediaUploadFormats"
+              class="hidden"
+              (change)="onFilesSelected($event)"
+            />
+            <studio-button
+              variant="primary"
+              size="small"
+              [disabled]="uploadService.inProgressCount() > 0"
+              [matMenuTriggerFor]="uploadMenu"
+              title="Upload media files"
+            >
+              <mat-icon class="mr-1">add</mat-icon>
+              <span>Add to Gallery</span>
+            </studio-button>
+            <mat-menu #uploadMenu="matMenu">
+              <button mat-menu-item class="add-to-gallery-option" (click)="fileInput.click()">
+                <mat-icon>laptop</mat-icon>
+                <span>From this device</span>
+              </button>
+              <button mat-menu-item class="add-to-gallery-option" (click)="openGoogleDrivePicker()">
+                <mat-icon svgIcon="drive-icon"></mat-icon>
+                <span>From Google Drive</span>
+              </button>
+            </mat-menu>
           </div>
 
           <!-- Select All Button -->

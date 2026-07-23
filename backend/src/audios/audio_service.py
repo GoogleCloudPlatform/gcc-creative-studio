@@ -48,6 +48,10 @@ from src.common.storage_service import GcsService
 from src.config.config_service import config_service
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.images.repository.media_item_repository import MediaRepository
+from src.brand_guidelines.repository.brand_guideline_repository import (
+    BrandGuidelineRepository,
+)
+from src.multimodal.gemini_service import GeminiService
 from src.users.user_model import UserModel
 
 logger = logging.getLogger(__name__)
@@ -90,6 +94,10 @@ def _process_audio_in_background(
             async with WorkerDatabase() as db_factory:
                 async with db_factory() as db:
                     media_repo = MediaRepository(db)
+                    brand_repo = BrandGuidelineRepository(db)
+                    gemini_service = GeminiService(
+                        brand_guideline_repo=brand_repo
+                    )
                     gcs_service = GcsService()
                     cfg = config_service
 
@@ -329,14 +337,40 @@ def _process_audio_in_background(
 
                         generation_time = time.monotonic() - start_time
 
-                        await media_repo.update(
-                            media_item_id,
-                            {
-                                "status": JobStatusEnum.COMPLETED,
-                                "gcs_uris": permanent_gcs_uris,
-                                "generation_time": generation_time,
-                            },
-                        )
+                        update_data = {
+                            "status": JobStatusEnum.COMPLETED,
+                            "gcs_uris": permanent_gcs_uris,
+                            "generation_time": generation_time,
+                        }
+                        if (
+                            getattr(
+                                request_dto, "metadata_generation_model", None
+                            )
+                            and permanent_gcs_uris
+                        ):
+                            try:
+                                metadata = await asyncio.to_thread(
+                                    gemini_service.generate_media_metadata,
+                                    prompt=(
+                                        "Describe this generated audio based"
+                                        f" on prompt: {request_dto.prompt}"
+                                    ),
+                                    media_uris=permanent_gcs_uris,
+                                    model_name=request_dto.metadata_generation_model,
+                                    mime_type="audio/mpeg",
+                                )
+                                titles = metadata.get("titles")
+                                if titles:
+                                    update_data["titles"] = titles
+                                descriptions = metadata.get("descriptions")
+                                if descriptions:
+                                    update_data["descriptions"] = descriptions
+                            except Exception as e:
+                                worker_logger.warning(
+                                    f"Failed to generate metadata for media item {media_item_id}: {e}"
+                                )
+
+                        await media_repo.update(media_item_id, update_data)
                         worker_logger.info(
                             f"Audio job {media_item_id} completed successfully."
                         )
@@ -405,6 +439,8 @@ class AudioService:
             seed=request_dto.seed,
             gcs_uris=[],
             comment=request_dto.file_name,
+            titles=request_dto.titles,
+            descriptions=request_dto.descriptions,
         )
         saved_item = await self.media_repo.create(media_post_to_save)
 

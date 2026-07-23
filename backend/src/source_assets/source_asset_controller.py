@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Controller for handling source asset API requests."""
 
 import asyncio
 
@@ -26,8 +27,19 @@ from fastapi import (
 )
 
 from src.auth.auth_guard import RoleChecker, get_current_user
-from src.common.base_dto import AspectRatioEnum
+from src.common.base_dto import (
+    AspectRatioEnum,
+    GenerationModelEnum,
+    MimeTypeEnum,
+)
 from src.common.dto.pagination_response_dto import PaginationResponseDto
+from src.source_assets.dto.finalize_upload_dto import (
+    FinalizeSourceAssetUploadDto,
+)
+from src.source_assets.dto.generate_upload_url_dto import (
+    GenerateSourceAssetUploadUrlDto,
+    GenerateSourceAssetUploadUrlResponseDto,
+)
 from src.source_assets.dto.source_asset_response_dto import (
     SourceAssetResponseDto,
 )
@@ -42,6 +54,21 @@ from src.users.repository.user_repository import UserRepository
 from src.users.user_model import UserModel, UserRoleEnum
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
+MAX_UPLOAD_SIZE_BYTES = 500 * 1024 * 1024  # 500 MB
+
+ALLOWED_MIME_TYPES = {
+    MimeTypeEnum.IMAGE_PNG.value,
+    MimeTypeEnum.IMAGE_JPEG.value,
+    "image/jpg",
+    MimeTypeEnum.IMAGE_WEBP.value,
+    MimeTypeEnum.VIDEO_MP4.value,
+    MimeTypeEnum.AUDIO_WAV.value,
+    MimeTypeEnum.AUDIO_MPEG.value,
+    MimeTypeEnum.AUDIO_MP3.value,
+    MimeTypeEnum.AUDIO_OGG.value,
+    MimeTypeEnum.AUDIO_WEBM.value,
+}
+
 router = APIRouter(
     prefix="/api/source_assets",
     tags=["User Assets"],
@@ -54,14 +81,82 @@ router = APIRouter(
 )
 
 
+@router.post(
+    "/generate-upload-url",
+    response_model=GenerateSourceAssetUploadUrlResponseDto,
+    summary="Get a Signed URL for Direct Source Asset Upload",
+)
+async def generate_source_asset_upload_url(
+    request_dto: GenerateSourceAssetUploadUrlDto,
+    current_user: UserModel = Depends(get_current_user),
+    service: SourceAssetService = Depends(),
+    workspace_auth: WorkspaceAuth = Depends(),
+):
+    """Generates a secure, short-lived signed URL to upload a source asset directly to GCS.
+
+    Uses same strategy as: backend/src/brand_guidelines/brand_guideline_controller.py
+    """
+    await workspace_auth.authorize(
+        workspace_id=request_dto.workspace_id,
+        user=current_user,
+    )
+
+    if request_dto.size > MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=f"File is too large. Maximum size is {MAX_UPLOAD_SIZE_BYTES // (1024 * 1024)}MB.",
+        )
+
+    content_type = request_dto.content_type.split(";")[0].strip().lower()
+    if content_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported file format.",
+        )
+
+    return await service.generate_signed_upload_url(
+        request_dto=request_dto,
+        current_user=current_user,
+    )
+
+
+@router.post(
+    "/finalize-upload",
+    response_model=SourceAssetResponseDto,
+    status_code=status.HTTP_201_CREATED,
+    summary="Finalize Direct Source Asset Upload",
+)
+async def finalize_source_asset_upload(
+    request_dto: FinalizeSourceAssetUploadDto,
+    current_user: UserModel = Depends(get_current_user),
+    service: SourceAssetService = Depends(),
+    workspace_auth: WorkspaceAuth = Depends(),
+):
+    """Finalizes registration of a source asset in the database after direct GCS upload."""
+    await workspace_auth.authorize(
+        workspace_id=request_dto.workspace_id,
+        user=current_user,
+    )
+
+    return await service.finalize_direct_upload(
+        request_dto=request_dto,
+        current_user=current_user,
+    )
+
+
 @router.post("/upload", response_model=SourceAssetResponseDto)
 async def upload_source_asset(
     file: UploadFile = File(),
-    workspaceId: int = Form(),
+    workspace_id: int = Form(..., alias="workspaceId"),
     scope: AssetScopeEnum | None = Form(None),
-    assetType: AssetTypeEnum | None = Form(None),
-    aspectRatio: AspectRatioEnum | None = Form(None),
-    upscaleFactor: str | None = Form(None),
+    asset_type: AssetTypeEnum | None = Form(None, alias="assetType"),
+    aspect_ratio: AspectRatioEnum | None = Form(None, alias="aspectRatio"),
+    upscale_factor: str | None = Form(None, alias="upscaleFactor"),
+    metadata_generation_model: GenerationModelEnum | str | None = Form(
+        GenerationModelEnum.GEMINI_3_5_FLASH
+    ),
+    title: str | None = Form(None),
+    description: str | None = Form(None),
     current_user: UserModel = Depends(get_current_user),
     service: SourceAssetService = Depends(SourceAssetService),
     workspace_auth: WorkspaceAuth = Depends(),
@@ -76,7 +171,7 @@ async def upload_source_asset(
     # Use our centralized dependency to authorize the user for the workspace
     # before proceeding with the upload.
     await workspace_auth.authorize(
-        workspace_id=workspaceId,
+        workspace_id=workspace_id,
         user=current_user,
     )
 
@@ -87,10 +182,13 @@ async def upload_source_asset(
         filename=file.filename,
         mime_type=file.content_type,
         scope=scope,
-        workspace_id=workspaceId,
-        asset_type=assetType,
-        aspect_ratio=aspectRatio,
-        upscale_factor=upscaleFactor,
+        workspace_id=workspace_id,
+        asset_type=asset_type,
+        aspect_ratio=aspect_ratio,
+        upscale_factor=upscale_factor,
+        metadata_generation_model=metadata_generation_model,
+        title=title,
+        description=description,
     )
 
 
@@ -98,7 +196,9 @@ async def upload_source_asset(
 async def convert_image_to_png(
     file: UploadFile = File(),
     # Keep auth dependencies to protect the endpoint
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(
+        get_current_user
+    ),  # pylint: disable=unused-argument
     service: SourceAssetService = Depends(),
 ):
     """Accepts any image file, converts it to PNG, and returns the binary data.

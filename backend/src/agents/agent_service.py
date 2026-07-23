@@ -93,9 +93,26 @@ class AgentService:
         }
         return AGENT_REASONING_ENGINES.get(appName, default_config)
 
-    def _get_remote_agent(self, appName: str = APP_NAME) -> Any:
+    def _get_validated_agent_name(self, appName: str) -> str:
         agent_config = self._get_agent_config(appName)
         agent_name = agent_config.get("resource_name")
+        if not agent_name:
+            logger.error(
+                "Agent resource name is not configured for app %s.", appName
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Agent Engine Resource Name is not configured in the backend environment.",
+            )
+        return agent_name
+
+    def _get_remote_agent(self, appName: str = APP_NAME) -> Any:
+        vertexai.init(
+            project=config_service.PROJECT_ID,
+            location=config_service.WORKFLOWS_LOCATION,
+            api_transport="grpc",
+        )
+        agent_name = self._get_validated_agent_name(appName)
         return agent_engines.get(agent_name)
 
     def _map_session_to_dto(
@@ -236,8 +253,7 @@ class AgentService:
                     user=current_user,
                 )
 
-            agent_config = self._get_agent_config(appName)
-            agent_name = agent_config.get("resource_name")
+            agent_name = self._get_validated_agent_name(appName)
 
             raw_sessions = self.client.agent_engines.sessions.list(
                 name=agent_name, config={"filter": f'user_id="{user_id}"'}
@@ -303,8 +319,8 @@ class AgentService:
                     user=current_user,
                 )
 
+            agent_name = self._get_validated_agent_name(appName)
             agent_config = self._get_agent_config(appName)
-            agent_name = agent_config.get("resource_name")
             auth_header = request.headers.get("Authorization", "")
             auth_key = agent_config.get("token_key", "user_auth_token")
 
@@ -388,8 +404,7 @@ class AgentService:
         session_dto = None
         if resolved_session_id is not None:
             try:
-                agent_config = self._get_agent_config(appName)
-                agent_name = agent_config.get("resource_name")
+                agent_name = self._get_validated_agent_name(appName)
                 full_session_name = (
                     f"{agent_name}/sessions/{resolved_session_id}"
                 )
@@ -408,6 +423,7 @@ class AgentService:
                             f"Session {resolved_session_id} not found. Re-creating dynamic session."
                         )
                         auth_header = request.headers.get("Authorization", "")
+                        agent_config = self._get_agent_config(appName)
                         auth_key = agent_config.get(
                             "token_key", "user_auth_token"
                         )
@@ -487,8 +503,7 @@ class AgentService:
                     user=current_user,
                 )
 
-            agent_config = self._get_agent_config(appName)
-            agent_name = agent_config.get("resource_name")
+            agent_name = self._get_validated_agent_name(appName)
             full_session_name = f"{agent_name}/sessions/{session_id}"
             session = self.client.agent_engines.sessions.get(
                 name=full_session_name
@@ -556,8 +571,7 @@ class AgentService:
                     user=current_user,
                 )
 
-            agent_config = self._get_agent_config(appName)
-            agent_name = agent_config.get("resource_name")
+            agent_name = self._get_validated_agent_name(appName)
             full_session_name = f"{agent_name}/sessions/{session_id}"
 
             # Fetch session to extract workspace_id and authorize
@@ -610,6 +624,7 @@ class AgentService:
         workspace_id = body.get("workspaceId")
 
         if workspace_id is not None:
+            injections.append(f"Active Workspace ID: {workspace_id}")
             await self.workspace_auth.authorize(
                 workspace_id=workspace_id,
                 user=current_user,
@@ -674,7 +689,7 @@ class AgentService:
                         [f"- {aid}" for aid in attached_assets]
                     )
                     injections.append(
-                        f"The user has attached the following reference assets:\n{asset_list}\nUse the load_asset_and_save_as_artifact tool to load them if needed."
+                        f"The user has attached the following reference assets:\n{asset_list}"
                     )
 
                 if injections:
@@ -703,7 +718,7 @@ class AgentService:
                 auth_key = agent_config.get("token_key", "user_auth_token")
 
                 if session_id and auth_header:
-                    agent_name = agent_config.get("resource_name")
+                    agent_name = self._get_validated_agent_name(app_name)
                     full_session_name = f"{agent_name}/sessions/{session_id}"
                     try:
                         self.client.agent_engines.sessions.events.append(
@@ -745,20 +760,6 @@ class AgentService:
                             )
                             loop.call_soon_threadsafe(queue.put_nowait, chunk)
                         loop.call_soon_threadsafe(queue.put_nowait, None)
-                    except ValueError as val_err:
-                        logger.warning(
-                            f"[Agent Stream ValueError] {val_err}",
-                            exc_info=True,
-                        )
-                        if "Can only parse array of JSON objects" in str(
-                            val_err
-                        ):
-                            logger.info(
-                                "Gracefully handled trailing REST stream error from Agent Engine."
-                            )
-                            loop.call_soon_threadsafe(queue.put_nowait, None)
-                        else:
-                            loop.call_soon_threadsafe(queue.put_nowait, val_err)
                     except Exception as prod_err:
                         logger.error(
                             f"[Agent Stream Exception] {prod_err}",
@@ -814,12 +815,12 @@ class AgentService:
                 )
                 async with async_session_local() as db_session:
                     repo = AgentRepository(db_session)
+                    error_msg = f"Internal error streaming from agent: {str(e)}"
+                    error_event = json.dumps({"error": error_msg})
                     await repo.add_chat_event(
                         user_id=user_id,
                         session_id=session_id,
-                        payload={
-                            "raw": f'data: {{"error": "Internal error streaming from agent: {str(e)}"}}\n\n'
-                        },
+                        payload={"raw": f"data: {error_event}\n\n"},
                     )
 
         asyncio.create_task(process_stream())

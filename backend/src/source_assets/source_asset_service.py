@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Service module for source asset operations including uploads, details, and delete."""
 
 import asyncio
 import hashlib
@@ -35,6 +36,14 @@ from src.common.media_utils import generate_thumbnail, get_video_dimensions
 from src.common.storage_service import GcsService
 from src.images.dto.upscale_imagen_dto import UpscaleImagenDto
 from src.images.imagen_service import ImagenService
+from src.multimodal.gemini_service import GeminiService
+from src.source_assets.dto.finalize_upload_dto import (
+    FinalizeSourceAssetUploadDto,
+)
+from src.source_assets.dto.generate_upload_url_dto import (
+    GenerateSourceAssetUploadUrlDto,
+    GenerateSourceAssetUploadUrlResponseDto,
+)
 from src.source_assets.dto.source_asset_response_dto import (
     SourceAssetResponseDto,
 )
@@ -65,6 +74,7 @@ class SourceAssetService:
         gcs_service: GcsService = Depends(),
         iam_signer: IamSignerCredentials = Depends(),
         imagen_service: ImagenService = Depends(),
+        gemini_service: GeminiService = Depends(),
         tags_repo: TagsRepository = Depends(),
     ):
         self.repo = repo
@@ -72,6 +82,7 @@ class SourceAssetService:
         self.gcs_service = gcs_service
         self.iam_signer = iam_signer
         self.imagen_service = imagen_service  # Service to perform the upscale
+        self.gemini_service = gemini_service
         self.tags_repo = tags_repo
 
     async def _get_and_validate_aspect_ratio(
@@ -87,7 +98,7 @@ class SourceAssetService:
         # For videos, we ALWAYS deduce the aspect ratio and ignore any provided one.
         if is_video:
             if not temp_video_path:
-                raise Exception(
+                raise ValueError(
                     "Temp video path is required to deduce video aspect ratio.",
                 )
             width, height = await asyncio.to_thread(
@@ -100,11 +111,11 @@ class SourceAssetService:
             try:
                 # If the provided string is a valid enum member, we're done.
                 return AspectRatioEnum(provided_aspect_ratio)
-            except ValueError:
+            except ValueError as exc:
                 raise HTTPException(
                     status.HTTP_400_BAD_REQUEST,
                     f"Invalid aspect ratio '{provided_aspect_ratio}' provided.",
-                )
+                ) from exc
 
         # For images without a provided ratio, we deduce it.
         else:
@@ -133,17 +144,41 @@ class SourceAssetService:
         # Check if the closest match is within a small tolerance (e.g., 2%)
         if abs(supported_ratios[closest_enum] - actual_ratio) > 0.02:
             logger.info(
-                f"Falling back to 'OTHER' ratio for {width}x{height} (actual ratio: {actual_ratio:.3f})",
+                "Falling back to 'OTHER' ratio for %sx%s (actual ratio: %.3f)",
+                width,
+                height,
+                actual_ratio,
             )
             return AspectRatioEnum.OTHER
 
         logger.info("Deduced aspect ratio as %s", closest_enum.value)
         return closest_enum
 
+    def _determine_mime_type_enum(self, content_type: str) -> MimeTypeEnum:
+        """Determines the appropriate MimeTypeEnum for a given content type string."""
+        if content_type.startswith("video/"):
+            return MimeTypeEnum.VIDEO_MP4
+        if content_type.startswith("audio/"):
+            if content_type in ["audio/mpeg", "audio/mp3"]:
+                return MimeTypeEnum.AUDIO_MPEG
+            if content_type == "audio/wav":
+                return MimeTypeEnum.AUDIO_WAV
+            if content_type == "audio/ogg":
+                return MimeTypeEnum.AUDIO_OGG
+            if content_type == "audio/webm":
+                return MimeTypeEnum.AUDIO_WEBM
+            return MimeTypeEnum.AUDIO_MPEG
+        if content_type in ["image/jpeg", "image/jpg"]:
+            return MimeTypeEnum.IMAGE_JPEG
+        if content_type == "image/webp":
+            return MimeTypeEnum.IMAGE_WEBP
+        return MimeTypeEnum.IMAGE_PNG
+
     async def _create_asset_response(
         self,
         asset: SourceAssetModel,
         user_email: str | None = None,
+        user_picture: str | None = None,
     ) -> SourceAssetResponseDto:
         """Generates presigned URLs for the asset and its thumbnail."""
         tasks = [
@@ -187,6 +222,7 @@ class SourceAssetService:
             presigned_original_url=presigned_original_url,
             presigned_thumbnail_url=presigned_thumbnail_url,
             user_email=user_email,
+            user_picture=user_picture,
         )
 
     async def upload_asset(
@@ -202,7 +238,9 @@ class SourceAssetService:
         upscale_factor: str | None = None,
         enhance_input_image: bool | None = None,
         image_preservation_factor: float | None = None,
-        skip_deduplication: bool = False,
+        metadata_generation_model: str | None = None,
+        title: str | None = None,
+        description: str | None = None,
     ) -> SourceAssetResponseDto:
         """Handles uploading, de-duplicating, upscaling, and saving a new user asset."""
         contents = file_bytes
@@ -214,16 +252,17 @@ class SourceAssetService:
 
         file_hash = hashlib.sha256(contents).hexdigest()
 
-        # 1. Check for duplicates for this user unless skipping deduplication
-        if skip_deduplication:
-            file_hash = f"{file_hash[:24]}_{uuid.uuid4().hex[:8]}"
-        else:
-            existing_asset = await self.repo.find_by_hash(user.id, file_hash)
-            if existing_asset:
-                logger.info(
-                    f"Duplicate asset found for user {user.email} with hash {file_hash[:8]}. Returning existing.",
-                )
-                return await self._create_asset_response(existing_asset)
+        # 1. Check for duplicates for this user
+        existing_asset = await self.repo.find_by_hash(
+            user.id, file_hash, workspace_id
+        )
+        if existing_asset:
+            logger.info(
+                "Duplicate asset found for user %s with hash %s. Returning existing.",
+                user.email,
+                file_hash[:8],
+            )
+            return await self._create_asset_response(existing_asset)
 
         # 2. Handle file processing based on type (image vs. video vs. audio)
         is_video: bool = bool(mime_type and "video" in mime_type)
@@ -312,7 +351,7 @@ class SourceAssetService:
 
                 # If the image is already high-resolution, we skip upscaling.
                 # Validate resolution for upscaling
-                MAX_OUTPUT_PIXELS = (
+                max_output_pixels = (
                     17 * 1024 * 1024
                 )  # ~17MP limit for Imagen 4 Upscale
 
@@ -330,10 +369,13 @@ class SourceAssetService:
                         factor_int * factor_int
                     )
 
-                    if projected_pixels > MAX_OUTPUT_PIXELS:
+                    if projected_pixels > max_output_pixels:
                         raise HTTPException(
                             status_code=status.HTTP_400_BAD_REQUEST,
-                            detail=f"Image is too large for upscaling to {upscale_factor} times. Max output is ~17MP. Your image would result in ~{projected_pixels / 1000000:.1f}MP.",
+                            detail=(
+                                f"Image is too large for upscaling to {upscale_factor} times. "
+                                f"Max output is ~17MP. Your image would result in ~{projected_pixels / 1000000:.1f}MP."
+                            ),
                         )
 
                 # --- Store Original ---
@@ -378,11 +420,14 @@ class SourceAssetService:
                         else:
                             final_gcs_uri = upscaled_result.image.gcs_uri
                             logger.info(
-                                f"Upscaling complete. Final asset at {final_gcs_uri}",
+                                "Upscaling complete. Final asset at %s",
+                                final_gcs_uri,
                             )
                     except Exception as e:
                         logger.error(
-                            f"Failed to upscale asset for user {user.email}: {e}",
+                            "Failed to upscale asset for user %s: %s",
+                            user.email,
+                            e,
                             exc_info=True,
                         )
                         # Fallback: if upscale fails, use the original URI
@@ -392,16 +437,16 @@ class SourceAssetService:
                     final_gcs_uri = original_gcs_uri
 
             if not final_gcs_uri:
-                raise Exception("Failed to process and upload asset.")
+                raise RuntimeError("Failed to process and upload asset.")
 
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Asset processing failed: {e}", exc_info=True)
+            logger.error("Asset processing failed: %s", e, exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to process asset: {e}",
-            )
+            ) from e
         finally:
             # Clean up the temporary directory if it was created
             if os.path.exists(temp_dir):
@@ -410,23 +455,7 @@ class SourceAssetService:
         # 4. Create and save the new UserAsset document
         # Determine mime_type based on content_type
         content_type = mime_type or ""
-        if content_type.startswith("video/"):
-            mime_type = MimeTypeEnum.VIDEO_MP4
-        elif content_type.startswith("audio/"):
-            # Map common audio types to enum values
-            if content_type in ["audio/mpeg", "audio/mp3"]:
-                mime_type = MimeTypeEnum.AUDIO_MPEG
-            elif content_type == "audio/wav":
-                mime_type = MimeTypeEnum.AUDIO_WAV
-            elif content_type == "audio/ogg":
-                mime_type = MimeTypeEnum.AUDIO_OGG
-            elif content_type == "audio/webm":
-                mime_type = MimeTypeEnum.AUDIO_WEBM
-            else:
-                # Default to MPEG for unknown audio types
-                mime_type = MimeTypeEnum.AUDIO_MPEG
-        else:
-            mime_type = MimeTypeEnum.IMAGE_PNG
+        mime_type = self._determine_mime_type_enum(content_type)
 
         is_admin = UserRoleEnum.ADMIN in user.roles
         final_scope = AssetScopeEnum.PRIVATE
@@ -441,18 +470,30 @@ class SourceAssetService:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Only administrators can set a non-private scope.",
             )
-        original_asset = SourceAssetModel(
-            workspace_id=workspace_id,
-            user_id=user.id,
-            aspect_ratio=final_aspect_ratio,
-            gcs_uri=original_gcs_uri or final_gcs_uri,
-            thumbnail_gcs_uri=thumbnail_gcs_uri,
-            original_filename=filename or "untitled",
-            mime_type=mime_type,
-            file_hash=file_hash,
-            scope=final_scope,
-            asset_type=final_asset_type,
-        )
+
+        final_titles = [title] if title else []
+        final_descriptions = [description] if description else []
+        if metadata_generation_model:
+            try:
+                metadata = await asyncio.to_thread(
+                    self.gemini_service.generate_media_metadata,
+                    prompt="Describe this asset.",
+                    media_uris=[final_gcs_uri],
+                    model_name=metadata_generation_model,
+                    mime_type=(
+                        mime_type.value
+                        if hasattr(mime_type, "value")
+                        else content_type
+                    ),
+                )
+                metadata_titles = metadata.get("titles")
+                if metadata_titles:
+                    final_titles = metadata_titles
+                metadata_descriptions = metadata.get("descriptions")
+                if metadata_descriptions:
+                    final_descriptions = metadata_descriptions
+            except Exception as e:
+                logger.warning("Failed to generate metadata for asset: %s", e)
 
         new_asset = SourceAssetModel(
             workspace_id=workspace_id,
@@ -466,14 +507,110 @@ class SourceAssetService:
             file_hash=file_hash,
             scope=final_scope,
             asset_type=final_asset_type,
+            titles=final_titles,
+            descriptions=final_descriptions,
         )
         created_asset = await self.repo.create(new_asset)
         new_asset.id = created_asset.id
 
         return await self._create_asset_response(new_asset)
 
+    async def generate_signed_upload_url(
+        self,
+        request_dto: GenerateSourceAssetUploadUrlDto,
+        current_user: UserModel,
+    ) -> GenerateSourceAssetUploadUrlResponseDto:
+        """Generates a GCS v4 signed URL for a client-side direct source asset upload.
+
+        Uses same strategy as: backend/src/brand_guidelines/brand_guideline_service.py
+        """
+        file_uuid = str(uuid.uuid4())
+        destination_blob_name = f"source_assets/{current_user.id}/uploads/{file_uuid}/{os.path.basename(request_dto.filename)}"
+
+        signed_url, gcs_uri = await asyncio.to_thread(
+            self.iam_signer.generate_v4_upload_signed_url,
+            destination_blob_name,
+            request_dto.content_type,
+            self.gcs_service.bucket_name,
+        )
+
+        if not signed_url or not gcs_uri:
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "Could not generate upload URL.",
+            )
+
+        return GenerateSourceAssetUploadUrlResponseDto(
+            upload_url=signed_url,
+            gcs_uri=gcs_uri,
+            file_uuid=file_uuid,
+        )
+
+    async def finalize_direct_upload(
+        self,
+        request_dto: FinalizeSourceAssetUploadDto,
+        current_user: UserModel,
+    ) -> SourceAssetResponseDto:
+        """Finalizes registration of a source asset uploaded directly to GCS."""
+        expected_prefix = f"gs://{self.gcs_service.bucket_name}/source_assets/{current_user.id}/"
+        if (
+            not request_dto.gcs_uri.startswith(expected_prefix)
+            or ".." in request_dto.gcs_uri
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid GCS URI path.",
+            )
+        content_type = request_dto.mime_type or ""
+        mime_type_enum = self._determine_mime_type_enum(content_type)
+
+        is_admin = UserRoleEnum.ADMIN in current_user.roles
+        final_scope = AssetScopeEnum.PRIVATE
+        if is_admin:
+            final_scope = request_dto.scope or AssetScopeEnum.PRIVATE
+        elif request_dto.scope and request_dto.scope != AssetScopeEnum.PRIVATE:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only administrators can set a non-private scope.",
+            )
+
+        if request_dto.asset_type:
+            final_asset_type = request_dto.asset_type
+        elif content_type.startswith("video/"):
+            final_asset_type = AssetTypeEnum.GENERIC_VIDEO
+        else:
+            final_asset_type = AssetTypeEnum.GENERIC_IMAGE
+
+        final_aspect_ratio = (
+            request_dto.aspect_ratio or AspectRatioEnum.RATIO_1_1
+        )
+
+        # Fallback to hashing the GCS URI as a unique placeholder because the file content is not available on the server
+        file_hash = hashlib.sha256(
+            request_dto.gcs_uri.encode("utf-8")
+        ).hexdigest()
+
+        new_asset = SourceAssetModel(
+            workspace_id=request_dto.workspace_id,
+            user_id=current_user.id,
+            aspect_ratio=final_aspect_ratio,
+            original_gcs_uri=request_dto.gcs_uri,
+            gcs_uri=request_dto.gcs_uri,
+            thumbnail_gcs_uri=None,
+            original_filename=request_dto.filename or "untitled",
+            mime_type=mime_type_enum,
+            file_hash=file_hash,
+            scope=final_scope,
+            asset_type=final_asset_type,
+        )
+
+        created_asset = await self.repo.create(new_asset)
+        new_asset.id = created_asset.id
+
+        return await self._create_asset_response(new_asset)
+
     async def convert_to_png(self, file: UploadFile) -> bytes:
-        """Converts an uploaded image file to PNG format in memory."""
+        """Converts an uploaded image file (including HEIC/HEIF) to PNG format in memory."""
         try:
             contents = await file.read()
             if not contents:
@@ -481,6 +618,40 @@ class SourceAssetService:
                     status.HTTP_400_BAD_REQUEST,
                     "Cannot convert an empty file.",
                 )
+
+            filename = file.filename or ""
+            content_type = file.content_type or ""
+            is_heic = filename.lower().endswith(
+                (".heic", ".heif")
+            ) or content_type.lower() in ["image/heic", "image/heif"]
+
+            if is_heic:
+                import tempfile
+                from heic2png import HEIC2PNG
+
+                with tempfile.NamedTemporaryFile(
+                    suffix=".heic", delete=False
+                ) as temp_in:
+                    temp_in.write(contents)
+                    temp_in_path = temp_in.name
+
+                try:
+                    heic_img = HEIC2PNG(temp_in_path, overwrite=True)
+                    with tempfile.NamedTemporaryFile(
+                        suffix=".png", delete=False
+                    ) as temp_out:
+                        temp_out_path = temp_out.name
+
+                    try:
+                        heic_img.save(temp_out_path)
+                        with open(temp_out_path, "rb") as f:
+                            return f.read()
+                    finally:
+                        if os.path.exists(temp_out_path):
+                            os.remove(temp_out_path)
+                finally:
+                    if os.path.exists(temp_in_path):
+                        os.remove(temp_in_path)
 
             pil_image = PILImage.open(io.BytesIO(contents))
 
@@ -495,12 +666,14 @@ class SourceAssetService:
             with io.BytesIO() as output:
                 pil_image.save(output, format="PNG")
                 return output.getvalue()
+        except HTTPException:
+            raise
         except Exception as e:
-            logger.error(f"Failed to convert image to PNG: {e}", exc_info=True)
+            logger.error("Failed to convert image to PNG: %s", e, exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to process image: {e}",
-            )
+            ) from e
 
     async def delete_asset(
         self,
@@ -518,7 +691,8 @@ class SourceAssetService:
         asset_to_delete = await self.repo.get_by_id(asset_id)
         if not asset_to_delete:
             logger.warning(
-                f"Attempted to delete non-existent asset with ID: {asset_id}",
+                "Attempted to delete non-existent asset with ID: %s",
+                asset_id,
             )
             return False
 
@@ -528,7 +702,9 @@ class SourceAssetService:
 
         # 3. Mark the document as deleted in the database
         logger.info(
-            f"Soft deleting asset document from database with ID: {asset_id} by user: {current_user_id}",
+            "Soft deleting asset document from database with ID: %s by user: %s",
+            asset_id,
+            current_user_id,
         )
         return await self.repo.soft_delete(asset_id, deleted_by=current_user_id)
 
@@ -617,14 +793,16 @@ class SourceAssetService:
         if not (is_admin or is_owner or is_system):
             return None
 
-        # Fetch the owner's email to display in the frontend
+        # Fetch the owner's email and picture to display in the frontend
         owner_email = None
+        owner_picture = None
         owner = await self.user_repo.get_by_id(asset.user_id)
         if owner:
             owner_email = owner.email
+            owner_picture = owner.picture
 
         response = await self._create_asset_response(
-            asset, user_email=owner_email
+            asset, user_email=owner_email, user_picture=owner_picture
         )
         response.tags = await self.tags_repo.get_tags_for_source_asset(asset_id)
         return response
@@ -650,10 +828,14 @@ class SourceAssetService:
         file_hash = hashlib.sha256(contents).hexdigest()
 
         # 3. Check duplicate
-        existing_asset = await self.repo.find_by_hash(user.id, file_hash)
+        existing_asset = await self.repo.find_by_hash(
+            user.id, file_hash, workspace_id
+        )
         if existing_asset:
             logger.info(
-                f"Duplicate asset found for user {user.email} with hash {file_hash[:8]}. Returning existing.",
+                "Duplicate asset found for user %s with hash %s. Returning existing.",
+                user.email,
+                file_hash[:8],
             )
             return await self._create_asset_response(existing_asset)
 
@@ -740,11 +922,11 @@ class SourceAssetService:
                 )
 
             if not final_gcs_uri:
-                raise Exception("Failed to upload processed asset.")
+                raise RuntimeError("Failed to upload processed asset.")
 
         except Exception as e:
-            logger.error(f"Batch asset processing failed: {e}", exc_info=True)
-            raise ValueError(f"Failed to process asset from GCS: {e!s}")
+            logger.error("Batch asset processing failed: %s", e, exc_info=True)
+            raise ValueError(f"Failed to process asset from GCS: {e!s}") from e
         finally:
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)

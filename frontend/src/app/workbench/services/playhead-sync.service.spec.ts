@@ -41,6 +41,7 @@ describe('PlayheadSyncService', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [TestComponent],
+      providers: [PlayheadSyncService],
     }).compileComponents();
 
     fixture = TestBed.createComponent(TestComponent);
@@ -71,9 +72,13 @@ describe('PlayheadSyncService', () => {
       'TimeRulerComponent',
       ['setScrollLeft'],
     );
+    const mockVideo1 = document.createElement('video');
+    const mockVideo2 = document.createElement('video');
+    Object.defineProperty(mockVideo1, 'readyState', {get: () => 4});
+    Object.defineProperty(mockVideo2, 'readyState', {get: () => 4});
+
     const mockElements = {
-      videoA: document.createElement('video'),
-      videoB: document.createElement('video'),
+      videos: [mockVideo1, mockVideo2],
       audios: [],
       timeline: document.createElement('div'),
       dummyScroll: document.createElement('div'),
@@ -105,14 +110,13 @@ describe('PlayheadSyncService', () => {
   }));
 
   it('should play video in effect when isPlaying is true', fakeAsync(() => {
-    const mockVideoA = document.createElement('video');
-    const mockVideoB = document.createElement('video');
-    spyOn(mockVideoA, 'play').and.returnValue(Promise.resolve());
-    spyOn(mockVideoB, 'play').and.returnValue(Promise.resolve());
+    const mockVideo1 = document.createElement('video');
+    const mockVideo2 = document.createElement('video');
+    spyOn(mockVideo1, 'play').and.returnValue(Promise.resolve());
+    spyOn(mockVideo2, 'play').and.returnValue(Promise.resolve());
 
     const mockElements = {
-      videoA: mockVideoA,
-      videoB: mockVideoB,
+      videos: [mockVideo1, mockVideo2],
       audios: [],
       timeline: document.createElement('div'),
       dummyScroll: document.createElement('div'),
@@ -140,20 +144,19 @@ describe('PlayheadSyncService', () => {
     fixture.detectChanges(); // Trigger effects again!
 
     expect(
-      (mockVideoA.play as jasmine.Spy).calls.any() ||
-        (mockVideoB.play as jasmine.Spy).calls.any(),
+      (mockVideo1.play as jasmine.Spy).calls.any() ||
+        (mockVideo2.play as jasmine.Spy).calls.any(),
     ).toBeTrue();
   }));
 
   it('should pause video in effect when isPlaying is false', fakeAsync(() => {
-    const mockVideoA = document.createElement('video');
-    const mockVideoB = document.createElement('video');
-    spyOn(mockVideoA, 'pause');
-    spyOn(mockVideoB, 'pause');
+    const mockVideo1 = document.createElement('video');
+    const mockVideo2 = document.createElement('video');
+    spyOn(mockVideo1, 'pause');
+    spyOn(mockVideo2, 'pause');
 
     const mockElements = {
-      videoA: mockVideoA,
-      videoB: mockVideoB,
+      videos: [mockVideo1, mockVideo2],
       audios: [],
       timeline: document.createElement('div'),
       dummyScroll: document.createElement('div'),
@@ -180,15 +183,15 @@ describe('PlayheadSyncService', () => {
     stateService.isPlaying.set(true);
     fixture.detectChanges();
 
-    (mockVideoA.pause as jasmine.Spy).calls.reset();
-    (mockVideoB.pause as jasmine.Spy).calls.reset();
+    (mockVideo1.pause as jasmine.Spy).calls.reset();
+    (mockVideo2.pause as jasmine.Spy).calls.reset();
 
     // Mock paused to be false on both (simulating that it was playing)
-    Object.defineProperty(mockVideoA, 'paused', {
+    Object.defineProperty(mockVideo1, 'paused', {
       get: () => false,
       configurable: true,
     });
-    Object.defineProperty(mockVideoB, 'paused', {
+    Object.defineProperty(mockVideo2, 'paused', {
       get: () => false,
       configurable: true,
     });
@@ -198,8 +201,95 @@ describe('PlayheadSyncService', () => {
     fixture.detectChanges();
 
     expect(
-      (mockVideoA.pause as jasmine.Spy).calls.any() ||
-        (mockVideoB.pause as jasmine.Spy).calls.any(),
+      (mockVideo1.pause as jasmine.Spy).calls.any() ||
+        (mockVideo2.pause as jasmine.Spy).calls.any(),
     ).toBeTrue();
+  }));
+
+  it('should set isVideoLoading to true and pause playback in loop if readyState < 3 for the first clip', fakeAsync(() => {
+    const mockRuler = jasmine.createSpyObj<TimeRulerComponent>(
+      'TimeRulerComponent',
+      ['setScrollLeft'],
+    );
+    const mockVideo1 = document.createElement('video');
+    const mockVideo2 = document.createElement('video');
+    // set readyState < 3
+    Object.defineProperty(mockVideo1, 'readyState', {get: () => 1});
+    Object.defineProperty(mockVideo2, 'readyState', {get: () => 4});
+
+    const mockElements = {
+      videos: [mockVideo1, mockVideo2],
+      audios: [],
+      timeline: document.createElement('div'),
+      dummyScroll: document.createElement('div'),
+      timeRuler: mockRuler,
+    };
+
+    stateService.timelineClips.set([
+      {
+        id: '1',
+        assetId: 'a1',
+        startTime: 0,
+        duration: 10,
+        offset: 0,
+        trackIndex: 0,
+        color: 'red',
+      },
+    ]);
+
+    service.registerElements(mockElements);
+    stateService.isPlaying.set(true);
+
+    service.runGameLoop();
+
+    tick(50); // run multiple frames
+
+    expect(service.isVideoLoading()).toBeTrue();
+
+    service.stopLoop();
+  }));
+
+  it('should stop playback and loop if active video element encounters an error', fakeAsync(() => {
+    const mockRuler = jasmine.createSpyObj<TimeRulerComponent>(
+      'TimeRulerComponent',
+      ['setScrollLeft'],
+    );
+    const mockVideo1 = document.createElement('video');
+    const mockVideo2 = document.createElement('video');
+    // Mock the error property
+    Object.defineProperty(mockVideo1, 'error', {get: () => ({}) as MediaError});
+
+    const mockElements = {
+      videos: [mockVideo1, mockVideo2],
+      audios: [],
+      timeline: document.createElement('div'),
+      dummyScroll: document.createElement('div'),
+      timeRuler: mockRuler,
+    };
+
+    stateService.timelineClips.set([
+      {
+        id: '1',
+        assetId: 'a1',
+        startTime: 0,
+        duration: 10,
+        offset: 0,
+        trackIndex: 0,
+        color: 'red',
+      },
+    ]);
+
+    service.registerElements(mockElements);
+    stateService.isPlaying.set(true);
+
+    spyOn(service, 'stopLoop').and.callThrough();
+
+    service.runGameLoop();
+
+    tick(50);
+
+    expect(stateService.isPlaying()).toBeFalse();
+    expect(service.stopLoop).toHaveBeenCalled();
+    expect(service.isVideoLoading()).toBeFalse();
   }));
 });

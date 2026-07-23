@@ -170,7 +170,6 @@ export class AudioComponent implements OnInit {
     {id: VoiceEnum.ZEPHYR, name: 'Zephyr (Female)', type: 'preset'},
     {id: VoiceEnum.ZUBENELGENUBI, name: 'Zubenelgenubi (Male)', type: 'preset'},
   ];
-  private path = '../../assets/images';
 
   constructor(
     private searchService: SearchService,
@@ -184,11 +183,6 @@ export class AudioComponent implements OnInit {
     private galleryService: GalleryService,
   ) {
     this.activeAudioJob$ = this.searchService.activeAudioJob$;
-
-    this.matIconRegistry.addSvgIcon(
-      'white-gemini-spark-icon',
-      this.setPath(`${this.path}/white-gemini-spark-icon.svg`),
-    );
   }
 
   ngOnInit() {
@@ -216,10 +210,6 @@ export class AudioComponent implements OnInit {
     this.sampleCount = state.sampleCount;
     this.selectedLanguage = state.selectedLanguage as LanguageEnum;
     this.selectedVoice = state.selectedVoice as VoiceEnum;
-  }
-
-  private setPath(url: string): SafeResourceUrl {
-    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   }
 
   onVoiceSelectionChange(value: string) {

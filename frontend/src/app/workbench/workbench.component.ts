@@ -33,11 +33,7 @@ import {
 import {isPlatformBrowser} from '@angular/common';
 import {HttpClient} from '@angular/common/http';
 import {MatIconRegistry} from '@angular/material/icon';
-import {
-  DomSanitizer,
-  SafeResourceUrl,
-  SafeUrl,
-} from '@angular/platform-browser';
+import {DomSanitizer, SafeResourceUrl} from '@angular/platform-browser';
 import {MatDialog} from '@angular/material/dialog';
 import {
   ImageSelectorComponent,
@@ -51,21 +47,23 @@ import {
 import {WorkbenchService, RenderTimelineRequest} from './workbench.service';
 import {AgentChatService} from './services/agent-chat.service';
 import {TimeRulerComponent} from './components/time-ruler/time-ruler.component';
-import {
-  TimelineStateService,
-  TimelineClip,
-  MediaAsset,
-} from './services/timeline-state.service';
+import {TimelineStateService} from './services/timeline-state.service';
 import {PlayheadSyncService} from './services/playhead-sync.service';
 import {
   TimelineDTO,
   VideoClipDTO,
   AudioClipDTO,
-  StoryboardResponse,
+  TransitionType,
+  TimelineClip,
+  MediaAsset,
 } from '../common/models/workbench.model';
 import {ActivatedRoute, Router} from '@angular/router';
+import {MatSnackBar} from '@angular/material/snack-bar';
+import {
+  handleErrorSnackbar,
+  handleSuccessSnackbar,
+} from '../utils/handleMessageSnackbar';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
-import {ProjectStateService} from '../services/project/project-state.service';
 import {
   Subject,
   Subscription,
@@ -78,8 +76,6 @@ import {debounceTime, switchMap, takeWhile, catchError} from 'rxjs/operators';
 import {StoryboardService} from '../services/storyboard/storyboard.service';
 import {GalleryService} from '../gallery/gallery.service';
 import {MediaItem} from '../common/models/media-item.model';
-import {MatSnackBar} from '@angular/material/snack-bar';
-import {handleErrorSnackbar} from '../utils/handleMessageSnackbar';
 
 @Component({
   selector: 'app-workbench',
@@ -158,8 +154,18 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   });
 
   // View Children
-  @ViewChild('videoA') videoA!: ElementRef<HTMLVideoElement>;
-  @ViewChild('videoB') videoB!: ElementRef<HTMLVideoElement>;
+  @ViewChildren('timelineVideo') timelineVideos!: QueryList<
+    ElementRef<HTMLVideoElement>
+  >;
+
+  private applyVideoFilter() {
+    const filterValue = this.videoFilter();
+    this.timelineVideos?.forEach(video => {
+      if (video.nativeElement) {
+        video.nativeElement.style.filter = filterValue;
+      }
+    });
+  }
   @ViewChildren('bgAudio') bgAudios!: QueryList<ElementRef<HTMLAudioElement>>;
   @ViewChild(TimeRulerComponent) timeRuler!: TimeRulerComponent;
   @ViewChild('timelineContainer')
@@ -182,7 +188,6 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   private workspaceStateService = inject(WorkspaceStateService);
   private sourceAssetService = inject(SourceAssetService);
-  private projectStateService = inject(ProjectStateService);
 
   isDownloading = signal(false);
 
@@ -209,6 +214,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   isBrowser: boolean;
   lastSavedText = signal<string>('');
+  videoAspectRatio = signal<string>('16/9');
 
   private saveSubject = new Subject<void>();
   private saveSubscription?: Subscription;
@@ -223,26 +229,60 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   ) {
     this.isBrowser = isPlatformBrowser(platformId);
 
-    // Setup an effect to handle storyboard loading from signal
+    effect(() => {
+      this.applyVideoFilter();
+    });
+
+    // Sync loadedTimelineId with storyboard's timeline_id
     effect(
       () => {
         const storyboard = this.agentChatService.currentStoryboard();
+        if (storyboard && storyboard.timeline_id) {
+          this.timelineState.loadedTimelineId.set(storyboard.timeline_id);
+        } else {
+          const hasTimelineParam =
+            this.route.snapshot.queryParams['timelineId'];
+          if (!hasTimelineParam) {
+            this.timelineState.loadedTimelineId.set(undefined);
+          }
+        }
+      },
+      {allowSignalWrites: true},
+    );
+
+    // Load timeline when loadedTimelineId changes
+    effect(
+      () => {
+        const timelineId = this.timelineState.loadedTimelineId();
         if (this.isSaving) {
           return;
         }
-        if (storyboard && storyboard.timeline_id) {
-          if (
-            this.timelineState.loadedTimelineId() === storyboard.timeline_id
-          ) {
-            return;
-          }
-          console.log('Fetching timeline for ID:', storyboard.timeline_id);
-          this.timelineState.loadedTimelineId.set(storyboard.timeline_id);
-          this.workbenchService.getTimeline(storyboard.timeline_id).subscribe({
+        if (timelineId) {
+          this.workbenchService.getTimeline(timelineId).subscribe({
             next: (timeline: TimelineDTO) => {
-              console.log('Loading timeline from API:', timeline);
               this.processGeneratedData(timeline);
               this.lastSavedText.set('Saved');
+
+              // If the timeline is associated with a session/storyboard, update URL and show agent panel
+              if (timeline.storyboard_id || timeline.session_id) {
+                void this.router.navigate([], {
+                  relativeTo: this.route,
+                  queryParams: {
+                    sessionId: timeline.session_id || null,
+                    storyboardId: timeline.storyboard_id || null,
+                  },
+                  queryParamsHandling: 'merge',
+                });
+                this.activeToolButton.set('agent');
+              } else {
+                // Manual timeline: clear agent chat state
+                this.agentChatService.currentStoryboard.set(null);
+                this.agentChatService.selectedSessionId.set(null);
+                this.agentChatService.chatMessages.set([]);
+                if (this.activeToolButton() === 'agent') {
+                  this.activeToolButton.set(null);
+                }
+              }
             },
             error: err => {
               console.error('Failed to fetch timeline:', err);
@@ -250,101 +290,35 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
             },
           });
         } else {
-          const qParams = this.route.snapshot.queryParams;
-          const hasTimelineIdInUrl = !!qParams['timelineId'];
-          const hasStoryboardOrSessionInUrl =
-            !!qParams['storyboardId'] || !!qParams['sessionId'];
-
-          if (hasTimelineIdInUrl && !hasStoryboardOrSessionInUrl) {
-            return;
-          }
-
-          this.clearTimeline();
+          this.timelineState.timelineClips.set([]);
+          this.timelineState.selectedClipId.set(null);
+          this.timelineState.assets.set([]);
+          this.timelineState.currentTime.set(0);
+          this.timelineState.isPlaying.set(false);
+          this.timelineState.scrollOffset.set(0);
+          this.lastSavedText.set('');
         }
       },
       {allowSignalWrites: true},
     );
 
-    this.matIconRegistry
-      .addSvgIcon(
-        'white-gemini-spark-icon',
-        this.setPath(`${this.path}/mobile-white-gemini-spark-icon.svg`),
-      )
-      .addSvgIcon(
-        'creative-studio-icon',
-        this.setPath(`${this.path}/creative-studio-icon.svg`),
-      )
-      .addSvgIcon(
-        'mobile-white-gemini-spark-icon',
-        this.setPath(`${this.path}/mobile-white-gemini-spark-icon.svg`),
-      )
-      .addSvgIcon(
-        'creative-studio-icon',
-        this.setPath(`${this.path}/creative-studio-icon.svg`),
-      )
-      .addSvgIcon(
-        'fun-templates-icon',
-        this.setPath(`${this.path}/fun-templates-icon.svg`),
-      )
-      .addSvgIcon(
-        'video-clap-icon',
-        this.setPath(`${this.path}/video-clap-icon.svg`),
-      )
-      .addSvgIcon(
-        'movie-shallow-icon',
-        this.setPath(`${this.path}/movie-clap-shallow-icon.svg`),
-      )
-      .addSvgIcon(
-        'volume-off-icon',
-        this.setPath(`${this.path}/volume-off-icon.svg`),
-      )
-      .addSvgIcon('upload-icon', this.setPath(`${this.path}/upload-icon.svg`))
-      .addSvgIcon(
-        'sound-sensing-icon',
-        this.setPath(`${this.path}/sound-sensing-icon.svg`),
-      )
-      .addSvgIcon('lock-icon', this.setPath(`${this.path}/lock-icon.svg`))
-      .addSvgIcon('img-icon', this.setPath(`${this.path}/img-icon.svg`))
-      .addSvgIcon('eye-icon', this.setPath(`${this.path}/eye-icon.svg`))
-      .addSvgIcon('drive-icon', this.setPath(`${this.path}/drive-icon.svg`))
-      .addSvgIcon(
-        'audio-magic-eraser-icon',
-        this.setPath(`${this.path}/audio_magic_eraser-icon.svg`),
-      )
-      .addSvgIcon(
-        'play-arrow-icon',
-        this.setPath(`${this.path}/play-arrow-icon.svg`),
-      )
-      .addSvgIcon('square-icon', this.setPath(`${this.path}/square.svg`))
-      .addSvgIcon('phone-icon', this.setPath(`${this.path}/pixel-9.svg`))
-      .addSvgIcon(
-        'lightbulb-icon',
-        this.setPath(`${this.path}/lightbulb-tips.svg`),
-      )
-      .addSvgIcon('desktop-icon', this.setPath(`${this.path}/desktop.svg`))
-      .addSvgIcon(
-        'desktop-mac-icon',
-        this.setPath(`${this.path}/desktop-mac.svg`),
-      )
-      .addSvgIcon('edit-icon', this.setPath(`${this.path}/edit.svg`))
-      .addSvgIcon(
-        'gemini-spark-icon',
-        this.setPath(`${this.path}/gemini-spark.svg`),
-      )
-      .addSvgIcon(
-        'photo-merge-auto-icon',
-        this.setPath(`${this.path}/photo-merge-auto.svg`),
-      )
-      .addSvgIcon(
-        'web-stories-icon',
-        this.setPath(`${this.path}/web-stories.svg`),
-      );
-  }
-
-  private path = '../../../assets/images';
-
-  private setPath(url: string): SafeResourceUrl {
-    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
+    // Pause playback when switching away from video player to agent view
+    effect(
+      () => {
+        if (
+          this.activeToolButton() === 'agent' &&
+          this.timelineState.isPlaying()
+        ) {
+          const lastScroll = this.timelineState.scrollOffset();
+          this.timelineState.isPlaying.set(false);
+          this.playbackService.stopLoop();
+          if (this.dummyScrollContainer?.nativeElement) {
+            this.dummyScrollContainer.nativeElement.scrollLeft = lastScroll;
+          }
+        }
+      },
+      {allowSignalWrites: true},
+    );
   }
 
   // Signal to track audio element changes
@@ -384,23 +358,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     return this.mutedTracks().has(trackIndex);
   }
 
-  clearTimeline() {
-    console.log('Clearing timeline clips and assets.');
-    this.timelineState.loadedTimelineId.set(undefined);
-    this.timelineState.timelineClips.set([]);
-    this.timelineState.selectedClipId.set(null);
-    this.timelineState.assets.set([]);
-    this.timelineState.currentTime.set(0);
-    this.timelineState.isPlaying.set(false);
-    this.timelineState.scrollOffset.set(0);
-    this.lastSavedText.set('');
-  }
-
   ngOnInit() {
-    this.projectStateService.activeProjectId$.subscribe(projectId => {
-      this.clearTimeline();
-    });
-
     // save timeline after 10 seconds of inactivity
     this.saveSubscription = this.saveSubject
       .pipe(debounceTime(10000))
@@ -418,47 +376,12 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         this.agentChatService.selectedSessionId.set(sessionId);
       }
 
-      if (sessionId || storyboardId) {
-        this.activeToolButton.set('agent');
+      if (timelineId) {
+        this.timelineState.loadedTimelineId.set(timelineId);
       }
 
-      if (timelineId) {
-        const tId = Number(timelineId);
-        if (this.timelineState.loadedTimelineId() !== tId) {
-          this.timelineState.loadedTimelineId.set(tId);
-          this.workbenchService.getTimeline(tId).subscribe({
-            next: (timeline: TimelineDTO) => {
-              this.processGeneratedData(timeline);
-              this.lastSavedText.set('Saved');
-
-              if (timeline.storyboard_id || timeline.session_id) {
-                void this.router.navigate([], {
-                  relativeTo: this.route,
-                  queryParams: {
-                    storyboardId: timeline.storyboard_id || null,
-                    sessionId: timeline.session_id || null,
-                  },
-                  queryParamsHandling: 'merge',
-                });
-              }
-            },
-            error: err => {
-              console.error('Failed to fetch timeline from queryParam:', err);
-              this.lastSavedText.set('Failed to load timeline');
-              handleErrorSnackbar(this.snackBar, err, 'Load Timeline');
-              this.clearTimeline();
-              void this.router.navigate([], {
-                relativeTo: this.route,
-                queryParams: {
-                  sessionId: null,
-                  storyboardId: null,
-                  timelineId: null,
-                },
-                queryParamsHandling: 'merge',
-              });
-            },
-          });
-        }
+      if (sessionId || storyboardId) {
+        this.activeToolButton.set('agent');
       }
     });
   }
@@ -467,6 +390,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     this.bgAudios.changes.subscribe(() => {
       this.audioElementsChanged.update(v => v + 1);
       this.registerPlaybackElements();
+    });
+
+    this.timelineVideos.changes.subscribe(() => {
+      this.registerPlaybackElements();
+      this.applyVideoFilter();
     });
 
     // Set initial container width for timeline
@@ -480,9 +408,10 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   }
 
   private registerPlaybackElements() {
+    const videoElements =
+      this.timelineVideos?.toArray().map(e => e.nativeElement) || [];
     this.playbackService.registerElements({
-      videoA: this.videoA?.nativeElement,
-      videoB: this.videoB?.nativeElement,
+      videos: videoElements,
       audios: this.bgAudios?.toArray().map(e => e.nativeElement) || [],
       timeline: this.timelineContainer?.nativeElement,
       dummyScroll: this.dummyScrollContainer?.nativeElement,
@@ -736,10 +665,73 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     this.timelineState.assets.update(items =>
       items.map(i => (i.id === id ? {...i, duration} : i)),
     );
-    this.timelineState.timelineClips.update(clips =>
-      clips.map(clip => (clip.assetId === id ? {...clip, duration} : clip)),
-    );
+    this.timelineState.timelineClips.update(clips => {
+      const updated = clips.map(clip => {
+        if (clip.assetId === id) {
+          if (clip.duration === 0 || clip.isDurationPlaceholder) {
+            const clipSpeed = clip.speed !== undefined ? clip.speed : 1.0;
+            const targetDuration = duration / clipSpeed;
+            const updatedClip = {...clip, duration: targetDuration};
+            delete updatedClip.isDurationPlaceholder;
+            return updatedClip;
+          }
+        }
+        return clip;
+      });
+      return this.recalculateAudioTracks(updated);
+    });
     this.refreshTimelineLayout();
+  }
+
+  private recalculateAudioTracks(clips: TimelineClip[]): TimelineClip[] {
+    const videoClips = clips.filter(c => c.trackIndex === 0);
+    const audioClips = clips.filter(c => c.trackIndex > 0);
+
+    // Sort audio clips by startTime to ensure deterministic and clean layout
+    audioClips.sort((a, b) => a.startTime - b.startTime);
+
+    const updatedAudioClips: TimelineClip[] = [];
+
+    audioClips.forEach(clip => {
+      const targetTrack = this.findNextAvailableTrackForClip(
+        clip.startTime,
+        clip.duration,
+        updatedAudioClips,
+      );
+      updatedAudioClips.push({
+        ...clip,
+        trackIndex: targetTrack,
+      });
+    });
+
+    return [...videoClips, ...updatedAudioClips];
+  }
+
+  private findNextAvailableTrackForClip(
+    startTime: number,
+    duration: number,
+    existingAudioClips: TimelineClip[],
+  ): number {
+    let targetTrack = 1;
+    let placed = false;
+
+    while (!placed) {
+      const trackClips = existingAudioClips.filter(
+        c => c.trackIndex === targetTrack,
+      );
+      const hasOverlap = trackClips.some(c => {
+        const cEnd = c.startTime + c.duration;
+        const newEnd = startTime + duration;
+        return startTime < cEnd && newEnd > c.startTime;
+      });
+
+      if (!hasOverlap) {
+        placed = true;
+      } else {
+        targetTrack++;
+      }
+    }
+    return targetTrack;
   }
 
   onThumbnailError(asset: MediaAsset) {
@@ -769,8 +761,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   processGeneratedData(data: TimelineDTO) {
     const newClips: TimelineClip[] = [];
+    const videoStartTimes: number[] = [];
+    const assetsToExtract: MediaAsset[] = [];
 
     // Save transitions metadata
+
     this.timelineState.transitions.set(data.transitions || []);
     this.timelineState.transitionIn.set(data.transition_in || null);
     this.timelineState.transitionOut.set(data.transition_out || null);
@@ -778,7 +773,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     // Handle Video Clips
     let currentVideoTime = 0;
     if (data.video_clips) {
-      data.video_clips.forEach((clip: VideoClipDTO) => {
+      data.video_clips.forEach((clip: VideoClipDTO, idx: number) => {
         const mediaItemId =
           clip.asset_ref?.type === 'media_item'
             ? Number(clip.asset_ref.id)
@@ -787,17 +782,20 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           clip.asset_ref?.type === 'source_asset'
             ? Number(clip.asset_ref.id)
             : undefined;
-        const trimDuration = clip.trim?.duration_seconds || 5;
+        const speed =
+          clip.speed !== undefined && clip.speed !== null ? clip.speed : 1.0;
+        const trimDuration = (clip.trim?.duration_seconds || 5) / speed;
         const trimOffset = clip.trim?.offset_seconds || 0;
 
         const assetId = String(mediaItemId || sourceAssetId || '');
+        const isPlaceholder = !clip.trim?.duration_seconds;
 
         // Populate assets signal so lookup works
-        const existingAsset: MediaAsset | undefined = this.timelineState
+        let existingAsset = this.timelineState
           .assets()
           .find(a => a.id === assetId);
         if (!existingAsset && clip.presigned_url) {
-          const newAsset: MediaAsset = {
+          existingAsset = {
             id: assetId,
             name: 'Clip ' + assetId,
             type: 'video',
@@ -808,8 +806,22 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
             mediaItemId: mediaItemId,
             sourceAssetId: sourceAssetId,
           };
-          this.timelineState.assets.update(prev => [...prev, newAsset]);
+          this.timelineState.assets.update(prev => [...prev, existingAsset!]);
         }
+
+        if (isPlaceholder && existingAsset) {
+          if (!assetsToExtract.some(a => a.id === existingAsset!.id)) {
+            assetsToExtract.push(existingAsset);
+          }
+        }
+
+        const transitionInfo = data.transitions && data.transitions[idx];
+        const transitionType = transitionInfo
+          ? transitionInfo.type
+          : TransitionType.NONE;
+        const transitionDuration = transitionInfo
+          ? transitionInfo.duration_seconds
+          : 0;
 
         newClips.push({
           id: Math.random().toString(36).substr(2, 9),
@@ -824,8 +836,18 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           first_frame_asset_ref: clip.first_frame_asset_ref || null,
           last_frame_asset_ref: clip.last_frame_asset_ref || null,
           placeholder: clip.placeholder || null,
+          isDurationPlaceholder: isPlaceholder || undefined,
+          volume:
+            clip.volume !== undefined && clip.volume !== null
+              ? clip.volume
+              : 1.0,
+          speed:
+            clip.speed !== undefined && clip.speed !== null ? clip.speed : 1.0,
+          transition_to_next_type: transitionType,
+          transition_to_next_duration: transitionDuration,
         });
-        currentVideoTime += trimDuration;
+        videoStartTimes.push(currentVideoTime);
+        currentVideoTime += trimDuration - transitionDuration / 2;
       });
     }
 
@@ -840,18 +862,32 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           clip.asset_ref?.type === 'source_asset'
             ? Number(clip.asset_ref.id)
             : undefined;
-        const trimDuration = clip.trim?.duration_seconds || 5;
+        const speed =
+          clip.speed !== undefined && clip.speed !== null ? clip.speed : 1.0;
+        const trimDuration = (clip.trim?.duration_seconds || 5) / speed;
         const trimOffset = clip.trim?.offset_seconds || 0;
-        const startTime = clip.start_at?.offset_seconds || 0;
+
+        let startTime = clip.start_at?.offset_seconds || 0;
+        const vClipIndex = clip.start_at?.video_clip_index;
+        if (
+          vClipIndex !== undefined &&
+          vClipIndex !== null &&
+          vClipIndex >= 0 &&
+          vClipIndex < videoStartTimes.length
+        ) {
+          startTime =
+            videoStartTimes[vClipIndex] + (clip.start_at?.offset_seconds || 0);
+        }
 
         const assetId = clip.presigned_url || '';
+        const isPlaceholder = !clip.trim?.duration_seconds;
 
         // Populate assets signal
-        const existingAsset: MediaAsset | undefined = this.timelineState
+        let existingAsset = this.timelineState
           .assets()
           .find(a => a.id === assetId);
         if (!existingAsset && clip.presigned_url) {
-          const newAsset: MediaAsset = {
+          existingAsset = {
             id: assetId,
             name: 'Audio ' + assetId,
             type: 'audio',
@@ -861,7 +897,13 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
             mediaItemId: mediaItemId,
             sourceAssetId: sourceAssetId,
           };
-          this.timelineState.assets.update(prev => [...prev, newAsset]);
+          this.timelineState.assets.update(prev => [...prev, existingAsset!]);
+        }
+
+        if (isPlaceholder && existingAsset) {
+          if (!assetsToExtract.some(a => a.id === existingAsset!.id)) {
+            assetsToExtract.push(existingAsset);
+          }
         }
 
         // Find available track among newClips
@@ -900,12 +942,28 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           color: '#10b981',
           mediaItemId: mediaItemId,
           sourceAssetId: sourceAssetId,
+          isDurationPlaceholder: isPlaceholder || undefined,
+          volume:
+            clip.volume !== undefined && clip.volume !== null
+              ? clip.volume
+              : 1.0,
+          speed:
+            clip.speed !== undefined && clip.speed !== null ? clip.speed : 1.0,
         });
       });
     }
 
+    console.log('Setting timelineClips to:', newClips);
     this.timelineState.timelineClips.set(newClips);
     this.refreshTimelineLayout();
+
+    assetsToExtract.forEach(asset => {
+      if (asset.type === 'video') {
+        this.extractVideoMetadataFromUrl(asset);
+      } else {
+        this.extractAudioMetadataFromUrl(asset);
+      }
+    });
   }
 
   getAssetThumbnail(id: string): string | undefined {
@@ -1022,26 +1080,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     const allAudioClips = this.timelineState
       .timelineClips()
       .filter(c => c.trackIndex > 0);
-    let targetTrack = 1;
-    let placed = false;
-
-    while (!placed) {
-      const trackClips = allAudioClips.filter(
-        c => c.trackIndex === targetTrack,
-      );
-      const hasOverlap = trackClips.some(c => {
-        const cEnd = c.startTime + c.duration;
-        const newEnd = startTime + duration;
-        return startTime < cEnd && newEnd > c.startTime;
-      });
-
-      if (!hasOverlap) {
-        placed = true;
-      } else {
-        targetTrack++;
-      }
-    }
-    return targetTrack;
+    return this.findNextAvailableTrackForClip(
+      startTime,
+      duration,
+      allAudioClips,
+    );
   }
 
   // Start dragging a clip horizontally on the timeline
@@ -1145,21 +1188,33 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   }
 
   onVideoEnded() {}
-  onMetadataLoaded() {}
+  onVideoMetadataLoaded(event: Event) {
+    const video = event.target as HTMLVideoElement;
+    if (video && video.videoWidth && video.videoHeight) {
+      const ratio = video.videoWidth / video.videoHeight;
+      this.videoAspectRatio.set(ratio.toString());
+    }
+  }
 
   // --- Download / Render ---
   downloadVideo() {
-    const storyboard = this.agentChatService.currentStoryboard();
-    if (!storyboard || !storyboard.timeline_id || this.isDownloading()) {
-      console.warn('Cannot download: missing storyboard or timeline ID');
+    const timelineId = this.timelineState.loadedTimelineId();
+    const hasClips = this.timelineState.timelineClips().length > 0;
+
+    if (this.isDownloading()) {
       return;
     }
 
-    const runRender = () => {
+    if (!timelineId && !hasClips) {
+      console.warn('Cannot download: missing timeline ID and no clips present');
+      return;
+    }
+
+    const runRender = (resolvedTimelineId: number | string) => {
       this.isDownloading.set(true);
 
       const request: RenderTimelineRequest = {
-        timeline_id: storyboard.timeline_id,
+        timeline_id: Number(resolvedTimelineId),
       };
 
       this.workbenchService.renderVideo(request).subscribe({
@@ -1176,12 +1231,18 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
                 return throwError(() => err);
               }),
               takeWhile(item => {
-                if (item.status === 'FAILED') {
+                const status = item.status?.toUpperCase();
+                if (status === 'FAILED') {
                   this.isDownloading.set(false);
                   this.lastSavedText.set('Render failed');
+                  handleErrorSnackbar(
+                    this.snackBar,
+                    {message: 'Video rendering failed.'},
+                    'Video Rendering',
+                  );
                   return false;
                 }
-                if (item.status === 'COMPLETED') {
+                if (status === 'COMPLETED') {
                   return false;
                 }
                 return true;
@@ -1189,9 +1250,13 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
             )
             .subscribe({
               next: item => {
-                if (item.status === 'COMPLETED') {
+                if (item.status?.toUpperCase() === 'COMPLETED') {
                   this.isDownloading.set(false);
                   this.lastSavedText.set('Render complete');
+
+                  const galleryUrl = `${window.location.origin}/gallery/${item.id}`;
+                  const message = `Video rendered successfully! <a href="${galleryUrl}" target="_blank">View in Gallery</a>`;
+                  handleSuccessSnackbar(this.snackBar, message, 20000);
 
                   if (item.presignedUrls && item.presignedUrls.length > 0) {
                     const url = item.presignedUrls[0];
@@ -1211,6 +1276,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
                           'Failed to download video file blob',
                           err,
                         );
+                        // Fallback: Open the presigned URL directly in a new tab if blob download fails (e.g., due to CORS)
+                        window.open(url, '_blank');
                       },
                     });
                   }
@@ -1220,6 +1287,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
                 console.error('Polling failed', err);
                 this.isDownloading.set(false);
                 this.lastSavedText.set('Render failed');
+                handleErrorSnackbar(this.snackBar, err, 'Video Rendering');
               },
             });
         },
@@ -1227,21 +1295,33 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           console.error('Render request failed', err);
           this.isDownloading.set(false);
           this.lastSavedText.set('Render failed');
+          handleErrorSnackbar(this.snackBar, err, 'Start Video Rendering');
         },
       });
     };
 
-    if (this.hasPendingSave) {
+    const shouldSave = this.hasPendingSave || !timelineId;
+
+    if (shouldSave) {
+      this.isDownloading.set(true);
       this.saveTimeline().subscribe({
-        next: () => {
-          runRender();
+        next: savedTimeline => {
+          const newTimelineId =
+            savedTimeline?.timeline_id || this.timelineState.loadedTimelineId();
+          if (newTimelineId) {
+            runRender(newTimelineId);
+          } else {
+            console.error('Failed to resolve timeline ID after saving');
+            this.isDownloading.set(false);
+          }
         },
         error: err => {
           console.error('Save failed before download, aborting render', err);
+          this.isDownloading.set(false);
         },
       });
-    } else {
-      runRender();
+    } else if (timelineId) {
+      runRender(timelineId);
     }
   }
 
@@ -1475,7 +1555,15 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       let currentTime = 0;
       const newVideoClips = videoClips.map(clip => {
         const newClip = {...clip, startTime: currentTime};
-        currentTime += clip.duration;
+        const transitionType =
+          clip.transition_to_next_type || TransitionType.NONE;
+        const transitionDuration =
+          transitionType !== TransitionType.NONE &&
+          clip.transition_to_next_duration !== undefined &&
+          clip.transition_to_next_duration !== null
+            ? clip.transition_to_next_duration
+            : 0;
+        currentTime += clip.duration - transitionDuration / 2;
         return newClip;
       });
 
@@ -1491,25 +1579,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         c => c.trackIndex > 0 && c.id !== movedClipId,
       );
 
-      let targetTrack = 1;
-      let placed = false;
-      const duration = movedClip.duration;
-      const startTime = movedClip.startTime; // Keep the user's dragged time
-
-      while (!placed) {
-        const trackClips = audioClips.filter(c => c.trackIndex === targetTrack);
-        const hasOverlap = trackClips.some(c => {
-          const cEnd = c.startTime + c.duration;
-          const newEnd = startTime + duration;
-          return startTime < cEnd && newEnd > c.startTime;
-        });
-
-        if (!hasOverlap) {
-          placed = true;
-        } else {
-          targetTrack++;
-        }
-      }
+      const targetTrack = this.findNextAvailableTrackForClip(
+        movedClip.startTime,
+        movedClip.duration,
+        audioClips,
+      );
 
       // Update the clip with the new track index
       this.timelineState.timelineClips.update(prev =>
@@ -1580,17 +1654,12 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   saveTimeline(): Observable<TimelineDTO | null> {
     this.hasPendingSave = false;
     const sb = this.agentChatService.currentStoryboard();
-    const loadedTimelineId = this.timelineState.loadedTimelineId();
-    const timelineId = sb?.timeline_id || loadedTimelineId;
+    const timelineId = this.timelineState.loadedTimelineId() || sb?.timeline_id;
 
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId() || 1;
-    const projectId = this.projectStateService.getActiveProjectId();
-
-    if (!timelineId && !projectId) {
+    if (!timelineId && this.timelineState.timelineClips().length === 0) {
       console.warn(
-        'Cannot auto-save timeline: missing timelineId and active projectId',
+        'Cannot auto-save timeline: no timeline ID and no clips to save',
       );
-      this.lastSavedText.set('Failed to save changes');
       return of(null);
     }
 
@@ -1667,11 +1736,16 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         };
       });
 
-    const timelineUpdate: TimelineDTO = {
-      timeline_id: timelineId,
-      workspace_id: workspaceId,
-      project_id: projectId || undefined,
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+
+    const timelineData: TimelineDTO = {
+      timeline_id: timelineId || undefined,
       storyboard_id: sb?.id || undefined,
+      session_id:
+        sb?.session_id ||
+        this.agentChatService.selectedSessionId() ||
+        undefined,
+      workspace_id: workspaceId || 1,
       title: 'Timeline',
       video_clips: videoClips,
       audio_clips: audioClips,
@@ -1683,26 +1757,28 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     this.isSaving = true;
     const subject = new Subject<TimelineDTO>();
 
-    const saveObs = timelineId
-      ? this.workbenchService.updateTimeline(timelineId, timelineUpdate)
-      : this.workbenchService.createTimeline(timelineUpdate);
-
-    this.activeSaveSubscription = saveObs.subscribe({
+    const request$ = timelineId
+      ? this.workbenchService.updateTimeline(timelineId, timelineData)
+      : this.workbenchService.createTimeline(timelineData);
+    this.activeSaveSubscription = request$.subscribe({
       next: (res: TimelineDTO) => {
         console.log('Timeline saved successfully', res);
         this.lastSavedText.set('Saved');
-        this.isSaving = false;
         if (res.timeline_id) {
           this.timelineState.loadedTimelineId.set(res.timeline_id);
-          if (sb) {
-            sb.timeline_id = res.timeline_id;
+          if (!res.storyboard_id && !res.session_id) {
+            void this.router.navigate([], {
+              relativeTo: this.route,
+              queryParams: {
+                timelineId: res.timeline_id,
+                sessionId: null,
+                storyboardId: null,
+              },
+              queryParamsHandling: 'merge',
+            });
           }
-          void this.router.navigate([], {
-            relativeTo: this.route,
-            queryParams: {timelineId: res.timeline_id},
-            queryParamsHandling: 'merge',
-          });
         }
+        this.isSaving = false;
         subject.next(res);
         subject.complete();
       },
@@ -1714,5 +1790,44 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       },
     });
     return subject.asObservable();
+  }
+
+  onTransitionChange(event: {
+    role: 'in' | 'out' | 'middle';
+    index?: number;
+    type: TransitionType;
+    duration_seconds: number;
+  }) {
+    if (event.role === 'in') {
+      this.timelineState.transitionIn.set({
+        type: event.type,
+        duration_seconds: event.duration_seconds,
+      });
+    } else if (event.role === 'out') {
+      this.timelineState.transitionOut.set({
+        type: event.type,
+        duration_seconds: event.duration_seconds,
+      });
+    } else if (event.role === 'middle' && event.index !== undefined) {
+      this.timelineState.transitions.update(transitions => {
+        const updated = [...transitions];
+        while (updated.length <= event.index!) {
+          updated.push({type: TransitionType.NONE, duration_seconds: 0});
+        }
+        updated[event.index!] = {
+          type: event.type,
+          duration_seconds: event.duration_seconds,
+        };
+        return updated;
+      });
+    }
+    this.saveTimeline().subscribe();
+  }
+
+  getLastVideoClipEndTime(): number {
+    const clips = this.timelineState.videoClips();
+    if (clips.length === 0) return 0;
+    const lastClip = clips[clips.length - 1];
+    return lastClip.startTime + lastClip.duration;
   }
 }

@@ -109,6 +109,11 @@ class BaseRepositoryMixin(Generic[ModelT, SchemaT, IdT]):
         if data.get("id") is None:
             data.pop("id", None)
 
+        # Filter out extra fields not present on the SQLAlchemy model
+        data = {
+            k: v for k, v in data.items() if k in self.model.__mapper__.columns
+        }
+
         db_item = self.model(**data)
         self.db.add(db_item)
         await self.db.commit()
@@ -135,8 +140,11 @@ class BaseRepositoryMixin(Generic[ModelT, SchemaT, IdT]):
             data = update_data
 
         # Update fields
+        restricted_fields = {"id", "created_at", "updated_at"}
         for key, value in data.items():
-            if hasattr(db_item, key):
+            if key in restricted_fields:
+                continue
+            if key in self.model.__mapper__.columns:
                 setattr(db_item, key, value)
 
         # Update timestamp

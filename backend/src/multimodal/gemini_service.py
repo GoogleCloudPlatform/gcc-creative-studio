@@ -13,12 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Gemini Service for multimodal content generation."""
+
 import json
 import logging
 from enum import Enum
 from typing import Any
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException
 from google.genai import Client, types
 from pydantic import BaseModel
 from tenacity import (
@@ -51,6 +53,13 @@ from src.multimodal.rewriters import (
 )
 from src.multimodal.schema.gemini_model_setup import GeminiModelSetup
 from src.videos.dto.create_veo_dto import CreateVeoDto
+from src.images.repository.media_item_repository import MediaRepository
+from src.source_assets.repository.source_asset_repository import (
+    SourceAssetRepository,
+)
+from src.multimodal.dto.multimodal_generation_request_dto import (
+    MultimodalGenerationRequestDto,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,13 +81,18 @@ class GeminiService:
     """
 
     def __init__(
-        self, brand_guideline_repo: BrandGuidelineRepository = Depends()
+        self,
+        brand_guideline_repo: BrandGuidelineRepository = Depends(),
+        media_item_repo: MediaRepository = Depends(),
+        source_asset_repo: SourceAssetRepository = Depends(),
     ):
         """Initializes the Gemini client and configuration."""
         self.client: Client = GeminiModelSetup.init()
         self.cfg = config_service
         self.rewriter_model = self.cfg.GEMINI_MODEL_ID
         self.brand_guideline_repo = brand_guideline_repo
+        self.media_item_repo = media_item_repo
+        self.source_asset_repo = source_asset_repo
 
     def _get_response_schema(self, target: PromptTargetEnum) -> type[BaseModel]:
         """Dynamically gets the Pydantic schema based on the target type."""
@@ -143,7 +157,9 @@ class GeminiService:
             return response.text or ""
         except Exception as e:
             logger.error(
-                f"Failed to generate structured prompt for '{original_prompt}': {e}",
+                "Failed to generate structured prompt for '%s': %s",
+                original_prompt,
+                e,
             )
             raise
 
@@ -180,11 +196,12 @@ class GeminiService:
             raise
 
     def _convert_dto_to_string(self, dto: BaseModel) -> str:
-        """Private helper to convert a DTO into a formatted string for prompting.
+        """Private helper to convert DTO into a string for prompting.
+
         This consolidates the repetitive logic from the original file.
         """
-        # Use model_dump_json and then reload it to ensure all values, especially
-        # enums, are converted to their primitive string/number/etc. values
+        # Use model_dump_json and reload it to ensure all values, especially
+        # enums, are converted to primitive string/number/etc. values
         # instead of their Python object representation.
         json_string = dto.model_dump_json(exclude_unset=True)
         fields = json.loads(json_string)
@@ -210,9 +227,9 @@ class GeminiService:
         target_type: PromptTargetEnum,
         response_mime_type: ResponseMimeTypeEnum = ResponseMimeTypeEnum.JSON,
     ) -> str:
-        """Enhances a partially filled DTO by converting it to a string,
-        then asking Gemini to generate a complete, structured prompt.
+        """Enhances a partially filled DTO by converting it to a string.
 
+        Then, asks Gemini to generate a complete, structured prompt.
         This single method replaces the four repetitive `rewrite_for_*` methods.
 
         Args:
@@ -220,7 +237,7 @@ class GeminiService:
             target_type: The target output type (IMAGE or VIDEO).
 
         Returns:
-            A dictionary containing the complete, structured prompt data from Gemini.
+            A dictionary containing the prompt data from Gemini.
 
         """
         if target_type not in [PromptTargetEnum.IMAGE, PromptTargetEnum.VIDEO]:
@@ -238,34 +255,62 @@ class GeminiService:
 
         if is_gemini_i2i:
             dto.prompt = (
-                "**Objective:** Perform a targeted edit on the source image based on the user's request.\n"
-                "**Guiding Principle:** Your primary goal is to follow the user's instructions precisely. Preserve all aspects of the original image (subject identity, background, lighting, composition) unless the user's request explicitly requires a change.\n\n"
-                "**Execution Flow:** Analyze the user's request and match it to one of the following scenarios. If no scenario fits perfectly, use the 'General Instruction' as a fallback.\n\n"
+                "**Objective:** Perform a targeted edit on the source image "
+                "based on the user's request.\n"
+                "**Guiding Principle:** Your primary goal is to follow the "
+                "user's instructions precisely. Preserve all aspects of the "
+                "original image (subject identity, background, lighting, "
+                "composition) unless the user's request explicitly requires "
+                "a change.\n\n"
+                "**Execution Flow:** Analyze the user's request and match it "
+                "to one of the following scenarios. If no scenario fits "
+                "perfectly, use the 'General Instruction' as a fallback.\n\n"
                 "--- Scenarios ---\n\n"
-                "**1. Garment/Accessory Edit** (e.g., 'change the shirt to blue', 'add sunglasses')\n"
-                "   - **Action:** Isolate and modify only the specified clothing or accessory item.\n"
-                "   - **Constraint:** You **MUST NOT** change the subject's identity, face, pose, or the background.\n\n"
-                "**2. Background Replacement** (e.g., 'change the background to a beach', 'put them in Paris')\n"
-                "   - **Action:** Replace the entire background with the new scene described.\n"
-                "   - **Constraint:** You **MUST** preserve the foreground subject's identity, pose, and clothing. Adjust lighting on the subject only as needed to blend them realistically into the new background.\n\n"
-                "**3. Pose Adjustment** (e.g., 'make them wave', 'change the pose to sitting')\n"
-                "   - **Action:** Adjust the subject's body to the new pose.\n"
-                "   - **Constraint:** You **MUST** preserve the subject's identity, clothing, and the background environment.\n\n"
-                "**4. Outpainting / Zoom Out** (e.g., 'zoom out', 'show more of the scene', 'make it a wide-angle shot')\n"
-                "   - **Action:** Extend the image outwards by generating new content that seamlessly matches the existing style (outpainting).\n"
-                "   - **Default:** If the user just says 'zoom out', interpret it as 'zoom out by at least 2x'. If they specify a different amount, follow their instruction.\n\n"
+                "**1. Garment/Accessory Edit** (e.g., 'change the shirt to "
+                "blue', 'add sunglasses')\n"
+                "   - **Action:** Isolate and modify only the specified "
+                "clothing or accessory item.\n"
+                "   - **Constraint:** You **MUST NOT** change the subject's "
+                "identity, face, pose, or the background.\n\n"
+                "**2. Background Replacement** (e.g., 'change the background "
+                "to a beach', 'put them in Paris')\n"
+                "   - **Action:** Replace the entire background with the new "
+                "scene described.\n"
+                "   - **Constraint:** You **MUST** preserve the foreground "
+                "subject's identity, pose, and clothing. Adjust lighting on "
+                "the subject only as needed to blend them realistically into "
+                "the new background.\n\n"
+                "**3. Pose Adjustment** (e.g., 'make them wave', 'change "
+                "the pose to sitting')\n"
+                "   - **Action:** Adjust the subject's body to the new "
+                "pose.\n"
+                "   - **Constraint:** You **MUST** preserve the subject's "
+                "identity, clothing, and the background environment.\n\n"
+                "**4. Outpainting / Zoom Out** (e.g., 'zoom out', 'show "
+                "more of the scene', 'make it a wide-angle shot')\n"
+                "   - **Action:** Extend the image outwards by generating "
+                "new content that seamlessly matches the existing style "
+                "(outpainting).\n"
+                "   - **Default:** If the user just says 'zoom out', "
+                "interpret it as 'zoom out by at least 2x'. If they specify "
+                "a different amount, follow their instruction.\n\n"
                 "**5. General Instruction (Fallback):**\n"
-                "   - **Action:** If the request does not fit the scenarios above, follow the user's instructions as literally as possible.\n"
-                "   - **Constraint:** Make the minimum necessary changes to fulfill the request, preserving as much of the original image as you can.\n\n"
+                "   - **Action:** If the request does not fit the scenarios "
+                "above, follow the user's instructions as literally as "
+                "possible.\n"
+                "   - **Constraint:** Make the minimum necessary changes to "
+                "fulfill the request, preserving as much of the original "
+                "image as you can.\n\n"
                 "--- End of Scenarios ---\n\n"
                 f"**User's Request:** {dto.prompt}"
             )
 
-            # For Gemini image-to-image, we do NOT want to rewrite the prompt into a
-            # complex JSON structure. The detailed instructions above are designed to
-            # be sent directly to the model to ensure it makes minimal, targeted
-            # changes. Bypassing the structured prompt generation prevents the model
-            # from deforming or completely changing the original image.
+            # For Gemini image-to-image, we do NOT want to rewrite the prompt
+            # into a complex JSON structure. The detailed instructions above
+            # are designed to be sent directly to the model to ensure it makes
+            # minimal, targeted changes. Bypassing the structured prompt
+            # generation prevents the model from deforming or completely
+            # changing the original image.
             # We also set the response mime type to TEXT to reflect this.
             return dto.prompt
 
@@ -283,7 +328,8 @@ class GeminiService:
                 guideline = guideline_response.data[0]
                 # Construct a prefix to guide the prompt rewriter.
                 prefix_parts = [
-                    "Based on the following brand guidelines, enhance the user's prompt.",
+                    "Based on the following brand guidelines, "
+                    "enhance the user's prompt.",
                 ]
                 if guideline.visual_style_summary:
                     prefix_parts.append(
@@ -298,7 +344,8 @@ class GeminiService:
                 dto.prompt = brand_guideline_prefix + dto.prompt
             else:
                 logger.info(
-                    f"No brand guidelines found for workspace '{dto.workspace_id}'.",
+                    "No brand guidelines found for workspace '%s'.",
+                    dto.workspace_id,
                 )
 
         prompt_template = (
@@ -322,22 +369,22 @@ class GeminiService:
         reraise=True,
     )
     def generate_text(self, prompt: str, model_id: str | None = None) -> str:
-        """Generates plain text from a given prompt using a Gemini model.
+        """Generates plain text from a prompt using Gemini.
 
-        This is a general-purpose method for simple text-in, text-out interactions.
+        General-purpose method for simple text-in, text-out.
 
         Args:
             prompt: The text prompt to send to the model.
-            model_id: Optional. The specific Gemini model ID to use, overriding the service default.
+            model_id: Optional. Gemini model ID to use, overriding default.
 
         Returns:
             A string containing the generated text from the model.
 
         Raises:
-            Exception: Propagates exceptions from the API call after retries.
+            Exception: Propagates exceptions from the API call.
 
         """
-        # Use the provided model_id or fall back to the service's default rewriter model
+        # Use provided model_id or fall back to service's default rewriter model
         target_model = model_id or self.rewriter_model
 
         logger.info(
@@ -356,9 +403,10 @@ class GeminiService:
             # Strip any leading/trailing whitespace from the response
             return response.text.strip() if response.text else ""
         except Exception as e:
-            # Log the error with part of the prompt for context
             logger.error(
-                f"Gemini text generation failed for prompt '{prompt[:100]}...': {e}",
+                "Gemini text generation failed for prompt '%s...': %s",
+                prompt[:100],
+                e,
             )
             raise
 
@@ -372,10 +420,12 @@ class GeminiService:
             A dictionary with 'title' and 'summary'.
         """
         prompt = (
-            f"Generate a short title and a summary for a conversation that starts with the following message.\n"
-            f"Message: {text}"
+            "Generate a short title and a summary for a conversation "
+            f"that starts with the following message.\nMessage: {text}"
         )
-        # Import inside to avoid circular imports if any, but it should be fine
+
+        # Import inside to avoid circular imports if any
+        # pylint: disable=import-outside-toplevel
         from src.multimodal.dto.gemini_prompt_enhancer_dto import (
             GenerateTitleResponseDto,
         )
@@ -391,15 +441,108 @@ class GeminiService:
             )
             return json.loads(response.text or "{}")
         except Exception as e:
-            logger.error(f"Failed to generate title and summary: {e}")
+            logger.error("Failed to generate title and summary: %s", e)
+            raise
+
+    def generate_media_metadata(
+        self,
+        prompt: str,
+        media_uris: list[str] | str | None,
+        model_name: str,
+        mime_type: str | None = None,
+    ) -> dict[str, list[str]]:
+        """Generates titles and descriptions for media assets in batch.
+
+        Args:
+            prompt: Instructions or context for generating metadata.
+            media_uris: List of GCS URIs (or a single URI string) of the media assets.
+            model_name: The Gemini model to use.
+            mime_type: Optional MIME type of the media assets.
+
+        Returns:
+            A dictionary with 'titles' (list of str) and 'descriptions' (list of str).
+        """
+        if isinstance(media_uris, str):
+            uris_list = [media_uris]
+        elif isinstance(media_uris, list):
+            uris_list = media_uris
+        else:
+            uris_list = []
+
+        contents = []
+        for media_uri in uris_list:
+            try:
+                resolved_mime_type = mime_type
+                if not resolved_mime_type:
+                    uri_lower = media_uri.lower()
+                    if uri_lower.endswith(".png"):
+                        resolved_mime_type = "image/png"
+                    elif uri_lower.endswith((".jpg", ".jpeg")):
+                        resolved_mime_type = "image/jpeg"
+                    elif uri_lower.endswith(".mp4"):
+                        resolved_mime_type = "video/mp4"
+                    elif uri_lower.endswith((".wav", ".mp3", ".ogg")):
+                        resolved_mime_type = "audio/mpeg"
+                    elif "video" in uri_lower:
+                        resolved_mime_type = "video/mp4"
+                    elif "audio" in uri_lower:
+                        resolved_mime_type = "audio/mpeg"
+                    else:
+                        resolved_mime_type = "image/png"
+
+                contents.append(
+                    types.Part.from_uri(
+                        file_uri=media_uri, mime_type=resolved_mime_type
+                    )
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to create Part from URI %s: %s", media_uri, e
+                )
+
+        batch_prompt = (
+            f"{prompt}\nGenerate a title and description for EACH of the"
+            f" {len(uris_list)} media items provided, in exact sequential"
+            " order."
+        )
+        contents.append(batch_prompt)
+
+        # pylint: disable=import-outside-toplevel
+        from src.multimodal.dto.gemini_prompt_enhancer_dto import (
+            GenerateMediaMetadataResponseDto,
+        )
+
+        try:
+            response = self.client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=GenerateMediaMetadataResponseDto,
+                ),
+            )
+            raw_result = json.loads(response.text or "{}")
+            items = raw_result.get("items") or []
+            titles = [
+                item.get("title", "")
+                for item in items
+                if isinstance(item, dict)
+            ]
+            descriptions = [
+                item.get("description", "")
+                for item in items
+                if isinstance(item, dict)
+            ]
+            return {"titles": titles, "descriptions": descriptions}
+        except Exception as e:
+            logger.error("Failed to generate media metadata: %s", e)
             raise
 
     def extract_brand_info_from_pdf(self, pdf_gcs_uri: str) -> dict[str, Any]:
-        """Uses a multimodal model to analyze a PDF from GCS and extract structured
-        brand guideline information.
+        """Extracts brand info from a PDF in GCS using Gemini.
 
         Args:
-            pdf_gcs_uri: The full GCS URI (gs://bucket/path/to/file.pdf) of the PDF.
+            pdf_gcs_uri: The full GCS URI (gs://bucket/...) of the PDF.
 
         Returns:
             A dictionary containing the extracted brand information.
@@ -433,12 +576,12 @@ class GeminiService:
                 ),
             )
 
-            # The model is configured to return JSON, so we can parse it directly.
+            # Model returns JSON, parse it directly.
             extracted_data = json.loads(response.text or "{}")
             return extracted_data
         except Exception as e:
             logger.error(
-                f"Failed to extract brand info from PDF {pdf_gcs_uri}: {e}"
+                "Failed to extract brand info from PDF %s: %s", pdf_gcs_uri, e
             )
             return {}
 
@@ -446,15 +589,15 @@ class GeminiService:
         self,
         partial_results: list[dict[str, Any]],
     ) -> BrandGuidelineModel | None:
-        """Aggregates multiple partial brand info extractions into a single,
-        consolidated result using Gemini.
+        """Aggregates multiple partial brand info extractions.
+
+        Uses Gemini to consolidate them.
 
         Args:
-            partial_results: A list of dictionaries, where each is a partial extraction
-                             from a PDF chunk, filtered to remove None values.
+            partial_results: A list of dictionaries of partial extractions.
 
         Returns:
-            A BrandGuidelineModel object with the combined information, or None on failure.
+            A BrandGuidelineModel object with combined info, or None on failure.
 
         """
         if not partial_results:
@@ -514,7 +657,7 @@ class GeminiService:
         """
 
         try:
-            # We expect a subset of the BrandGuidelineModel, so we can use it as the schema.
+            # Model subset used, schema can be BrandGuidelineModel.
             response = self.client.models.generate_content(
                 model=self.rewriter_model,
                 contents=prompt,
@@ -532,3 +675,76 @@ class GeminiService:
                 "Failed to aggregate brand info summaries with Gemini: %s", e
             )
             return None
+
+    async def generate_multimodal(
+        self,
+        request: MultimodalGenerationRequestDto,
+    ) -> str:
+        """Generates text from a multimodal prompt combining text and media."""
+        contents = []
+
+        # Add MediaItems
+        media_item_ids = request.media_items or request.media_item_ids
+        if media_item_ids:
+            for item_id in media_item_ids:
+                media_item = await self.media_item_repo.get_by_id(item_id)
+                if media_item:
+                    if media_item.workspace_id != request.workspace_id:
+                        raise HTTPException(
+                            status_code=403,
+                            detail=f"Media item {item_id} does not belong to workspace {request.workspace_id}",
+                        )
+                    if (
+                        getattr(media_item, "gcs_uris", None)
+                        and len(media_item.gcs_uris) > 0
+                    ):
+                        contents.append(
+                            types.Part.from_uri(
+                                file_uri=media_item.gcs_uris[0],
+                                mime_type=media_item.mime_type or "image/png",
+                            )
+                        )
+
+        # Add SourceAssets
+        source_asset_ids = request.assets or request.source_asset_ids
+        if source_asset_ids:
+            for asset_id in source_asset_ids:
+                asset = await self.source_asset_repo.get_by_id(asset_id)
+                if asset:
+                    if asset.workspace_id != request.workspace_id:
+                        raise HTTPException(
+                            status_code=403,
+                            detail=f"Asset {asset_id} does not belong to workspace {request.workspace_id}",
+                        )
+                    if asset.gcs_uri:
+                        contents.append(
+                            types.Part.from_uri(
+                                file_uri=asset.gcs_uri,
+                                mime_type=asset.mime_type or "image/png",
+                            )
+                        )
+
+        # Append the text prompt
+        contents.append(request.prompt)
+
+        config_args = {}
+        if request.config:
+            config_args = {
+                "config": types.GenerateContentConfig(**request.config)
+            }
+
+        try:
+            response = await self.client.aio.models.generate_content(
+                model=request.model,
+                contents=contents,
+                **config_args,
+            )
+            return response.text or ""
+        except HTTPException as http_exc:
+            raise http_exc
+        except Exception as e:
+            logger.error("Failed to generate multimodal content: %s", e)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to generate multimodal content: {e}",
+            )

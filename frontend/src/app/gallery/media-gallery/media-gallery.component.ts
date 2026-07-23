@@ -1,4 +1,4 @@
-import {trigger, state, style, transition, animate} from '@angular/animations';
+import {trigger, style, transition, animate} from '@angular/animations';
 /**
  * Copyright 2025 Google LLC
  *
@@ -25,19 +25,16 @@ import {
   OnDestroy,
   OnInit,
   Output,
-  ViewChild,
   Inject,
   PLATFORM_ID,
   HostListener,
 } from '@angular/core';
 import {isPlatformBrowser} from '@angular/common';
-import {MatCheckboxChange} from '@angular/material/checkbox';
 import {MatDialog} from '@angular/material/dialog';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {MatIconRegistry} from '@angular/material/icon';
 import {DomSanitizer, SafeResourceUrl} from '@angular/platform-browser';
-import {Subscription, fromEvent, forkJoin, of} from 'rxjs';
-import {debounceTime, map, switchMap} from 'rxjs/operators';
+import {Subscription, forkJoin} from 'rxjs';
 import {MediaItemSelection} from '../../common/components/image-selector/image-selector.component';
 import {CopyToWorkspaceDialogComponent} from '../../common/components/copy-to-workspace-dialog/copy-to-workspace-dialog.component';
 import {DropdownOption} from '../../common/components/studio-dropdown/studio-dropdown.component';
@@ -56,6 +53,9 @@ import {AssignTagsDialogComponent} from '../../common/components/assign-tags-dia
 import {UserRolesEnum} from '../../common/models/user.model';
 import {TagsManagementDialogComponent} from '../../common/components/tags-management-dialog/tags-management-dialog.component';
 import {ConfirmationDialogComponent} from '../../common/components/confirmation-dialog/confirmation-dialog.component';
+import {MediaUploadService} from '../../common/services/media-upload/media-upload.service';
+import {ACCEPTED_MEDIA_UPLOAD_FORMATS} from '../../common/services/media-upload/media-upload.constants';
+import {GoogleDriveService} from '../../common/services/google-drive/google-drive.service';
 
 @Component({
   selector: 'app-media-gallery',
@@ -110,6 +110,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   images: GalleryItem[] = [];
   filteredImages: GalleryItem[] = [];
   groups: {title: string; items: GalleryItem[]}[] = [];
+  readonly acceptedMediaUploadFormats = ACCEPTED_MEDIA_UPLOAD_FORMATS;
 
   selectedItems: Set<string> = new Set();
   lastSelectedIndex: number | null = null;
@@ -129,6 +130,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   private allImagesLoadedSubscription: Subscription | undefined;
   private loadingSubscription: Subscription | undefined;
   private resizeSubscription: Subscription | undefined;
+  private uploadBatchSubscription: Subscription | undefined;
   private _hostVisibilityObserver!: IntersectionObserver;
   private _scrollObserver!: IntersectionObserver;
   public userEmailFilter = '';
@@ -215,8 +217,6 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     this.searchTerm(); // Trigger search
   }
 
-  private autoSlideIntervals: {[id: string]: any} = {};
-
   isBrowser: boolean;
 
   constructor(
@@ -230,26 +230,13 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     private snackBar: MatSnackBar,
     public dialog: MatDialog,
     private tagsService: TagsService,
+    public uploadService: MediaUploadService,
+    private googleDriveService: GoogleDriveService,
     @Inject(PLATFORM_ID) platformId: Object,
   ) {
     this.isBrowser = isPlatformBrowser(platformId);
-    this.matIconRegistry
-      .addSvgIcon(
-        'mobile-white-gemini-spark-icon',
-        this.setPath(`${this.path}/mobile-white-gemini-spark-icon.svg`),
-      )
-      .addSvgIcon(
-        'gemini-spark-icon',
-        this.setPath(`${this.path}/gemini-spark-icon.svg`),
-      );
     const user = this.userService.getUserDetails();
     this.userId = user?.id as number;
-  }
-
-  private path = '../../assets/images';
-
-  private setPath(url: string): SafeResourceUrl {
-    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   }
 
   ngOnInit(): void {
@@ -290,7 +277,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
       if (images) {
         // Find only the new images that have been added
         const newImages = images.slice(this.images.length);
-        newImages.forEach(image => {
+        newImages.forEach(() => {
           // Intervals now handled by child component
         });
         this.images = images as GalleryItem[]; // Cast to GalleryItem[]
@@ -301,6 +288,11 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     this.allImagesLoadedSubscription =
       this.galleryService.allImagesLoaded.subscribe(loaded => {
         this.allImagesLoaded = loaded;
+      });
+
+    this.uploadBatchSubscription =
+      this.uploadService.uploadBatchComplete$.subscribe(() => {
+        this.searchTerm();
       });
 
     if (this.isBrowser) {
@@ -404,8 +396,31 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     }
 
     this.resizeSubscription?.unsubscribe();
+    this.uploadBatchSubscription?.unsubscribe();
     this._hostVisibilityObserver?.disconnect();
     this._scrollObserver?.disconnect();
+  }
+
+  onFilesSelected(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    if (input.files && input.files.length > 0) {
+      const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+      if (workspaceId !== null) {
+        this.uploadService.uploadFiles(workspaceId, Array.from(input.files));
+      }
+      input.value = '';
+    }
+  }
+
+  openGoogleDrivePicker(): void {
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    if (workspaceId === null) return;
+
+    this.googleDriveService.openPicker().subscribe(files => {
+      if (files && files.length > 0) {
+        this.uploadService.uploadFiles(workspaceId, files);
+      }
+    });
   }
 
   public trackByImage(index: number, image: GalleryItem): number | string {
@@ -423,7 +438,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   @HostListener('window:keydown.escape', ['$event'])
-  onEscapePressed(event: Event): void {
+  onEscapePressed(_event: Event): void {
     this.deselectAll();
   }
 

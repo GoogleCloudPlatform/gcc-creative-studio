@@ -16,7 +16,8 @@
 
 import {Injectable, inject, signal} from '@angular/core';
 import {HttpClient} from '@angular/common/http';
-import {Observable, firstValueFrom, Subject} from 'rxjs';
+import {Observable, firstValueFrom, Subject, of} from 'rxjs';
+import {tap} from 'rxjs/operators';
 import {environment} from '../../../environments/environment';
 import {AuthService} from '../../common/services/auth.service';
 import {
@@ -78,30 +79,54 @@ export class AgentChatService {
   // Broadcasts a fully generated video asset from the chat processor
   videoGenerated$ = new Subject<any>();
 
+  // Shared sessions state & caching
+  sessions = signal<ChatSession[]>([]);
+  chatMessages = signal<any[]>([]);
+  private lastLoadedWorkspaceId: number | null = null;
+  private lastLoadedAgent = '';
+  private lastLoadedSessionId: string | null = null;
+  private lastLoadedStoryboardId: number | string | null = null;
+
   getSessions(
     workspaceId?: number,
-    projectId?: number,
+    forceRefresh = false,
+    sessionId?: string | null,
+    storyboardId?: number | string | null,
   ): Observable<ChatSession[]> {
-    let url = `${this.apiUrl}/sessions?appName=${this.activeAgent()}`;
+    const currentAgent = this.activeAgent();
+    const targetSessionId = sessionId ?? null;
+    const targetStoryboardId = storyboardId ?? null;
+
+    if (
+      !forceRefresh &&
+      this.sessions().length > 0 &&
+      this.lastLoadedWorkspaceId === workspaceId &&
+      this.lastLoadedAgent === currentAgent &&
+      this.lastLoadedSessionId === targetSessionId &&
+      this.lastLoadedStoryboardId === targetStoryboardId
+    ) {
+      return of(this.sessions());
+    }
+
+    let url = `${this.apiUrl}/sessions?appName=${currentAgent}`;
     if (workspaceId) {
       url += `&workspace_id=${workspaceId}`;
     }
-    if (projectId) {
-      url += `&project_id=${projectId}`;
-    }
-    return this.http.get<ChatSession[]>(url);
+    return this.http.get<ChatSession[]>(url).pipe(
+      tap((sessions: ChatSession[]) => {
+        this.sessions.set(sessions || []);
+        this.lastLoadedWorkspaceId = workspaceId ?? null;
+        this.lastLoadedAgent = currentAgent;
+        this.lastLoadedSessionId = targetSessionId;
+        this.lastLoadedStoryboardId = targetStoryboardId;
+      }),
+    );
   }
 
-  createSession(
-    workspaceId?: number,
-    projectId?: number,
-  ): Observable<ChatSession> {
+  createSession(workspaceId?: number): Observable<ChatSession> {
     let url = `${this.apiUrl}/sessions?appName=${this.activeAgent()}`;
     if (workspaceId) {
       url += `&workspace_id=${workspaceId}`;
-    }
-    if (projectId) {
-      url += `&project_id=${projectId}`;
     }
     return this.http.post<ChatSession>(url, {});
   }
@@ -110,7 +135,6 @@ export class AgentChatService {
     workspaceId: number,
     sessionId?: string,
     storyboardId?: number,
-    projectId?: number,
   ): Observable<SessionDetailResponse> {
     let params = `workspace_id=${workspaceId}`;
     if (sessionId) {
@@ -119,25 +143,15 @@ export class AgentChatService {
     if (storyboardId) {
       params += `&storyboard_id=${storyboardId}`;
     }
-    if (projectId) {
-      params += `&project_id=${projectId}`;
-    }
     return this.http.get<SessionDetailResponse>(
       `${this.apiUrl}/sessions/detail?${params}`,
     );
   }
 
-  deleteSession(
-    sessionId: string,
-    workspaceId?: number,
-    projectId?: number,
-  ): Observable<void> {
+  deleteSession(sessionId: string, workspaceId?: number): Observable<void> {
     let url = `${this.apiUrl}/sessions/${sessionId}?appName=${this.activeAgent()}`;
     if (workspaceId) {
       url += `&workspace_id=${workspaceId}`;
-    }
-    if (projectId) {
-      url += `&project_id=${projectId}`;
     }
     return this.http.delete<void>(url);
   }
@@ -156,7 +170,6 @@ export class AgentChatService {
     message: string | ChatMessagePart[],
     workspaceId: number | null,
     callbacks: SSECallbacks<any>,
-    projectId?: number | null,
   ): Promise<void> {
     const url = `${this.apiUrl}/chat`;
 
@@ -188,8 +201,26 @@ export class AgentChatService {
       });
 
       if (!response.ok) {
-        if (callbacks.onError)
-          callbacks.onError(new Error('Failed to start chat session'));
+        let errorMsg = 'Failed to start chat session';
+        try {
+          const errData = await response.json();
+          if (errData && errData.detail) {
+            errorMsg =
+              typeof errData.detail === 'string'
+                ? errData.detail
+                : JSON.stringify(errData.detail);
+          }
+        } catch (e) {
+          try {
+            const rawText = await response.text();
+            if (rawText) errorMsg = rawText;
+          } catch (ex) {
+            // Ignore
+          }
+        }
+        if (callbacks.onError) {
+          callbacks.onError(new Error(errorMsg));
+        }
         return;
       }
 

@@ -23,7 +23,7 @@
   [class.btn-medium]="size === 'medium'"
   [class.btn-large]="size === 'large'"
   [disabled]="disabled"
+  (click)="handleHostClick($event)"
 >
-
   <ng-content></ng-content>
 </button>

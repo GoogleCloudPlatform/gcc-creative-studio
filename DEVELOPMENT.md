@@ -20,6 +20,8 @@ Before you begin, ensure you have the following tools installed on your system:
 2.  After you create your account:
     - You create a fork of [Open Source Repo](https://github.com/GoogleCloudPlatform/gcc-creative-studio/tree/main)
     - You see this video [How to Deploy Creative Studio.mp4](./screenshots/how_to_deploy_creative_studio.mp4) and deploy Creative Studio into your GCP Account environment, using CloudShell for simplicity.
+3.  Ensure required Google Cloud APIs are enabled in your project:
+    - **Google Drive API**: Ensure `drive.googleapis.com` is enabled in your project via the [Google Cloud Console API Overview](https://console.developers.google.com/apis/api/drive.googleapis.com/overview) if planning to use media gallery upload from Drive.
 
 ## 3. Add env variables to repo where we’ll work
 

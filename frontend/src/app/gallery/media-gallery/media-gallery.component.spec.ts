@@ -1,5 +1,5 @@
 /**
- * Copyright 2025 Google LLC
+ * Copyright 2026 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,28 +16,43 @@
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {HttpClientTestingModule} from '@angular/common/http/testing';
+import {ElementRef, NO_ERRORS_SCHEMA} from '@angular/core';
+import {DomSanitizer} from '@angular/platform-browser';
+import {MatIconModule} from '@angular/material/icon';
+import {MatMenuModule} from '@angular/material/menu';
+import {NoopAnimationsModule} from '@angular/platform-browser/animations';
+import {of} from 'rxjs';
 import {MediaGalleryComponent} from './media-gallery.component';
 import {GalleryService} from '../gallery.service';
-import {DomSanitizer} from '@angular/platform-browser';
-import {MatIconRegistry} from '@angular/material/icon';
 import {UserService} from '../../common/services/user.service';
-import {ElementRef, NgZone, NO_ERRORS_SCHEMA} from '@angular/core';
-import {MatIconModule} from '@angular/material/icon';
-import {of} from 'rxjs';
 import {WorkspaceStateService} from '../../services/workspace/workspace-state.service';
 import {TagsService} from '../../common/services/tags.service';
-import {NoopAnimationsModule} from '@angular/platform-browser/animations';
+import {MediaUploadService} from '../../common/services/media-upload/media-upload.service';
+import {GoogleDriveService} from '../../common/services/google-drive/google-drive.service';
 
 describe('MediaGalleryComponent', () => {
   let component: MediaGalleryComponent;
   let fixture: ComponentFixture<MediaGalleryComponent>;
+  let uploadService: MediaUploadService;
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [MediaGalleryComponent],
-      imports: [HttpClientTestingModule, MatIconModule, NoopAnimationsModule],
+      imports: [
+        HttpClientTestingModule,
+        MatIconModule,
+        MatMenuModule,
+        NoopAnimationsModule,
+      ],
       schemas: [NO_ERRORS_SCHEMA],
       providers: [
+        MediaUploadService,
+        {
+          provide: GoogleDriveService,
+          useValue: {
+            openPicker: () => of([]),
+          },
+        },
         {
           provide: GalleryService,
           useValue: {
@@ -58,10 +73,9 @@ describe('MediaGalleryComponent', () => {
           useValue: {
             bypassSecurityTrustResourceUrl: (url: string) => url,
             bypassSecurityTrustUrl: (url: string) => url,
-            sanitize: (context: any, value: any) => value,
+            sanitize: (context: unknown, value: unknown) => value,
           },
         },
-
         {
           provide: UserService,
           useValue: {
@@ -95,11 +109,38 @@ describe('MediaGalleryComponent', () => {
 
     fixture = TestBed.createComponent(MediaGalleryComponent);
     component = fixture.componentInstance;
+    uploadService = TestBed.inject(MediaUploadService);
     fixture.detectChanges();
   });
 
   it('should create', () => {
     expect(component).toBeTruthy();
+  });
+
+  it('should trigger MediaUploadService.uploadFiles when files are selected', () => {
+    spyOn(uploadService, 'uploadFiles');
+
+    const dummyFile = new File(['test'], 'demo.png', {type: 'image/png'});
+    const mockEvent = {
+      target: {
+        files: [dummyFile],
+        value: 'demo.png',
+      },
+    } as unknown as Event;
+
+    component.onFilesSelected(mockEvent);
+    expect(uploadService.uploadFiles).toHaveBeenCalledWith(1, [dummyFile]);
+  });
+
+  it('should trigger MediaUploadService.uploadFiles when files are selected from Google Drive', () => {
+    const driveService = TestBed.inject(GoogleDriveService);
+    const dummyFile = new File(['test'], 'drive-demo.png', {type: 'image/png'});
+    spyOn(driveService, 'openPicker').and.returnValue(of([dummyFile]));
+    spyOn(uploadService, 'uploadFiles');
+
+    component.openGoogleDrivePicker();
+    expect(driveService.openPicker).toHaveBeenCalled();
+    expect(uploadService.uploadFiles).toHaveBeenCalledWith(1, [dummyFile]);
   });
 
   describe('ngOnInit filters restoration', () => {
@@ -116,7 +157,8 @@ describe('MediaGalleryComponent', () => {
       };
 
       const galleryService = TestBed.inject(GalleryService);
-      (galleryService as any).filtersState = mockState;
+      (galleryService as unknown as {filtersState: unknown}).filtersState =
+        mockState;
 
       component.ngOnInit();
 
@@ -136,7 +178,8 @@ describe('MediaGalleryComponent', () => {
 
     it('should use default values when no filtersState is stored', () => {
       const galleryService = TestBed.inject(GalleryService);
-      (galleryService as any).filtersState = null;
+      (galleryService as unknown as {filtersState: unknown}).filtersState =
+        null;
 
       component.ngOnInit();
 

@@ -16,8 +16,7 @@
 
 <div class="workbench-container">
   <!-- Beta Label Row -->
-  <div class="flex justify-end items-center gap-4 w-full">
-    <app-project-switcher></app-project-switcher>
+  <div class="flex justify-end w-full">
     <div
       matTooltip="This is currently under development, it does not save content so use at your own risk, make sure to download your work before you leave this page!"
       class="beta-label mb-2"
@@ -523,22 +522,26 @@
 
           <!-- The Video Element -->
           <!-- Video Elements (Double Buffering) -->
-          <video
-            #videoA
-            class="max-w-full max-h-full object-contain shadow-2xl rounded-lg absolute transition-opacity duration-200"
+          <div
+            class="grid overflow-hidden rounded-lg shadow-2xl max-w-full max-h-full"
+            [style.aspect-ratio]="videoAspectRatio()"
             [class.hidden]="!timelineState.activeVideoClip()"
-            [class.invisible]="isVideoHidden()"
-            [style.filter]="videoFilter()"
-            [muted]="true"
-          ></video>
-          <video
-            #videoB
-            class="max-w-full max-h-full object-contain shadow-2xl rounded-lg absolute transition-opacity duration-200"
-            [class.hidden]="!timelineState.activeVideoClip()"
-            [class.invisible]="isVideoHidden()"
-            [style.filter]="videoFilter()"
-            [muted]="true"
-          ></video>
+          >
+            <video
+              *ngFor="let clip of timelineState.videoClips(); let idx = index"
+              #timelineVideo
+              preload="auto"
+              class="col-start-1 row-start-1 max-w-full max-h-full object-contain"
+              [class.invisible]="isVideoHidden()"
+              (loadedmetadata)="onVideoMetadataLoaded($event)"
+              [muted]="true"
+            ></video>
+          </div>
+
+          <div *ngIf="playbackService.isVideoLoading() && timelineState.activeVideoClip() && timelineState.activeVideoClip()?.id === timelineState.videoClips()[0]?.id"
+            class="absolute inset-0 flex items-center justify-center bg-black/40 rounded-lg z-10">
+            <mat-spinner diameter="40"></mat-spinner>
+          </div>
 
           <!-- Hidden Audio (Multi-track) -->
           <ng-container *ngFor="let src of activeAudioSrcs(); let i = index">
@@ -614,7 +617,6 @@
               <studio-button variant="primary" size="small" [shape]="activeToolButton() !== 'gallery' ? 'circle' : 'pill'"
                 mat-button
                 (click)="toggleToolButton('gallery')"
-                matTooltip="Gallery"
               >
                 <mat-icon
                   svgIcon="photo-merge-auto-icon"
@@ -627,7 +629,7 @@
                 >
               </studio-button>
 
-              <!-- <div matTooltip="Audio coming soon!" class="inline-block">
+              <div matTooltip="Audio coming soon!" class="inline-block">
                 <studio-button variant="primary" size="small" shape="circle"
                   mat-button
                   [disabled]="true"
@@ -637,9 +639,9 @@
                     class="!w-5 !h-5"
                   ></mat-icon>
                 </studio-button>
-              </div> -->
+              </div>
 
-              <!-- <div matTooltip="Stories coming soon!" class="inline-block">
+              <div matTooltip="Stories coming soon!" class="inline-block">
                 <studio-button variant="primary" size="small" shape="circle"
                   mat-button
                   [disabled]="true"
@@ -649,16 +651,16 @@
                     class="!w-5 !h-5"
                   ></mat-icon>
                 </studio-button>
-              </div> -->
+              </div>
 
-              <!-- <div matTooltip="Edit coming soon!" class="inline-block">
+              <div matTooltip="Edit coming soon!" class="inline-block">
                 <studio-button variant="primary" size="small" shape="circle"
                   mat-button
                   [disabled]="true"
                 >
                   <mat-icon svgIcon="edit-icon" class="!w-5 !h-5"></mat-icon>
                 </studio-button>
-              </div> -->
+              </div>
 
               <studio-button variant="primary" size="small" [shape]="activeToolButton() !== 'agent' ? 'circle' : 'pill'"
                 mat-button
@@ -818,7 +820,7 @@
 
             <div class="flex-1 flex flex-col md:w-[calc(100%-18rem)]">
               <!-- Main Scrollable Timeline -->
-              <div #timelineContainer class="relative !pl-4 overflow-hidden" (mousedown)="onTimelineMouseDown($event)">
+              <div #timelineContainer class="relative !pl-5 overflow-hidden" (mousedown)="onTimelineMouseDown($event)">
                 <div class="relative h-full" [style.width.px]="timelineWidth()" [style.transform]="
                                   'translateX(-' + timelineState.scrollOffset() + 'px)'
                   "
@@ -894,8 +896,36 @@
                         class="absolute right-0 top-[35%] bottom-[35%] w-2 bg-white/80 cursor-ew-resize rounded-full transform translate-x-1/2"
                         (mousedown)="startTrim($event, clip, 'end')">
                       </div>
-                      </div>
-                      </div>
+                    </div>
+                      
+                    <!-- Transition Indicators -->
+                    <app-transition-indicator
+                      *ngIf="timelineState.videoClips().length > 0"
+                      [left]="-12"
+                      [transition]="timelineState.transitionIn() || null"
+                      [role]="'in'"
+                      (transitionChange)="onTransitionChange($event)"
+                    ></app-transition-indicator>
+
+                    <ng-container *ngFor="let clip of timelineState.videoClips(); let idx = index">
+                      <app-transition-indicator
+                        *ngIf="idx < timelineState.videoClips().length - 1"
+                        [left]="timelineState.videoClips()[idx + 1].startTime * timelineState.pixelsPerSecond() - 12"
+                        [transitionIndex]="idx"
+                        [transition]="timelineState.transitions()[idx] || null"
+                        [role]="'middle'"
+                        (transitionChange)="onTransitionChange($event)"
+                      ></app-transition-indicator>
+                    </ng-container>
+
+                    <app-transition-indicator
+                      *ngIf="timelineState.videoClips().length > 0"
+                      [left]="getLastVideoClipEndTime() * timelineState.pixelsPerSecond() - 12"
+                      [transition]="timelineState.transitionOut() || null"
+                      [role]="'out'"
+                      (transitionChange)="onTransitionChange($event)"
+                    ></app-transition-indicator>
+                  </div>
 
                   <!-- AUDIO TRACKS (draggable clips) -->
                   <div
@@ -925,7 +955,7 @@
                     >
                       <!-- Waveform Graphic -->
                       <div
-                        class="flex items-center gap-0.5 h-full w-full justify-center px-2 opacity-80"
+                        class="flex items-center gap-0.5 h-full w-full justify-center px-0.5 opacity-80"
                       >
                         <div
                           *ngFor="

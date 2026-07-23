@@ -53,6 +53,7 @@ import {GalleryCardComponent} from './components/gallery-card/gallery-card.compo
 import {StudioDropdownComponent} from './components/studio-dropdown/studio-dropdown.component';
 import {StudioSearchFilterComponent} from './components/studio-search-filter/studio-search-filter.component';
 import {StudioDateRangeFilterComponent} from './components/studio-date-range-filter/studio-date-range-filter.component';
+import {UploadProgressWidgetComponent} from './components/upload-progress-widget/upload-progress-widget.component';
 import {TruncatePipe} from './pipes/truncate.pipe';
 
 const DECLARATIONS = [
@@ -71,6 +72,7 @@ const DECLARATIONS = [
   StudioDropdownComponent,
   StudioSearchFilterComponent,
   StudioDateRangeFilterComponent,
+  UploadProgressWidgetComponent,
   TruncatePipe,
   TagsManagementDialogComponent,
 ];

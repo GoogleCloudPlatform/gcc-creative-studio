@@ -34,7 +34,6 @@ import {AgentChatService} from '../../services/agent-chat.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
 import {StoryboardService} from '../../../services/storyboard/storyboard.service';
 import {TimelineStateService} from '../../services/timeline-state.service';
-import {ProjectStateService} from '../../../services/project/project-state.service';
 
 describe('ChatInterfaceComponent', () => {
   let component: ChatInterfaceComponent;
@@ -51,6 +50,8 @@ describe('ChatInterfaceComponent', () => {
       currentStoryboard: signal(null),
       activeAgent: signal('director'),
       isGeneratingStoryboard: signal(false),
+      sessions: signal([]),
+      chatMessages: signal([]),
       generateVideoRequest$: new Subject<void>(),
       videoGenerated$: new Subject<any>(),
       getSessions: jasmine.createSpy('getSessions').and.returnValue(of([])),
@@ -120,10 +121,18 @@ describe('ChatInterfaceComponent', () => {
       stopPolling: jasmine.createSpy('stopPolling'),
     };
 
+    let isFirstCall = true;
     const mockWorkspaceStateService = {
       getActiveWorkspaceId: jasmine
         .createSpy('getActiveWorkspaceId')
-        .and.returnValue(1),
+        .and.callFake(() => {
+          if (isFirstCall) {
+            isFirstCall = false;
+            return null;
+          }
+          return 1;
+        }),
+      setActiveWorkspaceId: jasmine.createSpy('setActiveWorkspaceId'),
       activeWorkspaceId$: of(1),
     };
 
@@ -141,15 +150,12 @@ describe('ChatInterfaceComponent', () => {
         ),
     };
 
-    const mockProjectStateService = {
-      getActiveProjectId: jasmine
-        .createSpy('getActiveProjectId')
-        .and.returnValue(202),
-      activeProjectId$: of(202),
-    };
-
     const mockTimelineStateService = {
-      loadedTimelineId: signal(undefined),
+      loadedTimelineId: signal<any>(undefined),
+      timelineClips: signal<any>([]),
+      transitions: signal<any>([]),
+      transitionIn: signal<any>(null),
+      transitionOut: signal<any>(null),
     };
 
     queryParamsSubject = new BehaviorSubject<any>({});
@@ -167,7 +173,6 @@ describe('ChatInterfaceComponent', () => {
       providers: [
         {provide: AgentChatService, useValue: mockAgentChatService},
         {provide: WorkspaceStateService, useValue: mockWorkspaceStateService},
-        {provide: ProjectStateService, useValue: mockProjectStateService},
         {provide: StoryboardService, useValue: mockStoryboardService},
         {provide: TimelineStateService, useValue: mockTimelineStateService},
         {
@@ -193,7 +198,12 @@ describe('ChatInterfaceComponent', () => {
   });
 
   it('should initialize and load sessions', () => {
-    expect(agentChatService.getSessions).toHaveBeenCalledWith(1, 202);
+    expect(agentChatService.getSessions).toHaveBeenCalledWith(
+      1,
+      false,
+      undefined,
+      undefined,
+    );
   });
 
   it('should start a new chat', () => {
@@ -227,7 +237,6 @@ describe('ChatInterfaceComponent', () => {
     expect(agentChatService.deleteSession).toHaveBeenCalledWith(
       'session-123',
       1,
-      202,
     );
     expect(component.currentSessionId).toBeNull();
   });
@@ -304,7 +313,7 @@ describe('ChatInterfaceComponent', () => {
 
     component.sendChatMessage('hello');
 
-    expect(agentChatService.createSession).toHaveBeenCalledWith(1, 202);
+    expect(agentChatService.createSession).toHaveBeenCalledWith(1);
     expect(component.currentSessionId).toBe('new-session' as any);
     expect(component['executeSendMessage']).toHaveBeenCalledWith('hello');
   });
@@ -476,7 +485,6 @@ describe('ChatInterfaceComponent', () => {
       1,
       'session-456',
       202,
-      202,
     );
   });
 
@@ -576,7 +584,6 @@ describe('ChatInterfaceComponent', () => {
       ],
       1,
       jasmine.any(Object),
-      202,
     );
     expect(component.selectedImages().length).toBe(0);
   });
@@ -704,7 +711,6 @@ describe('ChatInterfaceComponent', () => {
     expect(agentChatService.deleteSession).toHaveBeenCalledWith(
       'session-123',
       1,
-      202,
     );
     expect(component.currentSessionId).toBe('session-other');
   });
@@ -720,7 +726,7 @@ describe('ChatInterfaceComponent', () => {
     expect(component.chatMessages().length).toBe(1);
     expect(router.navigate).toHaveBeenCalledWith([], {
       relativeTo: component['route'],
-      queryParams: {sessionId: null, storyboardId: null, timelineId: null},
+      queryParams: {sessionId: null, storyboardId: null},
       queryParamsHandling: 'merge',
     });
   });
@@ -799,7 +805,7 @@ describe('ChatInterfaceComponent', () => {
     expect(agentChatService.selectedSessionId()).toBeNull();
     expect(router.navigate).toHaveBeenCalledWith([], {
       relativeTo: component['route'],
-      queryParams: {sessionId: null, storyboardId: null, timelineId: null},
+      queryParams: {sessionId: null, storyboardId: null},
       queryParamsHandling: 'merge',
     });
   });
@@ -832,7 +838,7 @@ describe('ChatInterfaceComponent', () => {
     agentChatService.getSessionDetail.and.returnValue(
       of({
         session: {id: 's1', events: []},
-        storyboard: {id: 202, timeline_id: 42},
+        storyboard: {id: 202, timeline_id: 42, workspace_id: 1},
       }),
     );
 
