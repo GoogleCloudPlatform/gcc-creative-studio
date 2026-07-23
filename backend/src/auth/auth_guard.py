@@ -46,6 +46,7 @@ async def get_current_user(
     provisioning flow. Supports standard token or internal agent key auth.
     """
     try:
+        is_agent_request.set(False)
         user_auth_header = request.headers.get("X-User-Authorization")
         if user_auth_header:
             is_agent_request.set(True)

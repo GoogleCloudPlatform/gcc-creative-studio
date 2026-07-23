@@ -15,6 +15,7 @@
 
 import importlib.metadata
 import logging
+import threading
 
 from google.genai import Client
 
@@ -37,6 +38,7 @@ class GenAIModelSetup:
 
     _client: Client | None = None
     _agent_client: Client | None = None
+    _client_lock = threading.Lock()
 
     @classmethod
     def get_client(cls) -> Client:
@@ -45,12 +47,16 @@ class GenAIModelSetup:
         if is_agent:
             logger.info("Agent request: using Izumi agent...")
             if cls._agent_client is None:
-                cls._agent_client = cls._create_client(is_agent=True)
+                with cls._client_lock:
+                    if cls._agent_client is None:
+                        cls._agent_client = cls._create_client(is_agent=True)
             return cls._agent_client
         else:
             logger.info("Frontend request: using with frontend...")
             if cls._client is None:
-                cls._client = cls._create_client(is_agent=False)
+                with cls._client_lock:
+                    if cls._client is None:
+                        cls._client = cls._create_client(is_agent=False)
             return cls._client
 
     @classmethod
@@ -66,7 +72,9 @@ class GenAIModelSetup:
                 f"Initializing shared GenAI client for project '{project_id}' in location '{location}' (is_agent={is_agent})",
             )
 
-            user_agent_prefix = "creative-studio/izumi" if is_agent else "creative-studio"
+            user_agent_prefix = (
+                "creative-studio/izumi" if is_agent else "creative-studio"
+            )
 
             return Client(
                 project=project_id,
@@ -84,6 +92,7 @@ class GenAIModelSetup:
 
     _omni_client: Client | None = None
     _omni_agent_client: Client | None = None
+    _omni_client_lock = threading.Lock()
 
     @classmethod
     def get_omni_client(cls) -> Client:
@@ -91,11 +100,19 @@ class GenAIModelSetup:
         is_agent = is_agent_request.get()
         if is_agent:
             if cls._omni_agent_client is None:
-                cls._omni_agent_client = cls._create_omni_client(is_agent=True)
+                with cls._omni_client_lock:
+                    if cls._omni_agent_client is None:
+                        cls._omni_agent_client = cls._create_omni_client(
+                            is_agent=True
+                        )
             return cls._omni_agent_client
         else:
             if cls._omni_client is None:
-                cls._omni_client = cls._create_omni_client(is_agent=False)
+                with cls._omni_client_lock:
+                    if cls._omni_client is None:
+                        cls._omni_client = cls._create_omni_client(
+                            is_agent=False
+                        )
             return cls._omni_client
 
     @classmethod
@@ -110,7 +127,9 @@ class GenAIModelSetup:
                 f"Initializing shared Gemini Omni GenAI client for project '{project_id}' in location 'global' (is_agent={is_agent})",
             )
 
-            user_agent_prefix = "creative-studio-agent" if is_agent else "creative-studio"
+            user_agent_prefix = (
+                "creative-studio/izumi" if is_agent else "creative-studio"
+            )
 
             return Client(
                 vertexai=True,
@@ -124,9 +143,7 @@ class GenAIModelSetup:
                 },
             )
         except Exception as e:
-            logger.error(
-                "Failed to initialize Gemini Omni GenAI client: %s", e
-            )
+            logger.error("Failed to initialize Gemini Omni GenAI client: %s", e)
             raise
 
     @staticmethod
