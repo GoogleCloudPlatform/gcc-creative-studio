@@ -180,6 +180,7 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
         return VideoTimeline(
             timeline_id=db_timeline.id,
             storyboard_id=db_timeline.storyboard_id,
+            project_id=db_timeline.project_id,
             workspace_id=db_timeline.workspace_id
             or str(db_timeline.storyboard_id or 1),
             user_id=db_timeline.user_id,

@@ -77,6 +77,7 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
             .options(
                 selectinload(self.model.scenes),
                 selectinload(self.model.timeline),
+                selectinload(self.model.project),
             )
         )
         result = await self.db.execute(query)
@@ -86,7 +87,10 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
         return self.schema.model_validate(item)
 
     async def find_by_workspace(
-        self, workspace_id: int, session_id: str | None = None
+        self,
+        workspace_id: int,
+        session_id: str | None = None,
+        user_id: int | None = None,
     ) -> list[StoryboardResponse]:
         """Finds storyboards for a given workspace, optionally filtered by session."""
         query = (
@@ -96,10 +100,13 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
             .options(
                 selectinload(self.model.scenes),
                 selectinload(self.model.timeline),
+                selectinload(self.model.project),
             )
         )
         if session_id:
             query = query.where(self.model.session_id == session_id)
+        if user_id is not None:
+            query = query.where(self.model.user_id == user_id)
         result = await self.db.execute(query)
         items = result.scalars().all()
         return [self.schema.model_validate(item) for item in items]
@@ -147,13 +154,41 @@ class ProjectRepository(BaseRepository[Project, ProjectResponse]):
     def __init__(self, db: AsyncSession = Depends(get_db)):
         super().__init__(model=Project, schema=ProjectResponse, db=db)
 
+    async def get_by_id(
+        self,
+        item_id: int,
+        include_deleted: bool = False,
+    ) -> ProjectResponse | None:
+        """Retrieves a single project by its ID, with storyboard and timeline loaded."""
+        query = (
+            select(self.model)
+            .where(self.model.id == item_id)
+            .options(
+                selectinload(self.model.storyboard),
+                selectinload(self.model.timeline),
+            )
+            .execution_options(include_deleted=include_deleted)
+        )
+        result = await self.db.execute(query)
+        item = result.scalar_one_or_none()
+        if not item:
+            return None
+        return self.schema.model_validate(item)
+
     async def find_by_workspace_and_owner(
         self, workspace_id: int, owner_id: int
     ) -> list[ProjectResponse]:
         """Retrieves all projects in a specific workspace belonging to the owner."""
-        query = select(self.model).where(
-            self.model.workspace_id == workspace_id,
-            self.model.owner_id == owner_id,
+        query = (
+            select(self.model)
+            .where(
+                self.model.workspace_id == workspace_id,
+                self.model.owner_id == owner_id,
+            )
+            .options(
+                selectinload(self.model.storyboard),
+                selectinload(self.model.timeline),
+            )
         )
         result = await self.db.execute(query)
         items = result.scalars().all()

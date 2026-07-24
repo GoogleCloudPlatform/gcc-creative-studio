@@ -24,6 +24,8 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from src.auth.auth_guard import get_current_user
 from src.users.user_model import UserModel
 from src.projects.project_service import ProjectService
+from src.workspaces.workspace_auth_guard import WorkspaceAuth
+from src.projects.project_auth_guard import ProjectAuth
 from src.workbench.dto.workbench_dto import (
     TimelineRequest,
     TimelineCreate,
@@ -101,8 +103,27 @@ async def create_timeline(
     timeline_create: TimelineCreate,
     current_user: UserModel = Depends(get_current_user),
     service: WorkbenchService = Depends(),
+    project_service: ProjectService = Depends(),
+    workspace_auth: WorkspaceAuth = Depends(),
+    project_auth: ProjectAuth = Depends(),
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
+    if timeline_create.workspace_id:
+        await workspace_auth.authorize(
+            int(timeline_create.workspace_id), current_user
+        )
+    if timeline_create.project_id:
+        await project_auth.authorize(timeline_create.project_id, current_user)
+    if timeline_create.storyboard_id:
+        storyboard = await project_service.get_storyboard(
+            timeline_create.storyboard_id
+        )
+        if storyboard and storyboard.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to access this storyboard.",
+            )
+
     timeline_create.user_id = str(current_user.id)
     return await service.create_timeline(timeline_create)
 
@@ -150,6 +171,7 @@ async def update_timeline(
     service: WorkbenchService = Depends(),
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
+    print("DEBUG update_timeline RECEIVED payload:", timeline_update.model_dump())
     timeline = await service.get_timeline(timeline_id)
     if not timeline:
         raise HTTPException(status_code=404, detail="Timeline not found")

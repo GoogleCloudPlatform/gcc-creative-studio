@@ -96,6 +96,8 @@ class ProjectResponse(BaseModel):
     thumbnail_url: Optional[str] = None
     thumbnail_media_item_id: Optional[int] = None
     thumbnail_source_asset_id: Optional[int] = None
+    storyboard_id: Optional[int] = None
+    timeline_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 
@@ -139,6 +141,7 @@ class StoryboardResponse(BaseModel):
     id: int
     user_id: int
     project_id: int
+    workspace_id: Optional[int] = None
     session_id: Optional[str] = None
     template_name: Optional[str] = None
     bg_music_description: Optional[str] = None

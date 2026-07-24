@@ -32,6 +32,7 @@ export interface DropdownOption {
   icon?: string;
   isSvgIcon?: boolean;
   tooltip?: string;
+  deletable?: boolean;
 }
 
 @Component({
@@ -72,15 +73,65 @@ export class StudioDropdownComponent {
   @Input() showCheckbox = false;
   @Input() checkboxChecked = false;
   @Input() checkboxLabel = 'Show only My tags';
+  @Input() editable = false;
+  @Input() showAddOption = false;
+  @Input() addOptionLabel = 'Add item';
 
   @Output() valueChange = new EventEmitter<any>();
   @Output() optionDeleted = new EventEmitter<DropdownOption>();
   @Output() searchChange = new EventEmitter<string>();
   @Output() loadMore = new EventEmitter<void>();
   @Output() checkboxChange = new EventEmitter<boolean>();
+  @Output() optionEdited = new EventEmitter<{
+    option: DropdownOption;
+    newValue: string;
+  }>();
+  @Output() addOptionClicked = new EventEmitter<string>();
 
   isOpen = false;
   searchQuery = '';
+  editingOptionValue: any = null;
+  editingValueText = '';
+  isAdding = false;
+  addingValueText = '';
+
+  startEdit(option: DropdownOption, event: Event) {
+    event.stopPropagation();
+    this.editingOptionValue = option.value;
+    this.editingValueText = option.label;
+  }
+
+  saveEdit(option: DropdownOption, event: Event) {
+    event.stopPropagation();
+    if (this.editingValueText.trim()) {
+      this.optionEdited.emit({option, newValue: this.editingValueText.trim()});
+    }
+    this.editingOptionValue = null;
+  }
+
+  cancelEdit(event: Event) {
+    event.stopPropagation();
+    this.editingOptionValue = null;
+  }
+
+  startAdd(event: Event) {
+    event.stopPropagation();
+    this.isAdding = true;
+    this.addingValueText = '';
+  }
+
+  saveAdd(event: Event) {
+    event.stopPropagation();
+    if (this.addingValueText.trim()) {
+      this.addOptionClicked.emit(this.addingValueText.trim());
+    }
+    this.isAdding = false;
+  }
+
+  cancelAdd(event: Event) {
+    event.stopPropagation();
+    this.isAdding = false;
+  }
 
   onSearchInput(event: Event) {
     const target = event.target as HTMLInputElement;

@@ -93,6 +93,7 @@ export interface AudioClipDTO {
 export interface TimelineDTO {
   timeline_id?: number | string;
   storyboard_id?: number | string;
+  project_id?: number;
   workspace_id: number | string;
   user_id?: number | string;
   session_id?: string;
@@ -190,4 +191,36 @@ export interface MediaAsset {
   thumbnail?: string;
   mediaItemId?: number;
   sourceAssetId?: number;
+}
+
+export interface ProjectResponse {
+  id: number;
+  workspace_id: number;
+  owner_id: number;
+  name: string;
+  description?: string;
+  thumbnail_url?: string;
+  thumbnail_media_item_id?: number;
+  thumbnail_source_asset_id?: number;
+  storyboard_id?: number;
+  timeline_id?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectCreate {
+  workspace_id: number;
+  name: string;
+  description?: string;
+  thumbnail_media_item_id?: number;
+  thumbnail_source_asset_id?: number;
+  thumbnail_url?: string;
+}
+
+export interface ProjectUpdate {
+  name?: string;
+  description?: string;
+  thumbnail_media_item_id?: number;
+  thumbnail_source_asset_id?: number;
+  thumbnail_url?: string;
 }

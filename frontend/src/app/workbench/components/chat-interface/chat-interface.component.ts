@@ -35,7 +35,8 @@ import {WorkspaceStateService} from '../../../services/workspace/workspace-state
 import {StoryboardService} from '../../../services/storyboard/storyboard.service';
 import {TimelineStateService} from '../../services/timeline-state.service';
 import {ActivatedRoute, Router} from '@angular/router';
-import {combineLatest} from 'rxjs';
+import {combineLatest, of} from 'rxjs';
+import {catchError} from 'rxjs/operators';
 import {CommonModule} from '@angular/common';
 import {FormsModule} from '@angular/forms';
 import {MatIconModule} from '@angular/material/icon';
@@ -324,8 +325,19 @@ export class ChatInterfaceComponent
     ]).subscribe(([params, workspaceId]) => {
       if (!workspaceId) return;
 
-      const storyboardId = params['storyboardId'];
-      const sessionId = params['sessionId'];
+      let storyboardId = params['storyboardId'];
+      let sessionId = params['sessionId'];
+      let projectId = params['projectId'];
+
+      if (sessionId === 'null' || sessionId === 'undefined') {
+        sessionId = null;
+      }
+      if (storyboardId === 'null' || storyboardId === 'undefined') {
+        storyboardId = null;
+      }
+      if (projectId === 'null' || projectId === 'undefined') {
+        projectId = null;
+      }
 
       const isWorkspaceChanged =
         this.lastWorkspaceId !== null && this.lastWorkspaceId !== workspaceId;
@@ -354,12 +366,13 @@ export class ChatInterfaceComponent
           this.shouldScrollToBottom = true;
           this.lastWorkspaceId = workspaceId;
 
-          if (storyboardId || sessionId) {
+          if (storyboardId || sessionId || projectId) {
             void this.router.navigate([], {
               relativeTo: this.route,
               queryParams: {
                 sessionId: null,
                 storyboardId: null,
+                projectId: null,
               },
               queryParamsHandling: 'merge',
             });
@@ -371,6 +384,7 @@ export class ChatInterfaceComponent
       const isExplicitNewChat =
         !sessionId &&
         !storyboardId &&
+        !projectId &&
         this.lastWorkspaceId === workspaceId &&
         this.sessions().length > 0;
 
@@ -384,6 +398,24 @@ export class ChatInterfaceComponent
       // Always load sessions first to populate the sessions dropdown
       this.agentChatService
         .getSessions(workspaceId, false, sessionId, storyboardId)
+        .pipe(
+          catchError(err => {
+            console.error(
+              'Error fetching sessions, proceeding to load storyboard if available:',
+              err,
+            );
+            if ((err as any)?.status === 503) {
+              console.warn(
+                'Backend returned 503: Agent Engine is likely missing AGENT_ENGINE_RESOURCE_NAME in environment.',
+              );
+              this.agentUnavailable.set(true);
+            } else {
+              handleErrorSnackbar(this.snackBar, err as any, 'Fetch Sessions');
+            }
+            // Return an empty sessions list so the next block continues
+            return of([] as ChatSession[]);
+          }),
+        )
         .subscribe({
           next: (sessions: ChatSession[]) => {
             this.sessions.set(sessions || []);
@@ -408,7 +440,9 @@ export class ChatInterfaceComponent
               });
 
             const shouldLoadDetail =
-              (sessionId && sessionExistsInWorkspace) || !!storyboardId;
+              (sessionId &&
+                (sessionExistsInWorkspace || this.agentUnavailable())) ||
+              !!storyboardId;
 
             if (shouldLoadDetail) {
               const isDifferentSession =

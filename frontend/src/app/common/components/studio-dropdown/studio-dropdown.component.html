@@ -58,36 +58,111 @@
     </div>
 
     <div class="menu-items">
-      <button
-        mat-button
-        *ngFor="let option of options; trackBy: trackByOption"
-        (click)="selectOption(option)"
-        [class.selected]="multiple ? value?.includes(option.value) : option.value === value"
-        class="studio-menu-item"
-        [matTooltip]="option.tooltip || ''"
-      >
+      <ng-container *ngFor="let option of options; trackBy: trackByOption">
+        <!-- Edit Mode -->
         <div
-          class="flex items-center justify-start gap-4 w-full h-full relative text-left"
+          *ngIf="editingOptionValue === option.value"
+          class="studio-menu-item flex items-center justify-between gap-2 px-3 h-11"
+          (click)="$event.stopPropagation()"
         >
-          <mat-icon *ngIf="multiple && value?.includes(option.value)" class="text-primary">check</mat-icon>
-          <!-- Color Dot -->
-          <span *ngIf="option.color" class="color-dot" [style.backgroundColor]="option.color"></span>
-          <!-- Label in the Middle -->
-          <span class="option-label truncate text-left">{{
-            option.label
-          }}</span>
-          <!-- Delete Button -->
-          <!-- <button mat-icon-button *ngIf="deletable && option.deletable !== false" (click)="onDeleteOption(option, $event)"
-                      class="delete-btn">
-            <mat-icon>delete</mat-icon>
-          </button> -->
-          </div>
-      </button>
+          <input
+            type="text"
+            [(ngModel)]="editingValueText"
+            class="flex-1 bg-white/10 border border-white/20 rounded px-2 py-1 text-white text-sm outline-none"
+            (keydown.enter)="saveEdit(option, $event)"
+            (keydown.escape)="cancelEdit($event)"
+            focus="true"
+          />
+          <button mat-icon-button class="edit-action-btn" (click)="saveEdit(option, $event)">
+            <mat-icon class="text-green-400">check</mat-icon>
+          </button>
+          <button mat-icon-button class="edit-action-btn" (click)="cancelEdit($event)">
+            <mat-icon class="text-red-400">close</mat-icon>
+          </button>
+        </div>
+
+        <!-- Normal Mode -->
+        <button
+          *ngIf="editingOptionValue !== option.value"
+          mat-button
+          (click)="selectOption(option)"
+          [class.selected]="multiple ? value?.includes(option.value) : option.value === value"
+          class="studio-menu-item"
+          [matTooltip]="option.tooltip || ''"
+        >
+          <div
+            class="flex items-center justify-start gap-4 w-full h-full relative text-left"
+          >
+            <mat-icon *ngIf="multiple && value?.includes(option.value)" class="text-primary">check</mat-icon>
+            <!-- Color Dot -->
+            <span *ngIf="option.color" class="color-dot" [style.backgroundColor]="option.color"></span>
+            <!-- Label in the Middle -->
+            <span class="option-label truncate text-left">{{
+              option.label
+            }}</span>
+            <!-- Edit Button -->
+            <button
+              mat-icon-button
+              *ngIf="editable"
+              (click)="startEdit(option, $event)"
+              class="edit-btn ml-auto"
+            >
+              <mat-icon>edit</mat-icon>
+            </button>
+            <!-- Delete Button -->
+            <button mat-icon-button *ngIf="deletable && option.deletable !== false" (click)="onDeleteOption(option, $event)"
+                        class="delete-btn">
+              <mat-icon>delete</mat-icon>
+            </button>
+            </div>
+        </button>
+      </ng-container>
       <!-- Load More Button -->
       <button mat-button *ngIf="hasMore" (click)="loadMore.emit(); $event.stopPropagation();"
         class="studio-menu-item justify-center" style="color: #a8c7fa !important;">
         Load More
       </button>
-    </div>
+
+      <!-- Divider and Add Option -->
+      <ng-container *ngIf="showAddOption">
+        <div class="border-t border-white/10 my-1 mx-2"></div>
+        
+        <!-- Add Input Mode -->
+        <div
+          *ngIf="isAdding"
+          class="studio-menu-item flex items-center justify-between gap-2 px-3 h-11"
+          (click)="$event.stopPropagation()"
+        >
+          <input
+            type="text"
+            [(ngModel)]="addingValueText"
+            class="flex-1 bg-white/10 border border-white/20 rounded px-2 py-1 text-white text-sm outline-none"
+            placeholder="Name..."
+            (keydown.enter)="saveAdd($event)"
+            (keydown.escape)="cancelAdd($event)"
+            focus="true"
+          />
+          <button mat-icon-button class="edit-action-btn" (click)="saveAdd($event)">
+            <mat-icon class="text-green-400">check</mat-icon>
+          </button>
+          <button mat-icon-button class="edit-action-btn" (click)="cancelAdd($event)">
+            <mat-icon class="text-red-400">close</mat-icon>
+          </button>
+        </div>
+
+        <!-- Add Button Mode -->
+        <button
+          *ngIf="!isAdding"
+          mat-button
+          (click)="startAdd($event)"
+          class="studio-menu-item text-primary"
+          style="color: #a8c7fa !important;"
+        >
+          <div class="flex items-center justify-start gap-4 w-full h-full relative text-left">
+            <mat-icon>add</mat-icon>
+            <span class="option-label truncate text-left">{{ addOptionLabel }}</span>
+          </div>
+        </button>
+      </ng-container>
   </div>
 </div>

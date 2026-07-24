@@ -148,7 +148,9 @@ def downgrade() -> None:
         op.drop_table("sessions")
 
     # 3. Re-add session_id column to storyboards if it doesn't exist
-    columns_storyboards = [c["name"] for c in inspector.get_columns("storyboards")]
+    columns_storyboards = [
+        c["name"] for c in inspector.get_columns("storyboards")
+    ]
     if "session_id" not in columns_storyboards:
         op.add_column(
             "storyboards", sa.Column("session_id", sa.String(), nullable=True)
@@ -174,7 +176,9 @@ def downgrade() -> None:
             sa.Column(
                 "workspace_id",
                 sa.Integer(),
-                sa.ForeignKey("workspaces.id", name="timelines_workspace_id_fkey"),
+                sa.ForeignKey(
+                    "workspaces.id", name="timelines_workspace_id_fkey"
+                ),
                 nullable=False,
             ),
         )
@@ -182,9 +186,14 @@ def downgrade() -> None:
     # 5. Drop project_id column, FK and unique constraint from timelines
     if "timelines" in tables:
         constraints_timelines = inspector.get_unique_constraints("timelines")
-        if any(c["name"] == "uq_timelines_project_id" for c in constraints_timelines):
-            op.drop_constraint("uq_timelines_project_id", "timelines", type_="unique")
-        
+        if any(
+            c["name"] == "uq_timelines_project_id"
+            for c in constraints_timelines
+        ):
+            op.drop_constraint(
+                "uq_timelines_project_id", "timelines", type_="unique"
+            )
+
         fks_timelines = inspector.get_foreign_keys("timelines")
         if any(fk["name"] == "fk_timelines_project_id" for fk in fks_timelines):
             op.drop_constraint(
@@ -195,14 +204,21 @@ def downgrade() -> None:
 
     # 6. Drop project_id column, FK and unique constraint from storyboards
     if "storyboards" in tables:
-        constraints_storyboards = inspector.get_unique_constraints("storyboards")
-        if any(c["name"] == "uq_storyboards_project_id" for c in constraints_storyboards):
+        constraints_storyboards = inspector.get_unique_constraints(
+            "storyboards"
+        )
+        if any(
+            c["name"] == "uq_storyboards_project_id"
+            for c in constraints_storyboards
+        ):
             op.drop_constraint(
                 "uq_storyboards_project_id", "storyboards", type_="unique"
             )
-        
+
         fks_storyboards = inspector.get_foreign_keys("storyboards")
-        if any(fk["name"] == "fk_storyboards_project_id" for fk in fks_storyboards):
+        if any(
+            fk["name"] == "fk_storyboards_project_id" for fk in fks_storyboards
+        ):
             op.drop_constraint(
                 "fk_storyboards_project_id", "storyboards", type_="foreignkey"
             )

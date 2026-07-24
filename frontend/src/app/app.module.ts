@@ -118,6 +118,7 @@ import {UpscaleComponent} from './upscale/upscale.component';
 import {StoryboardComponent} from './workbench/components/storyboard/storyboard.component';
 import {TimeRulerComponent} from './workbench/components/time-ruler/time-ruler.component';
 import {TransitionIndicatorComponent} from './workbench/components/transition-indicator/transition-indicator.component';
+import {ProjectSwitcherComponent} from './workbench/components/project-switcher/project-switcher.component';
 
 @NgModule({
   declarations: [
@@ -200,6 +201,7 @@ import {TransitionIndicatorComponent} from './workbench/components/transition-in
     StoryboardComponent,
     TimeRulerComponent,
     TransitionIndicatorComponent,
+    ProjectSwitcherComponent,
     TextFieldModule,
   ],
   providers: [

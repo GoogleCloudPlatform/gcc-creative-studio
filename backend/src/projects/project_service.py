@@ -78,10 +78,13 @@ class ProjectService:
         return storyboard
 
     async def list_storyboards(
-        self, workspace_id: int, session_id: str | None = None
+        self,
+        workspace_id: int,
+        session_id: str | None = None,
+        user_id: int | None = None,
     ) -> list[StoryboardResponse]:
         storyboards = await self.storyboard_repo.find_by_workspace(
-            workspace_id, session_id
+            workspace_id, session_id, user_id
         )
         for sb in storyboards:
             await self._enrich_storyboard(sb)

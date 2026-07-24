@@ -1,0 +1,1062 @@
+diff --git a/backend/alembic/versions/959c44325b16_move_timelines_to_workspaces.py b/backend/alembic/versions/959c44325b16_move_timelines_to_workspaces.py
+index 131239d..cbaa9d2 100644
+--- a/backend/alembic/versions/959c44325b16_move_timelines_to_workspaces.py
++++ b/backend/alembic/versions/959c44325b16_move_timelines_to_workspaces.py
+@@ -27,7 +27,7 @@ import sqlalchemy as sa
+ 
+ # revision identifiers, used by Alembic.
+ revision: str = "959c44325b16"
+-down_revision: Union[str, None] = "c3d4e5f6a7b8"
++down_revision: Union[str, None] = "7ec3aed70c3f"
+ branch_labels: Union[str, Sequence[str], None] = None
+ depends_on: Union[str, Sequence[str], None] = None
+ 
+@@ -53,6 +53,19 @@ def upgrade() -> None:
+         "FROM storyboards WHERE timelines.storyboard_id = storyboards.id"
+     )
+ 
++    # Delete dependent audio and video clips first to satisfy foreign key constraints
++    op.execute(
++        "DELETE FROM video_clips WHERE timeline_id IN "
++        "(SELECT id FROM timelines WHERE workspace_id IS NULL)"
++    )
++    op.execute(
++        "DELETE FROM audio_clips WHERE timeline_id IN "
++        "(SELECT id FROM timelines WHERE workspace_id IS NULL)"
++    )
++
++    # Delete timelines that still have NULL workspace_id (orphans)
++    op.execute("DELETE FROM timelines WHERE workspace_id IS NULL")
++
+     # 4. Alter workspace_id to NOT NULL
+     op.alter_column("timelines", "workspace_id", nullable=False)
+ 
+diff --git a/backend/alembic/versions/fa5148bc6f42_create_projects_table.py b/backend/alembic/versions/fa5148bc6f42_create_projects_table.py
+index 2342484..d5802f4 100644
+--- a/backend/alembic/versions/fa5148bc6f42_create_projects_table.py
++++ b/backend/alembic/versions/fa5148bc6f42_create_projects_table.py
+@@ -148,7 +148,9 @@ def downgrade() -> None:
+         op.drop_table("sessions")
+ 
+     # 3. Re-add session_id column to storyboards if it doesn't exist
+-    columns_storyboards = [c["name"] for c in inspector.get_columns("storyboards")]
++    columns_storyboards = [
++        c["name"] for c in inspector.get_columns("storyboards")
++    ]
+     if "session_id" not in columns_storyboards:
+         op.add_column(
+             "storyboards", sa.Column("session_id", sa.String(), nullable=True)
+@@ -174,7 +176,9 @@ def downgrade() -> None:
+             sa.Column(
+                 "workspace_id",
+                 sa.Integer(),
+-                sa.ForeignKey("workspaces.id", name="timelines_workspace_id_fkey"),
++                sa.ForeignKey(
++                    "workspaces.id", name="timelines_workspace_id_fkey"
++                ),
+                 nullable=False,
+             ),
+         )
+@@ -182,9 +186,14 @@ def downgrade() -> None:
+     # 5. Drop project_id column, FK and unique constraint from timelines
+     if "timelines" in tables:
+         constraints_timelines = inspector.get_unique_constraints("timelines")
+-        if any(c["name"] == "uq_timelines_project_id" for c in constraints_timelines):
+-            op.drop_constraint("uq_timelines_project_id", "timelines", type_="unique")
+-        
++        if any(
++            c["name"] == "uq_timelines_project_id"
++            for c in constraints_timelines
++        ):
++            op.drop_constraint(
++                "uq_timelines_project_id", "timelines", type_="unique"
++            )
++
+         fks_timelines = inspector.get_foreign_keys("timelines")
+         if any(fk["name"] == "fk_timelines_project_id" for fk in fks_timelines):
+             op.drop_constraint(
+@@ -195,14 +204,21 @@ def downgrade() -> None:
+ 
+     # 6. Drop project_id column, FK and unique constraint from storyboards
+     if "storyboards" in tables:
+-        constraints_storyboards = inspector.get_unique_constraints("storyboards")
+-        if any(c["name"] == "uq_storyboards_project_id" for c in constraints_storyboards):
++        constraints_storyboards = inspector.get_unique_constraints(
++            "storyboards"
++        )
++        if any(
++            c["name"] == "uq_storyboards_project_id"
++            for c in constraints_storyboards
++        ):
+             op.drop_constraint(
+                 "uq_storyboards_project_id", "storyboards", type_="unique"
+             )
+-        
++
+         fks_storyboards = inspector.get_foreign_keys("storyboards")
+-        if any(fk["name"] == "fk_storyboards_project_id" for fk in fks_storyboards):
++        if any(
++            fk["name"] == "fk_storyboards_project_id" for fk in fks_storyboards
++        ):
+             op.drop_constraint(
+                 "fk_storyboards_project_id", "storyboards", type_="foreignkey"
+             )
+diff --git a/backend/src/agents/agent_service.py b/backend/src/agents/agent_service.py
+index bfd62e9..1399742 100644
+--- a/backend/src/agents/agent_service.py
++++ b/backend/src/agents/agent_service.py
+@@ -396,7 +396,9 @@ class AgentService:
+ 
+         elif resolved_session_id is not None:
+             storyboards = await self.project_service.list_storyboards(
+-                workspace_id=workspace_id, session_id=resolved_session_id
++                workspace_id=workspace_id,
++                session_id=resolved_session_id,
++                user_id=current_user.id,
+             )
+             if storyboards:
+                 storyboard = storyboards[0]
+diff --git a/backend/src/projects/dto/project_dto.py b/backend/src/projects/dto/project_dto.py
+index 12677db..2749102 100644
+--- a/backend/src/projects/dto/project_dto.py
++++ b/backend/src/projects/dto/project_dto.py
+@@ -96,6 +96,8 @@ class ProjectResponse(BaseModel):
+     thumbnail_url: Optional[str] = None
+     thumbnail_media_item_id: Optional[int] = None
+     thumbnail_source_asset_id: Optional[int] = None
++    storyboard_id: Optional[int] = None
++    timeline_id: Optional[int] = None
+     created_at: datetime
+     updated_at: datetime
+ 
+@@ -139,6 +141,7 @@ class StoryboardResponse(BaseModel):
+     id: int
+     user_id: int
+     project_id: int
++    workspace_id: Optional[int] = None
+     session_id: Optional[str] = None
+     template_name: Optional[str] = None
+     bg_music_description: Optional[str] = None
+diff --git a/backend/src/projects/project_controller.py b/backend/src/projects/project_controller.py
+index 4a01c07..6d20c43 100644
+--- a/backend/src/projects/project_controller.py
++++ b/backend/src/projects/project_controller.py
+@@ -38,7 +38,9 @@ async def create_project(
+     project_create: ProjectCreate,
+     current_user: UserModel = Depends(get_current_user),
+     project_service: ProjectService = Depends(),
++    workspace_auth: WorkspaceAuth = Depends(),
+ ):
++    await workspace_auth.authorize(project_create.workspace_id, current_user)
+     return await project_service.create_project(project_create, current_user.id)
+ 
+ 
+diff --git a/backend/src/projects/project_repository.py b/backend/src/projects/project_repository.py
+index 98b8c4f..3cb9490 100644
+--- a/backend/src/projects/project_repository.py
++++ b/backend/src/projects/project_repository.py
+@@ -77,6 +77,7 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
+             .options(
+                 selectinload(self.model.scenes),
+                 selectinload(self.model.timeline),
++                selectinload(self.model.project),
+             )
+         )
+         result = await self.db.execute(query)
+@@ -86,7 +87,10 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
+         return self.schema.model_validate(item)
+ 
+     async def find_by_workspace(
+-        self, workspace_id: int, session_id: str | None = None
++        self,
++        workspace_id: int,
++        session_id: str | None = None,
++        user_id: int | None = None,
+     ) -> list[StoryboardResponse]:
+         """Finds storyboards for a given workspace, optionally filtered by session."""
+         query = (
+@@ -96,10 +100,13 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
+             .options(
+                 selectinload(self.model.scenes),
+                 selectinload(self.model.timeline),
++                selectinload(self.model.project),
+             )
+         )
+         if session_id:
+             query = query.where(self.model.session_id == session_id)
++        if user_id is not None:
++            query = query.where(self.model.user_id == user_id)
+         result = await self.db.execute(query)
+         items = result.scalars().all()
+         return [self.schema.model_validate(item) for item in items]
+@@ -147,13 +154,41 @@ class ProjectRepository(BaseRepository[Project, ProjectResponse]):
+     def __init__(self, db: AsyncSession = Depends(get_db)):
+         super().__init__(model=Project, schema=ProjectResponse, db=db)
+ 
++    async def get_by_id(
++        self,
++        item_id: int,
++        include_deleted: bool = False,
++    ) -> ProjectResponse | None:
++        """Retrieves a single project by its ID, with storyboard and timeline loaded."""
++        query = (
++            select(self.model)
++            .where(self.model.id == item_id)
++            .options(
++                selectinload(self.model.storyboard),
++                selectinload(self.model.timeline),
++            )
++            .execution_options(include_deleted=include_deleted)
++        )
++        result = await self.db.execute(query)
++        item = result.scalar_one_or_none()
++        if not item:
++            return None
++        return self.schema.model_validate(item)
++
+     async def find_by_workspace_and_owner(
+         self, workspace_id: int, owner_id: int
+     ) -> list[ProjectResponse]:
+         """Retrieves all projects in a specific workspace belonging to the owner."""
+-        query = select(self.model).where(
+-            self.model.workspace_id == workspace_id,
+-            self.model.owner_id == owner_id,
++        query = (
++            select(self.model)
++            .where(
++                self.model.workspace_id == workspace_id,
++                self.model.owner_id == owner_id,
++            )
++            .options(
++                selectinload(self.model.storyboard),
++                selectinload(self.model.timeline),
++            )
+         )
+         result = await self.db.execute(query)
+         items = result.scalars().all()
+diff --git a/backend/src/projects/project_service.py b/backend/src/projects/project_service.py
+index ac24af0..c10d1d4 100644
+--- a/backend/src/projects/project_service.py
++++ b/backend/src/projects/project_service.py
+@@ -78,10 +78,13 @@ class ProjectService:
+         return storyboard
+ 
+     async def list_storyboards(
+-        self, workspace_id: int, session_id: str | None = None
++        self,
++        workspace_id: int,
++        session_id: str | None = None,
++        user_id: int | None = None,
+     ) -> list[StoryboardResponse]:
+         storyboards = await self.storyboard_repo.find_by_workspace(
+-            workspace_id, session_id
++            workspace_id, session_id, user_id
+         )
+         for sb in storyboards:
+             await self._enrich_storyboard(sb)
+diff --git a/backend/src/projects/schema/project_model.py b/backend/src/projects/schema/project_model.py
+index 7e0b511..07e2052 100644
+--- a/backend/src/projects/schema/project_model.py
++++ b/backend/src/projects/schema/project_model.py
+@@ -64,6 +64,34 @@ class Project(Base):
+         back_populates="project", cascade="all, delete-orphan"
+     )
+ 
++    @property
++    def storyboard_id(self) -> int | None:
++        if hasattr(self, "_storyboard_id") and self._storyboard_id is not None:
++            return self._storyboard_id
++        from sqlalchemy import inspect
++        insp = inspect(self)
++        if insp is not None and "storyboard" in insp.unloaded:
++            return None
++        return self.storyboard.id if self.storyboard else None
++
++    @storyboard_id.setter
++    def storyboard_id(self, value):
++        self._storyboard_id = value
++
++    @property
++    def timeline_id(self) -> int | None:
++        if hasattr(self, "_timeline_id") and self._timeline_id is not None:
++            return self._timeline_id
++        from sqlalchemy import inspect
++        insp = inspect(self)
++        if insp is not None and "timeline" in insp.unloaded:
++            return None
++        return self.timeline.id if self.timeline else None
++
++    @timeline_id.setter
++    def timeline_id(self, value):
++        self._timeline_id = value
++
+ 
+ class Storyboard(Base):
+     __tablename__ = "storyboards"
+@@ -96,6 +124,20 @@ class Storyboard(Base):
+     def timeline_id(self) -> int | None:
+         return self.timeline.id if self.timeline else None
+ 
++    @property
++    def workspace_id(self) -> int | None:
++        if hasattr(self, "_workspace_id") and self._workspace_id is not None:
++            return self._workspace_id
++        from sqlalchemy import inspect
++        insp = inspect(self)
++        if insp is not None and "project" in insp.unloaded:
++            return None
++        return self.project.workspace_id if self.project else None
++
++    @workspace_id.setter
++    def workspace_id(self, value):
++        self._workspace_id = value
++
+ 
+ class Scene(Base):
+     __tablename__ = "scenes"
+diff --git a/backend/src/projects/storyboard_controller.py b/backend/src/projects/storyboard_controller.py
+index df14878..e882fcb 100644
+--- a/backend/src/projects/storyboard_controller.py
++++ b/backend/src/projects/storyboard_controller.py
+@@ -17,6 +17,7 @@ from src.auth.auth_guard import get_current_user
+ from src.users.user_model import UserModel
+ from src.projects.project_service import ProjectService
+ from src.workspaces.workspace_auth_guard import WorkspaceAuth
++from src.projects.project_auth_guard import ProjectAuth
+ from src.projects.dto.project_dto import (
+     StoryboardCreate,
+     StoryboardUpdate,
+@@ -39,7 +40,9 @@ async def create_storyboard(
+     storyboard_create: StoryboardCreate,
+     current_user: UserModel = Depends(get_current_user),
+     project_service: ProjectService = Depends(),
++    project_auth: ProjectAuth = Depends(),
+ ):
++    await project_auth.authorize(storyboard_create.project_id, current_user)
+     storyboard = await project_service.create_storyboard(
+         storyboard_create, current_user.id
+     )
+@@ -73,7 +76,7 @@ async def list_storyboards(
+ ):
+     await workspace_auth.authorize(workspace_id, current_user)
+     storyboards = await project_service.list_storyboards(
+-        workspace_id, session_id
++        workspace_id, session_id, current_user.id
+     )
+     return storyboards
+ 
+diff --git a/backend/src/workbench/repository/timeline_repository.py b/backend/src/workbench/repository/timeline_repository.py
+index 89f0c20..f622083 100644
+--- a/backend/src/workbench/repository/timeline_repository.py
++++ b/backend/src/workbench/repository/timeline_repository.py
+@@ -180,6 +180,7 @@ class TimelineRepository(BaseRepository[Timeline, TimelineResponse]):
+         return VideoTimeline(
+             timeline_id=db_timeline.id,
+             storyboard_id=db_timeline.storyboard_id,
++            project_id=db_timeline.project_id,
+             workspace_id=db_timeline.workspace_id
+             or str(db_timeline.storyboard_id or 1),
+             user_id=db_timeline.user_id,
+diff --git a/backend/src/workbench/workbench_controller.py b/backend/src/workbench/workbench_controller.py
+index 8a9ac0c..7357146 100644
+--- a/backend/src/workbench/workbench_controller.py
++++ b/backend/src/workbench/workbench_controller.py
+@@ -24,6 +24,8 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+ from src.auth.auth_guard import get_current_user
+ from src.users.user_model import UserModel
+ from src.projects.project_service import ProjectService
++from src.workspaces.workspace_auth_guard import WorkspaceAuth
++from src.projects.project_auth_guard import ProjectAuth
+ from src.workbench.dto.workbench_dto import (
+     TimelineRequest,
+     TimelineCreate,
+@@ -101,8 +103,27 @@ async def create_timeline(
+     timeline_create: TimelineCreate,
+     current_user: UserModel = Depends(get_current_user),
+     service: WorkbenchService = Depends(),
++    project_service: ProjectService = Depends(),
++    workspace_auth: WorkspaceAuth = Depends(),
++    project_auth: ProjectAuth = Depends(),
+     credentials: HTTPAuthorizationCredentials = Depends(security),
+ ):
++    if timeline_create.workspace_id:
++        await workspace_auth.authorize(
++            int(timeline_create.workspace_id), current_user
++        )
++    if timeline_create.project_id:
++        await project_auth.authorize(timeline_create.project_id, current_user)
++    if timeline_create.storyboard_id:
++        storyboard = await project_service.get_storyboard(
++            timeline_create.storyboard_id
++        )
++        if storyboard and storyboard.user_id != current_user.id:
++            raise HTTPException(
++                status_code=status.HTTP_403_FORBIDDEN,
++                detail="Not authorized to access this storyboard.",
++            )
++
+     timeline_create.user_id = str(current_user.id)
+     return await service.create_timeline(timeline_create)
+ 
+diff --git a/frontend/src/app/app.module.ts b/frontend/src/app/app.module.ts
+index a05b49e..28a0569 100644
+--- a/frontend/src/app/app.module.ts
++++ b/frontend/src/app/app.module.ts
+@@ -118,6 +118,7 @@ import {UpscaleComponent} from './upscale/upscale.component';
+ import {StoryboardComponent} from './workbench/components/storyboard/storyboard.component';
+ import {TimeRulerComponent} from './workbench/components/time-ruler/time-ruler.component';
+ import {TransitionIndicatorComponent} from './workbench/components/transition-indicator/transition-indicator.component';
++import {ProjectSwitcherComponent} from './workbench/components/project-switcher/project-switcher.component';
+ 
+ @NgModule({
+   declarations: [
+@@ -200,6 +201,7 @@ import {TransitionIndicatorComponent} from './workbench/components/transition-in
+     StoryboardComponent,
+     TimeRulerComponent,
+     TransitionIndicatorComponent,
++    ProjectSwitcherComponent,
+     TextFieldModule,
+   ],
+   providers: [
+diff --git a/frontend/src/app/common/components/studio-dropdown/studio-dropdown.component.html b/frontend/src/app/common/components/studio-dropdown/studio-dropdown.component.html
+index ede2562..12af709 100644
+--- a/frontend/src/app/common/components/studio-dropdown/studio-dropdown.component.html
++++ b/frontend/src/app/common/components/studio-dropdown/studio-dropdown.component.html
+@@ -58,36 +58,111 @@
+     </div>
+ 
+     <div class="menu-items">
+-      <button
+-        mat-button
+-        *ngFor="let option of options; trackBy: trackByOption"
+-        (click)="selectOption(option)"
+-        [class.selected]="multiple ? value?.includes(option.value) : option.value === value"
+-        class="studio-menu-item"
+-        [matTooltip]="option.tooltip || ''"
+-      >
++      <ng-container *ngFor="let option of options; trackBy: trackByOption">
++        <!-- Edit Mode -->
+         <div
+-          class="flex items-center justify-start gap-4 w-full h-full relative text-left"
++          *ngIf="editingOptionValue === option.value"
++          class="studio-menu-item flex items-center justify-between gap-2 px-3 h-11"
++          (click)="$event.stopPropagation()"
+         >
+-          <mat-icon *ngIf="multiple && value?.includes(option.value)" class="text-primary">check</mat-icon>
+-          <!-- Color Dot -->
+-          <span *ngIf="option.color" class="color-dot" [style.backgroundColor]="option.color"></span>
+-          <!-- Label in the Middle -->
+-          <span class="option-label truncate text-left">{{
+-            option.label
+-          }}</span>
+-          <!-- Delete Button -->
+-          <!-- <button mat-icon-button *ngIf="deletable && option.deletable !== false" (click)="onDeleteOption(option, $event)"
+-                      class="delete-btn">
+-            <mat-icon>delete</mat-icon>
+-          </button> -->
+-          </div>
+-      </button>
++          <input
++            type="text"
++            [(ngModel)]="editingValueText"
++            class="flex-1 bg-white/10 border border-white/20 rounded px-2 py-1 text-white text-sm outline-none"
++            (keydown.enter)="saveEdit(option, $event)"
++            (keydown.escape)="cancelEdit($event)"
++            focus="true"
++          />
++          <button mat-icon-button class="edit-action-btn" (click)="saveEdit(option, $event)">
++            <mat-icon class="text-green-400">check</mat-icon>
++          </button>
++          <button mat-icon-button class="edit-action-btn" (click)="cancelEdit($event)">
++            <mat-icon class="text-red-400">close</mat-icon>
++          </button>
++        </div>
++
++        <!-- Normal Mode -->
++        <button
++          *ngIf="editingOptionValue !== option.value"
++          mat-button
++          (click)="selectOption(option)"
++          [class.selected]="multiple ? value?.includes(option.value) : option.value === value"
++          class="studio-menu-item"
++          [matTooltip]="option.tooltip || ''"
++        >
++          <div
++            class="flex items-center justify-start gap-4 w-full h-full relative text-left"
++          >
++            <mat-icon *ngIf="multiple && value?.includes(option.value)" class="text-primary">check</mat-icon>
++            <!-- Color Dot -->
++            <span *ngIf="option.color" class="color-dot" [style.backgroundColor]="option.color"></span>
++            <!-- Label in the Middle -->
++            <span class="option-label truncate text-left">{{
++              option.label
++            }}</span>
++            <!-- Edit Button -->
++            <button
++              mat-icon-button
++              *ngIf="editable"
++              (click)="startEdit(option, $event)"
++              class="edit-btn ml-auto"
++            >
++              <mat-icon>edit</mat-icon>
++            </button>
++            <!-- Delete Button -->
++            <button mat-icon-button *ngIf="deletable && option.deletable !== false" (click)="onDeleteOption(option, $event)"
++                        class="delete-btn">
++              <mat-icon>delete</mat-icon>
++            </button>
++            </div>
++        </button>
++      </ng-container>
+       <!-- Load More Button -->
+       <button mat-button *ngIf="hasMore" (click)="loadMore.emit(); $event.stopPropagation();"
+         class="studio-menu-item justify-center" style="color: #a8c7fa !important;">
+         Load More
+       </button>
+-    </div>
++
++      <!-- Divider and Add Option -->
++      <ng-container *ngIf="showAddOption">
++        <div class="border-t border-white/10 my-1 mx-2"></div>
++        
++        <!-- Add Input Mode -->
++        <div
++          *ngIf="isAdding"
++          class="studio-menu-item flex items-center justify-between gap-2 px-3 h-11"
++          (click)="$event.stopPropagation()"
++        >
++          <input
++            type="text"
++            [(ngModel)]="addingValueText"
++            class="flex-1 bg-white/10 border border-white/20 rounded px-2 py-1 text-white text-sm outline-none"
++            placeholder="Name..."
++            (keydown.enter)="saveAdd($event)"
++            (keydown.escape)="cancelAdd($event)"
++            focus="true"
++          />
++          <button mat-icon-button class="edit-action-btn" (click)="saveAdd($event)">
++            <mat-icon class="text-green-400">check</mat-icon>
++          </button>
++          <button mat-icon-button class="edit-action-btn" (click)="cancelAdd($event)">
++            <mat-icon class="text-red-400">close</mat-icon>
++          </button>
++        </div>
++
++        <!-- Add Button Mode -->
++        <button
++          *ngIf="!isAdding"
++          mat-button
++          (click)="startAdd($event)"
++          class="studio-menu-item text-primary"
++          style="color: #a8c7fa !important;"
++        >
++          <div class="flex items-center justify-start gap-4 w-full h-full relative text-left">
++            <mat-icon>add</mat-icon>
++            <span class="option-label truncate text-left">{{ addOptionLabel }}</span>
++          </div>
++        </button>
++      </ng-container>
+   </div>
+ </div>
+diff --git a/frontend/src/app/common/components/studio-dropdown/studio-dropdown.component.scss b/frontend/src/app/common/components/studio-dropdown/studio-dropdown.component.scss
+index cb0d9d7..99d9a3a 100644
+--- a/frontend/src/app/common/components/studio-dropdown/studio-dropdown.component.scss
++++ b/frontend/src/app/common/components/studio-dropdown/studio-dropdown.component.scss
+@@ -228,6 +228,7 @@
+     color: white !important;
+     font-family: 'Google Sans Text', sans-serif !important;
+     height: 44px !important;
++    min-height: 3rem;
+     line-height: normal !important;
+     border-radius: 8px !important;
+     padding: 0 12px !important;
+@@ -260,6 +261,42 @@
+       flex-shrink: 0;
+     }
+ 
++    .edit-btn {
++      color: rgba(255, 255, 255, 0.5) !important;
++      opacity: 0;
++      transition: opacity 0.2s ease;
++      width: 32px !important;
++      height: 32px !important;
++      display: inline-flex !important;
++      align-items: center;
++      justify-content: center;
++
++      ::ng-deep .mat-icon {
++        font-size: 18px;
++        width: 18px;
++        height: 18px;
++      }
++
++      &:hover {
++        color: #a8c7fa !important; // Light blue
++      }
++    }
++
++    .edit-action-btn {
++      width: 28px !important;
++      height: 28px !important;
++      display: inline-flex !important;
++      align-items: center;
++      justify-content: center;
++      color: white !important;
++
++      ::ng-deep .mat-icon {
++        font-size: 16px;
++        width: 16px;
++        height: 16px;
++      }
++    }
++
+     .delete-btn {
+       color: rgba(255, 255, 255, 0.5) !important;
+       opacity: 0;
+@@ -267,8 +304,8 @@
+       width: 32px !important;
+       height: 32px !important;
+       display: inline-flex !important;
+-        align-items: center;
+-        justify-content: center;
++      align-items: center;
++      justify-content: center;
+ 
+       ::ng-deep .mat-icon {
+         font-size: 18px;
+@@ -282,7 +319,7 @@
+     }
+ 
+     &:hover {
+-      .delete-btn {
++      .delete-btn, .edit-btn {
+         opacity: 1;
+       }
+     }
+diff --git a/frontend/src/app/common/components/studio-dropdown/studio-dropdown.component.ts b/frontend/src/app/common/components/studio-dropdown/studio-dropdown.component.ts
+index 9cdc681..9f04aa5 100644
+--- a/frontend/src/app/common/components/studio-dropdown/studio-dropdown.component.ts
++++ b/frontend/src/app/common/components/studio-dropdown/studio-dropdown.component.ts
+@@ -32,6 +32,7 @@ export interface DropdownOption {
+   icon?: string;
+   isSvgIcon?: boolean;
+   tooltip?: string;
++  deletable?: boolean;
+ }
+ 
+ @Component({
+@@ -72,15 +73,65 @@ export class StudioDropdownComponent {
+   @Input() showCheckbox = false;
+   @Input() checkboxChecked = false;
+   @Input() checkboxLabel = 'Show only My tags';
++  @Input() editable = false;
++  @Input() showAddOption = false;
++  @Input() addOptionLabel = 'Add item';
+ 
+   @Output() valueChange = new EventEmitter<any>();
+   @Output() optionDeleted = new EventEmitter<DropdownOption>();
+   @Output() searchChange = new EventEmitter<string>();
+   @Output() loadMore = new EventEmitter<void>();
+   @Output() checkboxChange = new EventEmitter<boolean>();
++  @Output() optionEdited = new EventEmitter<{
++    option: DropdownOption;
++    newValue: string;
++  }>();
++  @Output() addOptionClicked = new EventEmitter<string>();
+ 
+   isOpen = false;
+   searchQuery = '';
++  editingOptionValue: any = null;
++  editingValueText = '';
++  isAdding = false;
++  addingValueText = '';
++
++  startEdit(option: DropdownOption, event: Event) {
++    event.stopPropagation();
++    this.editingOptionValue = option.value;
++    this.editingValueText = option.label;
++  }
++
++  saveEdit(option: DropdownOption, event: Event) {
++    event.stopPropagation();
++    if (this.editingValueText.trim()) {
++      this.optionEdited.emit({option, newValue: this.editingValueText.trim()});
++    }
++    this.editingOptionValue = null;
++  }
++
++  cancelEdit(event: Event) {
++    event.stopPropagation();
++    this.editingOptionValue = null;
++  }
++
++  startAdd(event: Event) {
++    event.stopPropagation();
++    this.isAdding = true;
++    this.addingValueText = '';
++  }
++
++  saveAdd(event: Event) {
++    event.stopPropagation();
++    if (this.addingValueText.trim()) {
++      this.addOptionClicked.emit(this.addingValueText.trim());
++    }
++    this.isAdding = false;
++  }
++
++  cancelAdd(event: Event) {
++    event.stopPropagation();
++    this.isAdding = false;
++  }
+ 
+   onSearchInput(event: Event) {
+     const target = event.target as HTMLInputElement;
+diff --git a/frontend/src/app/common/models/workbench.model.ts b/frontend/src/app/common/models/workbench.model.ts
+index b00f7bc..dcfd4f5 100644
+--- a/frontend/src/app/common/models/workbench.model.ts
++++ b/frontend/src/app/common/models/workbench.model.ts
+@@ -191,3 +191,35 @@ export interface MediaAsset {
+   mediaItemId?: number;
+   sourceAssetId?: number;
+ }
++
++export interface ProjectResponse {
++  id: number;
++  workspace_id: number;
++  owner_id: number;
++  name: string;
++  description?: string;
++  thumbnail_url?: string;
++  thumbnail_media_item_id?: number;
++  thumbnail_source_asset_id?: number;
++  storyboard_id?: number;
++  timeline_id?: number;
++  created_at: string;
++  updated_at: string;
++}
++
++export interface ProjectCreate {
++  workspace_id: number;
++  name: string;
++  description?: string;
++  thumbnail_media_item_id?: number;
++  thumbnail_source_asset_id?: number;
++  thumbnail_url?: string;
++}
++
++export interface ProjectUpdate {
++  name?: string;
++  description?: string;
++  thumbnail_media_item_id?: number;
++  thumbnail_source_asset_id?: number;
++  thumbnail_url?: string;
++}
+diff --git a/frontend/src/app/projects/projects.component.html b/frontend/src/app/projects/projects.component.html
+index 37f3c6a..608257c 100644
+--- a/frontend/src/app/projects/projects.component.html
++++ b/frontend/src/app/projects/projects.component.html
+@@ -30,10 +30,10 @@
+   <div *ngIf="!isLoading && projects.length > 0" class="projects-list">
+     <mat-card *ngFor="let project of projects" (click)="goToWorkbench(project.id)" class="project-card">
+       <mat-card-header>
+-        <mat-card-title>{{ project.template_name }}</mat-card-title>
++        <mat-card-title>{{ project.name }}</mat-card-title>
+       </mat-card-header>
+       <mat-card-content>
+-        <p *ngIf="project.timeline_id">Timeline: Available</p>
++        <p>{{ project.description }}</p>
+       </mat-card-content>
+       <mat-card-actions>
+         <button mat-button color="warn" (click)="deleteProject(project.id, $event)">Delete</button>
+diff --git a/frontend/src/app/projects/projects.component.ts b/frontend/src/app/projects/projects.component.ts
+index 77b7db9..195e291 100644
+--- a/frontend/src/app/projects/projects.component.ts
++++ b/frontend/src/app/projects/projects.component.ts
+@@ -19,7 +19,7 @@ import {Router} from '@angular/router';
+ import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
+ import {ProjectService} from '../services/project/project.service';
+ import {Subscription} from 'rxjs';
+-import {StoryboardResponse} from '../common/models/workbench.model';
++import {ProjectResponse} from '../common/models/workbench.model';
+ 
+ @Component({
+   selector: 'app-projects',
+@@ -27,7 +27,7 @@ import {StoryboardResponse} from '../common/models/workbench.model';
+   styleUrl: './projects.component.scss',
+ })
+ export class ProjectsComponent implements OnInit, OnDestroy {
+-  projects: StoryboardResponse[] = [];
++  projects: ProjectResponse[] = [];
+   isLoading = false;
+   activeWorkspaceId: number | null = null;
+   private subscription: Subscription = new Subscription();
+@@ -80,11 +80,11 @@ export class ProjectsComponent implements OnInit, OnDestroy {
+       this.projectService
+         .createProject({
+           workspace_id: this.activeWorkspaceId,
+-          template_name: name,
++          name: name,
+         })
+         .subscribe({
+           next: project => {
+-            this.projects.push({...project, scenes: []});
++            this.projects.push(project);
+           },
+           error: err => console.error('Failed to create project', err),
+         });
+diff --git a/frontend/src/app/services/project/project.service.ts b/frontend/src/app/services/project/project.service.ts
+index 1383214..777c7a9 100644
+--- a/frontend/src/app/services/project/project.service.ts
++++ b/frontend/src/app/services/project/project.service.ts
+@@ -18,10 +18,9 @@ import {Injectable} from '@angular/core';
+ import {HttpClient} from '@angular/common/http';
+ import {Observable} from 'rxjs';
+ import {
+-  StoryboardResponse,
+-  StoryboardCreate,
+-  StoryboardCreateResponse,
+-  StoryboardUpdate,
++  ProjectResponse,
++  ProjectCreate,
++  ProjectUpdate,
+ } from '../../common/models/workbench.model';
+ 
+ @Injectable({
+@@ -32,28 +31,25 @@ export class ProjectService {
+ 
+   constructor(private http: HttpClient) {}
+ 
+-  getProjects(workspaceId: number): Observable<StoryboardResponse[]> {
+-    return this.http.get<StoryboardResponse[]>(
+-      `${this.apiUrl}/?workspace_id=${workspaceId}`,
++  getProjects(workspaceId: number): Observable<ProjectResponse[]> {
++    return this.http.get<ProjectResponse[]>(
++      `${this.apiUrl}?workspace_id=${workspaceId}`,
+     );
+   }
+ 
+-  getProject(projectId: number): Observable<StoryboardResponse> {
+-    return this.http.get<StoryboardResponse>(`${this.apiUrl}/${projectId}`);
++  getProject(projectId: number): Observable<ProjectResponse> {
++    return this.http.get<ProjectResponse>(`${this.apiUrl}/${projectId}`);
+   }
+ 
+-  createProject(data: StoryboardCreate): Observable<StoryboardCreateResponse> {
+-    return this.http.post<StoryboardCreateResponse>(`${this.apiUrl}/`, data);
++  createProject(data: ProjectCreate): Observable<ProjectResponse> {
++    return this.http.post<ProjectResponse>(`${this.apiUrl}/`, data);
+   }
+ 
+   updateProject(
+     projectId: number,
+-    data: StoryboardUpdate,
+-  ): Observable<StoryboardResponse> {
+-    return this.http.put<StoryboardResponse>(
+-      `${this.apiUrl}/${projectId}`,
+-      data,
+-    );
++    data: ProjectUpdate,
++  ): Observable<ProjectResponse> {
++    return this.http.put<ProjectResponse>(`${this.apiUrl}/${projectId}`, data);
+   }
+ 
+   deleteProject(projectId: number): Observable<any> {
+diff --git a/frontend/src/app/workbench/components/chat-interface/chat-interface.component.ts b/frontend/src/app/workbench/components/chat-interface/chat-interface.component.ts
+index cbf74a9..74e81c0 100644
+--- a/frontend/src/app/workbench/components/chat-interface/chat-interface.component.ts
++++ b/frontend/src/app/workbench/components/chat-interface/chat-interface.component.ts
+@@ -35,7 +35,8 @@ import {WorkspaceStateService} from '../../../services/workspace/workspace-state
+ import {StoryboardService} from '../../../services/storyboard/storyboard.service';
+ import {TimelineStateService} from '../../services/timeline-state.service';
+ import {ActivatedRoute, Router} from '@angular/router';
+-import {combineLatest} from 'rxjs';
++import {combineLatest, of} from 'rxjs';
++import {catchError} from 'rxjs/operators';
+ import {CommonModule} from '@angular/common';
+ import {FormsModule} from '@angular/forms';
+ import {MatIconModule} from '@angular/material/icon';
+@@ -324,8 +325,19 @@ export class ChatInterfaceComponent
+     ]).subscribe(([params, workspaceId]) => {
+       if (!workspaceId) return;
+ 
+-      const storyboardId = params['storyboardId'];
+-      const sessionId = params['sessionId'];
++      let storyboardId = params['storyboardId'];
++      let sessionId = params['sessionId'];
++      let projectId = params['projectId'];
++
++      if (sessionId === 'null' || sessionId === 'undefined') {
++        sessionId = null;
++      }
++      if (storyboardId === 'null' || storyboardId === 'undefined') {
++        storyboardId = null;
++      }
++      if (projectId === 'null' || projectId === 'undefined') {
++        projectId = null;
++      }
+ 
+       const isWorkspaceChanged =
+         this.lastWorkspaceId !== null && this.lastWorkspaceId !== workspaceId;
+@@ -354,12 +366,13 @@ export class ChatInterfaceComponent
+           this.shouldScrollToBottom = true;
+           this.lastWorkspaceId = workspaceId;
+ 
+-          if (storyboardId || sessionId) {
++          if (storyboardId || sessionId || projectId) {
+             void this.router.navigate([], {
+               relativeTo: this.route,
+               queryParams: {
+                 sessionId: null,
+                 storyboardId: null,
++                projectId: null,
+               },
+               queryParamsHandling: 'merge',
+             });
+@@ -371,6 +384,7 @@ export class ChatInterfaceComponent
+       const isExplicitNewChat =
+         !sessionId &&
+         !storyboardId &&
++        !projectId &&
+         this.lastWorkspaceId === workspaceId &&
+         this.sessions().length > 0;
+ 
+@@ -384,6 +398,24 @@ export class ChatInterfaceComponent
+       // Always load sessions first to populate the sessions dropdown
+       this.agentChatService
+         .getSessions(workspaceId, false, sessionId, storyboardId)
++        .pipe(
++          catchError(err => {
++            console.error(
++              'Error fetching sessions, proceeding to load storyboard if available:',
++              err,
++            );
++            if ((err as any)?.status === 503) {
++              console.warn(
++                'Backend returned 503: Agent Engine is likely missing AGENT_ENGINE_RESOURCE_NAME in environment.',
++              );
++              this.agentUnavailable.set(true);
++            } else {
++              handleErrorSnackbar(this.snackBar, err as any, 'Fetch Sessions');
++            }
++            // Return an empty sessions list so the next block continues
++            return of([] as ChatSession[]);
++          }),
++        )
+         .subscribe({
+           next: (sessions: ChatSession[]) => {
+             this.sessions.set(sessions || []);
+@@ -408,7 +440,9 @@ export class ChatInterfaceComponent
+               });
+ 
+             const shouldLoadDetail =
+-              (sessionId && sessionExistsInWorkspace) || !!storyboardId;
++              (sessionId &&
++                (sessionExistsInWorkspace || this.agentUnavailable())) ||
++              !!storyboardId;
+ 
+             if (shouldLoadDetail) {
+               const isDifferentSession =
+diff --git a/frontend/src/app/workbench/workbench.component.html b/frontend/src/app/workbench/workbench.component.html
+index 966cf66..935de9e 100644
+--- a/frontend/src/app/workbench/workbench.component.html
++++ b/frontend/src/app/workbench/workbench.component.html
+@@ -16,7 +16,8 @@
+ 
+ <div class="workbench-container">
+   <!-- Beta Label Row -->
+-  <div class="flex justify-end w-full">
++  <div class="flex justify-end items-center gap-4 w-full">
++    <app-project-switcher></app-project-switcher>
+     <div
+       matTooltip="This is currently under development, it does not save content so use at your own risk, make sure to download your work before you leave this page!"
+       class="beta-label mb-2"
+diff --git a/frontend/src/app/workbench/workbench.component.ts b/frontend/src/app/workbench/workbench.component.ts
+index 2a39b3b..c1a086a 100644
+--- a/frontend/src/app/workbench/workbench.component.ts
++++ b/frontend/src/app/workbench/workbench.component.ts
+@@ -76,6 +76,7 @@ import {debounceTime, switchMap, takeWhile, catchError} from 'rxjs/operators';
+ import {StoryboardService} from '../services/storyboard/storyboard.service';
+ import {GalleryService} from '../gallery/gallery.service';
+ import {MediaItem} from '../common/models/media-item.model';
++import {ProjectService} from '../services/project/project.service';
+ 
+ @Component({
+   selector: 'app-workbench',
+@@ -185,11 +186,13 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
+   private storyboardService = inject(StoryboardService);
+   private galleryService = inject(GalleryService);
+   private snackBar = inject(MatSnackBar);
++  private projectService = inject(ProjectService);
+ 
+   private workspaceStateService = inject(WorkspaceStateService);
+   private sourceAssetService = inject(SourceAssetService);
+ 
+   isDownloading = signal(false);
++  currentProjectId = signal<number | null>(null);
+ 
+   // Trimming state (for clip in/out adjustments)
+   trimState: {
+@@ -368,19 +371,58 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
+       });
+ 
+     this.route.queryParams.subscribe(params => {
+-      const sessionId = params['sessionId'];
+-      const storyboardId = params['storyboardId'];
+-      const timelineId = params['timelineId'];
++      let projectId = params['projectId'];
++      let sessionId = params['sessionId'];
++      let storyboardId = params['storyboardId'];
++      let timelineId = params['timelineId'];
++
++      if (projectId === 'null' || projectId === 'undefined') {
++        projectId = null;
++      }
++      if (sessionId === 'null' || sessionId === 'undefined') {
++        sessionId = null;
++      }
++      if (storyboardId === 'null' || storyboardId === 'undefined') {
++        storyboardId = null;
++      }
++      if (timelineId === 'null' || timelineId === 'undefined') {
++        timelineId = null;
++      }
++
++      if (projectId) {
++        if (Number(projectId) !== this.currentProjectId()) {
++          this.currentProjectId.set(Number(projectId));
++          this.projectService.getProject(Number(projectId)).subscribe({
++            next: project => {
++              void this.router.navigate([], {
++                relativeTo: this.route,
++                queryParams: {
++                  sessionId: sessionId || null,
++                  storyboardId: project.storyboard_id || null,
++                  timelineId: project.timeline_id || null,
++                  projectId: project.id,
++                },
++                queryParamsHandling: 'merge',
++              });
++            },
++            error: err => {
++              console.error('Failed to load project details:', err);
++            }
++          });
++        }
++      } else {
++        this.currentProjectId.set(null);
++      }
+ 
+       if (sessionId) {
+         this.agentChatService.selectedSessionId.set(sessionId);
+       }
+ 
+       if (timelineId) {
+-        this.timelineState.loadedTimelineId.set(timelineId);
++        this.timelineState.loadedTimelineId.set(Number(timelineId));
+       }
+ 
+-      if (sessionId || storyboardId) {
++      if (sessionId || storyboardId || projectId) {
+         this.activeToolButton.set('agent');
+       }
+     });

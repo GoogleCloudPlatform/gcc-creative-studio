@@ -18,10 +18,9 @@ import {Injectable} from '@angular/core';
 import {HttpClient} from '@angular/common/http';
 import {Observable} from 'rxjs';
 import {
-  StoryboardResponse,
-  StoryboardCreate,
-  StoryboardCreateResponse,
-  StoryboardUpdate,
+  ProjectResponse,
+  ProjectCreate,
+  ProjectUpdate,
 } from '../../common/models/workbench.model';
 
 @Injectable({
@@ -32,28 +31,25 @@ export class ProjectService {
 
   constructor(private http: HttpClient) {}
 
-  getProjects(workspaceId: number): Observable<StoryboardResponse[]> {
-    return this.http.get<StoryboardResponse[]>(
-      `${this.apiUrl}/?workspace_id=${workspaceId}`,
+  getProjects(workspaceId: number): Observable<ProjectResponse[]> {
+    return this.http.get<ProjectResponse[]>(
+      `${this.apiUrl}?workspace_id=${workspaceId}`,
     );
   }
 
-  getProject(projectId: number): Observable<StoryboardResponse> {
-    return this.http.get<StoryboardResponse>(`${this.apiUrl}/${projectId}`);
+  getProject(projectId: number): Observable<ProjectResponse> {
+    return this.http.get<ProjectResponse>(`${this.apiUrl}/${projectId}`);
   }
 
-  createProject(data: StoryboardCreate): Observable<StoryboardCreateResponse> {
-    return this.http.post<StoryboardCreateResponse>(`${this.apiUrl}/`, data);
+  createProject(data: ProjectCreate): Observable<ProjectResponse> {
+    return this.http.post<ProjectResponse>(`${this.apiUrl}/`, data);
   }
 
   updateProject(
     projectId: number,
-    data: StoryboardUpdate,
-  ): Observable<StoryboardResponse> {
-    return this.http.put<StoryboardResponse>(
-      `${this.apiUrl}/${projectId}`,
-      data,
-    );
+    data: ProjectUpdate,
+  ): Observable<ProjectResponse> {
+    return this.http.put<ProjectResponse>(`${this.apiUrl}/${projectId}`, data);
   }
 
   deleteProject(projectId: number): Observable<any> {

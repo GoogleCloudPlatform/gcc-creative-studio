@@ -396,7 +396,9 @@ class AgentService:
 
         elif resolved_session_id is not None:
             storyboards = await self.project_service.list_storyboards(
-                workspace_id=workspace_id, session_id=resolved_session_id
+                workspace_id=workspace_id,
+                session_id=resolved_session_id,
+                user_id=current_user.id,
             )
             if storyboards:
                 storyboard = storyboards[0]

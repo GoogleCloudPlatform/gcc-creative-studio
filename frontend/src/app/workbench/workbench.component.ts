@@ -76,6 +76,7 @@ import {debounceTime, switchMap, takeWhile, catchError} from 'rxjs/operators';
 import {StoryboardService} from '../services/storyboard/storyboard.service';
 import {GalleryService} from '../gallery/gallery.service';
 import {MediaItem} from '../common/models/media-item.model';
+import { ProjectService } from '../services/project/project.service';
 
 @Component({
   selector: 'app-workbench',
@@ -185,11 +186,13 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   private storyboardService = inject(StoryboardService);
   private galleryService = inject(GalleryService);
   private snackBar = inject(MatSnackBar);
+  private projectService = inject(ProjectService);
 
   private workspaceStateService = inject(WorkspaceStateService);
   private sourceAssetService = inject(SourceAssetService);
 
   isDownloading = signal(false);
+  currentProjectId = signal<number | null>(null);
 
   // Trimming state (for clip in/out adjustments)
   trimState: {
@@ -368,19 +371,58 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       });
 
     this.route.queryParams.subscribe(params => {
-      const sessionId = params['sessionId'];
-      const storyboardId = params['storyboardId'];
-      const timelineId = params['timelineId'];
+      let projectId = params['projectId'];
+      let sessionId = params['sessionId'];
+      let storyboardId = params['storyboardId'];
+      let timelineId = params['timelineId'];
+
+      if (projectId === 'null' || projectId === 'undefined') {
+        projectId = null;
+      }
+      if (sessionId === 'null' || sessionId === 'undefined') {
+        sessionId = null;
+      }
+      if (storyboardId === 'null' || storyboardId === 'undefined') {
+        storyboardId = null;
+      }
+      if (timelineId === 'null' || timelineId === 'undefined') {
+        timelineId = null;
+      }
+
+      if (projectId) {
+        if (Number(projectId) !== this.currentProjectId()) {
+          this.currentProjectId.set(Number(projectId));
+          this.projectService.getProject(Number(projectId)).subscribe({
+            next: project => {
+              void this.router.navigate([], {
+                relativeTo: this.route,
+                queryParams: {
+                  sessionId: sessionId || null,
+                  storyboardId: project.storyboard_id || null,
+                  timelineId: project.timeline_id || null,
+                  projectId: project.id,
+                },
+                queryParamsHandling: 'merge',
+              });
+            },
+            error: err => {
+              console.error('Failed to load project details:', err);
+            }
+          });
+        }
+      } else {
+        this.currentProjectId.set(null);
+      }
 
       if (sessionId) {
         this.agentChatService.selectedSessionId.set(sessionId);
       }
 
       if (timelineId) {
-        this.timelineState.loadedTimelineId.set(timelineId);
+        this.timelineState.loadedTimelineId.set(Number(timelineId));
       }
 
-      if (sessionId || storyboardId) {
+      if (sessionId || storyboardId || projectId) {
         this.activeToolButton.set('agent');
       }
     });
@@ -1741,6 +1783,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     const timelineData: TimelineDTO = {
       timeline_id: timelineId || undefined,
       storyboard_id: sb?.id || undefined,
+      project_id: this.currentProjectId() || sb?.project_id || undefined,
       session_id:
         sb?.session_id ||
         this.agentChatService.selectedSessionId() ||

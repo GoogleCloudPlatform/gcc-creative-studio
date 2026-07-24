@@ -17,6 +17,7 @@ from src.auth.auth_guard import get_current_user
 from src.users.user_model import UserModel
 from src.projects.project_service import ProjectService
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
+from src.projects.project_auth_guard import ProjectAuth
 from src.projects.dto.project_dto import (
     StoryboardCreate,
     StoryboardUpdate,
@@ -39,7 +40,9 @@ async def create_storyboard(
     storyboard_create: StoryboardCreate,
     current_user: UserModel = Depends(get_current_user),
     project_service: ProjectService = Depends(),
+    project_auth: ProjectAuth = Depends(),
 ):
+    await project_auth.authorize(storyboard_create.project_id, current_user)
     storyboard = await project_service.create_storyboard(
         storyboard_create, current_user.id
     )
@@ -73,7 +76,7 @@ async def list_storyboards(
 ):
     await workspace_auth.authorize(workspace_id, current_user)
     storyboards = await project_service.list_storyboards(
-        workspace_id, session_id
+        workspace_id, session_id, current_user.id
     )
     return storyboards
 

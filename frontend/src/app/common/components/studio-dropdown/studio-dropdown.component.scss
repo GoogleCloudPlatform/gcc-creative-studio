@@ -228,6 +228,7 @@
     color: white !important;
     font-family: 'Google Sans Text', sans-serif !important;
     height: 44px !important;
+    min-height: 3rem;
     line-height: normal !important;
     border-radius: 8px !important;
     padding: 0 12px !important;
@@ -260,6 +261,42 @@
       flex-shrink: 0;
     }
 
+    .edit-btn {
+      color: rgba(255, 255, 255, 0.5) !important;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+      width: 32px !important;
+      height: 32px !important;
+      display: inline-flex !important;
+      align-items: center;
+      justify-content: center;
+
+      ::ng-deep .mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+      }
+
+      &:hover {
+        color: #a8c7fa !important; // Light blue
+      }
+    }
+
+    .edit-action-btn {
+      width: 28px !important;
+      height: 28px !important;
+      display: inline-flex !important;
+      align-items: center;
+      justify-content: center;
+      color: white !important;
+
+      ::ng-deep .mat-icon {
+        font-size: 16px;
+        width: 16px;
+        height: 16px;
+      }
+    }
+
     .delete-btn {
       color: rgba(255, 255, 255, 0.5) !important;
       opacity: 0;
@@ -267,8 +304,8 @@
       width: 32px !important;
       height: 32px !important;
       display: inline-flex !important;
-        align-items: center;
-        justify-content: center;
+      align-items: center;
+      justify-content: center;
 
       ::ng-deep .mat-icon {
         font-size: 18px;
@@ -282,7 +319,7 @@
     }
 
     &:hover {
-      .delete-btn {
+      .delete-btn, .edit-btn {
         opacity: 1;
       }
     }

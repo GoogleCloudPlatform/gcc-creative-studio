@@ -38,7 +38,9 @@ async def create_project(
     project_create: ProjectCreate,
     current_user: UserModel = Depends(get_current_user),
     project_service: ProjectService = Depends(),
+    workspace_auth: WorkspaceAuth = Depends(),
 ):
+    await workspace_auth.authorize(project_create.workspace_id, current_user)
     return await project_service.create_project(project_create, current_user.id)
 
 

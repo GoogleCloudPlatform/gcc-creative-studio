@@ -64,6 +64,34 @@ class Project(Base):
         back_populates="project", cascade="all, delete-orphan"
     )
 
+    @property
+    def storyboard_id(self) -> int | None:
+        if hasattr(self, "_storyboard_id") and self._storyboard_id is not None:
+            return self._storyboard_id
+        from sqlalchemy import inspect
+        insp = inspect(self)
+        if insp is not None and "storyboard" in insp.unloaded:
+            return None
+        return self.storyboard.id if self.storyboard else None
+
+    @storyboard_id.setter
+    def storyboard_id(self, value):
+        self._storyboard_id = value
+
+    @property
+    def timeline_id(self) -> int | None:
+        if hasattr(self, "_timeline_id") and self._timeline_id is not None:
+            return self._timeline_id
+        from sqlalchemy import inspect
+        insp = inspect(self)
+        if insp is not None and "timeline" in insp.unloaded:
+            return None
+        return self.timeline.id if self.timeline else None
+
+    @timeline_id.setter
+    def timeline_id(self, value):
+        self._timeline_id = value
+
 
 class Storyboard(Base):
     __tablename__ = "storyboards"
@@ -95,6 +123,20 @@ class Storyboard(Base):
     @property
     def timeline_id(self) -> int | None:
         return self.timeline.id if self.timeline else None
+
+    @property
+    def workspace_id(self) -> int | None:
+        if hasattr(self, "_workspace_id") and self._workspace_id is not None:
+            return self._workspace_id
+        from sqlalchemy import inspect
+        insp = inspect(self)
+        if insp is not None and "project" in insp.unloaded:
+            return None
+        return self.project.workspace_id if self.project else None
+
+    @workspace_id.setter
+    def workspace_id(self, value):
+        self._workspace_id = value
 
 
 class Scene(Base):
