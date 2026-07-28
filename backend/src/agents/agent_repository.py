@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db
 from src.agents.agent_chat_event_model import AgentChatEvent
+from src.projects.schema.project_model import Session
 
 logger = logging.getLogger(__name__)
 
@@ -68,3 +69,26 @@ class AgentRepository:
         )
         await self.db.execute(delete_stmt)
         await self.db.commit()
+
+    async def create_session_record(
+        self, project_id: int, session_id: str, name: str | None
+    ) -> Session:
+        """Create a new session record in the database."""
+        session_record = Session(
+            project_id=project_id,
+            session_id=session_id,
+            name=name,
+        )
+        self.db.add(session_record)
+        await self.db.commit()
+        return session_record
+
+    async def get_sessions_by_ids(
+        self, session_ids: List[str]
+    ) -> Sequence[Session]:
+        """Fetch session records by their Vertex AI session IDs."""
+        if not session_ids:
+            return []
+        stmt = select(Session).where(Session.session_id.in_(session_ids))
+        result = await self.db.execute(stmt)
+        return result.scalars().all()

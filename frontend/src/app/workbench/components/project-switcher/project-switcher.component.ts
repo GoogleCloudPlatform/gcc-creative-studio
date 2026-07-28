@@ -22,7 +22,7 @@ import {ProjectService} from '../../../services/project/project.service';
 import {ProjectStateService} from '../../../services/project/project-state.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
 import {ProjectResponse} from '../../../common/models/workbench.model';
-import {Router, ActivatedRoute} from '@angular/router';
+import {ActivatedRoute} from '@angular/router';
 import {Subscription} from 'rxjs';
 
 @Component({
@@ -36,13 +36,13 @@ export class ProjectSwitcherComponent implements OnInit, OnDestroy {
   private projectService = inject(ProjectService);
   private projectStateService = inject(ProjectStateService);
   private workspaceStateService = inject(WorkspaceStateService);
-  private router = inject(Router);
   private route = inject(ActivatedRoute);
   private subscriptions = new Subscription();
 
   projects: ProjectResponse[] = [];
   selectedProjectId: number | null = null;
   activeWorkspaceId: number | null = null;
+  private isInitialLoad = true;
 
   get projectOptions(): DropdownOption[] {
     return this.projects.map(p => ({
@@ -53,17 +53,29 @@ export class ProjectSwitcherComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
+    let isSyncEmit = true;
     this.subscriptions.add(
       this.workspaceStateService.activeWorkspaceId$.subscribe(workspaceId => {
         this.activeWorkspaceId = workspaceId;
         this.selectedProjectId = null;
         if (workspaceId) {
+          const hasRouteProject =
+            typeof window !== 'undefined' &&
+            (window.location.search.includes('projectId') ||
+              window.location.search.includes('storyboardId') ||
+              window.location.search.includes('timelineId') ||
+              window.location.search.includes('sessionId'));
+
+          if (isSyncEmit && hasRouteProject) {
+            return;
+          }
           this.loadProjects(workspaceId);
         } else {
           this.projects = [];
         }
       }),
     );
+    isSyncEmit = false;
 
     this.subscriptions.add(
       this.projectStateService.activeProjectId$.subscribe(projectId => {
@@ -84,25 +96,32 @@ export class ProjectSwitcherComponent implements OnInit, OnDestroy {
         this.projects = projects || [];
         if (this.projects.length === 0) {
           this.createDefaultProject(workspaceId);
+          this.isInitialLoad = false;
           return;
         }
 
-        const queryProjectIdStr =
-          this.route.snapshot.queryParamMap.get('projectId');
-        let targetProjectId: number | null = null;
-        if (queryProjectIdStr) {
-          targetProjectId = parseInt(queryProjectIdStr, 10);
-        }
-        if (!targetProjectId || isNaN(targetProjectId)) {
-          targetProjectId = this.projectStateService.getActiveProjectId();
-        }
-
+        const targetProjectId = this.projectStateService.getActiveProjectId();
         const matched = this.projects.find(p => p.id === targetProjectId);
 
         if (matched) {
-          this.setActiveProject(matched, false);
+          this.selectedProjectId = matched.id;
+          this.isInitialLoad = false;
         } else {
-          this.setActiveProject(this.projects[0], true);
+          const hasRouteProject =
+            typeof window !== 'undefined' &&
+            (window.location.search.includes('projectId') ||
+              window.location.search.includes('storyboardId') ||
+              window.location.search.includes('timelineId') ||
+              window.location.search.includes('sessionId'));
+
+          if (this.isInitialLoad && hasRouteProject) {
+            this.isInitialLoad = false;
+            return;
+          }
+
+          this.projectStateService.setActiveProjectId(null);
+          this.setActiveProject(this.projects[0]);
+          this.isInitialLoad = false;
         }
       },
       error: err => {
@@ -177,7 +196,7 @@ export class ProjectSwitcherComponent implements OnInit, OnDestroy {
       .subscribe({
         next: (project: ProjectResponse) => {
           this.projects = [project];
-          this.setActiveProject(project, false);
+          this.setActiveProject(project);
         },
         error: err => {
           console.error('Failed to create default project:', err);
@@ -187,21 +206,8 @@ export class ProjectSwitcherComponent implements OnInit, OnDestroy {
       });
   }
 
-  private setActiveProject(project: ProjectResponse, clearParams = true): void {
+  private setActiveProject(project: ProjectResponse): void {
     this.selectedProjectId = project.id;
     this.projectStateService.setActiveProjectId(project.id);
-
-    if (clearParams) {
-      void this.router.navigate([], {
-        relativeTo: this.route,
-        queryParams: {
-          projectId: null,
-          storyboardId: null,
-          sessionId: null,
-          timelineId: null,
-        },
-        queryParamsHandling: 'merge',
-      });
-    }
   }
 }

@@ -112,8 +112,22 @@ describe('PlayheadSyncService', () => {
   it('should play video in effect when isPlaying is true', fakeAsync(() => {
     const mockVideo1 = document.createElement('video');
     const mockVideo2 = document.createElement('video');
-    spyOn(mockVideo1, 'play').and.returnValue(Promise.resolve());
-    spyOn(mockVideo2, 'play').and.returnValue(Promise.resolve());
+    spyOn(mockVideo1, 'play').and.callFake(() => {
+      Object.defineProperty(mockVideo1, 'paused', {
+        get: () => false,
+        configurable: true,
+      });
+      return Promise.resolve();
+    });
+    spyOn(mockVideo2, 'play').and.callFake(() => {
+      Object.defineProperty(mockVideo2, 'paused', {
+        get: () => false,
+        configurable: true,
+      });
+      return Promise.resolve();
+    });
+    Object.defineProperty(mockVideo1, 'readyState', {get: () => 4});
+    Object.defineProperty(mockVideo2, 'readyState', {get: () => 4});
 
     const mockElements = {
       videos: [mockVideo1, mockVideo2],
@@ -141,6 +155,7 @@ describe('PlayheadSyncService', () => {
     fixture.detectChanges(); // Trigger effects!
 
     stateService.isPlaying.set(true);
+    service.syncPlayhead(0);
     fixture.detectChanges(); // Trigger effects again!
 
     expect(
@@ -152,8 +167,18 @@ describe('PlayheadSyncService', () => {
   it('should pause video in effect when isPlaying is false', fakeAsync(() => {
     const mockVideo1 = document.createElement('video');
     const mockVideo2 = document.createElement('video');
-    spyOn(mockVideo1, 'pause');
-    spyOn(mockVideo2, 'pause');
+    spyOn(mockVideo1, 'pause').and.callFake(() => {
+      Object.defineProperty(mockVideo1, 'paused', {
+        get: () => true,
+        configurable: true,
+      });
+    });
+    spyOn(mockVideo2, 'pause').and.callFake(() => {
+      Object.defineProperty(mockVideo2, 'paused', {
+        get: () => true,
+        configurable: true,
+      });
+    });
 
     const mockElements = {
       videos: [mockVideo1, mockVideo2],
@@ -281,6 +306,9 @@ describe('PlayheadSyncService', () => {
 
     service.registerElements(mockElements);
     stateService.isPlaying.set(true);
+
+    // Set recovery attempts to 3 to trigger the failure path immediately
+    service['recoveryAttempts'].set(mockVideo1, 3);
 
     spyOn(service, 'stopLoop').and.callThrough();
 

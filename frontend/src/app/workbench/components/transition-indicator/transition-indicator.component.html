@@ -62,7 +62,7 @@
     </div>
     <div class="flex justify-end gap-3">
       <button mat-button mat-dialog-close class="!text-white/60 !rounded-lg">Cancel</button>
-      <button mat-button mat-dialog-close [disabled]="!hasChanges" (click)="saveTransition()"
+      <button mat-button mat-dialog-close [disabled]="isSaveDisabled" (click)="saveTransition()"
         class="!text-blue-400 !rounded-lg">Save</button>
     </div>
   </div>

@@ -14,13 +14,18 @@
  * limitations under the License.
  */
 
-import {Injectable} from '@angular/core';
+import {Injectable, inject} from '@angular/core';
+import {Router} from '@angular/router';
 import {BehaviorSubject, Observable} from 'rxjs';
+import {WorkspaceStateService} from '../workspace/workspace-state.service';
 
 @Injectable({
   providedIn: 'root',
 })
 export class ProjectStateService {
+  private workspaceStateService = inject(WorkspaceStateService);
+  private router = inject(Router);
+
   private readonly activeProjectIdSubject = new BehaviorSubject<number | null>(
     null,
   );
@@ -37,6 +42,13 @@ export class ProjectStateService {
         }
       }
     }
+
+    this.workspaceStateService.activeWorkspaceId$.subscribe(() => {
+      const isWorkbench = this.router.url.includes('/workbench');
+      if (!isWorkbench) {
+        this.setActiveProjectId(null);
+      }
+    });
   }
 
   setActiveProjectId(projectId: number | null) {

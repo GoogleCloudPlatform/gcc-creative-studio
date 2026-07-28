@@ -546,7 +546,7 @@ class FFmpegService:
                 else:
                     video_filters.append(
                         f"color=c=black:s={width}x{height}:d={d},"
-                        f"fps={fps},format=yuv420p[v_in_black];"
+                        f"fps={fps},format=yuv420p,settb=AVTB[v_in_black];"
                         f"[v_in_black]{video_output_stream}xfade="
                         f"transition={t_type}:duration={d}:offset=0[v_fadein]"
                     )
@@ -567,7 +567,7 @@ class FFmpegService:
                 else:
                     video_filters.append(
                         f"color=c=black:s={width}x{height}:d={d},"
-                        f"fps={fps},format=yuv420p[v_out_black];"
+                        f"fps={fps},format=yuv420p,settb=AVTB[v_out_black];"
                         f"{video_output_stream}[v_out_black]xfade="
                         f"transition={t_type}:duration={d}:offset={st_out}[v_fadeout]"
                     )

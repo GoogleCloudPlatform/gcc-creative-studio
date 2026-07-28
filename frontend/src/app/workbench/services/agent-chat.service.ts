@@ -50,6 +50,7 @@ export interface ChatRequestDto {
   sessionId: string;
   appName?: string;
   workspaceId?: number | null;
+  projectId?: number | null;
   newMessage?: ChatMessage;
   streaming?: boolean;
 }
@@ -72,6 +73,7 @@ export class AgentChatService {
   // Agent Selection State
   activeAgent = signal<string>('ads_x');
   isGeneratingStoryboard = signal<boolean>(false);
+  isGeneratingVideo = signal<boolean>(false);
 
   // Triggers video generation from the Storyboard component
   generateVideoRequest$ = new Subject<void>();
@@ -83,6 +85,7 @@ export class AgentChatService {
   sessions = signal<ChatSession[]>([]);
   chatMessages = signal<any[]>([]);
   private lastLoadedWorkspaceId: number | null = null;
+  private lastLoadedProjectId: number | null = null;
   private lastLoadedAgent = '';
   private lastLoadedSessionId: string | null = null;
   private lastLoadedStoryboardId: number | string | null = null;
@@ -92,15 +95,18 @@ export class AgentChatService {
     forceRefresh = false,
     sessionId?: string | null,
     storyboardId?: number | string | null,
+    projectId?: number | null,
   ): Observable<ChatSession[]> {
     const currentAgent = this.activeAgent();
     const targetSessionId = sessionId ?? null;
     const targetStoryboardId = storyboardId ?? null;
+    const targetProjectId = projectId ?? null;
 
     if (
       !forceRefresh &&
       this.sessions().length > 0 &&
       this.lastLoadedWorkspaceId === workspaceId &&
+      this.lastLoadedProjectId === targetProjectId &&
       this.lastLoadedAgent === currentAgent &&
       this.lastLoadedSessionId === targetSessionId &&
       this.lastLoadedStoryboardId === targetStoryboardId
@@ -112,10 +118,14 @@ export class AgentChatService {
     if (workspaceId) {
       url += `&workspace_id=${workspaceId}`;
     }
+    if (projectId) {
+      url += `&project_id=${projectId}`;
+    }
     return this.http.get<ChatSession[]>(url).pipe(
       tap((sessions: ChatSession[]) => {
         this.sessions.set(sessions || []);
         this.lastLoadedWorkspaceId = workspaceId ?? null;
+        this.lastLoadedProjectId = targetProjectId;
         this.lastLoadedAgent = currentAgent;
         this.lastLoadedSessionId = targetSessionId;
         this.lastLoadedStoryboardId = targetStoryboardId;
@@ -123,12 +133,20 @@ export class AgentChatService {
     );
   }
 
-  createSession(workspaceId?: number): Observable<ChatSession> {
+  createSession(
+    workspaceId?: number,
+    projectId?: number,
+    name?: string,
+  ): Observable<ChatSession> {
     let url = `${this.apiUrl}/sessions?appName=${this.activeAgent()}`;
     if (workspaceId) {
       url += `&workspace_id=${workspaceId}`;
     }
-    return this.http.post<ChatSession>(url, {});
+    const body = {
+      projectId: projectId || 0,
+      name: name || null,
+    };
+    return this.http.post<ChatSession>(url, body);
   }
 
   getSessionDetail(
@@ -169,6 +187,7 @@ export class AgentChatService {
     sessionId: string,
     message: string | ChatMessagePart[],
     workspaceId: number | null,
+    projectId: number | null,
     callbacks: SSECallbacks<any>,
   ): Promise<void> {
     const url = `${this.apiUrl}/chat`;
@@ -183,6 +202,7 @@ export class AgentChatService {
       },
       streaming: true,
       workspaceId: workspaceId,
+      projectId: projectId,
     };
 
     try {

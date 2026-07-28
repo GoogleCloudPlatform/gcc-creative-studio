@@ -171,7 +171,9 @@ async def update_timeline(
     service: WorkbenchService = Depends(),
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
-    print("DEBUG update_timeline RECEIVED payload:", timeline_update.model_dump())
+    print(
+        "DEBUG update_timeline RECEIVED payload:", timeline_update.model_dump()
+    )
     timeline = await service.get_timeline(timeline_id)
     if not timeline:
         raise HTTPException(status_code=404, detail="Timeline not found")

@@ -28,6 +28,7 @@ from src.agents.agent_dtos import (
     PollEventsResponseDto,
     SessionResponseDto,
     SessionDetailResponseDto,
+    SessionCreateRequestDto,
 )
 
 router = APIRouter(
@@ -66,8 +67,8 @@ async def get_sessions(
 @router.post("/sessions", response_model=SessionResponseDto)
 async def create_session(
     request: Request,
+    payload: SessionCreateRequestDto,
     workspace_id: int | None = None,
-    project_id: int | None = None,
     appName: str = APP_NAME,
     current_user: UserModel = Depends(get_current_user),
     agent_service: AgentService = Depends(),
@@ -80,7 +81,8 @@ async def create_session(
         user_id=user_id,
         request=request,
         workspace_id=workspace_id,
-        project_id=project_id,
+        project_id=payload.projectId,
+        name=payload.name,
         appName=appName,
     )
 

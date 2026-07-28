@@ -69,6 +69,7 @@ class Project(Base):
         if hasattr(self, "_storyboard_id") and self._storyboard_id is not None:
             return self._storyboard_id
         from sqlalchemy import inspect
+
         insp = inspect(self)
         if insp is not None and "storyboard" in insp.unloaded:
             return None
@@ -83,6 +84,7 @@ class Project(Base):
         if hasattr(self, "_timeline_id") and self._timeline_id is not None:
             return self._timeline_id
         from sqlalchemy import inspect
+
         insp = inspect(self)
         if insp is not None and "timeline" in insp.unloaded:
             return None
@@ -91,6 +93,21 @@ class Project(Base):
     @timeline_id.setter
     def timeline_id(self, value):
         self._timeline_id = value
+
+    @property
+    def session_id(self) -> str | None:
+        from sqlalchemy import inspect
+
+        insp = inspect(self)
+        if insp is not None and "sessions" in insp.unloaded:
+            return None
+        if not self.sessions:
+            return None
+        # Sort by id descending to get the newest session
+        sorted_sessions = sorted(
+            self.sessions, key=lambda s: s.id, reverse=True
+        )
+        return sorted_sessions[0].session_id
 
 
 class Storyboard(Base):
@@ -129,6 +146,7 @@ class Storyboard(Base):
         if hasattr(self, "_workspace_id") and self._workspace_id is not None:
             return self._workspace_id
         from sqlalchemy import inspect
+
         insp = inspect(self)
         if insp is not None and "project" in insp.unloaded:
             return None

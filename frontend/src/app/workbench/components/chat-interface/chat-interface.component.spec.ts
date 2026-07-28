@@ -32,6 +32,7 @@ import {signal, CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
 import {of, Subject, BehaviorSubject, throwError} from 'rxjs';
 import {AgentChatService} from '../../services/agent-chat.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
+import {ProjectStateService} from '../../../services/project/project-state.service';
 import {StoryboardService} from '../../../services/storyboard/storyboard.service';
 import {TimelineStateService} from '../../services/timeline-state.service';
 
@@ -50,6 +51,7 @@ describe('ChatInterfaceComponent', () => {
       currentStoryboard: signal(null),
       activeAgent: signal('director'),
       isGeneratingStoryboard: signal(false),
+      isGeneratingVideo: signal(false),
       sessions: signal([]),
       chatMessages: signal([]),
       generateVideoRequest$: new Subject<void>(),
@@ -114,7 +116,13 @@ describe('ChatInterfaceComponent', () => {
       sendMessage: jasmine
         .createSpy('sendMessage')
         .and.callFake(
-          (wsId: number, sessionId: string, parts: any[], callbacks: any) => {
+          (
+            sessionId: string,
+            message: any,
+            workspaceId: number | null,
+            projectId: number | null,
+            callbacks: any,
+          ) => {
             sseCallbacks = callbacks;
           },
         ),
@@ -134,6 +142,14 @@ describe('ChatInterfaceComponent', () => {
         }),
       setActiveWorkspaceId: jasmine.createSpy('setActiveWorkspaceId'),
       activeWorkspaceId$: of(1),
+    };
+
+    const mockProjectStateService = {
+      getActiveProjectId: jasmine
+        .createSpy('getActiveProjectId')
+        .and.returnValue(10),
+      setActiveProjectId: jasmine.createSpy('setActiveProjectId'),
+      activeProjectId$: of(10),
     };
 
     const mockStoryboardService = {
@@ -173,6 +189,7 @@ describe('ChatInterfaceComponent', () => {
       providers: [
         {provide: AgentChatService, useValue: mockAgentChatService},
         {provide: WorkspaceStateService, useValue: mockWorkspaceStateService},
+        {provide: ProjectStateService, useValue: mockProjectStateService},
         {provide: StoryboardService, useValue: mockStoryboardService},
         {provide: TimelineStateService, useValue: mockTimelineStateService},
         {
@@ -201,8 +218,9 @@ describe('ChatInterfaceComponent', () => {
     expect(agentChatService.getSessions).toHaveBeenCalledWith(
       1,
       false,
-      undefined,
-      undefined,
+      null,
+      null,
+      10,
     );
   });
 
@@ -313,7 +331,11 @@ describe('ChatInterfaceComponent', () => {
 
     component.sendChatMessage('hello');
 
-    expect(agentChatService.createSession).toHaveBeenCalledWith(1);
+    expect(agentChatService.createSession).toHaveBeenCalledWith(
+      1,
+      10,
+      'New Chat',
+    );
     expect(component.currentSessionId).toBe('new-session' as any);
     expect(component['executeSendMessage']).toHaveBeenCalledWith('hello');
   });
@@ -466,7 +488,7 @@ describe('ChatInterfaceComponent', () => {
     expect(mockElement.scrollTop).toBe(1500);
   }));
 
-  it('should load session details from query parameters on startup if session exists in workspace', () => {
+  it('should load session details on startup if session exists in workspace', () => {
     agentChatService.getSessions.and.returnValue(
       of([
         {
@@ -476,10 +498,16 @@ describe('ChatInterfaceComponent', () => {
       ]),
     );
 
-    queryParamsSubject.next({
-      sessionId: 'session-456',
-      storyboardId: '202',
-    });
+    (
+      TestBed.inject(WorkspaceStateService).getActiveWorkspaceId as jasmine.Spy
+    ).and.returnValue(1);
+    (
+      TestBed.inject(ProjectStateService).getActiveProjectId as jasmine.Spy
+    ).and.returnValue(10);
+    agentChatService.selectedSessionId.set('session-456');
+    agentChatService.currentStoryboard.set({id: 202} as any);
+
+    fixture.detectChanges();
 
     expect(agentChatService.getSessionDetail).toHaveBeenCalledWith(
       1,
@@ -583,6 +611,7 @@ describe('ChatInterfaceComponent', () => {
         {sourceAssetId: 'a1'},
       ],
       1,
+      10,
       jasmine.any(Object),
     );
     expect(component.selectedImages().length).toBe(0);
@@ -636,7 +665,15 @@ describe('ChatInterfaceComponent', () => {
       throwError(() => new Error('Get Sessions error')),
     );
 
-    queryParamsSubject.next({sessionId: 'session-error-test'});
+    (
+      TestBed.inject(WorkspaceStateService).getActiveWorkspaceId as jasmine.Spy
+    ).and.returnValue(1);
+    (
+      TestBed.inject(ProjectStateService).getActiveProjectId as jasmine.Spy
+    ).and.returnValue(20);
+    agentChatService.selectedSessionId.set('session-error-test');
+
+    fixture.detectChanges();
 
     expect(console.error).toHaveBeenCalled();
   });
@@ -655,30 +692,31 @@ describe('ChatInterfaceComponent', () => {
       throwError(() => new Error('Get Detail error')),
     );
 
-    queryParamsSubject.next({
-      sessionId: 'session-456',
-      storyboardId: '202',
-    });
+    (
+      TestBed.inject(WorkspaceStateService).getActiveWorkspaceId as jasmine.Spy
+    ).and.returnValue(1);
+    (
+      TestBed.inject(ProjectStateService).getActiveProjectId as jasmine.Spy
+    ).and.returnValue(10);
+    agentChatService.selectedSessionId.set('session-456');
+    agentChatService.currentStoryboard.set({id: 202} as any);
+
+    fixture.detectChanges();
 
     expect(console.error).toHaveBeenCalled();
   });
 
-  it('should map sessions to topics mapping label and tooltip correctly in dropdownOptions', () => {
+  it('should map sessions to label and tooltip correctly in dropdownOptions', () => {
     component.sessions.set([
-      {id: 's1', lastUpdateTime: 1780000000},
-      {id: 's2', lastUpdateTime: 1780100000},
-      {id: 's3', lastUpdateTime: 1780200000},
+      {id: 's1', name: 'Topic 1 title', lastUpdateTime: 1780000000},
+      {id: 's2', name: 'Topic 2 string title', lastUpdateTime: 1780100000},
+      {id: 's3', name: '', lastUpdateTime: 1780200000},
     ]);
-    component.topics.set({
-      s1: {title: 'Topic 1 title', summary: 'Topic 1 summary'},
-      s2: 'Topic 2 string title',
-    });
 
     const formatted = component.dropdownOptions();
 
     expect(formatted.length).toBe(3);
     expect(formatted[0].label).toBe('Topic 1 title');
-    expect(formatted[0].tooltip).toBe('Topic 1 summary');
     expect(formatted[1].label).toBe('Topic 2 string title');
     expect(formatted[2].label).toContain('- Chat');
   });
@@ -715,8 +753,7 @@ describe('ChatInterfaceComponent', () => {
     expect(component.currentSessionId).toBe('session-other');
   });
 
-  it('should clear states and navigate on startNewChat', () => {
-    spyOn(router, 'navigate');
+  it('should clear states on startNewChat', () => {
     component.currentSessionId = 'session-123';
 
     component.startNewChat();
@@ -724,11 +761,6 @@ describe('ChatInterfaceComponent', () => {
     expect(component.currentSessionId).toBeNull();
     expect(agentChatService.selectedSessionId()).toBeNull();
     expect(component.chatMessages().length).toBe(1);
-    expect(router.navigate).toHaveBeenCalledWith([], {
-      relativeTo: component['route'],
-      queryParams: {sessionId: null, storyboardId: null},
-      queryParamsHandling: 'merge',
-    });
   });
 
   it('should log error when deleteSession fails', () => {
@@ -759,55 +791,67 @@ describe('ChatInterfaceComponent', () => {
     expect(component.isTyping()).toBeFalse();
   });
 
-  it('should generate a topic title and save it on first message', () => {
-    component.currentSessionId = 'session-123';
-    component.topics.set({});
+  it('should generate a topic title and use it to create session on first message', () => {
+    component.currentSessionId = null;
     agentChatService.generateTitle.and.returnValue(
       of({title: 'Generated Title', summary: 'Generated Summary'}),
+    );
+    agentChatService.createSession.and.returnValue(
+      of({id: 'new-session', name: 'Generated Title'}),
     );
 
     component.sendChatMessage('hello');
 
     expect(agentChatService.generateTitle).toHaveBeenCalledWith('hello');
-    expect(component.topics()['session-123']).toEqual({
-      title: 'Generated Title',
-      summary: 'Generated Summary',
-    });
+    expect(agentChatService.createSession).toHaveBeenCalledWith(
+      1,
+      jasmine.any(Number),
+      'Generated Title',
+    );
   });
 
-  it('should fallback to message text as title if generateTitle fails', () => {
+  it('should fallback to default session name if generateTitle fails', () => {
     spyOn(console, 'error');
-    component.currentSessionId = 'session-123';
-    component.topics.set({});
+    component.currentSessionId = null;
     agentChatService.generateTitle.and.returnValue(
       throwError(() => new Error('Title generation failed')),
+    );
+    agentChatService.createSession.and.returnValue(
+      of({id: 'new-session', name: 'New Session'}),
     );
 
     component.sendChatMessage('hello');
 
     expect(console.error).toHaveBeenCalled();
-    expect(component.topics()['session-123']).toEqual({
-      title: 'hello',
-      summary: undefined,
-    });
+    expect(agentChatService.createSession).toHaveBeenCalledWith(
+      1,
+      jasmine.any(Number),
+      'New Session',
+    );
   });
 
-  it('should start a new conversation by default when sessionId is not provided in query params and sessions exist', () => {
-    spyOn(router, 'navigate');
+  it('should load default session when sessionId is not provided and sessions exist', () => {
     agentChatService.getSessions.and.returnValue(
       of([{id: 'latest-session-id', lastUpdateTime: 123}]),
     );
-    component['lastWorkspaceId'] = 999;
 
-    queryParamsSubject.next({random: Math.random()});
+    (
+      TestBed.inject(WorkspaceStateService).getActiveWorkspaceId as jasmine.Spy
+    ).and.returnValue(1);
+    (
+      TestBed.inject(ProjectStateService).getActiveProjectId as jasmine.Spy
+    ).and.returnValue(20);
+    agentChatService.selectedSessionId.set(null);
+    agentChatService.currentStoryboard.set(null);
 
-    expect(component.currentSessionId).toBeNull();
-    expect(agentChatService.selectedSessionId()).toBeNull();
-    expect(router.navigate).toHaveBeenCalledWith([], {
-      relativeTo: component['route'],
-      queryParams: {sessionId: null, storyboardId: null},
-      queryParamsHandling: 'merge',
-    });
+    component.loadChatSessions();
+    fixture.detectChanges();
+
+    expect(agentChatService.getSessionDetail).toHaveBeenCalledWith(
+      1,
+      'latest-session-id',
+      undefined,
+    );
   });
 
   it('should clear storyboard and add welcome message if loaded session storyboard is null', () => {
@@ -818,14 +862,22 @@ describe('ChatInterfaceComponent', () => {
       }),
     );
 
-    queryParamsSubject.next({sessionId: 'session-no-sb'});
+    (
+      TestBed.inject(WorkspaceStateService).getActiveWorkspaceId as jasmine.Spy
+    ).and.returnValue(1);
+    (
+      TestBed.inject(ProjectStateService).getActiveProjectId as jasmine.Spy
+    ).and.returnValue(10);
+    agentChatService.selectedSessionId.set('session-no-sb');
+
+    fixture.detectChanges();
 
     expect(agentChatService.currentStoryboard()).toBeNull();
     expect(component.chatMessages().length).toBe(1);
     expect(component.chatMessages()[0].sender).toBe('agent');
   });
 
-  it('should validate if storyboardId query param exists in workspace sessions', () => {
+  it('should load matching session if storyboardId is provided', () => {
     agentChatService.getSessions.and.returnValue(
       of([
         {
@@ -842,20 +894,44 @@ describe('ChatInterfaceComponent', () => {
       }),
     );
 
-    queryParamsSubject.next({storyboardId: '202'});
+    (
+      TestBed.inject(WorkspaceStateService).getActiveWorkspaceId as jasmine.Spy
+    ).and.returnValue(1);
+    (
+      TestBed.inject(ProjectStateService).getActiveProjectId as jasmine.Spy
+    ).and.returnValue(10);
+    agentChatService.selectedSessionId.set(null);
+    agentChatService.currentStoryboard.set({id: 202} as any);
 
-    expect(component.currentSessionId).toBe('s1');
+    fixture.detectChanges();
+
+    expect(agentChatService.getSessionDetail).toHaveBeenCalledWith(
+      1,
+      's1',
+      202,
+    );
   });
 
-  it('should navigate to new session if query param sessionId is not in workspace sessions', () => {
-    spyOn(router, 'navigate');
+  it('should fallback to default session if selectedSessionId is not in workspace sessions', () => {
     agentChatService.getSessions.and.returnValue(
       of([{id: 's1', lastUpdateTime: 123}]),
     );
 
-    queryParamsSubject.next({sessionId: 'invalid-session-id'});
+    (
+      TestBed.inject(WorkspaceStateService).getActiveWorkspaceId as jasmine.Spy
+    ).and.returnValue(1);
+    (
+      TestBed.inject(ProjectStateService).getActiveProjectId as jasmine.Spy
+    ).and.returnValue(20);
+    agentChatService.selectedSessionId.set('invalid-session-id');
 
-    expect(router.navigate).toHaveBeenCalled();
+    fixture.detectChanges();
+
+    expect(agentChatService.getSessionDetail).toHaveBeenCalledWith(
+      1,
+      's1',
+      undefined,
+    );
   });
 
   it('should parse JSON block inside text chunks in SSE stream onMessage', () => {

@@ -76,7 +76,8 @@ import {debounceTime, switchMap, takeWhile, catchError} from 'rxjs/operators';
 import {StoryboardService} from '../services/storyboard/storyboard.service';
 import {GalleryService} from '../gallery/gallery.service';
 import {MediaItem} from '../common/models/media-item.model';
-import { ProjectService } from '../services/project/project.service';
+import {ProjectService} from '../services/project/project.service';
+import {ProjectStateService} from '../services/project/project-state.service';
 
 @Component({
   selector: 'app-workbench',
@@ -187,9 +188,15 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   private galleryService = inject(GalleryService);
   private snackBar = inject(MatSnackBar);
   private projectService = inject(ProjectService);
+  private projectStateService = inject(ProjectStateService);
 
   private workspaceStateService = inject(WorkspaceStateService);
   private sourceAssetService = inject(SourceAssetService);
+
+  private projectStateSubscription?: Subscription;
+  private isInitialQueryParamLoad = true;
+  private isFirstProjectStateEmit = true;
+  private isSyncingFromRoute = false;
 
   isDownloading = signal(false);
   currentProjectId = signal<number | null>(null);
@@ -236,18 +243,47 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       this.applyVideoFilter();
     });
 
+    // Unified query parameters syncing effect
+    effect(() => {
+      const projectId = this.projectStateService.getActiveProjectId();
+      const sessionId = this.agentChatService.selectedSessionId();
+      const storyboard = this.agentChatService.currentStoryboard();
+      const timelineId = this.timelineState.loadedTimelineId();
+
+      const storyboardId = storyboard?.id || null;
+
+      if (this.isInitialQueryParamLoad || this.isSyncingFromRoute) {
+        return;
+      }
+
+      const queryParams = this.route.snapshot.queryParams;
+      const hasChanges =
+        Number(queryParams['projectId']) !== Number(projectId) ||
+        (queryParams['sessionId'] !== (sessionId || undefined) &&
+          !(queryParams['sessionId'] === undefined && sessionId === null)) ||
+        Number(queryParams['storyboardId']) !== Number(storyboardId) ||
+        Number(queryParams['timelineId']) !== Number(timelineId);
+
+      if (hasChanges) {
+        void this.router.navigate([], {
+          relativeTo: this.route,
+          queryParams: {
+            projectId: projectId || null,
+            sessionId: sessionId || null,
+            storyboardId: storyboardId || null,
+            timelineId: timelineId || null,
+          },
+          queryParamsHandling: 'merge',
+        });
+      }
+    });
+
     // Sync loadedTimelineId with storyboard's timeline_id
     effect(
       () => {
         const storyboard = this.agentChatService.currentStoryboard();
         if (storyboard && storyboard.timeline_id) {
           this.timelineState.loadedTimelineId.set(storyboard.timeline_id);
-        } else {
-          const hasTimelineParam =
-            this.route.snapshot.queryParams['timelineId'];
-          if (!hasTimelineParam) {
-            this.timelineState.loadedTimelineId.set(undefined);
-          }
         }
       },
       {allowSignalWrites: true},
@@ -266,16 +302,28 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
               this.processGeneratedData(timeline);
               this.lastSavedText.set('Saved');
 
-              // If the timeline is associated with a session/storyboard, update URL and show agent panel
-              if (timeline.storyboard_id || timeline.session_id) {
-                void this.router.navigate([], {
-                  relativeTo: this.route,
-                  queryParams: {
-                    sessionId: timeline.session_id || null,
-                    storyboardId: timeline.storyboard_id || null,
-                  },
-                  queryParamsHandling: 'merge',
-                });
+              const currentSb = this.agentChatService.currentStoryboard();
+              const currentSessionId =
+                this.agentChatService.selectedSessionId();
+              if (
+                timeline.storyboard_id ||
+                timeline.session_id ||
+                currentSb ||
+                currentSessionId
+              ) {
+                if (timeline.storyboard_id && !currentSb) {
+                  this.agentChatService.currentStoryboard.set({
+                    id: timeline.storyboard_id,
+                  });
+                }
+                if (
+                  timeline.session_id &&
+                  !this.agentChatService.selectedSessionId()
+                ) {
+                  this.agentChatService.selectedSessionId.set(
+                    timeline.session_id,
+                  );
+                }
                 this.activeToolButton.set('agent');
               } else {
                 // Manual timeline: clear agent chat state
@@ -299,6 +347,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           this.timelineState.currentTime.set(0);
           this.timelineState.isPlaying.set(false);
           this.timelineState.scrollOffset.set(0);
+          this.timelineState.transitions.set([]);
+          this.timelineState.transitionIn.set(null);
+          this.timelineState.transitionOut.set(null);
           this.lastSavedText.set('');
         }
       },
@@ -370,7 +421,44 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         this.saveTimeline();
       });
 
+    this.projectStateSubscription =
+      this.projectStateService.activeProjectId$.subscribe(projectId => {
+        if (projectId !== this.currentProjectId()) {
+          const hasUrlParams =
+            typeof window !== 'undefined' &&
+            (window.location.search.includes('projectId') ||
+              window.location.search.includes('storyboardId') ||
+              window.location.search.includes('timelineId') ||
+              window.location.search.includes('sessionId'));
+
+          if (this.isFirstProjectStateEmit) {
+            this.isFirstProjectStateEmit = false;
+            if (hasUrlParams) {
+              return;
+            }
+          }
+
+          if (projectId) {
+            this.timelineState.loadedTimelineId.set(undefined);
+            this.agentChatService.selectedSessionId.set(null);
+            this.agentChatService.currentStoryboard.set(null);
+
+            void this.router.navigate([], {
+              relativeTo: this.route,
+              queryParams: {
+                projectId: projectId,
+                storyboardId: null,
+                timelineId: null,
+                sessionId: null,
+              },
+              queryParamsHandling: 'merge',
+            });
+          }
+        }
+      });
+
     this.route.queryParams.subscribe(params => {
+      this.isSyncingFromRoute = true;
       let projectId = params['projectId'];
       let sessionId = params['sessionId'];
       let storyboardId = params['storyboardId'];
@@ -389,41 +477,168 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         timelineId = null;
       }
 
-      if (projectId) {
-        if (Number(projectId) !== this.currentProjectId()) {
-          this.currentProjectId.set(Number(projectId));
-          this.projectService.getProject(Number(projectId)).subscribe({
+      if (!projectId && !sessionId && !storyboardId && !timelineId) {
+        const activeId = this.projectStateService.getActiveProjectId();
+        if (activeId) {
+          this.projectService.getProject(activeId).subscribe({
             next: project => {
-              void this.router.navigate([], {
-                relativeTo: this.route,
-                queryParams: {
-                  sessionId: sessionId || null,
-                  storyboardId: project.storyboard_id || null,
-                  timelineId: project.timeline_id || null,
-                  projectId: project.id,
-                },
-                queryParamsHandling: 'merge',
-              });
+              const activeWorkspaceId =
+                this.workspaceStateService.getActiveWorkspaceId();
+              if (project.workspace_id === activeWorkspaceId) {
+                void this.router
+                  .navigate([], {
+                    relativeTo: this.route,
+                    queryParams: {projectId: activeId},
+                    queryParamsHandling: 'merge',
+                  })
+                  .then(() => {
+                    this.isSyncingFromRoute = false;
+                  });
+              } else {
+                this.projectStateService.setActiveProjectId(null);
+                this.isSyncingFromRoute = false;
+              }
             },
             error: err => {
-              console.error('Failed to load project details:', err);
-            }
+              console.error('Failed to verify active project:', err);
+              this.projectStateService.setActiveProjectId(null);
+              this.isSyncingFromRoute = false;
+            },
           });
+        } else {
+          this.isSyncingFromRoute = false;
         }
+        return;
+      }
+
+      if (projectId) {
+        const numericProjectId = Number(projectId);
+        if (
+          numericProjectId !== this.projectStateService.getActiveProjectId()
+        ) {
+          this.projectStateService.setActiveProjectId(numericProjectId);
+        }
+      }
+
+      // Check if already loaded to avoid redundant API calls
+      const currentActiveId = this.currentProjectId();
+      const currentTimelineId = this.timelineState.loadedTimelineId();
+      const currentStoryboardId = this.agentChatService.currentStoryboard()?.id;
+      const currentSessionId = this.agentChatService.selectedSessionId();
+
+      const isAlreadyLoaded =
+        (projectId
+          ? Number(projectId) === Number(currentActiveId)
+          : !currentActiveId) &&
+        (sessionId === currentSessionId || (!sessionId && !currentSessionId)) &&
+        (storyboardId
+          ? Number(storyboardId) === Number(currentStoryboardId)
+          : !currentStoryboardId) &&
+        (timelineId
+          ? Number(timelineId) === Number(currentTimelineId)
+          : !currentTimelineId);
+
+      if (isAlreadyLoaded) {
+        if (sessionId || storyboardId || projectId) {
+          if (this.isInitialQueryParamLoad) {
+            this.activeToolButton.set('agent');
+          }
+        }
+        this.isInitialQueryParamLoad = false;
+        this.isSyncingFromRoute = false;
+        return;
+      }
+
+      let url = '';
+      if (projectId) {
+        url = `/api/projects/${projectId}`;
+      } else if (storyboardId) {
+        url = `/api/projects/any?storyboard_id=${storyboardId}`;
+      } else if (timelineId) {
+        url = `/api/projects/any?timeline_id=${timelineId}`;
+      } else if (sessionId) {
+        url = `/api/projects/any?session_id=${sessionId}`;
+      }
+
+      if (url) {
+        this.http.get<any>(url).subscribe({
+          next: project => {
+            const activeWorkspaceId =
+              this.workspaceStateService.getActiveWorkspaceId();
+            if (project.workspace_id !== activeWorkspaceId) {
+              this.workspaceStateService.setActiveWorkspaceId(
+                project.workspace_id,
+              );
+            }
+
+            this.timelineState.loadedTimelineId.set(
+              project.timeline_id || undefined,
+            );
+            const targetSessionId = sessionId || project.session_id || null;
+            this.agentChatService.selectedSessionId.set(targetSessionId);
+
+            if (project.storyboard_id) {
+              const currentSb = this.agentChatService.currentStoryboard();
+              if (
+                !currentSb ||
+                Number(currentSb.id) !== Number(project.storyboard_id)
+              ) {
+                this.agentChatService.currentStoryboard.set({
+                  id: project.storyboard_id,
+                });
+              }
+            } else {
+              this.agentChatService.currentStoryboard.set(null);
+            }
+
+            this.currentProjectId.set(project.id);
+            this.projectStateService.setActiveProjectId(project.id);
+
+            const targetParams: any = {
+              projectId: project.id,
+              storyboardId: project.storyboard_id || null,
+              timelineId: project.timeline_id || null,
+              sessionId: targetSessionId,
+            };
+
+            const hasUrlChanges =
+              Number(params['projectId']) !== Number(targetParams.projectId) ||
+              params['sessionId'] !== (targetParams.sessionId || undefined) ||
+              Number(params['storyboardId']) !==
+                Number(targetParams.storyboardId) ||
+              Number(params['timelineId']) !== Number(targetParams.timelineId);
+
+            if (hasUrlChanges) {
+              void this.router
+                .navigate([], {
+                  relativeTo: this.route,
+                  queryParams: targetParams,
+                  queryParamsHandling: 'merge',
+                })
+                .then(() => {
+                  this.isSyncingFromRoute = false;
+                });
+            } else {
+              this.isSyncingFromRoute = false;
+            }
+
+            if (targetSessionId) {
+              if (this.isInitialQueryParamLoad) {
+                this.activeToolButton.set('agent');
+              }
+            }
+            this.isInitialQueryParamLoad = false;
+          },
+          error: err => {
+            console.error('Failed to load project details:', err);
+            handleErrorSnackbar(this.snackBar, err, 'Load Project Details');
+            this.isInitialQueryParamLoad = false;
+            this.isSyncingFromRoute = false;
+          },
+        });
       } else {
-        this.currentProjectId.set(null);
-      }
-
-      if (sessionId) {
-        this.agentChatService.selectedSessionId.set(sessionId);
-      }
-
-      if (timelineId) {
-        this.timelineState.loadedTimelineId.set(Number(timelineId));
-      }
-
-      if (sessionId || storyboardId || projectId) {
-        this.activeToolButton.set('agent');
+        this.isInitialQueryParamLoad = false;
+        this.isSyncingFromRoute = false;
       }
     });
   }
@@ -479,6 +694,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     }
     if (this.saveSubscription) {
       this.saveSubscription.unsubscribe();
+    }
+    if (this.projectStateSubscription) {
+      this.projectStateSubscription.unsubscribe();
     }
   }
 
@@ -995,7 +1213,6 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       });
     }
 
-    console.log('Setting timelineClips to:', newClips);
     this.timelineState.timelineClips.set(newClips);
     this.refreshTimelineLayout();
 
@@ -1688,9 +1905,17 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   }
 
   triggerAutoSave() {
-    this.hasPendingSave = true;
-    this.lastSavedText.set('Saving...');
-    this.saveSubject.next();
+    const sb = this.agentChatService.currentStoryboard();
+    const timelineId = this.timelineState.loadedTimelineId() || sb?.timeline_id;
+
+    if (!timelineId) {
+      this.lastSavedText.set('Saving...');
+      this.saveTimeline().subscribe();
+    } else {
+      this.hasPendingSave = true;
+      this.lastSavedText.set('Saving...');
+      this.saveSubject.next();
+    }
   }
 
   saveTimeline(): Observable<TimelineDTO | null> {
@@ -1783,7 +2008,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     const timelineData: TimelineDTO = {
       timeline_id: timelineId || undefined,
       storyboard_id: sb?.id || undefined,
-      project_id: this.currentProjectId() || sb?.project_id || undefined,
+      project_id:
+        this.currentProjectId() ||
+        sb?.project_id ||
+        this.projectStateService.getActiveProjectId() ||
+        undefined,
       session_id:
         sb?.session_id ||
         this.agentChatService.selectedSessionId() ||
@@ -1809,17 +2038,6 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         this.lastSavedText.set('Saved');
         if (res.timeline_id) {
           this.timelineState.loadedTimelineId.set(res.timeline_id);
-          if (!res.storyboard_id && !res.session_id) {
-            void this.router.navigate([], {
-              relativeTo: this.route,
-              queryParams: {
-                timelineId: res.timeline_id,
-                sessionId: null,
-                storyboardId: null,
-              },
-              queryParamsHandling: 'merge',
-            });
-          }
         }
         this.isSaving = false;
         subject.next(res);
@@ -1863,6 +2081,23 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         };
         return updated;
       });
+
+      const vClips = this.timelineState.videoClips();
+      if (event.index < vClips.length) {
+        const targetClip = vClips[event.index];
+        this.timelineState.timelineClips.update(clips =>
+          clips.map(c =>
+            c.id === targetClip.id
+              ? {
+                  ...c,
+                  transition_to_next_type: event.type,
+                  transition_to_next_duration: event.duration_seconds,
+                }
+              : c,
+          ),
+        );
+        this.resolveOverlaps(targetClip.id);
+      }
     }
     this.saveTimeline().subscribe();
   }
@@ -1872,5 +2107,37 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     if (clips.length === 0) return 0;
     const lastClip = clips[clips.length - 1];
     return lastClip.startTime + lastClip.duration;
+  }
+
+  getVisualClipLeft(clip: TimelineClip): number {
+    if (clip.trackIndex !== 0) {
+      return clip.startTime * this.timelineState.pixelsPerSecond() + 2;
+    }
+    const clips = this.timelineState.videoClips();
+    const idx = clips.findIndex(c => c.id === clip.id);
+    if (idx <= 0) {
+      return 2;
+    }
+    let accumulatedTime = 0;
+    for (let i = 0; i < idx; i++) {
+      accumulatedTime += clips[i].duration;
+    }
+    return accumulatedTime * this.timelineState.pixelsPerSecond() + 2;
+  }
+
+  getVisualTransitionLeft(idx: number): number {
+    const clips = this.timelineState.videoClips();
+    if (idx < 0 || idx >= clips.length - 1) return 0;
+    let accumulatedTime = 0;
+    for (let i = 0; i <= idx; i++) {
+      accumulatedTime += clips[i].duration;
+    }
+    return accumulatedTime * this.timelineState.pixelsPerSecond() - 12;
+  }
+
+  getVisualTotalDuration(): number {
+    return this.timelineState
+      .videoClips()
+      .reduce((acc, c) => acc + c.duration, 0);
   }
 }

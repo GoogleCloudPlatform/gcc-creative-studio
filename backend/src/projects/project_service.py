@@ -223,8 +223,19 @@ class ProjectService:
         data["owner_id"] = owner_id
         return await self.project_repo.create(data)
 
-    async def get_project(self, project_id: int) -> ProjectResponse | None:
-        return await self.project_repo.get_by_id(project_id)
+    async def get_project(
+        self,
+        project_id: int | None = None,
+        session_id: str | None = None,
+        storyboard_id: int | None = None,
+        timeline_id: int | None = None,
+    ) -> ProjectResponse | None:
+        return await self.project_repo.get_project_by_params(
+            project_id=project_id,
+            session_id=session_id,
+            storyboard_id=storyboard_id,
+            timeline_id=timeline_id,
+        )
 
     async def list_projects(
         self, workspace_id: int, owner_id: int

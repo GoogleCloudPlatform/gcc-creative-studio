@@ -15,10 +15,12 @@
  */
 
 :host {
-  display: block;
+  display: inline-block;
   position: relative;
   z-index: 100;
-  width: 200px;
+  width: max-content;
+  min-width: 160px;
+  max-width: 100%;
 
   &.size-default {
     height: 48px;
@@ -55,10 +57,8 @@
 
   border-radius: 12px;
   width: 100%;
-  overflow: hidden;
-  position: absolute;
-  top: 0;
-  left: 0;
+  overflow: visible;
+  position: relative;
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 
   &.size-medium {
@@ -120,11 +120,6 @@
       inset 0 1px 0 0 rgba(255, 255, 255, 0.3),
       0 4px 12px rgba(0, 0, 0, 0.3);
   }
-
-  &.expanded {
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
-    z-index: 1000;
-  }
 }
 
 .dropdown-header {
@@ -158,8 +153,35 @@
 }
 
 .dropdown-panel {
-  padding: 0 4px 8px 4px;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  width: max-content;
+  min-width: 100%;
+  max-width: 400px;
+  
+  // Double-Layered Glass Background (Matching studio-button)
+  border: 1px solid transparent;
+  background-image: linear-gradient(
+      180deg,
+      rgba(45, 45, 45, 0.85),
+      rgba(25, 25, 25, 0.95)
+    ),
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.3) 0%,
+      rgba(255, 255, 255, 0.05) 100%
+    );
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  backdrop-filter: blur(15px);
+  box-shadow: 
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.1),
+    0 8px 32px rgba(0, 0, 0, 0.5);
+  border-radius: 12px;
+  z-index: 1000;
+
+  padding: 8px 4px;
   text-align: right;
 
   .menu-header {
@@ -235,6 +257,10 @@
     text-align: left;
     width: 100%;
     transition: background 0.2s ease;
+
+    &.flex {
+      min-width: 280px;
+    }
 
     ::ng-deep .mdc-button__label {
       width: 100%;

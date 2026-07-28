@@ -95,7 +95,7 @@ export class StoryboardComponent {
   isGeneratingStoryboard = computed(() =>
     this.agentChatService.isGeneratingStoryboard(),
   );
-  isGeneratingVideo = signal<boolean>(false);
+  isGeneratingVideo = computed(() => this.agentChatService.isGeneratingVideo());
   isGenerating = computed(
     () => this.isGeneratingStoryboard() || this.isGeneratingVideo(),
   );
@@ -132,7 +132,7 @@ export class StoryboardComponent {
   constructor() {
     // Reset video generation state when video is completed
     this.agentChatService.videoGenerated$.subscribe(() => {
-      this.isGeneratingVideo.set(false);
+      this.agentChatService.isGeneratingVideo.set(false);
       this.showSeeVideoBtn.set(true);
     });
 
@@ -301,7 +301,7 @@ export class StoryboardComponent {
     this.scenes.set(updatedScenes);
   }
   onGenerateVideo() {
-    this.isGeneratingVideo.set(true);
+    this.agentChatService.isGeneratingVideo.set(true);
     // Notify the Agent Chat Service that the user requested video generation
     this.agentChatService.generateVideoRequest$.next();
   }

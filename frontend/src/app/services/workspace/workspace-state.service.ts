@@ -27,8 +27,27 @@ export class WorkspaceStateService {
   public readonly activeWorkspaceId$: Observable<number | null> =
     this.activeWorkspaceIdSubject.asObservable();
 
+  constructor() {
+    if (typeof localStorage !== 'undefined') {
+      const storedWorkspaceId = localStorage.getItem('activeWorkspaceId');
+      if (storedWorkspaceId) {
+        const parsed = parseInt(storedWorkspaceId, 10);
+        if (!isNaN(parsed)) {
+          this.activeWorkspaceIdSubject.next(parsed);
+        }
+      }
+    }
+  }
+
   setActiveWorkspaceId(workspaceId: number | null) {
     this.activeWorkspaceIdSubject.next(workspaceId);
+    if (typeof localStorage !== 'undefined') {
+      if (workspaceId !== null) {
+        localStorage.setItem('activeWorkspaceId', workspaceId.toString());
+      } else {
+        localStorage.removeItem('activeWorkspaceId');
+      }
+    }
   }
 
   getActiveWorkspaceId(): number | null {

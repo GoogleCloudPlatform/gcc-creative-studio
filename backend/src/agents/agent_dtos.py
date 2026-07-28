@@ -56,6 +56,7 @@ class ChatRequestDto(BaseModel):
 
     sessionId: str
     workspaceId: int
+    projectId: Optional[int] = None
     appName: Optional[str] = "ads_x"
     newMessage: Optional[ChatMessage] = None
     streaming: Optional[bool] = False
@@ -72,6 +73,12 @@ class PollEventsResponseDto(BaseModel):
     events: List[str]
 
 
+# --- Session Requests ---
+class SessionCreateRequestDto(BaseModel):
+    projectId: int
+    name: Optional[str] = None
+
+
 # --- Session Responses ---
 class SessionResponseDto(BaseModel):
     id: str
@@ -80,6 +87,7 @@ class SessionResponseDto(BaseModel):
     lastUpdateTime: Optional[float] = None
     state: Optional[Dict[str, Any]] = None
     events: Optional[List[Any]] = None
+    name: Optional[str] = None
 
 
 # --- Any dynamic structure fallback (for passthrough) ---

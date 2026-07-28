@@ -13,13 +13,18 @@
 # limitations under the License.
 
 from fastapi import Depends
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.common.base_repository import BaseRepository
 from src.database import get_db
 
-from src.projects.schema.project_model import Project, Storyboard, Scene
+from src.projects.schema.project_model import (
+    Project,
+    Storyboard,
+    Scene,
+    Session,
+)
 from src.workbench.schema.timeline_model import Timeline, VideoClip, AudioClip
 from src.projects.dto.project_dto import (
     ProjectResponse,
@@ -104,7 +109,7 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
             )
         )
         if session_id:
-            query = query.where(self.model.session_id == session_id)
+            query = query.join(Session).where(Session.session_id == session_id)
         if user_id is not None:
             query = query.where(self.model.user_id == user_id)
         result = await self.db.execute(query)
@@ -175,6 +180,54 @@ class ProjectRepository(BaseRepository[Project, ProjectResponse]):
             return None
         return self.schema.model_validate(item)
 
+    async def get_project_by_params(
+        self,
+        project_id: int | None = None,
+        session_id: str | None = None,
+        storyboard_id: int | None = None,
+        timeline_id: int | None = None,
+        include_deleted: bool = False,
+    ) -> ProjectResponse | None:
+        """Retrieves a single project by any of the 4 params: project_id, session_id, storyboard_id, or timeline_id."""
+        query = (
+            select(self.model)
+            .options(
+                selectinload(self.model.storyboard),
+                selectinload(self.model.timeline),
+                selectinload(self.model.sessions),
+            )
+            .execution_options(include_deleted=include_deleted)
+        )
+
+        conditions = []
+        if project_id is not None:
+            conditions.append(self.model.id == project_id)
+
+        if session_id is not None:
+            query = query.outerjoin(Session).outerjoin(Timeline)
+            conditions.append(
+                (Session.session_id == session_id)
+                | (Timeline.session_id == session_id)
+            )
+
+        if storyboard_id is not None:
+            query = query.join(Storyboard, isouter=True)
+            conditions.append(Storyboard.id == storyboard_id)
+
+        if timeline_id is not None:
+            query = query.join(Timeline, isouter=True)
+            conditions.append(Timeline.id == timeline_id)
+
+        if not conditions:
+            return None
+
+        query = query.where(or_(*conditions))
+        result = await self.db.execute(query)
+        item = result.scalars().first()
+        if not item:
+            return None
+        return self.schema.model_validate(item)
+
     async def find_by_workspace_and_owner(
         self, workspace_id: int, owner_id: int
     ) -> list[ProjectResponse]:
@@ -188,6 +241,7 @@ class ProjectRepository(BaseRepository[Project, ProjectResponse]):
             .options(
                 selectinload(self.model.storyboard),
                 selectinload(self.model.timeline),
+                selectinload(self.model.sessions),
             )
         )
         result = await self.db.execute(query)

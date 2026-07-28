@@ -25,6 +25,9 @@ from src.users.user_model import UserModel
 from src.agents.agent_chat_event_model import AgentChatEvent
 from src.projects.project_repository import StoryboardRepository
 from src.projects.project_service import ProjectService
+from src.agents.agent_repository import AgentRepository
+from src.workspaces.workspace_auth_guard import WorkspaceAuth
+from src.projects.project_auth_guard import ProjectAuth
 
 
 @pytest.fixture(name="mock_user")
@@ -36,7 +39,11 @@ def fixture_mock_user():
 
 @pytest.fixture(name="mock_db")
 def fixture_mock_db():
-    return AsyncMock(spec=AsyncSession)
+    db = AsyncMock(spec=AsyncSession)
+    mock_result = MagicMock()
+    mock_result.scalars().all.return_value = []
+    db.execute.return_value = mock_result
+    return db
 
 
 @pytest.fixture(name="mock_workspace_service")
@@ -119,6 +126,22 @@ def fixture_mock_workspace_repo():
     return repo
 
 
+@pytest.fixture(name="mock_workspace_auth")
+def fixture_mock_workspace_auth():
+    """Provides a mocked WorkspaceAuth."""
+    mock = AsyncMock()
+    mock.authorize.return_value = True
+    return mock
+
+
+@pytest.fixture(name="mock_project_auth")
+def fixture_mock_project_auth():
+    """Provides a mocked ProjectAuth."""
+    mock = AsyncMock()
+    mock.authorize.return_value = True
+    return mock
+
+
 @pytest.fixture(name="client")
 def fixture_client(
     mock_user,
@@ -127,6 +150,8 @@ def fixture_client(
     mock_storyboard_repo,
     mock_workspace_repo,
     mock_project_service,
+    mock_workspace_auth,
+    mock_project_auth,
 ):
     app = FastAPI()
     app.include_router(router)
@@ -145,6 +170,8 @@ def fixture_client(
         lambda: mock_storyboard_repo
     )
     app.dependency_overrides[ProjectService] = lambda: mock_project_service
+    app.dependency_overrides[WorkspaceAuth] = lambda: mock_workspace_auth
+    app.dependency_overrides[ProjectAuth] = lambda: mock_project_auth
     app.dependency_overrides[security] = lambda: HTTPAuthorizationCredentials(
         scheme="Bearer", credentials="dummy"
     )
@@ -175,6 +202,7 @@ async def test_get_sessions_success(mock_remote_agent, client):
             "lastUpdateTime": None,
             "state": {"workspace_id": 1},
             "events": [],
+            "name": None,
         }
     ]
 
@@ -213,7 +241,7 @@ async def test_create_session_success(mock_remote_agent, client):
         "state": {"workspace_id": 1},
     }
 
-    response = client.post("/api/agent/sessions")
+    response = client.post("/api/agent/sessions", json={"projectId": 1})
 
     assert response.status_code == 200
     assert response.json() == {
@@ -223,6 +251,7 @@ async def test_create_session_success(mock_remote_agent, client):
         "lastUpdateTime": None,
         "state": {"workspace_id": 1},
         "events": [],
+        "name": None,
     }
 
 
@@ -245,6 +274,7 @@ async def test_get_session_messages_success(mock_remote_agent, client):
         "lastUpdateTime": None,
         "state": {"workspace_id": 1},
         "events": [],
+        "name": None,
     }
 
 
@@ -428,7 +458,7 @@ async def test_agent_service_sync_fallbacks(mock_remote_agent):
     from src.agents.agent_service import AgentService
 
     service = AgentService(
-        agent_repo=MagicMock(),
+        agent_repo=AsyncMock(),
         workspace_service=MagicMock(),
         storyboard_repo=MagicMock(),
         workspace_auth=AsyncMock(),
@@ -480,7 +510,7 @@ async def test_agent_service_exceptions(mock_remote_agent):
     from fastapi import HTTPException
 
     service = AgentService(
-        agent_repo=MagicMock(),
+        agent_repo=AsyncMock(),
         workspace_service=MagicMock(),
         storyboard_repo=MagicMock(),
         workspace_auth=AsyncMock(),

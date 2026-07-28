@@ -432,6 +432,7 @@ describe('WorkbenchComponent', () => {
     });
 
     it('should set status to Saving... in triggerAutoSave', () => {
+      stateService.loadedTimelineId.set(2);
       component.triggerAutoSave();
       expect(component.lastSavedText()).toBe('Saving...');
       expect(component['hasPendingSave']).toBeTrue();
@@ -512,6 +513,7 @@ describe('WorkbenchComponent', () => {
       expect(workbenchService.updateTimeline).toHaveBeenCalledWith(2, {
         timeline_id: 2,
         storyboard_id: 1,
+        project_id: undefined,
         session_id: undefined,
         workspace_id: 1,
         title: 'Timeline',
@@ -799,6 +801,7 @@ describe('WorkbenchComponent', () => {
       expect(stateService.timelineClips().length).toBe(1);
 
       agentChatService.currentStoryboard.set(null);
+      stateService.loadedTimelineId.set(undefined);
       fixture.detectChanges();
       tick();
 

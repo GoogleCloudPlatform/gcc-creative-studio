@@ -259,7 +259,7 @@ class AgentService:
                 name=agent_name, config={"filter": f'user_id="{user_id}"'}
             )
 
-            mapped_sessions = []
+            filtered_sessions = []
             for s in raw_sessions:
                 s_state = getattr(s, "session_state", None)
                 if isinstance(s, dict):
@@ -271,23 +271,49 @@ class AgentService:
                     s_workspace_id = s_state.get("workspace_id")
                     s_project_id = s_state.get("project_id")
 
+                matches_workspace = True
+                if workspace_id is not None:
+                    matches_workspace = s_workspace_id is not None and str(
+                        s_workspace_id
+                    ) == str(workspace_id)
+
+                matches_project = True
                 if project_id is not None:
-                    if s_project_id is not None and str(s_project_id) == str(
-                        project_id
-                    ):
-                        mapped_sessions.append(
-                            self._map_session_to_dto(s, appName, user_id)
-                        )
-                elif s_workspace_id is not None:
-                    if workspace_id is not None:
-                        if str(s_workspace_id) == str(workspace_id):
-                            mapped_sessions.append(
-                                self._map_session_to_dto(s, appName, user_id)
-                            )
-                    else:
-                        mapped_sessions.append(
-                            self._map_session_to_dto(s, appName, user_id)
-                        )
+                    matches_project = s_project_id is not None and str(
+                        s_project_id
+                    ) == str(project_id)
+
+                if matches_workspace and matches_project:
+                    filtered_sessions.append(s)
+
+            session_ids = []
+            for s in filtered_sessions:
+                s_id = (
+                    getattr(s, "id", None)
+                    if not isinstance(s, dict)
+                    else s.get("id")
+                )
+                if not s_id and hasattr(s, "name"):
+                    s_id = s.name.split("/")[-1]
+                if s_id:
+                    session_ids.append(s_id)
+
+            db_sessions = await self.agent_repo.get_sessions_by_ids(session_ids)
+            session_name_map = {ds.session_id: ds.name for ds in db_sessions}
+
+            mapped_sessions = []
+            for s in filtered_sessions:
+                s_id = (
+                    getattr(s, "id", None)
+                    if not isinstance(s, dict)
+                    else s.get("id")
+                )
+                if not s_id and hasattr(s, "name"):
+                    s_id = s.name.split("/")[-1]
+                dto = self._map_session_to_dto(s, appName, user_id)
+                if s_id:
+                    dto.name = session_name_map.get(s_id)
+                mapped_sessions.append(dto)
 
             return mapped_sessions
         except HTTPException:
@@ -305,6 +331,7 @@ class AgentService:
         request: Request,
         workspace_id: int | None = None,
         project_id: int | None = None,
+        name: str | None = None,
         appName: str = APP_NAME,
     ) -> SessionResponseDto:
         try:
@@ -335,7 +362,24 @@ class AgentService:
                 config={"session_state": state_data},
             )
             session = getattr(op, "response", None) or op
-            return self._map_session_to_dto(session, appName, user_id)
+            s_id = (
+                getattr(session, "id", None)
+                if not isinstance(session, dict)
+                else session.get("id")
+            )
+            if not s_id and hasattr(session, "name"):
+                s_id = session.name.split("/")[-1]
+
+            if project_id is not None and s_id:
+                await self.agent_repo.create_session_record(
+                    project_id=project_id,
+                    session_id=s_id,
+                    name=name,
+                )
+
+            dto = self._map_session_to_dto(session, appName, user_id)
+            dto.name = name
+            return dto
         except HTTPException:
             raise
         except Exception as e:
@@ -467,6 +511,12 @@ class AgentService:
                 session_dto = self._map_session_to_dto(
                     session, appName, user_id, events=events_list
                 )
+                if resolved_session_id:
+                    db_sessions = await self.agent_repo.get_sessions_by_ids(
+                        [resolved_session_id]
+                    )
+                    if db_sessions:
+                        session_dto.name = db_sessions[0].name
             except Exception as e:
                 logger.error(
                     f"Unexpected error fetching session {resolved_session_id} details: {e}",
@@ -624,6 +674,7 @@ class AgentService:
 
         session_id = body.get("sessionId")
         workspace_id = body.get("workspaceId")
+        project_id = body.get("projectId")
 
         if workspace_id is not None:
             injections.append(f"Active Workspace ID: {workspace_id}")
@@ -631,7 +682,17 @@ class AgentService:
                 workspace_id=workspace_id,
                 user=current_user,
             )
-        elif session_id is not None:
+
+        if project_id is not None:
+            injections.append(f"Active Project ID: {project_id}")
+            await self.project_auth.authorize(
+                project_id=project_id,
+                user=current_user,
+            )
+
+        if (
+            workspace_id is None or project_id is None
+        ) and session_id is not None:
             try:
                 agent_config = self._get_agent_config(body["appName"])
                 agent_name = agent_config.get("resource_name")
@@ -645,22 +706,35 @@ class AgentService:
                         s_state = session.get("session_state") or s_state
 
                     s_workspace_id = None
+                    s_project_id = None
                     if isinstance(s_state, dict):
                         s_workspace_id = s_state.get("workspace_id")
+                        s_project_id = s_state.get("project_id")
 
-                    if s_workspace_id is not None:
+                    if workspace_id is None and s_workspace_id is not None:
                         workspace_id = int(s_workspace_id)
+                        injections.append(
+                            f"Active Workspace ID: {workspace_id}"
+                        )
                         await self.workspace_auth.authorize(
                             workspace_id=workspace_id,
                             user=current_user,
                         )
+
+                    if project_id is None and s_project_id is not None:
+                        project_id = int(s_project_id)
+                        injections.append(f"Active Project ID: {project_id}")
+                        await self.project_auth.authorize(
+                            project_id=project_id,
+                            user=current_user,
+                        )
             except Exception as e_err:
                 logger.warning(
-                    f"Could not retrieve session workspace for chat authorization: {e_err}"
+                    f"Could not retrieve session workspace or project for chat authorization: {e_err}"
                 )
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Unauthorized: Could not verify session workspace authorization.",
+                    detail="Unauthorized: Could not verify session authorization.",
                 )
 
         if "newMessage" in body:

@@ -154,6 +154,7 @@ export interface ChatSession {
     [key: string]: unknown;
   };
   events?: any[];
+  name?: string;
 }
 
 export interface SessionDetailResponse {
@@ -204,6 +205,7 @@ export interface ProjectResponse {
   thumbnail_source_asset_id?: number;
   storyboard_id?: number;
   timeline_id?: number;
+  session_id?: string;
   created_at: string;
   updated_at: string;
 }

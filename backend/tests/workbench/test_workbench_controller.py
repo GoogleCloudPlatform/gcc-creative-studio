@@ -21,6 +21,8 @@ import pytest
 from fastapi import status
 
 from main import app
+from src.workspaces.workspace_auth_guard import WorkspaceAuth
+from src.projects.project_auth_guard import ProjectAuth
 from src.workbench.dto.workbench_dto import TimelineResponse
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.common.base_dto import (
@@ -55,13 +57,34 @@ def fixture_mock_project_service():
     return AsyncMock()
 
 
+@pytest.fixture(name="mock_workspace_auth")
+def fixture_mock_workspace_auth():
+    """Provides a mocked WorkspaceAuth."""
+    mock = AsyncMock()
+    mock.authorize.return_value = True
+    return mock
+
+
+@pytest.fixture(name="mock_project_auth")
+def fixture_mock_project_auth():
+    """Provides a mocked ProjectAuth."""
+    mock = AsyncMock()
+    mock.authorize.return_value = True
+    return mock
+
+
 @pytest.fixture(name="override_workbench_service", autouse=True)
 def fixture_override_workbench_service(
-    mock_workbench_service, mock_project_service
+    mock_workbench_service,
+    mock_project_service,
+    mock_workspace_auth,
+    mock_project_auth,
 ):
     """Overrides the WorkbenchService and security dependency in the app."""
     app.dependency_overrides[WorkbenchService] = lambda: mock_workbench_service
     app.dependency_overrides[ProjectService] = lambda: mock_project_service
+    app.dependency_overrides[WorkspaceAuth] = lambda: mock_workspace_auth
+    app.dependency_overrides[ProjectAuth] = lambda: mock_project_auth
     app.dependency_overrides[security] = lambda: HTTPAuthorizationCredentials(
         scheme="Bearer", credentials="mock"
     )
@@ -70,6 +93,10 @@ def fixture_override_workbench_service(
         del app.dependency_overrides[WorkbenchService]
     if ProjectService in app.dependency_overrides:
         del app.dependency_overrides[ProjectService]
+    if WorkspaceAuth in app.dependency_overrides:
+        del app.dependency_overrides[WorkspaceAuth]
+    if ProjectAuth in app.dependency_overrides:
+        del app.dependency_overrides[ProjectAuth]
     if security in app.dependency_overrides:
         del app.dependency_overrides[security]
 
@@ -79,7 +106,7 @@ class TestWorkbenchController:
 
     def test_render_timeline(self, api_client, mock_workbench_service):
         mock_timeline = TimelineResponse(
-            timeline_id=1, workspace_id="ws1", title="Timeline", user_id="1"
+            timeline_id=1, workspace_id=1, title="Timeline", user_id="1"
         )
         mock_workbench_service.get_timeline.return_value = mock_timeline
         mock_res = MediaItemResponse(
@@ -106,13 +133,13 @@ class TestWorkbenchController:
 
     def test_create_timeline(self, api_client, mock_workbench_service):
         mock_res = TimelineResponse(
-            timeline_id=1, storyboard_id=5, workspace_id="ws1", title="New"
+            timeline_id=1, storyboard_id=5, workspace_id=1, title="New"
         )
         mock_workbench_service.create_timeline.return_value = mock_res
 
         payload = {
             "storyboardId": 5,
-            "workspace_id": "ws1",
+            "workspace_id": 1,
             "title": "New",
             "video_clips": [],
             "audio_clips": [],
@@ -129,7 +156,7 @@ class TestWorkbenchController:
 
     def test_get_timeline_found(self, api_client, mock_workbench_service):
         mock_res = TimelineResponse(
-            timeline_id=2, workspace_id="ws1", title="Found", user_id="1"
+            timeline_id=2, workspace_id=1, title="Found", user_id="1"
         )
         mock_workbench_service.get_timeline.return_value = mock_res
 
@@ -156,7 +183,7 @@ class TestWorkbenchController:
 
         mock_res = [
             TimelineResponse(
-                timeline_id=3, workspace_id="ws1", title="T3", user_id="1"
+                timeline_id=3, workspace_id=1, title="T3", user_id="1"
             )
         ]
         mock_workbench_service.list_timelines.return_value = mock_res
@@ -170,14 +197,14 @@ class TestWorkbenchController:
 
     def test_update_timeline_found(self, api_client, mock_workbench_service):
         mock_timeline = TimelineResponse(
-            timeline_id=4, workspace_id="ws1", title="Old", user_id="1"
+            timeline_id=4, workspace_id=1, title="Old", user_id="1"
         )
         mock_workbench_service.get_timeline.return_value = mock_timeline
 
         mock_res = TimelineResponse(
             timeline_id=4,
             storyboard_id=10,
-            workspace_id="ws1",
+            workspace_id=1,
             title="Updated",
             user_id="1",
         )
@@ -185,7 +212,7 @@ class TestWorkbenchController:
 
         payload = {
             "storyboard_id": 10,
-            "workspace_id": "ws1",
+            "workspace_id": 1,
             "title": "Updated",
             "video_clips": [],
             "audio_clips": [],
@@ -205,7 +232,7 @@ class TestWorkbenchController:
         mock_workbench_service.get_timeline.return_value = None
 
         payload = {
-            "workspace_id": "ws1",
+            "workspace_id": 1,
             "title": "Updated",
             "video_clips": [],
             "audio_clips": [],
@@ -216,7 +243,7 @@ class TestWorkbenchController:
 
     def test_delete_timeline_found(self, api_client, mock_workbench_service):
         mock_timeline = TimelineResponse(
-            timeline_id=5, workspace_id="ws1", title="DeleteMe", user_id="1"
+            timeline_id=5, workspace_id=1, title="DeleteMe", user_id="1"
         )
         mock_workbench_service.get_timeline.return_value = mock_timeline
         mock_workbench_service.delete_timeline.return_value = True

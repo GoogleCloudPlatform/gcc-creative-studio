@@ -77,7 +77,23 @@ export class TransitionIndicatorComponent {
   ];
 
   selectedType: TransitionType = TransitionType.NONE;
-  durationSeconds = 0;
+  private _durationSeconds = 0;
+  get durationSeconds(): number {
+    return this._durationSeconds;
+  }
+  set durationSeconds(value: number) {
+    if (value === null || value === undefined || isNaN(value)) {
+      this._durationSeconds = value;
+      return;
+    }
+    if (value > 4) {
+      this._durationSeconds = 4;
+    } else if (value < 0) {
+      this._durationSeconds = 0;
+    } else {
+      this._durationSeconds = value;
+    }
+  }
 
   private dialog = inject(MatDialog);
   @ViewChild('transitionModal') transitionModal!: TemplateRef<any>;
@@ -111,6 +127,17 @@ export class TransitionIndicatorComponent {
       this.selectedType !== originalType ||
       this.durationSeconds !== originalDuration
     );
+  }
+
+  get isSaveDisabled(): boolean {
+    if (!this.hasChanges) {
+      return true;
+    }
+    if (this.selectedType !== TransitionType.NONE) {
+      const val = Number(this.durationSeconds);
+      return !this.durationSeconds || val <= 0 || val > 4;
+    }
+    return false;
   }
 
   selectType(type: TransitionType) {

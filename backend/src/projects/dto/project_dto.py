@@ -98,6 +98,7 @@ class ProjectResponse(BaseModel):
     thumbnail_source_asset_id: Optional[int] = None
     storyboard_id: Optional[int] = None
     timeline_id: Optional[int] = None
+    session_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
