@@ -28,6 +28,7 @@ from google.oauth2 import id_token
 from src.config.config_service import config_service
 from src.users.user_model import UserModel, UserRoleEnum
 from src.users.user_service import UserService
+from src.common.request_context import is_agent_request
 
 # Initialize the scheme without auto_error so we can handle fallback internal auth
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
@@ -45,8 +46,10 @@ async def get_current_user(
     provisioning flow. Supports standard token or internal agent key auth.
     """
     try:
+        is_agent_request.set(False)
         user_auth_header = request.headers.get("X-User-Authorization")
         if user_auth_header:
+            is_agent_request.set(True)
             token = (
                 user_auth_header.replace("Bearer ", "")
                 .replace("bearer ", "")
