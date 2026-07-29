@@ -275,3 +275,34 @@ class TestBackgroundWorkers:
             called_config.speech_config.voice_config.prebuilt_voice_config.voice_name
             == "Aoede"
         )
+
+
+class TestCreateAudioDtoValidation:
+
+    def test_validate_new_audio_models(self):
+        lyria_dto = CreateAudioDto(
+            workspace_id=1,
+            prompt="Lyria 3 test prompt",
+            model=GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+            sample_count=1,
+        )
+        assert lyria_dto.model == GenerationModelEnum.LYRIA_3_CLIP_PREVIEW
+
+        gemini_dto = CreateAudioDto(
+            workspace_id=1,
+            prompt="Gemini 3.1 TTS test prompt",
+            model=GenerationModelEnum.GEMINI_3_1_FLASH_TTS_PREVIEW,
+            language_code=LanguageEnum.EN_US,
+            voice_name=VoiceEnum.PUCK,
+        )
+        assert (
+            gemini_dto.model == GenerationModelEnum.GEMINI_3_1_FLASH_TTS_PREVIEW
+        )
+
+    def test_invalid_audio_model_raises_error(self):
+        with pytest.raises(ValueError, match="is not a valid audio model"):
+            CreateAudioDto(
+                workspace_id=1,
+                prompt="Invalid model test",
+                model=GenerationModelEnum.GEMINI_2_5_FLASH,
+            )
