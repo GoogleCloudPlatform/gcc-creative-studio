@@ -43,4 +43,4 @@ provider "google-beta" {
   region  = var.region
 }
 
-# check platform.tf if you're looking for the crux of this module
+# check app.tf, storage.tf, and network.tf if you're looking for the crux of this module

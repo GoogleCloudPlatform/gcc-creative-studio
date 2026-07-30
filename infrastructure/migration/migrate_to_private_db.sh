@@ -46,16 +46,31 @@ fi
 BUCKET_NAME="${BUCKET_NAME#gs://}"
 EXPORT_FILE="migration_$(date +%s).sql.gz"
 
-# Check if target database already contains data to prevent accidental overwrites
+# Check if user wants to force or confirm before migrating to target database
 if [ "$FORCE" != "true" ]; then
-    echo "Checking if target database $DATABASE_NAME already contains tables..."
-    TABLE_COUNT=$(gcloud sql execute "$TARGET_INSTANCE" --database="$DATABASE_NAME" "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public';" --format="value(count)" 2>/dev/null || echo "0")
-    if [ "$TABLE_COUNT" -gt 0 ]; then
-        echo "ERROR: Target database '$DATABASE_NAME' on '$TARGET_INSTANCE' already contains $TABLE_COUNT table(s)."
-        echo "Aborting migration to prevent accidental data loss. To force migration anyway, re-run with FORCE=true."
+    echo "WARNING: You are about to import data into target instance '$TARGET_INSTANCE' (database '$DATABASE_NAME')."
+    echo "If this target database already contains data, this import may overwrite or duplicate tables."
+    read -r -p "Are you sure you want to proceed? (y/N): " CONFIRM
+    if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+        echo "Aborting migration to prevent accidental data loss. To run without interactive prompts, set FORCE=true."
         exit 1
     fi
 fi
+
+cleanup_iam_bindings() {
+    echo "Cleaning up temporary IAM policy bindings on gs://$BUCKET_NAME..."
+    if [ -n "$SOURCE_SA" ]; then
+        gcloud storage buckets remove-iam-policy-binding "gs://$BUCKET_NAME" \
+            --member="serviceAccount:$SOURCE_SA" \
+            --role="roles/storage.objectAdmin" --quiet 2>/dev/null || true
+    fi
+    if [ -n "$TARGET_SA" ]; then
+        gcloud storage buckets remove-iam-policy-binding "gs://$BUCKET_NAME" \
+            --member="serviceAccount:$TARGET_SA" \
+            --role="roles/storage.objectViewer" --quiet 2>/dev/null || true
+    fi
+}
+trap cleanup_iam_bindings EXIT
 
 echo "Starting migration from $SOURCE_INSTANCE to $TARGET_INSTANCE for database $DATABASE_NAME..."
 

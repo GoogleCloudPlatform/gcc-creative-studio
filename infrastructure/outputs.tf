@@ -46,5 +46,15 @@ output "agent_service_account_email" {
   value       = module.compute.agent_service_account_email
 }
 
+output "backend_secrets" {
+  description = "Application secrets created for the backend layer."
+  value       = tolist(var.application_secrets)
+}
+
+output "frontend_secrets" {
+  description = "Application secrets created for the frontend layer."
+  value       = []
+}
+
 
 

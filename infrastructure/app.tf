@@ -33,8 +33,11 @@ module "compute" {
   secret_ids      = var.application_secrets
 
   container_env_vars = {
+    PROJECT_ID                       = var.project_id
     DB_NAME                          = module.database.database_name
     DB_USER                          = module.database.user_name
+    INSTANCE_CONNECTION_NAME         = module.database.instance_connection_name
+    GENMEDIA_BUCKET                  = google_storage_bucket.genmedia.name
     AGENT_ENGINE_RESOURCE_NAME       = var.agent_engine_resource_name
     AGENT_LOCATION                   = var.agent_location
     AGENT_ENGINE_USER_AUTH_TOKEN_KEY = var.agent_engine_user_auth_token_key

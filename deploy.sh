@@ -478,12 +478,7 @@ auto_migrate_database() {
     step 10 "Checking Database Migration Requirements"
     info "Checking if an existing database migration is required..."
 
-    local ENV_TF_DIR="$REPO_ROOT/infrastructure/environments/$ENV_NAME"
-    if [ ! -d "$ENV_TF_DIR" ]; then
-        ENV_TF_DIR="$REPO_ROOT/infra/environments/$ENV_NAME"
-    fi
-
-    pushd "$ENV_TF_DIR" > /dev/null
+    pushd "$REPO_ROOT/infrastructure" > /dev/null
     local TARGET_INSTANCE=$(terraform output -raw cloud_sql_connection_name 2>/dev/null | cut -d':' -f3 || echo "")
     popd > /dev/null
 
@@ -500,9 +495,6 @@ auto_migrate_database() {
 
         local ASSET_BUCKET="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
         local MIGRATE_SCRIPT="$REPO_ROOT/infrastructure/migration/migrate_to_private_db.sh"
-        if [ ! -f "$MIGRATE_SCRIPT" ]; then
-            MIGRATE_SCRIPT="$REPO_ROOT/infra/migration/migrate_to_private_db.sh"
-        fi
 
         if [ -f "$MIGRATE_SCRIPT" ]; then
             info "Starting automatic data migration from ${SOURCE_INSTANCE} to ${TARGET_INSTANCE}..."
@@ -675,8 +667,8 @@ deploy_izumi_agent() {
     else
         info "Executing deployment script..."
         AGENT_SA_EMAIL=""
-        if [ -d "$REPO_ROOT/infrastructure/environments/$ENV_NAME" ]; then
-            AGENT_SA_EMAIL=$(cd "$REPO_ROOT/infrastructure/environments/$ENV_NAME" && terraform output -raw agent_service_account_email 2>/dev/null || echo "")
+        if [ -d "$REPO_ROOT/infrastructure" ]; then
+            AGENT_SA_EMAIL=$(cd "$REPO_ROOT/infrastructure" && terraform output -raw agent_service_account_email 2>/dev/null || echo "")
         fi
 
         AGENT_AUTH_TOKEN=$(gcloud secrets versions access latest --secret="agent_engine_user_auth_token_key" --project="$GCP_PROJECT_ID" 2>/dev/null || echo "")

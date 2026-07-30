@@ -92,7 +92,7 @@ resource "google_cloud_run_v2_service" "backend" {
       # Startup and Liveness Probes
       startup_probe {
         http_get {
-          path = "/health/ready" # Your API's health endpoint
+          path = "/" # Your API's health endpoint
           port = 8080
         }
         initial_delay_seconds = 2
@@ -102,7 +102,8 @@ resource "google_cloud_run_v2_service" "backend" {
       
       liveness_probe {
         http_get {
-          path = "/health/live"
+          path = "/"
+          port = 8080
         }
         period_seconds = 10
       }

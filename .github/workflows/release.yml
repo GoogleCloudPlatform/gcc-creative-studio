@@ -45,6 +45,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.5.0
+
       - name: Sign Backend Image
         run: |
           cosign sign --yes "${{ env.REGISTRY }}/${{ github.repository }}/backend@${{ steps.build-push.outputs.digest }}"

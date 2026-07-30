@@ -39,6 +39,7 @@ module "gateway" {
 | `ban_duration_sec` | Duration in seconds to ban abusive IPs. | `number` | `300` | no |
 | `enable_cdn` | Whether to enable Cloud CDN on the backend. | `bool` | `false` | no |
 | `log_sample_rate` | Sample rate for request logging (0.0 to 1.0). | `number` | `1.0` | no |
+| `enable_adaptive_protection` | Whether to enable Cloud Armor Adaptive Protection. | `bool` | `false` | no |
 
 ## Outputs
 

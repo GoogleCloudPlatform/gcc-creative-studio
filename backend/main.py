@@ -126,7 +126,13 @@ async def lifespan(app: FastAPI):
 
     logger.info("Closing ThreadPoolExecutor...")
     app.state.executor.shutdown(wait=True)
-    # Your shutdown logic here, e.g., closing database connections
+    logger.info("Closing Cloud SQL Python Connector...")
+    try:
+        from src.database import cleanup_connector
+
+        await cleanup_connector()
+    except Exception as e:
+        logger.error(f"Error during database connector cleanup: {e}")
 
 
 app = FastAPI(

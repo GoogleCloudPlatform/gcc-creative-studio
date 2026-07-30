@@ -3,10 +3,13 @@ resource "google_compute_security_policy" "policy" {
   name = "${var.resource_prefix}-${var.environment}-waf-policy"
 
   # Enable Machine Learning DDoS Protection
-  adaptive_protection_config {
-    layer_7_ddos_defense_config {
-      enable          = true
-      rule_visibility = "STANDARD"
+  dynamic "adaptive_protection_config" {
+    for_each = var.enable_adaptive_protection ? [1] : []
+    content {
+      layer_7_ddos_defense_config {
+        enable          = true
+        rule_visibility = "STANDARD"
+      }
     }
   }
 

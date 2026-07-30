@@ -117,6 +117,8 @@ variable "run_sa_project_roles" {
     "roles/workflows.editor",
     "roles/workflows.invoker",
     "roles/secretmanager.secretAccessor",
+    "roles/cloudsql.client",
+    "roles/cloudsql.instanceUser",
   ]
 }
 

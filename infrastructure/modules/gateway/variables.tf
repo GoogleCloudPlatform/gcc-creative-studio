@@ -52,3 +52,10 @@ variable "log_sample_rate" {
   description = "Sample rate for request logging (0.0 to 1.0)."
   default     = 1.0
 }
+
+variable "enable_adaptive_protection" {
+  type        = bool
+  description = "Whether to enable Cloud Armor Adaptive Protection (requires Cloud Armor Enterprise subscription)."
+  default     = false
+}
+

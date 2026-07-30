@@ -136,8 +136,9 @@ start_sql_proxy() {
     
     # 1. Get Instance Connection Name
     # Try Terraform output first, fallback to gcloud
-    pushd "$REPO_ROOT/infra/environments/$ENV_NAME" > /dev/null
-    DB_INSTANCE_NAME=$(terraform output -raw cloud_sql_connection_name 2>/dev/null)
+    local ENV_TF_DIR="$REPO_ROOT/infrastructure"
+    pushd "$ENV_TF_DIR" > /dev/null
+    DB_INSTANCE_NAME=$(terraform output -raw cloud_sql_connection_name 2>/dev/null || echo "")
     popd > /dev/null
 
     if [ -z "$DB_INSTANCE_NAME" ]; then
@@ -358,7 +359,7 @@ setup_repo() {
         cd "$REPO_CLONE_DIR"
         
         # 2. Sparse checkout for ROOT folders only
-        git sparse-checkout set "infra" "backend" "frontend" "bootstrap.sh"
+        git sparse-checkout set "infrastructure" "backend" "frontend" "bootstrap.sh"
         
         git checkout
         cd ..
@@ -370,12 +371,12 @@ setup_repo() {
     info "Verifying project structure..."
 
     # Check if the project is at the top level
-    if [[ -d "$REPO_CLONE_DIR/infra" && -f "$REPO_CLONE_DIR/bootstrap.sh" ]]; then
+    if [[ -d "$REPO_CLONE_DIR/infrastructure" && -f "$REPO_CLONE_DIR/bootstrap.sh" ]]; then
         info "Detected project structure."
     else
         warn "Directory listing of clone:"
         ls -F "$REPO_CLONE_DIR/"
-        fail "Could not find a valid project structure. The script requires an 'infra' directory and 'bootstrap.sh' file at the root."
+        fail "Could not find a valid project structure. The script requires an 'infrastructure' directory and 'bootstrap.sh' file at the root."
     fi
 
     cd "$REPO_CLONE_DIR"
@@ -393,14 +394,14 @@ setup_repo() {
 
 configure_environment() {
     step 5 "Configuring Terraform Environment";
-    cd "$REPO_ROOT/infra"
+    cd "$REPO_ROOT/infrastructure"
     if [ -z "$ENV_NAME" ]; then
         prompt "What would you like to call this deployment environment?"; read -p "   Environment Name [default value: $DEFAULT_ENV_NAME]: " ENV_NAME < /dev/tty
         ENV_NAME=${ENV_NAME:-$DEFAULT_ENV_NAME}
     else info "Using previously configured environment: $ENV_NAME"; fi
     ENV_DIR="environments/$ENV_NAME";
-    TFVARS_FILE_PATH="$REPO_ROOT/infra/$ENV_DIR/$ENV_NAME.tfvars"
-    STATE_FILE="$REPO_ROOT/infra/$ENV_DIR/.bootstrap_state";
+    TFVARS_FILE_PATH="$REPO_ROOT/infrastructure/$ENV_DIR/$ENV_NAME.tfvars"
+    STATE_FILE="$REPO_ROOT/infrastructure/$ENV_DIR/.bootstrap_state";
     read_state
     if [ ! -d "$ENV_DIR" ]; then
         info "Creating new environment directory from template: $TEMPLATE_ENV_DIR"; cp -r "$TEMPLATE_ENV_DIR" "$ENV_DIR"
@@ -448,7 +449,7 @@ configure_environment() {
 }
 
 handle_manual_steps() {
-    step 6 "Manual Steps Required"; cd "$REPO_ROOT/infra"; TFVARS_FILE_PATH="$ENV_DIR/$ENV_NAME.tfvars"
+    step 6 "Manual Steps Required"; cd "$REPO_ROOT/infrastructure"; TFVARS_FILE_PATH="$ENV_DIR/$ENV_NAME.tfvars"
     info "Enabling required Google Cloud APIs..."; gcloud services enable cloudbuild.googleapis.com secretmanager.googleapis.com firebase.googleapis.com iap.googleapis.com identitytoolkit.googleapis.com texttospeech.googleapis.com workflows.googleapis.com --project="$GCP_PROJECT_ID"
     if [ -z "$GITHUB_CONN_NAME" ]; then
         prompt "\nDo you already have a Cloud Build Host Connection for GitHub in this project? (y/n)"; read -r REPLY < /dev/tty
@@ -617,7 +618,8 @@ setup_db_secrets() {
 
 run_terraform() {
     step 10 "Deploying Infrastructure with Terraform";
-    TFVARS_FILE_PATH="$REPO_ROOT/infra/environments/$ENV_NAME/$ENV_NAME.tfvars"; info "Navigating to $REPO_ROOT/infra/environments/$ENV_NAME..."; cd "$REPO_ROOT/infra/environments/$ENV_NAME"
+    local ENV_TF_DIR="$REPO_ROOT/infrastructure"
+    TFVARS_FILE_PATH="$ENV_TF_DIR/$ENV_NAME.tfvars"; info "Navigating to $ENV_TF_DIR..."; cd "$ENV_TF_DIR"
     info "Initializing Terraform..."; terraform init -reconfigure
     info "Planning Terraform changes..."; terraform plan -var-file="$TFVARS_FILE_PATH"
 
@@ -633,10 +635,7 @@ auto_migrate_database() {
     step 11 "Checking Database Migration Requirements"
     info "Checking if an existing database migration is required..."
 
-    local ENV_TF_DIR="$REPO_ROOT/infra/environments/$ENV_NAME"
-    if [ ! -d "$ENV_TF_DIR" ]; then
-        ENV_TF_DIR="$REPO_ROOT/infrastructure/environments/$ENV_NAME"
-    fi
+    local ENV_TF_DIR="$REPO_ROOT/infrastructure"
 
     pushd "$ENV_TF_DIR" > /dev/null
     local TARGET_INSTANCE=$(terraform output -raw cloud_sql_connection_name 2>/dev/null | cut -d':' -f3 || echo "")
@@ -655,10 +654,6 @@ auto_migrate_database() {
 
         local ASSET_BUCKET="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
         local MIGRATE_SCRIPT="$REPO_ROOT/infrastructure/migration/migrate_to_private_db.sh"
-        if [ ! -f "$MIGRATE_SCRIPT" ]; then
-            MIGRATE_SCRIPT="$REPO_ROOT/infra/migration/migrate_to_private_db.sh"
-        fi
-
         if [ -f "$MIGRATE_SCRIPT" ]; then
             info "Starting automatic data migration from ${SOURCE_INSTANCE} to ${TARGET_INSTANCE}..."
             SOURCE_INSTANCE="$SOURCE_INSTANCE" \
@@ -685,7 +680,7 @@ update_oauth_client() {
 }
 
 update_secrets() {
-    step 12 "Updating Remaining Secrets"; info "Navigating to $REPO_ROOT/infra/environments/$ENV_NAME..."; cd "$REPO_ROOT/infra/environments/$ENV_NAME"
+    step 12 "Updating Remaining Secrets"; local ENV_TF_DIR="$REPO_ROOT/infrastructure"; info "Navigating to $ENV_TF_DIR..."; cd "$ENV_TF_DIR"
     info "Populating values in Secret Manager..."; local TERRAFORM_OUTPUTS=$(terraform output -json)
     local FRONTEND_SECRETS=$(echo "$TERRAFORM_OUTPUTS" | jq -r .frontend_secrets.value[]); local BACKEND_SECRETS=$(echo "$TERRAFORM_OUTPUTS" | jq -r .backend_secrets.value[])
     local ALL_SECRETS=$(echo "${FRONTEND_SECRETS} ${BACKEND_SECRETS}" | tr ' ' '\n' | sort -u | grep .)
@@ -859,8 +854,9 @@ deploy_izumi_agent() {
     else
         info "Executing deployment script..."
         AGENT_SA_EMAIL=""
-        if [ -d "$REPO_ROOT/infra/environments/$ENV_NAME" ]; then
-            AGENT_SA_EMAIL=$(cd "$REPO_ROOT/infra/environments/$ENV_NAME" && terraform output -raw agent_service_account_email 2>/dev/null || echo "")
+        local ENV_TF_DIR="$REPO_ROOT/infrastructure"
+        if [ -d "$ENV_TF_DIR" ]; then
+            AGENT_SA_EMAIL=$(cd "$ENV_TF_DIR" && terraform output -raw agent_service_account_email 2>/dev/null || echo "")
         fi
 
         # Fetch generated auth token secret from Secret Manager
@@ -936,7 +932,8 @@ main() {
         step_num=$((i + 1))
         if (( LAST_COMPLETED_STEP < step_num )); then
             if [ -z "$STATE_FILE" ] && [ "$step_num" -gt 4 ]; then
-                STATE_FILE="$REPO_ROOT/infra/environments/$ENV_NAME/.bootstrap_state"
+                local ENV_TF_DIR="$REPO_ROOT/infrastructure"
+                STATE_FILE="$ENV_TF_DIR/.bootstrap_state"
                 write_state "REPO_ROOT" "$REPO_ROOT"
             fi
             ${steps_to_run[$i]}; write_state "LAST_COMPLETED_STEP" "$step_num"
@@ -945,7 +942,8 @@ main() {
 
     step 16 "🎉 Deployment Complete! 🎉";
     info "Fetching your application URLs...";
-    cd "$REPO_ROOT/infra/environments/$ENV_NAME"
+    local ENV_TF_DIR="$REPO_ROOT/infrastructure"
+    cd "$ENV_TF_DIR"
 
     # Try to get the frontend URL from terraform output, but handle the error
     FRONTEND_URL=$(terraform output -raw frontend_service_url 2>/dev/null || echo "")
