@@ -31,6 +31,7 @@ import {
   SourceAssetResponseDto,
   SourceAssetService,
 } from '../../../common/services/source-asset.service';
+import {labelToName, nameToLabel} from '../../utils/workflow-step.util';
 import {WorkflowStep} from '../../workflow.models';
 
 @Component({
@@ -41,7 +42,7 @@ import {WorkflowStep} from '../../workflow.models';
 export class RunWorkflowModalComponent implements OnInit {
   runForm!: FormGroup;
   userInputStep: WorkflowStep;
-  inputDefinitions: {name: string; type: string}[] = [];
+  inputDefinitions: {name: string; label: string; type: string}[] = [];
   referenceImages: {[key: string]: ReferenceImage | null} = {};
 
   constructor(
@@ -58,9 +59,23 @@ export class RunWorkflowModalComponent implements OnInit {
     this.runForm = this.fb.group({});
 
     if (this.userInputStep && this.userInputStep.outputs) {
+      const definitions = this.userInputStep.settings['definitions'] || [];
+      const defMap = new Map<string, string>();
+      definitions.forEach((def: any) => {
+        if (def && def.name) {
+          defMap.set(labelToName(def.name), def.name);
+          defMap.set(def.name, def.name);
+        }
+      });
+
       Object.entries(this.userInputStep.outputs).forEach(
         ([key, value]: [string, any]) => {
-          this.inputDefinitions.push({name: key, type: value.type});
+          const rawLabel = defMap.get(key) || key;
+          this.inputDefinitions.push({
+            name: key,
+            label: nameToLabel(rawLabel),
+            type: value.type,
+          });
 
           if (value.type === 'image') {
             this.runForm.addControl(

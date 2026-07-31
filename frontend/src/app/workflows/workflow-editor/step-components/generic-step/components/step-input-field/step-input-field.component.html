@@ -18,8 +18,8 @@
 
 <div [class.controls-row]="mode !== 'mixed'" [class.mb-4]="mode === 'mixed'">
 
-  <!-- Media Input (Fixed or Mixed) -->
-  <ng-container *ngIf="mode === 'mixed' || (mode === 'fixed' && (config.type === 'image' || config.type === 'video'))">
+  <!-- Media Input (Fixed, Linked, or Mixed) -->
+  <ng-container *ngIf="config.type === 'image' || config.type === 'video' || mode === 'mixed'">
     <app-step-media-input
       [control]="control"
       [inputName]="config.name"

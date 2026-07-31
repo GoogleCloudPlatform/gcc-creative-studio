@@ -133,8 +133,14 @@ class UserInputInputs(BaseModel):
     pass
 
 
+class UserInputDefinition(BaseModel):
+    id: str | None = None
+    name: str
+    type: str
+
+
 class UserInputSettings(BaseModel):
-    pass
+    definitions: list[UserInputDefinition] = Field(default_factory=list)
 
 
 # We inherit from BaseStep and pass in the concrete types for [InputT, SettingsT]
