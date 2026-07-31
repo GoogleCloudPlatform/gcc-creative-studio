@@ -21,7 +21,7 @@
   <form [formGroup]="runForm" class="flex flex-col gap-4">
     <div *ngFor="let input of inputDefinitions">
       <div *ngIf="input.type === 'image'; else textInput">
-        <label class="block text-sm font-medium text-neutral-300 mb-2">{{ input.name | titlecase }}</label>
+        <label class="block text-sm font-medium text-neutral-300 mb-2">{{ input.label | titlecase }}</label>
         <div class="flex items-center gap-3">
           <div
             class="relative h-16 w-16 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex items-center justify-center"
@@ -50,8 +50,8 @@
 
       <ng-template #textInput>
         <mat-form-field appearance="outline" class="w-full">
-          <mat-label>{{ input.name | titlecase }}</mat-label>
-          <input matInput [formControlName]="input.name" [placeholder]="'Enter ' + input.name">
+          <mat-label>{{ input.label | titlecase }}</mat-label>
+          <input matInput [formControlName]="input.name" [placeholder]="'Enter ' + (input.label | titlecase)">
           <mat-hint *ngIf="input.type !== 'text'">Type: {{ input.type }}</mat-hint>
         </mat-form-field>
       </ng-template>

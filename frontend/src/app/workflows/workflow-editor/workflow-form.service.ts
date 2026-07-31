@@ -16,16 +16,30 @@
 
 import {Injectable, PLATFORM_ID, inject} from '@angular/core';
 import {isPlatformBrowser} from '@angular/common';
-import {FormArray, FormBuilder, FormGroup, Validators} from '@angular/forms';
+import {
+  AbstractControl,
+  FormArray,
+  FormBuilder,
+  FormGroup,
+  Validators,
+} from '@angular/forms';
 import {BehaviorSubject} from 'rxjs';
 import {pairwise, startWith} from 'rxjs/operators';
 import {STEP_CONFIGS_MAP} from '../shared/step-configs.map';
+import {labelToName, nameToLabel} from '../utils/workflow-step.util';
 import {
   NodeTypes,
   StepStatusEnum,
   WorkflowBase,
   WorkflowModel,
 } from '../workflow.models';
+
+type NodePort = {
+  stepId: string;
+  output: string;
+  _definitionId: string;
+  step: NodeTypes;
+};
 
 @Injectable()
 export class WorkflowFormService {
@@ -65,8 +79,8 @@ export class WorkflowFormService {
       this.patchData(data);
     } else {
       // Default initialization for new workflows
-      this.addOutputDefinition('User_Text_Input', 'text');
-      this.addOutputDefinition('User_Image_Input', 'image');
+      this.addOutputDefinition('User Text Input', 'text');
+      this.addOutputDefinition('User Image Input', 'image');
     }
 
     // Subscribe to output definition changes for renaming
@@ -186,30 +200,57 @@ export class WorkflowFormService {
     currentDefinitions.forEach(newDef => {
       const oldDef = prevMap.get(newDef.id);
       if (oldDef && oldDef.name && newDef.name && oldDef.name !== newDef.name) {
-        this.updateStepReferences(newDef.id, newDef.name);
+        this.updateStepReferences(
+          this.stepsArray.controls,
+          newDef.id,
+          newDef.name,
+        );
       }
     });
   }
 
-  private updateStepReferences(definitionId: string, newName: string) {
-    this.stepsArray.controls.forEach(stepControl => {
+  public updateStepReferences(
+    controls: AbstractControl[],
+    definitionId: string,
+    newName: string,
+  ) {
+    controls.forEach(stepControl => {
       const inputs = stepControl.get('inputs') as FormGroup;
       if (!inputs) return;
 
       Object.keys(inputs.controls).forEach(inputKey => {
         const control = inputs.get(inputKey);
-        const value = control?.value;
-        if (
-          value &&
-          typeof value === 'object' &&
-          value.step === NodeTypes.USER_INPUT &&
-          value._definitionId === definitionId
-        ) {
-          // Update the output name in the reference
+        const value = control?.value as NodePort | NodePort[];
+        if (Array.isArray(value)) {
+          let updated = false;
+          const newValue = value.map((item: NodePort) => {
+            if (this.isUserInputAndHasDefinitionId(item, definitionId)) {
+              updated = true;
+              return {...item, output: newName};
+            }
+            return item;
+          });
+          if (updated) {
+            control?.setValue(newValue);
+          }
+        } else if (this.isUserInputAndHasDefinitionId(value, definitionId)) {
           control?.setValue({...value, output: newName});
         }
       });
     });
+  }
+
+  private isUserInputAndHasDefinitionId(
+    item: NodePort,
+    definitionId: string,
+  ): boolean {
+    return this.isUserInput(item) && item._definitionId === definitionId;
+  }
+
+  private isUserInput(item: NodePort): boolean {
+    return (
+      item && typeof item === 'object' && item.step === NodeTypes.USER_INPUT
+    );
   }
 
   private updateAvailableOutputs(): void {
@@ -220,7 +261,7 @@ export class WorkflowFormService {
       const val = control.value;
       if (val.name && val.type) {
         userInputOutputs.push({
-          label: `User Input: ${val.name} `,
+          label: `User Input: ${nameToLabel(val.name)} `,
           value: {
             step: 'user_input',
             output: val.name,
@@ -286,21 +327,38 @@ export class WorkflowFormService {
     // 2. Rebuild User Input Definitions & Map IDs
     this.outputDefinitionsArray.clear();
     const outputIdMap = new Map<string, string>();
+    const outputNameMap = new Map<string, string>();
 
     if (
       userInputStep?.settings?.definitions &&
       userInputStep.settings.definitions.length > 0
     ) {
       userInputStep.settings.definitions.forEach((def: any) => {
-        this.addOutputDefinition(def.name, def.type, def.id);
+        const id = def.id || this.generateId();
+        const displayName = nameToLabel(def.name);
+        const identifier = labelToName(displayName);
+        outputIdMap.set(identifier, id);
+        outputIdMap.set(displayName, id);
+        outputIdMap.set(def.name, id);
+        outputNameMap.set(identifier, displayName);
+        outputNameMap.set(displayName, displayName);
+        outputNameMap.set(def.name, displayName);
+        this.addOutputDefinition(displayName, def.type, id);
       });
     } else if (userInputStep?.outputs) {
       Object.entries(userInputStep.outputs).forEach(
         ([key, value]: [string, any]) => {
           // Reverse engineer the ID and Name from the stored output
           const id = this.generateId();
+          const displayName = nameToLabel(key);
+          const identifier = labelToName(displayName);
           outputIdMap.set(key, id);
-          this.addOutputDefinition(this.toDisplay(key), value.type, id);
+          outputIdMap.set(identifier, id);
+          outputIdMap.set(displayName, id);
+          outputNameMap.set(key, displayName);
+          outputNameMap.set(identifier, displayName);
+          outputNameMap.set(displayName, displayName);
+          this.addOutputDefinition(displayName, value.type, id);
         },
       );
     }
@@ -315,21 +373,21 @@ export class WorkflowFormService {
       if (stepData.inputs) {
         const newInputs = {...stepData.inputs};
         let changed = false;
-        Object.values(newInputs).forEach((input: any) => {
-          // Check if it's a user input reference
-          if (
-            input &&
-            typeof input === 'object' &&
-            input.step === NodeTypes.USER_INPUT &&
-            input.output
-          ) {
-            // If we have a mapped ID for this user output
-            if (outputIdMap.has(input.output)) {
-              input._definitionId = outputIdMap.get(input.output);
-              input.output = this.toDisplay(input.output);
-              changed = true;
-            }
+
+        const transformRef = (item: NodePort) => {
+          if (this.isUserInput(item) && item.output) {
+            const definitionId = outputIdMap.get(item.output);
+            const newName = outputNameMap.get(item.output);
+            if (definitionId) item._definitionId = definitionId;
+            item.output = newName ? newName : nameToLabel(item.output);
+            changed = true;
           }
+        };
+
+        Object.keys(newInputs).forEach(key => {
+          const val = newInputs[key];
+          const values = Array.isArray(val) ? val : [val];
+          values.forEach(item => transformRef(item));
         });
         if (changed) {
           stepData.inputs = newInputs;
@@ -378,9 +436,5 @@ export class WorkflowFormService {
       Math.random().toString(36).substring(2, 15) +
       Math.random().toString(36).substring(2, 15)
     );
-  }
-
-  private toDisplay(name: string): string {
-    return name ? name.replace(/_/g, ' ') : name;
   }
 }
