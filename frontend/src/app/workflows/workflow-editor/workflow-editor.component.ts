@@ -52,6 +52,7 @@ import {
 // import { STEP_CONFIGS_MAP } from '../shared/step-configs.map'; // Removed as only used by getStepConfig which is now in service (mostly)
 // But wait, template calls getStepConfig.
 import {STEP_CONFIGS_MAP} from '../shared/step-configs.map'; // Kept for template
+import {labelToName} from '../utils/workflow-step.util';
 import {WorkflowService} from '../workflow.service';
 import {AddStepModalComponent} from './add-step-modal/add-step-modal.component';
 import {RunWorkflowModalComponent} from './run-workflow-modal/run-workflow-modal.component';
@@ -372,16 +373,14 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             this.displayedWorkflow = this.workflowRun?.workflowSnapshot ?? null;
             this.workflowId = this.workflowRun?.id ?? null;
             if (this.displayedWorkflow) {
-              this.loadNodePositions();
-              this.formService.patchData(this.displayedWorkflow);
+              this.loadAndSetData();
             }
             this.workflowForm.disable(); // Read-only mode
           } else if (this.mode === EditorMode.Edit) {
             this.workflow = data as WorkflowModel;
             this.displayedWorkflow = this.workflow;
             if (this.displayedWorkflow) {
-              this.loadNodePositions();
-              this.formService.patchData(this.displayedWorkflow);
+              this.loadAndSetData();
               if (this.initialExecutionId) {
                 this.onExecutionSelected(this.initialExecutionId);
               }
@@ -408,6 +407,12 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         this.previousOutputDefinitions = currentValues;
       });
     }
+  }
+
+  private loadAndSetData() {
+    this.loadNodePositions();
+    this.formService.patchData(this.displayedWorkflow);
+    setTimeout(() => this.updateEdges(), 100);
   }
 
   private domObserver?: MutationObserver;
@@ -871,28 +876,12 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     currentDefinitions.forEach(newDef => {
       const oldDef = prevMap.get(newDef.id);
       if (oldDef && oldDef.name !== newDef.name) {
-        this.updateStepReferences(newDef.id, newDef.name);
+        this.formService.updateStepReferences(
+          this.stepsArray.controls,
+          newDef.id,
+          newDef.name,
+        );
       }
-    });
-  }
-
-  private updateStepReferences(definitionId: string, newName: string) {
-    this.stepsArray.controls.forEach(stepControl => {
-      const inputs = stepControl.get('inputs') as FormGroup;
-      if (!inputs) return;
-
-      Object.keys(inputs.controls).forEach(inputKey => {
-        const control = inputs.get(inputKey);
-        const value = control?.value;
-        if (
-          value &&
-          typeof value === 'object' &&
-          value.step === NodeTypes.USER_INPUT &&
-          value._definitionId === definitionId
-        ) {
-          control?.setValue({...value, output: newName});
-        }
-      });
     });
   }
 
@@ -1225,7 +1214,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     const userInputOutputs: any = {};
     if (formValue.userInput && formValue.userInput.outputs) {
       Object.keys(formValue.userInput.outputs).forEach(key => {
-        const cleanKey = this.toIdentifier(key);
+        const cleanKey = labelToName(key);
         userInputOutputs[cleanKey] = formValue.userInput.outputs[key];
       });
     }
@@ -1305,7 +1294,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
 
     // Handle user input name transformation (display -> identifier)
     if (newVal.step === NodeTypes.USER_INPUT && newVal.output) {
-      newVal = {...newVal, output: this.toIdentifier(newVal.output)};
+      newVal = {...newVal, output: labelToName(newVal.output)};
     }
 
     return newVal;
@@ -1476,12 +1465,6 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   // populateFormFromData and resetFormForNew removed, handled by service patchData and initForm
 
   // getStepIcon removed, use StepIconPipe in template
-
-  // toDisplay removed, used in service. kept toIdentifier for prepareSteps
-
-  private toIdentifier(name: string): string {
-    return name ? name.trim().replace(/\s+/g, '_') : name;
-  }
 }
 
 export enum EditorMode {
