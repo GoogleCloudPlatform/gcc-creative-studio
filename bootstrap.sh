@@ -82,7 +82,7 @@ configure_firebase_site_id() {
     local default_site_name
     # The `jq` filter first looks for a site with type "DEFAULT_SITE". If not found, it takes the first site in the list.
     # The result is the full resource name, e.g., "projects/my-proj/sites/my-site-id".
-    default_site_name=$(firebase hosting:sites:list --project "$project_id" --json | jq -r 'first(.result.sites[] | select(.type == "DEFAULT_SITE") | .name) // first(.result.sites[].name) // ""')
+    default_site_name=$( (firebase hosting:sites:list --project "$project_id" --json 2>/dev/null || echo "{}") | jq -r 'try ((.result.sites // []) | (map(select(.type == "DEFAULT_SITE"))[0].name // .[0].name // "")) catch ""' 2>/dev/null || echo "" )
 
     # If a site was found, extract the site ID from the name. Otherwise, fall back to the project ID.
     local site_id_to_use=$project_id
@@ -252,7 +252,7 @@ check_and_install_terraform() {
         install_terraform
         return
     fi
-    INSTALLED_VERSION=$(terraform version -json | jq -r .terraform_version)
+    INSTALLED_VERSION=$( (terraform version -json 2>/dev/null || echo "{}") | jq -r 'try .terraform_version catch ""' 2>/dev/null || echo "" )
     if [[ "$(printf '%s\n' "$REQUIRED_TERRAFORM_VERSION" "$INSTALLED_VERSION" | sort -V | head -n1)" != "$REQUIRED_TERRAFORM_VERSION" ]]; then
         warn "Your Terraform version ($INSTALLED_VERSION) is older than the required version ($REQUIRED_TERRAFORM_VERSION)."
         install_terraform
@@ -279,7 +279,7 @@ install_terraform() {
     export PATH="$HOME/bin:$PATH"
     hash -r
     rm terraform.zip LICENSE.txt
-    if command -v terraform &> /dev/null && [[ "$(terraform version -json | jq -r .terraform_version)" == "$REQUIRED_TERRAFORM_VERSION" ]]; then
+    if command -v terraform &> /dev/null && [[ "$( (terraform version -json 2>/dev/null || echo "{}") | jq -r 'try .terraform_version catch ""' 2>/dev/null || echo "" )" == "$REQUIRED_TERRAFORM_VERSION" ]]; then
         success "Terraform v$(terraform -version | head -n 1) is now active."
     else
         fail "Terraform installation failed. Please open a new terminal and run this script again."
@@ -384,7 +384,7 @@ setup_repo() {
     export REPO_ROOT
     success "Project root successfully set to: $REPO_ROOT"
 
-    GITHUB_REPO_OWNER=$(git remote get-url origin | sed -n 's/.*github.com\/\(.*\)\/.*/\1/p')
+    GITHUB_REPO_OWNER=$(git remote get-url origin 2>/dev/null | sed -n 's/.*github.com[:\/]\([^/]*\)\/.*/\1/p' || echo "")
     GITHUB_REPO_NAME=$REPO_CLONE_DIR
 
     info "Detected GitHub owner: $GITHUB_REPO_OWNER"
@@ -498,16 +498,16 @@ setup_firebase_app() {
     else info "Firebase web app '$FE_SERVICE_NAME' already exists."; fi
 
     info "Fetching Firebase SDK configuration to store in memory...";
-	local APP_ID=$(firebase apps:list --project="$GCP_PROJECT_ID" --json | jq -r --arg name "$FE_SERVICE_NAME" '.result[] | select(.displayName == $name) | .appId')
-    local SDK_CONFIG_JSON=$(firebase apps:sdkconfig WEB "$APP_ID" --project="$GCP_PROJECT_ID" --json)
+	local APP_ID=$( (firebase apps:list --project="$GCP_PROJECT_ID" --json 2>/dev/null || echo "{}") | jq -r --arg name "$FE_SERVICE_NAME" 'try (.result[]? | select(.displayName == $name) | .appId) catch ""' 2>/dev/null || echo "" )
+    local SDK_CONFIG_JSON=$(firebase apps:sdkconfig WEB "$APP_ID" --project="$GCP_PROJECT_ID" --json 2>/dev/null || echo "{}")
 
-    AUTO_FIREBASE_API_KEY=$(echo "$SDK_CONFIG_JSON" | jq -r '.result.sdkConfig.apiKey // empty')
-    AUTO_FIREBASE_AUTH_DOMAIN=$(echo "$SDK_CONFIG_JSON" | jq -r '.result.sdkConfig.authDomain // empty')
-    AUTO_FIREBASE_PROJECT_ID=$(echo "$SDK_CONFIG_JSON" | jq -r '.result.sdkConfig.projectId // empty')
-    AUTO_FIREBASE_STORAGE_BUCKET=$(echo "$SDK_CONFIG_JSON" | jq -r '.result.sdkConfig.storageBucket // empty')
-    AUTO_FIREBASE_MESSAGING_SENDER_ID=$(echo "$SDK_CONFIG_JSON" | jq -r '.result.sdkConfig.messagingSenderId // empty')
-    AUTO_FIREBASE_APP_ID=$(echo "$SDK_CONFIG_JSON" | jq -r '.result.sdkConfig.appId // empty')
-    AUTO_FIREBASE_MEASUREMENT_ID=$(echo "$SDK_CONFIG_JSON" | jq -r '.result.sdkConfig.measurementId // empty')
+    AUTO_FIREBASE_API_KEY=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.apiKey // "") catch ""' 2>/dev/null || echo "" )
+    AUTO_FIREBASE_AUTH_DOMAIN=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.authDomain // "") catch ""' 2>/dev/null || echo "" )
+    AUTO_FIREBASE_PROJECT_ID=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.projectId // "") catch ""' 2>/dev/null || echo "" )
+    AUTO_FIREBASE_STORAGE_BUCKET=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.storageBucket // "") catch ""' 2>/dev/null || echo "" )
+    AUTO_FIREBASE_MESSAGING_SENDER_ID=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.messagingSenderId // "") catch ""' 2>/dev/null || echo "" )
+    AUTO_FIREBASE_APP_ID=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.appId // "") catch ""' 2>/dev/null || echo "" )
+    AUTO_FIREBASE_MEASUREMENT_ID=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.measurementId // "") catch ""' 2>/dev/null || echo "" )
 
     if [ -z "$AUTO_FIREBASE_API_KEY" ]; then fail "Could not automatically fetch Firebase API Key. Please check your Firebase setup."; fi
     success "Firebase secrets have been fetched and will be populated automatically after Terraform runs."
@@ -519,7 +519,7 @@ populate_oauth_secrets() {
     info "Looking for the OAuth 2.0 Web Client ID using the Firebase Management API..."
 
     local AUTH_TOKEN=$(gcloud auth print-access-token)
-    local APP_ID=$(firebase apps:list --project="$GCP_PROJECT_ID" --json | jq -r --arg name "$FE_SERVICE_NAME" '.result[] | select(.displayName == $name) | .appId')
+    local APP_ID=$( (firebase apps:list --project="$GCP_PROJECT_ID" --json 2>/dev/null || echo "{}") | jq -r --arg name "$FE_SERVICE_NAME" 'try (.result[]? | select(.displayName == $name) | .appId) catch ""' 2>/dev/null || echo "" )
 
     if [ -z "$APP_ID" ]; then
         warn "Could not find Firebase App ID for '$FE_SERVICE_NAME'. Skipping OAuth secret population."
@@ -532,7 +532,7 @@ populate_oauth_secrets() {
         "https://firebase.googleapis.com/v1beta1/projects/$GCP_PROJECT_ID/webApps/$APP_ID/config")
 
     # The client ID is the one NOT associated with the API key.
-    AUTO_OAUTH_CLIENT_ID=$(echo "$API_RESPONSE" | jq -r '.oauthClientId')
+    AUTO_OAUTH_CLIENT_ID=$( (echo "$API_RESPONSE" 2>/dev/null || echo "{}") | jq -r 'try (.oauthClientId // "") catch ""' 2>/dev/null || echo "" )
 
     if [ -z "$AUTO_OAUTH_CLIENT_ID" ] || [ "$AUTO_OAUTH_CLIENT_ID" == "null" ]; then
         warn "Could not automatically find the OAuth Client ID via API."
@@ -604,7 +604,7 @@ run_terraform() {
 update_oauth_client() {
     step 11 "Configuring OAuth Client URIs"; cd "$REPO_ROOT"
     if [ -z "$AUTO_OAUTH_CLIENT_ID" ]; then warn "Could not find OAuth Client ID automatically. Skipping URI update."; return; fi
-    info "Fetching full OAuth client name..."; local OAUTH_CLIENT_FULL_NAME=$(gcloud iap oauth-clients list "$GCP_PROJECT_ID" --format="json" | jq -r --arg clientid "$AUTO_OAUTH_CLIENT_ID" '.[] | select(.name | contains($clientid)) | .name')
+    info "Fetching full OAuth client name..."; local OAUTH_CLIENT_FULL_NAME=$( (gcloud iap oauth-clients list "$GCP_PROJECT_ID" --format="json" 2>/dev/null || echo "[]") | jq -r --arg clientid "$AUTO_OAUTH_CLIENT_ID" 'try (.[]? | select(.name | contains($clientid)) | .name) catch ""' 2>/dev/null || echo "" )
     if [ -z "$OAUTH_CLIENT_FULL_NAME" ]; then warn "Could not resolve the full name for the OAuth client. Skipping URI update."; return; fi
     info "Ensuring OAuth Client has all required origins and redirect URIs..."; local PROJECT_DOMAIN_BASE=$(gcloud projects describe "$GCP_PROJECT_ID" --format='value(projectId)')
     local FIREBASEAPP_ORIGIN="https://${PROJECT_DOMAIN_BASE}.firebaseapp.com"; local WEBAPP_ORIGIN="https://${PROJECT_DOMAIN_BASE}.web.app"
@@ -615,8 +615,8 @@ update_oauth_client() {
 
 update_secrets() {
     step 12 "Updating Remaining Secrets"; info "Navigating to $REPO_ROOT/infra/environments/$ENV_NAME..."; cd "$REPO_ROOT/infra/environments/$ENV_NAME"
-    info "Populating values in Secret Manager..."; local TERRAFORM_OUTPUTS=$(terraform output -json)
-    local FRONTEND_SECRETS=$(echo "$TERRAFORM_OUTPUTS" | jq -r .frontend_secrets.value[]); local BACKEND_SECRETS=$(echo "$TERRAFORM_OUTPUTS" | jq -r .backend_secrets.value[])
+    info "Populating values in Secret Manager..."; local TERRAFORM_OUTPUTS=$(terraform output -json 2>/dev/null || echo "{}")
+    local FRONTEND_SECRETS=$( (echo "$TERRAFORM_OUTPUTS" 2>/dev/null || echo "{}") | jq -r 'try (.frontend_secrets.value[]?) catch ""' 2>/dev/null || echo "" ); local BACKEND_SECRETS=$( (echo "$TERRAFORM_OUTPUTS" 2>/dev/null || echo "{}") | jq -r 'try (.backend_secrets.value[]?) catch ""' 2>/dev/null || echo "" )
     local ALL_SECRETS=$(echo "${FRONTEND_SECRETS} ${BACKEND_SECRETS}" | tr ' ' '\n' | sort -u | grep .)
     if [ -z "$ALL_SECRETS" ]; then success "No secrets defined in Terraform outputs. Nothing to do."; return; fi
 
@@ -628,17 +628,17 @@ update_secrets() {
         if [ -z "$FE_APP_NAME" ]; then
             warn "Could not determine frontend service name from .tfvars. Cannot auto-discover Firebase secrets."
         else
-            local APP_ID=$(firebase apps:list --project="$GCP_PROJECT_ID" --json | jq -r --arg name "$FE_SERVICE_NAME" '.result[] | select(.displayName == $name) | .appId')
+            local APP_ID=$( (firebase apps:list --project="$GCP_PROJECT_ID" --json 2>/dev/null || echo "{}") | jq -r --arg name "$FE_SERVICE_NAME" 'try (.result[]? | select(.displayName == $name) | .appId) catch ""' 2>/dev/null || echo "" )
             if [ -n "$APP_ID" ]; then
-                local SDK_CONFIG_JSON=$(firebase apps:sdkconfig WEB "$APP_ID" --project="$GCP_PROJECT_ID" --json)
-				AUTO_FIREBASE_API_KEY=$(echo "$SDK_CONFIG_JSON" | jq -r '.result.sdkConfig.apiKey // empty')
+                local SDK_CONFIG_JSON=$(firebase apps:sdkconfig WEB "$APP_ID" --project="$GCP_PROJECT_ID" --json 2>/dev/null || echo "{}")
+				AUTO_FIREBASE_API_KEY=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.apiKey // "") catch ""' 2>/dev/null || echo "" )
                 # ... (re-populate all other AUTO_... variables)
-				AUTO_FIREBASE_AUTH_DOMAIN=$(echo "$SDK_CONFIG_JSON" | jq -r '.result.sdkConfig.authDomain // empty')
-				AUTO_FIREBASE_PROJECT_ID=$(echo "$SDK_CONFIG_JSON" | jq -r '.result.sdkConfig.projectId // empty')
-				AUTO_FIREBASE_STORAGE_BUCKET=$(echo "$SDK_CONFIG_JSON" | jq -r '.result.sdkConfig.storageBucket // empty')
-				AUTO_FIREBASE_MESSAGING_SENDER_ID=$(echo "$SDK_CONFIG_JSON" | jq -r '.result.sdkConfig.messagingSenderId // empty')
-				AUTO_FIREBASE_APP_ID=$(echo "$SDK_CONFIG_JSON" | jq -r '.result.sdkConfig.appId // empty')
-				AUTO_FIREBASE_MEASUREMENT_ID=$(echo "$SDK_CONFIG_JSON" | jq -r '.result.sdkConfig.measurementId // empty')
+				AUTO_FIREBASE_AUTH_DOMAIN=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.authDomain // "") catch ""' 2>/dev/null || echo "" )
+				AUTO_FIREBASE_PROJECT_ID=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.projectId // "") catch ""' 2>/dev/null || echo "" )
+				AUTO_FIREBASE_STORAGE_BUCKET=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.storageBucket // "") catch ""' 2>/dev/null || echo "" )
+				AUTO_FIREBASE_MESSAGING_SENDER_ID=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.messagingSenderId // "") catch ""' 2>/dev/null || echo "" )
+				AUTO_FIREBASE_APP_ID=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.appId // "") catch ""' 2>/dev/null || echo "" )
+				AUTO_FIREBASE_MEASUREMENT_ID=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.measurementId // "") catch ""' 2>/dev/null || echo "" )
                 success "Successfully re-discovered Firebase configuration."
             fi
         fi
@@ -713,6 +713,7 @@ seed_data() {
     export GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID
     export ADMIN_USER_EMAIL=$CURRENT_USER
     export GENMEDIA_BUCKET=$ASSET_BUCKET_NAME
+    export ENVIRONMENT="${ENVIRONMENT:-development}"
 
     local PYTHON_SCRIPT_PATH="backend/bootstrap/bootstrap.py"
     if [ ! -f "$PYTHON_SCRIPT_PATH" ]; then
@@ -760,8 +761,28 @@ trigger_builds() {
     step 14 "Triggering Initial Builds"; cd "$REPO_ROOT"
     prompt "Would you like to trigger the initial builds for the frontend and backend now? (y/n)"; read -r REPLY < /dev/tty
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then info "You can trigger the builds manually later by pushing a commit or via the Cloud Build UI."; return; fi
-    info "Triggering backend build..."; gcloud builds triggers run "${BE_SERVICE_NAME}-trigger" --branch="$GITHUB_BRANCH" --project="$GCP_PROJECT_ID" --region="us-central1"
-    info "Triggering frontend build..."; gcloud builds triggers run "$GCP_PROJECT_ID-trigger" --branch="$GITHUB_BRANCH" --project $GCP_PROJECT_ID --region="us-central1"
+
+    local BRANCH_TO_USE
+    BRANCH_TO_USE=$(git branch --show-current 2>/dev/null)
+    if [ -z "$BRANCH_TO_USE" ]; then
+        BRANCH_TO_USE=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    fi
+
+    if [ -z "$BRANCH_TO_USE" ] || [ "$BRANCH_TO_USE" = "HEAD" ]; then
+        if [ -n "$GITHUB_BRANCH" ] && [ "$GITHUB_BRANCH" != "HEAD" ]; then
+            BRANCH_TO_USE="$GITHUB_BRANCH"
+        elif git show-ref --verify --quiet refs/heads/develop || git show-ref --verify --quiet refs/remotes/origin/develop; then
+            BRANCH_TO_USE="develop"
+        else
+            BRANCH_TO_USE="main"
+        fi
+        info "Git HEAD is detached or branch unavailable. Falling back to branch: ${C_YELLOW}${BRANCH_TO_USE}${C_RESET}"
+    else
+        info "Detected current Git branch: ${C_YELLOW}${BRANCH_TO_USE}${C_RESET}"
+    fi
+
+    info "Triggering backend build..."; gcloud builds triggers run "${BE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="us-central1"
+    info "Triggering frontend build..."; gcloud builds triggers run "${GCP_PROJECT_ID}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="us-central1"
 
     success "Builds have been triggered."; info "You can monitor their progress in the Cloud Build console:"; echo -e "   ${C_YELLOW}https://console.cloud.google.com/cloud-build/builds?project=${GCP_PROJECT_ID}${C_RESET}"
 }

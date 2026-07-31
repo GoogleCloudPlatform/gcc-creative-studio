@@ -36,6 +36,7 @@ from src.audios.audio_controller import router as audio_router
 from src.brand_guidelines.brand_guideline_controller import (
     router as brand_guideline_router,
 )
+from src.config.config_service import config_service
 from src.galleries.gallery_controller import router as gallery_router
 from src.generation_options.generation_options_controller import (
     router as generation_options_router,
@@ -61,7 +62,10 @@ from src.workspaces.workspace_controller import router as workspace_router
 
 def configure_cors(app):
     """Configures CORS middleware based on the environment."""
-    environment = getenv("ENVIRONMENT")
+    raw_env = config_service.ENVIRONMENT
+    environment = (
+        raw_env.strip() if raw_env and raw_env.strip() else "development"
+    ).lower()
     allowed_origins = []
 
     if environment == "production":
