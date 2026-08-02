@@ -21,3 +21,8 @@ local/
 genmedia-agent-demos
 .gemini
 .agents
+
+# Persistent deployment configuration profiles
+*.cstudio_bootstrap.conf
+cstudio_profiles/
+**/infrastructure/profiles/

@@ -76,6 +76,11 @@ configure_firebase_site_id() {
   # Check if the site ID is still the placeholder value
   if grep -q "YOUR_FIREBASE_SITE_ID" "$tfvars_file"; then
     warn "Placeholder 'YOUR_FIREBASE_SITE_ID' found in ${tfvars_file}."
+    if [ -n "$AUTO_FIREBASE_SITE_ID" ] && [ "$AUTO_FIREBASE_SITE_ID" != "null" ]; then
+      info "Using confirmed Firebase Hosting Site ID from deployment profile: ${C_YELLOW}${AUTO_FIREBASE_SITE_ID}${C_RESET}"
+      sed -i.bak "s/YOUR_FIREBASE_SITE_ID/${AUTO_FIREBASE_SITE_ID}/" "$tfvars_file" && rm -f "${tfvars_file}.bak"
+      return
+    fi
     info "Querying Firebase for an existing default hosting site..."
 
     # Query Firebase for sites and find the one marked as default (or the first one if none are default)
@@ -90,6 +95,8 @@ configure_firebase_site_id() {
 
     info "Setting 'firebase_site_id' to '${C_YELLOW}${site_id_to_use}${C_RESET}' in ${tfvars_file}."
     sed -i.bak "s/YOUR_FIREBASE_SITE_ID/${site_id_to_use}/" "$tfvars_file" && rm "${tfvars_file}.bak"
+    AUTO_FIREBASE_SITE_ID="$site_id_to_use"
+    write_state "AUTO_FIREBASE_SITE_ID" "$AUTO_FIREBASE_SITE_ID"
   fi
 }
 
@@ -128,72 +135,6 @@ read_state() {
         info "Found previous state file. Resuming..."
         set -a; source "$STATE_FILE"; set +a
     fi
-}
-
-# --- Database Connectivity Helpers ---
-start_sql_proxy() {
-    info "Starting Cloud SQL Auth Proxy..."
-    
-    # 1. Get Instance Connection Name
-    # Try Terraform output first, fallback to gcloud
-    local ENV_TF_DIR="$REPO_ROOT/infrastructure"
-    pushd "$ENV_TF_DIR" > /dev/null
-    DB_INSTANCE_NAME=$(terraform output -raw cloud_sql_connection_name 2>/dev/null || echo "")
-    popd > /dev/null
-
-    if [ -z "$DB_INSTANCE_NAME" ]; then
-        DB_INSTANCE_NAME=$(gcloud sql instances list --format="value(connectionName)" --filter="name:creative-studio-db*" --project="$GCP_PROJECT_ID" | head -n 1)
-    fi
-
-    if [ -z "$DB_INSTANCE_NAME" ]; then
-        fail "Could not find Cloud SQL instance. Ensure Terraform ran successfully."
-    fi
-
-    export INSTANCE_CONNECTION_NAME="$DB_INSTANCE_NAME"
-
-    # 2. Download Proxy (if missing)
-    if [ ! -f "cloud-sql-proxy" ]; then
-        curl -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64
-        chmod +x cloud-sql-proxy
-    fi
-
-    # 3. Start Proxy in Background (Port 5432)
-    ./cloud-sql-proxy --address 0.0.0.0 --port 5432 "$DB_INSTANCE_NAME" > /dev/null 2>&1 &
-    PROXY_PID=$!
-    export PROXY_PID
-    
-    # 4. Wait for Readiness
-    echo -n "   Waiting for proxy connection..."
-    for i in {1..30}; do
-        if (echo > /dev/tcp/127.0.0.1/5432) >/dev/null 2>&1; then
-            echo " Connected!"
-            return 0
-        fi
-        echo -n "."
-        sleep 1
-    done
-    echo
-    warn "Proxy connection check timed out, but proceeding..."
-}
-
-stop_sql_proxy() {
-    if [ -n "$PROXY_PID" ]; then
-        info "Stopping Cloud SQL Proxy..."
-        kill "$PROXY_PID" 2>/dev/null || true
-        unset PROXY_PID
-    fi
-}
-
-export_db_vars() {
-    # Fetch password from Secret Manager
-    DB_PASS=$(gcloud secrets versions access latest --secret="creative-studio-db-password" --project="$GCP_PROJECT_ID")
-    
-    export DB_USER="studio_user"
-    export DB_PASS="$DB_PASS"
-    export DB_NAME="creative_studio"
-    export DB_HOST="127.0.0.1" # Proxy address
-    export DB_PORT="5432"
-    export USE_CLOUD_SQL_AUTH_PROXY=true
 }
 
 # --- Script Functions ---
@@ -439,14 +380,14 @@ configure_environment() {
         prompt "Please provide the following value:"
         prompt_and_update_tfvar "GitHub Branch to deploy from" "$DEFAULT_BRANCH_NAME" "github_branch_name" "GITHUB_BRANCH"
 
-        write_state "ENV_NAME" "$ENV_NAME"; write_state "BE_SERVICE_NAME" "$BE_SERVICE_NAME"; write_state "FE_SERVICE_NAME" "$FE_SERVICE_NAME"; write_state "GITHUB_BRANCH" "$GITHUB_BRANCH"
+        write_state "ENV_NAME" "$ENV_NAME"; write_state "BE_SERVICE_NAME" "$BE_SERVICE_NAME"; write_state "FE_SERVICE_NAME" "$FE_SERVICE_NAME"; write_state "GITHUB_BRANCH" "$GITHUB_BRANCH"; write_state "AUTO_FIREBASE_SITE_ID" "$AUTO_FIREBASE_SITE_ID"
     else info "Environment directory '$ENV_DIR' already configured."; fi
     success "Configuration files for '$ENV_NAME' environment are ready."
 }
 
 handle_manual_steps() {
     step 6 "Manual Steps Required"; cd "$REPO_ROOT/infrastructure"; TFVARS_FILE_PATH="$ENV_DIR/$ENV_NAME.tfvars"
-    info "Enabling required Google Cloud APIs..."; gcloud services enable cloudbuild.googleapis.com secretmanager.googleapis.com firebase.googleapis.com iap.googleapis.com identitytoolkit.googleapis.com texttospeech.googleapis.com workflows.googleapis.com --project="$GCP_PROJECT_ID"
+    info "Enabling required Google Cloud APIs..."; gcloud services enable cloudbuild.googleapis.com secretmanager.googleapis.com firebase.googleapis.com iap.googleapis.com identitytoolkit.googleapis.com texttospeech.googleapis.com workflows.googleapis.com sqladmin.googleapis.com --project="$GCP_PROJECT_ID"
     if [ -z "$GITHUB_CONN_NAME" ]; then
         prompt "\nDo you already have a Cloud Build Host Connection for GitHub in this project? (y/n)"; read -r REPLY < /dev/tty
         if [[ $REPLY =~ ^[Yy]$ ]]; then prompt "Please enter the existing connection name:"; read -p "   Connection Name: " GITHUB_CONN_NAME < /dev/tty
@@ -478,6 +419,7 @@ handle_manual_steps() {
         prompt "Paste the OAuth Client ID here:"
         read -p "   Client ID: " AUTO_OAUTH_CLIENT_ID < /dev/tty
         if [ -z "$AUTO_OAUTH_CLIENT_ID" ]; then fail "OAuth Client ID is required to proceed."; fi
+        write_state "AUTO_OAUTH_CLIENT_ID" "$AUTO_OAUTH_CLIENT_ID"
     fi
 
     sed -i.bak "s|YOUR_OAUTH_WEB_CLIENT_ID_HERE|$AUTO_OAUTH_CLIENT_ID|g" "$TFVARS_FILE_PATH"
@@ -513,37 +455,43 @@ setup_firebase_app() {
 populate_oauth_secrets() {
     step 8 "Automating OAuth Secret Population"
     cd "$REPO_ROOT"
-    info "Looking for the OAuth 2.0 Web Client ID using the Firebase Management API..."
-
-    local AUTH_TOKEN=$(gcloud auth print-access-token)
-    local APP_ID=$( (firebase apps:list --project="$GCP_PROJECT_ID" --json 2>/dev/null || echo "{}") | jq -r --arg name "$FE_SERVICE_NAME" 'try (.result[]? | select(.displayName == $name) | .appId) catch ""' 2>/dev/null || echo "" )
-
-    if [ -z "$APP_ID" ]; then
-        warn "Could not find Firebase App ID for '$FE_SERVICE_NAME'. Skipping OAuth secret population."
-        return
-    fi
-
-    # Use the Firebase Management API to get the auth config, which includes the client ID.
-    local API_RESPONSE=$(curl -s -X GET \
-        -H "Authorization: Bearer $AUTH_TOKEN" \
-        "https://firebase.googleapis.com/v1beta1/projects/$GCP_PROJECT_ID/webApps/$APP_ID/config")
-
-    # The client ID is the one NOT associated with the API key.
-    AUTO_OAUTH_CLIENT_ID=$( (echo "$API_RESPONSE" 2>/dev/null || echo "{}") | jq -r 'try (.oauthClientId // "") catch ""' 2>/dev/null || echo "" )
-
-    if [ -z "$AUTO_OAUTH_CLIENT_ID" ] || [ "$AUTO_OAUTH_CLIENT_ID" == "null" ]; then
-        warn "Could not automatically find the OAuth Client ID via API."
-        info "Please perform the following manual steps:"
-        echo "1. Open this URL in your browser to find your OAuth Client ID:"
-        echo -e "   ${C_YELLOW}https://console.cloud.google.com/apis/credentials?project=${GCP_PROJECT_ID}${C_RESET}"
-        echo "2. Find the OAuth 2.0 Client ID of type 'Web application'."
-        prompt "Paste the OAuth Client ID here:"
-        read -p "   Client ID: " AUTO_OAUTH_CLIENT_ID < /dev/tty
-        if [ -z "$AUTO_OAUTH_CLIENT_ID" ]; then
-            fail "OAuth Client ID is required to proceed. Please restart the script."
-        fi
+    
+    if [ -n "$AUTO_OAUTH_CLIENT_ID" ] && [ "$AUTO_OAUTH_CLIENT_ID" != "null" ]; then
+        info "Using confirmed OAuth Client ID from deployment profile: ${C_YELLOW}${AUTO_OAUTH_CLIENT_ID}${C_RESET}"
     else
-        info "Found OAuth Client ID via Firebase API."
+        info "Looking for the OAuth 2.0 Web Client ID using the Firebase Management API..."
+
+        local AUTH_TOKEN=$(gcloud auth print-access-token)
+        local APP_ID=$( (firebase apps:list --project="$GCP_PROJECT_ID" --json 2>/dev/null || echo "{}") | jq -r --arg name "$FE_SERVICE_NAME" 'try (.result[]? | select(.displayName == $name) | .appId) catch ""' 2>/dev/null || echo "" )
+
+        if [ -z "$APP_ID" ]; then
+            warn "Could not find Firebase App ID for '$FE_SERVICE_NAME'. Skipping OAuth secret population."
+            return
+        fi
+
+        # Use the Firebase Management API to get the auth config, which includes the client ID.
+        local API_RESPONSE=$(curl -s -X GET \
+            -H "Authorization: Bearer $AUTH_TOKEN" \
+            "https://firebase.googleapis.com/v1beta1/projects/$GCP_PROJECT_ID/webApps/$APP_ID/config")
+
+        # The client ID is the one NOT associated with the API key.
+        AUTO_OAUTH_CLIENT_ID=$( (echo "$API_RESPONSE" 2>/dev/null || echo "{}") | jq -r 'try (.oauthClientId // "") catch ""' 2>/dev/null || echo "" )
+
+        if [ -z "$AUTO_OAUTH_CLIENT_ID" ] || [ "$AUTO_OAUTH_CLIENT_ID" == "null" ]; then
+            warn "Could not automatically find the OAuth Client ID via API."
+            info "Please perform the following manual steps:"
+            echo "1. Open this URL in your browser to find your OAuth Client ID:"
+            echo -e "   ${C_YELLOW}https://console.cloud.google.com/apis/credentials?project=${GCP_PROJECT_ID}${C_RESET}"
+            echo "2. Find the OAuth 2.0 Client ID of type 'Web application'."
+            prompt "Paste the OAuth Client ID here:"
+            read -p "   Client ID: " AUTO_OAUTH_CLIENT_ID < /dev/tty
+            if [ -z "$AUTO_OAUTH_CLIENT_ID" ]; then
+                fail "OAuth Client ID is required to proceed. Please restart the script."
+            fi
+        else
+            info "Found OAuth Client ID via Firebase API."
+        fi
+        write_state "AUTO_OAUTH_CLIENT_ID" "$AUTO_OAUTH_CLIENT_ID"
     fi
 
     info "Populating secrets with Client ID: ${C_YELLOW}${AUTO_OAUTH_CLIENT_ID}${C_RESET}"
@@ -560,10 +508,6 @@ populate_oauth_secrets() {
 setup_db_secrets() {
     step 9 "Configuring Database Secrets" # Renumber subsequent steps
     
-    # 1. Enable required APIs first
-    info "Enabling Secret Manager and SQL Admin APIs..."
-    gcloud services enable secretmanager.googleapis.com sqladmin.googleapis.com --project="$GCP_PROJECT_ID"
-
     local SECRET_NAME="creative-studio-db-password"
     
     # 2. Check if the secret already exists
@@ -617,14 +561,39 @@ run_terraform() {
     local ENV_TF_DIR="$REPO_ROOT/infrastructure"
     TFVARS_FILE_PATH="$ENV_TF_DIR/$ENV_NAME.tfvars"; info "Navigating to $ENV_TF_DIR..."; cd "$ENV_TF_DIR"
     info "Initializing Terraform..."; terraform init -reconfigure -backend-config="${ENV_NAME}.backend.tfvars"
-    info "Planning Terraform changes..."; terraform plan -var-file="$TFVARS_FILE_PATH"
+    info "Planning Terraform changes..."
+    
+    set +e
+    terraform plan -detailed-exitcode -var-file="$TFVARS_FILE_PATH" -out="tfplan"
+    local PLAN_STATUS=$?
+    set -e
 
-    warn "ℹ️  Database Upgrade Notice: If upgrading an existing installation, Terraform will provision a new Private PostgreSQL instance while keeping your existing database online."
-    warn "   After provisioning completes, the script will automatically transfer your data to the new private instance."
+    if [ $PLAN_STATUS -eq 0 ]; then
+        success "Terraform plan detected zero required infrastructure modifications. Skipping apply step!"
+        rm -f tfplan
+        return 0
+    elif [ $PLAN_STATUS -ne 2 ]; then
+        rm -f tfplan
+        fail "Terraform plan encountered an error (exit code $PLAN_STATUS)."
+    fi
 
-    prompt "\nTerraform is ready to apply the changes. This will create the infrastructure, including empty secret shells."; prompt "Do you want to proceed with 'terraform apply'? (y/n)"; read -r REPLY < /dev/tty
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then warn "Apply cancelled."; return; fi
-    terraform apply -auto-approve -var-file="$TFVARS_FILE_PATH" -parallelism=30
+    if [ "$TF_AUTO_APPROVE" = "true" ]; then
+        info "Auto-approve flag (--auto-approve) detected. Applying infrastructure modifications automatically..."
+        terraform apply "tfplan" -parallelism=30
+    else
+        warn "ℹ️  Database Upgrade Notice: If upgrading an existing installation, Terraform will provision a new Private PostgreSQL instance while keeping your existing database online."
+        warn "   After provisioning completes, the script will automatically transfer your data to the new private instance."
+        prompt "\nTerraform is ready to apply the changes. This will create or update infrastructure."
+        prompt "Do you want to proceed with 'terraform apply'? (y/n)"
+        read -r REPLY < /dev/tty
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            rm -f tfplan
+            warn "Apply cancelled by user."
+            return 0
+        fi
+        terraform apply "tfplan" -parallelism=30
+    fi
+    rm -f tfplan
 }
 
 auto_migrate_database() {
@@ -744,83 +713,81 @@ update_secrets() {
     done; success "All secrets have been populated."
 }
 
-seed_data() {
-    step 13 "Seeding Initial Data (Workspaces, Templates, Assets)"
-    cd "$REPO_ROOT"
+seed_database() {
+    step 14 "Executing Database Migrations & Initial Seeding (Cloud Run Job)"
+    cd "$REPO_ROOT/infrastructure"
 
-    info "The user running this script will be set as the owner of initial data."
-    local CURRENT_USER=$(gcloud config get-value account 2>/dev/null)
-    if [ -z "$CURRENT_USER" ]; then
-      warn "Could not determine current gcloud user. Defaulting to 'system' owner in bootstrap script."
-      CURRENT_USER="system"
+    # 1. Fetch secure outputs from Terraform
+    info "Resolving secure database credentials..."
+    local DB_CONN_NAME=$(terraform output -raw cloud_sql_connection_name 2>/dev/null || echo "")
+    local DB_NAME=$(terraform output -raw db_name 2>/dev/null || echo "")
+    local DB_USER=$(terraform output -raw db_user 2>/dev/null || echo "")
+    local DB_PASS_SECRET=$(terraform output -raw db_secret_id 2>/dev/null || echo "")
+    local SUBNET_NAME=$(terraform output -raw cloud_run_subnet_name 2>/dev/null || echo "")
+    
+    if [ -z "$DB_CONN_NAME" ] || [ -z "$DB_PASS_SECRET" ] || [ -z "$SUBNET_NAME" ]; then
+        fail "Could not query network or database outputs. Verify Terraform apply ran successfully."
     fi
 
-    info "Project:      ${C_YELLOW}${GCP_PROJECT_ID}${C_RESET}"
-    info "Deploying as: ${C_YELLOW}${CURRENT_USER}${C_RESET}"
+    # 2. Deduce target runtime image URL from local Artifact Registry repository
+    local STABLE_IMAGE="${DEPLOY_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${RES_PREFIX}-${ENV_NAME}-repo/backend:latest"
+    info "Target secure runtime image: ${C_YELLOW}${STABLE_IMAGE}${C_RESET}"
+    
+    info "Database: ${DB_CONN_NAME}"
+    info "Subnetwork Egress: ${SUBNET_NAME}"
 
-    # Establish Database Connectivity
-    export_db_vars
-    start_sql_proxy
-    # Ensure proxy stops even if this function fails
-    trap stop_sql_proxy EXIT
+    info "Verifying backend container image in Artifact Registry..."
+    local attempts=0
+    while ! gcloud artifacts docker images describe "$STABLE_IMAGE" --project="$GCP_PROJECT_ID" >/dev/null 2>&1; do
+        attempts=$((attempts + 1))
+        if [ $attempts -gt 30 ]; then
+            warn "Container image not ready after 15 minutes. Please verify Cloud Build completion."
+            fail "Database seeding aborted because container image was not found."
+        fi
+        echo -n "." # waiting for Cloud Build
+        sleep 30
+    done
+    echo ""
+    success "Container image confirmed available in Artifact Registry!"
 
-    # Temporarily change to the project root so Python module resolution works
-    pushd "$REPO_ROOT" > /dev/null
+    local CURRENT_USER=$(gcloud config get-value account 2>/dev/null || echo "system")
+    local BUCKET_ASSETS="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
 
-    # 1. Manually construct the CORRECT asset bucket name
-    local ASSET_BUCKET_NAME="${GCP_PROJECT_ID}-cs-development-bucket"
-    success "Using asset bucket: gs://${ASSET_BUCKET_NAME}"
+    # 3. Create a secure, temporary Google Cloud Run Job inside the VPC boundary
+    info "Registering secure administrative Job inside VPC..."
+    
+    gcloud run jobs delete temp-db-bootstrap-job --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || true
 
-    info "Setting bootstrap script environment variables..."
-    export GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID
-    export ADMIN_USER_EMAIL=$CURRENT_USER
-    export GENMEDIA_BUCKET=$ASSET_BUCKET_NAME
-    export ENVIRONMENT="${ENVIRONMENT:-development}"
+    gcloud run jobs create temp-db-bootstrap-job \
+        --image="$STABLE_IMAGE" \
+        --region="$DEPLOY_REGION" \
+        --subnet="$SUBNET_NAME" \
+        --command="python" \
+        --args="-m,bootstrap.bootstrap" \
+        --add-cloudsql-instances="$DB_CONN_NAME" \
+        --set-env-vars="INSTANCE_CONNECTION_NAME=${DB_CONN_NAME},DB_HOST=/cloudsql/${DB_CONN_NAME},DB_NAME=${DB_NAME},DB_USER=${DB_USER},USE_CLOUD_SQL_AUTH_PROXY=true,PROJECT_ID=${GCP_PROJECT_ID},GENMEDIA_BUCKET=${BUCKET_ASSETS},ADMIN_USER_EMAIL=${CURRENT_USER},ENVIRONMENT=development" \
+        --set-secrets="DB_PASS=${DB_PASS_SECRET}:latest" \
+        --project="$GCP_PROJECT_ID" \
+        --quiet
 
-    local PYTHON_SCRIPT_PATH="backend/bootstrap/bootstrap.py"
-    if [ ! -f "$PYTHON_SCRIPT_PATH" ]; then
-        fail "Bootstrap script not found at: ${PYTHON_SCRIPT_PATH}"
-    fi
-
-    # --- Set up virtual environment and install dependencies using uv ---
-    info "Setting up Python virtual environment for data seeding using uv..."
-    VENV_DIR="$REPO_ROOT/backend/.venv"
-    PYPROJECT_FILE="$REPO_ROOT/backend/pyproject.toml"
-
-    if [ ! -f "$PYPROJECT_FILE" ]; then
-        popd > /dev/null
-        fail "Python project file not found at '$PYPROJECT_FILE'."
-    fi
-
-    # Create venv if it doesn't exist
-    uv venv "$VENV_DIR" --python python3
-
-    # Install dependencies from pyproject.toml into the virtual environment
-    info "Installing Python project and its dependencies from 'backend/pyproject.toml'..."
-    # Use an editable install (-e) to ensure all project dependencies are installed.
-    uv pip install --python "$VENV_DIR/bin/python" -e backend
-
-    info "Executing Python bootstrap script..."
-    # We `cd` into the backend directory so that relative paths to assets inside the python script resolve correctly.
-    # The editable install ensures that `from src...` imports work without needing PYTHONPATH.
-    if (cd backend && "$VENV_DIR/bin/python" -m bootstrap.bootstrap); then
-        success "Python bootstrap script executed successfully."
+    # 4. Trigger Job execution serverless and wait for completion
+    info "Triggering migration and seeding execution in Cloud Run Job..."
+    if gcloud run jobs execute temp-db-bootstrap-job --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --wait --quiet; then
+        success "Database migrations and initial database data seeding executed successfully!"
     else
-        fail "Python bootstrap script failed."
+        warn "Database seeding failed. Retrying in background or check logs inside Cloud Run Job console."
+        gcloud run jobs delete temp-db-bootstrap-job --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || true
+        fail "Database initialization aborted due to seeding job error."
     fi
 
-    # Return to the original directory
-    popd > /dev/null
-
-    # Cleanup
-    stop_sql_proxy
-    trap - EXIT
+    # 5. Clean up administrative Job
+    info "Cleaning up temporary seeding job..."
+    gcloud run jobs delete temp-db-bootstrap-job --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --quiet
+    success "Temporary serverless seeding infrastructure securely dismantled."
 }
 
-
-
 trigger_builds() {
-    step 14 "Triggering Initial Builds"; cd "$REPO_ROOT"
+    step 13 "Triggering Initial Builds"; cd "$REPO_ROOT"
     prompt "Would you like to trigger the initial builds for the frontend and backend now? (y/n)"; read -r REPLY < /dev/tty
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then info "You can trigger the builds manually later by pushing a commit or via the Cloud Build UI."; return; fi
 
@@ -908,9 +875,122 @@ deploy_izumi_agent() {
     success "Izumi Agent deployed successfully."
 }
 
+select_deployment_profile() {
+    step 2 "Selecting Deployment Configuration Profile"
+    local PROFILE_DIR="./cstudio_profiles"
+    if [ -d "gcc-creative-studio/infrastructure" ]; then
+        PROFILE_DIR="gcc-creative-studio/infrastructure/profiles"
+    elif [ -d "infrastructure" ]; then
+        PROFILE_DIR="infrastructure/profiles"
+    fi
+    mkdir -p "$PROFILE_DIR"
+
+    if [ -n "$CLI_PROFILE" ]; then
+        local PROFILE_NAME="${CLI_PROFILE%.cstudio_bootstrap.conf}.cstudio_bootstrap.conf"
+        STATE_FILE="$PROFILE_DIR/$PROFILE_NAME"
+        info "Loading targeted deployment profile via CLI flag: ${C_YELLOW}${STATE_FILE}${C_RESET}"
+        read_state
+        return 0
+    fi
+
+    local profiles=()
+    while IFS= read -r file; do
+        [ -f "$file" ] && profiles+=("$file")
+    done < <(find "$PROFILE_DIR" -maxdepth 1 -name "*.cstudio_bootstrap.conf" 2>/dev/null | sort)
+
+    if [ ${#profiles[@]} -eq 0 ]; then
+        info "No persistent profiles detected in $PROFILE_DIR. Initializing 'default.cstudio_bootstrap.conf'..."
+        STATE_FILE="$PROFILE_DIR/default.cstudio_bootstrap.conf"
+        return 0
+    fi
+
+    echo -e "${C_CYAN}➡️  Detected persistent deployment profiles:${C_RESET}"
+    for i in "${!profiles[@]}"; do
+        local p_file="${profiles[$i]}"
+        local p_name=$(basename "$p_file")
+        local p_proj=$(grep "^GCP_PROJECT_ID=" "$p_file" | cut -d'=' -f2 || echo "unassigned")
+        local p_branch=$(grep "^GITHUB_BRANCH=" "$p_file" | cut -d'=' -f2 || echo "main")
+        echo -e "    [$((i + 1))] ${C_YELLOW}${p_name}${C_RESET} (Project: ${p_proj} | Branch: ${p_branch})"
+    done
+    echo "    [N] + Create a brand new deployment profile"
+
+    prompt "Which deployment profile would you like to use? [Default: 1 / N for new]"
+    read -p "   Select Profile [1]: " PROF_CHOICE < /dev/tty
+    PROF_CHOICE=${PROF_CHOICE:-1}
+
+    if [[ "$PROF_CHOICE" =~ ^[nN]$ ]]; then
+        prompt "Enter a name for your new deployment profile (e.g. dev, staging, prod):"
+        read -p "   Profile Name: " NEW_PROF_NAME < /dev/tty
+        NEW_PROF_NAME=${NEW_PROF_NAME:-custom}
+        NEW_PROF_NAME="${NEW_PROF_NAME%.cstudio_bootstrap.conf}.cstudio_bootstrap.conf"
+        STATE_FILE="$PROFILE_DIR/$NEW_PROF_NAME"
+        info "Created new deployment profile at: $STATE_FILE"
+        return 0
+    fi
+
+    local idx=$((PROF_CHOICE - 1))
+    if [ -n "${profiles[$idx]}" ]; then
+        STATE_FILE="${profiles[$idx]}"
+        info "Loading deployment profile: ${C_YELLOW}${STATE_FILE}${C_RESET}"
+        read_state
+        
+        echo -e "${C_CYAN}➡️  Loaded Profile Parameters:${C_RESET}"
+        echo "    • GCP Project ID:         ${GCP_PROJECT_ID:-unassigned}"
+        echo "    • Fork Repository URL:    ${GITHUB_REPO_URL:-unassigned}"
+        echo "    • Deployment Branch:      ${GITHUB_BRANCH:-main}"
+        echo "    • Environment Name:       ${ENV_NAME:-unassigned}"
+        echo "    • Cloud Build Conn Name:  ${GITHUB_CONN_NAME:-unassigned}"
+        echo "    • OAuth Web Client ID:    ${AUTO_OAUTH_CLIENT_ID:-unassigned}"
+        echo "    • Firebase Site ID:       ${AUTO_FIREBASE_SITE_ID:-unassigned}"
+        
+        prompt "Use these stored deployment parameters? (Y/n / e to edit)"
+        read -p "   Confirm [Y/n/e]: " CONFIRM_PROF < /dev/tty
+        if [[ "$CONFIRM_PROF" =~ ^[nNeE]$ ]]; then
+            info "You opted to edit or reset parameters. Interactive prompts will allow overriding values."
+            if [[ "$CONFIRM_PROF" =~ ^[eE]$ ]]; then
+                prompt "Would you like to reset OAuth Client ID, Firebase Site ID, and Cloud Build connection to be prompted again? (y/N)"
+                read -p "   Reset OAuth/Conn [y/N]: " RESET_AUTH < /dev/tty
+                if [[ "$RESET_AUTH" =~ ^[Yy]$ ]]; then
+                    unset AUTO_OAUTH_CLIENT_ID GITHUB_CONN_NAME AUTO_FIREBASE_SITE_ID
+                    sed -i.bak '/^AUTO_OAUTH_CLIENT_ID=/d;/^GITHUB_CONN_NAME=/d;/^AUTO_FIREBASE_SITE_ID=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"
+                fi
+            fi
+        else
+            success "Deployment parameters locked in from profile!"
+        fi
+    else
+        warn "Invalid selection. Defaulting to first profile..."
+        STATE_FILE="${profiles[0]}"
+        read_state
+    fi
+}
+
 
 # --- Main Execution ---
 main() {
+    TF_AUTO_APPROVE="false"
+    CLI_PROFILE=""
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --profile|-p)
+                CLI_PROFILE="$2"
+                shift 2
+                ;;
+            --auto-approve|-a)
+                TF_AUTO_APPROVE="true"
+                shift
+                ;;
+            --help|-h)
+                echo "Usage: $0 [--profile <profile_name>] [--auto-approve]"
+                exit 0
+                ;;
+            *)
+                warn "Unknown parameter: $1. Ignoring."
+                shift
+                ;;
+        esac
+    done
+    export TF_AUTO_APPROVE CLI_PROFILE
     echo -e "${C_GREEN}============================================================${C_RESET}"
     echo -e "${C_GREEN} 🚀  Welcome to the Creative Studio Infrastructure Setup 🚀 ${C_RESET}"
     echo -e "${C_GREEN}============================================================${C_RESET}"
@@ -930,6 +1010,7 @@ main() {
     read_state; LAST_COMPLETED_STEP=${LAST_COMPLETED_STEP:-0}
     declare -a steps_to_run=(
         "check_prerequisites"
+        "select_deployment_profile"
         "check_and_install_terraform"
         "setup_project" "setup_repo"
         "configure_environment"
@@ -941,8 +1022,8 @@ main() {
         "populate_oauth_secrets"
         "update_oauth_client"
         "update_secrets"
-        "seed_data"
         "trigger_builds"
+        "seed_database"
         "deploy_izumi_agent"
     )
     for i in "${!steps_to_run[@]}"; do

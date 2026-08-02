@@ -27,7 +27,11 @@ variable "apis_to_enable" {
     "firestore.googleapis.com",
     "texttospeech.googleapis.com",
     "workflows.googleapis.com",
-    "drive.googleapis.com"
+    "drive.googleapis.com",
+    "servicenetworking.googleapis.com", # Required for Private VPC Peering (Cloud SQL)
+    "sqladmin.googleapis.com",          # Required for Cloud SQL instance management
+    "secretmanager.googleapis.com",     # Required for application secret management
+    "vpcaccess.googleapis.com"          # Required for Serverless Direct VPC routing
   ]
 }
 
