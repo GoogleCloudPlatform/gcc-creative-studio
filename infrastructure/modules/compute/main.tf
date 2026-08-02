@@ -154,3 +154,10 @@ resource "google_cloud_run_v2_service_iam_member" "agent_engine_invoker" {
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_service_account.agent_sa.email}"
 }
+
+# Grant Vertex AI user role to the dedicated AI Agent Service Account for reasoning engine model access
+resource "google_project_iam_member" "agent_sa_aiplatform_user" {
+  project = var.project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_service_account.agent_sa.email}"
+}

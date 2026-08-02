@@ -38,9 +38,7 @@ module "compute" {
     DB_USER                          = module.database.user_name
     INSTANCE_CONNECTION_NAME         = module.database.instance_connection_name
     GENMEDIA_BUCKET                  = google_storage_bucket.genmedia.name
-    AGENT_ENGINE_RESOURCE_NAME       = var.agent_engine_resource_name
     AGENT_LOCATION                   = var.agent_location
-    AGENT_ENGINE_USER_AUTH_TOKEN_KEY = var.agent_engine_user_auth_token_key
   }
 
   runtime_secrets = {

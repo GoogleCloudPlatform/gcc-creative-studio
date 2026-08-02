@@ -57,8 +57,11 @@ if [ "$FORCE" != "true" ]; then
     fi
 fi
 
-cleanup_iam_bindings() {
-    echo "Cleaning up temporary IAM policy bindings on gs://$BUCKET_NAME..."
+cleanup_resources() {
+    echo "Cleaning up temporary IAM policy bindings and sensitive SQL exports on gs://$BUCKET_NAME..."
+    if [ -n "$EXPORT_FILE" ]; then
+        gcloud storage rm "gs://$BUCKET_NAME/$EXPORT_FILE" --quiet 2>/dev/null || true
+    fi
     if [ -n "$SOURCE_SA" ]; then
         gcloud storage buckets remove-iam-policy-binding "gs://$BUCKET_NAME" \
             --member="serviceAccount:$SOURCE_SA" \
@@ -70,7 +73,7 @@ cleanup_iam_bindings() {
             --role="roles/storage.objectViewer" --quiet 2>/dev/null || true
     fi
 }
-trap cleanup_iam_bindings EXIT
+trap cleanup_resources EXIT
 
 echo "Starting migration from $SOURCE_INSTANCE to $TARGET_INSTANCE for database $DATABASE_NAME..."
 
@@ -99,5 +102,8 @@ echo "Importing data into $TARGET_INSTANCE..."
 retry_command gcloud sql import sql "$TARGET_INSTANCE" "gs://$BUCKET_NAME/$EXPORT_FILE" \
     --database="$DATABASE_NAME" \
     --quiet
+
+echo "Removing temporary database export from GCS..."
+gcloud storage rm "gs://$BUCKET_NAME/$EXPORT_FILE" --quiet 2>/dev/null || true
 
 echo "Migration completed successfully!"

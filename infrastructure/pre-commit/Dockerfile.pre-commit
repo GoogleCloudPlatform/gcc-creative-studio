@@ -20,7 +20,7 @@ ENV PATH=$PATH:/usr/local/go/bin
 RUN pip install pre-commit pylint
 
 # Copy and set entrypoint
-COPY infra/pre-commit/entrypoint.sh /entrypoint.sh
+COPY infrastructure/pre-commit/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 WORKDIR /app
