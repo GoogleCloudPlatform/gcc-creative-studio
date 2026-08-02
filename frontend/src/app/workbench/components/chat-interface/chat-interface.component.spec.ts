@@ -197,6 +197,112 @@ describe('ChatInterfaceComponent', () => {
     expect(component).toBeTruthy();
   });
 
+  describe('markdown link renderer', () => {
+    let linkRenderer: (arg1: any, arg2?: any, arg3?: any) => string;
+
+    beforeEach(() => {
+      linkRenderer = component['markdownService'].renderer.link;
+    });
+
+    it('should render safe relative links and resolve them against the window origin', () => {
+      const result = linkRenderer(
+        '/gallery/123',
+        'Gallery Title',
+        'Go to gallery',
+      );
+      const currentOrigin = window.location.origin;
+      expect(result).toContain(`href="${currentOrigin}/gallery/123"`);
+      expect(result).toContain('title="Gallery Title"');
+      expect(result).toContain('>Go to gallery</a>');
+    });
+
+    it('should render same-origin absolute links', () => {
+      const currentOrigin = window.location.origin;
+      const result = linkRenderer(
+        `${currentOrigin}/asset-detail/456`,
+        'Asset Detail',
+        'View Asset',
+      );
+      expect(result).toContain(`href="${currentOrigin}/asset-detail/456"`);
+      expect(result).toContain('title="Asset Detail"');
+      expect(result).toContain('>View Asset</a>');
+    });
+
+    it('should sanitize and render external absolute links as plain text', () => {
+      const result = linkRenderer(
+        'https://malicious.com/attack',
+        'Attack',
+        'Click Me',
+      );
+      expect(result).toBe('Click Me');
+    });
+
+    it('should sanitize javascript protocol links as plain text', () => {
+      const result = linkRenderer('javascript:alert(1)', 'XSS', 'Click here');
+      expect(result).toBe('Click here');
+    });
+
+    it('should sanitize javascript protocol links with leading spaces as plain text', () => {
+      const result = linkRenderer(
+        '   javascript:alert(1)  ',
+        'XSS',
+        'Click here',
+      );
+      expect(result).toBe('Click here');
+    });
+
+    it('should sanitize javascript links containing control characters (tabs, newlines, carriage returns) as plain text', () => {
+      const resultTab = linkRenderer(
+        'java\tscript:alert(1)',
+        'XSS',
+        'Click here',
+      );
+      expect(resultTab).toBe('Click here');
+
+      const resultNewline = linkRenderer(
+        'java\nscript:alert(2)',
+        'XSS',
+        'Click here',
+      );
+      expect(resultNewline).toBe('Click here');
+
+      const resultCR = linkRenderer(
+        'java\rscript:alert(3)',
+        'XSS',
+        'Click here',
+      );
+      expect(resultCR).toBe('Click here');
+    });
+
+    it('should render relative links with colons in query parameters or path', () => {
+      const currentOrigin = window.location.origin;
+      const resultQuery = linkRenderer(
+        '/gallery/view?id=abc:123',
+        'Gallery Query',
+        'View query',
+      );
+      expect(resultQuery).toContain(
+        `href="${currentOrigin}/gallery/view?id=abc:123"`,
+      );
+
+      const resultPath = linkRenderer(
+        '/assets/color:blue',
+        'Blue Assets',
+        'Blue',
+      );
+      expect(resultPath).toContain(`href="${currentOrigin}/assets/color:blue"`);
+    });
+
+    it('should escape double quotes in the title attribute', () => {
+      const result = linkRenderer(
+        '/gallery/123',
+        'A "cool" title',
+        'Go to gallery',
+      );
+      expect(result).toContain('title="A &quot;cool&quot; title"');
+    });
+  });
+
   it('should initialize and load sessions', () => {
     expect(agentChatService.getSessions).toHaveBeenCalledWith(
       1,
