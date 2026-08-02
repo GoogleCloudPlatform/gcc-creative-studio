@@ -71,4 +71,3 @@ module "compute" {
 | `service_location` | The location/region of the Cloud Run service. |
 | `service_account_email` | The email address of the runtime service account. |
 | `service_account_name` | The fully-qualified name of the runtime service account. |
-| `serverless_neg_id` | The fully qualified ID of the serverless network endpoint group. |

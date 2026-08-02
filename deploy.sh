@@ -298,14 +298,13 @@ configure_environment() {
         info "Using active environment: $ENV_NAME"
     fi
     
-    ENV_DIR="environments/$ENV_NAME"
-    TFVARS_FILE_PATH="$REPO_ROOT/infrastructure/$ENV_DIR/terraform.tfvars"
-    STATE_FILE="$REPO_ROOT/infrastructure/$ENV_DIR/.deploy_state"
+    ENV_DIR="$REPO_ROOT/infrastructure"
+    TFVARS_FILE_PATH="$ENV_DIR/$ENV_NAME.tfvars"
+    STATE_FILE="$ENV_DIR/.deploy_state_${ENV_NAME}"
     read_state
 
-    if [ ! -d "$ENV_DIR" ]; then
-        info "Creating new environment folder from template: $TEMPLATE_ENV_DIR"
-        cp -r "$TEMPLATE_ENV_DIR" "$ENV_DIR"
+    if [ ! -f "$TFVARS_FILE_PATH" ]; then
+        info "Configuring environment files in flattened infrastructure directory..."
         
         prompt "Do you have an existing GCS bucket for Terraform state? (y/n)"
         read -r REPLY < /dev/tty
@@ -320,11 +319,12 @@ configure_environment() {
         fi
         
         BUCKET_PREFIX=$(printf "$GCS_BUCKET_PREFIX_FORMAT" "$ENV_NAME")
-        info "Updating backend.tfvars with: $BUCKET_PREFIX"
-        echo -e "bucket = \"$BUCKET_NAME\"\nprefix = \"$BUCKET_PREFIX\"" > "$ENV_DIR/backend.tfvars"
+        info "Creating backend config file ${ENV_NAME}.backend.tfvars..."
+        echo -e "bucket = \"$BUCKET_NAME\"\nprefix = \"$BUCKET_PREFIX\"" > "$ENV_DIR/${ENV_NAME}.backend.tfvars"
         
         # Populate tfvars file
-        info "Configuring terraform.tfvars..."
+        info "Configuring $TFVARS_FILE_PATH..."
+        touch "$TFVARS_FILE_PATH"
         sed -i.bak "s|^[#[:space:]]*project_id[[:space:]]*=.*|project_id = \"$GCP_PROJECT_ID\"|g" "$TFVARS_FILE_PATH"
         sed -i.bak "s|^[#[:space:]]*environment[[:space:]]*=.*|environment = \"$ENV_NAME\"|g" "$TFVARS_FILE_PATH"
 
@@ -337,7 +337,6 @@ configure_environment() {
         
         prompt_and_update_tfvar "Region to deploy resources into" "us-central1" "region" "DEPLOY_REGION"
         prompt_and_update_tfvar "Resource naming prefix" "cs" "resource_prefix" "RES_PREFIX"
-        prompt_and_update_tfvar "Custom domain name (Load Balancer SSL)" "${GCP_PROJECT_ID}.example.com" "domain_name" "LB_DOMAIN"
         
         # Discover and Set Firebase Site ID
         configure_firebase_site_id "$TFVARS_FILE_PATH" "$GCP_PROJECT_ID"
@@ -346,7 +345,6 @@ configure_environment() {
         write_state "ENV_NAME" "$ENV_NAME"
         write_state "DEPLOY_REGION" "$DEPLOY_REGION"
         write_state "RES_PREFIX" "$RES_PREFIX"
-        write_state "LB_DOMAIN" "$LB_DOMAIN"
         write_state "AUTO_FIREBASE_SITE_ID" "$AUTO_FIREBASE_SITE_ID"
     else
         info "Environment '$ENV_NAME' directory already exists."
@@ -454,13 +452,12 @@ populate_oauth_secrets() {
 run_terraform() {
     step 9 "Provisioning Google Cloud Infrastructure via Terraform"
     cd "$REPO_ROOT/infrastructure"
-    ENV_DIR="environments/$ENV_NAME"
     
-    info "Initializing Terraform with GCS Backend State config: $ENV_DIR/backend.tfvars..."
-    terraform init -reconfigure -backend-config="$ENV_DIR/backend.tfvars"
+    info "Initializing Terraform with GCS Backend State config: ${ENV_NAME}.backend.tfvars..."
+    terraform init -reconfigure -backend-config="${ENV_NAME}.backend.tfvars"
     
     info "Running Terraform Plan..."
-    terraform plan -var-file="$ENV_DIR/terraform.tfvars"
+    terraform plan -var-file="${ENV_NAME}.tfvars"
     
     warn "ℹ️  Database Upgrade Notice: If upgrading an existing installation, Terraform will provision a new Private PostgreSQL instance while keeping your existing database online."
     warn "   After provisioning completes, the script will automatically transfer your data to the new private instance."
@@ -470,7 +467,7 @@ run_terraform() {
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then fail "Deployment halted by user."; fi
     
     info "Applying infrastructure deployment configuration..."
-    terraform apply -auto-approve -var-file="$ENV_DIR/terraform.tfvars"
+    terraform apply -auto-approve -var-file="${ENV_NAME}.tfvars"
     success "Infrastructure provisioned successfully."
 }
 

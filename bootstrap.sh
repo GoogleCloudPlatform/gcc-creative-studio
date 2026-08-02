@@ -616,7 +616,7 @@ run_terraform() {
     step 10 "Deploying Infrastructure with Terraform";
     local ENV_TF_DIR="$REPO_ROOT/infrastructure"
     TFVARS_FILE_PATH="$ENV_TF_DIR/$ENV_NAME.tfvars"; info "Navigating to $ENV_TF_DIR..."; cd "$ENV_TF_DIR"
-    info "Initializing Terraform..."; terraform init -reconfigure
+    info "Initializing Terraform..."; terraform init -reconfigure -backend-config="${ENV_NAME}.backend.tfvars"
     info "Planning Terraform changes..."; terraform plan -var-file="$TFVARS_FILE_PATH"
 
     warn "ℹ️  Database Upgrade Notice: If upgrading an existing installation, Terraform will provision a new Private PostgreSQL instance while keeping your existing database online."

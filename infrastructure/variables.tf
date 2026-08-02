@@ -66,10 +66,7 @@ variable "backend_image_tag" {
   default     = "latest"
 }
 
-variable "domain_name" {
-  type        = string
-  description = "The custom domain name for the Load Balancer."
-}
+
 
 variable "firebase_site_id" {
   type        = string

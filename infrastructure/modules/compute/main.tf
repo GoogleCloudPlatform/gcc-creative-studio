@@ -36,8 +36,8 @@ resource "google_cloud_run_v2_service" "backend" {
   custom_audiences    = var.custom_audiences
   deletion_protection = false
   
-  # Lock network to the Load Balancer ONLY
-  ingress = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+  # Standard ingress allowing authenticated IAM requests
+  ingress = "INGRESS_TRAFFIC_ALL"
 
   template {
     service_account = google_service_account.run_sa.email
@@ -139,17 +139,7 @@ resource "google_service_account_iam_member" "run_sa_act_as_self" {
   member             = "serviceAccount:${google_service_account.run_sa.email}"
 }
 
-# The Serverless NEG targeting this specific service
-resource "google_compute_region_network_endpoint_group" "serverless_neg" {
-  name                  = "${var.resource_prefix}-${var.environment}-neg"
-  project               = var.project_id
-  region                = var.region
-  network_endpoint_type = "SERVERLESS"
 
-  cloud_run {
-    service = google_cloud_run_v2_service.backend.name
-  }
-}
 
 resource "google_service_account" "agent_sa" {
   account_id   = "${var.resource_prefix}-${var.environment}-agent"
