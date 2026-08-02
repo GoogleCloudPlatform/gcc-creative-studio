@@ -27,7 +27,7 @@ variable "labels" {
 variable "repository_id" {
   type        = string
   description = "The ID of the repository."
-  default     = "ghcr-proxy"
+  default     = "repo"
 }
 
 variable "remote_uri" {

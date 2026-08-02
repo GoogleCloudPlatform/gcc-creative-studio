@@ -185,10 +185,18 @@ async def test_worker_database_cloud_sql():
             mock_create_engine.return_value = AsyncMock()
             mock_connector_inst = MagicMock()
             mock_connector_inst.close_async = AsyncMock()
+            mock_connector_inst.connect_async = AsyncMock()
             mock_connector_cls.return_value = mock_connector_inst
 
             async with WorkerDatabase() as sessionmaker:
                 assert sessionmaker is not None
+                creator = mock_create_engine.call_args.kwargs["async_creator"]
+                await creator()
+                from src.database import IPTypes
+
+                mock_connector_inst.connect_async.assert_called_once()
+                call_kwargs = mock_connector_inst.connect_async.call_args.kwargs
+                assert call_kwargs.get("ip_type") == IPTypes.PRIVATE
 
 
 def test_database_connector_singleton():

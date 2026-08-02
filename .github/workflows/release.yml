@@ -1,8 +1,16 @@
 name: Release Pipeline
 
+# ==============================================================================
+# PHASE 2 ROADMAP (FUTURE ENTERPRISE DISTRIBUTION PIPELINE)
+# This automated GHCR and release artifact packaging workflow is reserved for
+# Phase 2 enterprise distribution and turnkey zero-fork onboarding.
+# For Phase 1 (current standard), open-source clients and engineers deploy
+# directly from their personal GitHub forks using custom Cloud Build triggers.
+# The automated release trigger is currently paused until Phase 2 rollout.
+# ==============================================================================
 on:
-  release:
-    types: [created]
+  # release:
+  #   types: [created]
   workflow_dispatch:
 
 env:
@@ -78,8 +86,8 @@ jobs:
       - name: Create Placeholder Config
         # This ensures the Angular build doesn't fail due to missing environment files
         run: |
-          mkdir -p src/assets
-          echo '{"production": true}' > src/assets/config.json
+          mkdir -p public/assets
+          echo '{"production": true}' > public/assets/config.json
         working-directory: frontend
 
       - name: Build Angular App

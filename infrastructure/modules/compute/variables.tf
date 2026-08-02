@@ -73,7 +73,7 @@ variable "custom_audiences" {
 variable "cpu" {
   type        = string
   description = "CPU limit for the Cloud Run container."
-  default     = "1000m"
+  default     = "1.0"
 }
 
 variable "memory" {

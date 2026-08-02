@@ -399,12 +399,13 @@ configure_environment() {
         prompt "What would you like to call this deployment environment?"; read -p "   Environment Name [default value: $DEFAULT_ENV_NAME]: " ENV_NAME < /dev/tty
         ENV_NAME=${ENV_NAME:-$DEFAULT_ENV_NAME}
     else info "Using previously configured environment: $ENV_NAME"; fi
-    ENV_DIR="environments/$ENV_NAME";
-    TFVARS_FILE_PATH="$REPO_ROOT/infrastructure/$ENV_DIR/$ENV_NAME.tfvars"
-    STATE_FILE="$REPO_ROOT/infrastructure/$ENV_DIR/.bootstrap_state";
+    # Use flattened structure directly under infrastructure/
+    ENV_DIR="$REPO_ROOT/infrastructure"
+    TFVARS_FILE_PATH="$ENV_DIR/$ENV_NAME.tfvars"
+    STATE_FILE="$ENV_DIR/.bootstrap_state_${ENV_NAME}"
     read_state
-    if [ ! -d "$ENV_DIR" ]; then
-        info "Creating new environment directory from template: $TEMPLATE_ENV_DIR"; cp -r "$TEMPLATE_ENV_DIR" "$ENV_DIR"
+    if [ ! -f "$TFVARS_FILE_PATH" ]; then
+        info "Configuring environment files in flattened infrastructure directory..."
         prompt "Do you have an existing GCS bucket for Terraform state? (y/n)"; read -r REPLY < /dev/tty
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             prompt "Please enter the name of your GCS bucket:"; read -p "   Bucket Name: " BUCKET_NAME < /dev/tty
@@ -413,14 +414,9 @@ configure_environment() {
             info "Creating GCS bucket '$BUCKET_NAME' for Terraform state..."; gsutil mb -p "$GCP_PROJECT_ID" "gs://${BUCKET_NAME}" || warn "Bucket 'gs://${BUCKET_NAME}' may already exist. Continuing..."
         fi
         BUCKET_PREFIX=$(printf "$GCS_BUCKET_PREFIX_FORMAT" "$ENV_NAME")
-        info "Updating backend.tf with default prefix: $BUCKET_PREFIX"; echo "terraform {
-  backend \"gcs\" {
-    bucket = \"$BUCKET_NAME\"
-    prefix = \"$BUCKET_PREFIX\"
-  }
-}" > "$ENV_DIR/backend.tf"
-        info "Updating $TFVARS_FILE_PATH...";
-        mv "$ENV_DIR/dev.tfvars" "$TFVARS_FILE_PATH"
+        info "Creating backend config file ${ENV_NAME}.backend.tfvars..."; echo -e "bucket = \"$BUCKET_NAME\"\nprefix = \"$BUCKET_PREFIX\"" > "$ENV_DIR/${ENV_NAME}.backend.tfvars"
+        info "Creating $TFVARS_FILE_PATH...";
+        touch "$TFVARS_FILE_PATH"
 
         sed -i.bak "s|^[#[:space:]]*gcp_project_id[[:space:]]*=.*|gcp_project_id = \"$GCP_PROJECT_ID\"|g" "$TFVARS_FILE_PATH"
         sed -i.bak "s|^[#[:space:]]*github_repo_owner[[:space:]]*=.*|github_repo_owner = \"$GITHUB_REPO_OWNER\"|g" "$TFVARS_FILE_PATH"
@@ -680,7 +676,7 @@ update_oauth_client() {
 }
 
 update_secrets() {
-    step 12 "Updating Remaining Secrets"; info "Navigating to $REPO_ROOT/infra/environments/$ENV_NAME..."; cd "$REPO_ROOT/infra/environments/$ENV_NAME"
+    step 12 "Updating Remaining Secrets"; info "Navigating to $REPO_ROOT/infrastructure..."; cd "$REPO_ROOT/infrastructure"
     info "Populating values in Secret Manager..."; local TERRAFORM_OUTPUTS=$(terraform output -json 2>/dev/null || echo "{}")
     local FRONTEND_SECRETS=$( (echo "$TERRAFORM_OUTPUTS" 2>/dev/null || echo "{}") | jq -r 'try (.frontend_secrets.value[]?) catch ""' 2>/dev/null || echo "" ); local BACKEND_SECRETS=$( (echo "$TERRAFORM_OUTPUTS" 2>/dev/null || echo "{}") | jq -r 'try (.backend_secrets.value[]?) catch ""' 2>/dev/null || echo "" )
     local ALL_SECRETS=$(echo "${FRONTEND_SECRETS} ${BACKEND_SECRETS}" | tr ' ' '\n' | sort -u | grep .)

@@ -23,7 +23,7 @@ module "compute" {
   service_name    = "backend"
   
   # Image configuration
-  ar_repo_id         = "ghcr-proxy"
+  ar_repo_id         = "repo"
   github_org_or_user = "my-org"
   github_repo_name   = "my-repo"
   image_tag          = "latest"

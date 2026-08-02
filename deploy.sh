@@ -74,7 +74,7 @@ spinner() {
     local delay=0.1
     local spinstr='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
     tput civis # Hide cursor
-    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
+    while kill -0 "$pid" 2>/dev/null; do
         local temp=${spinstr#?}
         printf " ${C_CYAN}[%c]${C_RESET}  " "$spinstr"
         local spinstr=$temp${spinstr%"$temp"}
@@ -601,8 +601,8 @@ seed_database() {
         fail "Could not query network or database outputs. Verify Terraform apply ran successfully."
     fi
 
-    # 2. Deduce dynamic billing proxy registry image URL
-    local STABLE_IMAGE="${DEPLOY_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${RES_PREFIX}-${ENV_NAME}-ghcr-proxy/GoogleCloudPlatform/gcc-creative-studio/backend:latest"
+    # 2. Deduce target runtime image URL from local Artifact Registry repository
+    local STABLE_IMAGE="${DEPLOY_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${RES_PREFIX}-${ENV_NAME}-repo/backend:latest"
     info "Target secure runtime image: ${C_YELLOW}${STABLE_IMAGE}${C_RESET}"
     
     info "Database: ${DB_CONN_NAME}"
@@ -649,15 +649,21 @@ deploy_izumi_agent() {
     step 12 "Automated Izumi Agent Deployment"
     info "Deploying Izumi Agent..."
 
-    rm -rf /tmp/izumi-agent
-    trap 'rm -rf /tmp/izumi-agent' EXIT INT TERM
+    if [ -d "$REPO_ROOT/genmedia-agent-demos" ]; then
+        info "Using local workspace agent demos at $REPO_ROOT/genmedia-agent-demos..."
+        AGENT_DIR="$REPO_ROOT/genmedia-agent-demos"
+    else
+        rm -rf /tmp/izumi-agent
+        trap 'rm -rf /tmp/izumi-agent' EXIT INT TERM
 
-    IZUMI_BRANCH="${IZUMI_AGENT_BRANCH:-feat/unified-mediagent-interface}"
-    info "Cloning Izumi Agent repository (branch: ${IZUMI_BRANCH})..."
-    git clone -b "$IZUMI_BRANCH" https://github.com/GoogleCloudPlatform/genmedia-izumi-agent.git /tmp/izumi-agent
+        IZUMI_BRANCH="${IZUMI_AGENT_BRANCH:-feat/unified-mediagent-interface}"
+        info "Cloning Izumi Agent repository (branch: ${IZUMI_BRANCH})..."
+        git clone -b "$IZUMI_BRANCH" https://github.com/GoogleCloudPlatform/genmedia-izumi-agent.git /tmp/izumi-agent
+        AGENT_DIR="/tmp/izumi-agent"
+    fi
 
     info "Setting up Python virtual environment and installing dependencies using uv..."
-    pushd /tmp/izumi-agent > /dev/null
+    pushd "$AGENT_DIR" > /dev/null
     uv venv .venv
     uv pip install --python .venv/bin/python -e .
 
@@ -666,6 +672,10 @@ deploy_izumi_agent() {
         info "Mock execution of deploy_to_agent_engine.py successful."
     else
         info "Executing deployment script..."
+        export GOOGLE_CLOUD_PROJECT="$GCP_PROJECT_ID"
+        export GOOGLE_CLOUD_LOCATION="$DEPLOY_REGION"
+        export ASSET_SERVICE_GCS_BUCKET="gs://${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
+
         AGENT_SA_EMAIL=""
         if [ -d "$REPO_ROOT/infrastructure" ]; then
             AGENT_SA_EMAIL=$(cd "$REPO_ROOT/infrastructure" && terraform output -raw agent_service_account_email 2>/dev/null || echo "")
@@ -697,8 +707,10 @@ deploy_izumi_agent() {
         rm -f "$DEPLOY_LOG"
     fi
     popd > /dev/null
-    rm -rf /tmp/izumi-agent
-    trap - EXIT INT TERM
+    if [ "$AGENT_DIR" = "/tmp/izumi-agent" ]; then
+        rm -rf /tmp/izumi-agent
+        trap - EXIT INT TERM
+    fi
     success "Izumi Agent deployed successfully."
 }
 
