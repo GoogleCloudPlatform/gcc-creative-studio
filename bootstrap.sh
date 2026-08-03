@@ -121,6 +121,7 @@ prompt_and_update_tfvar() {
 write_state() {
     if [ -z "$STATE_FILE" ]; then return; fi
     if ! (
+        mkdir -p "$(dirname "$STATE_FILE")" 2>/dev/null || true
         touch "$STATE_FILE"
         TMP_STATE_FILE=$(mktemp)
         grep -v "^$1=" "$STATE_FILE" > "$TMP_STATE_FILE" || true
@@ -238,6 +239,7 @@ setup_project() {
         prompt "Found project '$GCP_PROJECT_ID' from a previous run. Use this project? (y/n)"; read -r REPLY < /dev/tty
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             gcloud config set project "$GCP_PROJECT_ID"
+            write_state "GCP_PROJECT_ID" "$GCP_PROJECT_ID"
             success "Project '$GCP_PROJECT_ID' is configured."
             return
         fi
@@ -248,6 +250,7 @@ setup_project() {
             GCP_PROJECT_ID=$CURRENT_GCLOUD_PROJECT
             info "Using existing project '$GCP_PROJECT_ID'."
             gcloud config set project "$GCP_PROJECT_ID"
+            write_state "GCP_PROJECT_ID" "$GCP_PROJECT_ID"
             success "Project '$GCP_PROJECT_ID' is configured."
             return
         fi
@@ -262,28 +265,41 @@ setup_project() {
         info "Linking billing account '$BILLING_ACCOUNT_ID'..."; gcloud beta billing projects link "$GCP_PROJECT_ID" --billing-account="$BILLING_ACCOUNT_ID"
     fi
     info "Setting gcloud config to use project '$GCP_PROJECT_ID'..."; gcloud config set project "$GCP_PROJECT_ID"
+    write_state "GCP_PROJECT_ID" "$GCP_PROJECT_ID"
     success "Project '$GCP_PROJECT_ID' is configured."
 }
 
 setup_repo() {
     step 4 "Configuring Git Repository"
 
-    # Since the script is run via curl, it never starts inside a repo. We must clone it.
-    warn "Please fork the main repository first: ${UPSTREAM_REPO_URL}/fork"
-    while true; do
-        prompt "What is the git URL of YOUR forked repository? (e.g., https://github.com/user/repo.git)"
-        read -p "   Git URL: " GITHUB_REPO_URL < /dev/tty
-        if [ -z "$GITHUB_REPO_URL" ]; then warn "Repository URL cannot be empty."; continue; fi
-        info "Validating repository URL..."
-        if git ls-remote --exit-code -h "$GITHUB_REPO_URL" > /dev/null 2>&1; then
-            success "Repository found."; break
-        else warn "Repository not found at that URL. Please check for typos and try again."; fi
-    done
+    if [ -n "$GITHUB_REPO_URL" ] && [ "$GITHUB_REPO_URL" != "unassigned" ]; then
+        info "Using stored repository URL from profile: ${C_YELLOW}${GITHUB_REPO_URL}${C_RESET}"
+    else
+        # Since the script is run via curl, it never starts inside a repo. We must clone it.
+        warn "Please fork the main repository first: ${UPSTREAM_REPO_URL}/fork"
+        while true; do
+            prompt "What is the git URL of YOUR forked repository? (e.g., https://github.com/user/repo.git)"
+            read -p "   Git URL: " GITHUB_REPO_URL < /dev/tty
+            if [ -z "$GITHUB_REPO_URL" ]; then warn "Repository URL cannot be empty."; continue; fi
+            info "Validating repository URL..."
+            if git ls-remote --exit-code -h "$GITHUB_REPO_URL" > /dev/null 2>&1; then
+                success "Repository found."; break
+            else warn "Repository not found at that URL. Please check for typos and try again."; fi
+        done
+        write_state "GITHUB_REPO_URL" "$GITHUB_REPO_URL"
+    fi
 
     # --- Ask for Branch ---
-    prompt "Which git branch would you like to use? (default: main)"
-    read -p "   Branch Name: " SELECTED_BRANCH < /dev/tty
-    SELECTED_BRANCH=${SELECTED_BRANCH:-main}
+    if [ -n "$GITHUB_BRANCH" ] && [ "$GITHUB_BRANCH" != "unassigned" ]; then
+        SELECTED_BRANCH="$GITHUB_BRANCH"
+        info "Using stored Git branch from profile: ${C_YELLOW}${SELECTED_BRANCH}${C_RESET}"
+    else
+        prompt "Which git branch would you like to use? (default: main)"
+        read -p "   Branch Name: " SELECTED_BRANCH < /dev/tty
+        SELECTED_BRANCH=${SELECTED_BRANCH:-main}
+        GITHUB_BRANCH="$SELECTED_BRANCH"
+        write_state "GITHUB_BRANCH" "$GITHUB_BRANCH"
+    fi
     DEFAULT_BRANCH_NAME="$SELECTED_BRANCH"
 
     local REPO_CLONE_DIR=$(basename "$GITHUB_REPO_URL" .git)
@@ -343,8 +359,6 @@ configure_environment() {
     # Use flattened structure directly under infrastructure/
     ENV_DIR="$REPO_ROOT/infrastructure"
     TFVARS_FILE_PATH="$ENV_DIR/$ENV_NAME.tfvars"
-    STATE_FILE="$ENV_DIR/.bootstrap_state_${ENV_NAME}"
-    read_state
     if [ ! -f "$TFVARS_FILE_PATH" ]; then
         info "Configuring environment files in flattened infrastructure directory..."
         prompt "Do you have an existing GCS bucket for Terraform state? (y/n)"; read -r REPLY < /dev/tty
@@ -560,7 +574,7 @@ run_terraform() {
     step 10 "Deploying Infrastructure with Terraform";
     local ENV_TF_DIR="$REPO_ROOT/infrastructure"
     TFVARS_FILE_PATH="$ENV_TF_DIR/$ENV_NAME.tfvars"; info "Navigating to $ENV_TF_DIR..."; cd "$ENV_TF_DIR"
-    info "Initializing Terraform..."; terraform init -reconfigure -backend-config="${ENV_NAME}.backend.tfvars"
+    info "Initializing Terraform..."; terraform init -reconfigure -upgrade -backend-config="${ENV_NAME}.backend.tfvars"
     info "Planning Terraform changes..."
     
     set +e
@@ -877,12 +891,7 @@ deploy_izumi_agent() {
 
 select_deployment_profile() {
     step 2 "Selecting Deployment Configuration Profile"
-    local PROFILE_DIR="./cstudio_profiles"
-    if [ -d "gcc-creative-studio/infrastructure" ]; then
-        PROFILE_DIR="gcc-creative-studio/infrastructure/profiles"
-    elif [ -d "infrastructure" ]; then
-        PROFILE_DIR="infrastructure/profiles"
-    fi
+    local PROFILE_DIR="${HOME}/.cstudio/profiles"
     mkdir -p "$PROFILE_DIR"
 
     if [ -n "$CLI_PROFILE" ]; then
@@ -901,10 +910,11 @@ select_deployment_profile() {
     if [ ${#profiles[@]} -eq 0 ]; then
         info "No persistent profiles detected in $PROFILE_DIR. Initializing 'default.cstudio_bootstrap.conf'..."
         STATE_FILE="$PROFILE_DIR/default.cstudio_bootstrap.conf"
+        write_state "PROFILE_INITIALIZED" "true"
         return 0
     fi
 
-    echo -e "${C_CYAN}➡️  Detected persistent deployment profiles:${C_RESET}"
+    echo -e "${C_CYAN}➡️  Detected persistent deployment profiles in ${PROFILE_DIR}:${C_RESET}"
     for i in "${!profiles[@]}"; do
         local p_file="${profiles[$i]}"
         local p_name=$(basename "$p_file")
@@ -925,6 +935,7 @@ select_deployment_profile() {
         NEW_PROF_NAME="${NEW_PROF_NAME%.cstudio_bootstrap.conf}.cstudio_bootstrap.conf"
         STATE_FILE="$PROFILE_DIR/$NEW_PROF_NAME"
         info "Created new deployment profile at: $STATE_FILE"
+        write_state "PROFILE_INITIALIZED" "true"
         return 0
     fi
 
@@ -934,6 +945,11 @@ select_deployment_profile() {
         info "Loading deployment profile: ${C_YELLOW}${STATE_FILE}${C_RESET}"
         read_state
         
+        if [ -z "$GCP_PROJECT_ID" ] && [ -z "$GITHUB_REPO_URL" ]; then
+            info "Profile '${C_YELLOW}$(basename "$STATE_FILE" .cstudio_bootstrap.conf)${C_RESET}' is fresh or unassigned. Interactive prompts will now guide you to complete missing settings and automatically save them to this profile!"
+            return 0
+        fi
+
         echo -e "${C_CYAN}➡️  Loaded Profile Parameters:${C_RESET}"
         echo "    • GCP Project ID:         ${GCP_PROJECT_ID:-unassigned}"
         echo "    • Fork Repository URL:    ${GITHUB_REPO_URL:-unassigned}"
@@ -1029,11 +1045,6 @@ main() {
     for i in "${!steps_to_run[@]}"; do
         step_num=$((i + 1))
         if (( LAST_COMPLETED_STEP < step_num )); then
-            if [ -z "$STATE_FILE" ] && [ "$step_num" -gt 4 ]; then
-                local ENV_TF_DIR="$REPO_ROOT/infrastructure"
-                STATE_FILE="$ENV_TF_DIR/.bootstrap_state"
-                write_state "REPO_ROOT" "$REPO_ROOT"
-            fi
             ${steps_to_run[$i]}; write_state "LAST_COMPLETED_STEP" "$step_num"
         fi
     done
