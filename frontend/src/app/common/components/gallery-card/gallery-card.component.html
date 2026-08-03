@@ -28,11 +28,11 @@
     class="card-link"
     [class.selection-mode]="isSelectionMode"
   >
-    <ng-container *ngIf="item.mimeType?.startsWith('image/') || assetType === 'youtube_video'">
+    <ng-container *ngIf="item.mimeType?.startsWith('image/') || isYoutubeVideo">
       <img
         *ngFor="let url of displayUrls; let i = index"
         class="media-element"
-        [loading]="assetType === 'youtube_video' ? 'eager' : 'lazy'"
+        [loading]="isYoutubeVideo ? 'eager' : 'lazy'"
         [src]="url"
         [alt]="getShortPrompt(item.prompt)"
         [class.active]="currentImageIndex === i"
@@ -46,7 +46,7 @@
       ></div>
     </ng-container>
 
-    <ng-container *ngIf="item.mimeType?.startsWith('video/') && assetType !== 'youtube_video'">
+    <ng-container *ngIf="item.mimeType?.startsWith('video/') && !isYoutubeVideo">
       <!-- Show video on hover -->
       <ng-container *ngIf="hoveredVideoId === item.id">
         <video

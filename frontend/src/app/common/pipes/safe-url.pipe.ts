@@ -36,10 +36,6 @@ export class SafeUrlPipe implements PipeTransform {
         videoId ? `https://www.youtube.com/embed/${videoId}` : '',
       );
     }
-    // Secure the fallback by ensuring we do not blindly trust raw/dangerous urls
-    if (url.startsWith('https://') || url.startsWith('http://')) {
-      return this.sanitizer.bypassSecurityTrustResourceUrl(url);
-    }
     return this.sanitizer.bypassSecurityTrustResourceUrl('');
   }
 }

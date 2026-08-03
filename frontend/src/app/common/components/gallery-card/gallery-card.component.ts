@@ -69,7 +69,6 @@ export class GalleryCardComponent implements OnDestroy {
   loadedMedia: Record<number, boolean> = {};
   hoveredVideoId: number | null = null;
   hoveredAudioId: number | null = null;
-  assetType: string | null = null;
 
   get displayUrls(): string[] {
     if (
@@ -130,6 +129,14 @@ export class GalleryCardComponent implements OnDestroy {
     }
   }
 
+  get isYoutubeVideo(): boolean {
+    const meta = this.item?.metadata as any;
+    return (
+      meta?.assetType === 'youtube_video' ||
+      meta?.asset_type === 'youtube_video'
+    );
+  }
+
   openAssignTagsDialog(event: Event): void {
     event.stopPropagation();
     event.preventDefault();
@@ -162,13 +169,11 @@ export class GalleryCardComponent implements OnDestroy {
     if (this.item.mimeType?.startsWith('audio/')) {
       this.hoveredAudioId = this.item.id;
     }
-    this.assetType = (this.item.metadata as any)?.assetType || null;
   }
 
   onMouseLeave() {
     this.hoveredVideoId = null;
     this.hoveredAudioId = null;
-    this.assetType = null;
   }
 
   nextImageItem(event: Event) {
