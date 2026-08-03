@@ -72,6 +72,7 @@
             [showFiltersInSelector]="true"
             [filterByType]="data.mimeType"
             [maxSelection]="data.maxSelection ?? null"
+            [includeExternal]="data.includeExternal ?? false"
             (mediaItemSelected)="onMediaItemSelected($event)"
             (mediaSelected)="onMediaSelected($event)"
           ></app-media-gallery>
@@ -86,6 +87,7 @@
             [filterByUserEmail]="currentUserEmail"
             [maxSelection]="data.maxSelection ?? null"
             [itemType]="'source_asset'"
+            [includeExternal]="data.includeExternal ?? false"
             (mediaItemSelected)="onMediaItemSelected($event)"
             (mediaSelected)="onMediaSelected($event)"
           ></app-media-gallery>

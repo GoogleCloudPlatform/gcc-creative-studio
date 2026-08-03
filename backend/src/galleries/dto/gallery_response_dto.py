@@ -28,9 +28,10 @@ class SourceAssetLinkResponse(SourceAssetLink):
     """Extends the source asset link with a presigned URL and GCS URI for frontend display."""
 
     presigned_url: str
-    gcs_uri: str
+    gcs_uri: str | None = None
     presigned_thumbnail_url: str | None = None
     mime_type: str | None = None
+    external_url: str | None = None
 
 
 class SourceMediaItemLinkResponse(SourceMediaItemLink):

@@ -50,6 +50,8 @@ from src.images.repository.media_item_repository import MediaRepository
 from src.source_assets.repository.source_asset_repository import (
     SourceAssetRepository,
 )
+from src.common.media_utils import extract_youtube_video_id
+from src.source_assets.schema.source_asset_model import AssetTypeEnum
 from src.users.repository.user_repository import UserRepository
 from src.users.user_model import UserModel, UserRoleEnum
 from src.workspaces.repository.workspace_repository import WorkspaceRepository
@@ -96,6 +98,34 @@ class GalleryService:
 
         if not asset_doc:
             return None
+
+        is_youtube = False
+        if (
+            getattr(asset_doc, "asset_type", None)
+            == AssetTypeEnum.YOUTUBE_VIDEO
+        ):
+            is_youtube = True
+        elif isinstance(
+            getattr(asset_doc, "external_url", None), str
+        ) and extract_youtube_video_id(asset_doc.external_url):
+            is_youtube = True
+
+        if is_youtube:
+            video_id = extract_youtube_video_id(asset_doc.external_url)
+            presigned_url = asset_doc.external_url or ""
+            presigned_thumbnail_url = (
+                f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg"
+                if video_id
+                else None
+            )
+            return SourceAssetLinkResponse(
+                **link.model_dump(),
+                presigned_url=presigned_url,
+                presigned_thumbnail_url=presigned_thumbnail_url,
+                gcs_uri=None,
+                mime_type=asset_doc.mime_type,
+                external_url=asset_doc.external_url,
+            )
 
         tasks = [
             asyncio.to_thread(
@@ -268,14 +298,30 @@ class GalleryService:
     ) -> UnifiedGalleryItemResponse:
         """Enriches a UnifiedGalleryItemResponse with presigned URLs."""
 
-        # Helper to safely get list or string as list
-        def as_list(val):
-            if isinstance(val, list):
-                return val
-            return [val] if val else []
+        is_youtube = False
+        external_url = None
+        if item.metadata:
+            asset_type = item.metadata.get("assetType") or item.metadata.get(
+                "asset_type"
+            )
+            external_url = item.metadata.get(
+                "externalUrl"
+            ) or item.metadata.get("external_url")
+            if asset_type == AssetTypeEnum.YOUTUBE_VIDEO or (
+                isinstance(external_url, str)
+                and extract_youtube_video_id(external_url)
+            ):
+                is_youtube = True
 
-        uris_to_sign = []
-        thumbnail_uris_to_sign = []
+        if is_youtube and external_url:
+            video_id = extract_youtube_video_id(external_url)
+            item.presigned_urls = [external_url]
+            item.presigned_thumbnail_urls = (
+                [f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg"]
+                if video_id
+                else []
+            )
+            return item
 
         uris_to_sign = item.gcs_uris or []
         thumbnail_uris_to_sign = item.thumbnail_uris or []

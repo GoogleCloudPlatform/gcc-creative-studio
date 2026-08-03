@@ -57,6 +57,13 @@ class UnifiedGalleryRepository(
         if not search_dto.include_deleted:
             query = query.where(self.model.deleted_at.is_(None))
 
+        # External resource filter: filter out external resources if include_external is False
+        if not search_dto.include_external:
+            query = query.where(
+                self.model.metadata_["external_url"].astext.is_(None)
+                | (self.model.metadata_["external_url"].astext == "")
+            )
+
         # Filter by workspace (conditional for admins)
         if search_dto.workspace_id is not None:
             query = query.where(
