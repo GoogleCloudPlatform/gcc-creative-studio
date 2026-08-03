@@ -255,7 +255,7 @@ def extract_youtube_video_id(url: str | None) -> str | None:
             hostname == h or hostname.endswith("." + h)
             for h in ("youtube.com", "youtube-nocookie.com")
         )
-        is_short = "youtu.be" in hostname
+        is_short = hostname == "youtu.be" or hostname.endswith(".youtu.be")
 
         if is_youtube:
             if any(p in parsed.path for p in ("/embed/", "/shorts/", "/v/")):
