@@ -1,0 +1,65 @@
+name: Upstream Sync
+
+on:
+  schedule:
+    - cron: '0 6 * * *'      # Daily at 06:00 UTC (11:30 IST)
+  workflow_dispatch:          # Manual "Run workflow" button
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream + fetch
+        run: |
+          git remote add upstream https://github.com/GoogleCloudPlatform/gcc-creative-studio.git || true
+          git fetch upstream main
+
+      - name: Update upstream-sync branch to match upstream/main
+        run: |
+          # Recreate the branch from upstream so it's a clean mirror
+          git branch -f upstream-sync upstream/main
+          git push origin upstream-sync --force
+
+      - name: Check if main is already up to date
+        id: check
+        run: |
+          BEHIND=$(git rev-list --count main..upstream/main)
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+          echo "main is $BEHIND commit(s) behind upstream/main"
+
+      - name: Open / update PR (only if there are new upstream commits)
+        if: steps.check.outputs.behind != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Create PR from upstream-sync -> main if one doesn't already exist
+          EXISTING=$(gh pr list --head upstream-sync --base main --state open --json number --jq 'length')
+          if [ "$EXISTING" = "0" ]; then
+            gh pr create \
+              --base main \
+              --head upstream-sync \
+              --title "⬆️ Upstream sync: ${{ steps.check.outputs.behind }} new commit(s) from GoogleCloudPlatform" \
+              --body "Automated sync from **GoogleCloudPlatform/gcc-creative-studio** (\`main\`).
+
+          ⚠️ **Review before merging** — this fork contains custom changes (token instrumentation, Firebase auth, global model routing). Resolve any conflicts to preserve them.
+
+          - Upstream commits ahead: **${{ steps.check.outputs.behind }}**
+          - Compare: https://github.com/GoogleCloudPlatform/gcc-creative-studio/commits/main"
+          else
+            echo "PR already open (#$(gh pr list --head upstream-sync --base main --state open --json number --jq '.[0].number')) — branch updated."
+          fi
