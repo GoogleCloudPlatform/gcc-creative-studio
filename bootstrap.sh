@@ -235,14 +235,12 @@ setup_project() {
     # try detecting current project on the current terminal
     CURRENT_GCLOUD_PROJECT=$(gcloud config get-value project 2>/dev/null || echo "")
 
-    if [ -n "$GCP_PROJECT_ID" ]; then
-        prompt "Found project '$GCP_PROJECT_ID' from a previous run. Use this project? (y/n)"; read -r REPLY < /dev/tty
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            gcloud config set project "$GCP_PROJECT_ID"
-            write_state "GCP_PROJECT_ID" "$GCP_PROJECT_ID"
-            success "Project '$GCP_PROJECT_ID' is configured."
-            return
-        fi
+    if [ -n "$GCP_PROJECT_ID" ] && [ "$GCP_PROJECT_ID" != "unassigned" ]; then
+        info "Using Google Cloud Project ID from confirmed profile: ${C_YELLOW}${GCP_PROJECT_ID}${C_RESET}"
+        gcloud config set project "$GCP_PROJECT_ID" 2>/dev/null || true
+        write_state "GCP_PROJECT_ID" "$GCP_PROJECT_ID"
+        success "Project '$GCP_PROJECT_ID' is configured."
+        return 0
     elif [ -n "$CURRENT_GCLOUD_PROJECT" ]; then
         prompt "Detected active gcloud project '$CURRENT_GCLOUD_PROJECT'. Use this project? (y/n)"
         read -r REPLY < /dev/tty
@@ -302,10 +300,29 @@ setup_repo() {
     fi
     DEFAULT_BRANCH_NAME="$SELECTED_BRANCH"
 
+    if [ -d "infrastructure" ] && [ -f "bootstrap.sh" ] && [ -d "backend" ] && [ -d "frontend" ]; then
+        info "Currently executing inside active repository root $(pwd). Bypassing sparse git clone..."
+        REPO_ROOT=$(pwd)
+        export REPO_ROOT
+        write_state "REPO_ROOT" "$REPO_ROOT"
+        success "Project root successfully verified at: $REPO_ROOT"
+        GITHUB_REPO_OWNER=$(git remote get-url origin 2>/dev/null | sed -n 's/.*github.com[:\/]\([^/]*\)\/.*/\1/p' || echo "GoogleCloudPlatform")
+        GITHUB_REPO_NAME=$(basename "$(pwd)" .git)
+        info "Detected GitHub owner: $GITHUB_REPO_OWNER"
+        info "Detected GitHub repo name: $GITHUB_REPO_NAME"
+        return 0
+    fi
+
     local REPO_CLONE_DIR=$(basename "$GITHUB_REPO_URL" .git)
 
     if [[ -d "$REPO_CLONE_DIR" ]]; then
-        warn "Directory '$REPO_CLONE_DIR' already exists."; prompt "Do you want to use this existing directory? (y/n)"; read -r REPLY < /dev/tty
+        warn "Directory '$REPO_CLONE_DIR' already exists."
+        if [ "$TF_AUTO_APPROVE" = "true" ]; then
+            info "Auto-approve flag detected. Reusing existing repository directory '$REPO_CLONE_DIR'."
+            REPLY="y"
+        else
+            prompt "Do you want to use this existing directory? (y/n)"; read -r REPLY < /dev/tty
+        fi
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then fail "Please remove the directory or run the script from a different location."; fi
     else
         info "Performing a sparse checkout of '$REPO_CLONE_DIR' (Branch: $SELECTED_BRANCH)..."
@@ -340,6 +357,7 @@ setup_repo() {
 
     REPO_ROOT=$(pwd)
     export REPO_ROOT
+    write_state "REPO_ROOT" "$REPO_ROOT"
     success "Project root successfully set to: $REPO_ROOT"
 
     GITHUB_REPO_OWNER=$(git remote get-url origin 2>/dev/null | sed -n 's/.*github.com[:\/]\([^/]*\)\/.*/\1/p' || echo "")
@@ -359,9 +377,14 @@ configure_environment() {
     # Use flattened structure directly under infrastructure/
     ENV_DIR="$REPO_ROOT/infrastructure"
     TFVARS_FILE_PATH="$ENV_DIR/$ENV_NAME.tfvars"
-    if [ ! -f "$TFVARS_FILE_PATH" ]; then
+    if [ ! -s "$TFVARS_FILE_PATH" ] || ! grep -q "project_id[[:space:]]*=" "$TFVARS_FILE_PATH"; then
         info "Configuring environment files in flattened infrastructure directory..."
-        prompt "Do you have an existing GCS bucket for Terraform state? (y/n)"; read -r REPLY < /dev/tty
+        if [ "$TF_AUTO_APPROVE" = "true" ]; then
+            info "Auto-approve flag detected. Defaulting to creating a GCS storage bucket automatically."
+            REPLY="n"
+        else
+            prompt "Do you have an existing GCS bucket for Terraform state? (y/n)"; read -r REPLY < /dev/tty
+        fi
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             prompt "Please enter the name of your GCS bucket:"; read -p "   Bucket Name: " BUCKET_NAME < /dev/tty
         else
@@ -370,31 +393,16 @@ configure_environment() {
         fi
         BUCKET_PREFIX=$(printf "$GCS_BUCKET_PREFIX_FORMAT" "$ENV_NAME")
         info "Creating backend config file ${ENV_NAME}.backend.tfvars..."; echo -e "bucket = \"$BUCKET_NAME\"\nprefix = \"$BUCKET_PREFIX\"" > "$ENV_DIR/${ENV_NAME}.backend.tfvars"
-        info "Creating $TFVARS_FILE_PATH...";
-        touch "$TFVARS_FILE_PATH"
-
-        sed -i.bak "s|^[#[:space:]]*gcp_project_id[[:space:]]*=.*|gcp_project_id = \"$GCP_PROJECT_ID\"|g" "$TFVARS_FILE_PATH"
-        sed -i.bak "s|^[#[:space:]]*github_repo_owner[[:space:]]*=.*|github_repo_owner = \"$GITHUB_REPO_OWNER\"|g" "$TFVARS_FILE_PATH"
-        sed -i.bak "s|^[#[:space:]]*github_repo_name[[:space:]]*=.*|github_repo_name = \"$GITHUB_REPO_NAME\"|g" "$TFVARS_FILE_PATH"
-
-        # Set service names automatically
+        info "Creating or repairing $TFVARS_FILE_PATH with required root parameters..."
+        cat <<EOF > "$TFVARS_FILE_PATH"
+project_id       = "$GCP_PROJECT_ID"
+region           = "us-central1"
+environment      = "$ENV_NAME"
+resource_prefix  = "cs"
+firebase_site_id = "YOUR_FIREBASE_SITE_ID"
+EOF
         info "Default service names will be '$BE_SERVICE_NAME' and '$FE_SERVICE_NAME'."
-        sed -i.bak "s|^[#[:space:]]*backend_service_name[[:space:]]*=.*|backend_service_name = \"$BE_SERVICE_NAME\"|g" "$TFVARS_FILE_PATH"
-        sed -i.bak "s|^[#[:space:]]*frontend_service_name[[:space:]]*=.*|frontend_service_name = \"$FE_SERVICE_NAME\"|g" "$TFVARS_FILE_PATH"
-
-        # --- Discover and Set Firebase Site ID ---
-        # This function will query Firebase for the default site and update the
-        # 'YOUR_FIREBASE_SITE_ID' placeholder in the .tfvars file.
-        configure_firebase_site_id "$TFVARS_FILE_PATH" "$GCP_PROJECT_ID"
-        # After discovery, read the final value into a global variable for later use
-        AUTO_FIREBASE_SITE_ID=$(grep 'firebase_site_id' "$TFVARS_FILE_PATH" | awk -F'"' '{print $2}')
-
-        # Prompt only for the branch name
-        export TFVARS_FILE=$TFVARS_FILE_PATH # Set context for helper function
-        prompt "Please provide the following value:"
-        prompt_and_update_tfvar "GitHub Branch to deploy from" "$DEFAULT_BRANCH_NAME" "github_branch_name" "GITHUB_BRANCH"
-
-        write_state "ENV_NAME" "$ENV_NAME"; write_state "BE_SERVICE_NAME" "$BE_SERVICE_NAME"; write_state "FE_SERVICE_NAME" "$FE_SERVICE_NAME"; write_state "GITHUB_BRANCH" "$GITHUB_BRANCH"; write_state "AUTO_FIREBASE_SITE_ID" "$AUTO_FIREBASE_SITE_ID"
+        write_state "ENV_NAME" "$ENV_NAME"; write_state "BE_SERVICE_NAME" "$BE_SERVICE_NAME"; write_state "FE_SERVICE_NAME" "$FE_SERVICE_NAME"; write_state "GITHUB_BRANCH" "$GITHUB_BRANCH"
     else info "Environment directory '$ENV_DIR' already configured."; fi
     success "Configuration files for '$ENV_NAME' environment are ready."
 }
@@ -420,7 +428,11 @@ handle_manual_steps() {
     warn "\nTerraform cannot accept legal terms on your behalf."; info "Please perform this one-time manual step for Firebase:"
     echo "1. Open this URL in your browser:"; echo -e "   ${C_YELLOW}https://console.firebase.google.com/?project=${GCP_PROJECT_ID}${C_RESET}"
     echo "2. You should be prompted to 'Add Firebase' to your existing project."; echo "3. Follow the prompts and accept the terms."
-    prompt "Press [Enter] to continue after you have linked the project."; read -r < /dev/tty
+    if [ "$TF_AUTO_APPROVE" != "true" ]; then
+        prompt "Press [Enter] to continue after you have linked the project."; read -r < /dev/tty
+    else
+        info "Auto-approve flag detected. Bypassing interactive pause for Firebase project linking."
+    fi
     rm -f "$TFVARS_FILE_PATH.bak"
 
     # --- Automate .tfvars placeholder replacement ---
@@ -463,6 +475,23 @@ setup_firebase_app() {
     AUTO_FIREBASE_MEASUREMENT_ID=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.measurementId // "") catch ""' 2>/dev/null || echo "" )
 
     if [ -z "$AUTO_FIREBASE_API_KEY" ]; then fail "Could not automatically fetch Firebase API Key. Please check your Firebase setup."; fi
+    
+    info "Resolving Firebase Hosting Site ID for project '$GCP_PROJECT_ID'..."
+    if [ -n "$AUTO_FIREBASE_SITE_ID" ] && [ "$AUTO_FIREBASE_SITE_ID" != "null" ] && [ "$AUTO_FIREBASE_SITE_ID" != "unassigned" ]; then
+        info "Using confirmed Firebase Hosting Site ID from profile: ${C_YELLOW}${AUTO_FIREBASE_SITE_ID}${C_RESET}"
+    else
+        local default_site_name=$( (firebase hosting:sites:list --project "$GCP_PROJECT_ID" --json 2>/dev/null || echo "{}") | jq -r 'try ((.result.sites // []) | (map(select(.type == "DEFAULT_SITE"))[0].name // .[0].name // "")) catch ""' 2>/dev/null || echo "" )
+        AUTO_FIREBASE_SITE_ID=$GCP_PROJECT_ID
+        [ -n "$default_site_name" ] && AUTO_FIREBASE_SITE_ID=$(basename "$default_site_name")
+        info "Discovered Firebase Hosting Site ID: ${C_YELLOW}${AUTO_FIREBASE_SITE_ID}${C_RESET}"
+        write_state "AUTO_FIREBASE_SITE_ID" "$AUTO_FIREBASE_SITE_ID"
+    fi
+
+    local TFVARS_FILE_PATH="$REPO_ROOT/infrastructure/$ENV_NAME.tfvars"
+    if [ -f "$TFVARS_FILE_PATH" ]; then
+        sed -i.bak "s/YOUR_FIREBASE_SITE_ID/${AUTO_FIREBASE_SITE_ID}/" "$TFVARS_FILE_PATH" 2>/dev/null && rm -f "${TFVARS_FILE_PATH}.bak"
+    fi
+    
     success "Firebase secrets have been fetched and will be populated automatically after Terraform runs."
 }
 
@@ -716,6 +745,10 @@ update_secrets() {
 
         else
             # This fallback is now only for secrets that are not auto-discovered
+            if [ "$TF_AUTO_APPROVE" = "true" ]; then
+                info "  Auto-approve enabled. Skipping manual input for ${SECRET_NAME}."
+                continue
+            fi
             warn "  This secret requires manual input."
             echo -e "${C_CYAN}  It is safe to paste your secret. The value is read securely, not displayed, and not stored in history.${C_RESET}"
             read -s -p "  Enter new value: " SECRET_VALUE < /dev/tty; echo
@@ -802,7 +835,12 @@ seed_database() {
 
 trigger_builds() {
     step 13 "Triggering Initial Builds"; cd "$REPO_ROOT"
-    prompt "Would you like to trigger the initial builds for the frontend and backend now? (y/n)"; read -r REPLY < /dev/tty
+    if [ "$TF_AUTO_APPROVE" = "true" ]; then
+        info "Auto-approve flag detected. Triggering initial container builds automatically."
+        REPLY="y"
+    else
+        prompt "Would you like to trigger the initial builds for the frontend and backend now? (y/n)"; read -r REPLY < /dev/tty
+    fi
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then info "You can trigger the builds manually later by pushing a commit or via the Cloud Build UI."; return; fi
 
     local BRANCH_TO_USE
@@ -899,6 +937,13 @@ select_deployment_profile() {
         STATE_FILE="$PROFILE_DIR/$PROFILE_NAME"
         info "Loading targeted deployment profile via CLI flag: ${C_YELLOW}${STATE_FILE}${C_RESET}"
         read_state
+        if [ -z "$REPO_ROOT" ] || [ ! -d "$REPO_ROOT/infrastructure" ]; then
+            local SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+            if [ -d "$SCRIPT_DIR/infrastructure" ]; then REPO_ROOT="$SCRIPT_DIR";
+            elif [ -d "$(pwd)/gcc-creative-studio/infrastructure" ]; then REPO_ROOT="$(pwd)/gcc-creative-studio";
+            elif [ -d "infrastructure" ]; then REPO_ROOT="$(pwd)"; fi
+        fi
+        if [ -n "$REPO_ROOT" ]; then export REPO_ROOT; write_state "REPO_ROOT" "$REPO_ROOT"; fi
         return 0
     fi
 
@@ -1024,6 +1069,20 @@ main() {
     echo ""
 
     read_state; LAST_COMPLETED_STEP=${LAST_COMPLETED_STEP:-0}
+    if [ -z "$REPO_ROOT" ] || [ ! -d "$REPO_ROOT/infrastructure" ]; then
+        local SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        if [ -d "$SCRIPT_DIR/infrastructure" ]; then
+            REPO_ROOT="$SCRIPT_DIR"
+            write_state "REPO_ROOT" "$REPO_ROOT"
+        elif [ -d "$(pwd)/gcc-creative-studio/infrastructure" ]; then
+            REPO_ROOT="$(pwd)/gcc-creative-studio"
+            write_state "REPO_ROOT" "$REPO_ROOT"
+        elif [ -d "infrastructure" ]; then
+            REPO_ROOT="$(pwd)"
+            write_state "REPO_ROOT" "$REPO_ROOT"
+        fi
+    fi
+    export REPO_ROOT
     declare -a steps_to_run=(
         "check_prerequisites"
         "select_deployment_profile"
