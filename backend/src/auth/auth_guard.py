@@ -28,6 +28,7 @@ from google.oauth2 import id_token
 from src.config.config_service import config_service
 from src.users.user_model import UserModel, UserRoleEnum
 from src.users.user_service import UserService
+from src.common.token_logger import current_user_email
 from src.workspaces.workspace_service import WorkspaceService
 from src.workspaces.dto.create_workspace_dto import CreateWorkspaceDto
 
@@ -80,6 +81,10 @@ async def get_current_user(
             )
 
         email = decoded_token.get("email")
+        try:
+            current_user_email.set(email or "unknown")
+        except Exception:
+            pass
         name = decoded_token.get("name")
         picture = decoded_token.get("picture", "")
         token_info_hd = decoded_token.get("hd")

@@ -66,6 +66,9 @@ class ResponseMimeTypeEnum(str, Enum):
     TEXT = "text/plain"
 
 
+from src.common.token_logger import log_tokens
+
+
 class GeminiService:
     """A dedicated service for interactions with Google's Gemini models.
     Handles client initialization, prompt rewriting, and error handling.
@@ -129,6 +132,7 @@ class GeminiService:
                         response_schema=response_schema,
                     ),
                 )
+                log_tokens('creative-studio', self.rewriter_model, response)
             elif response_mime_type.value == ResponseMimeTypeEnum.TEXT.value:
                 response = self.client.models.generate_content(
                     model=self.rewriter_model,
@@ -137,6 +141,7 @@ class GeminiService:
                         response_mime_type=response_mime_type.value,
                     ),
                 )
+                log_tokens('creative-studio', self.rewriter_model, response)
             else:
                 return ""
 
@@ -352,6 +357,7 @@ class GeminiService:
                     response_mime_type="text/plain"
                 ),
             )
+            log_tokens("creative-studio", target_model, response)
             logger.info("Successfully received text response from Gemini.")
             # Strip any leading/trailing whitespace from the response
             return response.text.strip() if response.text else ""
@@ -400,6 +406,7 @@ class GeminiService:
                     response_schema=BrandGuidelineModel,
                 ),
             )
+            log_tokens("creative-studio", self.cfg.GEMINI_MODEL_ID, response)
 
             # The model is configured to return JSON, so we can parse it directly.
             extracted_data = json.loads(response.text or "{}")
@@ -491,6 +498,7 @@ class GeminiService:
                     response_schema=BrandGuidelineModel,
                 ),
             )
+            log_tokens("creative-studio", self.rewriter_model, response)
 
             # --- Step 3: Combine Python and AI results ---
             aggregated_data = json.loads(response.text or "{}")
