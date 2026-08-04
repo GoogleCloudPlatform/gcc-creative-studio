@@ -16,7 +16,7 @@ from typing import Any
 
 import google.auth
 from google.auth.exceptions import DefaultCredentialsError
-from pydantic import Field, computed_field, model_validator
+from pydantic import Field, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -113,6 +113,14 @@ class ConfigService(BaseSettings):
             except DefaultCredentialsError:
                 pass  # Fail gracefully, let required fields catch this if needed.
         return values
+
+    @field_validator("ENVIRONMENT", mode="before")
+    @classmethod
+    def default_environment_if_empty(cls, v: Any) -> Any:
+        """Sets ENVIRONMENT to default 'development' if empty or whitespace."""
+        if v is None or not str(v).strip():
+            return "development"
+        return str(v).strip()
 
     # <<< FIX 2: New validator to handle dependent default values >>>
     @model_validator(mode="after")
