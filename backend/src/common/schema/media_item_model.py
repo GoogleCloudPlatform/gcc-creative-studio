@@ -83,6 +83,10 @@ class AssetRoleEnum(str, Enum):
     )
     VIDEO_REFERENCE = "video_reference"  # Video used as omni input reference
     AUDIO_REFERENCE = "audio_reference"  # Audio used as omni input reference
+    # The video being modified in an edit. Distinct from
+    # VIDEO_EXTENSION_SOURCE, which appends new footage, and from
+    # VIDEO_REFERENCE, which only guides a fresh generation.
+    EDIT_SOURCE = "edit_source"
 
 
 class SourceAssetLink(BaseModel):

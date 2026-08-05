@@ -58,7 +58,6 @@ class GenerationModelEnum(str, Enum):
     VTO = "virtual-try-on-001"
 
     # Video-Specific Models
-    GEMINI_OMNI = "gemini-omni-generate-preview"
     GEMINI_OMNI_FLASH_PREVIEW = "gemini-omni-flash-preview"
     VEO_3_1_FAST_GENERATE_001 = "veo-3.1-fast-generate-001"
     VEO_3_1_LITE_GENERATE_001 = "veo-3.1-lite-generate-001"
@@ -77,6 +76,10 @@ class GenerationModelEnum(str, Enum):
 
     # Deprecated models (For old generations only, do not use)
     _DEPRECATED_VTO = "virtual-try-on-preview-08-04"
+    # Never resolved on Vertex: the Interactions API answers
+    # "Unsupported model interaction: gemini-omni-generate-preview". Kept only
+    # so historical rows referencing it still deserialize.
+    GEMINI_OMNI = "gemini-omni-generate-preview"
     GEMINI_3_PRO_IMAGE_PREVIEW = "gemini-3-pro-image-preview"
     GEMINI_3_1_FLASH_IMAGE_PREVIEW = "gemini-3.1-flash-image-preview"
     IMAGEN_4_001 = "imagen-4.0-generate-001"
