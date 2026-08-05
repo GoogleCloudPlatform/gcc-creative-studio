@@ -24,6 +24,9 @@ from src.workflows.schema.workflow_model import (
     GenerateTextInputs,
     GenerateTextSettings,
     GenerateTextStep,
+    ImageInputs,
+    ImageSettings,
+    ImageStep,
     NodeTypes,
     WorkflowCreateDto,
     WorkflowModel,
@@ -140,6 +143,41 @@ class TestWorkflowServiceConfig:
         assert "args" in step_1
         assert "url" in step_1["args"]
         assert "body" in step_1["args"]
+
+    def test_generate_workflow_yaml_with_image_step(self, workflow_service):
+        from src.config.config_service import config_service
+
+        config_service.WORKFLOWS_LOCATION = "us-central1"
+
+        workflow_model = WorkflowModel(
+            id="id-img-wf",
+            user_id=1,
+            name="Image Workflow",
+            description="Workflow with Image step",
+            steps=[
+                ImageStep(
+                    step_id="image_step_1",
+                    type=NodeTypes.IMAGE,
+                    inputs=ImageInputs(prompt="A futuristic flying car"),
+                    settings=ImageSettings(
+                        mode="generate_image",
+                        model="gemini-3.1-flash-image",
+                        aspect_ratio="16:9",
+                    ),
+                ),
+            ],
+        )
+
+        yaml_output = workflow_service._generate_workflow_yaml(workflow_model)
+        parsed = yaml.safe_load(yaml_output)
+
+        steps = parsed["main"]["steps"]
+        assert len(steps) == 1
+        assert "image_step_1" in steps[0]
+        image_step = steps[0]["image_step_1"]
+        assert image_step["call"] == "http.post"
+        assert image_step["args"]["url"].endswith("/image")
+        assert image_step["args"]["body"]["config"]["mode"] == "generate_image"
 
 
 class TestCreateWorkflow:

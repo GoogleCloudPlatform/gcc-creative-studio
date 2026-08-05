@@ -54,7 +54,8 @@
   }
 
   /* Blue */
-  &.generate-image {
+  &.generate-image,
+  &.image {
     border-top: 4px solid #51cf66;
   }
 
@@ -210,6 +211,12 @@
   .mat-mdc-form-field-subscript-wrapper {
     display: none;
     /* Hides helper text space to make it compact */
+  }
+}
+
+.mode-section {
+  mat-form-field {
+    width: 100%;
   }
 }
 
