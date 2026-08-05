@@ -20,3 +20,7 @@ local/
 genmedia-agent-demos
 .gemini
 .agents
+# Local content-policy test bundle: generated clips, keyframes and results
+_review/
+
+
