@@ -24,7 +24,7 @@ import {
 } from '@angular/common/http';
 import {Observable, throwError} from 'rxjs';
 import {catchError, switchMap} from 'rxjs/operators';
-import {AuthService} from './common/services/auth.service';
+import {AuthService, SessionExpiredError} from './common/services/auth.service';
 import {environment} from '../environments/environment';
 
 @Injectable()
@@ -45,19 +45,19 @@ export class AuthInterceptor implements HttpInterceptor {
         return next.handle(authorizedRequest);
       }),
       catchError(error => {
-        // If the error is NOT an HttpErrorResponse, it's a token refresh failure
-        // from our AuthService. In this case, the session is invalid, and we should log out.
-        if (!(error instanceof HttpErrorResponse)) {
-          console.error(
-            'AuthInterceptor: Session expired and could not be refreshed. Logging out.',
-            error,
-          );
+        // Sign out only when the session is genuinely unrecoverable.
+        //
+        // This used to log out on any error that was not an HttpErrorResponse,
+        // which is far broader than intended: a dropped connection or a DNS
+        // hiccup during token refresh is not an HttpErrorResponse either, so a
+        // brief loss of connectivity would end the session with no explanation.
+        if (error instanceof SessionExpiredError) {
+          console.error('AuthInterceptor: %s Logging out.', error.message);
           void this.authService.logout();
         }
 
-        // Otherwise, it's a backend API error (e.g., 404, 500). We should NOT log out.
-        // We just re-throw the original HttpErrorResponse so the calling service
-        // (e.g., UserService) can handle it and display an appropriate error message.
+        // Everything else - backend errors and transport failures alike - is
+        // passed through for the calling service to surface. The session stays.
         return throwError(() => error);
       }),
     );

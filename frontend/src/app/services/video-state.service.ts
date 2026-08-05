@@ -90,23 +90,53 @@ export class VideoStateService {
             let loadedNumMedia =
               parsed.numberOfMedia ?? this.initialState.numberOfMedia;
 
-            const isValidVideoModel = MODEL_CONFIGS.some(
+            const modelConfig = MODEL_CONFIGS.find(
               m => m.type === 'VIDEO' && m.value === loadedModel,
             );
 
-            if (!isValidVideoModel) {
+            let activeConfig = modelConfig;
+            if (!modelConfig) {
               loadedModel = this.initialState.model;
               loadedNumMedia = this.initialState.numberOfMedia;
+              activeConfig = MODEL_CONFIGS.find(
+                m => m.type === 'VIDEO' && m.value === loadedModel,
+              );
+            }
+
+            // The persisted model is validated above, but the mode was not. A
+            // stale pairing such as Extend Video with a model that cannot
+            // extend would restore into a state the backend rejects.
+            let loadedMode = parsed.mode ?? this.initialState.mode;
+            const supportedModes = activeConfig?.capabilities.supportedModes;
+            if (
+              supportedModes?.length &&
+              !supportedModes.includes(loadedMode)
+            ) {
+              loadedMode = supportedModes.includes('Text to Video')
+                ? 'Text to Video'
+                : supportedModes[0];
             }
 
             savedState = {
               ...this.initialState,
               ...parsed,
               model: loadedModel,
+              mode: loadedMode,
               numberOfMedia: loadedNumMedia,
-              referenceVideo: null,
-              referenceAudio: null,
-              referenceImages: [],
+              // Restore what the user had attached, keeping only entries that
+              // still carry a usable server-side reference. A corrupt or
+              // half-written entry would otherwise be sent to the backend and
+              // rejected.
+              referenceImages: (parsed.referenceImages ?? []).filter(
+                (ref: ReferenceImage) =>
+                  !!ref && (!!ref.sourceAssetId || !!ref.sourceMediaItem),
+              ),
+              referenceVideo: parsed.referenceVideo?.id
+                ? parsed.referenceVideo
+                : null,
+              referenceAudio: parsed.referenceAudio?.id
+                ? parsed.referenceAudio
+                : null,
             };
           }
         }
@@ -127,12 +157,16 @@ export class VideoStateService {
     this.state.next(updated);
     if (typeof localStorage !== 'undefined') {
       try {
-        // Don't save reference files to localStorage
-        const partialState: Partial<VideoState> = {...updated};
-        delete partialState.referenceVideo;
-        delete partialState.referenceAudio;
-        delete partialState.referenceImages;
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(partialState));
+        // References are persisted along with everything else. They were
+        // previously stripped on the way out and blanked on the way back in,
+        // so a reload silently discarded whatever the user had attached.
+        //
+        // No file data is involved: these entries hold asset IDs plus a
+        // presigned preview URL. The IDs are durable server-side references
+        // and are what generation actually needs. A preview URL can expire, in
+        // which case the thumbnail fails to load - a far smaller problem than
+        // losing the selection.
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
       } catch (e) {
         console.error('Failed to save video state to localStorage', e);
       }

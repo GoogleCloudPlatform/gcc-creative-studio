@@ -111,7 +111,10 @@ describe('VideoStateService', () => {
     expect(consoleSpy).toHaveBeenCalled();
   });
 
-  it('should omit referenceVideo, referenceAudio, and referenceImages when saving state to localStorage', () => {
+  it('persists referenceVideo, referenceAudio and referenceImages to localStorage', () => {
+    // This previously asserted the opposite. Stripping them meant a reload
+    // silently discarded the user's attached inputs, which is the behaviour
+    // being fixed - the entries hold durable asset IDs, not file data.
     initService();
 
     service.updateState({
@@ -135,9 +138,9 @@ describe('VideoStateService', () => {
     if (saved) {
       const parsed = JSON.parse(saved);
       expect(parsed.prompt).toBe('video with references');
-      expect(parsed.referenceImages).toBeUndefined();
-      expect(parsed.referenceVideo).toBeUndefined();
-      expect(parsed.referenceAudio).toBeUndefined();
+      expect(parsed.referenceImages.length).toBe(1);
+      expect(parsed.referenceVideo.id).toBe(1);
+      expect(parsed.referenceAudio.id).toBe(1);
     }
   });
 
@@ -181,5 +184,77 @@ describe('VideoStateService', () => {
       jasmine.any(Error),
     );
     removeSpy.and.stub();
+  });
+});
+
+describe('VideoStateService model capability guards', () => {
+  let service: VideoStateService;
+
+  beforeEach(() => {
+    try {
+      localStorage.removeItem('video_state');
+    } catch (e) {
+      /* ignore */
+    }
+    TestBed.resetTestingModule();
+  });
+
+  afterEach(() => {
+    try {
+      localStorage.removeItem('video_state');
+    } catch (e) {
+      /* ignore */
+    }
+  });
+
+  function initService() {
+    TestBed.configureTestingModule({
+      providers: [VideoStateService],
+    });
+    service = TestBed.inject(VideoStateService);
+  }
+
+  it('resets a persisted mode the restored model cannot support', () => {
+    // Omni cannot extend video. Without a guard this pairing is restored
+    // verbatim and the request is then rejected by the backend.
+    localStorage.setItem(
+      'video_state',
+      JSON.stringify({
+        model: 'gemini-omni-flash-preview',
+        mode: 'Extend Video',
+      }),
+    );
+
+    initService();
+
+    expect(service.getState().mode).toBe('Text to Video');
+  });
+
+  it('keeps a persisted mode the restored model does support', () => {
+    localStorage.setItem(
+      'video_state',
+      JSON.stringify({
+        model: 'gemini-omni-flash-preview',
+        mode: 'Ingredients to Video',
+      }),
+    );
+
+    initService();
+
+    expect(service.getState().mode).toBe('Ingredients to Video');
+  });
+
+  it('keeps Extend Video for a model that supports it', () => {
+    localStorage.setItem(
+      'video_state',
+      JSON.stringify({
+        model: 'veo-3.1-generate-001',
+        mode: 'Extend Video',
+      }),
+    );
+
+    initService();
+
+    expect(service.getState().mode).toBe('Extend Video');
   });
 });
