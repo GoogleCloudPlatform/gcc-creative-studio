@@ -24,6 +24,7 @@ export enum NodeTypes {
   VIRTUAL_TRY_ON = 'virtual_try_on',
   GENERATE_AUDIO = 'generate_audio',
   UPSCALE_IMAGE = 'upscale_image',
+  IMAGE = 'image',
 }
 
 export interface StepOutputReference {

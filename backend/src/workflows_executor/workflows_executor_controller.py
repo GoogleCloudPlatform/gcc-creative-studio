@@ -22,6 +22,7 @@ from src.workflows_executor.dto.workflows_executor_dto import (
     GenerateImageRequest,
     GenerateTextRequest,
     GenerateVideoRequest,
+    ImageStepRequest,
     UpscaleImageRequest,
     VirtualTryOnRequest,
 )
@@ -70,6 +71,15 @@ async def upscale_image(
     service: WorkflowsExecutorService = Depends(),
 ):
     return await service.upscale_image(request, authorization)
+
+
+@router.post("/image")
+async def execute_image(
+    request: ImageStepRequest,
+    authorization: Annotated[str | None, Header()] = None,
+    service: WorkflowsExecutorService = Depends(),
+):
+    return await service.execute_image(request, authorization)
 
 
 @router.post("/generate_video")

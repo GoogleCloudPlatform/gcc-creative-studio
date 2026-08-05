@@ -48,6 +48,19 @@
   </div>
 
   <div class="step-body" *ngIf="!isCollapsed">
+    <!-- Mode Section (Prominently displayed at the top of the node) -->
+    <div class="section mode-section" *ngIf="getModeSetting() as modeSetting" formGroupName="settings">
+      <h3>Mode</h3>
+      <mat-form-field appearance="outline" class="w-full">
+        <mat-label>{{ modeSetting.label }}</mat-label>
+        <mat-select [formControlName]="modeSetting.name">
+          <mat-option *ngFor="let option of modeSetting.options" [value]="option.value">
+            {{ option.label }}
+          </mat-option>
+        </mat-select>
+      </mat-form-field>
+    </div>
+
     <div class="section inputs" formGroupName="inputs">
       <h3>Inputs</h3>
       <ng-container *ngFor="let input of localConfig.inputs">
@@ -78,7 +91,7 @@
       <h3>Settings</h3>
       <div class="settings-grid">
         <ng-container *ngFor="let setting of localConfig.settings">
-          <ng-container *ngIf="!setting.hidden">
+          <ng-container *ngIf="!setting.hidden && setting.name !== 'mode'">
           <mat-form-field *ngIf="setting.type === 'select'" appearance="outline">
             <mat-label>{{ setting.label }}</mat-label>
             <mat-select [formControlName]="setting.name">

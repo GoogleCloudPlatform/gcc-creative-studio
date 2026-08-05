@@ -22,13 +22,24 @@ from httpx import AsyncClient as RestClient
 from src.common.schema.genai_model_setup import GenAIModelSetup
 from src.common.schema.media_item_model import AssetRoleEnum
 from src.config.config_service import config_service
-from src.workflows.schema.workflow_model import ReferenceMediaOrAsset
+from src.workflows.schema.workflow_model import (
+    EditImageInputs,
+    EditImageSettings,
+    GenerateImageInputs,
+    GenerateImageSettings,
+    ReferenceMediaOrAsset,
+    UpscaleImageInputs,
+    UpscaleImageSettings,
+    VirtualTryOnInputs,
+    VirtualTryOnSettings,
+)
 from src.workflows_executor.dto.workflows_executor_dto import (
     EditImageRequest,
     GenerateAudioRequest,
     GenerateImageRequest,
     GenerateTextRequest,
     GenerateVideoRequest,
+    ImageStepRequest,
     UpscaleImageRequest,
     VirtualTryOnRequest,
 )
@@ -668,3 +679,121 @@ class WorkflowsExecutorService:
         await self._poll_job_status(upscaled_id, authorization)
 
         return {"upscaled_image": upscaled_id}
+
+    async def execute_image(
+        self,
+        request: ImageStepRequest,
+        authorization: str | None = None,
+    ):
+        logger.info("Execute unified image step, mode: %s", request.config.mode)
+        mode = request.config.mode or "generate_image"
+
+        if mode == "generate_image":
+            if not request.inputs.prompt:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Prompt is required for Text to Image generation",
+                )
+            gen_req = GenerateImageRequest(
+                workspace_id=request.workspace_id,
+                inputs=GenerateImageInputs(prompt=request.inputs.prompt),
+                config=GenerateImageSettings(
+                    model=request.config.model or "gemini-3.1-flash-image",
+                    brand_guidelines=request.config.brand_guidelines,
+                    aspect_ratio=request.config.aspect_ratio or "1:1",
+                    resolution=request.config.resolution or "1K",
+                ),
+            )
+            result = await self.generate_image(gen_req, authorization)
+            media_id = result.get("generated_image")
+            return {
+                "generated_image": media_id,
+                "image_output": media_id,
+            }
+
+        elif mode == "edit_image":
+            if not request.inputs.prompt:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Prompt is required for Image Editing",
+                )
+            if not request.inputs.input_images:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Input images are required for Image Editing",
+                )
+            edit_req = EditImageRequest(
+                workspace_id=request.workspace_id,
+                inputs=EditImageInputs(
+                    prompt=request.inputs.prompt,
+                    input_images=request.inputs.input_images,
+                ),
+                config=EditImageSettings(
+                    model=request.config.model or "gemini-2.5-flash-image",
+                    brand_guidelines=request.config.brand_guidelines,
+                    aspect_ratio=request.config.aspect_ratio or "1:1",
+                    resolution=request.config.resolution or "1K",
+                ),
+            )
+            result = await self.edit_image(edit_req, authorization)
+            media_id = result.get("edited_image")
+            return {
+                "generated_image": media_id,
+                "edited_image": media_id,
+                "image_output": media_id,
+            }
+
+        elif mode == "upscale_image":
+            if not request.inputs.input_image:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Input image is required for Image Upscaling",
+                )
+            upscale_req = UpscaleImageRequest(
+                workspace_id=request.workspace_id,
+                inputs=UpscaleImageInputs(
+                    input_image=request.inputs.input_image,
+                ),
+                config=UpscaleImageSettings(
+                    upscale_factor=request.config.upscale_factor or "x2",
+                    enhance_input_image=request.config.enhance_input_image,
+                    image_preservation_factor=request.config.image_preservation_factor,
+                ),
+            )
+            result = await self.upscale_image(upscale_req, authorization)
+            media_id = result.get("upscaled_image")
+            return {
+                "generated_image": media_id,
+                "upscaled_image": media_id,
+                "image_output": media_id,
+            }
+
+        elif mode == "virtual_try_on":
+            if not request.inputs.model_image:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Model image is required for Virtual Try-On",
+                )
+            vto_req = VirtualTryOnRequest(
+                workspace_id=request.workspace_id,
+                inputs=VirtualTryOnInputs(
+                    model_image=request.inputs.model_image,
+                    top_image=request.inputs.top_image,
+                    bottom_image=request.inputs.bottom_image,
+                    dress_image=request.inputs.dress_image,
+                    shoes_image=request.inputs.shoes_image,
+                ),
+                config=VirtualTryOnSettings(),
+            )
+            result = await self.virtual_try_on(vto_req, authorization)
+            media_id = result.get("generated_image")
+            return {
+                "generated_image": media_id,
+                "image_output": media_id,
+            }
+
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported image mode: {mode}",
+            )

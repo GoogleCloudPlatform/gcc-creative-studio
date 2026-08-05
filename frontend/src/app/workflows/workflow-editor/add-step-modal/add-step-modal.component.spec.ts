@@ -40,17 +40,15 @@ describe('AddStepModalComponent', () => {
     expect(component).toBeTruthy();
   });
 
-  it('should include upscale_image in stepTypes', () => {
-    const upscaleOption = component.stepTypes.find(
-      s => s.type === 'upscale_image',
-    );
-    expect(upscaleOption).toBeDefined();
-    expect(upscaleOption?.label).toBe('Image Upscaler');
+  it('should include image in stepTypes', () => {
+    const imageOption = component.stepTypes.find(s => s.type === 'image');
+    expect(imageOption).toBeDefined();
+    expect(imageOption?.label).toBe('Image');
   });
 
   it('should close dialog with selected step type', () => {
-    component.selectStep('upscale_image');
-    expect(dialogRefSpy.close).toHaveBeenCalledWith('upscale_image');
+    component.selectStep('image');
+    expect(dialogRefSpy.close).toHaveBeenCalledWith('image');
   });
 
   it('should close dialog without value on closeModal', () => {

@@ -414,8 +414,13 @@ export class WorkflowFormService {
     };
 
     // Default settings logic
-    if (type === NodeTypes.EDIT_IMAGE) {
-      base.settings = {aspectRatio: '1:1', saveOutputToGallery: true};
+    if (type === NodeTypes.IMAGE) {
+      base.settings = {
+        mode: 'generate_image',
+        model: 'gemini-3.1-flash-image',
+        aspect_ratio: '1:1',
+        brand_guidelines: false,
+      };
     }
     return base;
   }
