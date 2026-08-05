@@ -383,3 +383,147 @@ async def test_upscale_image_missing_input(service):
         with pytest.raises(HTTPException) as exc:
             await service.upscale_image(request)
         assert exc.value.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_execute_image_generate_mode(service):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "A majestic lion"
+    request.config.mode = "generate_image"
+    request.config.model = "gemini-3.1-flash-image"
+    request.config.aspect_ratio = "1:1"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+
+    with patch.object(
+        service,
+        "generate_image",
+        AsyncMock(return_value={"generated_image": 111}),
+    ) as mock_gen:
+        result = await service.execute_image(request)
+        assert result["generated_image"] == 111
+        assert result["image_output"] == 111
+        mock_gen.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_execute_image_edit_mode(service):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "Add sunglasses"
+    request.inputs.input_images = [10]
+    request.config.mode = "edit_image"
+    request.config.model = "gemini-2.5-flash-image"
+    request.config.aspect_ratio = "1:1"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+
+    with patch.object(
+        service,
+        "edit_image",
+        AsyncMock(return_value={"edited_image": 222}),
+    ) as mock_edit:
+        result = await service.execute_image(request)
+        assert result["generated_image"] == 222
+        assert result["edited_image"] == 222
+        assert result["image_output"] == 222
+        mock_edit.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_execute_image_upscale_mode(service):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.input_image = 20
+    request.config.mode = "upscale_image"
+    request.config.upscale_factor = "x2"
+    request.config.enhance_input_image = False
+    request.config.image_preservation_factor = None
+
+    with patch.object(
+        service,
+        "upscale_image",
+        AsyncMock(return_value={"upscaled_image": 333}),
+    ) as mock_upscale:
+        result = await service.execute_image(request)
+        assert result["generated_image"] == 333
+        assert result["upscaled_image"] == 333
+        assert result["image_output"] == 333
+        mock_upscale.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_execute_image_vto_mode(service):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.model_image = 30
+    request.inputs.top_image = 31
+    request.inputs.bottom_image = None
+    request.inputs.dress_image = None
+    request.inputs.shoes_image = None
+    request.config.mode = "virtual_try_on"
+
+    with patch.object(
+        service,
+        "virtual_try_on",
+        AsyncMock(return_value={"generated_image": 444}),
+    ) as mock_vto:
+        result = await service.execute_image(request)
+        assert result["generated_image"] == 444
+        assert result["image_output"] == 444
+        mock_vto.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_execute_image_missing_inputs(service):
+    # Test missing prompt in generate mode
+    req1 = MagicMock()
+    req1.inputs.prompt = None
+    req1.config.mode = "generate_image"
+    with pytest.raises(HTTPException) as exc1:
+        await service.execute_image(req1)
+    assert exc1.value.status_code == 400
+
+    # Test missing prompt in edit mode
+    req2 = MagicMock()
+    req2.inputs.prompt = None
+    req2.inputs.input_images = [1]
+    req2.config.mode = "edit_image"
+    with pytest.raises(HTTPException) as exc2:
+        await service.execute_image(req2)
+    assert exc2.value.status_code == 400
+
+    # Test missing input_images in edit mode
+    req3 = MagicMock()
+    req3.inputs.prompt = "Edit prompt"
+    req3.inputs.input_images = None
+    req3.config.mode = "edit_image"
+    with pytest.raises(HTTPException) as exc3:
+        await service.execute_image(req3)
+    assert exc3.value.status_code == 400
+
+    # Test missing input_image in upscale mode
+    req4 = MagicMock()
+    req4.inputs.input_image = None
+    req4.config.mode = "upscale_image"
+    with pytest.raises(HTTPException) as exc4:
+        await service.execute_image(req4)
+    assert exc4.value.status_code == 400
+
+    # Test missing model_image in vto mode
+    req5 = MagicMock()
+    req5.inputs.model_image = None
+    req5.config.mode = "virtual_try_on"
+    with pytest.raises(HTTPException) as exc5:
+        await service.execute_image(req5)
+    assert exc5.value.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_execute_image_invalid_mode(service):
+    request = MagicMock()
+    request.config.mode = "invalid_mode"
+    with pytest.raises(HTTPException) as exc:
+        await service.execute_image(request)
+    assert exc.value.status_code == 400

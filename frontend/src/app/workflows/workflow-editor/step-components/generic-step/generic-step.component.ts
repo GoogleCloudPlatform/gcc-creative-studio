@@ -29,7 +29,7 @@ import {
   ASPECT_RATIO_LABELS,
   MODEL_CONFIGS,
 } from '../../../../common/config/model-config';
-import {StepConfig} from './step.model';
+import {StepConfig, StepSetting} from './step.model';
 import {StepStatusEnum} from '../../../workflow.models';
 
 @Component({
@@ -62,6 +62,7 @@ export class GenericStepComponent implements OnInit, OnChanges {
   localConfig!: StepConfig;
   private settingsSubscription?: Subscription;
   private inputModeSubscription?: Subscription;
+  private modeSubscription?: Subscription;
   private inputsSubscription?: Subscription;
   currentMaxReferenceImages = 1;
 
@@ -101,6 +102,9 @@ export class GenericStepComponent implements OnInit, OnChanges {
     }
     if (this.inputModeSubscription) {
       this.inputModeSubscription.unsubscribe();
+    }
+    if (this.modeSubscription) {
+      this.modeSubscription.unsubscribe();
     }
     if (this.inputsSubscription) {
       this.inputsSubscription.unsubscribe();
@@ -213,6 +217,20 @@ export class GenericStepComponent implements OnInit, OnChanges {
         this.inputModeSubscription = modeControl?.valueChanges.subscribe(() => {
           this.updateInputVisibility();
         });
+      }
+
+      // Subscribe to mode changes (for unified image node)
+      if (settings.contains('mode')) {
+        const modeControl = settings.get('mode');
+        if (this.modeSubscription) {
+          this.modeSubscription.unsubscribe();
+        }
+        this.modeSubscription = modeControl?.valueChanges.subscribe(value => {
+          this.updateImageModeConfig(value);
+        });
+
+        // Initial update
+        this.updateImageModeConfig(modeControl?.value);
       }
     }
 
@@ -370,8 +388,100 @@ export class GenericStepComponent implements OnInit, OnChanges {
     });
   }
 
+  private updateImageModeConfig(mode: string | null): void {
+    if (!mode || this.localConfig.type !== 'image') return;
+
+    // Define visibility and requirement maps per mode
+    const inputVisibility: Record<
+      string,
+      {visible: boolean; required: boolean}
+    > = {
+      prompt: {
+        visible: mode === 'generate_image' || mode === 'edit_image',
+        required: mode === 'generate_image' || mode === 'edit_image',
+      },
+      input_images: {
+        visible: mode === 'edit_image',
+        required: mode === 'edit_image',
+      },
+      input_image: {
+        visible: mode === 'upscale_image',
+        required: mode === 'upscale_image',
+      },
+      model_image: {
+        visible: mode === 'virtual_try_on',
+        required: mode === 'virtual_try_on',
+      },
+      top_image: {
+        visible: mode === 'virtual_try_on',
+        required: false,
+      },
+      bottom_image: {
+        visible: mode === 'virtual_try_on',
+        required: false,
+      },
+      dress_image: {
+        visible: mode === 'virtual_try_on',
+        required: false,
+      },
+      shoes_image: {
+        visible: mode === 'virtual_try_on',
+        required: false,
+      },
+    };
+
+    const settingVisibility: Record<string, boolean> = {
+      mode: true,
+      model: mode === 'generate_image' || mode === 'edit_image',
+      aspect_ratio: mode === 'generate_image' || mode === 'edit_image',
+      brand_guidelines: mode === 'generate_image' || mode === 'edit_image',
+      upscale_factor: mode === 'upscale_image',
+      enhance_input_image: mode === 'upscale_image',
+      image_preservation_factor: mode === 'upscale_image',
+    };
+
+    // Update inputs
+    const inputsFormGroup = this.stepForm.get('inputs') as FormGroup;
+    this.localConfig.inputs.forEach(input => {
+      const config = inputVisibility[input.name];
+      if (config) {
+        input.hidden = !config.visible;
+        input.required = config.required;
+
+        const control = inputsFormGroup?.get(input.name);
+        if (control) {
+          if (config.visible) {
+            control.enable();
+            if (config.required) {
+              control.setValidators([Validators.required]);
+            } else {
+              control.clearValidators();
+            }
+          } else {
+            control.disable();
+            control.clearValidators();
+          }
+          control.updateValueAndValidity();
+        }
+      }
+    });
+
+    // Update settings
+    this.localConfig.settings.forEach(setting => {
+      if (setting.name in settingVisibility) {
+        setting.hidden = !settingVisibility[setting.name];
+      }
+    });
+
+    this.updateCompatibleOutputs();
+  }
+
   toggleInputMode(inputName: string, mode: 'fixed' | 'linked' | 'mixed') {
     this.inputModes[inputName] = mode;
     this.stepForm.get('inputs')?.get(inputName)?.setValue(null);
+  }
+
+  getModeSetting(): StepSetting | undefined {
+    return this.localConfig?.settings?.find(s => s.name === 'mode');
   }
 }

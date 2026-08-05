@@ -45,6 +45,7 @@ class NodeTypes(str, Enum):
     VIRTUAL_TRY_ON = "virtual_try_on"
     GENERATE_AUDIO = "generate_audio"
     UPSCALE_IMAGE = "upscale_image"
+    IMAGE = "image"
 
 
 # =========================================
@@ -291,6 +292,40 @@ class UpscaleImageStep(BaseStep[UpscaleImageInputs, UpscaleImageSettings]):
     settings: UpscaleImageSettings = Field(default_factory=UpscaleImageSettings)
 
 
+# --- Image (Unified) ---
+class ImageInputs(BaseModel):
+    # Text to Image / Edit Image inputs
+    prompt: StepOutputReference | str | None = None
+    input_images: WorkflowInputItem | None = None
+
+    # Upscale Image input
+    input_image: WorkflowInputItem | None = None
+
+    # Virtual Try-On inputs
+    model_image: WorkflowInputItem | None = None
+    top_image: WorkflowInputItem | None = None
+    bottom_image: WorkflowInputItem | None = None
+    dress_image: WorkflowInputItem | None = None
+    shoes_image: WorkflowInputItem | None = None
+
+
+class ImageSettings(BaseModel):
+    mode: str = "generate_image"
+    model: str | None = "gemini-3.1-flash-image"
+    aspect_ratio: str | None = "1:1"
+    brand_guidelines: bool = False
+    resolution: Literal["1K", "2K", "4K"] = "1K"
+    upscale_factor: Literal["x2", "x3", "x4"] = "x2"
+    enhance_input_image: bool = False
+    image_preservation_factor: float | None = None
+
+
+class ImageStep(BaseStep[ImageInputs, ImageSettings]):
+    type: Literal[NodeTypes.IMAGE] = NodeTypes.IMAGE
+    inputs: ImageInputs = Field(default_factory=ImageInputs)
+    settings: ImageSettings = Field(default_factory=ImageSettings)
+
+
 # =========================================
 # Workflow Step Union
 # =========================================
@@ -304,6 +339,7 @@ WorkflowStepUnion = Union[
     VirtualTryOnStep,
     GenerateAudioStep,
     UpscaleImageStep,
+    ImageStep,
 ]
 
 # Discriminated union based on the 'type' field in each step
