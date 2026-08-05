@@ -185,10 +185,16 @@ export class GenericStepComponent implements OnInit, OnChanges {
     if (settings) {
       this.config.settings.forEach(setting => {
         if (!settings.contains(setting.name)) {
-          settings.addControl(
-            setting.name,
-            this.fb.control(setting.defaultValue),
-          );
+          let defaultValue = setting.defaultValue;
+          if (setting.name === 'mode') {
+            const stepType = this.stepForm.get('type')?.value;
+            if (stepType === 'edit_image') defaultValue = 'edit_image';
+            else if (stepType === 'upscale_image')
+              defaultValue = 'upscale_image';
+            else if (stepType === 'virtual_try_on')
+              defaultValue = 'virtual_try_on';
+          }
+          settings.addControl(setting.name, this.fb.control(defaultValue));
         }
       });
 
