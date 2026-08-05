@@ -169,4 +169,61 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
     expect(modeSetting?.name).toBe('mode');
     expect(modeSetting?.options?.length).toBe(4);
   });
+
+  it('should preset mode to edit_image for legacy edit_image step without explicit mode', () => {
+    const editStepForm = fb.group({
+      stepId: ['legacy_edit_1'],
+      type: ['edit_image'],
+      status: ['idle'],
+      inputs: fb.group({
+        prompt: ['Modify picture'],
+        input_images: [[1]],
+      }),
+      settings: fb.group({
+        model: ['gemini-3.1-flash-image'],
+      }),
+      outputs: fb.group({}),
+    });
+
+    component.stepForm = editStepForm;
+    component.config = IMAGE_STEP_CONFIG;
+    component.ngOnChanges({
+      stepForm: {
+        currentValue: editStepForm,
+        previousValue: null,
+        firstChange: false,
+        isFirstChange: () => false,
+      },
+    });
+
+    expect(editStepForm.get('settings.mode')?.value).toBe('edit_image');
+  });
+
+  it('should preset mode to upscale_image for legacy upscale_image step', () => {
+    const upscaleStepForm = fb.group({
+      stepId: ['legacy_upscale_1'],
+      type: ['upscale_image'],
+      status: ['idle'],
+      inputs: fb.group({
+        input_image: [1],
+      }),
+      settings: fb.group({
+        upscale_factor: ['x2'],
+      }),
+      outputs: fb.group({}),
+    });
+
+    component.stepForm = upscaleStepForm;
+    component.config = IMAGE_STEP_CONFIG;
+    component.ngOnChanges({
+      stepForm: {
+        currentValue: upscaleStepForm,
+        previousValue: null,
+        firstChange: false,
+        isFirstChange: () => false,
+      },
+    });
+
+    expect(upscaleStepForm.get('settings.mode')?.value).toBe('upscale_image');
+  });
 });
