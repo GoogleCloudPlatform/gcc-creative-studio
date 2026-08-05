@@ -29,6 +29,7 @@ import {
   ASPECT_RATIO_LABELS,
   MODEL_CONFIGS,
 } from '../../../../common/config/model-config';
+import {WORKFLOW_VIDEO_MODES} from '../step-configs/generate-video-step.config';
 import {StepConfig} from './step.model';
 
 @Component({
@@ -219,18 +220,29 @@ export class GenericStepComponent implements OnInit, OnChanges {
         s => s.name === 'input_mode',
       );
       if (modeSetting) {
-        modeSetting.options = modelMeta.supportedModes.map(mode => ({
+        // Restrict to modes a workflow step can actually send. A model may
+        // support Extend Video interactively, but the executor's request body
+        // has no field for a source video, so offering it here would be a dead
+        // option.
+        const selectableModes =
+          this.localConfig.type === 'generate-video'
+            ? modelMeta.supportedModes.filter(mode =>
+                WORKFLOW_VIDEO_MODES.includes(mode),
+              )
+            : modelMeta.supportedModes;
+
+        modeSetting.options = selectableModes.map(mode => ({
           value: mode,
           label: mode,
         }));
 
         // Default to first mode if current is invalid
         const currentMode = this.stepForm.get('settings.input_mode')?.value;
-        if (!currentMode || !modelMeta.supportedModes.includes(currentMode)) {
+        if (!currentMode || !selectableModes.includes(currentMode)) {
           // Prefer 'Text to Video' if available, else first
-          const defaultMode = modelMeta.supportedModes.includes('Text to Video')
+          const defaultMode = selectableModes.includes('Text to Video')
             ? 'Text to Video'
-            : modelMeta.supportedModes[0];
+            : selectableModes[0];
           this.stepForm.get('settings.input_mode')?.setValue(defaultMode);
         }
       }

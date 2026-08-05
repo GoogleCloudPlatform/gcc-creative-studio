@@ -82,6 +82,13 @@ export type VeoRequest = {
   referenceVideo?: AssetReferenceDto | null;
   referenceAudio?: AssetReferenceDto | null;
   parentMediaItemId?: number | null;
+  /** Which clip of a multi-clip parent to continue editing. */
+  parentMediaIndex?: number;
+  /**
+   * A clip to modify. Distinct from sourceVideoAssetId, which extends a video
+   * and is not supported by Gemini Omni.
+   */
+  editSource?: AssetReferenceDto | null;
   resolution?: '1K' | '2K' | '4K';
 };
 

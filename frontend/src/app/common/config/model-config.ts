@@ -22,6 +22,9 @@ export type GenerationMode =
   | 'Text to Video'
   | 'Frames to Video'
   | 'Ingredients to Video'
+  | 'Extend Video'
+  | 'Concatenate Video'
+  | 'Edit Video'
   | 'Text to Audio'
   | 'Multimodal to text';
 
@@ -37,6 +40,34 @@ export interface ModelCapability {
   supportsVoice?: boolean;
   supportsLanguage?: boolean;
   supportsSeed?: boolean;
+  /**
+   * Whether a closing frame can be supplied alongside the opening one.
+   * 'Frames to Video' covers both first-frame-only and first+last
+   * interpolation, but Gemini Omni supports only the former.
+   */
+  supportsLastFrame?: boolean;
+  /**
+   * Whether a video or audio clip can be supplied as a generation reference.
+   * Omni ignores audio references and mishandles short video references, so it
+   * must not advertise either.
+   */
+  supportsVideoReference?: boolean;
+  supportsAudioReference?: boolean;
+  /** Maximum clips a single request may produce. */
+  maxOutputs?: number;
+  /**
+   * Whether the model only offers its shorter durations in text-to-video at
+   * 1K, pinning every other mode to the longest length. True for Veo; Gemini
+   * Omni accepts its full range in any mode.
+   */
+  restrictsDurationOutsideTextToVideo?: boolean;
+  /**
+   * Whether <FIRST_FRAME> / <IMAGE_REF_N> tags in the prompt bind images to
+   * roles. Verified against Gemini Omni on Vertex: tagged prompts produced the
+   * requested pairing in 4 of 4 runs against a 1-in-4 untagged baseline. The
+   * binding is a strong bias rather than a guarantee.
+   */
+  supportsRoleTags?: boolean;
 }
 
 export interface GenerationModelConfig {
@@ -228,16 +259,29 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
     type: 'VIDEO',
     icon: 'layers',
     capabilities: {
+      // No 'Extend Video': Omni does not support video extension. It does
+      // support editing an existing clip, which is a different operation.
+      // 'Frames to Video' is opening-frame only (see supportsLastFrame).
       supportedModes: [
         'Text to Video',
         'Ingredients to Video',
         'Frames to Video',
+        'Edit Video',
       ],
-      maxReferenceImages: 3,
+      maxReferenceImages: 7,
       supportedAspectRatios: ['16:9', '9:16'],
       supportedResolutions: ['1K'],
-      supportedDurations: [4, 6, 8],
+      // 3-10s in 1s increments, unlike Veo's fixed set of lengths.
+      supportedDurations: [3, 4, 5, 6, 7, 8, 9, 10],
+      // Audio is always generated and is steered through the prompt, so there
+      // is no toggle and no audio reference input.
       supportsAudio: true,
+      supportsNegativePrompt: false,
+      supportsLastFrame: false,
+      supportsVideoReference: true,
+      supportsAudioReference: false,
+      maxOutputs: 4,
+      supportsRoleTags: true,
     },
   },
   {
@@ -250,12 +294,21 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         'Text to Video',
         'Ingredients to Video',
         'Frames to Video',
-      ], // Assuming ingredients = image-to-video
+        'Extend Video',
+        'Concatenate Video',
+      ],
       maxReferenceImages: 3,
       supportedAspectRatios: ['16:9', '9:16'],
       supportedResolutions: ['1K', '2K', '4K'],
+      // Veo offers fixed lengths, not a range: 5s and 7s are not valid.
       supportedDurations: [4, 6, 8],
       supportsAudio: true,
+      supportsNegativePrompt: true,
+      supportsLastFrame: true,
+      supportsVideoReference: false,
+      supportsAudioReference: false,
+      maxOutputs: 4,
+      restrictsDurationOutsideTextToVideo: true,
     },
   },
   {
@@ -268,12 +321,21 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         'Text to Video',
         'Ingredients to Video',
         'Frames to Video',
+        'Extend Video',
+        'Concatenate Video',
       ],
       maxReferenceImages: 3,
       supportedAspectRatios: ['16:9', '9:16'],
       supportedResolutions: ['1K', '2K'],
+      // Veo offers fixed lengths, not a range: 5s and 7s are not valid.
       supportedDurations: [4, 6, 8],
       supportsAudio: true,
+      supportsNegativePrompt: true,
+      supportsLastFrame: true,
+      supportsVideoReference: false,
+      supportsAudioReference: false,
+      maxOutputs: 4,
+      restrictsDurationOutsideTextToVideo: true,
     },
   },
   {
@@ -286,12 +348,21 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         'Text to Video',
         'Ingredients to Video',
         'Frames to Video',
+        'Extend Video',
+        'Concatenate Video',
       ],
       maxReferenceImages: 3,
       supportedAspectRatios: ['16:9', '9:16'],
       supportedResolutions: ['1K', '2K', '4K'],
+      // Veo offers fixed lengths, not a range: 5s and 7s are not valid.
       supportedDurations: [4, 6, 8],
       supportsAudio: true,
+      supportsNegativePrompt: true,
+      supportsLastFrame: true,
+      supportsVideoReference: false,
+      supportsAudioReference: false,
+      maxOutputs: 4,
+      restrictsDurationOutsideTextToVideo: true,
     },
   },
 

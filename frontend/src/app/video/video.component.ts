@@ -40,8 +40,10 @@ import {
   MediaItemSelection,
 } from '../common/components/image-selector/image-selector.component';
 import {
+  GenerationMode,
   GenerationModelConfig,
   MODEL_CONFIGS,
+  ModelCapability,
 } from '../common/config/model-config';
 import {JobStatus, MediaItem} from '../common/models/media-item.model';
 import {
@@ -114,6 +116,8 @@ export class VideoComponent implements OnInit, AfterViewInit {
   referenceVideo: ReferenceVideo | null = null;
   referenceAudio: ReferenceAudio | null = null;
   parentMediaItemId: number | null = null;
+  parentMediaIndex = 0;
+  editSource: ReferenceVideo | null = null;
   currentMode = 'Text to Video';
   modes = [
     {value: 'Text to Video', icon: 'description', label: 'Text to Video'},
@@ -125,6 +129,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
     },
     {value: 'Extend Video', icon: 'extension', label: 'Extend Video'},
     {value: 'Concatenate Video', icon: 'merge', label: 'Concatenate Video'},
+    {value: 'Edit Video', icon: 'auto_fix_high', label: 'Edit Video'},
   ];
 
   // Internal state to track input types
@@ -328,8 +333,14 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.searchRequest.style = state.style;
     this.searchRequest.colorAndTone = state.colorAndTone;
     this.searchRequest.lighting = state.lighting;
-    this.searchRequest.numberOfMedia =
-      state.model === 'gemini-omni-flash-preview' ? 1 : state.numberOfMedia;
+    // Clamp to what the restored model allows rather than pinning Omni to a
+    // single clip: it can return several for side-by-side comparison.
+    const restoredMaxOutputs =
+      this.getModelCapabilities(state.model).maxOutputs ?? 4;
+    this.searchRequest.numberOfMedia = Math.min(
+      state.numberOfMedia || 1,
+      restoredMaxOutputs,
+    );
     this.selectedOutputs.set(this.searchRequest.numberOfMedia || 2);
     this.searchRequest.durationSeconds = state.durationSeconds;
     this.searchRequest.composition = state.composition;
@@ -386,30 +397,116 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
     this.clearOtherImage(1);
 
-    // Active video models (Veo 3.1 & Omni) support audio.
-    this.isAudioGenerationDisabled = false;
-    this.searchRequest.generateAudio = true;
+    const capabilities = this.getModelCapabilities(model.value);
 
-    // These models only support 16:9 and 9:16 aspect ratios.
-    const supportedRatios = ['16:9', '9:16'];
-    if (!supportedRatios.includes(this.searchRequest.aspectRatio)) {
-      this.searchRequest.aspectRatio = '16:9';
-      const landscapeOption = this.aspectRatioOptions.find(
-        opt => opt.value === '16:9',
-      )!;
-      this.selectedAspectRatio = landscapeOption.viewValue;
-    }
+    this.isAudioGenerationDisabled = !capabilities.supportsAudio;
+    this.searchRequest.generateAudio = !!capabilities.supportsAudio;
 
-    if (model.value === 'gemini-omni-flash-preview') {
-      this.searchRequest.numberOfMedia = 1;
-      this.selectedOutputs.set(1);
+    // Aspect ratios come from the model rather than a hardcoded pair, so a
+    // model that supports a different set is not silently constrained.
+    const supportedRatios = capabilities.supportedAspectRatios;
+    if (
+      supportedRatios.length &&
+      !supportedRatios.includes(this.searchRequest.aspectRatio)
+    ) {
+      const fallbackRatio = supportedRatios.includes('16:9')
+        ? '16:9'
+        : supportedRatios[0];
+      this.searchRequest.aspectRatio = fallbackRatio;
+      const fallbackOption = this.aspectRatioOptions.find(
+        opt => opt.value === fallbackRatio,
+      );
+      if (fallbackOption) {
+        this.selectedAspectRatio = fallbackOption.viewValue;
+      }
     }
 
     this.aspectRatioOptions.forEach(opt => {
       opt.disabled = !supportedRatios.includes(opt.value);
     });
 
+    // Clamp duration to something the model actually offers.
+    const supportedDurations = capabilities.supportedDurations;
+    if (
+      supportedDurations.length &&
+      !supportedDurations.includes(this.searchRequest.durationSeconds)
+    ) {
+      this.searchRequest.durationSeconds = supportedDurations.includes(8)
+        ? 8
+        : supportedDurations[supportedDurations.length - 1];
+    }
+
+    const maxOutputs = capabilities.maxOutputs ?? 4;
+    if ((this.searchRequest.numberOfMedia ?? 1) > maxOutputs) {
+      this.searchRequest.numberOfMedia = maxOutputs;
+      this.selectedOutputs.set(maxOutputs);
+    }
+
+    // Drop inputs the newly selected model cannot use, rather than sending
+    // them and having the model quietly ignore them.
+    if (!capabilities.supportsAudioReference) {
+      this.referenceAudio = null;
+    }
+    if (!capabilities.supportsVideoReference) {
+      this.referenceVideo = null;
+    }
+    if (!capabilities.supportsLastFrame && this.endImageAssetId !== null) {
+      this.endImageAssetId = null;
+      this.image2Preview = null;
+      this.sourceMediaItems[1] = null;
+    }
+
+    this.ensureModeSupported();
+
     this.saveState();
+  }
+
+  /** Capabilities for a model value, falling back to the active model. */
+  private getModelCapabilities(modelValue?: string): ModelCapability {
+    const value = modelValue ?? this.searchRequest.generationModel;
+    const config = this.generationModels.find(m => m.value === value);
+    return (
+      config?.capabilities ?? {
+        supportedModes: [],
+        maxReferenceImages: 3,
+        supportedAspectRatios: ['16:9', '9:16'],
+        supportedResolutions: ['1K'],
+        supportedDurations: [],
+      }
+    );
+  }
+
+  /** Modes the active model actually supports, in the UI's display order. */
+  get availableModes(): {value: string; icon: string; label: string}[] {
+    const supported = this.getModelCapabilities().supportedModes;
+    if (!supported.length) {
+      return this.modes;
+    }
+    return this.modes.filter(mode =>
+      supported.includes(mode.value as GenerationMode),
+    );
+  }
+
+  /**
+   * Moves off a mode the active model does not support.
+   *
+   * Switching models can strand the UI in an impossible state — Extend Video
+   * with a model that cannot extend, for instance — which would then be sent to
+   * the backend and rejected.
+   */
+  private ensureModeSupported(): void {
+    const available = this.availableModes;
+    if (!available.length) {
+      return;
+    }
+    if (available.some(mode => mode.value === this.currentMode)) {
+      return;
+    }
+
+    const fallback =
+      available.find(mode => mode.value === 'Text to Video') ?? available[0];
+    this.onModeChanged(fallback.value);
+    this.selectedMode.set(fallback.value);
   }
 
   selectAspectRatio(ratio: string | {value: string; viewValue: string}): void {
@@ -753,6 +850,17 @@ export class VideoComponent implements OnInit, AfterViewInit {
             }
           : undefined,
       parentMediaItemId: this.parentMediaItemId ?? undefined,
+      parentMediaIndex: this.parentMediaIndex ?? undefined,
+      // Edit Video modifies one existing clip. It is deliberately separate
+      // from sourceVideoAssetId, which means "extend" and is unsupported here.
+      editSource:
+        this.currentMode === 'Edit Video' && this.editSource
+          ? {
+              id: this.editSource.id,
+              type: this.editSource.type,
+              index: this.editSource.index,
+            }
+          : undefined,
     };
 
     // TODO: Add notification when video is completed after the pooling
@@ -1432,8 +1540,11 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
   handleEditWithOmni(event: {mediaItem: MediaItem; selectedIndex: number}) {
     this.parentMediaItemId = event.mediaItem.id;
-    this.currentMode = 'Ingredients to Video';
-    this.selectedMode.set('Ingredients to Video');
+    // A job can produce several clips, each its own conversation, so the
+    // selected index decides which one the edit continues.
+    this.parentMediaIndex = event.selectedIndex;
+    this.currentMode = 'Edit Video';
+    this.selectedMode.set('Edit Video');
 
     const omniModel = this.generationModels.find(
       m => m.value === 'gemini-omni-flash-preview',
@@ -1442,20 +1553,22 @@ export class VideoComponent implements OnInit, AfterViewInit {
       this.selectModel(omniModel);
     }
 
-    this.referenceVideo = {
+    this.editSource = {
       id: event.mediaItem.id,
       type: 'media_item',
       previewUrl:
         event.mediaItem.presignedThumbnailUrls?.[event.selectedIndex] || '',
       index: event.selectedIndex,
     };
+    // Not a reference: the clip is being modified, not used as inspiration.
+    this.referenceVideo = null;
 
     this.saveState();
 
     this._snackBar.open(
-      'Multi-turn conversational mode activated. Modifying current video!',
+      'Editing this video. Describe the change, and add "Keep everything else the same" to preserve the rest.',
       'OK',
-      {duration: 5000},
+      {duration: 6000},
     );
   }
 
@@ -1542,6 +1655,64 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.saveState();
   }
 
+  /** Picks the clip to modify in Edit Video mode. */
+  openVideoSelectorForEdit(): void {
+    const dialogRef = this.dialog.open(ImageSelectorComponent, {
+      width: '90vw',
+      height: '80vh',
+      maxWidth: '90vw',
+      data: {
+        mimeType: 'video/*',
+        multiSelect: false,
+      },
+      panelClass: 'image-selector-dialog',
+    });
+
+    // The selector returns either an uploaded asset or a library item, and
+    // the declared types do not describe that runtime shape. Mirrors
+    // openVideoSelectorForReference above.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    dialogRef.afterClosed().subscribe((result: any) => {
+      if (!result) return;
+
+      const res = Array.isArray(result) ? result[0] : result;
+      if ('gcsUri' in res) {
+        this.editSource = {
+          id: res.id,
+          type: 'source_asset',
+          previewUrl: res.presignedThumbnailUrl || res.presignedUrl || '',
+          index: 0,
+        };
+        // An uploaded clip has no prior conversation to continue, so the edit
+        // is stateless.
+        this.parentMediaItemId = null;
+        this.parentMediaIndex = 0;
+      } else {
+        const thumbnail =
+          res.mediaItem.presignedThumbnailUrls?.[res.selectedIndex];
+        const previewUrl =
+          thumbnail || res.mediaItem.presignedUrls?.[res.selectedIndex];
+        if (previewUrl) {
+          this.editSource = {
+            id: res.mediaItem.id,
+            type: 'media_item',
+            previewUrl: previewUrl,
+            index: res.selectedIndex,
+          };
+        }
+      }
+      this.saveState();
+    });
+  }
+
+  clearEditSource(event: Event): void {
+    event.stopPropagation();
+    this.editSource = null;
+    this.parentMediaItemId = null;
+    this.parentMediaIndex = 0;
+    this.saveState();
+  }
+
   openAudioSelectorForReference(): void {
     const dialogRef = this.dialog.open(ImageSelectorComponent, {
       width: '90vw',
@@ -1585,16 +1756,25 @@ export class VideoComponent implements OnInit, AfterViewInit {
   }
 
   private handleOmniModelSwitch(): void {
-    if (this.referenceVideo || this.referenceAudio) {
+    // Audio references are unsupported by every current video model: the
+    // Interactions API accepts an audio part and then ignores it, so switching
+    // models cannot make one work. Only a video reference justifies a switch.
+    if (this.referenceAudio && !this.referenceVideo) {
+      return;
+    }
+
+    if (this.referenceVideo) {
       const omniModel = this.generationModels.find(
-        m => m.value === 'gemini-omni-flash-preview',
+        m =>
+          m.value === 'gemini-omni-flash-preview' &&
+          m.capabilities.supportsVideoReference,
       );
       if (omniModel) {
         if (this.searchRequest.generationModel !== omniModel.value) {
           this.selectModel(omniModel);
           handleSuccessSnackbar(
             this._snackBar,
-            "We've switched to the Gemini Omni model, as this one supports video and audio references.",
+            "We've switched to the Gemini Omni model, as this one supports video references.",
           );
         }
       } else {
@@ -1671,7 +1851,14 @@ export class VideoComponent implements OnInit, AfterViewInit {
   // Called when DROPPING a file on the new drop zone
   onReferenceImageDrop(event: DragEvent) {
     event.preventDefault();
-    if (this.referenceImages.length >= 3) return;
+    // Use the model's own ceiling; a hardcoded 3 capped Omni below the 7 it
+    // accepts, and contradicted the limit enforced everywhere else.
+    if (
+      this.referenceImages.length >=
+      this.getModelCapabilities().maxReferenceImages
+    ) {
+      return;
+    }
     const file = event.dataTransfer?.files[0];
     if (file && file.type.startsWith('image/')) {
       // For a direct drop, go straight to the cropper

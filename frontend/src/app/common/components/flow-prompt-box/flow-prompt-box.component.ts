@@ -29,7 +29,7 @@ import {
   inject,
 } from '@angular/core';
 import {MatSnackBar} from '@angular/material/snack-bar';
-import {ReferenceImage} from '../../models/search.model';
+import {ReferenceImage, ReferenceVideo} from '../../models/search.model';
 import {GenerationModelConfig} from '../../config/model-config';
 import {MatIconModule} from '@angular/material/icon';
 import {CommonModule} from '@angular/common';
@@ -143,6 +143,8 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   @Output() toggleReferenceImagesType = new EventEmitter<boolean>();
   @Output() openVideoSelectorForReference = new EventEmitter<void>();
   @Output() clearReferenceVideo = new EventEmitter<Event>();
+  @Output() openVideoSelectorForEdit = new EventEmitter<void>();
+  @Output() clearEditSource = new EventEmitter<Event>();
   @Output() openAudioSelectorForReference = new EventEmitter<void>();
   @Output() clearReferenceAudio = new EventEmitter<Event>();
 
@@ -151,8 +153,11 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   @Input() referenceImages: ReferenceImage[] = [];
   @Input() referenceImagesType: 'ASSET' | 'STYLE' = 'ASSET';
   @Input() referenceVideo: any | null = null;
+  /** The clip being modified in Edit Video mode. */
+  @Input() editSource: ReferenceVideo | null = null;
   @Input() referenceAudio: any | null = null;
 
+  @ViewChild('promptInput') promptInput?: ElementRef<HTMLTextAreaElement>;
   @ViewChild('modeTrigger') modeTrigger!: ElementRef;
   @ViewChild('modeMenu') modeMenu!: ElementRef;
   @ViewChild('settingsTrigger') settingsTrigger!: ElementRef;
@@ -235,6 +240,48 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   onPromptInput(event: Event) {
     const target = event.target as HTMLTextAreaElement;
     this.promptChanged.emit(target.value);
+  }
+
+  /** Whether the active model binds <IMAGE_REF_N> tags to reference images. */
+  get supportsRoleTags(): boolean {
+    return !!this.getSelectedModelObject()?.capabilities?.supportsRoleTags;
+  }
+
+  /**
+   * Inserts a role tag at the caret.
+   *
+   * Reference images are positional, so the index a tag refers to is otherwise
+   * invisible - a user would have to count thumbnails and type the tag by hand.
+   */
+  insertRoleTag(tag: string): void {
+    const textarea: HTMLTextAreaElement | undefined =
+      this.promptInput?.nativeElement;
+    const current = this.prompt ?? '';
+
+    if (!textarea) {
+      this.promptChanged.emit(`${current} ${tag}`.trim());
+      return;
+    }
+
+    const start = textarea.selectionStart ?? current.length;
+    const end = textarea.selectionEnd ?? start;
+    const before = current.slice(0, start);
+    const after = current.slice(end);
+
+    // Keep the tag as its own word so it does not fuse with adjacent text.
+    const lead = before && !/\s$/.test(before) ? ' ' : '';
+    const trail = after && !/^\s/.test(after) ? ' ' : '';
+    const insertion = `${lead}${tag}${trail}`;
+
+    this.promptChanged.emit(before + insertion + after);
+
+    // The prompt round-trips through the parent, so restore the caret once the
+    // new value has been applied.
+    const caret = start + insertion.length;
+    setTimeout(() => {
+      textarea.focus();
+      textarea.setSelectionRange(caret, caret);
+    });
   }
 
   onEditOverlayClick(num?: NumPos, index?: number, ref?: ReferenceImage): void {
@@ -336,14 +383,29 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
 
   getSelectedModelDurations(model?: any): number[] {
     const activeModel = model || this.getSelectedModelObject();
-    // only 'text to video' mode supports shorter durations
-    // resolutions above 1K support only longest duration
+    const all = activeModel?.capabilities?.supportedDurations ?? [];
+
+    // Veo only offers shorter lengths in text-to-video, and only at 1K;
+    // everywhere else it is pinned to the longest. That is a Veo constraint,
+    // not a universal one - applying it to every model left Gemini Omni
+    // stuck at 10s in every mode except text-to-video, even though it accepts
+    // its full 3-10s range regardless of mode.
+    if (!activeModel?.capabilities?.restrictsDurationOutsideTextToVideo) {
+      return all;
+    }
+
     if (!this.isTextToVideo() || this.selectedResolution() !== '1K') {
-      const longest = activeModel?.capabilities?.supportedDurations?.at(-1);
+      const longest = all.at(-1);
       return longest ? [longest] : [];
     }
 
-    return activeModel?.capabilities?.supportedDurations ?? [];
+    return all;
+  }
+
+  /** Output counts the active model allows, for the x1..xN selector. */
+  availableOutputs(): number[] {
+    const max = this.getSelectedModelObject()?.capabilities?.maxOutputs ?? 4;
+    return Array.from({length: Math.max(1, max)}, (_, i) => i + 1);
   }
 
   private updateSupportedResolutions(model?: any, modeChanged = false) {

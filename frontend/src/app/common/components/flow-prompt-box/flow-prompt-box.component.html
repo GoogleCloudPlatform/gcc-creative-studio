@@ -91,6 +91,7 @@
     <!-- Prompt Area -->
     <div class="mt-4">
       <textarea
+        #promptInput
         (input)="onPromptInput($event)"
         [ngModel]="prompt"
         [disabled]="mode === 'Concatenate Video'"
@@ -158,6 +159,32 @@
           </div>
         </ng-container>
 
+        <!-- Edit Video: the single clip being modified -->
+        <ng-container *ngIf="mode === 'Edit Video'">
+          <div
+            class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
+            (click)="!editSource && openVideoSelectorForEdit.emit()"
+          >
+            <ng-container *ngIf="!editSource">
+              <mat-icon class="text-neutral-500">auto_fix_high</mat-icon>
+              <span class="absolute bottom-1 text-[8px] text-neutral-500">Video to edit</span>
+            </ng-container>
+            <ng-container *ngIf="editSource">
+              <img *ngIf="editSource.previewUrl" [src]="editSource.previewUrl"
+                class="h-full w-full rounded-lg object-cover" />
+              <button (click)="$event.stopPropagation(); clearEditSource.emit($event)"
+                class="absolute -right-1 -top-1 rounded-full bg-neutral-900 p-0.5 text-neutral-400 hover:text-white">
+                <mat-icon class="!h-3 !w-3 text-xs">close</mat-icon>
+              </button>
+            </ng-container>
+          </div>
+          <div class="w-full text-[11px] text-neutral-500">
+            Describe only what should change. Adding
+            <span class="font-mono text-neutral-400">Keep everything else the same</span>
+            helps preserve the rest of the shot.
+          </div>
+        </ng-container>
+
         <!-- Unified Ingredients Mode Inputs -->
         <ng-container *ngIf="mode === 'Ingredients to Video' || mode === 'Ingredients to Image'">
           <ng-container *ngIf="getSelectedModelObject() as model">
@@ -178,16 +205,34 @@
                 [class.highlight-new]="ref.isNew">
                 <img [src]="ref.previewUrl" class="h-full w-full object-cover" />
                 <ng-container *ngTemplateOutlet="editOverlay; context: { index: i, ref: ref, small: true }"></ng-container>
+                <!--
+                  The tag index is otherwise invisible: references are bound by
+                  position, so a user would have to count thumbnails and type
+                  the tag by hand. Clicking inserts it at the caret.
+                -->
+                <button *ngIf="supportsRoleTags"
+                  (click)="$event.stopPropagation(); insertRoleTag('<IMAGE_REF_' + i + '>')"
+                  [matTooltip]="'Insert <IMAGE_REF_' + i + '> into the prompt to refer to this image'"
+                  class="absolute bottom-0 left-0 rounded-tr-md bg-neutral-900/80 px-1 text-[10px] font-mono text-neutral-300 hover:bg-blue-600 hover:text-white">
+                  {{ i }}
+                </button>
                 <button (click)="$event.stopPropagation(); clearReferenceImage.emit({index: i, event: $event})"
                   class="absolute -right-1 -top-1 rounded-full bg-neutral-900 p-0.5 text-neutral-400 hover:text-white">
                   <mat-icon class="!h-3 !w-3 text-xs">close</mat-icon>
                 </button>
               </div>
             </div>
+            <!-- Discoverability: the tag syntax is not guessable. -->
+            <div *ngIf="supportsRoleTags && referenceImages.length > 1"
+              class="w-full text-[11px] text-neutral-500">
+              Tip: click an image's number to insert its tag, e.g.
+              <span class="font-mono text-neutral-400">&lt;IMAGE_REF_0&gt; wears &lt;IMAGE_REF_1&gt;</span>,
+              to control which reference is which.
+            </div>
           </ng-container>
 
-            <!-- Video Reference Slot (only for Ingredients to Video mode AND only for Gemini Omni) -->
-            <div *ngIf="mode === 'Ingredients to Video' && getSelectedModelObject()?.value === 'gemini-omni-flash-preview'"
+            <!-- Video Reference Slot, gated on capability rather than model name. -->
+            <div *ngIf="mode === 'Ingredients to Video' && getSelectedModelObject()?.capabilities?.supportsVideoReference"
               class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
               (click)="!referenceVideo && openVideoSelectorForReference.emit()"
             >
@@ -207,8 +252,13 @@
               </ng-container>
             </div>
 
-            <!-- Audio Reference Slot (only for Ingredients to Video mode AND only for Gemini Omni) -->
-            <div *ngIf="mode === 'Ingredients to Video' && getSelectedModelObject()?.value === 'gemini-omni-flash-preview'"
+            <!--
+              Audio Reference Slot. Gated on capability, not on a model name:
+              no current video model accepts an audio reference. Omni's API
+              takes the part and ignores it, so offering the control invited
+              silent failure - and now a rejected request.
+            -->
+            <div *ngIf="mode === 'Ingredients to Video' && getSelectedModelObject()?.capabilities?.supportsAudioReference"
               class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
               (click)="!referenceAudio && openAudioSelectorForReference.emit()"
             >
@@ -449,30 +499,17 @@
             <div
               class="absolute right-0 top-full z-30 mt-1 w-full rounded-lg bg-neutral-700 p-1 shadow-lg"
             >
-              <button
-                (click)="selectOutputs(1)"
-                class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600"
-              >
-                x1
-              </button>
-              @if (getSelectedModelObject()?.value !== 'gemini-omni-flash-preview') {
+              <!--
+                Driven by the model's maxOutputs. This used to hardcode Omni to
+                a single output, which is no longer true: it can return several
+                clips per request for side-by-side comparison.
+              -->
+              @for (count of availableOutputs(); track count) {
                 <button
-                  (click)="selectOutputs(2)"
+                  (click)="selectOutputs(count)"
                   class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600"
                 >
-                  x2
-                </button>
-                <button
-                  (click)="selectOutputs(3)"
-                  class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600"
-                >
-                  x3
-                </button>
-                <button
-                  (click)="selectOutputs(4)"
-                  class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600"
-                >
-                  x4
+                  x{{ count }}
                 </button>
               }
             </div>
