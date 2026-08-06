@@ -1,0 +1,35 @@
+// Dev Container metadata reference: https://containers.dev/implementors/json_reference/
+{
+  "name": "Equinox Terraform Environment",
+  "features": {
+    "ghcr.io/devcontainers-extra/features/checkov:1": {},
+    "ghcr.io/devcontainers-extra/features/pre-commit:2": {},
+    "ghcr.io/devcontainers/features/terraform:1": {
+      "tflint": "latest",
+      "installTerraformDocs": true
+    }
+  },
+  "onCreateCommand": "bash .devcontainer/files/onCreate.sh",
+  "customizations": {
+    "codespaces": {
+      "openFiles": [
+        ".devcontainer/README.md"
+      ],
+      "repositories": {
+        "equinox-platformx/terraform-modules": {
+          "permissions": {
+            "contents": "write"
+          }
+        }
+      }
+    },
+    "vscode": {
+      // Add the IDs of extensions you want installed when the container is created.
+      "extensions": [
+        "streetsidesoftware.code-spell-checker", // Spell Checker
+        "HashiCorp.terraform", // Terraform syntax highlighting
+        "GitHub.copilot" // GitHub Copilot
+      ]
+    }
+  }
+}
