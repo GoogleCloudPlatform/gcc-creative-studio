@@ -152,6 +152,12 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     icon: string;
   }[] = [
     {
+      value: 'auto',
+      viewValue: 'Auto \n Dynamic',
+      disabled: false,
+      icon: 'hdr_auto',
+    },
+    {
       value: '1:1',
       viewValue: '1:1 \n Square',
       disabled: false,
@@ -236,7 +242,9 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
       icon: 'crop_16_9',
     },
   ];
-  selectedAspectRatio = this.aspectRatioOptions[0].viewValue;
+  selectedAspectRatio =
+    this.aspectRatioOptions.find(r => r.value === '1:1')?.viewValue ||
+    this.aspectRatioOptions[0].viewValue;
   imageStyles = [
     'Cinematic',
     'Fantasy',
@@ -499,20 +507,59 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
   private applyModelSettings(model: GenerationModelConfig) {
     const capabilities = model.capabilities;
 
-    // Enable/Disable aspect ratios based on capabilities
+    // Enable/Disable aspect ratios based on capabilities and mode
     this.aspectRatioOptions.forEach(r => {
-      r.disabled = !capabilities.supportedAspectRatios.includes(r.value);
+      if (r.value === 'auto') {
+        r.disabled =
+          this.currentMode !== 'Ingredients to Image' ||
+          !model.value.startsWith('gemini-');
+      } else {
+        r.disabled = !capabilities.supportedAspectRatios.includes(r.value);
+      }
     });
 
-    // If current aspect ratio is not supported, switch to the first supported one (usually 1:1)
-    if (
-      !capabilities.supportedAspectRatios.includes(
-        this.searchRequest.aspectRatio,
-      )
-    ) {
-      const firstSupported = this.aspectRatioOptions.find(r => !r.disabled);
+    // If current aspect ratio is not supported or disabled, switch to the first supported one
+    const currentOption = this.aspectRatioOptions.find(
+      r => r.value === this.searchRequest.aspectRatio,
+    );
+    if (!currentOption || currentOption.disabled) {
+      const defaultOption =
+        this.currentMode === 'Ingredients to Image'
+          ? this.aspectRatioOptions.find(r => r.value === 'auto' && !r.disabled)
+          : undefined;
+      const firstSupported =
+        defaultOption || this.aspectRatioOptions.find(r => !r.disabled);
       if (firstSupported) {
         this.selectAspectRatio(firstSupported);
+      }
+    }
+  }
+
+  private updateAspectRatioForMode(previousMode: string, newMode: string) {
+    if (this.selectedGenerationModelObject) {
+      this.applyModelSettings(this.selectedGenerationModelObject);
+    }
+
+    if (newMode === 'Ingredients to Image') {
+      if (
+        previousMode !== 'Ingredients to Image' ||
+        this.searchRequest.aspectRatio === 'auto'
+      ) {
+        const autoOption = this.aspectRatioOptions.find(
+          r => r.value === 'auto' && !r.disabled,
+        );
+        if (autoOption) {
+          this.selectAspectRatio(autoOption);
+        }
+      }
+    } else {
+      if (this.searchRequest.aspectRatio === 'auto') {
+        const firstSupported = this.aspectRatioOptions.find(
+          r => !r.disabled && r.value !== 'auto',
+        );
+        if (firstSupported) {
+          this.selectAspectRatio(firstSupported);
+        }
       }
     }
   }
@@ -657,6 +704,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   onModeChanged(mode: string) {
+    const previousMode = this.currentMode;
     this.currentMode = mode;
     if (
       mode === 'Video to Image' &&
@@ -669,6 +717,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
         this.selectModel(compatibleModel);
       }
     }
+    this.updateAspectRatioForMode(previousMode, mode);
     this.saveState();
   }
 
@@ -880,7 +929,9 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     this.sourceMediaItems = [];
     this.selectedGenerationModel = this.generationModels[0].viewValue;
     this.selectedGenerationModelObject = this.generationModels[0];
-    this.selectedAspectRatio = this.aspectRatioOptions[0].viewValue;
+    this.selectedAspectRatio =
+      this.aspectRatioOptions.find(r => r.value === '1:1')?.viewValue ||
+      this.aspectRatioOptions[0].viewValue;
     this.imageStateService.resetState();
   }
 
@@ -918,7 +969,9 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     }
 
     // Switch to Ingredients to Image mode
+    const previousMode = this.currentMode;
     this.currentMode = 'Ingredients to Image';
+    this.updateAspectRatioForMode(previousMode, 'Ingredients to Image');
 
     // Add to reference images
     const refImage: ReferenceImage = {
@@ -1007,7 +1060,9 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
 
     // Switch to Ingredients to Image mode if we have reference images
     if (this.referenceImages.length > 0) {
+      const previousMode = this.currentMode;
       this.currentMode = 'Ingredients to Image';
+      this.updateAspectRatioForMode(previousMode, 'Ingredients to Image');
       this.saveState();
     }
   }
@@ -1239,7 +1294,9 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     }));
 
     if (this.referenceImages.length > 0) {
+      const previousMode = this.currentMode;
       this.currentMode = 'Ingredients to Image';
+      this.updateAspectRatioForMode(previousMode, 'Ingredients to Image');
     }
     this.saveState();
   }

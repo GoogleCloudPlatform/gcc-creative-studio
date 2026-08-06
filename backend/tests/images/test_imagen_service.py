@@ -760,6 +760,36 @@ def test_gemini_generate_image_base64_reconstruct(mock_gcs_service):
     mock_gcs_service.store_to_gcs.assert_called_once()
 
 
+def test_gemini_generate_image_auto_aspect_ratio(mock_gcs_service):
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_candidate = MagicMock()
+    mock_part = MagicMock()
+    mock_part.inline_data.data = "YmFzZTY0X2ltYWdl"
+    mock_part.inline_data.mime_type = "image/png"
+    mock_candidate.content.parts = [mock_part]
+    mock_response.candidates = [mock_candidate]
+    mock_client.models.generate_content.return_value = mock_response
+
+    mock_gcs_service.store_to_gcs.return_value = "gs://bucket/out.png"
+
+    image_obj, grounding_metadata = gemini_generate_image(
+        gcs_service=mock_gcs_service,
+        vertexai_client=mock_client,
+        prompt="Test Auto Ratio",
+        model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE,
+        bucket_name="bucket",
+        aspect_ratio=AspectRatioEnum.AUTO,
+    )
+
+    assert image_obj.image.gcs_uri == "gs://bucket/out.png"
+    # Verify that types.GenerateContentConfig was called with image_config.aspect_ratio == None
+    call_kwargs = mock_client.models.generate_content.call_args.kwargs
+    config = call_kwargs.get("config")
+    assert config is not None
+    assert config.image_config.aspect_ratio is None
+
+
 @patch("src.images.imagen_service.generate_image_thumbnail_from_gcs")
 @patch("src.common.media_utils.generate_image_thumbnail_from_gcs")
 @patch("src.database.WorkerDatabase")
