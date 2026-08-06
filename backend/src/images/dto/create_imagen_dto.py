@@ -172,7 +172,16 @@ class CreateImagenDto(BaseDto):
         model = self.generation_model
 
         # Aspect Ratio Validation
-        if self.aspect_ratio not in model.valid_aspect_ratios:
+        if self.aspect_ratio == AspectRatioEnum.AUTO:
+            if not model.is_gemini_image_model:
+                raise ValueError(
+                    f"Auto aspect ratio is not supported for model {model.value}.",
+                )
+            if total_inputs == 0:
+                raise ValueError(
+                    "Auto aspect ratio is only supported when input/reference images are provided (Ingredients to Image mode).",
+                )
+        elif self.aspect_ratio not in model.valid_aspect_ratios:
             raise ValueError(
                 f"Aspect ratio {self.aspect_ratio} is not supported for model {model.value}.",
             )

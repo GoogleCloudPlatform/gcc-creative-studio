@@ -240,6 +240,38 @@ describe('HomeComponent', () => {
     expect(mockImageStateService.updateState).toHaveBeenCalled();
   });
 
+  describe('auto aspect ratio for Ingredients to Image mode', () => {
+    it('should disable auto aspect ratio in Text to Image mode', () => {
+      component.onModeChanged('Text to Image');
+      const autoOption = component.aspectRatioOptions.find(
+        r => r.value === 'auto',
+      );
+      expect(autoOption?.disabled).toBeTrue();
+    });
+
+    it('should enable auto aspect ratio and set it as default when switching to Ingredients to Image mode', () => {
+      component.onModeChanged('Text to Image');
+      expect(component.searchRequest.aspectRatio).not.toBe('auto');
+
+      component.onModeChanged('Ingredients to Image');
+      const autoOption = component.aspectRatioOptions.find(
+        r => r.value === 'auto',
+      );
+      expect(autoOption?.disabled).toBeFalse();
+      expect(component.searchRequest.aspectRatio).toBe('auto');
+      expect(component.selectedAspectRatio).toBe('Auto \n Dynamic');
+    });
+
+    it('should fallback away from auto aspect ratio when switching from Ingredients to Image to Text to Image mode', () => {
+      component.onModeChanged('Ingredients to Image');
+      expect(component.searchRequest.aspectRatio).toBe('auto');
+
+      component.onModeChanged('Text to Image');
+      expect(component.searchRequest.aspectRatio).not.toBe('auto');
+      expect(component.searchRequest.aspectRatio).toBe('1:1');
+    });
+  });
+
   it('should toggle style and save state when selecting an image style', () => {
     component.selectImageStyle('Cinematic');
     expect(component.searchRequest.style).toBe('Cinematic');

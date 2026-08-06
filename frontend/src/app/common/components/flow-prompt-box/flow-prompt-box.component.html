@@ -371,9 +371,8 @@
             class="relative w-full flex items-center justify-between rounded-lg bg-neutral-700 px-3 py-2 text-left text-sm"
           >
             <span class="flex items-center gap-2 min-w-0">
-              <!-- Landscape Icon -->
               <mat-icon class="flex-shrink-0">
-                {{ aspectRatio.includes('16:9') ? 'crop_landscape' : 'crop_portrait' }}
+                {{ getAspectRatioIcon(aspectRatio) }}
               </mat-icon>
               <span class="truncate whitespace-nowrap">{{ aspectRatio }}</span>
             </span>

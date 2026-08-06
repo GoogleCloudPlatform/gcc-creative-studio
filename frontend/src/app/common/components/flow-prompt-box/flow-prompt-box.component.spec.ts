@@ -73,4 +73,38 @@ describe('FlowPromptBoxComponent', () => {
       expect(editOverlays.length).toBe(0);
     });
   });
+
+  describe('getAspectRatioIcon', () => {
+    it('should return matched option icon when present in aspectRatioOptions', () => {
+      component.aspectRatioOptions = [
+        {
+          value: 'auto',
+          viewValue: 'Auto \n Dynamic',
+          disabled: false,
+          icon: 'hdr_auto',
+        },
+        {
+          value: '1:1',
+          viewValue: '1:1 \n Square',
+          disabled: false,
+          icon: 'crop_square',
+        },
+      ];
+      expect(component.getAspectRatioIcon('Auto \n Dynamic')).toBe('hdr_auto');
+      expect(component.getAspectRatioIcon('auto')).toBe('hdr_auto');
+      expect(component.getAspectRatioIcon('1:1 \n Square')).toBe('crop_square');
+    });
+
+    it('should return hdr_auto for auto ratio when not matched in options', () => {
+      component.aspectRatioOptions = [];
+      expect(component.getAspectRatioIcon('auto')).toBe('hdr_auto');
+      expect(component.getAspectRatioIcon('Auto \n Dynamic')).toBe('hdr_auto');
+    });
+
+    it('should return crop_landscape or crop_portrait based on ratio when unmatched', () => {
+      component.aspectRatioOptions = [];
+      expect(component.getAspectRatioIcon('16:9')).toBe('crop_landscape');
+      expect(component.getAspectRatioIcon('9:16')).toBe('crop_portrait');
+    });
+  });
 });
