@@ -80,11 +80,13 @@ git push origin main
 gcloud builds submit --config backend/cloudbuild.yaml \
   --substitutions=_REGION=<REGION>,_REPO_NAME=<ARTIFACT_REPO>,_SERVICE_NAME=<BACKEND_SERVICE>
 
-gcloud builds submit --config frontend/cloudbuild.yaml \
-  --substitutions=_TARGET_PROJECT_ID=<PROJECT>,_ANGULAR_BUILD_COMMAND=<build-command>,_FIREBASE_PROJECT_ID=<FIREBASE_PROJECT>
+gcloud builds submit --config frontend/cloudbuild-deploy.yaml \
+  --substitutions=_ANGULAR_BUILD_COMMAND=<build-command>,_BACKEND_SERVICE_ID=<BACKEND_SERVICE>,_BACKEND_URL=<FRONTEND_URL>,_FE_SERVICE_NAME=<FRONTEND_SERVICE>,_FIREBASE_SITE_ID=<FIREBASE_SITE_ID>,_FIREBASE_PROJECT_ID=<FIREBASE_PROJECT>
 ```
 
-Defaults for these live at the bottom of each `cloudbuild.yaml`.
+Use `cloudbuild-deploy.yaml`, not `frontend/cloudbuild.yaml` — the latter is a thin wrapper the CI trigger uses that only forwards `_FIREBASE_PROJECT_ID` and kicks off the real deploy build `--async`, so it reports success before the actual deploy has even started, and `cloudbuild-deploy.yaml` itself has no default substitutions to fall back on. `cloudbuild-deploy.yaml` is what actually injects secrets, builds Angular, and deploys to Firebase Hosting in one synchronous step — submit it directly for a real manual deploy.
+
+Defaults for the backend's substitutions live at the bottom of `backend/cloudbuild.yaml`.
 
 ### Deploy both services
 
@@ -103,7 +105,10 @@ changes to take effect.
    ```bash
    gcloud run services logs read <BACKEND_SERVICE> --region=<REGION> --limit=50
    ```
-   Look for `Migrations applied successfully` followed by `Application startup complete`.
+   If this deploy carried a migration, look for `Migrations applied successfully`. Most deploys
+   don't, in which case the healthy message is `Database is already up to date. No pending
+   migrations.` instead — that is not a failure, just the other branch of the same check. Either
+   way it should be followed by `Application startup complete`.
 2. **Sign in** and confirm the gallery loads with thumbnails.
 3. **Generate one video** on your most-used model.
 4. **Run one saved workflow**, if you use them. See the compatibility note below.
