@@ -89,6 +89,11 @@ export type VeoRequest = {
    * and is not supported by Gemini Omni.
    */
   editSource?: AssetReferenceDto | null;
+  /**
+   * Strip audio from the clip being edited. Omni refuses to edit a clip
+   * containing speech when reference images are also supplied.
+   */
+  stripSourceAudio?: boolean;
   resolution?: '1K' | '2K' | '4K';
 };
 

@@ -108,6 +108,10 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         '1:8',
         '8:1',
       ], // All
+      // Verified against the live API at 1K, 2K and 4K. It also accepts
+      // 512, which is not offered here: adding it would mean widening the
+      // resolution union across the UI and every backend Literal, including
+      // the shared workflow schemas.
       supportedResolutions: ['1K', '2K', '4K'],
       supportedDurations: [],
       supportsGoogleSearch: true,
@@ -164,6 +168,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         '5:4',
         '21:9',
       ], // All
+      // Verified against the live API at 1K, 2K and 4K. 512 is rejected.
       supportedResolutions: ['1K', '2K', '4K'],
       supportedDurations: [],
       supportsGoogleSearch: true,
@@ -190,7 +195,10 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         '5:4',
         '21:9',
       ],
-      supportedResolutions: ['1K', '2K', '4K'],
+      // 1K only. The API accepts 2K and 4K without complaint and then
+      // returns 1024x1024 anyway, so offering them told users they
+      // were getting a resolution they never received.
+      supportedResolutions: ['1K'],
       supportedDurations: [],
     },
   },
@@ -278,7 +286,10 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportsAudio: true,
       supportsNegativePrompt: false,
       supportsLastFrame: false,
-      supportsVideoReference: true,
+      // A video input belongs in Edit Video, not Ingredients. Reference videos
+      // under 3s are accepted by the schema but not processed correctly, and
+      // the supported way to combine a video with images is task=edit.
+      supportsVideoReference: false,
       supportsAudioReference: false,
       maxOutputs: 4,
       supportsRoleTags: true,

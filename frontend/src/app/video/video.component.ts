@@ -118,6 +118,9 @@ export class VideoComponent implements OnInit, AfterViewInit {
   parentMediaItemId: number | null = null;
   parentMediaIndex = 0;
   editSource: ReferenceVideo | null = null;
+  // Omni refuses to edit a clip containing speech when reference images are
+  // also supplied, and its own output always carries audio, so default on.
+  stripSourceAudio = true;
   currentMode = 'Text to Video';
   modes = [
     {value: 'Text to Video', icon: 'description', label: 'Text to Video'},
@@ -321,6 +324,8 @@ export class VideoComponent implements OnInit, AfterViewInit {
       referenceImagesType: this.referenceImagesType,
       referenceVideo: this.referenceVideo,
       referenceAudio: this.referenceAudio,
+      editSource: this.editSource,
+      stripSourceAudio: this.stripSourceAudio,
     });
   }
 
@@ -353,6 +358,8 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.referenceImagesType = state.referenceImagesType || 'ASSET';
     this.referenceVideo = state.referenceVideo || null;
     this.referenceAudio = state.referenceAudio || null;
+    this.editSource = state.editSource || null;
+    this.stripSourceAudio = state.stripSourceAudio ?? true;
 
     this.negativePhrases = state.negativePrompt
       ? state.negativePrompt.split(', ').filter(Boolean)
@@ -450,15 +457,61 @@ export class VideoComponent implements OnInit, AfterViewInit {
     if (!capabilities.supportsVideoReference) {
       this.referenceVideo = null;
     }
-    if (!capabilities.supportsLastFrame && this.endImageAssetId !== null) {
+    // An end frame can arrive either as an uploaded asset or as a media item,
+    // so checking only endImageAssetId left media-item end frames attached and
+    // visible, and the backend then rejected the request.
+    if (
+      !capabilities.supportsLastFrame &&
+      (this.endImageAssetId !== null || this.sourceMediaItems[1] !== null)
+    ) {
       this.endImageAssetId = null;
       this.image2Preview = null;
       this.sourceMediaItems[1] = null;
     }
 
+    // Models differ in how many references they take. Keeping an over-limit
+    // set means every Generate fails validation until the user works out which
+    // images to remove.
+    const maxRefs = capabilities.maxReferenceImages;
+    if (maxRefs && this.referenceImages.length > maxRefs) {
+      const dropped = this.referenceImages.length - maxRefs;
+      this.referenceImages = this.referenceImages.slice(0, maxRefs);
+      handleSuccessSnackbar(
+        this._snackBar,
+        `${model.viewValue} takes at most ${maxRefs} reference images, so we removed the last ${dropped}.`,
+      );
+    }
+
     this.ensureModeSupported();
 
     this.saveState();
+  }
+
+  /**
+   * Move to a model that can use a closing frame, if the current one cannot.
+   *
+   * The "use as end frame" hand-off from the gallery carries no model, so it
+   * lands on whatever is persisted - by default Gemini Omni, which cannot
+   * interpolate. The backend rejects that outright, so without this the user
+   * sees their end frame attached and then a 422 on Generate.
+   */
+  private ensureLastFrameCapableModel(): void {
+    if (this.getModelCapabilities().supportsLastFrame) {
+      return;
+    }
+    const veo31Model = this.generationModels.find(
+      m => m.value === 'veo-3.1-generate-001',
+    );
+    if (!veo31Model) {
+      return;
+    }
+    this.selectModel(veo31Model);
+    this.currentMode = 'Frames to Video';
+    this.selectedMode.set('Frames to Video');
+    handleSuccessSnackbar(
+      this._snackBar,
+      "Gemini Omni can't use a closing frame, so we've switched to Veo 3.1 for you.",
+    );
   }
 
   /** Capabilities for a model value, falling back to the active model. */
@@ -476,14 +529,37 @@ export class VideoComponent implements OnInit, AfterViewInit {
     );
   }
 
-  /** Modes the active model actually supports, in the UI's display order. */
+  /**
+   * Every mode stays in the menu, including ones the active model cannot do.
+   *
+   * Filtering the menu by capability made Extend Video and Concatenate Video
+   * disappear on the default model with no explanation. Picking one now moves
+   * to a model that supports it instead, which is what the reference-image and
+   * end-frame paths already do.
+   */
   get availableModes(): {value: string; icon: string; label: string}[] {
+    return this.modes;
+  }
+
+  /** Whether the active model supports a given mode. */
+  private modelSupportsMode(mode: string): boolean {
     const supported = this.getModelCapabilities().supportedModes;
-    if (!supported.length) {
-      return this.modes;
+    return !supported.length || supported.includes(mode as GenerationMode);
+  }
+
+  /** First model that supports a mode, preferring Veo 3.1 then Omni. */
+  private findModelForMode(mode: string) {
+    const preferred = ['veo-3.1-generate-001', 'gemini-omni-flash-preview'];
+    for (const value of preferred) {
+      const candidate = this.generationModels.find(m => m.value === value);
+      if (
+        candidate?.capabilities?.supportedModes.includes(mode as GenerationMode)
+      ) {
+        return candidate;
+      }
     }
-    return this.modes.filter(mode =>
-      supported.includes(mode.value as GenerationMode),
+    return this.generationModels.find(m =>
+      m.capabilities?.supportedModes.includes(mode as GenerationMode),
     );
   }
 
@@ -495,18 +571,11 @@ export class VideoComponent implements OnInit, AfterViewInit {
    * the backend and rejected.
    */
   private ensureModeSupported(): void {
-    const available = this.availableModes;
-    if (!available.length) {
+    if (this.modelSupportsMode(this.currentMode)) {
       return;
     }
-    if (available.some(mode => mode.value === this.currentMode)) {
-      return;
-    }
-
-    const fallback =
-      available.find(mode => mode.value === 'Text to Video') ?? available[0];
-    this.onModeChanged(fallback.value);
-    this.selectedMode.set(fallback.value);
+    this.onModeChanged('Text to Video');
+    this.selectedMode.set('Text to Video');
   }
 
   selectAspectRatio(ratio: string | {value: string; viewValue: string}): void {
@@ -601,6 +670,19 @@ export class VideoComponent implements OnInit, AfterViewInit {
     console.log('Mode changed to:', mode);
     if (this.currentMode === mode) {
       return;
+    }
+
+    // Every mode is offered regardless of model, so picking one the active
+    // model cannot do moves to a model that can rather than failing later.
+    if (!this.modelSupportsMode(mode)) {
+      const capableModel = this.findModelForMode(mode);
+      if (capableModel) {
+        this.selectModel(capableModel);
+        handleSuccessSnackbar(
+          this._snackBar,
+          `Switched to ${capableModel.viewValue}, which supports ${mode}.`,
+        );
+      }
     }
 
     // If we are switching FROM Concatenate TO Extend, we should keep the first video
@@ -778,6 +860,14 @@ export class VideoComponent implements OnInit, AfterViewInit {
       (i): i is SourceMediaItemLink => !!i,
     );
 
+    // Edit Video composites characters into a clip using the same reference
+    // images as Ingredients, and <IMAGE_REF_N> in the prompt is positional over
+    // them. Gating these on Ingredients alone silently dropped every reference
+    // in Edit mode, so the tags in the prompt bound to nothing.
+    const usesReferenceImages =
+      this.currentMode === 'Ingredients to Video' ||
+      this.currentMode === 'Edit Video';
+
     // --- Build the two separate R2V reference payloads ---
     const referenceImagesPayload: {
       assetId: number;
@@ -822,17 +912,15 @@ export class VideoComponent implements OnInit, AfterViewInit {
           ? {id: this.endImageAssetId, type: 'source_asset'}
           : undefined,
       referenceImages:
-        this.currentMode === 'Ingredients to Video' &&
-        referenceImagesPayload.length > 0
+        usesReferenceImages && referenceImagesPayload.length > 0
           ? referenceImagesPayload
           : undefined,
-      sourceMediaItems:
-        this.currentMode === 'Ingredients to Video'
-          ? sourceMediaItemsForReference
-          : this.currentMode === 'Frames to Video' ||
-              this.currentMode === 'Extend Video'
-            ? validSourceMediaItems
-            : undefined,
+      sourceMediaItems: usesReferenceImages
+        ? sourceMediaItemsForReference
+        : this.currentMode === 'Frames to Video' ||
+            this.currentMode === 'Extend Video'
+          ? validSourceMediaItems
+          : undefined,
       referenceVideo:
         this.currentMode === 'Ingredients to Video' && this.referenceVideo
           ? {
@@ -853,6 +941,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
       parentMediaIndex: this.parentMediaIndex ?? undefined,
       // Edit Video modifies one existing clip. It is deliberately separate
       // from sourceVideoAssetId, which means "extend" and is unsupported here.
+      stripSourceAudio: this.stripSourceAudio,
       editSource:
         this.currentMode === 'Edit Video' && this.editSource
           ? {
@@ -1439,6 +1528,13 @@ export class VideoComponent implements OnInit, AfterViewInit {
       name: string;
       index?: number;
     };
+    /** A clip to modify in Edit Video, as opposed to extend or reference. */
+    editSource?: {
+      id: number;
+      type: 'source_asset' | 'media_item';
+      index?: number;
+      previewUrl?: string;
+    };
   }): void {
     this.resetInputs();
     if (remixState.prompt) this.searchRequest.prompt = remixState.prompt;
@@ -1470,6 +1566,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
           this.image2Preview = remixState.endImagePreviewUrl || null;
           // Switch to Ingredients to Video mode if we have start or end frames
           this.currentMode = 'Frames to Video';
+          this.ensureLastFrameCapableModel();
           this.saveState();
         } else if (item.role === 'video_extension_source') {
           // This is the case for extending a video
@@ -1536,15 +1633,52 @@ export class VideoComponent implements OnInit, AfterViewInit {
       );
       if (modelOption) this.selectModel(modelOption);
     }
+
+    // Last, because applyEditSource picks the model and re-asserts the mode,
+    // and both would be undone by the generationModel branch above.
+    if (remixState.editSource) {
+      this.applyEditSource({
+        ...remixState.editSource,
+        parentMediaItemId:
+          remixState.parentMediaItemId ?? remixState.editSource.id,
+        parentMediaIndex: remixState.parentMediaIndex,
+      });
+    }
   }
 
   handleEditWithOmni(event: {mediaItem: MediaItem; selectedIndex: number}) {
-    this.parentMediaItemId = event.mediaItem.id;
+    this.applyEditSource({
+      id: event.mediaItem.id,
+      type: 'media_item',
+      index: event.selectedIndex,
+      previewUrl:
+        event.mediaItem.presignedThumbnailUrls?.[event.selectedIndex] || '',
+      parentMediaItemId: event.mediaItem.id,
+    });
+  }
+
+  /**
+   * Put the page into Edit Video with a clip attached.
+   *
+   * Shared by the in-page lightbox button and the gallery hand-off, which
+   * arrives through applyRemixState. The gallery used to pass the clip as a
+   * referenceVideo, which Omni does not accept, so it was discarded on the way
+   * in and the user landed on an empty screen.
+   */
+  private applyEditSource(source: {
+    id: number;
+    type: 'source_asset' | 'media_item';
+    index?: number;
+    previewUrl?: string;
+    parentMediaItemId?: number | null;
+    parentMediaIndex?: number;
+  }): void {
+    if (source.parentMediaItemId !== undefined) {
+      this.parentMediaItemId = source.parentMediaItemId;
+    }
     // A job can produce several clips, each its own conversation, so the
     // selected index decides which one the edit continues.
-    this.parentMediaIndex = event.selectedIndex;
-    this.currentMode = 'Edit Video';
-    this.selectedMode.set('Edit Video');
+    this.parentMediaIndex = source.parentMediaIndex ?? source.index ?? 0;
 
     const omniModel = this.generationModels.find(
       m => m.value === 'gemini-omni-flash-preview',
@@ -1553,12 +1687,16 @@ export class VideoComponent implements OnInit, AfterViewInit {
       this.selectModel(omniModel);
     }
 
+    // After selectModel, which runs ensureModeSupported and could otherwise
+    // move us somewhere else.
+    this.currentMode = 'Edit Video';
+    this.selectedMode.set('Edit Video');
+
     this.editSource = {
-      id: event.mediaItem.id,
-      type: 'media_item',
-      previewUrl:
-        event.mediaItem.presignedThumbnailUrls?.[event.selectedIndex] || '',
-      index: event.selectedIndex,
+      id: source.id,
+      type: source.type,
+      previewUrl: source.previewUrl || '',
+      index: source.index,
     };
     // Not a reference: the clip is being modified, not used as inspiration.
     this.referenceVideo = null;
@@ -1703,6 +1841,11 @@ export class VideoComponent implements OnInit, AfterViewInit {
       }
       this.saveState();
     });
+  }
+
+  onStripSourceAudioChanged(value: boolean): void {
+    this.stripSourceAudio = value;
+    this.saveState();
   }
 
   clearEditSource(event: Event): void {

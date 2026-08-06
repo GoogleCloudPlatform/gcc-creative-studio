@@ -46,6 +46,9 @@ interface VideoState {
   referenceImagesType: 'ASSET' | 'STYLE';
   referenceVideo: ReferenceVideo | null;
   referenceAudio: ReferenceAudio | null;
+  /** The clip being modified in Edit Video mode. */
+  editSource: ReferenceVideo | null;
+  stripSourceAudio: boolean;
 }
 
 @Injectable({
@@ -77,6 +80,8 @@ export class VideoStateService {
       referenceImagesType: 'ASSET',
       referenceVideo: null,
       referenceAudio: null,
+      editSource: null,
+      stripSourceAudio: true,
     };
 
     let savedState: VideoState | null = null;
@@ -106,7 +111,17 @@ export class VideoStateService {
             // The persisted model is validated above, but the mode was not. A
             // stale pairing such as Extend Video with a model that cannot
             // extend would restore into a state the backend rejects.
+            const loadedEditSource = parsed.editSource?.id
+              ? parsed.editSource
+              : null;
+
             let loadedMode = parsed.mode ?? this.initialState.mode;
+            // Edit Video without a clip is an unusable screen: the mode comes
+            // back, the slot is empty, and generating produces a brand new
+            // video instead of an edit.
+            if (loadedMode === 'Edit Video' && !loadedEditSource) {
+              loadedMode = this.initialState.mode;
+            }
             const supportedModes = activeConfig?.capabilities.supportedModes;
             if (
               supportedModes?.length &&
@@ -137,6 +152,7 @@ export class VideoStateService {
               referenceAudio: parsed.referenceAudio?.id
                 ? parsed.referenceAudio
                 : null,
+              editSource: loadedEditSource,
             };
           }
         }

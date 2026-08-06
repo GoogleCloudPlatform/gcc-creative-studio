@@ -387,17 +387,19 @@ export class MediaDetailComponent implements OnDestroy {
           this.mediaItem.originalPrompt || `Audio Input ${this.mediaItem.id}`,
       };
     } else {
-      remixState.referenceVideo = {
+      // The clip is being modified, so it is an editSource, not a reference.
+      // Omni rejects a reference video, so sending it as one meant the video
+      // screen dropped it and opened with nothing attached.
+      remixState.editSource = {
         id: this.mediaItem.id,
         type: this.mediaItem.itemType || 'media_item',
         index: index,
-        name:
-          this.mediaItem.originalPrompt || `Video Input ${this.mediaItem.id}`,
         previewUrl:
           this.mediaItem.presignedThumbnailUrls?.[index] ||
           this.mediaItem.presignedUrls?.[index] ||
           '',
       };
+      delete remixState.isOmniMode;
     }
 
     const navigationExtras: NavigationExtras = {

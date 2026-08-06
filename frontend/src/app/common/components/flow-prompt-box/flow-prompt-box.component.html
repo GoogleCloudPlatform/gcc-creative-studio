@@ -90,6 +90,16 @@
 
     <!-- Prompt Area -->
     <div class="mt-4">
+      <div class="flex items-start justify-between gap-2">
+        <span class="flex-1"></span>
+        <button *ngIf="hasResettableInput"
+          (click)="$event.stopPropagation(); resetClicked.emit()"
+          matTooltip="Clear the prompt and every attached image or clip"
+          class="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300">
+          <mat-icon class="!h-3.5 !w-3.5 !text-sm !leading-none">restart_alt</mat-icon>
+          Clear all
+        </button>
+      </div>
       <textarea
         #promptInput
         (input)="onPromptInput($event)"
@@ -183,10 +193,26 @@
             <span class="font-mono text-neutral-400">Keep everything else the same</span>
             helps preserve the rest of the shot.
           </div>
+          <!--
+            Omni refuses to edit a clip containing speech when reference images
+            are also supplied, and its own output always has audio, so this
+            defaults on.
+          -->
+          <label class="flex w-full cursor-pointer items-center gap-2 text-[11px] text-neutral-400">
+            <input type="checkbox" [checked]="stripSourceAudio"
+              (change)="stripSourceAudioChanged.emit(!stripSourceAudio)"
+              class="h-3 w-3 accent-blue-600" />
+            Remove audio from the source clip
+            <span class="text-neutral-600">(needed when using reference images)</span>
+          </label>
         </ng-container>
 
-        <!-- Unified Ingredients Mode Inputs -->
-        <ng-container *ngIf="mode === 'Ingredients to Video' || mode === 'Ingredients to Image'">
+        <!--
+          Reference images. Also shown for Edit Video: sending text, an image
+          and a video together with task=edit is how a character is composited
+          into existing footage.
+        -->
+        <ng-container *ngIf="mode === 'Ingredients to Video' || mode === 'Ingredients to Image' || mode === 'Edit Video'">
           <ng-container *ngIf="getSelectedModelObject() as model">
             <div
               class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex items-center justify-center"

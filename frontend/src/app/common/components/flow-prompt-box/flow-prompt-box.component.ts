@@ -145,6 +145,8 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   @Output() clearReferenceVideo = new EventEmitter<Event>();
   @Output() openVideoSelectorForEdit = new EventEmitter<void>();
   @Output() clearEditSource = new EventEmitter<Event>();
+  @Output() stripSourceAudioChanged = new EventEmitter<boolean>();
+  @Output() resetClicked = new EventEmitter<void>();
   @Output() openAudioSelectorForReference = new EventEmitter<void>();
   @Output() clearReferenceAudio = new EventEmitter<Event>();
 
@@ -155,6 +157,7 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   @Input() referenceVideo: any | null = null;
   /** The clip being modified in Edit Video mode. */
   @Input() editSource: ReferenceVideo | null = null;
+  @Input() stripSourceAudio = true;
   @Input() referenceAudio: any | null = null;
 
   @ViewChild('promptInput') promptInput?: ElementRef<HTMLTextAreaElement>;
@@ -240,6 +243,18 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   onPromptInput(event: Event) {
     const target = event.target as HTMLTextAreaElement;
     this.promptChanged.emit(target.value);
+  }
+
+  /** True when there is anything for the reset control to clear. */
+  get hasResettableInput(): boolean {
+    return !!(
+      this.prompt ||
+      this.referenceImages.length ||
+      this.image1Preview ||
+      this.image2Preview ||
+      this.referenceVideo ||
+      this.editSource
+    );
   }
 
   /** Whether the active model binds <IMAGE_REF_N> tags to reference images. */
@@ -374,11 +389,18 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
 
   getSelectedModelResolutions(model?: any): ('1K' | '2K' | '4K')[] {
     const activeModel = model || this.getSelectedModelObject();
-    if (this.isExtendVideo() || this.isIngredientsToImage()) {
-      const smallest = activeModel?.capabilities?.supportedResolutions?.[0];
+    const all = activeModel?.capabilities?.supportedResolutions ?? [];
+
+    // Extending a video does drop to the lowest resolution. Editing an image
+    // does not: Nano Banana Pro and Nano Banana 2 both return full 2K and 4K
+    // with a reference image attached, verified against the live API. Pinning
+    // Ingredients to Image to the smallest option withheld resolutions the
+    // model would happily have produced.
+    if (this.isExtendVideo()) {
+      const smallest = all[0];
       return smallest ? [smallest] : [];
     }
-    return activeModel?.capabilities?.supportedResolutions ?? [];
+    return all;
   }
 
   getSelectedModelDurations(model?: any): number[] {

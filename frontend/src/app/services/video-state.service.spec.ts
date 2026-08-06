@@ -257,4 +257,37 @@ describe('VideoStateService model capability guards', () => {
 
     expect(service.getState().mode).toBe('Extend Video');
   });
+
+  it('restores the clip being edited', () => {
+    localStorage.setItem(
+      'video_state',
+      JSON.stringify({
+        model: 'gemini-omni-flash-preview',
+        mode: 'Edit Video',
+        editSource: {id: 42, type: 'media_item', index: 1, previewUrl: 'p'},
+      }),
+    );
+
+    initService();
+
+    expect(service.getState().mode).toBe('Edit Video');
+    expect(service.getState().editSource?.id).toBe(42);
+  });
+
+  it('leaves Edit Video when the clip being edited was not persisted', () => {
+    // Otherwise the mode comes back with an empty slot, and generating makes a
+    // brand new video instead of editing anything.
+    localStorage.setItem(
+      'video_state',
+      JSON.stringify({
+        model: 'gemini-omni-flash-preview',
+        mode: 'Edit Video',
+      }),
+    );
+
+    initService();
+
+    expect(service.getState().mode).toBe('Text to Video');
+    expect(service.getState().editSource).toBeNull();
+  });
 });
