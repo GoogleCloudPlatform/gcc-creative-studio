@@ -154,6 +154,61 @@ interpolation, which Omni does not support — but it now fails visibly instead 
   exists specifically so older library items keep working.
 - **Cloud Storage is untouched** by a code deploy.
 
+### Where video and image inputs belong
+
+The reference-video slot has been removed from **Ingredients to Video**. Reference videos under
+three seconds were accepted by the schema but not processed correctly, and the supported way to
+combine a video with images is an edit.
+
+To composite a character into existing footage, use **Edit Video** and attach reference images
+alongside the clip. That sends text, image and video together with `task=edit`, matching Google's
+Vertex sample. Role tags work here too: `<IMAGE_REF_N>` is positional and counts the reference
+images in the order they were attached, so `<IMAGE_REF_0>` is the first image added. Verified
+against the live API with three references, in mirrored pairs that exchange the two indices:
+the composited arrangement flipped with them every time.
+
+### End an edit prompt with "Keep everything else the same"
+
+Edit prompts that scope the change some other way are frequently rejected with
+
+```
+400 Unable to submit request because This model does not support video extension.
+```
+
+even though the request asks for `task=edit`. The trigger is the prompt wording, not the request
+shape: across 116 live calls, ref-image count, tags versus plain names and the staging described
+all made no difference, while the closing sentence decided the outcome. `"Keep the room and
+lighting the same."` failed 13/13 on one prompt; the same request ending `"Keep everything else
+the same."` succeeded 9/10. Paraphrases are measurably weaker, so prefer that exact sentence.
+Appending `"This is an edit of the provided video, not an extension. Do not add any new footage."`
+also worked (3/3) where the wording has to stay.
+
+Whether the service literally reclassifies the request as an extension is unverified - that
+reading comes from the error text. What is established is that the wording controls it. The
+Edit Video snackbar now suggests the working phrasing.
+
+Anyone who previously attached a reference video in Ingredients mode will find the slot gone.
+Nothing breaks; the input was not being used properly in the first place.
+
+### Source audio is removed before an edit
+
+Omni refuses to edit a clip carrying speech when reference images are also supplied:
+
+```
+The model is currently unable to process speech edits.
+```
+
+Every Omni clip has a native audio track, so editing one of its own outputs would fail. The
+backend now strips the audio from the source clip first, uploads the silent copy alongside the
+original, and sends that. **Remove audio from the source clip** in Edit Video controls this and
+defaults on; turn it off to keep the original audio when editing without references.
+
+This writes one extra object per edit under `edit_sources/` in your media bucket. They are small
+— the video stream is copied rather than re-encoded — but they accumulate, so a lifecycle rule on
+that prefix is worth considering.
+
+`ffmpeg` is required and is already installed in the backend image.
+
 ### Behaviour that changes without any action
 
 - Selecting 9:16 now produces a portrait video. It previously returned 16:9 regardless.
