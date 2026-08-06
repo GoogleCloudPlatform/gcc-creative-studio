@@ -201,7 +201,16 @@ class GeminiService:
         for key, value in fields.items():
             if value:  # Ensure value is not None or empty
                 formatted_key = key.replace("_", " ").title()
-                attributes.append(f"- {formatted_key}: {value}")
+                if key == "aspect_ratio":
+                    if value == "9:16":
+                        formatted_value = "9:16 (Portrait / Vertical format)"
+                    elif value == "16:9":
+                        formatted_value = "16:9 (Landscape / Widescreen format)"
+                    else:
+                        formatted_value = str(value)
+                else:
+                    formatted_value = str(value)
+                attributes.append(f"- {formatted_key}: {formatted_value}")
         return "\n".join(filter(None, attributes))
 
     async def enhance_prompt_from_dto(
