@@ -238,7 +238,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       ],
       maxReferenceImages: 3,
       supportedAspectRatios: ['16:9', '9:16'],
-      supportedResolutions: ['1K'],
+      supportedResolutions: [],
       supportedDurations: [4, 6, 8],
       supportsAudio: true,
     },
