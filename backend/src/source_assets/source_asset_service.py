@@ -32,7 +32,11 @@ from src.common.base_dto import (
     MimeTypeEnum,
 )
 from src.common.dto.pagination_response_dto import PaginationResponseDto
-from src.common.media_utils import generate_thumbnail, get_video_dimensions
+from src.common.media_utils import (
+    extract_youtube_video_id,
+    generate_thumbnail,
+    get_video_dimensions,
+)
 from src.common.storage_service import GcsService
 from src.images.dto.upscale_imagen_dto import UpscaleImagenDto
 from src.images.imagen_service import ImagenService
@@ -181,40 +185,57 @@ class SourceAssetService:
         user_picture: str | None = None,
     ) -> SourceAssetResponseDto:
         """Generates presigned URLs for the asset and its thumbnail."""
-        tasks = [
-            asyncio.to_thread(
-                self.iam_signer.generate_presigned_url, asset.gcs_uri
-            ),
-        ]
+        is_youtube = getattr(
+            asset, "asset_type", None
+        ) == AssetTypeEnum.YOUTUBE_VIDEO or (
+            isinstance(getattr(asset, "external_url", None), str)
+            and bool(extract_youtube_video_id(asset.external_url))
+        )
 
-        if asset.original_gcs_uri:
-            tasks.append(
-                asyncio.to_thread(
-                    self.iam_signer.generate_presigned_url,
-                    asset.original_gcs_uri,
-                ),
+        if is_youtube and asset.external_url:
+            video_id = extract_youtube_video_id(asset.external_url)
+            presigned_url = asset.external_url
+            presigned_original_url = asset.external_url
+            presigned_thumbnail_url = (
+                f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg"
+                if video_id
+                else ""
             )
-
-        if asset.thumbnail_gcs_uri:
-            tasks.append(
+        else:
+            tasks = [
                 asyncio.to_thread(
-                    self.iam_signer.generate_presigned_url,
-                    asset.thumbnail_gcs_uri,
+                    self.iam_signer.generate_presigned_url, asset.gcs_uri
                 ),
-            )
+            ]
 
-        results = await asyncio.gather(*tasks)
-        presigned_url = results[0]
-        presigned_original_url = ""
-        presigned_thumbnail_url = ""
-        next_index = 1
+            if asset.original_gcs_uri:
+                tasks.append(
+                    asyncio.to_thread(
+                        self.iam_signer.generate_presigned_url,
+                        asset.original_gcs_uri,
+                    ),
+                )
 
-        if asset.original_gcs_uri:
-            presigned_original_url = results[next_index]
-            next_index += 1
+            if asset.thumbnail_gcs_uri:
+                tasks.append(
+                    asyncio.to_thread(
+                        self.iam_signer.generate_presigned_url,
+                        asset.thumbnail_gcs_uri,
+                    ),
+                )
 
-        if asset.thumbnail_gcs_uri:
-            presigned_thumbnail_url = results[next_index]
+            results = await asyncio.gather(*tasks)
+            presigned_url = results[0]
+            presigned_original_url = ""
+            presigned_thumbnail_url = ""
+            next_index = 1
+
+            if asset.original_gcs_uri:
+                presigned_original_url = results[next_index]
+                next_index += 1
+
+            if asset.thumbnail_gcs_uri:
+                presigned_thumbnail_url = results[next_index]
 
         return SourceAssetResponseDto(
             **asset.model_dump(),

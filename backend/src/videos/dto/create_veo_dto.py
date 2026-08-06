@@ -20,6 +20,7 @@ from pydantic import Field, field_validator, model_validator
 
 from src.common.base_dto import (
     AspectRatioEnum,
+    AssetReferenceDto,
     BaseDto,
     ColorAndToneEnum,
     CompositionEnum,
@@ -40,17 +41,6 @@ class ReferenceImageDto(BaseDto):
     )
     reference_type: ReferenceImageTypeEnum = Field(
         default=ReferenceImageTypeEnum.ASSET
-    )
-
-
-class AssetReferenceDto(BaseDto):
-    id: int = Field(description="The ID of the asset.")
-    type: str = Field(
-        description="The type of asset: 'source_asset' or 'media_item'."
-    )
-    index: int | None = Field(
-        default=0,
-        description="The index of the media in the media item (if applicable).",
     )
 
 

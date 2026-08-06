@@ -13,12 +13,16 @@
 # limitations under the License.
 
 from typing import Annotated, Literal
+from urllib.parse import urlparse
 
 from fastapi import Query
 from pydantic import Field, field_validator, model_validator
 
+from src.common.media_utils import extract_youtube_video_id
+
 from src.common.base_dto import (
     AspectRatioEnum,
+    AssetReferenceDto,
     BaseDto,
     ColorAndToneEnum,
     CompositionEnum,
@@ -126,6 +130,44 @@ class CreateImagenDto(BaseDto):
         default=None,
         description="Optional name for the generated media.",
     )
+    reference_video: AssetReferenceDto | None = Field(
+        default=None,
+        description="Optional video asset reference for Video to Image generation.",
+    )
+    external_url: str | None = Field(
+        default=None,
+        description="Optional external URL (e.g. YouTube video URL) for Video to Image generation.",
+    )
+
+    @field_validator("external_url")
+    @classmethod
+    def validate_youtube_url(cls, value: str | None) -> str | None:
+        if not value:
+            return value
+        try:
+            parsed = urlparse(value.strip())
+        except Exception:
+            raise ValueError("Invalid YouTube URL provided.")
+        valid_hosts = {
+            "youtube.com",
+            "www.youtube.com",
+            "m.youtube.com",
+            "youtu.be",
+            "youtube-nocookie.com",
+            "www.youtube-nocookie.com",
+        }
+        if (
+            parsed.scheme not in ("http", "https")
+            or not parsed.hostname
+            or parsed.hostname.lower() not in valid_hosts
+        ):
+            raise ValueError("Invalid YouTube URL provided.")
+
+        if not extract_youtube_video_id(value):
+            raise ValueError(
+                "YouTube URL does not contain a valid 11-character video ID."
+            )
+        return value.strip()
 
     @field_validator("prompt")
     @classmethod
@@ -168,7 +210,12 @@ class CreateImagenDto(BaseDto):
         generated_inputs_count = (
             len(self.source_media_items) if self.source_media_items else 0
         )
-        total_inputs = source_assets_count + generated_inputs_count
+        video_refs_count = (1 if self.reference_video else 0) + (
+            1 if self.external_url else 0
+        )
+        total_inputs = (
+            source_assets_count + generated_inputs_count + video_refs_count
+        )
         model = self.generation_model
 
         # Aspect Ratio Validation
@@ -184,6 +231,16 @@ class CreateImagenDto(BaseDto):
         elif self.aspect_ratio not in model.valid_aspect_ratios:
             raise ValueError(
                 f"Aspect ratio {self.aspect_ratio} is not supported for model {model.value}.",
+            )
+
+        if self.reference_video and self.external_url:
+            raise ValueError(
+                "Cannot provide both a reference video file and an external URL simultaneously."
+            )
+
+        if video_refs_count > 0 and not model.is_gemini_image_model:
+            raise ValueError(
+                f"Model '{model.value}' does not support video references."
             )
 
         if total_inputs == 0:

@@ -37,6 +37,7 @@ class AssetTypeEnum(str, Enum):
 
     GENERIC_IMAGE = "generic_image"
     GENERIC_VIDEO = "generic_video"
+    YOUTUBE_VIDEO = "youtube_video"
     VTO_PRODUCT = "vto_product"
     VTO_PERSON_FEMALE = "vto_person_female"
     VTO_PERSON_MALE = "vto_person_male"
@@ -59,20 +60,22 @@ class SourceAsset(Base):
         nullable=False,
     )
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
-    gcs_uri: Mapped[str] = mapped_column(String, nullable=False)
-    original_filename: Mapped[str] = mapped_column(String, nullable=False)
+    gcs_uri: Mapped[str | None] = mapped_column(String, nullable=True)
+    original_filename: Mapped[str | None] = mapped_column(String, nullable=True)
     titles: Mapped[list[str] | None] = mapped_column(
         ARRAY(String), default=[], nullable=True
     )
     descriptions: Mapped[list[str] | None] = mapped_column(
         ARRAY(String), default=[], nullable=True
     )
-    mime_type: Mapped[MimeTypeEnum] = mapped_column(String, nullable=False)
+    mime_type: Mapped[MimeTypeEnum | None] = mapped_column(
+        String, nullable=True
+    )
     aspect_ratio: Mapped[AspectRatioEnum] = mapped_column(
         String,
         default=AspectRatioEnum.RATIO_1_1.value,
     )
-    file_hash: Mapped[str] = mapped_column(String, nullable=False)
+    file_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     scope: Mapped[AssetScopeEnum] = mapped_column(
         String,
         default=AssetScopeEnum.PRIVATE.value,
@@ -83,6 +86,7 @@ class SourceAsset(Base):
     )
     thumbnail_gcs_uri: Mapped[str | None] = mapped_column(String, nullable=True)
     original_gcs_uri: Mapped[str | None] = mapped_column(String, nullable=True)
+    external_url: Mapped[str | None] = mapped_column(String, nullable=True)
 
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True),
@@ -120,15 +124,18 @@ class SourceAssetModel(BaseDocument):
         description="User ID of the person who uploaded this specific file.",
     )
     original_gcs_uri: str | None = None
-    gcs_uri: str
-    original_filename: str
+    gcs_uri: str | None = None
+    original_filename: str | None = None
     titles: list[str] | None = Field(default_factory=list)
     descriptions: list[str] | None = Field(default_factory=list)
-    mime_type: MimeTypeEnum
+    mime_type: MimeTypeEnum | None = None
     aspect_ratio: AspectRatioEnum = AspectRatioEnum.RATIO_1_1
-    file_hash: str  # SHA-256 hash of the original file for de-duplication
+    file_hash: str | None = (
+        None  # SHA-256 hash of the original file for de-duplication
+    )
     scope: AssetScopeEnum = AssetScopeEnum.PRIVATE
     asset_type: AssetTypeEnum = AssetTypeEnum.GENERIC_IMAGE
     thumbnail_gcs_uri: str | None = None  # In case of uploading a video
+    external_url: str | None = None
     deleted_at: datetime.datetime | None = None
     deleted_by: int | None = None
