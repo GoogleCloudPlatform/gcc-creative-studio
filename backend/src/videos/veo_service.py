@@ -33,7 +33,11 @@ from src.common.base_dto import (
     MimeTypeEnum,
     ReferenceImageTypeEnum,
 )
-from src.common.media_utils import concatenate_videos, generate_thumbnail
+from src.common.media_utils import (
+    concatenate_videos,
+    generate_thumbnail,
+    strip_audio,
+)
 from src.common.schema.genai_model_setup import GenAIModelSetup
 from src.common.schema.media_item_model import (
     AssetRoleEnum,
@@ -202,6 +206,42 @@ def build_omni_followup_input(
             "content": [{"type": "text", "text": prompt}],
         },
     ]
+
+
+def _make_silent_copy(
+    gcs_service, gcs_uri: str, media_item_id: int
+) -> str | None:
+    """Downloads a clip, removes its audio, and uploads the silent copy.
+
+    Blocking: call from a worker thread. Returns None on any failure, so the
+    caller falls back to the original clip rather than aborting the job.
+    """
+    blob = gcs_uri_to_blob_path(gcs_uri)
+    local_src = f"thumbnails/edit_src/{media_item_id}_src.mp4"
+    local_out = f"thumbnails/edit_src/{media_item_id}_silent.mp4"
+    os.makedirs(os.path.dirname(local_src), exist_ok=True)
+    try:
+        if not gcs_service.download_from_gcs(
+            gcs_uri_path=blob, destination_file_path=local_src
+        ):
+            return None
+        if not strip_audio(local_src, local_out):
+            return None
+        return gcs_service.upload_file_to_gcs(
+            local_path=local_out,
+            destination_blob_name=f"edit_sources/{media_item_id}_silent.mp4",
+            mime_type=MimeTypeEnum.VIDEO_MP4.value,
+        )
+    except Exception as e:  # noqa: BLE001 - never fail the job over this
+        logger.warning("Could not strip audio from %s: %s", gcs_uri, e)
+        return None
+    finally:
+        for path in (local_src, local_out):
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
 
 
 def gcs_uri_to_blob_path(gcs_uri: str) -> str:
@@ -676,23 +716,61 @@ def _process_video_in_background(
                                     request_dto.prompt,
                                 )
                             elif edit_source_uri:
+                                # Omni refuses to edit a clip carrying speech
+                                # when reference images are also supplied:
+                                # "The model is currently unable to process
+                                # speech edits." Its own output always has
+                                # audio, so editing one of its clips would
+                                # otherwise fail. Strip it first.
+                                if request_dto.strip_source_audio:
+                                    silent_uri = await asyncio.to_thread(
+                                        _make_silent_copy,
+                                        gcs_service,
+                                        edit_source_uri,
+                                        media_item_id,
+                                    )
+                                    if silent_uri:
+                                        edit_source_uri = silent_uri
+                                        worker_logger.info(
+                                            "Using silent copy of the source "
+                                            "clip: %s",
+                                            silent_uri,
+                                        )
+
                                 worker_logger.info(
-                                    "Editing %s statelessly (task=%s).",
+                                    "Editing %s statelessly (task=%s, %s refs).",
                                     edit_source_uri,
                                     omni_task,
+                                    len(reference_images_for_api),
                                 )
+                                # Reference images may accompany an edit - that
+                                # is how a character is composited into existing
+                                # footage. They must be appended in the order the
+                                # user supplied them: <IMAGE_REF_N> is positional,
+                                # so reordering here silently rebinds every tag in
+                                # the prompt to the wrong image.
                                 omni_inputs = [
-                                    {
-                                        "type": "video",
-                                        "mime_type": edit_source_mime
-                                        or MimeTypeEnum.VIDEO_MP4.value,
-                                        "uri": edit_source_uri,
-                                    },
                                     {
                                         "type": "text",
                                         "text": request_dto.prompt,
                                     },
                                 ]
+                                omni_inputs.extend(
+                                    {
+                                        "type": "image",
+                                        "mime_type": ref_img.image.mime_type,
+                                        "uri": ref_img.image.gcs_uri,
+                                    }
+                                    for ref_img in reference_images_for_api
+                                )
+                                omni_inputs.append(
+                                    {
+                                        "type": "video",
+                                        "mime_type": edit_source_mime
+                                        or MimeTypeEnum.VIDEO_MP4.value,
+                                        "uri": edit_source_uri,
+                                    }
+                                )
                             else:
                                 worker_logger.info(
                                     "Starting Gemini Omni generation (task=%s)",

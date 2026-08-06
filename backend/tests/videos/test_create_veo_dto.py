@@ -327,13 +327,46 @@ def test_veo_rejects_edit_source():
     assert "does not support video editing" in str(exc_info.value)
 
 
-def test_edit_source_cannot_combine_with_references():
+def test_edit_source_allows_reference_images():
+    """Compositing a character into existing footage is a supported pattern.
+
+    Google's Vertex sample sends text + image + video with task=edit, and it
+    was confirmed working against the live API. An earlier version of this
+    validator rejected the combination and blocked the use case outright.
+    """
+    dto = CreateVeoDto(
+        prompt="Place the woman from the reference into this scene",
+        workspace_id=1,
+        generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+        edit_source={"id": 7, "type": "source_asset"},
+        reference_images=[{"asset_id": 1}],
+    )
+    assert dto.edit_source.id == 7
+    assert len(dto.reference_images) == 1
+    # Omni refuses to edit a clip containing speech when references are also
+    # supplied, and its own output always has audio, so this defaults on.
+    assert dto.strip_source_audio is True
+
+
+def test_edit_source_rejects_a_second_video():
     with pytest.raises(ValidationError) as exc_info:
         CreateVeoDto(
-            prompt="Make the balloon blue",
+            prompt="Edit this",
             workspace_id=1,
             generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
             edit_source={"id": 7, "type": "source_asset"},
-            reference_images=[{"asset_id": 1}],
+            reference_video={"id": 8, "type": "source_asset"},
         )
-    assert "cannot be combined" in str(exc_info.value)
+    assert "two videos" in str(exc_info.value)
+
+
+def test_edit_source_rejects_a_start_frame():
+    with pytest.raises(ValidationError) as exc_info:
+        CreateVeoDto(
+            prompt="Edit this",
+            workspace_id=1,
+            generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+            edit_source={"id": 7, "type": "source_asset"},
+            start_image_asset_id={"id": 9, "type": "source_asset"},
+        )
+    assert "start frame" in str(exc_info.value)

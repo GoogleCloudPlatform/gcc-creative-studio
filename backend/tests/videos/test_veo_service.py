@@ -1722,14 +1722,15 @@ class TestBackgroundWorkers:
         assert "previous_interaction_id" not in kwargs
         # A stateless edit does carry the task, unlike a replayed conversation.
         assert kwargs["generation_config"]["video_config"]["task"] == "edit"
-        # The parent clip is sent by URI, never re-uploaded.
+        # Text leads, then the clip by URI - the ordering Google's Vertex
+        # sample uses for an edit. The parent is never re-uploaded.
         assert kwargs["input"] == [
+            {"type": "text", "text": "Test Omni Turn 2 Fallback"},
             {
                 "type": "video",
                 "mime_type": MimeTypeEnum.VIDEO_MP4,
                 "uri": "gs://b/99.mp4",
             },
-            {"type": "text", "text": "Test Omni Turn 2 Fallback"},
         ]
 
     @patch("src.database.WorkerDatabase")
@@ -2089,15 +2090,250 @@ class TestBackgroundWorkers:
         assert kwargs["generation_config"]["video_config"]["task"] == "edit"
         assert kwargs["input"] == [
             {
+                "type": "text",
+                "text": "Make the balloon blue. Keep everything else the same.",
+            },
+            {
                 "type": "video",
                 "mime_type": "video/mp4",
                 "uri": "gs://b/uploaded.mp4",
-            },
-            {
-                "type": "text",
-                "text": "Make the balloon blue. Keep everything else the same.",
             },
         ]
         # An edit takes its dimensions and length from the source clip.
         assert "duration" not in kwargs["response_format"]
         assert "aspect_ratio" not in kwargs["response_format"]
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.videos.veo_service.GenAIModelSetup.get_omni_client")
+    @patch("src.videos.veo_service.generate_thumbnail")
+    def test_omni_edit_sends_reference_images_with_the_clip(
+        self,
+        mock_thumb,
+        mock_omni_client_init,
+        mock_worker_db_class,
+    ):
+        """Compositing a character into footage sends text, image and video.
+
+        This is Google's documented Vertex pattern and was confirmed working
+        against the live API, including role-tag binding: a prompt naming
+        <IMAGE_REF_0> and <IMAGE_REF_1> placed each character as instructed.
+        """
+        sample_dto = CreateVeoDto(
+            workspace_id=1,
+            prompt="Place <IMAGE_REF_0> into this scene.",
+            generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+            edit_source={"id": 7, "type": "source_asset"},
+            reference_images=[{"asset_id": 3}],
+            strip_source_audio=False,
+        )
+
+        mock_db_context = AsyncMock()
+        mock_db_factory = MagicMock(return_value=mock_db_context)
+        mock_worker_db_class.return_value.__aenter__.return_value = (
+            mock_db_factory
+        )
+
+        mock_vertex_client = MagicMock()
+        mock_omni_client_init.return_value = mock_vertex_client
+        mock_vertex_client.interactions.create.return_value = (
+            self._omni_interaction(uri="gs://bucket/videos/out.mp4")
+        )
+        mock_thumb.return_value = None
+
+        with (
+            patch("src.videos.veo_service.MediaRepository") as mock_repo_class,
+            patch(
+                "src.videos.veo_service.SourceAssetRepository"
+            ) as mock_asset_repo_class,
+            patch("src.videos.veo_service.GcsService") as mock_gcs_class,
+            patch("os.path.exists", return_value=False),
+            patch("os.makedirs"),
+        ):
+            mock_repo_class.return_value = AsyncMock()
+            mock_asset_repo = AsyncMock()
+            mock_asset_repo_class.return_value = mock_asset_repo
+            mock_asset_repo.get_by_id.side_effect = [
+                SimpleNamespace(
+                    gcs_uri="gs://b/ref.png", mime_type="image/png"
+                ),
+                SimpleNamespace(
+                    gcs_uri="gs://b/clip.mp4", mime_type="video/mp4"
+                ),
+            ]
+            mock_gcs_class.return_value = MagicMock()
+
+            _process_video_in_background(
+                media_item_id=1234,
+                request_dto=sample_dto,
+                user_email="test@user.com",
+            )
+
+        kwargs = mock_vertex_client.interactions.create.call_args.kwargs
+        assert kwargs["generation_config"]["video_config"]["task"] == "edit"
+
+        types_sent = [part["type"] for part in kwargs["input"]]
+        assert types_sent == ["text", "image", "video"]
+        # The prompt reaches the model untouched so role tags survive.
+        assert (
+            kwargs["input"][0]["text"] == "Place <IMAGE_REF_0> into this scene."
+        )
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.videos.veo_service.GenAIModelSetup.get_omni_client")
+    @patch("src.videos.veo_service.generate_thumbnail")
+    def test_omni_edit_keeps_reference_images_in_order(
+        self,
+        mock_thumb,
+        mock_omni_client_init,
+        mock_worker_db_class,
+    ):
+        """<IMAGE_REF_N> is positional, so the order sent must be the order given.
+
+        An earlier version inserted each reference at index 1, which reversed
+        them: <IMAGE_REF_0> bound to the last image the user added. Every tag in
+        the prompt silently addressed the wrong character, which reads to a user
+        as the model ignoring tags. A single-reference test cannot catch this.
+        """
+        sample_dto = CreateVeoDto(
+            workspace_id=1,
+            prompt="<IMAGE_REF_0> greets <IMAGE_REF_2>.",
+            generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+            edit_source={"id": 7, "type": "source_asset"},
+            reference_images=[
+                {"asset_id": 3},
+                {"asset_id": 4},
+                {"asset_id": 5},
+            ],
+            strip_source_audio=False,
+        )
+
+        mock_db_context = AsyncMock()
+        mock_db_factory = MagicMock(return_value=mock_db_context)
+        mock_worker_db_class.return_value.__aenter__.return_value = (
+            mock_db_factory
+        )
+
+        mock_vertex_client = MagicMock()
+        mock_omni_client_init.return_value = mock_vertex_client
+        mock_vertex_client.interactions.create.return_value = (
+            self._omni_interaction(uri="gs://bucket/videos/out.mp4")
+        )
+        mock_thumb.return_value = None
+
+        with (
+            patch("src.videos.veo_service.MediaRepository") as mock_repo_class,
+            patch(
+                "src.videos.veo_service.SourceAssetRepository"
+            ) as mock_asset_repo_class,
+            patch("src.videos.veo_service.GcsService") as mock_gcs_class,
+            patch("os.path.exists", return_value=False),
+            patch("os.makedirs"),
+        ):
+            mock_repo_class.return_value = AsyncMock()
+            mock_asset_repo = AsyncMock()
+            mock_asset_repo_class.return_value = mock_asset_repo
+            mock_asset_repo.get_by_id.side_effect = [
+                SimpleNamespace(
+                    gcs_uri="gs://b/first.png", mime_type="image/png"
+                ),
+                SimpleNamespace(
+                    gcs_uri="gs://b/second.png", mime_type="image/png"
+                ),
+                SimpleNamespace(
+                    gcs_uri="gs://b/third.png", mime_type="image/png"
+                ),
+                SimpleNamespace(
+                    gcs_uri="gs://b/clip.mp4", mime_type="video/mp4"
+                ),
+            ]
+            mock_gcs_class.return_value = MagicMock()
+
+            _process_video_in_background(
+                media_item_id=1234,
+                request_dto=sample_dto,
+                user_email="test@user.com",
+            )
+
+        sent = mock_vertex_client.interactions.create.call_args.kwargs["input"]
+        assert [part["type"] for part in sent] == [
+            "text",
+            "image",
+            "image",
+            "image",
+            "video",
+        ]
+        assert [part["uri"] for part in sent[1:4]] == [
+            "gs://b/first.png",
+            "gs://b/second.png",
+            "gs://b/third.png",
+        ]
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.videos.veo_service.GenAIModelSetup.get_omni_client")
+    @patch("src.videos.veo_service.generate_thumbnail")
+    @patch("src.videos.veo_service._make_silent_copy")
+    def test_omni_edit_strips_source_audio_by_default(
+        self,
+        mock_silent,
+        mock_thumb,
+        mock_omni_client_init,
+        mock_worker_db_class,
+    ):
+        """Omni refuses to edit a clip with speech when references are present.
+
+        Its own output always carries audio, so editing one of its clips would
+        fail without this. The silent copy is used in place of the original.
+        """
+        sample_dto = CreateVeoDto(
+            workspace_id=1,
+            prompt="Make it snow.",
+            generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+            edit_source={"id": 7, "type": "source_asset"},
+        )
+
+        mock_db_context = AsyncMock()
+        mock_db_factory = MagicMock(return_value=mock_db_context)
+        mock_worker_db_class.return_value.__aenter__.return_value = (
+            mock_db_factory
+        )
+
+        mock_vertex_client = MagicMock()
+        mock_omni_client_init.return_value = mock_vertex_client
+        mock_vertex_client.interactions.create.return_value = (
+            self._omni_interaction(uri="gs://bucket/videos/out.mp4")
+        )
+        mock_thumb.return_value = None
+        mock_silent.return_value = "gs://b/silent.mp4"
+
+        with (
+            patch("src.videos.veo_service.MediaRepository") as mock_repo_class,
+            patch(
+                "src.videos.veo_service.SourceAssetRepository"
+            ) as mock_asset_repo_class,
+            patch("src.videos.veo_service.GcsService") as mock_gcs_class,
+            patch("os.path.exists", return_value=False),
+            patch("os.makedirs"),
+        ):
+            mock_repo_class.return_value = AsyncMock()
+            mock_asset_repo = AsyncMock()
+            mock_asset_repo_class.return_value = mock_asset_repo
+            mock_asset_repo.get_by_id.return_value = SimpleNamespace(
+                gcs_uri="gs://b/noisy.mp4", mime_type="video/mp4"
+            )
+            mock_gcs_class.return_value = MagicMock()
+
+            _process_video_in_background(
+                media_item_id=1234,
+                request_dto=sample_dto,
+                user_email="test@user.com",
+            )
+
+        mock_silent.assert_called_once()
+        video_parts = [
+            p
+            for p in mock_vertex_client.interactions.create.call_args.kwargs[
+                "input"
+            ]
+            if p["type"] == "video"
+        ]
+        assert video_parts[0]["uri"] == "gs://b/silent.mp4"

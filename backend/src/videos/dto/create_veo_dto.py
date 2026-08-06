@@ -193,6 +193,16 @@ class CreateVeoDto(BaseDto):
             "including uploaded footage. Gemini Omni only."
         ),
     )
+    strip_source_audio: bool = Field(
+        default=True,
+        description=(
+            "Remove the audio track from the clip being edited before sending "
+            "it. Omni refuses to edit a clip containing speech when reference "
+            "images are also supplied, and its own output always has audio, so "
+            "this defaults on. Turn it off to preserve the original audio when "
+            "editing without references."
+        ),
+    )
     parent_media_item_id: int | None = Field(
         default=None,
         description="The ID of the parent media item for multi-turn conversation editing.",
@@ -338,14 +348,20 @@ class CreateVeoDto(BaseDto):
                 f"Use '{GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW.value}'.",
             )
 
-        if self.edit_source and (
-            self.start_image_asset_id
-            or self.reference_images
-            or self.reference_video
-        ):
+        # Reference images ARE allowed alongside edit_source: Google's Vertex
+        # sample composites a character into existing footage by sending text,
+        # an image and a video together with task=edit, and that was confirmed
+        # working against the live API. A start frame is still meaningless for
+        # an edit, and a second video is not supported.
+        if self.edit_source and self.start_image_asset_id:
             raise ValueError(
-                "edit_source cannot be combined with a start frame or "
-                "reference media: an edit modifies one clip.",
+                "edit_source cannot be combined with a start frame: an edit "
+                "modifies an existing clip rather than starting a new one.",
+            )
+        if self.edit_source and self.reference_video:
+            raise ValueError(
+                "edit_source cannot be combined with reference_video: the "
+                "model cannot reason across two videos in one request.",
             )
 
         return self
