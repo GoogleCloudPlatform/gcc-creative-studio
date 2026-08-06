@@ -16,7 +16,7 @@
 
 import {NO_ERRORS_SCHEMA} from '@angular/core';
 import {ComponentFixture, TestBed} from '@angular/core/testing';
-import {FormBuilder, ReactiveFormsModule} from '@angular/forms';
+import {FormBuilder, FormGroup, ReactiveFormsModule} from '@angular/forms';
 import {WorkflowStatusPipe} from '../../../workflow-status.pipe';
 import {IMAGE_STEP_CONFIG} from '../step-configs/image-step.config';
 import {GenericStepComponent} from './generic-step.component';
@@ -196,7 +196,9 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       },
     });
 
-    expect(editStepForm.get('settings.mode')?.value).toBe('edit_image');
+    expect((editStepForm.get('settings') as FormGroup).get('mode')?.value).toBe(
+      'edit_image',
+    );
   });
 
   it('should preset mode to upscale_image for legacy upscale_image step', () => {
@@ -224,6 +226,8 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       },
     });
 
-    expect(upscaleStepForm.get('settings.mode')?.value).toBe('upscale_image');
+    expect(
+      (upscaleStepForm.get('settings') as FormGroup).get('mode')?.value,
+    ).toBe('upscale_image');
   });
 });
