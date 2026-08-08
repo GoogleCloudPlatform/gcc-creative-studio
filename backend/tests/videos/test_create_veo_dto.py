@@ -96,6 +96,75 @@ def test_validate_source_media_items_conflicting_inputs():
     )
 
 
+def test_omni_allows_start_frame_with_reference_images():
+    """Anchoring a shot to an opening frame while holding character identities.
+
+    Veo rejects an input image alongside reference images, but Omni has no
+    typed reference field - they all ride the multimodal input - so the pairing
+    is legal and is the core consistency workflow. Verified live against the
+    API before relaxing this.
+    """
+    dto = CreateVeoDto(
+        prompt="<IMAGE_REF_0> is the opening frame; keep <IMAGE_REF_1>'s face.",
+        workspace_id=1,
+        generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+        start_image_asset_id={"id": 1, "type": "source_asset"},
+        reference_images=[
+            ReferenceImageDto(
+                asset_id=2,
+                reference_type=ReferenceImageTypeEnum.ASSET,
+            ),
+        ],
+        source_media_items=[],  # Force validator to run
+    )
+    assert dto.start_image_asset_id.id == 1
+    assert len(dto.reference_images) == 1
+
+
+def test_omni_allows_start_frame_role_with_reference_images():
+    """The same pairing when the frame arrives as a media item, not an asset."""
+    dto = CreateVeoDto(
+        prompt="Anchor to the frame, keep the character.",
+        workspace_id=1,
+        generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+        reference_images=[
+            ReferenceImageDto(
+                asset_id=2,
+                reference_type=ReferenceImageTypeEnum.ASSET,
+            ),
+        ],
+        source_media_items=[
+            SourceMediaItemLink(
+                media_item_id=5,
+                media_index=0,
+                role="start_frame",
+            ),
+        ],
+    )
+    assert len(dto.source_media_items) == 1
+
+
+def test_omni_still_rejects_end_frame_with_reference_images():
+    """Relaxing the start frame must not relax interpolation, which Omni lacks."""
+    with pytest.raises(ValidationError) as exc_info:
+        CreateVeoDto(
+            prompt="Test",
+            workspace_id=1,
+            generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+            end_image_asset_id={"id": 1, "type": "source_asset"},
+            reference_images=[
+                ReferenceImageDto(
+                    asset_id=2,
+                    reference_type=ReferenceImageTypeEnum.ASSET,
+                ),
+            ],
+            source_media_items=[],  # Force validator to run
+        )
+    assert "Reference media cannot be used at the same time" in str(
+        exc_info.value
+    )
+
+
 def test_validate_video_generation_model_error():
     with pytest.raises(ValidationError) as exc_info:
         CreateVeoDto(

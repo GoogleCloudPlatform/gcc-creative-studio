@@ -159,6 +159,23 @@ interpolation, which Omni does not support — but it now fails visibly instead 
   exists specifically so older library items keep working.
 - **Cloud Storage is untouched** by a code deploy.
 
+### An opening frame and reference images can now be combined
+
+**Frames to Video** accepts reference images alongside the opening frame when the model supports
+it, which today means Gemini Omni. This is the main consistency workflow for serialized drama:
+the frame fixes the composition and the references hold each character's face and wardrobe.
+
+It was previously rejected outright — `"Reference media cannot be used at the same time as a start
+frame, end frame, or source video."` That rule is correct for Veo, which types its reference
+images separately from its input image and refuses both in one request. Omni has no typed
+reference field: every image rides the multimodal input, so the pairing is just an ordered list
+and works. Verified live before relaxing it.
+
+The request routes to `task=image_to_video` rather than `reference_to_video`, so the first image
+stays the opening frame instead of being demoted to another reference. An end frame or an
+extension source alongside references is still rejected for every model, Omni included, since
+Omni cannot interpolate or extend.
+
 ### Where video and image inputs belong
 
 The reference-video slot has been removed from **Ingredients to Video**. Reference videos under

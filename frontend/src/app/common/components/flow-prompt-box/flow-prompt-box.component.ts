@@ -257,6 +257,20 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
     );
   }
 
+  /**
+   * Whether reference images can accompany an opening frame in Frames to Video.
+   *
+   * Veo types its reference images separately from its input image and rejects
+   * both together. Omni carries every image in one multimodal input, so an
+   * opening frame plus character sheets is the normal way to anchor a shot
+   * while holding identities - the backend routes it to image_to_video so the
+   * frame stays frame 1.
+   */
+  get supportsFramePlusReferences(): boolean {
+    return !!this.getSelectedModelObject()?.capabilities
+      ?.supportsFrameWithReferences;
+  }
+
   /** Whether the active model binds <IMAGE_REF_N> tags to reference images. */
   get supportsRoleTags(): boolean {
     return !!this.getSelectedModelObject()?.capabilities?.supportsRoleTags;

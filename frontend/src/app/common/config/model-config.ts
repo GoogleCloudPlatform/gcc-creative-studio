@@ -68,6 +68,13 @@ export interface ModelCapability {
    * binding is a strong bias rather than a guarantee.
    */
   supportsRoleTags?: boolean;
+  /**
+   * Whether an opening frame and reference images may be sent together. Veo
+   * rejects the combination ("Image and reference images cannot be both set.");
+   * Omni carries all images in one multimodal input, so pairing them anchors a
+   * shot to a frame while holding character identities.
+   */
+  supportsFrameWithReferences?: boolean;
 }
 
 export interface GenerationModelConfig {
@@ -293,6 +300,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportsAudioReference: false,
       maxOutputs: 4,
       supportsRoleTags: true,
+      supportsFrameWithReferences: true,
     },
   },
   {

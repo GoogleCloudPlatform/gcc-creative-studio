@@ -212,7 +212,7 @@
           and a video together with task=edit is how a character is composited
           into existing footage.
         -->
-        <ng-container *ngIf="mode === 'Ingredients to Video' || mode === 'Ingredients to Image' || mode === 'Edit Video'">
+        <ng-container *ngIf="mode === 'Ingredients to Video' || mode === 'Ingredients to Image' || mode === 'Edit Video' || (mode === 'Frames to Video' && supportsFramePlusReferences)">
           <ng-container *ngIf="getSelectedModelObject() as model">
             <div
               class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex items-center justify-center"

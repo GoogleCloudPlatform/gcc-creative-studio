@@ -90,8 +90,13 @@ def resolve_omni_task(
     """Picks the explicit Omni task mode for a request.
 
     Order matters: an edit stays an edit even when references are attached, and
-    references outrank a start image because reference-to-video is the more
-    specific intent.
+    a start image outranks references. Both can be sent together — Omni has no
+    typed reference field, so every image rides the multimodal input — but only
+    image_to_video treats the first image as the opening frame. Choosing
+    reference_to_video there would demote a deliberately chosen frame to one
+    more reference and lose the anchor, which is the whole point of supplying
+    it. Verified live: image_to_video with a frame plus a character sheet held
+    the frame as frame 1 and still carried the reference likeness.
 
     The caller omits the task entirely when replaying a prior conversation's
     steps, following Google's Vertex sample — the replayed steps already carry
@@ -99,10 +104,10 @@ def resolve_omni_task(
     """
     if is_edit:
         return OMNI_TASK_EDIT
-    if has_references:
-        return OMNI_TASK_REFERENCE_TO_VIDEO
     if has_start_image:
         return OMNI_TASK_IMAGE_TO_VIDEO
+    if has_references:
+        return OMNI_TASK_REFERENCE_TO_VIDEO
     return OMNI_TASK_TEXT_TO_VIDEO
 
 

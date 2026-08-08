@@ -864,9 +864,19 @@ export class VideoComponent implements OnInit, AfterViewInit {
     // images as Ingredients, and <IMAGE_REF_N> in the prompt is positional over
     // them. Gating these on Ingredients alone silently dropped every reference
     // in Edit mode, so the tags in the prompt bound to nothing.
+    // Frames to Video joins the list for models that accept an opening frame
+    // and references together: the frame anchors the shot and the references
+    // hold character identity. The backend routes that pairing to
+    // image_to_video so the frame stays frame 1.
     const usesReferenceImages =
       this.currentMode === 'Ingredients to Video' ||
-      this.currentMode === 'Edit Video';
+      this.currentMode === 'Edit Video' ||
+      (this.currentMode === 'Frames to Video' &&
+        !!this.getModelCapabilities().supportsFrameWithReferences);
+
+    // Frames to Video always carries its frame slots, whether or not the model
+    // also accepts references alongside them.
+    const carriesFrameSlots = this.currentMode === 'Frames to Video';
 
     // --- Build the two separate R2V reference payloads ---
     const referenceImagesPayload: {
@@ -915,12 +925,16 @@ export class VideoComponent implements OnInit, AfterViewInit {
         usesReferenceImages && referenceImagesPayload.length > 0
           ? referenceImagesPayload
           : undefined,
-      sourceMediaItems: usesReferenceImages
-        ? sourceMediaItemsForReference
-        : this.currentMode === 'Frames to Video' ||
-            this.currentMode === 'Extend Video'
-          ? validSourceMediaItems
-          : undefined,
+      // Frames to Video with references needs BOTH lists: the frame slots
+      // carry the opening frame and the reference entries carry the cast.
+      // Sending only one silently drops the other.
+      sourceMediaItems: carriesFrameSlots
+        ? [...validSourceMediaItems, ...sourceMediaItemsForReference]
+        : usesReferenceImages
+          ? sourceMediaItemsForReference
+          : this.currentMode === 'Extend Video'
+            ? validSourceMediaItems
+            : undefined,
       referenceVideo:
         this.currentMode === 'Ingredients to Video' && this.referenceVideo
           ? {

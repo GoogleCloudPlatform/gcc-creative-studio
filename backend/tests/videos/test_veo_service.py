@@ -32,6 +32,7 @@ from src.videos.dto.concatenate_videos_dto import (
 from src.videos.dto.create_veo_dto import CreateVeoDto
 from src.videos.veo_service import (
     VeoService,
+    resolve_omni_task,
     _process_video_concatenation_in_background,
     _process_video_in_background,
 )
@@ -2337,3 +2338,58 @@ class TestBackgroundWorkers:
             if p["type"] == "video"
         ]
         assert video_parts[0]["uri"] == "gs://b/silent.mp4"
+
+
+class TestResolveOmniTask:
+    """Task selection for a Gemini Omni request.
+
+    Omni has no typed reference field, so a request can legitimately carry an
+    opening frame and character references at once; only the task decides how
+    the first image is read.
+    """
+
+    def test_edit_wins_over_everything(self):
+        assert (
+            resolve_omni_task(
+                is_edit=True, has_references=True, has_start_image=True
+            )
+            == "edit"
+        )
+
+    def test_start_image_outranks_references(self):
+        """The anchor must survive.
+
+        reference_to_video would demote a deliberately chosen opening frame to
+        one more reference, losing the frame-1 anchor that is the entire reason
+        for supplying it.
+        """
+        assert (
+            resolve_omni_task(
+                is_edit=False, has_references=True, has_start_image=True
+            )
+            == "image_to_video"
+        )
+
+    def test_references_alone(self):
+        assert (
+            resolve_omni_task(
+                is_edit=False, has_references=True, has_start_image=False
+            )
+            == "reference_to_video"
+        )
+
+    def test_start_image_alone(self):
+        assert (
+            resolve_omni_task(
+                is_edit=False, has_references=False, has_start_image=True
+            )
+            == "image_to_video"
+        )
+
+    def test_neither(self):
+        assert (
+            resolve_omni_task(
+                is_edit=False, has_references=False, has_start_image=False
+            )
+            == "text_to_video"
+        )
