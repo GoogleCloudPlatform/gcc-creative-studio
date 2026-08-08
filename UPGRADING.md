@@ -172,7 +172,12 @@ reference field: every image rides the multimodal input, so the pairing is just 
 and works. Verified live before relaxing it.
 
 The request routes to `task=image_to_video` rather than `reference_to_video`, so the first image
-stays the opening frame instead of being demoted to another reference. An end frame or an
+stays the opening frame instead of being demoted to another reference.
+
+`<IMAGE_REF_N>` counts **every** image in the request, and the opening frame is sent first, so it
+owns `<IMAGE_REF_0>` and the reference images start at `<IMAGE_REF_1>`. The prompt box numbers the
+badges accordingly. `<FIRST_FRAME>` is **not** a recognised tag - a mirrored-pair test bound it to
+the wrong image, while swapping two `<IMAGE_REF_N>` indices swapped the performance as instructed. An end frame or an
 extension source alongside references is still rejected for every model, Omni included, since
 Omni cannot interpolate or extend.
 

@@ -271,6 +271,50 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
       ?.supportsFrameWithReferences;
   }
 
+  /**
+   * Whether the opening frame carries its own role-tag badge.
+   *
+   * Only worth showing where the frame travels alongside references and the
+   * numbering therefore matters.
+   */
+  get showFrameRoleTag(): boolean {
+    return (
+      this.mode === 'Frames to Video' &&
+      !!this.image1Preview &&
+      this.supportsFramePlusReferences
+    );
+  }
+
+  /**
+   * How far the reference images' tag numbers are pushed along.
+   *
+   * <IMAGE_REF_N> counts every image in the request, and the backend sends the
+   * opening frame first, so with a frame attached the references start at 1.
+   * Numbering them from 0 in the UI would point every tag at the wrong image -
+   * the same off-by-one that made role tags look broken in Edit Video.
+   */
+  get roleTagOffset(): number {
+    return this.showFrameRoleTag ? 1 : 0;
+  }
+
+  /**
+   * Whether the second input slot is offered.
+   *
+   * It means different things per mode: a closing frame in Frames to Video, a
+   * second clip in Concatenate. Only the closing frame depends on the model -
+   * Gemini Omni cannot interpolate and the backend rejects an end frame, so
+   * showing the slot only led to a rejected generate.
+   */
+  get showSecondSlot(): boolean {
+    if (this.mode === 'Concatenate Video') {
+      return true;
+    }
+    if (this.mode === 'Frames to Video') {
+      return !!this.getSelectedModelObject()?.capabilities?.supportsLastFrame;
+    }
+    return false;
+  }
+
   /** Whether the active model binds <IMAGE_REF_N> tags to reference images. */
   get supportsRoleTags(): boolean {
     return !!this.getSelectedModelObject()?.capabilities?.supportsRoleTags;
