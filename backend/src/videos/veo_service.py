@@ -549,12 +549,25 @@ def _process_video_in_background(
                                         f"Could not find or use generated_input: {gen_input.media_item_id} at index {gen_input.media_index}",
                                     )
 
-                        # Validation to prevent conflicting inputs
-                        if reference_images_for_api and (
-                            start_image_for_api
-                            or end_image_for_api
+                        # Validation to prevent conflicting inputs.
+                        #
+                        # Veo types its reference images separately from its
+                        # `image=` input and rejects both in one request. Omni
+                        # has no typed reference field - every image rides the
+                        # multimodal input - so an opening frame alongside
+                        # character sheets is valid there, and is how a shot is
+                        # anchored while identities are held. An end frame or an
+                        # extension source stays disallowed for Omni too, since
+                        # it can neither interpolate nor extend.
+                        is_omni_request = (
+                            request_dto.generation_model in OMNI_MODELS
+                        )
+                        conflicting_input = (
+                            end_image_for_api
                             or source_video_for_api
-                        ):
+                            or (start_image_for_api and not is_omni_request)
+                        )
+                        if reference_images_for_api and conflicting_input:
                             raise ValueError(
                                 "Reference images cannot be used at the same time as a start/end image or a source video.",
                             )
