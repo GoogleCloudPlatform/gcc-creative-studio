@@ -2036,21 +2036,40 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
   private handleReferenceImageAdded(): void {
     if (this.referenceImages.length === 1) {
-      // If there's a start/end frame or a video for extension/concatenation, clear them.
-      const hadInputs = this.image1Preview || this.image2Preview;
-      const snackbarMessage =
-        'Start/end frames and extension videos have been cleared to use reference images.';
-      if (this.image1Preview || this.image2Preview) {
-        this.startImageAssetId = null;
-        this.image1Preview = null;
-        this._input1IsVideo = false;
-        this.sourceMediaItems[0] = null;
+      // Clearing the frames is a Veo constraint: it types reference images
+      // separately from its input image and refuses both together. Gemini Omni
+      // carries every image in one multimodal input, and an opening frame plus
+      // character sheets is the point of the combination - discarding the
+      // frame there would throw away the anchor the user just chose. A still
+      // image in slot 1 is therefore kept for models that allow the pairing;
+      // an end frame or an extension clip is cleared regardless, since Omni can
+      // neither interpolate nor extend.
+      const keepsOpeningFrame =
+        !!this.getModelCapabilities().supportsFrameWithReferences &&
+        !this._input1IsVideo;
+
+      const clearsSlot1 = (this.image1Preview && !keepsOpeningFrame) as boolean;
+      const clearsSlot2 = !!this.image2Preview;
+
+      if (clearsSlot1 || clearsSlot2) {
+        if (clearsSlot1) {
+          this.startImageAssetId = null;
+          this.image1Preview = null;
+          this._input1IsVideo = false;
+          this.sourceMediaItems[0] = null;
+        }
         this.endImageAssetId = null;
         this.image2Preview = null;
         this._input2IsVideo = false;
         this.sourceMediaItems[1] = null;
         this.updateModeAndNotify();
-        this._snackBar.open(snackbarMessage, 'OK', {duration: 5000});
+        this._snackBar.open(
+          clearsSlot1
+            ? 'Start/end frames and extension videos have been cleared to use reference images.'
+            : 'The closing frame was cleared: this model uses an opening frame with references, but cannot interpolate to an end frame.',
+          'OK',
+          {duration: 5000},
+        );
       }
 
       const omniModel = this.generationModels.find(
