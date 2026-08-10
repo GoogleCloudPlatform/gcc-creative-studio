@@ -365,18 +365,33 @@ export class VideoComponent implements OnInit, AfterViewInit {
       ? state.negativePrompt.split(', ').filter(Boolean)
       : [];
 
-    // Update selected options for UI
+    // Update selected options for UI.
+    //
+    // The values above were assigned unconditionally, so a persisted model or
+    // ratio with no matching option used to leave the chip showing something
+    // else entirely - the request then carried one thing while the UI promised
+    // another. Anything unrecognised is coerced back to a real option instead,
+    // so what is displayed is always what will be sent.
     const modelOption = this.generationModels.find(
       m => m.value === state.model,
     );
     if (modelOption) {
       this.selectedGenerationModel = modelOption.viewValue;
+    } else if (this.generationModels.length) {
+      const fallbackModel = this.generationModels[0];
+      this.searchRequest.generationModel = fallbackModel.value;
+      this.selectedGenerationModel = fallbackModel.viewValue;
     }
+
     const ratioOption = this.aspectRatioOptions.find(
       r => r.value === state.aspectRatio,
     );
     if (ratioOption) {
       this.selectedAspectRatio = ratioOption.viewValue;
+    } else if (this.aspectRatioOptions.length) {
+      const fallbackRatio = this.aspectRatioOptions[0];
+      this.searchRequest.aspectRatio = fallbackRatio.value;
+      this.selectedAspectRatio = fallbackRatio.viewValue;
     }
   }
 
@@ -1025,23 +1040,36 @@ export class VideoComponent implements OnInit, AfterViewInit {
       });
   }
 
-  resetAllFilters() {
-    this.searchRequest = {
-      prompt: '',
-      generationModel: 'veo-3.0-generate-001',
-      aspectRatio: '16:9',
-      numberOfMedia: 4,
-      style: null,
-      lighting: null,
-      colorAndTone: null,
-      composition: null,
-      negativePrompt: '',
-      generateAudio: true,
-      durationSeconds: 8,
-      useBrandGuidelines: false,
-      enhancePrompt: false,
-    };
-    this.videoStateService.resetState();
+  /**
+   * Clears what the user typed and attached, leaving their settings alone.
+   *
+   * Replaces a resetAllFilters() that rebuilt searchRequest wholesale - forcing
+   * aspectRatio back to 16:9 and the model to veo-3.0 - without touching
+   * selectedAspectRatio or selectedGenerationModel. The chips kept showing the
+   * old choices while the payload carried the reset ones, so a user with 9:16
+   * and Omni on screen silently generated 16:9 on Veo. It was unreachable until
+   * the clear button called it.
+   *
+   * Model, aspect ratio, resolution and duration are settings rather than
+   * inputs, so they survive: the control only promises to clear the prompt and
+   * the attachments.
+   */
+  clearPromptAndInputs(): void {
+    this.searchRequest.prompt = '';
+    this.searchRequest.negativePrompt = '';
+    this.negativePhrases = [];
+
+    this.referenceImages = [];
+    this.referenceVideo = null;
+    this.referenceAudio = null;
+    this.editSource = null;
+    this.parentMediaItemId = null;
+    this.parentMediaIndex = 0;
+    this._input1IsVideo = false;
+    this._input2IsVideo = false;
+    this.resetInputs();
+
+    this.saveState();
   }
 
   private applyTemplateParameters(): void {
