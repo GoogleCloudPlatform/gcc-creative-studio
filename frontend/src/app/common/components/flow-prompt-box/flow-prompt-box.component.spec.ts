@@ -267,4 +267,20 @@ describe('FlowPromptBoxComponent', () => {
       expect(component.resolutionChanged.emit).not.toHaveBeenCalled();
     });
   });
+
+  describe('Outputs per prompt', () => {
+    it('should default outputs to 1', () => {
+      expect(component.outputs).toBe(1);
+    });
+
+    it('should emit outputsChanged and close dropdown on selectOutputs', () => {
+      spyOn(component.outputsChanged, 'emit');
+      component.isSettingsDropdownOpen.set('outputs');
+
+      component.selectOutputs(2);
+
+      expect(component.outputsChanged.emit).toHaveBeenCalledWith(2);
+      expect(component.isSettingsDropdownOpen()).toBeNull();
+    });
+  });
 });

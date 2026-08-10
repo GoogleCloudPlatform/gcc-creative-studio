@@ -66,7 +66,7 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   @Input() isLoading = false;
   @Input() prompt = '';
   @Input() aspectRatio = '16:9';
-  @Input() outputs = 4;
+  @Input() outputs = 1;
   @Input() aspectRatioOptions: {
     value: string;
     viewValue: string;
