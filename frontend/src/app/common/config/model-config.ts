@@ -69,6 +69,13 @@ export interface ModelCapability {
    */
   supportsRoleTags?: boolean;
   /**
+   * Whether an opening frame and reference images may be sent together. Veo
+   * rejects the combination ("Image and reference images cannot be both set.");
+   * Omni carries all images in one multimodal input, so pairing them anchors a
+   * shot to a frame while holding character identities.
+   */
+  supportsFrameWithReferences?: boolean;
+  /**
    * Whether sampling temperature can be set. Gemini image models accept it;
    * Imagen does not expose it, and Gemini Omni rejects it outright.
    */
@@ -302,6 +309,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportsAudioReference: false,
       maxOutputs: 4,
       supportsRoleTags: true,
+      supportsFrameWithReferences: true,
     },
   },
   {

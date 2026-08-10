@@ -229,6 +229,7 @@ class CreateVeoDto(BaseDto):
         3. Ensures reference image roles are only used with correct model.
         """
         conflicting_roles_present = False
+        start_frame_role_present = False
         reference_roles_present = False
         model = self.generation_model
 
@@ -249,7 +250,14 @@ class CreateVeoDto(BaseDto):
                     raise ValueError(
                         f"Invalid role '{item.role}' for source_media_item.",
                     )
-                if item.role in non_reference_roles:
+                # Compared by value: the field arrives as a plain string, so an
+                # identity check against the enum silently never matches.
+                if item.role == AssetRoleEnum.START_FRAME:
+                    # Tracked apart from the others: Omni may pair an opening
+                    # frame with references, an end frame or extension source
+                    # never.
+                    start_frame_role_present = True
+                elif item.role in non_reference_roles:
                     conflicting_roles_present = True
                 if item.role in reference_roles:
                     reference_roles_present = True
@@ -282,12 +290,25 @@ class CreateVeoDto(BaseDto):
             end_image_present = bool(self.end_image_asset_id)
             source_video_present = bool(self.source_video_asset_id)
 
-            if (
-                start_image_present
-                or end_image_present
+            # Veo types its reference images separately from its `image=` input
+            # and rejects both in one request ("Image and reference images
+            # cannot be both set."). Omni has no typed reference field - every
+            # image rides the multimodal input array - so an opening frame plus
+            # character sheets is just an ordered list of images, and is the
+            # normal way to anchor a shot while holding identities. Verified
+            # live: task=image_to_video with [frame, character sheet] honoured
+            # the frame as frame 1 and carried the reference likeness.
+            references_conflict = (
+                end_image_present
                 or source_video_present
                 or conflicting_roles_present
-            ):
+                or (
+                    (start_image_present or start_frame_role_present)
+                    and model not in OMNI_MODELS
+                )
+            )
+
+            if references_conflict:
                 raise ValueError(
                     "Reference media cannot be used at the same time as a start frame, end frame, or source video.",
                 )

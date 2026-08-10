@@ -260,6 +260,64 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
     );
   }
 
+  /**
+   * Whether reference images can accompany an opening frame in Frames to Video.
+   *
+   * Veo types its reference images separately from its input image and rejects
+   * both together. Omni carries every image in one multimodal input, so an
+   * opening frame plus character sheets is the normal way to anchor a shot
+   * while holding identities - the backend routes it to image_to_video so the
+   * frame stays frame 1.
+   */
+  get supportsFramePlusReferences(): boolean {
+    return !!this.getSelectedModelObject()?.capabilities
+      ?.supportsFrameWithReferences;
+  }
+
+  /**
+   * Whether the opening frame carries its own role-tag badge.
+   *
+   * Only worth showing where the frame travels alongside references and the
+   * numbering therefore matters.
+   */
+  get showFrameRoleTag(): boolean {
+    return (
+      this.mode === 'Frames to Video' &&
+      !!this.image1Preview &&
+      this.supportsFramePlusReferences
+    );
+  }
+
+  /**
+   * How far the reference images' tag numbers are pushed along.
+   *
+   * <IMAGE_REF_N> counts every image in the request, and the backend sends the
+   * opening frame first, so with a frame attached the references start at 1.
+   * Numbering them from 0 in the UI would point every tag at the wrong image -
+   * the same off-by-one that made role tags look broken in Edit Video.
+   */
+  get roleTagOffset(): number {
+    return this.showFrameRoleTag ? 1 : 0;
+  }
+
+  /**
+   * Whether the second input slot is offered.
+   *
+   * It means different things per mode: a closing frame in Frames to Video, a
+   * second clip in Concatenate. Only the closing frame depends on the model -
+   * Gemini Omni cannot interpolate and the backend rejects an end frame, so
+   * showing the slot only led to a rejected generate.
+   */
+  get showSecondSlot(): boolean {
+    if (this.mode === 'Concatenate Video') {
+      return true;
+    }
+    if (this.mode === 'Frames to Video') {
+      return !!this.getSelectedModelObject()?.capabilities?.supportsLastFrame;
+    }
+    return false;
+  }
+
   /** Whether the active model binds <IMAGE_REF_N> tags to reference images. */
   get supportsRoleTags(): boolean {
     return !!this.getSelectedModelObject()?.capabilities?.supportsRoleTags;

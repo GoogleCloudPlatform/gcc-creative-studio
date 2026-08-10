@@ -146,6 +146,19 @@
                 <img [src]="image1Preview" class="h-full w-full object-cover" />
                 <ng-container *ngTemplateOutlet="editOverlay; context: { num: 1 }"></ng-container>
               </div>
+              <!--
+                The opening frame is image 0 of the request, so it owns
+                <IMAGE_REF_0> and pushes the reference images to 1 and up.
+                Verified live with a mirrored pair: swapping which tag was told
+                to act swapped which person acted. <FIRST_FRAME> is NOT a
+                recognised tag - it bound to the wrong image in the same test.
+              -->
+              <button *ngIf="supportsRoleTags && showFrameRoleTag"
+                (click)="$event.stopPropagation(); insertRoleTag('<IMAGE_REF_0>')"
+                matTooltip="Insert <IMAGE_REF_0> into the prompt to refer to this opening frame"
+                class="absolute bottom-0 left-0 rounded-tr-md bg-neutral-900/80 px-1 text-[10px] font-mono text-neutral-300 hover:bg-blue-600 hover:text-white">
+                0
+              </button>
               <button
                 (click)="$event.stopPropagation(); clearImage.emit({num: 1, event: $event})"
                 class="absolute -right-2 -top-2 rounded-full bg-neutral-900 p-0.5 text-neutral-400 hover:text-white"
@@ -156,11 +169,16 @@
           </div>
 
           <!-- Arrow: Shown only if we have a second slot -->
-          <mat-icon *ngIf="mode !== 'Extend Video'" class="text-neutral-500">compare_arrows</mat-icon>
+          <!--
+            Slot 2 is a closing frame in Frames to Video and a second clip in
+            Concatenate. Gemini Omni cannot interpolate between two frames and
+            the backend rejects an end frame outright, so offering the slot only
+            invited a 422.
+          -->
+          <mat-icon *ngIf="showSecondSlot" class="text-neutral-500">compare_arrows</mat-icon>
 
-          <!-- Slot 2: Shown for Frames to Video and Concatenate Video -->
           <div
-            *ngIf="mode !== 'Extend Video'"
+            *ngIf="showSecondSlot"
             class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex items-center justify-center"
             (click)="openImageSelector.emit(2)"
             (dragover)="$event.preventDefault()"
@@ -227,7 +245,7 @@
           and a video together with task=edit is how a character is composited
           into existing footage.
         -->
-        <ng-container *ngIf="mode === 'Ingredients to Video' || mode === 'Ingredients to Image' || mode === 'Edit Video'">
+        <ng-container *ngIf="mode === 'Ingredients to Video' || mode === 'Ingredients to Image' || mode === 'Edit Video' || (mode === 'Frames to Video' && supportsFramePlusReferences)">
           <ng-container *ngIf="getSelectedModelObject() as model">
             <div
               class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex items-center justify-center"
@@ -252,10 +270,10 @@
                   the tag by hand. Clicking inserts it at the caret.
                 -->
                 <button *ngIf="supportsRoleTags"
-                  (click)="$event.stopPropagation(); insertRoleTag('<IMAGE_REF_' + i + '>')"
-                  [matTooltip]="'Insert <IMAGE_REF_' + i + '> into the prompt to refer to this image'"
+                  (click)="$event.stopPropagation(); insertRoleTag('<IMAGE_REF_' + (i + roleTagOffset) + '>')"
+                  [matTooltip]="'Insert <IMAGE_REF_' + (i + roleTagOffset) + '> into the prompt to refer to this image'"
                   class="absolute bottom-0 left-0 rounded-tr-md bg-neutral-900/80 px-1 text-[10px] font-mono text-neutral-300 hover:bg-blue-600 hover:text-white">
-                  {{ i }}
+                  {{ i + roleTagOffset }}
                 </button>
                 <button (click)="$event.stopPropagation(); clearReferenceImage.emit({index: i, event: $event})"
                   class="absolute -right-1 -top-1 rounded-full bg-neutral-900 p-0.5 text-neutral-400 hover:text-white">
@@ -268,7 +286,9 @@
               class="w-full text-[11px] text-neutral-500">
               Tip: click an image's number to insert its tag, e.g.
               <span class="font-mono text-neutral-400">&lt;IMAGE_REF_0&gt; wears &lt;IMAGE_REF_1&gt;</span>,
-              to control which reference is which.
+              to control which reference is which. An opening frame counts as
+              <span class="font-mono text-neutral-400">&lt;IMAGE_REF_0&gt;</span>,
+              so the references after it start at 1.
             </div>
           </ng-container>
 

@@ -32,6 +32,7 @@ from src.videos.dto.concatenate_videos_dto import (
 from src.videos.dto.create_veo_dto import CreateVeoDto
 from src.videos.veo_service import (
     VeoService,
+    resolve_omni_task,
     _process_video_concatenation_in_background,
     _process_video_in_background,
 )
@@ -2337,3 +2338,155 @@ class TestBackgroundWorkers:
             if p["type"] == "video"
         ]
         assert video_parts[0]["uri"] == "gs://b/silent.mp4"
+
+
+class TestResolveOmniTask:
+    """Task selection for a Gemini Omni request.
+
+    Omni has no typed reference field, so a request can legitimately carry an
+    opening frame and character references at once; only the task decides how
+    the first image is read.
+    """
+
+    def test_edit_wins_over_everything(self):
+        assert (
+            resolve_omni_task(
+                is_edit=True, has_references=True, has_start_image=True
+            )
+            == "edit"
+        )
+
+    def test_start_image_outranks_references(self):
+        """The anchor must survive.
+
+        reference_to_video would demote a deliberately chosen opening frame to
+        one more reference, losing the frame-1 anchor that is the entire reason
+        for supplying it.
+        """
+        assert (
+            resolve_omni_task(
+                is_edit=False, has_references=True, has_start_image=True
+            )
+            == "image_to_video"
+        )
+
+    def test_references_alone(self):
+        assert (
+            resolve_omni_task(
+                is_edit=False, has_references=True, has_start_image=False
+            )
+            == "reference_to_video"
+        )
+
+    def test_start_image_alone(self):
+        assert (
+            resolve_omni_task(
+                is_edit=False, has_references=False, has_start_image=True
+            )
+            == "image_to_video"
+        )
+
+    def test_neither(self):
+        assert (
+            resolve_omni_task(
+                is_edit=False, has_references=False, has_start_image=False
+            )
+            == "text_to_video"
+        )
+
+
+class TestOmniStartFrameWithReferences:
+    """An opening frame alongside character references, on Omni.
+
+    Three separate places encoded Veo's "not both" rule as if it applied to
+    every model: the DTO, the prompt box, and the worker's runtime guard. This
+    covers the runtime guard, which was the last of them and had no test.
+    """
+
+    @staticmethod
+    def _omni_interaction(uri: str):
+        step = SimpleNamespace(
+            type="model_output",
+            content=[SimpleNamespace(uri=uri, mime_type="video/mp4")],
+        )
+        return SimpleNamespace(
+            id="int-1",
+            steps=[step],
+            output_video=SimpleNamespace(uri=uri, mime_type="video/mp4"),
+        )
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.videos.veo_service.GenAIModelSetup.get_omni_client")
+    @patch("src.videos.veo_service.generate_thumbnail")
+    def test_omni_sends_frame_then_references_as_image_to_video(
+        self,
+        mock_thumb,
+        mock_omni_client_init,
+        mock_worker_db_class,
+    ):
+        sample_dto = CreateVeoDto(
+            workspace_id=1,
+            prompt="<IMAGE_REF_0> is the opening frame; keep <IMAGE_REF_1>.",
+            generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+            aspect_ratio="9:16",
+            duration_seconds=8,
+            start_image_asset_id={"id": 10, "type": "source_asset"},
+            reference_images=[{"asset_id": 11}],
+        )
+
+        mock_db_context = AsyncMock()
+        mock_db_factory = MagicMock(return_value=mock_db_context)
+        mock_worker_db_class.return_value.__aenter__.return_value = (
+            mock_db_factory
+        )
+
+        mock_vertex_client = MagicMock()
+        mock_omni_client_init.return_value = mock_vertex_client
+        mock_vertex_client.interactions.create.return_value = (
+            self._omni_interaction(uri="gs://bucket/videos/out.mp4")
+        )
+        mock_thumb.return_value = None
+
+        with (
+            patch("src.videos.veo_service.MediaRepository") as mock_repo_class,
+            patch(
+                "src.videos.veo_service.SourceAssetRepository"
+            ) as mock_asset_repo_class,
+            patch("src.videos.veo_service.GcsService") as mock_gcs_class,
+            patch("os.path.exists", return_value=False),
+            patch("os.makedirs"),
+        ):
+            mock_repo_class.return_value = AsyncMock()
+            mock_asset_repo = AsyncMock()
+            mock_asset_repo_class.return_value = mock_asset_repo
+            mock_asset_repo.get_by_id.side_effect = [
+                SimpleNamespace(
+                    gcs_uri="gs://b/frame.png", mime_type="image/png"
+                ),
+                SimpleNamespace(
+                    gcs_uri="gs://b/character.png", mime_type="image/png"
+                ),
+            ]
+            mock_gcs_class.return_value = MagicMock()
+
+            _process_video_in_background(
+                media_item_id=1234,
+                request_dto=sample_dto,
+                user_email="test@user.com",
+            )
+
+        kwargs = mock_vertex_client.interactions.create.call_args.kwargs
+
+        # image_to_video, not reference_to_video: the frame must stay frame 1.
+        assert (
+            kwargs["generation_config"]["video_config"]["task"]
+            == "image_to_video"
+        )
+
+        # The opening frame is image 0, so it owns <IMAGE_REF_0> and the
+        # character sheet is <IMAGE_REF_1>. Order is the binding.
+        images = [p for p in kwargs["input"] if p["type"] == "image"]
+        assert [p["uri"] for p in images] == [
+            "gs://b/frame.png",
+            "gs://b/character.png",
+        ]

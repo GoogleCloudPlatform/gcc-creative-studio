@@ -365,18 +365,33 @@ export class VideoComponent implements OnInit, AfterViewInit {
       ? state.negativePrompt.split(', ').filter(Boolean)
       : [];
 
-    // Update selected options for UI
+    // Update selected options for UI.
+    //
+    // The values above were assigned unconditionally, so a persisted model or
+    // ratio with no matching option used to leave the chip showing something
+    // else entirely - the request then carried one thing while the UI promised
+    // another. Anything unrecognised is coerced back to a real option instead,
+    // so what is displayed is always what will be sent.
     const modelOption = this.generationModels.find(
       m => m.value === state.model,
     );
     if (modelOption) {
       this.selectedGenerationModel = modelOption.viewValue;
+    } else if (this.generationModels.length) {
+      const fallbackModel = this.generationModels[0];
+      this.searchRequest.generationModel = fallbackModel.value;
+      this.selectedGenerationModel = fallbackModel.viewValue;
     }
+
     const ratioOption = this.aspectRatioOptions.find(
       r => r.value === state.aspectRatio,
     );
     if (ratioOption) {
       this.selectedAspectRatio = ratioOption.viewValue;
+    } else if (this.aspectRatioOptions.length) {
+      const fallbackRatio = this.aspectRatioOptions[0];
+      this.searchRequest.aspectRatio = fallbackRatio.value;
+      this.selectedAspectRatio = fallbackRatio.viewValue;
     }
   }
 
@@ -864,9 +879,19 @@ export class VideoComponent implements OnInit, AfterViewInit {
     // images as Ingredients, and <IMAGE_REF_N> in the prompt is positional over
     // them. Gating these on Ingredients alone silently dropped every reference
     // in Edit mode, so the tags in the prompt bound to nothing.
+    // Frames to Video joins the list for models that accept an opening frame
+    // and references together: the frame anchors the shot and the references
+    // hold character identity. The backend routes that pairing to
+    // image_to_video so the frame stays frame 1.
     const usesReferenceImages =
       this.currentMode === 'Ingredients to Video' ||
-      this.currentMode === 'Edit Video';
+      this.currentMode === 'Edit Video' ||
+      (this.currentMode === 'Frames to Video' &&
+        !!this.getModelCapabilities().supportsFrameWithReferences);
+
+    // Frames to Video always carries its frame slots, whether or not the model
+    // also accepts references alongside them.
+    const carriesFrameSlots = this.currentMode === 'Frames to Video';
 
     // --- Build the two separate R2V reference payloads ---
     const referenceImagesPayload: {
@@ -915,12 +940,16 @@ export class VideoComponent implements OnInit, AfterViewInit {
         usesReferenceImages && referenceImagesPayload.length > 0
           ? referenceImagesPayload
           : undefined,
-      sourceMediaItems: usesReferenceImages
-        ? sourceMediaItemsForReference
-        : this.currentMode === 'Frames to Video' ||
-            this.currentMode === 'Extend Video'
-          ? validSourceMediaItems
-          : undefined,
+      // Frames to Video with references needs BOTH lists: the frame slots
+      // carry the opening frame and the reference entries carry the cast.
+      // Sending only one silently drops the other.
+      sourceMediaItems: carriesFrameSlots
+        ? [...validSourceMediaItems, ...sourceMediaItemsForReference]
+        : usesReferenceImages
+          ? sourceMediaItemsForReference
+          : this.currentMode === 'Extend Video'
+            ? validSourceMediaItems
+            : undefined,
       referenceVideo:
         this.currentMode === 'Ingredients to Video' && this.referenceVideo
           ? {
@@ -1011,23 +1040,36 @@ export class VideoComponent implements OnInit, AfterViewInit {
       });
   }
 
-  resetAllFilters() {
-    this.searchRequest = {
-      prompt: '',
-      generationModel: 'veo-3.0-generate-001',
-      aspectRatio: '16:9',
-      numberOfMedia: 4,
-      style: null,
-      lighting: null,
-      colorAndTone: null,
-      composition: null,
-      negativePrompt: '',
-      generateAudio: true,
-      durationSeconds: 8,
-      useBrandGuidelines: false,
-      enhancePrompt: false,
-    };
-    this.videoStateService.resetState();
+  /**
+   * Clears what the user typed and attached, leaving their settings alone.
+   *
+   * Replaces a resetAllFilters() that rebuilt searchRequest wholesale - forcing
+   * aspectRatio back to 16:9 and the model to veo-3.0 - without touching
+   * selectedAspectRatio or selectedGenerationModel. The chips kept showing the
+   * old choices while the payload carried the reset ones, so a user with 9:16
+   * and Omni on screen silently generated 16:9 on Veo. It was unreachable until
+   * the clear button called it.
+   *
+   * Model, aspect ratio, resolution and duration are settings rather than
+   * inputs, so they survive: the control only promises to clear the prompt and
+   * the attachments.
+   */
+  clearPromptAndInputs(): void {
+    this.searchRequest.prompt = '';
+    this.searchRequest.negativePrompt = '';
+    this.negativePhrases = [];
+
+    this.referenceImages = [];
+    this.referenceVideo = null;
+    this.referenceAudio = null;
+    this.editSource = null;
+    this.parentMediaItemId = null;
+    this.parentMediaIndex = 0;
+    this._input1IsVideo = false;
+    this._input2IsVideo = false;
+    this.resetInputs();
+
+    this.saveState();
   }
 
   private applyTemplateParameters(): void {
@@ -2022,21 +2064,40 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
   private handleReferenceImageAdded(): void {
     if (this.referenceImages.length === 1) {
-      // If there's a start/end frame or a video for extension/concatenation, clear them.
-      const hadInputs = this.image1Preview || this.image2Preview;
-      const snackbarMessage =
-        'Start/end frames and extension videos have been cleared to use reference images.';
-      if (this.image1Preview || this.image2Preview) {
-        this.startImageAssetId = null;
-        this.image1Preview = null;
-        this._input1IsVideo = false;
-        this.sourceMediaItems[0] = null;
+      // Clearing the frames is a Veo constraint: it types reference images
+      // separately from its input image and refuses both together. Gemini Omni
+      // carries every image in one multimodal input, and an opening frame plus
+      // character sheets is the point of the combination - discarding the
+      // frame there would throw away the anchor the user just chose. A still
+      // image in slot 1 is therefore kept for models that allow the pairing;
+      // an end frame or an extension clip is cleared regardless, since Omni can
+      // neither interpolate nor extend.
+      const keepsOpeningFrame =
+        !!this.getModelCapabilities().supportsFrameWithReferences &&
+        !this._input1IsVideo;
+
+      const clearsSlot1 = (this.image1Preview && !keepsOpeningFrame) as boolean;
+      const clearsSlot2 = !!this.image2Preview;
+
+      if (clearsSlot1 || clearsSlot2) {
+        if (clearsSlot1) {
+          this.startImageAssetId = null;
+          this.image1Preview = null;
+          this._input1IsVideo = false;
+          this.sourceMediaItems[0] = null;
+        }
         this.endImageAssetId = null;
         this.image2Preview = null;
         this._input2IsVideo = false;
         this.sourceMediaItems[1] = null;
         this.updateModeAndNotify();
-        this._snackBar.open(snackbarMessage, 'OK', {duration: 5000});
+        this._snackBar.open(
+          clearsSlot1
+            ? 'Start/end frames and extension videos have been cleared to use reference images.'
+            : 'The closing frame was cleared: this model uses an opening frame with references, but cannot interpolate to an end frame.',
+          'OK',
+          {duration: 5000},
+        );
       }
 
       const omniModel = this.generationModels.find(
