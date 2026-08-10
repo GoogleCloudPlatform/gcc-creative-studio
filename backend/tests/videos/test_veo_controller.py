@@ -91,7 +91,7 @@ def test_generate_videos_success(client, mock_veo_service, mock_workspace_auth):
         "workspace_id": 1,
         "generation_model": "veo-3.0-generate-001",
         "aspect_ratio": "16:9",
-        "duration_seconds": 5,
+        "duration_seconds": 6,
     }
 
     response = client.post("/api/videos/generate-videos", json=payload)
@@ -152,7 +152,7 @@ def test_generate_videos_value_error(client, mock_veo_service):
         "workspace_id": 1,
         "generation_model": "veo-3.0-generate-001",
         "aspect_ratio": "16:9",
-        "duration_seconds": 5,
+        "duration_seconds": 6,
     }
 
     response = client.post("/api/videos/generate-videos", json=payload)
@@ -173,7 +173,7 @@ def test_generate_videos_http_exception(client, mock_workspace_auth):
         "workspace_id": 1,
         "generation_model": "veo-3.0-generate-001",
         "aspect_ratio": "16:9",
-        "duration_seconds": 5,
+        "duration_seconds": 6,
     }
 
     response = client.post("/api/videos/generate-videos", json=payload)
@@ -191,7 +191,7 @@ def test_generate_videos_general_exception(client, mock_veo_service):
         "workspace_id": 1,
         "generation_model": "veo-3.0-generate-001",
         "aspect_ratio": "16:9",
-        "duration_seconds": 5,
+        "duration_seconds": 6,
     }
 
     response = client.post("/api/videos/generate-videos", json=payload)

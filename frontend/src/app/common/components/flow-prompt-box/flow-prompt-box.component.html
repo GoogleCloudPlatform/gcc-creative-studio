@@ -85,12 +85,38 @@
             <mat-icon class="!h-4 !w-4 !flex !items-center !justify-center">{{ selectedResolution() | lowercase }}</mat-icon>
           </button>
         }
+        <!--
+          Temperature is worth seeing at a glance while iterating on an edit,
+          so it sits with the other settings rather than only inside the popup.
+        -->
+        @if (supportsTemperature) {
+          <button
+            (click)="toggleSettingsMenu(); $event.stopPropagation()"
+            [matTooltip]="temperature === null
+              ? 'Temperature: model default. Lower stays closer to the prompt and references.'
+              : 'Temperature ' + temperature + '. Lower stays closer to the prompt and references.'"
+            class="rounded-md bg-neutral-800 px-2 py-1 cursor-pointer hover:bg-neutral-700"
+          >
+            {{ temperature === null ? 'T auto' : 'T ' + temperature }}
+          </button>
+        }
       </div>
     </div>
 
     <!-- Prompt Area -->
     <div class="mt-4">
+      <div class="flex items-start justify-between gap-2">
+        <span class="flex-1"></span>
+        <button *ngIf="hasResettableInput"
+          (click)="$event.stopPropagation(); resetClicked.emit()"
+          matTooltip="Clear the prompt and every attached image or clip"
+          class="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300">
+          <mat-icon class="!h-3.5 !w-3.5 !text-sm !leading-none">restart_alt</mat-icon>
+          Clear all
+        </button>
+      </div>
       <textarea
+        #promptInput
         (input)="onPromptInput($event)"
         [ngModel]="prompt"
         [disabled]="mode === 'Concatenate Video'"
@@ -120,6 +146,19 @@
                 <img [src]="image1Preview" class="h-full w-full object-cover" />
                 <ng-container *ngTemplateOutlet="editOverlay; context: { num: 1 }"></ng-container>
               </div>
+              <!--
+                The opening frame is image 0 of the request, so it owns
+                <IMAGE_REF_0> and pushes the reference images to 1 and up.
+                Verified live with a mirrored pair: swapping which tag was told
+                to act swapped which person acted. <FIRST_FRAME> is NOT a
+                recognised tag - it bound to the wrong image in the same test.
+              -->
+              <button *ngIf="supportsRoleTags && showFrameRoleTag"
+                (click)="$event.stopPropagation(); insertRoleTag('<IMAGE_REF_0>')"
+                matTooltip="Insert <IMAGE_REF_0> into the prompt to refer to this opening frame"
+                class="absolute bottom-0 left-0 rounded-tr-md bg-neutral-900/80 px-1 text-[10px] font-mono text-neutral-300 hover:bg-blue-600 hover:text-white">
+                0
+              </button>
               <button
                 (click)="$event.stopPropagation(); clearImage.emit({num: 1, event: $event})"
                 class="absolute -right-2 -top-2 rounded-full bg-neutral-900 p-0.5 text-neutral-400 hover:text-white"
@@ -130,11 +169,16 @@
           </div>
 
           <!-- Arrow: Shown only if we have a second slot -->
-          <mat-icon *ngIf="mode !== 'Extend Video'" class="text-neutral-500">compare_arrows</mat-icon>
+          <!--
+            Slot 2 is a closing frame in Frames to Video and a second clip in
+            Concatenate. Gemini Omni cannot interpolate between two frames and
+            the backend rejects an end frame outright, so offering the slot only
+            invited a 422.
+          -->
+          <mat-icon *ngIf="showSecondSlot" class="text-neutral-500">compare_arrows</mat-icon>
 
-          <!-- Slot 2: Shown for Frames to Video and Concatenate Video -->
           <div
-            *ngIf="mode !== 'Extend Video'"
+            *ngIf="showSecondSlot"
             class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex items-center justify-center"
             (click)="openImageSelector.emit(2)"
             (dragover)="$event.preventDefault()"
@@ -158,8 +202,50 @@
           </div>
         </ng-container>
 
-        <!-- Unified Ingredients Mode Inputs -->
-        <ng-container *ngIf="mode === 'Ingredients to Video' || mode === 'Ingredients to Image'">
+        <!-- Edit Video: the single clip being modified -->
+        <ng-container *ngIf="mode === 'Edit Video'">
+          <div
+            class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
+            (click)="!editSource && openVideoSelectorForEdit.emit()"
+          >
+            <ng-container *ngIf="!editSource">
+              <mat-icon class="text-neutral-500">auto_fix_high</mat-icon>
+              <span class="absolute bottom-1 text-[8px] text-neutral-500">Video to edit</span>
+            </ng-container>
+            <ng-container *ngIf="editSource">
+              <img *ngIf="editSource.previewUrl" [src]="editSource.previewUrl"
+                class="h-full w-full rounded-lg object-cover" />
+              <button (click)="$event.stopPropagation(); clearEditSource.emit($event)"
+                class="absolute -right-1 -top-1 rounded-full bg-neutral-900 p-0.5 text-neutral-400 hover:text-white">
+                <mat-icon class="!h-3 !w-3 text-xs">close</mat-icon>
+              </button>
+            </ng-container>
+          </div>
+          <div class="w-full text-[11px] text-neutral-500">
+            Describe only what should change. Adding
+            <span class="font-mono text-neutral-400">Keep everything else the same</span>
+            helps preserve the rest of the shot.
+          </div>
+          <!--
+            Omni refuses to edit a clip containing speech when reference images
+            are also supplied, and its own output always has audio, so this
+            defaults on.
+          -->
+          <label class="flex w-full cursor-pointer items-center gap-2 text-[11px] text-neutral-400">
+            <input type="checkbox" [checked]="stripSourceAudio"
+              (change)="stripSourceAudioChanged.emit(!stripSourceAudio)"
+              class="h-3 w-3 accent-blue-600" />
+            Remove audio from the source clip
+            <span class="text-neutral-600">(needed when using reference images)</span>
+          </label>
+        </ng-container>
+
+        <!--
+          Reference images. Also shown for Edit Video: sending text, an image
+          and a video together with task=edit is how a character is composited
+          into existing footage.
+        -->
+        <ng-container *ngIf="mode === 'Ingredients to Video' || mode === 'Ingredients to Image' || mode === 'Edit Video' || (mode === 'Frames to Video' && supportsFramePlusReferences)">
           <ng-container *ngIf="getSelectedModelObject() as model">
             <div
               class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex items-center justify-center"
@@ -178,16 +264,36 @@
                 [class.highlight-new]="ref.isNew">
                 <img [src]="ref.previewUrl" class="h-full w-full object-cover" />
                 <ng-container *ngTemplateOutlet="editOverlay; context: { index: i, ref: ref, small: true }"></ng-container>
+                <!--
+                  The tag index is otherwise invisible: references are bound by
+                  position, so a user would have to count thumbnails and type
+                  the tag by hand. Clicking inserts it at the caret.
+                -->
+                <button *ngIf="supportsRoleTags"
+                  (click)="$event.stopPropagation(); insertRoleTag('<IMAGE_REF_' + (i + roleTagOffset) + '>')"
+                  [matTooltip]="'Insert <IMAGE_REF_' + (i + roleTagOffset) + '> into the prompt to refer to this image'"
+                  class="absolute bottom-0 left-0 rounded-tr-md bg-neutral-900/80 px-1 text-[10px] font-mono text-neutral-300 hover:bg-blue-600 hover:text-white">
+                  {{ i + roleTagOffset }}
+                </button>
                 <button (click)="$event.stopPropagation(); clearReferenceImage.emit({index: i, event: $event})"
                   class="absolute -right-1 -top-1 rounded-full bg-neutral-900 p-0.5 text-neutral-400 hover:text-white">
                   <mat-icon class="!h-3 !w-3 text-xs">close</mat-icon>
                 </button>
               </div>
             </div>
+            <!-- Discoverability: the tag syntax is not guessable. -->
+            <div *ngIf="supportsRoleTags && referenceImages.length > 1"
+              class="w-full text-[11px] text-neutral-500">
+              Tip: click an image's number to insert its tag, e.g.
+              <span class="font-mono text-neutral-400">&lt;IMAGE_REF_0&gt; wears &lt;IMAGE_REF_1&gt;</span>,
+              to control which reference is which. An opening frame counts as
+              <span class="font-mono text-neutral-400">&lt;IMAGE_REF_0&gt;</span>,
+              so the references after it start at 1.
+            </div>
           </ng-container>
 
-            <!-- Video Reference Slot (only for Ingredients to Video mode AND only for Gemini Omni) -->
-            <div *ngIf="mode === 'Ingredients to Video' && getSelectedModelObject()?.value === 'gemini-omni-flash-preview'"
+            <!-- Video Reference Slot, gated on capability rather than model name. -->
+            <div *ngIf="mode === 'Ingredients to Video' && getSelectedModelObject()?.capabilities?.supportsVideoReference"
               class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
               (click)="!referenceVideo && openVideoSelectorForReference.emit()"
             >
@@ -207,8 +313,13 @@
               </ng-container>
             </div>
 
-            <!-- Audio Reference Slot (only for Ingredients to Video mode AND only for Gemini Omni) -->
-            <div *ngIf="mode === 'Ingredients to Video' && getSelectedModelObject()?.value === 'gemini-omni-flash-preview'"
+            <!--
+              Audio Reference Slot. Gated on capability, not on a model name:
+              no current video model accepts an audio reference. Omni's API
+              takes the part and ignores it, so offering the control invited
+              silent failure - and now a rejected request.
+            -->
+            <div *ngIf="mode === 'Ingredients to Video' && getSelectedModelObject()?.capabilities?.supportsAudioReference"
               class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
               (click)="!referenceAudio && openAudioSelectorForReference.emit()"
             >
@@ -449,35 +560,47 @@
             <div
               class="absolute right-0 top-full z-30 mt-1 w-full rounded-lg bg-neutral-700 p-1 shadow-lg"
             >
-              <button
-                (click)="selectOutputs(1)"
-                class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600"
-              >
-                x1
-              </button>
-              @if (getSelectedModelObject()?.value !== 'gemini-omni-flash-preview') {
+              <!--
+                Driven by the model's maxOutputs. This used to hardcode Omni to
+                a single output, which is no longer true: it can return several
+                clips per request for side-by-side comparison.
+              -->
+              @for (count of availableOutputs(); track count) {
                 <button
-                  (click)="selectOutputs(2)"
+                  (click)="selectOutputs(count)"
                   class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600"
                 >
-                  x2
-                </button>
-                <button
-                  (click)="selectOutputs(3)"
-                  class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600"
-                >
-                  x3
-                </button>
-                <button
-                  (click)="selectOutputs(4)"
-                  class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600"
-                >
-                  x4
+                  x{{ count }}
                 </button>
               }
             </div>
           }
         </div>
+
+        <!-- Temperature: Gemini image models only -->
+        @if (supportsTemperature) {
+          <div class="relative">
+            <label for="temperature" class="block text-xs font-medium text-neutral-400 mb-1.5">
+              Temperature
+            </label>
+            <div class="flex items-center gap-2">
+              <input id="temperature" type="range" min="0" max="2" step="0.05"
+                [value]="temperature ?? 1"
+                (input)="onTemperatureInput($event)"
+                class="h-1 w-28 cursor-pointer accent-blue-600" />
+              <span class="w-8 text-right font-mono text-xs text-neutral-300">
+                {{ temperature === null ? 'auto' : temperature }}
+              </span>
+              <button *ngIf="temperature !== null"
+                (click)="temperatureChanged.emit(null)"
+                matTooltip="Use the model default"
+                class="text-[10px] text-neutral-500 hover:text-neutral-300">reset</button>
+            </div>
+            <p class="mt-1 text-[10px] text-neutral-600">
+              Lower stays closer to the prompt and references — useful when editing.
+            </p>
+          </div>
+        }
 
         <!-- Duration Dropdown -->
         @if (hasDurationOptions()) {

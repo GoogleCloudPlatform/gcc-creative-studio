@@ -467,6 +467,7 @@ def gemini_generate_image(
     aspect_ratio: str | None = None,
     google_search: bool = False,
     resolution: str | None = None,
+    temperature: float | None = None,
 ) -> types.GeneratedImage | None:
     """Generates an image using the Gemini API for text-to-image or
     image-to-image.
@@ -515,6 +516,9 @@ def gemini_generate_image(
                 response_modalities=["Text", "Image"],
                 image_config=image_config,
                 tools=tools if tools else None,
+                # Omitted when unset so the model's own default applies rather
+                # than us pinning one.
+                temperature=temperature,
             )
             response: types.GenerateContentResponse = (
                 vertexai_client.models.generate_content(
@@ -735,6 +739,7 @@ def _process_image_in_background(
                                         aspect_ratio=request_dto.aspect_ratio,
                                         google_search=request_dto.google_search,
                                         resolution=request_dto.resolution,
+                                        temperature=request_dto.temperature,
                                     )
                                     for _ in range(request_dto.number_of_media)
                                 ]
@@ -811,6 +816,7 @@ def _process_image_in_background(
                                     aspect_ratio=request_dto.aspect_ratio,
                                     google_search=request_dto.google_search,
                                     resolution=request_dto.resolution,
+                                    temperature=request_dto.temperature,
                                 )
                                 for _ in range(request_dto.number_of_media)
                             ]

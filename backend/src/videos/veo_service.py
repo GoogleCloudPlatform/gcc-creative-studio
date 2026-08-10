@@ -33,7 +33,11 @@ from src.common.base_dto import (
     MimeTypeEnum,
     ReferenceImageTypeEnum,
 )
-from src.common.media_utils import concatenate_videos, generate_thumbnail
+from src.common.media_utils import (
+    concatenate_videos,
+    generate_thumbnail,
+    strip_audio,
+)
 from src.common.schema.genai_model_setup import GenAIModelSetup
 from src.common.schema.media_item_model import (
     AssetRoleEnum,
@@ -52,7 +56,7 @@ from src.source_assets.repository.source_asset_repository import (
 )
 from src.users.user_model import UserModel
 from src.videos.dto.concatenate_videos_dto import ConcatenateVideosDto
-from src.videos.dto.create_veo_dto import CreateVeoDto
+from src.videos.dto.create_veo_dto import OMNI_MODELS, CreateVeoDto
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +65,217 @@ VIDEO_RESOLUTION_MAP = {
     "2K": "1080p",
     "4K": "4k",
 }
+
+# --- GEMINI OMNI (INTERACTIONS API) HELPERS ---
+
+# Task modes accepted by generation_config.video_config.task. Without one the
+# model infers intent from the prompt and media ordering, which is how a
+# reference image ends up being treated as a final frame.
+OMNI_TASK_TEXT_TO_VIDEO = "text_to_video"
+OMNI_TASK_IMAGE_TO_VIDEO = "image_to_video"
+OMNI_TASK_REFERENCE_TO_VIDEO = "reference_to_video"
+OMNI_TASK_EDIT = "edit"
+
+# Generation can run well over a minute. Without a ceiling a stalled request
+# holds one of the shared executor's threads for the life of the process.
+OMNI_REQUEST_TIMEOUT_SECONDS = 600.0
+
+
+def resolve_omni_task(
+    *,
+    is_edit: bool,
+    has_references: bool,
+    has_start_image: bool,
+) -> str:
+    """Picks the explicit Omni task mode for a request.
+
+    Order matters: an edit stays an edit even when references are attached, and
+    a start image outranks references. Both can be sent together — Omni has no
+    typed reference field, so every image rides the multimodal input — but only
+    image_to_video treats the first image as the opening frame. Choosing
+    reference_to_video there would demote a deliberately chosen frame to one
+    more reference and lose the anchor, which is the whole point of supplying
+    it. Verified live: image_to_video with a frame plus a character sheet held
+    the frame as frame 1 and still carried the reference likeness.
+
+    The caller omits the task entirely when replaying a prior conversation's
+    steps, following Google's Vertex sample — the replayed steps already carry
+    the intent. A stateless edit does send it.
+    """
+    if is_edit:
+        return OMNI_TASK_EDIT
+    if has_start_image:
+        return OMNI_TASK_IMAGE_TO_VIDEO
+    if has_references:
+        return OMNI_TASK_REFERENCE_TO_VIDEO
+    return OMNI_TASK_TEXT_TO_VIDEO
+
+
+def build_omni_response_format(
+    *,
+    aspect_ratio: str | None,
+    duration_seconds: int | None,
+    gcs_output_directory: str,
+) -> dict:
+    """Builds the response_format block for an Omni interaction.
+
+    Aspect ratio and duration are both omitted for edits, which inherit the
+    dimensions and length of the clip being modified. Sending either is
+    rejected: "Aspect ratio cannot be set in response format for edit task."
+    """
+    response_format: dict = {
+        "type": "video",
+        # Inline base64 is capped around 4MB, which an 8s 720p clip routinely
+        # exceeds. URI delivery also lets Vertex write straight to the bucket.
+        "delivery": "uri",
+        "gcs_uri": gcs_output_directory,
+    }
+    if aspect_ratio is not None:
+        response_format["aspect_ratio"] = aspect_ratio
+    if duration_seconds is not None:
+        response_format["duration"] = f"{duration_seconds}s"
+    return response_format
+
+
+def serialize_omni_steps(steps) -> list[dict] | None:
+    """Converts interaction steps to JSON for storage, for later replay.
+
+    Vertex has no server-side conversation state for this model, so a follow-up
+    turn works by resending the previous turn's steps. They therefore have to be
+    kept.
+
+    Returns None when any step carries inline media, which only happens if the
+    response came back as base64 rather than a URI. Persisting a whole video
+    into a JSONB column is not worth it, and a partial copy would replay a turn
+    with the video missing.
+    """
+    if not steps:
+        return None
+
+    serialized: list[dict] = []
+    for step in steps:
+        if hasattr(step, "model_dump"):
+            entry = step.model_dump(mode="json", exclude_none=True)
+        elif isinstance(step, dict):
+            entry = step
+        else:
+            return None
+
+        for content in entry.get("content") or []:
+            if isinstance(content, dict) and content.get("data"):
+                return None
+
+        serialized.append(entry)
+
+    return serialized or None
+
+
+def extract_omni_interaction_entry(
+    raw_data: dict | None,
+    media_index: int,
+) -> dict | None:
+    """Reads the stored interaction record for one clip of a parent item.
+
+    A job can produce several clips, each from its own interaction, so an edit
+    has to continue the conversation belonging to the clip the user selected.
+    """
+    if not raw_data:
+        return None
+
+    interactions = raw_data.get("interactions")
+    if not isinstance(interactions, list) or not interactions:
+        return None
+
+    if not 0 <= media_index < len(interactions):
+        media_index = 0
+
+    entry = interactions[media_index]
+    return entry if isinstance(entry, dict) else None
+
+
+def build_omni_followup_input(
+    previous_steps: list[dict],
+    prompt: str,
+) -> list[dict]:
+    """Builds the input for a follow-up turn.
+
+    The documented Vertex pattern is to resend the previous interaction's steps
+    with a new user turn appended. Note this differs from the Gemini API path,
+    which uses `previous_interaction_id` — Vertex rejects that parameter for
+    this model.
+    """
+    return [
+        *previous_steps,
+        {
+            "type": "user_input",
+            "content": [{"type": "text", "text": prompt}],
+        },
+    ]
+
+
+def _make_silent_copy(
+    gcs_service, gcs_uri: str, media_item_id: int
+) -> str | None:
+    """Downloads a clip, removes its audio, and uploads the silent copy.
+
+    Blocking: call from a worker thread. Returns None on any failure, so the
+    caller falls back to the original clip rather than aborting the job.
+    """
+    blob = gcs_uri_to_blob_path(gcs_uri)
+    local_src = f"thumbnails/edit_src/{media_item_id}_src.mp4"
+    local_out = f"thumbnails/edit_src/{media_item_id}_silent.mp4"
+    os.makedirs(os.path.dirname(local_src), exist_ok=True)
+    try:
+        if not gcs_service.download_from_gcs(
+            gcs_uri_path=blob, destination_file_path=local_src
+        ):
+            return None
+        if not strip_audio(local_src, local_out):
+            return None
+        return gcs_service.upload_file_to_gcs(
+            local_path=local_out,
+            destination_blob_name=f"edit_sources/{media_item_id}_silent.mp4",
+            mime_type=MimeTypeEnum.VIDEO_MP4.value,
+        )
+    except Exception as e:  # noqa: BLE001 - never fail the job over this
+        logger.warning("Could not strip audio from %s: %s", gcs_uri, e)
+        return None
+    finally:
+        for path in (local_src, local_out):
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+
+def gcs_uri_to_blob_path(gcs_uri: str) -> str:
+    """Strips the ``gs://<bucket>/`` prefix from a URI.
+
+    GcsService.download_from_gcs takes a bucket-relative blob path. Matching on
+    the configured bucket name alone silently leaves the full URI in place when
+    the model writes somewhere slightly different, and the download then fails
+    with only a log line to show for it.
+    """
+    if not gcs_uri.startswith("gs://"):
+        return gcs_uri
+    without_scheme = gcs_uri[len("gs://") :]
+    _, separator, blob_path = without_scheme.partition("/")
+    return blob_path if separator else ""
+
+
+def is_retryable_omni_error(error: Exception) -> bool:
+    """Whether an Interactions API failure is worth retrying.
+
+    Client errors such as a malformed request or a content block will fail
+    identically on every attempt, so retrying them only delays the error the
+    caller needs to see.
+    """
+    status = getattr(error, "code", None) or getattr(error, "status_code", None)
+    if isinstance(status, int) and 400 <= status < 500:
+        # 408 Request Timeout and 429 Too Many Requests are transient.
+        return status in (408, 429)
+    return True
 
 
 # --- STANDALONE WORKER FUNCTION ---
@@ -334,12 +549,25 @@ def _process_video_in_background(
                                         f"Could not find or use generated_input: {gen_input.media_item_id} at index {gen_input.media_index}",
                                     )
 
-                        # Validation to prevent conflicting inputs
-                        if reference_images_for_api and (
-                            start_image_for_api
-                            or end_image_for_api
+                        # Validation to prevent conflicting inputs.
+                        #
+                        # Veo types its reference images separately from its
+                        # `image=` input and rejects both in one request. Omni
+                        # has no typed reference field - every image rides the
+                        # multimodal input - so an opening frame alongside
+                        # character sheets is valid there, and is how a shot is
+                        # anchored while identities are held. An end frame or an
+                        # extension source stays disallowed for Omni too, since
+                        # it can neither interpolate nor extend.
+                        is_omni_request = (
+                            request_dto.generation_model in OMNI_MODELS
+                        )
+                        conflicting_input = (
+                            end_image_for_api
                             or source_video_for_api
-                        ):
+                            or (start_image_for_api and not is_omni_request)
+                        )
+                        if reference_images_for_api and conflicting_input:
                             raise ValueError(
                                 "Reference images cannot be used at the same time as a start/end image or a source video.",
                             )
@@ -352,10 +580,7 @@ def _process_video_in_background(
 
                         start_time = time.monotonic()
 
-                        if request_dto.generation_model in [
-                            GenerationModelEnum.GEMINI_OMNI,
-                            GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
-                        ]:
+                        if request_dto.generation_model in OMNI_MODELS:
                             worker_logger.info(
                                 "Running Gemini Omni video generation via Interactions API..."
                             )
@@ -364,8 +589,12 @@ def _process_video_in_background(
                             interaction_id = None
                             thought_signature = None
 
-                            # Resolve reference video & reference audio URIs
+                            # Resolve the reference video URI and its real mime
+                            # type. Audio references are rejected upstream by
+                            # CreateVeoDto: Omni accepts an audio part and then
+                            # ignores it, so there is nothing to resolve here.
                             ref_video_uri = None
+                            ref_video_mime_type = None
                             if request_dto.reference_video:
                                 ref = request_dto.reference_video
                                 if ref.type == "media_item":
@@ -374,18 +603,18 @@ def _process_video_in_background(
                                     )
                                     if parent_item and parent_item.gcs_uris:
                                         index = ref.index or 0
-                                        if (
+                                        if not (
                                             0
                                             <= index
                                             < len(parent_item.gcs_uris)
                                         ):
-                                            ref_video_uri = (
-                                                parent_item.gcs_uris[index]
-                                            )
-                                        else:
-                                            ref_video_uri = (
-                                                parent_item.gcs_uris[0]
-                                            )
+                                            index = 0
+                                        ref_video_uri = parent_item.gcs_uris[
+                                            index
+                                        ]
+                                        ref_video_mime_type = (
+                                            parent_item.mime_type
+                                        )
                                 else:
                                     video_asset = (
                                         await source_asset_repo.get_by_id(
@@ -394,155 +623,196 @@ def _process_video_in_background(
                                     )
                                     if video_asset:
                                         ref_video_uri = video_asset.gcs_uri
+                                        ref_video_mime_type = (
+                                            video_asset.mime_type
+                                        )
 
-                            ref_audio_uri = None
-                            if request_dto.reference_audio:
-                                ref = request_dto.reference_audio
+                            # --- Continue from a previous clip, if asked ---
+                            # Vertex holds no conversation state for this model,
+                            # so there are two ways to build on an earlier clip:
+                            #
+                            #   1. Replay the prior interaction's steps with a
+                            #      new user turn appended. Keeps the whole
+                            #      conversation, so earlier instructions still
+                            #      apply.
+                            #   2. Send the clip itself as a video part with
+                            #      task=edit. Stateless, but works for any clip
+                            #      including ones generated before steps were
+                            #      being stored.
+                            #
+                            # Prefer 1 when the steps are available and fall back
+                            # to 2, so older library items stay editable.
+                            previous_steps = None
+                            edit_source_uri = None
+                            edit_source_mime = None
+
+                            # An explicitly chosen clip to edit. Works for
+                            # uploaded footage as well as library items, and
+                            # always starts a fresh conversation.
+                            if request_dto.edit_source:
+                                ref = request_dto.edit_source
                                 if ref.type == "media_item":
-                                    parent_item = await media_repo.get_by_id(
+                                    item = await media_repo.get_by_id(ref.id)
+                                    if item and item.gcs_uris:
+                                        index = ref.index or 0
+                                        if not 0 <= index < len(item.gcs_uris):
+                                            index = 0
+                                        edit_source_uri = item.gcs_uris[index]
+                                        edit_source_mime = item.mime_type
+                                else:
+                                    asset = await source_asset_repo.get_by_id(
                                         ref.id
                                     )
-                                    if parent_item and parent_item.gcs_uris:
-                                        index = ref.index or 0
-                                        if (
-                                            0
-                                            <= index
-                                            < len(parent_item.gcs_uris)
-                                        ):
-                                            ref_audio_uri = (
-                                                parent_item.gcs_uris[index]
-                                            )
-                                        else:
-                                            ref_audio_uri = (
-                                                parent_item.gcs_uris[0]
-                                            )
-                                else:
-                                    audio_asset = (
-                                        await source_asset_repo.get_by_id(
-                                            ref.id
-                                        )
-                                    )
-                                    if audio_asset:
-                                        ref_audio_uri = audio_asset.gcs_uri
+                                    if asset:
+                                        edit_source_uri = asset.gcs_uri
+                                        edit_source_mime = asset.mime_type
 
-                            # Check for Turn 2 conversational input context
-                            is_turn_2 = False
-                            if request_dto.parent_media_item_id:
+                                if not edit_source_uri:
+                                    raise ValueError(
+                                        f"Could not resolve a video to edit "
+                                        f"from {ref.type} {ref.id}.",
+                                    )
+
+                            if (
+                                not edit_source_uri
+                                and request_dto.parent_media_item_id
+                            ):
                                 parent_media_item = await media_repo.get_by_id(
                                     request_dto.parent_media_item_id
                                 )
-                                if (
-                                    parent_media_item
-                                    and parent_media_item.raw_data
-                                ):
-                                    interaction1_id = (
-                                        parent_media_item.raw_data.get(
-                                            "interaction_id"
+                                entry = extract_omni_interaction_entry(
+                                    (
+                                        parent_media_item.raw_data
+                                        if parent_media_item
+                                        else None
+                                    ),
+                                    request_dto.parent_media_index,
+                                )
+                                previous_steps = (entry or {}).get(
+                                    "steps"
+                                ) or None
+
+                                if not previous_steps and parent_media_item:
+                                    uris = parent_media_item.gcs_uris or []
+                                    index = request_dto.parent_media_index
+                                    if not 0 <= index < len(uris):
+                                        index = 0
+                                    if uris:
+                                        edit_source_uri = uris[index]
+                                        edit_source_mime = (
+                                            parent_media_item.mime_type
                                         )
-                                    )
-                                    signature1 = parent_media_item.raw_data.get(
-                                        "signature"
-                                    )
-                                    if interaction1_id and signature1:
-                                        is_turn_2 = True
-                                    else:
-                                        worker_logger.warning(
-                                            f"Parent MediaItem {request_dto.parent_media_item_id} does not have interaction context in raw_data. Falling back to Turn 1 R2V generation."
-                                        )
-                                else:
+
+                                if not previous_steps and not edit_source_uri:
                                     worker_logger.warning(
-                                        f"Parent MediaItem {request_dto.parent_media_item_id} does not have interaction context. Falling back to Turn 1 R2V generation."
+                                        "Parent MediaItem %s has neither stored "
+                                        "steps nor a video at index %s; falling "
+                                        "back to a fresh generation.",
+                                        request_dto.parent_media_item_id,
+                                        request_dto.parent_media_index,
                                     )
 
-                            if is_turn_2:
+                            is_followup = bool(previous_steps)
+                            is_edit = is_followup or bool(edit_source_uri)
+
+                            omni_task = resolve_omni_task(
+                                is_edit=is_edit,
+                                has_references=bool(
+                                    reference_images_for_api or ref_video_uri
+                                ),
+                                has_start_image=bool(start_image_for_api),
+                            )
+
+                            if is_followup:
                                 worker_logger.info(
-                                    f"Performing Turn 2 Multi-Turn generation from parent MediaItem: {request_dto.parent_media_item_id}"
+                                    "Continuing Gemini Omni conversation from "
+                                    "%s replayed steps.",
+                                    len(previous_steps),
                                 )
-                                prompt1 = (
-                                    parent_media_item.original_prompt
-                                    or parent_media_item.prompt
-                                    or ""
+                                omni_inputs = build_omni_followup_input(
+                                    previous_steps,
+                                    request_dto.prompt,
                                 )
+                            elif edit_source_uri:
+                                # Omni refuses to edit a clip carrying speech
+                                # when reference images are also supplied:
+                                # "The model is currently unable to process
+                                # speech edits." Its own output always has
+                                # audio, so editing one of its clips would
+                                # otherwise fail. Strip it first.
+                                if request_dto.strip_source_audio:
+                                    silent_uri = await asyncio.to_thread(
+                                        _make_silent_copy,
+                                        gcs_service,
+                                        edit_source_uri,
+                                        media_item_id,
+                                    )
+                                    if silent_uri:
+                                        edit_source_uri = silent_uri
+                                        worker_logger.info(
+                                            "Using silent copy of the source "
+                                            "clip: %s",
+                                            silent_uri,
+                                        )
 
-                                # Download parent video to read bytes
-                                parent_blob_name = parent_media_item.gcs_uris[
-                                    0
-                                ].replace(f"gs://{cfg.GENMEDIA_BUCKET}/", "")
-                                local_parent_path = (
-                                    f"thumbnails/{parent_blob_name}"
+                                worker_logger.info(
+                                    "Editing %s statelessly (task=%s, %s refs).",
+                                    edit_source_uri,
+                                    omni_task,
+                                    len(reference_images_for_api),
                                 )
-                                os.makedirs(
-                                    os.path.dirname(local_parent_path),
-                                    exist_ok=True,
-                                )
-                                await asyncio.to_thread(
-                                    gcs_service.download_from_gcs,
-                                    gcs_uri_path=parent_blob_name,
-                                    destination_file_path=local_parent_path,
-                                )
-
-                                with open(local_parent_path, "rb") as f:
-                                    parent_video_bytes = f.read()
-
-                                turn2_input = [
+                                # Reference images may accompany an edit - that
+                                # is how a character is composited into existing
+                                # footage. They must be appended in the order the
+                                # user supplied them: <IMAGE_REF_N> is positional,
+                                # so reordering here silently rebinds every tag in
+                                # the prompt to the wrong image.
+                                omni_inputs = [
                                     {
-                                        "type": "user_input",
-                                        "content": [
-                                            {"type": "text", "text": prompt1}
-                                        ],
-                                    },
-                                    {
-                                        "type": "model_output",
-                                        "content": [
-                                            {
-                                                "type": "thought",
-                                                "signature": signature1,
-                                            },
-                                            {
-                                                "type": "video",
-                                                "data": parent_video_bytes,
-                                                "mime_type": "video/mp4",
-                                            },
-                                        ],
-                                    },
-                                    {
-                                        "type": "user_input",
-                                        "content": [
-                                            {
-                                                "type": "text",
-                                                "text": request_dto.prompt,
-                                            }
-                                        ],
+                                        "type": "text",
+                                        "text": request_dto.prompt,
                                     },
                                 ]
-
-                                # Clean up local parent video path
-                                if os.path.exists(local_parent_path):
-                                    try:
-                                        os.remove(local_parent_path)
-                                    except Exception as e:
-                                        worker_logger.warning(
-                                            f"Failed to clean up parent video at {local_parent_path}: {e}"
-                                        )
+                                omni_inputs.extend(
+                                    {
+                                        "type": "image",
+                                        "mime_type": ref_img.image.mime_type,
+                                        "uri": ref_img.image.gcs_uri,
+                                    }
+                                    for ref_img in reference_images_for_api
+                                )
+                                omni_inputs.append(
+                                    {
+                                        "type": "video",
+                                        "mime_type": edit_source_mime
+                                        or MimeTypeEnum.VIDEO_MP4.value,
+                                        "uri": edit_source_uri,
+                                    }
+                                )
                             else:
                                 worker_logger.info(
-                                    "Performing Turn 1 Video Generation/R2V"
+                                    "Starting Gemini Omni generation (task=%s)",
+                                    omni_task,
                                 )
-                                t1_inputs = [
-                                    {"type": "text", "text": request_dto.prompt}
+                                # The task value is what distinguishes a start
+                                # frame from a reference; the DTO already forbids
+                                # combining the two, so ordering is unambiguous.
+                                # The prompt is passed through verbatim. Users
+                                # can bind specific images to roles with
+                                # <FIRST_FRAME> and <IMAGE_REF_N> tags, which
+                                # are honoured on Vertex (verified: tagged
+                                # prompts produced the requested cross-pairing
+                                # while an untagged control paired adjacently).
+                                # Rewriting the prompt here would break them.
+                                omni_inputs = [
+                                    {
+                                        "type": "text",
+                                        "text": request_dto.prompt,
+                                    }
                                 ]
 
-                                for ref_img in reference_images_for_api:
-                                    t1_inputs.append(
-                                        {
-                                            "type": "image",
-                                            "mime_type": ref_img.image.mime_type,
-                                            "uri": ref_img.image.gcs_uri,
-                                        }
-                                    )
-
                                 if start_image_for_api:
-                                    t1_inputs.append(
+                                    omni_inputs.append(
                                         {
                                             "type": "image",
                                             "mime_type": start_image_for_api.mime_type,
@@ -550,47 +820,46 @@ def _process_video_in_background(
                                         }
                                     )
 
-                                if end_image_for_api:
-                                    t1_inputs.append(
+                                for ref_img in reference_images_for_api:
+                                    omni_inputs.append(
                                         {
                                             "type": "image",
-                                            "mime_type": end_image_for_api.mime_type,
-                                            "uri": end_image_for_api.gcs_uri,
-                                        }
-                                    )
-
-                                if source_video_for_api:
-                                    t1_inputs.append(
-                                        {
-                                            "type": "video",
-                                            "mime_type": source_video_for_api.mime_type,
-                                            "uri": source_video_for_api.uri,
+                                            "mime_type": ref_img.image.mime_type,
+                                            "uri": ref_img.image.gcs_uri,
                                         }
                                     )
 
                                 if ref_video_uri:
-                                    t1_inputs.append(
+                                    omni_inputs.append(
                                         {
                                             "type": "video",
-                                            "mime_type": "video/mp4",
+                                            "mime_type": ref_video_mime_type
+                                            or MimeTypeEnum.VIDEO_MP4.value,
                                             "uri": ref_video_uri,
                                         }
                                     )
 
-                                if ref_audio_uri:
-                                    t1_inputs.append(
-                                        {
-                                            "type": "audio",
-                                            "mime_type": "audio/wav",
-                                            "uri": ref_audio_uri,
-                                        }
-                                    )
+                            # An edit inherits both dimensions and length from
+                            # the clip it modifies; the API rejects either.
+                            omni_response_format = build_omni_response_format(
+                                aspect_ratio=(
+                                    None
+                                    if is_edit
+                                    else request_dto.aspect_ratio.value
+                                ),
+                                duration_seconds=(
+                                    None
+                                    if is_edit
+                                    else request_dto.duration_seconds
+                                ),
+                                gcs_output_directory=gcs_output_directory,
+                            )
 
                             final_gcs_uris = []
                             permanent_thumbnail_gcs_uris = []
                             interaction_details = []
 
-                            num_outputs = 1
+                            num_outputs = max(1, request_dto.number_of_media)
                             worker_logger.info(
                                 f"Queueing {num_outputs} Gemini Omni generation interactions."
                             )
@@ -601,22 +870,42 @@ def _process_video_in_background(
                                 interaction = None
                                 for attempt in range(max_retries):
                                     try:
-                                        if is_turn_2:
-                                            interaction = await asyncio.to_thread(
-                                                vertex_client.interactions.create,
-                                                model=model_name_for_api,
-                                                previous_interaction_id=interaction1_id,
-                                                input=turn2_input,
-                                            )
-                                        else:
-                                            interaction = await asyncio.to_thread(
-                                                vertex_client.interactions.create,
-                                                model=model_name_for_api,
-                                                input=t1_inputs,
-                                            )
+                                        create_kwargs = {
+                                            "model": model_name_for_api,
+                                            "input": omni_inputs,
+                                            "response_format": omni_response_format,
+                                            # A hung call would otherwise pin a
+                                            # worker thread indefinitely.
+                                            "timeout": OMNI_REQUEST_TIMEOUT_SECONDS,
+                                        }
+                                        if not is_followup:
+                                            # A replayed conversation omits the
+                                            # task, matching Google's Vertex
+                                            # sample: the steps already carry
+                                            # the intent. A stateless edit does
+                                            # send task=edit.
+                                            create_kwargs[
+                                                "generation_config"
+                                            ] = {
+                                                "video_config": {
+                                                    "task": omni_task,
+                                                },
+                                            }
+
+                                        interaction = await asyncio.to_thread(
+                                            vertex_client.interactions.create,
+                                            **create_kwargs,
+                                        )
                                         break
                                     except Exception as e:
                                         last_err = e
+                                        if not is_retryable_omni_error(e):
+                                            worker_logger.error(
+                                                "Gemini Omni interactions call failed with a "
+                                                "non-retryable error: %s",
+                                                e,
+                                            )
+                                            raise
                                         worker_logger.warning(
                                             f"Gemini Omni interactions API call attempt {attempt + 1} failed: {e}. Retrying..."
                                         )
@@ -629,36 +918,38 @@ def _process_video_in_background(
                                     )
 
                                 interaction_id = interaction.id
-                                contents = []
-                                thought_signature = None
-                                if interaction.steps:
-                                    for step in interaction.steps:
-                                        if step.type == "model_output":
-                                            contents.extend(step.content)
-                                            if (
-                                                hasattr(step, "signature")
-                                                and step.signature
-                                            ):
-                                                thought_signature = (
-                                                    step.signature
-                                                )
-                                            elif isinstance(
-                                                step, dict
-                                            ) and step.get("signature"):
-                                                thought_signature = step.get(
-                                                    "signature"
-                                                )
 
-                                if not contents or not contents[0].data:
+                                # The SDK surfaces the first video content from
+                                # the model_output step here. Fall back to a
+                                # typed scan rather than assuming position:
+                                # model_output can also carry text.
+                                video_content = getattr(
+                                    interaction, "output_video", None
+                                )
+                                if video_content is None:
+                                    for step in interaction.steps or []:
+                                        if (
+                                            getattr(step, "type", None)
+                                            != "model_output"
+                                        ):
+                                            continue
+                                        for content in (
+                                            getattr(step, "content", None) or []
+                                        ):
+                                            if (
+                                                getattr(content, "type", None)
+                                                == "video"
+                                            ):
+                                                video_content = content
+                                                break
+                                        if video_content is not None:
+                                            break
+
+                                if video_content is None:
                                     raise Exception(
-                                        f"Interactions call {i + 1} succeeded but returned no model output data."
+                                        f"Interactions call {i + 1} succeeded but returned no video output."
                                     )
 
-                                raw_video_bytes = base64.b64decode(
-                                    contents[0].data
-                                )
-
-                                # Write raw video bytes directly to local output path using index
                                 output_filename = (
                                     f"videos/{media_item_id}_{i}.mp4"
                                 )
@@ -669,22 +960,59 @@ def _process_video_in_background(
                                     os.path.dirname(local_output_path),
                                     exist_ok=True,
                                 )
-                                with open(local_output_path, "wb") as f:
-                                    f.write(raw_video_bytes)
 
-                                # Upload local file to GCS
-                                final_gcs_uri = await asyncio.to_thread(
-                                    gcs_service.upload_file_to_gcs,
-                                    local_path=local_output_path,
-                                    destination_blob_name=output_filename,
-                                    mime_type="video/mp4",
+                                content_uri = getattr(
+                                    video_content, "uri", None
                                 )
+                                content_data = getattr(
+                                    video_content, "data", None
+                                )
+
+                                if content_uri:
+                                    # URI delivery: the model already wrote the
+                                    # file to the bucket. Download only to build
+                                    # the thumbnail.
+                                    final_gcs_uri = content_uri
+                                    await asyncio.to_thread(
+                                        gcs_service.download_from_gcs,
+                                        gcs_uri_path=gcs_uri_to_blob_path(
+                                            content_uri
+                                        ),
+                                        destination_file_path=local_output_path,
+                                    )
+                                elif content_data:
+                                    # Inline delivery: decode and upload it
+                                    # ourselves.
+                                    raw_video_bytes = base64.b64decode(
+                                        content_data
+                                    )
+                                    with open(local_output_path, "wb") as f:
+                                        f.write(raw_video_bytes)
+
+                                    final_gcs_uri = await asyncio.to_thread(
+                                        gcs_service.upload_file_to_gcs,
+                                        local_path=local_output_path,
+                                        destination_blob_name=output_filename,
+                                        mime_type=MimeTypeEnum.VIDEO_MP4.value,
+                                    )
+                                else:
+                                    raise Exception(
+                                        f"Interactions call {i + 1} returned a video "
+                                        "output with neither data nor uri.",
+                                    )
 
                                 # Generate local thumbnail
-                                thumbnail_path = await asyncio.to_thread(
-                                    generate_thumbnail,
-                                    local_output_path,
-                                )
+                                thumbnail_path = None
+                                if os.path.exists(local_output_path):
+                                    thumbnail_path = await asyncio.to_thread(
+                                        generate_thumbnail,
+                                        local_output_path,
+                                    )
+                                else:
+                                    worker_logger.warning(
+                                        "No local copy of %s available; skipping thumbnail.",
+                                        final_gcs_uri,
+                                    )
                                 local_thumbnail_name = thumbnail_path or ""
 
                                 # Upload thumbnail to GCS
@@ -720,7 +1048,7 @@ def _process_video_in_background(
                                     final_gcs_uri,
                                     thumbnail_gcs_uri,
                                     interaction_id,
-                                    thought_signature,
+                                    serialize_omni_steps(interaction.steps),
                                 )
 
                             tasks = [
@@ -733,17 +1061,21 @@ def _process_video_in_background(
                                 final_gcs_uri,
                                 thumbnail_gcs_uri,
                                 interaction_id,
-                                thought_signature,
+                                interaction_steps,
                             ) in parallel_results:
                                 final_gcs_uris.append(final_gcs_uri)
                                 permanent_thumbnail_gcs_uris.append(
                                     thumbnail_gcs_uri
                                 )
+                                # One record per clip, kept in output order so a
+                                # later edit can continue the right conversation.
+                                # The steps are what make that possible, since
+                                # Vertex holds no state for us.
                                 interaction_details.append(
                                     {
                                         "interaction_id": interaction_id,
-                                        "signature": thought_signature,
-                                    }
+                                        "steps": interaction_steps,
+                                    },
                                 )
 
                             raw_data_dict = {
@@ -1250,6 +1582,24 @@ class VeoService:
                     SourceAssetLink(
                         asset_id=ref.id,
                         role=AssetRoleEnum.AUDIO_REFERENCE,
+                    )
+                )
+
+        if request_dto.edit_source:
+            ref = request_dto.edit_source
+            if ref.type == "media_item":
+                source_media_items.append(
+                    SourceMediaItemLink(
+                        media_item_id=ref.id,
+                        media_index=ref.index or 0,
+                        role=AssetRoleEnum.EDIT_SOURCE,
+                    )
+                )
+            else:
+                source_assets.append(
+                    SourceAssetLink(
+                        asset_id=ref.id,
+                        role=AssetRoleEnum.EDIT_SOURCE,
                     )
                 )
 

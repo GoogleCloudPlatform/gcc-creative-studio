@@ -29,7 +29,7 @@ import {
   inject,
 } from '@angular/core';
 import {MatSnackBar} from '@angular/material/snack-bar';
-import {ReferenceImage} from '../../models/search.model';
+import {ReferenceImage, ReferenceVideo} from '../../models/search.model';
 import {GenerationModelConfig} from '../../config/model-config';
 import {MatIconModule} from '@angular/material/icon';
 import {CommonModule} from '@angular/common';
@@ -143,16 +143,27 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   @Output() toggleReferenceImagesType = new EventEmitter<boolean>();
   @Output() openVideoSelectorForReference = new EventEmitter<void>();
   @Output() clearReferenceVideo = new EventEmitter<Event>();
+  @Output() openVideoSelectorForEdit = new EventEmitter<void>();
+  @Output() clearEditSource = new EventEmitter<Event>();
+  @Output() stripSourceAudioChanged = new EventEmitter<boolean>();
+  @Output() resetClicked = new EventEmitter<void>();
   @Output() openAudioSelectorForReference = new EventEmitter<void>();
   @Output() clearReferenceAudio = new EventEmitter<Event>();
+  @Output() temperatureChanged = new EventEmitter<number | null>();
 
   @Input() image1Preview: string | null = null;
   @Input() image2Preview: string | null = null;
   @Input() referenceImages: ReferenceImage[] = [];
   @Input() referenceImagesType: 'ASSET' | 'STYLE' = 'ASSET';
   @Input() referenceVideo: any | null = null;
+  /** The clip being modified in Edit Video mode. */
+  @Input() editSource: ReferenceVideo | null = null;
+  @Input() stripSourceAudio = true;
   @Input() referenceAudio: any | null = null;
+  /** null means "use the model's default" rather than a chosen value. */
+  @Input() temperature: number | null = null;
 
+  @ViewChild('promptInput') promptInput?: ElementRef<HTMLTextAreaElement>;
   @ViewChild('modeTrigger') modeTrigger!: ElementRef;
   @ViewChild('modeMenu') modeMenu!: ElementRef;
   @ViewChild('settingsTrigger') settingsTrigger!: ElementRef;
@@ -235,6 +246,128 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   onPromptInput(event: Event) {
     const target = event.target as HTMLTextAreaElement;
     this.promptChanged.emit(target.value);
+  }
+
+  /** True when there is anything for the reset control to clear. */
+  get hasResettableInput(): boolean {
+    return !!(
+      this.prompt ||
+      this.referenceImages.length ||
+      this.image1Preview ||
+      this.image2Preview ||
+      this.referenceVideo ||
+      this.editSource
+    );
+  }
+
+  /**
+   * Whether reference images can accompany an opening frame in Frames to Video.
+   *
+   * Veo types its reference images separately from its input image and rejects
+   * both together. Omni carries every image in one multimodal input, so an
+   * opening frame plus character sheets is the normal way to anchor a shot
+   * while holding identities - the backend routes it to image_to_video so the
+   * frame stays frame 1.
+   */
+  get supportsFramePlusReferences(): boolean {
+    return !!this.getSelectedModelObject()?.capabilities
+      ?.supportsFrameWithReferences;
+  }
+
+  /**
+   * Whether the opening frame carries its own role-tag badge.
+   *
+   * Only worth showing where the frame travels alongside references and the
+   * numbering therefore matters.
+   */
+  get showFrameRoleTag(): boolean {
+    return (
+      this.mode === 'Frames to Video' &&
+      !!this.image1Preview &&
+      this.supportsFramePlusReferences
+    );
+  }
+
+  /**
+   * How far the reference images' tag numbers are pushed along.
+   *
+   * <IMAGE_REF_N> counts every image in the request, and the backend sends the
+   * opening frame first, so with a frame attached the references start at 1.
+   * Numbering them from 0 in the UI would point every tag at the wrong image -
+   * the same off-by-one that made role tags look broken in Edit Video.
+   */
+  get roleTagOffset(): number {
+    return this.showFrameRoleTag ? 1 : 0;
+  }
+
+  /**
+   * Whether the second input slot is offered.
+   *
+   * It means different things per mode: a closing frame in Frames to Video, a
+   * second clip in Concatenate. Only the closing frame depends on the model -
+   * Gemini Omni cannot interpolate and the backend rejects an end frame, so
+   * showing the slot only led to a rejected generate.
+   */
+  get showSecondSlot(): boolean {
+    if (this.mode === 'Concatenate Video') {
+      return true;
+    }
+    if (this.mode === 'Frames to Video') {
+      return !!this.getSelectedModelObject()?.capabilities?.supportsLastFrame;
+    }
+    return false;
+  }
+
+  /** Whether the active model binds <IMAGE_REF_N> tags to reference images. */
+  get supportsRoleTags(): boolean {
+    return !!this.getSelectedModelObject()?.capabilities?.supportsRoleTags;
+  }
+
+  /**
+   * Inserts a role tag at the caret.
+   *
+   * Reference images are positional, so the index a tag refers to is otherwise
+   * invisible - a user would have to count thumbnails and type the tag by hand.
+   */
+  insertRoleTag(tag: string): void {
+    const textarea: HTMLTextAreaElement | undefined =
+      this.promptInput?.nativeElement;
+    const current = this.prompt ?? '';
+
+    if (!textarea) {
+      this.promptChanged.emit(`${current} ${tag}`.trim());
+      return;
+    }
+
+    const start = textarea.selectionStart ?? current.length;
+    const end = textarea.selectionEnd ?? start;
+    const before = current.slice(0, start);
+    const after = current.slice(end);
+
+    // Keep the tag as its own word so it does not fuse with adjacent text.
+    const lead = before && !/\s$/.test(before) ? ' ' : '';
+    const trail = after && !/^\s/.test(after) ? ' ' : '';
+    const insertion = `${lead}${tag}${trail}`;
+
+    this.promptChanged.emit(before + insertion + after);
+
+    // The prompt round-trips through the parent, so restore the caret once the
+    // new value has been applied.
+    const caret = start + insertion.length;
+    setTimeout(() => {
+      textarea.focus();
+      textarea.setSelectionRange(caret, caret);
+    });
+  }
+
+  /** Whether the active model accepts a sampling temperature. */
+  get supportsTemperature(): boolean {
+    return !!this.getSelectedModelObject()?.capabilities?.supportsTemperature;
+  }
+
+  onTemperatureInput(event: Event): void {
+    const value = (event.target as HTMLInputElement).value;
+    this.temperatureChanged.emit(value === '' ? null : Number(value));
   }
 
   onEditOverlayClick(num?: NumPos, index?: number, ref?: ReferenceImage): void {
@@ -327,23 +460,45 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
 
   getSelectedModelResolutions(model?: any): ('1K' | '2K' | '4K')[] {
     const activeModel = model || this.getSelectedModelObject();
-    if (this.isExtendVideo() || this.isIngredientsToImage()) {
-      const smallest = activeModel?.capabilities?.supportedResolutions?.[0];
+    const all = activeModel?.capabilities?.supportedResolutions ?? [];
+
+    // Extending a video does drop to the lowest resolution. Editing an image
+    // does not: Nano Banana Pro and Nano Banana 2 both return full 2K and 4K
+    // with a reference image attached, verified against the live API. Pinning
+    // Ingredients to Image to the smallest option withheld resolutions the
+    // model would happily have produced.
+    if (this.isExtendVideo()) {
+      const smallest = all[0];
       return smallest ? [smallest] : [];
     }
-    return activeModel?.capabilities?.supportedResolutions ?? [];
+    return all;
   }
 
   getSelectedModelDurations(model?: any): number[] {
     const activeModel = model || this.getSelectedModelObject();
-    // only 'text to video' mode supports shorter durations
-    // resolutions above 1K support only longest duration
+    const all = activeModel?.capabilities?.supportedDurations ?? [];
+
+    // Veo only offers shorter lengths in text-to-video, and only at 1K;
+    // everywhere else it is pinned to the longest. That is a Veo constraint,
+    // not a universal one - applying it to every model left Gemini Omni
+    // stuck at 10s in every mode except text-to-video, even though it accepts
+    // its full 3-10s range regardless of mode.
+    if (!activeModel?.capabilities?.restrictsDurationOutsideTextToVideo) {
+      return all;
+    }
+
     if (!this.isTextToVideo() || this.selectedResolution() !== '1K') {
-      const longest = activeModel?.capabilities?.supportedDurations?.at(-1);
+      const longest = all.at(-1);
       return longest ? [longest] : [];
     }
 
-    return activeModel?.capabilities?.supportedDurations ?? [];
+    return all;
+  }
+
+  /** Output counts the active model allows, for the x1..xN selector. */
+  availableOutputs(): number[] {
+    const max = this.getSelectedModelObject()?.capabilities?.maxOutputs ?? 4;
+    return Array.from({length: Math.max(1, max)}, (_, i) => i + 1);
   }
 
   private updateSupportedResolutions(model?: any, modeChanged = false) {

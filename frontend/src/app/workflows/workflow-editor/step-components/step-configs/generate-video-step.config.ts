@@ -14,7 +14,10 @@
  * limitations under the License.
  */
 
-import {MODEL_CONFIGS} from '../../../../common/config/model-config';
+import {
+  GenerationMode,
+  MODEL_CONFIGS,
+} from '../../../../common/config/model-config';
 import {StepConfig} from '../generic-step/step.model';
 
 const model_options = MODEL_CONFIGS.filter(model => model.type === 'VIDEO').map(
@@ -23,6 +26,20 @@ const model_options = MODEL_CONFIGS.filter(model => model.type === 'VIDEO').map(
     label: model.viewValue,
   }),
 );
+
+/**
+ * Modes a workflow step can actually express.
+ *
+ * The generic step builds its mode dropdown from a model's `supportedModes`,
+ * but the workflow executor's request body has no field for a source video, so
+ * Extend Video and Concatenate Video would be dead options here even for models
+ * that support them interactively.
+ */
+export const WORKFLOW_VIDEO_MODES: GenerationMode[] = [
+  'Text to Video',
+  'Frames to Video',
+  'Ingredients to Video',
+];
 
 export const GENERATE_VIDEO_STEP_CONFIG: StepConfig = {
   type: 'generate-video',

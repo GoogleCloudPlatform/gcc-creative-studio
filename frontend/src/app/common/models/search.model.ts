@@ -32,6 +32,11 @@ export type ImagenRequest = {
   useBrandGuidelines: boolean;
   enhancePrompt?: boolean;
   googleSearch?: boolean;
+  /**
+   * Sampling temperature for Gemini image models. Undefined means the
+   * model's own default. Imagen and Gemini Omni do not accept it.
+   */
+  temperature?: number;
   resolution?: '1K' | '2K' | '4K';
 };
 
@@ -82,6 +87,18 @@ export type VeoRequest = {
   referenceVideo?: AssetReferenceDto | null;
   referenceAudio?: AssetReferenceDto | null;
   parentMediaItemId?: number | null;
+  /** Which clip of a multi-clip parent to continue editing. */
+  parentMediaIndex?: number;
+  /**
+   * A clip to modify. Distinct from sourceVideoAssetId, which extends a video
+   * and is not supported by Gemini Omni.
+   */
+  editSource?: AssetReferenceDto | null;
+  /**
+   * Strip audio from the clip being edited. Omni refuses to edit a clip
+   * containing speech when reference images are also supplied.
+   */
+  stripSourceAudio?: boolean;
   resolution?: '1K' | '2K' | '4K';
 };
 

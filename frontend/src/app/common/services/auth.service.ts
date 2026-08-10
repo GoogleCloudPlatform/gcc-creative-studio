@@ -19,7 +19,7 @@ import {Router} from '@angular/router';
 import {UserModel, UserRolesEnum} from '../models/user.model';
 import {HttpClient, HttpHeaders, HttpErrorResponse} from '@angular/common/http';
 import {environment} from '../../../environments/environment';
-import {Auth, IdTokenResult} from '@angular/fire/auth';
+import {Auth, IdTokenResult, authState} from '@angular/fire/auth';
 import {UserService} from '../services/user.service';
 import {
   GoogleAuthProvider,
@@ -27,7 +27,7 @@ import {
   UserCredential,
 } from '@angular/fire/auth';
 import {Observable, from, throwError, of} from 'rxjs';
-import {catchError, tap, map, switchMap} from 'rxjs/operators';
+import {catchError, tap, map, switchMap, take} from 'rxjs/operators';
 import {isPlatformBrowser} from '@angular/common';
 
 // Declare the 'google' global object from the Google Identity Services script
@@ -40,6 +40,21 @@ const LOGIN_ROUTE = '/login';
 interface FirebaseSession {
   token: string;
   expiry: number; // Expiration timestamp in milliseconds
+}
+
+/**
+ * Raised only when the session is genuinely unrecoverable and the user has to
+ * sign in again.
+ *
+ * The interceptor needs to tell this apart from a transient failure. It used to
+ * log out on any error that was not an HttpErrorResponse, which swept up
+ * network blips during token refresh and signed people out mid-session.
+ */
+export class SessionExpiredError extends Error {
+  constructor(message = 'Session expired and could not be refreshed.') {
+    super(message);
+    this.name = 'SessionExpiredError';
+  }
 }
 
 @Injectable({
@@ -237,16 +252,52 @@ export class AuthService {
    * 3. If silent refresh fails, it emits an error, signaling a required re-login.
    */
   getValidIdentityPlatformToken$(): Observable<string> {
-    // First, check our own session info which is loaded from localStorage.
-    // This is synchronous and tells us if we have a valid, non-expired token.
-    if (!this.isLoggedIn()) {
-      return of();
+    // Ask Firebase for the token whenever it is available. getIdToken()
+    // returns the cached value and refreshes it automatically as expiry
+    // approaches, which is what keeps a long session alive.
+    //
+    // This previously read only the local cache and never refreshed, so once
+    // the hour-long token lapsed every request failed. Worse, the no-session
+    // branch returned `of()` - an observable that completes without emitting -
+    // so requests were silently dropped: no response, no error, nothing for
+    // the caller to handle.
+    const currentUser = this.auth.currentUser;
+    if (currentUser) {
+      return this.freshTokenFor$(currentUser);
     }
 
-    // Fallback case: The Firebase Auth instance is not yet initialized, but we
-    // have a valid token from localStorage. We can use this for the current
-    // request. The next request will likely hit the ideal case above.
-    return of(this.firebaseIdToken!);
+    // Firebase restores the signed-in user asynchronously, so currentUser is
+    // briefly null right after a page load. Treating that as "no session"
+    // logs the user out on refresh whenever the cached token has aged out -
+    // exactly the case Firebase would have recovered from a moment later.
+    // Wait for the first definitive auth state instead of guessing.
+    return authState(this.auth).pipe(
+      take(1),
+      switchMap(user => {
+        if (user) {
+          return this.freshTokenFor$(user);
+        }
+        // Still nothing after Firebase settled: fall back to a cached token
+        // if one is somehow still valid, otherwise the session really is gone.
+        if (this.isLoggedIn()) {
+          return of(this.firebaseIdToken!);
+        }
+        return throwError(() => new SessionExpiredError());
+      }),
+    );
+  }
+
+  /** Gets a token for a user, refreshing it if it is close to expiry. */
+  private freshTokenFor$(user: {
+    getIdToken: (force?: boolean) => Promise<string>;
+  }): Observable<string> {
+    return from(user.getIdToken()).pipe(
+      tap((token: string) => this.cacheSession(token)),
+      catchError(error => {
+        console.error('Token refresh failed', error);
+        return throwError(() => new SessionExpiredError());
+      }),
+    );
   }
 
   private syncUserWithBackend$(token: string): Observable<UserModel> {
@@ -295,22 +346,40 @@ export class AuthService {
       });
   }
 
+  /**
+   * Whether a non-expired token is cached.
+   *
+   * This is a pure predicate. It used to navigate to the login route as a side
+   * effect, which meant any caller checking the session could bounce the user
+   * out of the page they were on - including the interceptor, on every request
+   * made after the cached token passed its expiry. Both route guards already
+   * redirect on their own, so nothing depended on that behaviour.
+   */
   isLoggedIn() {
     if (!isPlatformBrowser(this.platformId)) return false;
 
-    // Check if the in-memory token is valid
     const now = Date.now();
-    const isTokenValid = !!(
+    return !!(
       this.firebaseIdToken &&
       this.firebaseTokenExpiry &&
       this.firebaseTokenExpiry > now
     );
+  }
 
-    if (!isTokenValid && this.router.url !== LOGIN_ROUTE) {
-      void this.router.navigate([LOGIN_ROUTE]);
+  /** Stores a freshly issued token in memory and localStorage. */
+  private cacheSession(token: string): void {
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      this.firebaseIdToken = token;
+      this.firebaseTokenExpiry = payload.exp * 1000;
+      const session: FirebaseSession = {
+        token,
+        expiry: this.firebaseTokenExpiry!,
+      };
+      localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
+    } catch (e) {
+      console.error('Could not cache session token', e);
     }
-
-    return isTokenValid;
   }
 
   private loadSessionFromStorage(): void {

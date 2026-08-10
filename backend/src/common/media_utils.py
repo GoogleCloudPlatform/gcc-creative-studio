@@ -237,3 +237,43 @@ def get_video_dimensions(video_path: str) -> tuple[int, int]:
     width = data["streams"][0]["width"]
     height = data["streams"][0]["height"]
     return width, height
+
+
+def strip_audio(video_path: str, output_path: str) -> str | None:
+    """Writes a copy of a video with its audio track removed.
+
+    Gemini Omni refuses to edit a clip that carries speech when reference
+    images are also supplied: "The model is currently unable to process speech
+    edits." Every Omni-generated clip has a native audio track, so compositing
+    a character into one of its own outputs fails unless the audio is dropped
+    first.
+
+    The video stream is copied rather than re-encoded, so this is fast and
+    lossless.
+
+    Returns:
+        The path to the silent copy, or None on failure.
+
+    """
+    command = [
+        "ffmpeg",
+        "-y",
+        "-v",
+        "error",
+        "-i",
+        video_path,
+        "-an",  # drop audio
+        "-c:v",
+        "copy",  # no re-encode
+        output_path,
+    ]
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True)
+        logger.info("Stripped audio from %s", video_path)
+        return output_path
+    except FileNotFoundError:
+        logger.error("ffmpeg not found. Cannot strip audio.")
+        return None
+    except subprocess.CalledProcessError as e:
+        logger.error("Error stripping audio: %s", e.stderr)
+        return None

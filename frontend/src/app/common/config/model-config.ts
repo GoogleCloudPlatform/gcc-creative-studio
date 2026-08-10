@@ -22,6 +22,9 @@ export type GenerationMode =
   | 'Text to Video'
   | 'Frames to Video'
   | 'Ingredients to Video'
+  | 'Extend Video'
+  | 'Concatenate Video'
+  | 'Edit Video'
   | 'Text to Audio'
   | 'Multimodal to text';
 
@@ -37,6 +40,46 @@ export interface ModelCapability {
   supportsVoice?: boolean;
   supportsLanguage?: boolean;
   supportsSeed?: boolean;
+  /**
+   * Whether a closing frame can be supplied alongside the opening one.
+   * 'Frames to Video' covers both first-frame-only and first+last
+   * interpolation, but Gemini Omni supports only the former.
+   */
+  supportsLastFrame?: boolean;
+  /**
+   * Whether a video or audio clip can be supplied as a generation reference.
+   * Omni ignores audio references and mishandles short video references, so it
+   * must not advertise either.
+   */
+  supportsVideoReference?: boolean;
+  supportsAudioReference?: boolean;
+  /** Maximum clips a single request may produce. */
+  maxOutputs?: number;
+  /**
+   * Whether the model only offers its shorter durations in text-to-video at
+   * 1K, pinning every other mode to the longest length. True for Veo; Gemini
+   * Omni accepts its full range in any mode.
+   */
+  restrictsDurationOutsideTextToVideo?: boolean;
+  /**
+   * Whether <FIRST_FRAME> / <IMAGE_REF_N> tags in the prompt bind images to
+   * roles. Verified against Gemini Omni on Vertex: tagged prompts produced the
+   * requested pairing in 4 of 4 runs against a 1-in-4 untagged baseline. The
+   * binding is a strong bias rather than a guarantee.
+   */
+  supportsRoleTags?: boolean;
+  /**
+   * Whether an opening frame and reference images may be sent together. Veo
+   * rejects the combination ("Image and reference images cannot be both set.");
+   * Omni carries all images in one multimodal input, so pairing them anchors a
+   * shot to a frame while holding character identities.
+   */
+  supportsFrameWithReferences?: boolean;
+  /**
+   * Whether sampling temperature can be set. Gemini image models accept it;
+   * Imagen does not expose it, and Gemini Omni rejects it outright.
+   */
+  supportsTemperature?: boolean;
 }
 
 export interface GenerationModelConfig {
@@ -77,8 +120,13 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         '1:8',
         '8:1',
       ], // All
+      // Verified against the live API at 1K, 2K and 4K. It also accepts
+      // 512, which is not offered here: adding it would mean widening the
+      // resolution union across the UI and every backend Literal, including
+      // the shared workflow schemas.
       supportedResolutions: ['1K', '2K', '4K'],
       supportedDurations: [],
+      supportsTemperature: true,
       supportsGoogleSearch: true,
     },
   },
@@ -109,6 +157,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       ], // All
       supportedResolutions: ['1K'],
       supportedDurations: [],
+      supportsTemperature: true,
       supportsGoogleSearch: true,
     },
   },
@@ -133,8 +182,10 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         '5:4',
         '21:9',
       ], // All
+      // Verified against the live API at 1K, 2K and 4K. 512 is rejected.
       supportedResolutions: ['1K', '2K', '4K'],
       supportedDurations: [],
+      supportsTemperature: true,
       supportsGoogleSearch: true,
     },
   },
@@ -159,8 +210,12 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         '5:4',
         '21:9',
       ],
-      supportedResolutions: ['1K', '2K', '4K'],
+      // 1K only. The API accepts 2K and 4K without complaint and then
+      // returns 1024x1024 anyway, so offering them told users they
+      // were getting a resolution they never received.
+      supportedResolutions: ['1K'],
       supportedDurations: [],
+      supportsTemperature: true,
     },
   },
 
@@ -228,16 +283,33 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
     type: 'VIDEO',
     icon: 'layers',
     capabilities: {
+      // No 'Extend Video': Omni does not support video extension. It does
+      // support editing an existing clip, which is a different operation.
+      // 'Frames to Video' is opening-frame only (see supportsLastFrame).
       supportedModes: [
         'Text to Video',
         'Ingredients to Video',
         'Frames to Video',
+        'Edit Video',
       ],
-      maxReferenceImages: 3,
+      maxReferenceImages: 7,
       supportedAspectRatios: ['16:9', '9:16'],
       supportedResolutions: ['1K'],
-      supportedDurations: [4, 6, 8],
+      // 3-10s in 1s increments, unlike Veo's fixed set of lengths.
+      supportedDurations: [3, 4, 5, 6, 7, 8, 9, 10],
+      // Audio is always generated and is steered through the prompt, so there
+      // is no toggle and no audio reference input.
       supportsAudio: true,
+      supportsNegativePrompt: false,
+      supportsLastFrame: false,
+      // A video input belongs in Edit Video, not Ingredients. Reference videos
+      // under 3s are accepted by the schema but not processed correctly, and
+      // the supported way to combine a video with images is task=edit.
+      supportsVideoReference: false,
+      supportsAudioReference: false,
+      maxOutputs: 4,
+      supportsRoleTags: true,
+      supportsFrameWithReferences: true,
     },
   },
   {
@@ -250,12 +322,21 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         'Text to Video',
         'Ingredients to Video',
         'Frames to Video',
-      ], // Assuming ingredients = image-to-video
+        'Extend Video',
+        'Concatenate Video',
+      ],
       maxReferenceImages: 3,
       supportedAspectRatios: ['16:9', '9:16'],
       supportedResolutions: ['1K', '2K', '4K'],
+      // Veo offers fixed lengths, not a range: 5s and 7s are not valid.
       supportedDurations: [4, 6, 8],
       supportsAudio: true,
+      supportsNegativePrompt: true,
+      supportsLastFrame: true,
+      supportsVideoReference: false,
+      supportsAudioReference: false,
+      maxOutputs: 4,
+      restrictsDurationOutsideTextToVideo: true,
     },
   },
   {
@@ -268,12 +349,21 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         'Text to Video',
         'Ingredients to Video',
         'Frames to Video',
+        'Extend Video',
+        'Concatenate Video',
       ],
       maxReferenceImages: 3,
       supportedAspectRatios: ['16:9', '9:16'],
       supportedResolutions: ['1K', '2K'],
+      // Veo offers fixed lengths, not a range: 5s and 7s are not valid.
       supportedDurations: [4, 6, 8],
       supportsAudio: true,
+      supportsNegativePrompt: true,
+      supportsLastFrame: true,
+      supportsVideoReference: false,
+      supportsAudioReference: false,
+      maxOutputs: 4,
+      restrictsDurationOutsideTextToVideo: true,
     },
   },
   {
@@ -286,12 +376,21 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         'Text to Video',
         'Ingredients to Video',
         'Frames to Video',
+        'Extend Video',
+        'Concatenate Video',
       ],
       maxReferenceImages: 3,
       supportedAspectRatios: ['16:9', '9:16'],
       supportedResolutions: ['1K', '2K', '4K'],
+      // Veo offers fixed lengths, not a range: 5s and 7s are not valid.
       supportedDurations: [4, 6, 8],
       supportsAudio: true,
+      supportsNegativePrompt: true,
+      supportsLastFrame: true,
+      supportsVideoReference: false,
+      supportsAudioReference: false,
+      maxOutputs: 4,
+      restrictsDurationOutsideTextToVideo: true,
     },
   },
 
