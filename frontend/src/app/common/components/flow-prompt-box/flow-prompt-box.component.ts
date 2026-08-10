@@ -327,7 +327,7 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
 
   getSelectedModelResolutions(model?: any): ('1K' | '2K' | '4K')[] {
     const activeModel = model || this.getSelectedModelObject();
-    if (this.isExtendVideo() || this.isIngredientsToImage()) {
+    if (this.isExtendVideo()) {
       const smallest = activeModel?.capabilities?.supportedResolutions?.[0];
       return smallest ? [smallest] : [];
     }
