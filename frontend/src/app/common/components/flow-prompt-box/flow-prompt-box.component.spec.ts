@@ -20,6 +20,7 @@ import {MatSnackBar} from '@angular/material/snack-bar';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {MatIconTestingModule} from '@angular/material/icon/testing';
 import {By} from '@angular/platform-browser';
+import {MODEL_CONFIGS} from '../../config/model-config';
 
 describe('FlowPromptBoxComponent', () => {
   let component: FlowPromptBoxComponent;
@@ -197,6 +198,73 @@ describe('FlowPromptBoxComponent', () => {
       component.aspectRatioOptions = [];
       expect(component.getAspectRatioIcon('16:9')).toBe('crop_landscape');
       expect(component.getAspectRatioIcon('9:16')).toBe('crop_portrait');
+    });
+  });
+
+  describe('Resolution Support', () => {
+    const nanoBanana2 = MODEL_CONFIGS.find(
+      m => m.value === 'gemini-3.1-flash-image',
+    )!;
+    const nanoBanana2Lite = MODEL_CONFIGS.find(
+      m => m.value === 'gemini-3.1-flash-lite-image',
+    )!;
+    const veo31 = MODEL_CONFIGS.find(m => m.value === 'veo-3.1-generate-001')!;
+
+    beforeEach(() => {
+      component.generationModels = MODEL_CONFIGS;
+    });
+
+    it('should support 1K, 2K, and 4K resolutions for Nano Banana 2 in Ingredients to Image mode', () => {
+      component.selectedGenerationModel = nanoBanana2.viewValue;
+      component.mode = 'Ingredients to Image';
+
+      const resolutions = component.getSelectedModelResolutions();
+      expect(resolutions).toEqual(['1K', '2K', '4K']);
+      expect(component.supportedResolutions()).toEqual(['1K', '2K', '4K']);
+      expect(component.hasResolutionOptions()).toBeTrue();
+    });
+
+    it('should support only 1K for Nano Banana 2 Lite in Ingredients to Image mode', () => {
+      component.selectedGenerationModel = nanoBanana2Lite.viewValue;
+      component.mode = 'Ingredients to Image';
+
+      const resolutions = component.getSelectedModelResolutions();
+      expect(resolutions).toEqual(['1K']);
+      expect(component.supportedResolutions()).toEqual(['1K']);
+    });
+
+    it('should restrict resolution to 1K for Extend Video mode', () => {
+      component.selectedGenerationModel = veo31.viewValue;
+      component.mode = 'Extend Video';
+
+      const resolutions = component.getSelectedModelResolutions();
+      expect(resolutions).toEqual(['1K']);
+      expect(component.supportedResolutions()).toEqual(['1K']);
+    });
+
+    it('should update selectedResolution and emit resolutionChanged on selectResolution', () => {
+      component.selectedGenerationModel = nanoBanana2.viewValue;
+      component.mode = 'Ingredients to Image';
+      spyOn(component.resolutionChanged, 'emit');
+
+      component.selectResolution('2K');
+      expect(component.selectedResolution()).toBe('2K');
+      expect(component.resolutionChanged.emit).toHaveBeenCalledWith('2K');
+
+      component.selectResolution('4K');
+      expect(component.selectedResolution()).toBe('4K');
+      expect(component.resolutionChanged.emit).toHaveBeenCalledWith('4K');
+    });
+
+    it('should not select an unsupported resolution', () => {
+      component.selectedGenerationModel = nanoBanana2Lite.viewValue;
+      component.mode = 'Ingredients to Image';
+      component.selectedResolution.set('1K');
+      spyOn(component.resolutionChanged, 'emit');
+
+      component.selectResolution('4K');
+      expect(component.selectedResolution()).toBe('1K');
+      expect(component.resolutionChanged.emit).not.toHaveBeenCalled();
     });
   });
 });

@@ -240,6 +240,16 @@ describe('HomeComponent', () => {
     expect(mockImageStateService.updateState).toHaveBeenCalled();
   });
 
+  it('should update searchRequest and save state when selecting a resolution', () => {
+    component.onResolutionChanged('2K');
+    expect(component.searchRequest.resolution).toBe('2K');
+    expect(mockImageStateService.updateState).toHaveBeenCalled();
+
+    component.onResolutionChanged('4K');
+    expect(component.searchRequest.resolution).toBe('4K');
+    expect(mockImageStateService.updateState).toHaveBeenCalled();
+  });
+
   describe('auto aspect ratio for Ingredients to Image mode', () => {
     it('should disable auto aspect ratio in Text to Image mode', () => {
       component.onModeChanged('Text to Image');
