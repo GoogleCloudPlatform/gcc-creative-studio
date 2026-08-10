@@ -75,6 +75,11 @@ export interface ModelCapability {
    * shot to a frame while holding character identities.
    */
   supportsFrameWithReferences?: boolean;
+  /**
+   * Whether sampling temperature can be set. Gemini image models accept it;
+   * Imagen does not expose it, and Gemini Omni rejects it outright.
+   */
+  supportsTemperature?: boolean;
 }
 
 export interface GenerationModelConfig {
@@ -121,6 +126,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       // the shared workflow schemas.
       supportedResolutions: ['1K', '2K', '4K'],
       supportedDurations: [],
+      supportsTemperature: true,
       supportsGoogleSearch: true,
     },
   },
@@ -151,6 +157,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       ], // All
       supportedResolutions: ['1K'],
       supportedDurations: [],
+      supportsTemperature: true,
       supportsGoogleSearch: true,
     },
   },
@@ -178,6 +185,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       // Verified against the live API at 1K, 2K and 4K. 512 is rejected.
       supportedResolutions: ['1K', '2K', '4K'],
       supportedDurations: [],
+      supportsTemperature: true,
       supportsGoogleSearch: true,
     },
   },
@@ -207,6 +215,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       // were getting a resolution they never received.
       supportedResolutions: ['1K'],
       supportedDurations: [],
+      supportsTemperature: true,
     },
   },
 
