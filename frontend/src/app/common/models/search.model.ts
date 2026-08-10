@@ -32,6 +32,11 @@ export type ImagenRequest = {
   useBrandGuidelines: boolean;
   enhancePrompt?: boolean;
   googleSearch?: boolean;
+  /**
+   * Sampling temperature for Gemini image models. Undefined means the
+   * model's own default. Imagen and Gemini Omni do not accept it.
+   */
+  temperature?: number;
   resolution?: '1K' | '2K' | '4K';
 };
 

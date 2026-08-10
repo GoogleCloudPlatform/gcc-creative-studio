@@ -149,6 +149,7 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   @Output() resetClicked = new EventEmitter<void>();
   @Output() openAudioSelectorForReference = new EventEmitter<void>();
   @Output() clearReferenceAudio = new EventEmitter<Event>();
+  @Output() temperatureChanged = new EventEmitter<number | null>();
 
   @Input() image1Preview: string | null = null;
   @Input() image2Preview: string | null = null;
@@ -159,6 +160,8 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   @Input() editSource: ReferenceVideo | null = null;
   @Input() stripSourceAudio = true;
   @Input() referenceAudio: any | null = null;
+  /** null means "use the model's default" rather than a chosen value. */
+  @Input() temperature: number | null = null;
 
   @ViewChild('promptInput') promptInput?: ElementRef<HTMLTextAreaElement>;
   @ViewChild('modeTrigger') modeTrigger!: ElementRef;
@@ -297,6 +300,16 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
       textarea.focus();
       textarea.setSelectionRange(caret, caret);
     });
+  }
+
+  /** Whether the active model accepts a sampling temperature. */
+  get supportsTemperature(): boolean {
+    return !!this.getSelectedModelObject()?.capabilities?.supportsTemperature;
+  }
+
+  onTemperatureInput(event: Event): void {
+    const value = (event.target as HTMLInputElement).value;
+    this.temperatureChanged.emit(value === '' ? null : Number(value));
   }
 
   onEditOverlayClick(num?: NumPos, index?: number, ref?: ReferenceImage): void {
