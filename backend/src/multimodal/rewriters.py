@@ -166,7 +166,7 @@ Example of a General Prompt for you to replace with the information received:
   }
 }
 
-IMPORTANT!! Example 3 of prompts if no styling properties ('style', 'color_and_tone', 'lighting' and 'composition') received or empty then 'visual_style' should return emtpy:
+IMPORTANT!! Example 3 of prompts if no styling properties ('style', 'color_and_tone', 'lighting' and 'composition') received or empty then 'visual_style' should return empty:
 {
   "metadata": {
     "prompt_name": "Abstract Landscape",
@@ -387,7 +387,7 @@ Example 3 of prompts (Vertical 9:16 video for Gemini Omni Flash):
 }
 
 
-Example 4 of prompts if no styling properties ('style', 'color_and_tone', 'lighting' and 'composition') received or empty then 'visual_style' should return emtpy:
+Example 4 of prompts if no styling properties ('style', 'color_and_tone', 'lighting' and 'composition') received or empty then 'visual_style' should return empty:
 {
   "metadata": {
     "prompt_name": "Simple Scene",
