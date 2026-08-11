@@ -280,6 +280,20 @@ describe('HomeComponent', () => {
       expect(component.searchRequest.aspectRatio).not.toBe('auto');
       expect(component.searchRequest.aspectRatio).toBe('1:1');
     });
+
+    it('should fallback to a compatible model (Nano Banana 2) when switching to Video to Image mode from Nano Banana 2 Lite', () => {
+      const nanoBanana2Lite = component.generationModels.find(
+        m => m.value === 'gemini-3.1-flash-lite-image',
+      )!;
+      component.selectModel(nanoBanana2Lite);
+      expect(component.selectedGenerationModel).toBe('Nano Banana 2 Lite');
+
+      component.onModeChanged('Video to Image');
+      expect(component.selectedGenerationModel).toBe('Nano Banana 2');
+      expect(component.selectedGenerationModelObject?.value).toBe(
+        'gemini-3.1-flash-image',
+      );
+    });
   });
 
   it('should toggle style and save state when selecting an image style', () => {

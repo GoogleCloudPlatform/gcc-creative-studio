@@ -128,6 +128,41 @@ describe('FlowPromptBoxComponent', () => {
       closeBtn.triggerEventHandler('click', {stopPropagation: () => {}});
       expect(component.clearExternalUrl.emit).toHaveBeenCalled();
     });
+
+    it('should disable Nano Banana 2 Lite and enable Nano Banana 2 in Video to Image mode', () => {
+      component.generationModels = MODEL_CONFIGS;
+      component.isSettingsMenuOpen.set(true);
+      component.isSettingsDropdownOpen.set('model');
+      fixture.detectChanges();
+
+      const modelButtons = fixture.debugElement.queryAll(
+        By.css('div.max-h-80 button'),
+      );
+      const nanoBanana2Btn = modelButtons.find(
+        btn =>
+          btn.nativeElement.textContent.trim().startsWith('Nano Banana 2') &&
+          !btn.nativeElement.textContent.includes('Lite') &&
+          !btn.nativeElement.textContent.includes('Pro'),
+      );
+      const nanoBanana2LiteBtn = modelButtons.find(btn =>
+        btn.nativeElement.textContent.includes('Nano Banana 2 Lite'),
+      );
+
+      expect(nanoBanana2Btn?.nativeElement.disabled).toBeFalse();
+      expect(nanoBanana2LiteBtn?.nativeElement.disabled).toBeTrue();
+    });
+
+    it('should not allow selecting Nano Banana 2 Lite in Video to Image mode', () => {
+      component.generationModels = MODEL_CONFIGS;
+      const nanoBanana2Lite = MODEL_CONFIGS.find(
+        m => m.value === 'gemini-3.1-flash-lite-image',
+      )!;
+      spyOn(component.modelSelected, 'emit');
+
+      component.selectInternalModel(nanoBanana2Lite);
+
+      expect(component.modelSelected.emit).not.toHaveBeenCalled();
+    });
   });
 
   describe('Edit Overlay Visibility', () => {

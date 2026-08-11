@@ -112,7 +112,6 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportedResolutions: ['1K'],
       supportedDurations: [],
       supportsGoogleSearch: true,
-      supportsVideoReference: true,
     },
   },
   {
