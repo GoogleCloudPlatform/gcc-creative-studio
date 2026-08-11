@@ -106,8 +106,8 @@ class CreateVeoDto(BaseDto):
     duration_seconds: int = Field(
         default=8,
         ge=1,
-        le=8,
-        description="Duration in seconds for the videos to generate (between 1 and 8 secs).",
+        le=10,
+        description="Duration in seconds for the videos to generate (between 1 and 10 secs).",
     )
     start_image_asset_id: AssetReferenceDto | None = Field(
         default=None,

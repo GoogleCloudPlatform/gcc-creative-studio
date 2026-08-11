@@ -169,3 +169,24 @@ def test_validate_resolution_by_model():
         generation_model=GenerationModelEnum.VEO_3_1_GENERATE_001,
         resolution="4K",
     )
+
+
+def test_validate_duration_seconds():
+    # 10s is valid (e.g. for Gemini Omni)
+    dto = CreateVeoDto(
+        prompt="Test",
+        workspace_id=1,
+        generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+        duration_seconds=10,
+    )
+    assert dto.duration_seconds == 10
+
+    # 11s exceeds max limit
+    with pytest.raises(ValidationError) as exc_info:
+        CreateVeoDto(
+            prompt="Test",
+            workspace_id=1,
+            generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+            duration_seconds=11,
+        )
+    assert "less than or equal to 10" in str(exc_info.value)
