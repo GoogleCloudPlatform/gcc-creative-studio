@@ -219,12 +219,11 @@ class GeminiService:
             if value:  # Ensure value is not None or empty
                 formatted_key = key.replace("_", " ").title()
                 if key == "aspect_ratio":
-                    if value == "9:16":
-                        formatted_value = "9:16 (Portrait / Vertical format)"
-                    elif value == "16:9":
-                        formatted_value = "16:9 (Landscape / Widescreen format)"
-                    else:
-                        formatted_value = str(value)
+                    ratio_labels = {
+                        "9:16": "9:16 (Portrait / Vertical format)",
+                        "16:9": "16:9 (Landscape / Widescreen format)",
+                    }
+                    formatted_value = ratio_labels.get(value, str(value))
                 else:
                     formatted_value = str(value)
                 attributes.append(f"- {formatted_key}: {formatted_value}")
