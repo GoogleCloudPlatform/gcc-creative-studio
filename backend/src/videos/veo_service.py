@@ -621,6 +621,16 @@ def _process_video_in_background(
                             permanent_thumbnail_gcs_uris = []
                             interaction_details = []
 
+                            duration_str = (
+                                f"{request_dto.duration_seconds}s"
+                                if request_dto.duration_seconds
+                                else "8s"
+                            )
+                            omni_response_format = {
+                                "type": "video",
+                                "duration": duration_str,
+                            }
+
                             num_outputs = 1
                             worker_logger.info(
                                 f"Queueing {num_outputs} Gemini Omni generation interactions."
@@ -638,12 +648,14 @@ def _process_video_in_background(
                                                 model=model_name_for_api,
                                                 previous_interaction_id=interaction1_id,
                                                 input=turn2_input,
+                                                response_format=omni_response_format,
                                             )
                                         else:
                                             interaction = await asyncio.to_thread(
                                                 vertex_client.interactions.create,
                                                 model=model_name_for_api,
                                                 input=t1_inputs,
+                                                response_format=omni_response_format,
                                             )
                                         break
                                     except Exception as e:
