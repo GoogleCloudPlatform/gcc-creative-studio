@@ -1353,6 +1353,11 @@ class TestBackgroundWorkers:
 
             mock_media_repo.update.assert_called_once()
             mock_vertex_client.interactions.create.assert_called_once()
+            call_kwargs = mock_vertex_client.interactions.create.call_args[1]
+            assert call_kwargs["response_format"] == {
+                "type": "video",
+                "duration": "5s",
+            }
 
     @patch("src.database.WorkerDatabase")
     @patch("src.videos.veo_service.GenAIModelSetup.get_omni_client")
@@ -1453,6 +1458,11 @@ class TestBackgroundWorkers:
 
             mock_media_repo.update.assert_called_once()
             mock_vertex_client.interactions.create.assert_called_once()
+            call_kwargs = mock_vertex_client.interactions.create.call_args[1]
+            assert call_kwargs["response_format"] == {
+                "type": "video",
+                "duration": "8s",
+            }
 
     @patch("src.database.WorkerDatabase")
     @patch("src.videos.veo_service.GenAIModelSetup.get_omni_client")
@@ -1620,6 +1630,10 @@ class TestBackgroundWorkers:
                 for item in input_list
                 if item.get("type") == "text"
             )
+            assert call_kwargs["response_format"] == {
+                "type": "video",
+                "duration": "4s",
+            }
             update_dict = mock_media_repo.update.call_args[0][1]
             assert update_dict["status"] == JobStatusEnum.COMPLETED
             assert update_dict["gcs_uris"] == [
