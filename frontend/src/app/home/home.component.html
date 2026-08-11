@@ -376,7 +376,7 @@
       <!-- Prompt Section -->
       <div class="lg:col-span-4 flex flex-col justify-start items-center gap-4 w-full">
         <app-flow-prompt-box class="w-full max-w-2xl block" [prompt]="searchRequest.prompt"
-          [aspectRatio]="selectedAspectRatio" [outputs]="searchRequest.numberOfMedia || 4" [mode]="currentMode"
+          [aspectRatio]="selectedAspectRatio" [outputs]="searchRequest.numberOfMedia || 1" [mode]="currentMode"
           [modes]="modes" [aspectRatioOptions]="aspectRatioOptions" [generationModels]="generationModels"
           [isLoading]="isImageGenerating" [selectedGenerationModel]="selectedGenerationModel"
           [referenceImages]="referenceImages" [resolution]="searchRequest.resolution"

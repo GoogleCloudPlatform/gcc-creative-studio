@@ -678,3 +678,64 @@ async def test_generate_multimodal_http_exception_propagation(gemini_service):
         await gemini_service.generate_multimodal(request)
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == "Propagated bad request"
+
+
+@pytest.mark.anyio
+async def test_enhance_prompt_from_dto_video_omni_flash_portrait(
+    gemini_service,
+):
+    from src.videos.dto.create_veo_dto import CreateVeoDto
+    from src.common.base_dto import GenerationModelEnum, AspectRatioEnum
+
+    dto = CreateVeoDto(
+        prompt="A fashionable model in the city",
+        generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+        aspect_ratio=AspectRatioEnum.RATIO_9_16,
+        resolution="1K",
+        workspace_id=1,
+    )
+
+    with patch.object(gemini_service, "generate_structured_prompt") as mock_gen:
+        mock_gen.return_value = '{"metadata": {"target_model": "gemini-omni-flash-preview"}, "visual_style": {"resolution_and_format": "720p, 9:16 portrait vertical format"}}'
+
+        res = await gemini_service.enhance_prompt_from_dto(
+            dto, PromptTargetEnum.VIDEO
+        )
+        assert res is not None
+        mock_gen.assert_called_once()
+        call_args = mock_gen.call_args[1]
+        assert (
+            "9:16 (Portrait / Vertical format)" in call_args["original_prompt"]
+        )
+        assert "gemini-omni-flash-preview" in call_args["original_prompt"]
+
+
+@pytest.mark.anyio
+async def test_enhance_prompt_from_dto_video_omni_flash_landscape(
+    gemini_service,
+):
+    from src.videos.dto.create_veo_dto import CreateVeoDto
+    from src.common.base_dto import GenerationModelEnum, AspectRatioEnum
+
+    dto = CreateVeoDto(
+        prompt="A car driving along the coast",
+        generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+        aspect_ratio=AspectRatioEnum.RATIO_16_9,
+        resolution="1K",
+        workspace_id=1,
+    )
+
+    with patch.object(gemini_service, "generate_structured_prompt") as mock_gen:
+        mock_gen.return_value = '{"metadata": {"target_model": "gemini-omni-flash-preview"}, "visual_style": {"resolution_and_format": "720p, 16:9 widescreen"}}'
+
+        res = await gemini_service.enhance_prompt_from_dto(
+            dto, PromptTargetEnum.VIDEO
+        )
+        assert res is not None
+        mock_gen.assert_called_once()
+        call_args = mock_gen.call_args[1]
+        assert (
+            "16:9 (Landscape / Widescreen format)"
+            in call_args["original_prompt"]
+        )
+        assert "gemini-omni-flash-preview" in call_args["original_prompt"]

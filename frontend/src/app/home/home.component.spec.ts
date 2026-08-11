@@ -60,7 +60,7 @@ describe('HomeComponent', () => {
     resolution: '4K',
     style: null,
     colorAndTone: null,
-    numberOfMedia: 4,
+    numberOfMedia: 1,
     composition: null,
     useBrandGuidelines: false,
     mode: 'Text to Image',
@@ -136,7 +136,7 @@ describe('HomeComponent', () => {
       prompt: '',
       generationModel: 'gemini-3-pro-image',
       aspectRatio: '1:1',
-      numberOfMedia: 4,
+      numberOfMedia: 1,
       style: null,
       lighting: null,
       colorAndTone: null,
@@ -237,6 +237,16 @@ describe('HomeComponent', () => {
     const ratio = {value: '16:9', viewValue: '16:9 \n Horizontal'};
     component.selectAspectRatio(ratio);
     expect(component.searchRequest.aspectRatio).toBe('16:9');
+    expect(mockImageStateService.updateState).toHaveBeenCalled();
+  });
+
+  it('should update searchRequest and save state when selecting a resolution', () => {
+    component.onResolutionChanged('2K');
+    expect(component.searchRequest.resolution).toBe('2K');
+    expect(mockImageStateService.updateState).toHaveBeenCalled();
+
+    component.onResolutionChanged('4K');
+    expect(component.searchRequest.resolution).toBe('4K');
     expect(mockImageStateService.updateState).toHaveBeenCalled();
   });
 
