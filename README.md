@@ -135,6 +135,7 @@ Regarding the dependencies of the APIs and Services we’ll use (the Google APIs
 - `cloudbuild.googleapis.com` (Cloud Build)
 - `cloudfunctions.googleapis.com` (Cloud Functions)
 - `compute.googleapis.com` (Compute Engine)
+- `drive.googleapis.com` (Google Drive API)
 - `firebase.googleapis.com` (Firebase)
 - `sqladmin.googleapis.com` (Cloud SQL)
 - `iamcredentials.googleapis.com` (IAM Service API)

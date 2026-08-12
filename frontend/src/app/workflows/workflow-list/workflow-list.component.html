@@ -23,7 +23,6 @@
       </div>
       <studio-button variant="cta" size="medium"
         mat-flat-button
-        *ngIf="authService.isUserAdmin() || authService.isUserWorkflows()"
         (click)="createNewWorkflow()"
       >
         <mat-icon>add</mat-icon>
@@ -94,10 +93,7 @@
         </div>
 
         <!-- Actions Right (Always visible or hover? Screenshot shows them clearly) -->
-        <div
-          class="actions-group"
-          *ngIf="authService.isUserAdmin() || authService.isUserWorkflows()"
-        >
+        <div class="actions-group">
           <button
             mat-icon-button
             (click)="$event.stopPropagation(); navigateToHistory(wf)"

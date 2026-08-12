@@ -146,6 +146,10 @@ export class MediaDetailComponent implements OnDestroy {
     );
   }
 
+  get isYoutubeVideo(): boolean {
+    return (this.mediaItem as any)?.metadata?.assetType === 'youtube_video';
+  }
+
   constructor(
     private route: ActivatedRoute,
     private router: Router,
@@ -313,7 +317,7 @@ export class MediaDetailComponent implements OnDestroy {
             this._snackBar,
             'Template created successfully!',
           );
-          void this.router.navigate(['/templates/edit', newTemplate.id]);
+          void this.router.navigate(['/admin/media-templates']);
         },
         error: err => {
           this.loadingService.hide();

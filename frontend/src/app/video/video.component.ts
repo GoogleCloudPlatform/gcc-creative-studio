@@ -137,7 +137,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
     prompt: '',
     generationModel: 'gemini-omni-flash-preview',
     aspectRatio: '16:9',
-    numberOfMedia: 4,
+    numberOfMedia: 1,
     style: null,
     lighting: null,
     colorAndTone: null,
@@ -242,24 +242,6 @@ export class VideoComponent implements OnInit, AfterViewInit {
       ),
     );
 
-    this.matIconRegistry
-      .addSvgIcon(
-        'content-type-icon',
-        this.setPath(`${this.path}/content-type-icon.svg`),
-      )
-      .addSvgIcon(
-        'lighting-icon',
-        this.setPath(`${this.path}/lighting-icon.svg`),
-      )
-      .addSvgIcon(
-        'number-of-images-icon',
-        this.setPath(`${this.path}/number-of-images-icon.svg`),
-      )
-      .addSvgIcon(
-        'gemini-spark-icon',
-        this.setPath(`${this.path}/gemini-spark-icon.svg`),
-      );
-
     const navigation = this.router.getCurrentNavigation();
     this.templateParams =
       navigation?.extras.state?.['templateParams'] ||
@@ -330,7 +312,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.searchRequest.lighting = state.lighting;
     this.searchRequest.numberOfMedia =
       state.model === 'gemini-omni-flash-preview' ? 1 : state.numberOfMedia;
-    this.selectedOutputs.set(this.searchRequest.numberOfMedia || 2);
+    this.selectedOutputs.set(this.searchRequest.numberOfMedia || 1);
     this.searchRequest.durationSeconds = state.durationSeconds;
     this.searchRequest.composition = state.composition;
     this.searchRequest.generateAudio = state.generateAudio;
@@ -372,12 +354,6 @@ export class VideoComponent implements OnInit, AfterViewInit {
         }
       }, 1500);
     }
-  }
-
-  private path = '../../assets/images';
-
-  private setPath(url: string): SafeResourceUrl {
-    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   }
 
   selectModel(model: {value: string; viewValue: string}): void {
@@ -819,7 +795,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
       prompt: '',
       generationModel: 'veo-3.0-generate-001',
       aspectRatio: '16:9',
-      numberOfMedia: 4,
+      numberOfMedia: 1,
       style: null,
       lighting: null,
       colorAndTone: null,
@@ -1803,7 +1779,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
   // Selected values
   selectedMode = signal<string>('Text to Video');
   selectedNewAspectRatio = signal<string>('Landscape (16:9)');
-  selectedOutputs = signal<number>(2);
+  selectedOutputs = signal<number>(1);
   selectedModel = signal<string>('Veo 3.1 - Fast');
   selectedPreset = signal<string>('');
 

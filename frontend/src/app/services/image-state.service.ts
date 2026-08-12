@@ -17,6 +17,7 @@
 import {Injectable} from '@angular/core';
 import {BehaviorSubject, Observable} from 'rxjs';
 import {MODEL_CONFIGS} from '../common/config/model-config';
+import {ReferenceVideo} from '../common/models/search.model';
 
 const STORAGE_KEY = 'image_state';
 
@@ -36,6 +37,8 @@ export interface ImageState {
   useBrandGuidelines: boolean;
   enhancePrompt: boolean;
   mode: string;
+  referenceVideo: ReferenceVideo | null;
+  externalUrl: string | null;
 }
 
 @Injectable({
@@ -58,11 +61,13 @@ export class ImageStateService {
       resolution: '1K',
       style: null,
       colorAndTone: null,
-      numberOfMedia: 4,
+      numberOfMedia: 1,
       composition: null,
       useBrandGuidelines: false,
       enhancePrompt: false,
       mode: 'Text to Image',
+      referenceVideo: null,
+      externalUrl: null,
     };
 
     let savedState: ImageState | null = null;
@@ -82,7 +87,13 @@ export class ImageStateService {
               loadedModel = this.initialState.model;
             }
 
-            savedState = {...this.initialState, ...parsed, model: loadedModel};
+            savedState = {
+              ...this.initialState,
+              ...parsed,
+              model: loadedModel,
+              referenceVideo: null,
+              externalUrl: null,
+            };
           }
         }
       } catch (e) {
@@ -102,7 +113,11 @@ export class ImageStateService {
     this.state.next(updated);
     if (typeof localStorage !== 'undefined') {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+        // Don't save reference files to localStorage
+        const partialState: Partial<ImageState> = {...updated};
+        delete partialState.referenceVideo;
+        delete partialState.externalUrl;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(partialState));
       } catch (e) {
         console.error('Failed to save image state to localStorage', e);
       }

@@ -22,9 +22,9 @@ class SourceAssetResponseDto(SourceAssetModel):
     temporary, accessible URL.
     """
 
-    presigned_url: str
-    presigned_original_url: str
-    presigned_thumbnail_url: str
+    presigned_url: str | None = None
+    presigned_original_url: str | None = None
+    presigned_thumbnail_url: str | None = None
     user_email: str | None = None
     user_picture: str | None = None
     tags: list[TagModel] | None = None

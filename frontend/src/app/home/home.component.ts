@@ -46,8 +46,10 @@ import {
 } from '../common/config/model-config';
 import {MediaItem} from '../common/models/media-item.model';
 import {
+  AssetReferenceDto,
   ImagenRequest,
   ReferenceImage,
+  ReferenceVideo,
   SourceMediaItemLink,
 } from '../common/models/search.model';
 import {
@@ -67,6 +69,8 @@ import {
   handleInfoSnackbar,
   handleSuccessSnackbar,
 } from '../utils/handleMessageSnackbar';
+import {YouTubeInputComponent} from '../common/components/youtube-input-dialog/youtube-input-dialog.component';
+import {extractYouTubeVideoId} from '../utils/youtube.utils';
 
 @Component({
   selector: 'app-home',
@@ -83,6 +87,8 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
   referenceImages: ReferenceImage[] = [];
   sourceMediaItems: (SourceMediaItemLink | null)[] = [];
   activeWorkspaceId$: Observable<number | null>;
+  referenceVideo: ReferenceVideo | null = null;
+  externalUrl: string | null = null;
 
   @HostListener('window:keydown.control.enter', ['$event'])
   handleCtrlEnter(event: Event) {
@@ -99,7 +105,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     prompt: '',
     generationModel: 'gemini-3.1-flash-lite-image',
     aspectRatio: '1:1',
-    numberOfMedia: 4,
+    numberOfMedia: 1,
     style: null,
     lighting: null,
     colorAndTone: null,
@@ -118,6 +124,11 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
       value: 'Ingredients to Image',
       icon: 'layers',
       label: 'Ingredients to Image',
+    },
+    {
+      value: 'Video to Image',
+      icon: 'movie',
+      label: 'Video to Image',
     },
   ];
   currentMode = 'Text to Image';
@@ -140,6 +151,12 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     disabled: boolean;
     icon: string;
   }[] = [
+    {
+      value: 'auto',
+      viewValue: 'Auto \n Dynamic',
+      disabled: false,
+      icon: 'hdr_auto',
+    },
     {
       value: '1:1',
       viewValue: '1:1 \n Square',
@@ -225,7 +242,9 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
       icon: 'crop_16_9',
     },
   ];
-  selectedAspectRatio = this.aspectRatioOptions[0].viewValue;
+  selectedAspectRatio =
+    this.aspectRatioOptions.find(r => r.value === '1:1')?.viewValue ||
+    this.aspectRatioOptions[0].viewValue;
   imageStyles = [
     'Cinematic',
     'Fantasy',
@@ -307,32 +326,6 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     private sourceAssetService: SourceAssetService,
     @Inject(PLATFORM_ID) private platformId: Object,
   ) {
-    this.matIconRegistry
-      .addSvgIcon(
-        'content-type-icon',
-        this.setPath(`${this.path}/content-type-icon.svg`),
-      )
-      .addSvgIcon(
-        'lighting-icon',
-        this.setPath(`${this.path}/lighting-icon.svg`),
-      )
-      .addSvgIcon(
-        'number-of-images-icon',
-        this.setPath(`${this.path}/number-of-images-icon.svg`),
-      )
-      .addSvgIcon(
-        'gemini-spark-icon',
-        this.setPath(`${this.path}/gemini-spark-icon.svg`),
-      )
-      .addSvgIcon(
-        'white-gemini-spark-icon',
-        this.setPath(`${this.path}/white-gemini-spark-icon.svg`),
-      )
-      .addSvgIcon(
-        'mobile-white-gemini-spark-icon',
-        this.setPath(`${this.path}/mobile-white-gemini-spark-icon.svg`),
-      );
-
     const navigation = this.router.getCurrentNavigation();
     const remixState = navigation?.extras.state?.['remixState'];
     const sourceAssets = navigation?.extras.state?.[
@@ -364,12 +357,6 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
         }
       }
     });
-  }
-
-  private path = '../../assets/images';
-
-  private setPath(url: string): SafeResourceUrl {
-    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   }
 
   ngAfterViewInit(): void {
@@ -437,6 +424,8 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
         this.watermarkOptions.find(o => o.value === state.watermark)
           ?.viewValue || 'No';
       this.service.imagePrompt = state.prompt;
+      this.referenceVideo = state.referenceVideo;
+      this.externalUrl = state.externalUrl;
     });
   }
 
@@ -457,6 +446,8 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
       useBrandGuidelines: this.searchRequest.useBrandGuidelines,
       enhancePrompt: this.searchRequest.enhancePrompt || false,
       mode: this.currentMode,
+      referenceVideo: this.referenceVideo,
+      externalUrl: this.externalUrl,
     });
   }
 
@@ -516,20 +507,59 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
   private applyModelSettings(model: GenerationModelConfig) {
     const capabilities = model.capabilities;
 
-    // Enable/Disable aspect ratios based on capabilities
+    // Enable/Disable aspect ratios based on capabilities and mode
     this.aspectRatioOptions.forEach(r => {
-      r.disabled = !capabilities.supportedAspectRatios.includes(r.value);
+      if (r.value === 'auto') {
+        r.disabled =
+          this.currentMode !== 'Ingredients to Image' ||
+          !model.value.startsWith('gemini-');
+      } else {
+        r.disabled = !capabilities.supportedAspectRatios.includes(r.value);
+      }
     });
 
-    // If current aspect ratio is not supported, switch to the first supported one (usually 1:1)
-    if (
-      !capabilities.supportedAspectRatios.includes(
-        this.searchRequest.aspectRatio,
-      )
-    ) {
-      const firstSupported = this.aspectRatioOptions.find(r => !r.disabled);
+    // If current aspect ratio is not supported or disabled, switch to the first supported one
+    const currentOption = this.aspectRatioOptions.find(
+      r => r.value === this.searchRequest.aspectRatio,
+    );
+    if (!currentOption || currentOption.disabled) {
+      const defaultOption =
+        this.currentMode === 'Ingredients to Image'
+          ? this.aspectRatioOptions.find(r => r.value === 'auto' && !r.disabled)
+          : undefined;
+      const firstSupported =
+        defaultOption || this.aspectRatioOptions.find(r => !r.disabled);
       if (firstSupported) {
         this.selectAspectRatio(firstSupported);
+      }
+    }
+  }
+
+  private updateAspectRatioForMode(previousMode: string, newMode: string) {
+    if (this.selectedGenerationModelObject) {
+      this.applyModelSettings(this.selectedGenerationModelObject);
+    }
+
+    if (newMode === 'Ingredients to Image') {
+      if (
+        previousMode !== 'Ingredients to Image' ||
+        this.searchRequest.aspectRatio === 'auto'
+      ) {
+        const autoOption = this.aspectRatioOptions.find(
+          r => r.value === 'auto' && !r.disabled,
+        );
+        if (autoOption) {
+          this.selectAspectRatio(autoOption);
+        }
+      }
+    } else {
+      if (this.searchRequest.aspectRatio === 'auto') {
+        const firstSupported = this.aspectRatioOptions.find(
+          r => !r.disabled && r.value !== 'auto',
+        );
+        if (firstSupported) {
+          this.selectAspectRatio(firstSupported);
+        }
       }
     }
   }
@@ -674,7 +704,20 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   onModeChanged(mode: string) {
+    const previousMode = this.currentMode;
     this.currentMode = mode;
+    if (
+      mode === 'Video to Image' &&
+      !this.selectedGenerationModelObject?.capabilities?.supportsVideoReference
+    ) {
+      const compatibleModel = this.generationModels.find(
+        m => m.capabilities?.supportsVideoReference,
+      );
+      if (compatibleModel) {
+        this.selectModel(compatibleModel);
+      }
+    }
+    this.updateAspectRatioForMode(previousMode, mode);
     this.saveState();
   }
 
@@ -716,9 +759,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   selectNumberOfImages(num: number): void {
-    this.searchRequest.numberOfMedia === num
-      ? (this.searchRequest.numberOfMedia = 4)
-      : (this.searchRequest.numberOfMedia = num);
+    this.searchRequest.numberOfMedia = num;
     this.saveState();
   }
 
@@ -782,6 +823,15 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
 
+    let referenceVideo: AssetReferenceDto | undefined;
+    if (this.currentMode === 'Video to Image' && this.referenceVideo) {
+      referenceVideo = {
+        id: this.referenceVideo.id,
+        type: this.referenceVideo.type,
+        index: this.referenceVideo.index,
+      };
+    }
+
     const payload: ImagenRequest = {
       ...this.searchRequest,
       negativePrompt: this.negativePhrases.join(', '),
@@ -795,6 +845,8 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
           ? sourceAssetIds
           : undefined,
       workspaceId: activeWorkspaceId ?? undefined,
+      referenceVideo,
+      externalUrl: this.externalUrl,
     };
 
     this.isImageGenerating = true;
@@ -859,7 +911,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
       prompt: '',
       generationModel: 'gemini-3.1-flash-image',
       aspectRatio: '1:1',
-      numberOfMedia: 4,
+      numberOfMedia: 1,
       style: null,
       lighting: null,
       colorAndTone: null,
@@ -875,7 +927,9 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     this.sourceMediaItems = [];
     this.selectedGenerationModel = this.generationModels[0].viewValue;
     this.selectedGenerationModelObject = this.generationModels[0];
-    this.selectedAspectRatio = this.aspectRatioOptions[0].viewValue;
+    this.selectedAspectRatio =
+      this.aspectRatioOptions.find(r => r.value === '1:1')?.viewValue ||
+      this.aspectRatioOptions[0].viewValue;
     this.imageStateService.resetState();
   }
 
@@ -913,7 +967,9 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     }
 
     // Switch to Ingredients to Image mode
+    const previousMode = this.currentMode;
     this.currentMode = 'Ingredients to Image';
+    this.updateAspectRatioForMode(previousMode, 'Ingredients to Image');
 
     // Add to reference images
     const refImage: ReferenceImage = {
@@ -1002,7 +1058,9 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
 
     // Switch to Ingredients to Image mode if we have reference images
     if (this.referenceImages.length > 0) {
+      const previousMode = this.currentMode;
       this.currentMode = 'Ingredients to Image';
+      this.updateAspectRatioForMode(previousMode, 'Ingredients to Image');
       this.saveState();
     }
   }
@@ -1234,7 +1292,9 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     }));
 
     if (this.referenceImages.length > 0) {
+      const previousMode = this.currentMode;
       this.currentMode = 'Ingredients to Image';
+      this.updateAspectRatioForMode(previousMode, 'Ingredients to Image');
     }
     this.saveState();
   }
@@ -1269,5 +1329,85 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
           handleErrorSnackbar(this._snackBar, err, 'Delete results');
         },
       });
+  }
+
+  openVideoSelectorForReference(): void {
+    const dialogRef = this.dialog.open(ImageSelectorComponent, {
+      width: '90vw',
+      height: '80vh',
+      maxWidth: '90vw',
+      data: {
+        mimeType: 'video/*',
+        multiSelect: false,
+        includeExternal: true,
+      },
+      panelClass: 'image-selector-dialog',
+    });
+
+    dialogRef.afterClosed().subscribe((result: any) => {
+      if (!result) return;
+
+      const res = Array.isArray(result) ? result[0] : result;
+      if ('gcsUri' in res) {
+        this.referenceVideo = {
+          id: res.id,
+          type: 'source_asset',
+          previewUrl: res.presignedThumbnailUrl || res.presignedUrl || '',
+          index: 0,
+        };
+      } else {
+        const thumbnail =
+          res.mediaItem.presignedThumbnailUrls?.[res.selectedIndex];
+        const previewUrl =
+          thumbnail || res.mediaItem.presignedUrls?.[res.selectedIndex];
+        if (previewUrl) {
+          this.referenceVideo = {
+            id: res.mediaItem.id,
+            type: 'media_item',
+            previewUrl: previewUrl,
+            index: res.selectedIndex,
+          };
+        }
+      }
+
+      this.externalUrl = null;
+      this.saveState();
+    });
+  }
+
+  clearReferenceVideo(event: Event): void {
+    event.stopPropagation();
+    this.referenceVideo = null;
+    this.saveState();
+  }
+
+  openVideoUrlInputForReference(): void {
+    const dialogRef = this.dialog.open(YouTubeInputComponent, {
+      width: '50vw',
+      panelClass: 'youtube-input-dialog',
+    });
+
+    dialogRef.afterClosed().subscribe((url: string | undefined) => {
+      if (!url) return;
+
+      const videoId = extractYouTubeVideoId(url);
+      if (videoId) {
+        this.externalUrl = `https://www.youtube.com/watch?v=${videoId}`;
+        this.referenceVideo = null;
+        handleInfoSnackbar(this._snackBar, 'YouTube URL added');
+      } else {
+        handleErrorSnackbar(
+          this._snackBar,
+          {message: 'Invalid YouTube URL'},
+          'Validation Error',
+        );
+      }
+      this.saveState();
+    });
+  }
+
+  clearExternalUrl(): void {
+    this.externalUrl = null;
+    this.saveState();
   }
 }

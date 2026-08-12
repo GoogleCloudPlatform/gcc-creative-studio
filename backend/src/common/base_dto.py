@@ -16,7 +16,7 @@
 
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 
@@ -25,6 +25,10 @@ class MimeTypeEnum(str, Enum):
 
     IMAGE_JPEG = "image/jpeg"
     IMAGE_PNG = "image/png"
+    IMAGE_WEBP = "image/webp"
+    IMAGE_HEIC = "image/heic"
+    IMAGE_HEIF = "image/heif"
+    IMAGE_AVIF = "image/avif"
     VIDEO_MP4 = "video/mp4"
     AUDIO_WAV = "audio/wav"
     AUDIO_MPEG = "audio/mpeg"
@@ -193,6 +197,7 @@ class AspectRatioEnum(str, Enum):
     RATIO_4_1 = "4:1"
     RATIO_1_8 = "1:8"
     RATIO_8_1 = "8:1"
+    AUTO = "auto"
     OTHER = "other"
 
 
@@ -266,4 +271,15 @@ class BaseDto(BaseModel):
         extra="forbid",
         populate_by_name=True,
         from_attributes=True,
+    )
+
+
+class AssetReferenceDto(BaseDto):
+    id: int = Field(description="The ID of the asset.")
+    type: str = Field(
+        description="The type of asset: 'source_asset' or 'media_item'."
+    )
+    index: int | None = Field(
+        default=0,
+        description="The index of the media in the media item (if applicable).",
     )

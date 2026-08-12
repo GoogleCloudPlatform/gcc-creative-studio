@@ -18,10 +18,13 @@ from unittest.mock import MagicMock, patch
 
 from src.common.media_utils import (
     concatenate_videos,
+    extract_youtube_video_id,
+    format_api_error_message,
     generate_image_thumbnail_bytes,
     generate_image_thumbnail_from_gcs,
     generate_thumbnail,
     get_video_dimensions,
+    get_youtube_aspect_ratio,
 )
 
 
@@ -189,3 +192,63 @@ def test_concatenate_videos_called_process_error():
                 ["/tmp/v1.mp4", "/tmp/v2.mp4"], "/tmp/output.mp4"
             )
             assert res is None
+
+
+def test_extract_youtube_video_id_valid_and_invalid():
+    assert (
+        extract_youtube_video_id("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        == "dQw4w9WgXcQ"
+    )
+    assert (
+        extract_youtube_video_id("https://youtu.be/dQw4w9WgXcQ")
+        == "dQw4w9WgXcQ"
+    )
+    assert (
+        extract_youtube_video_id("https://www.youtube.com/shorts/dQw4w9WgXcQ")
+        == "dQw4w9WgXcQ"
+    )
+    assert (
+        extract_youtube_video_id("https://www.youtube.com/embed/dQw4w9WgXcQ")
+        == "dQw4w9WgXcQ"
+    )
+    assert extract_youtube_video_id("not a youtube url") is None
+    assert extract_youtube_video_id(None) is None
+
+
+def test_get_youtube_aspect_ratio():
+    assert (
+        get_youtube_aspect_ratio("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        == "16:9"
+    )
+    assert get_youtube_aspect_ratio("https://youtu.be/dQw4w9WgXcQ") == "16:9"
+    assert (
+        get_youtube_aspect_ratio("https://www.youtube.com/shorts/dQw4w9WgXcQ")
+        == "9:16"
+    )
+    assert get_youtube_aspect_ratio("not a youtube url") == "16:9"
+    assert get_youtube_aspect_ratio(None) == "16:9"
+
+
+def test_format_api_error_message_content_blocked():
+    raw_error = "Error code: 400 - {'error': {'message': \"Unable to show the generated video. The output contains certain restricted individuals that violate Google's Responsible AI practices. Try rephrasing the prompt. If you think this was an error, send feedback.\", 'code': 'content_blocked'}}"
+    msg = format_api_error_message(Exception(raw_error))
+    assert (
+        msg
+        == "Unable to show the generated video. The output contains certain restricted individuals that violate Google's Responsible AI practices. Try rephrasing the prompt. If you think this was an error, send feedback."
+    )
+
+
+def test_format_api_error_message_restricted_individuals_fallback():
+    raw_error = "error: restricted individuals present"
+    msg = format_api_error_message(raw_error)
+    assert "restricted individuals" in msg
+
+
+def test_format_api_error_message_none():
+    msg = format_api_error_message(None)
+    assert "Unknown error" in msg
+
+
+def test_format_api_error_message_plain():
+    msg = format_api_error_message(Exception("Standard failure message"))
+    assert msg == "Standard failure message"

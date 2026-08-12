@@ -496,3 +496,8 @@ app-workspace-switcher .workspace-name {
     font-weight: 600;
   }
 }
+
+.google-drive-snackbar {
+  --mdc-snackbar-container-color: #000000;
+  --mdc-snackbar-supporting-text-color: #ffffff;
+}

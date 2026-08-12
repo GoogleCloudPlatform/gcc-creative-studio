@@ -80,6 +80,13 @@ export class GalleryCardComponent implements OnDestroy {
     return this.item.presignedUrls || [];
   }
 
+  get hasThumbnail(): boolean {
+    return (
+      !!this.item.presignedThumbnailUrls &&
+      this.item.presignedThumbnailUrls.length > 0
+    );
+  }
+
   get displayPaddingBottom(): string {
     const rawRatio =
       this.item.aspectRatio ||
@@ -120,6 +127,14 @@ export class GalleryCardComponent implements OnDestroy {
     } else {
       return '100%'; // 1:1
     }
+  }
+
+  get isYoutubeVideo(): boolean {
+    const meta = this.item?.metadata as any;
+    return (
+      meta?.assetType === 'youtube_video' ||
+      meta?.asset_type === 'youtube_video'
+    );
   }
 
   openAssignTagsDialog(event: Event): void {
