@@ -56,7 +56,7 @@ The User Prompt to rewrite:
 '{}'
 """
 
-REWRITE_VIDEO_TEXT_PROMPT_TEMPLATE = """Please rewrite the following prompt suitable for an AI Video generator. The prompt should describe a complete, short scene with a clear beginning, middle, and end. Include specific details about the subject and the sequence of actions, the environment and lighting, and the overall visual aesthetic. Crucially, describe the camera work, including movements (e.g., 'slow dolly-in', 'sweeping crane shot') and angles. Finally, suggest the sound design or key audio elements.
+REWRITE_VIDEO_TEXT_PROMPT_TEMPLATE = """Please rewrite the following prompt suitable for an AI Video generator. The prompt should describe a complete, short scene with a clear beginning, middle, and end. Include specific details about the subject and the sequence of actions, the environment and lighting, and the overall visual aesthetic. Crucially, describe the camera work, including movements (e.g., 'slow dolly-in', 'sweeping crane shot') and angles. Suggest the sound design or key audio elements. If an aspect ratio (such as 9:16 vertical/portrait or 16:9 widescreen) or target model is specified, preserve and incorporate those specific formatting directives.
 
 IMPORTANT!!: JUST RETURN THE REWRITTEN PROMPT DIRECTLY, YOU DON'T NEED TO CLARIFY THAT.
 
@@ -166,7 +166,7 @@ Example of a General Prompt for you to replace with the information received:
   }
 }
 
-IMPORTANT!! Example 3 of prompts if no styling properties ('style', 'color_and_tone', 'lighting' and 'composition') received or empty then 'visual_style' should return emtpy:
+IMPORTANT!! Example 3 of prompts if no styling properties ('style', 'color_and_tone', 'lighting' and 'composition') received or empty then 'visual_style' should return empty:
 {
   "metadata": {
     "prompt_name": "Abstract Landscape",
@@ -216,9 +216,13 @@ The User Prompt to rewrite with the corresponding JSON format:
 REWRITE_VIDEO_JSON_PROMPT_TEMPLATE = """Write a prompt for a text-to-video model following the JSON style of the examples of prompts, and then I will give you a prompt that I want you to rewrite.
 Do not generate videos, provide only the rewritten prompt.
 
-**Crucial Instruction:** If a 'Target Model' or 'Generation Model' is specified in the user's prompt, you **MUST** use that exact model name for the 'target_model' field in the JSON output. Do not change or replace it.
+**Crucial Instructions:**
+1. **Target Model**: If a 'Target Model' or 'Generation Model' is specified in the user's prompt (e.g., 'gemini-omni-flash-preview', 'Gemini Omni Flash', 'veo-3.1-generate-001', 'Veo'), you **MUST** use that exact model identifier or name for the 'target_model' field in the JSON output. Do not replace it.
+2. **Aspect Ratio**: If an 'Aspect Ratio' (e.g., '9:16', '16:9', '1:1') is specified in the user's prompt, you **MUST** strictly adhere to it in 'resolution_and_format', camera directives, and 'final_summary_prompt'.
+   - If '9:16' (portrait/vertical) is specified, you MUST specify '9:16 portrait' (vertical format) in 'resolution_and_format' and describe a vertical video in 'final_summary_prompt'. NEVER return 16:9 widescreen when 9:16 is requested.
+   - If '16:9' (landscape/horizontal) is specified, specify '16:9 widescreen' in 'resolution_and_format'.
 
-Example 1 of prompts:
+Example 1 of prompts (Widescreen 16:9 / 21:9 for Veo):
 {
   "metadata": {
     "prompt_name": "Cyberpunk Drone Pursuit",
@@ -337,8 +341,53 @@ Example 2 of prompts:
   "final_summary_prompt": "Photorealistic 4K macro video. In a magical forest at dawn, a single dewdrop falls onto a mossy rock, causing a beautiful, intricate crystal flower to grow and bloom in a hyper-lapse. The mood is serene and wondrous, with soft, ethereal lighting and a focus on the magical transformation."
 }
 
+Example 3 of prompts (Vertical 9:16 video for Gemini Omni Flash):
+{
+  "metadata": {
+    "prompt_name": "Urban Fashion Reel",
+    "version": 1.0,
+    "target_model": "gemini-omni-flash-preview",
+    "core_concept": "A stylish model walks down a vibrant city street showcasing modern streetwear in a dynamic portrait orientation."
+  },
+  "scene_setup": {
+    "environment": "A bustling downtown street with tall modern glass buildings, warm late afternoon sunlight.",
+    "mood": "Energetic, trendy, confident.",
+    "key_objects": [
+      "Trendy streetwear outfit",
+      "Sunglasses"
+    ]
+  },
+  "visual_style": {
+    "aesthetic": "Crisp, modern, social-media lifestyle aesthetic.",
+    "color_palette": "Warm golden tones, vibrant accents, soft shadows.",
+    "resolution_and_format": "720p, 9:16 portrait vertical format"
+  },
+  "camera_directives": {
+    "overall_movement": "Smooth vertical tracking shot following the model.",
+    "shot_types": "Full-body vertical framing, low-angle perspective."
+  },
+  "timeline": [
+    {
+      "sequence_id": 1,
+      "timestamp": "00:00-00:04",
+      "action": "The model strides forward, turns slightly toward the camera with a confident smile.",
+      "camera_instruction": "Vertical follow shot maintaining the subject centered.",
+      "audio_description": "Upbeat ambient city sounds and subtle background music."
+    }
+  ],
+  "constraints": {
+    "negative_prompts": [
+      "horizontal framing",
+      "16:9 widescreen",
+      "blurry",
+      "distorted"
+    ]
+  },
+  "final_summary_prompt": "Vertical 720p video in 9:16 portrait format. A stylish model walks confidently down a sunlit downtown street in trendy streetwear. Smooth vertical camera tracking with bright natural lighting."
+}
 
-Example 3 of prompts if no styling properties ('style', 'color_and_tone', 'lighting' and 'composition') received or empty then 'visual_style' should return emtpy:
+
+Example 4 of prompts if no styling properties ('style', 'color_and_tone', 'lighting' and 'composition') received or empty then 'visual_style' should return empty:
 {
   "metadata": {
     "prompt_name": "Simple Scene",
@@ -378,7 +427,7 @@ Example 3 of prompts if no styling properties ('style', 'color_and_tone', 'light
 }
 
 
-Example 4 of prompts if styling properties ('style', 'color_and_tone', 'lighting' and 'composition') are empty strings then 'visual_style' should return emtpy:
+Example 5 of prompts if styling properties ('style', 'color_and_tone', 'lighting' and 'composition') are empty strings then 'visual_style' should return empty:
 {
   "metadata": {
     "prompt_name": "Simple Scene",

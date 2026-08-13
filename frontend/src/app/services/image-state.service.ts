@@ -58,7 +58,7 @@ export class ImageStateService {
       resolution: '1K',
       style: null,
       colorAndTone: null,
-      numberOfMedia: 4,
+      numberOfMedia: 1,
       composition: null,
       useBrandGuidelines: false,
       enhancePrompt: false,
