@@ -195,11 +195,17 @@ export class UpscaleComponent implements OnInit, OnDestroy {
         // Handle the result which could be a SourceAssetResponseDto or an object wrapper
         let asset: SourceAssetResponseDto | null = null;
 
-        // Check if it's the object wrapper from ImageCropperDialogComponent
-        if (result.asset) {
+        // Normalize every shape ImageSelectorComponent can emit:
+        // an array (multi-select path), a {asset} wrapper, a {selection}, or a raw DTO.
+        if (Array.isArray(result)) {
+          asset = (result[0] as SourceAssetResponseDto) ?? null;
+        } else if (result.asset) {
           asset = result.asset;
+        } else if (result.selection) {
+          asset = Array.isArray(result.selection)
+            ? (result.selection[0] as SourceAssetResponseDto)
+           : (result.selection as SourceAssetResponseDto);
         } else if (result.id) {
-          // It's likely the SourceAssetResponseDto directly
           asset = result as SourceAssetResponseDto;
         }
 
