@@ -137,7 +137,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
     prompt: '',
     generationModel: 'gemini-omni-flash-preview',
     aspectRatio: '16:9',
-    numberOfMedia: 4,
+    numberOfMedia: 1,
     style: null,
     lighting: null,
     colorAndTone: null,
@@ -330,7 +330,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.searchRequest.lighting = state.lighting;
     this.searchRequest.numberOfMedia =
       state.model === 'gemini-omni-flash-preview' ? 1 : state.numberOfMedia;
-    this.selectedOutputs.set(this.searchRequest.numberOfMedia || 2);
+    this.selectedOutputs.set(this.searchRequest.numberOfMedia || 1);
     this.searchRequest.durationSeconds = state.durationSeconds;
     this.searchRequest.composition = state.composition;
     this.searchRequest.generateAudio = state.generateAudio;
@@ -819,7 +819,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
       prompt: '',
       generationModel: 'veo-3.0-generate-001',
       aspectRatio: '16:9',
-      numberOfMedia: 4,
+      numberOfMedia: 1,
       style: null,
       lighting: null,
       colorAndTone: null,
@@ -1803,7 +1803,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
   // Selected values
   selectedMode = signal<string>('Text to Video');
   selectedNewAspectRatio = signal<string>('Landscape (16:9)');
-  selectedOutputs = signal<number>(2);
+  selectedOutputs = signal<number>(1);
   selectedModel = signal<string>('Veo 3.1 - Fast');
   selectedPreset = signal<string>('');
 

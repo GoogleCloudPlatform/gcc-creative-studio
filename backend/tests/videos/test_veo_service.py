@@ -1353,6 +1353,11 @@ class TestBackgroundWorkers:
 
             mock_media_repo.update.assert_called_once()
             mock_vertex_client.interactions.create.assert_called_once()
+            call_kwargs = mock_vertex_client.interactions.create.call_args[1]
+            assert call_kwargs["response_format"] == {
+                "type": "video",
+                "duration": "5s",
+            }
 
     @patch("src.database.WorkerDatabase")
     @patch("src.videos.veo_service.GenAIModelSetup.get_omni_client")
@@ -1453,6 +1458,11 @@ class TestBackgroundWorkers:
 
             mock_media_repo.update.assert_called_once()
             mock_vertex_client.interactions.create.assert_called_once()
+            call_kwargs = mock_vertex_client.interactions.create.call_args[1]
+            assert call_kwargs["response_format"] == {
+                "type": "video",
+                "duration": "8s",
+            }
 
     @patch("src.database.WorkerDatabase")
     @patch("src.videos.veo_service.GenAIModelSetup.get_omni_client")
@@ -1540,3 +1550,92 @@ class TestBackgroundWorkers:
 
             mock_media_repo.update.assert_called_once()
             mock_vertex_client.interactions.create.assert_called_once()
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.videos.veo_service.GenAIModelSetup.get_omni_client")
+    @patch("src.videos.veo_service.generate_thumbnail")
+    def test_process_video_in_background_omni_flash_9_16(
+        self,
+        mock_thumb,
+        mock_omni_client_init,
+        mock_worker_db_class,
+    ):
+        from src.common.schema.media_item_model import (
+            MediaItemModel,
+            MimeTypeEnum,
+            JobStatusEnum,
+        )
+
+        sample_dto = CreateVeoDto(
+            workspace_id=1,
+            prompt="A model walking",
+            generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+            aspect_ratio="9:16",
+            resolution="1K",
+            duration_seconds=4,
+        )
+
+        mock_db_context = AsyncMock()
+        mock_db_factory = MagicMock(return_value=mock_db_context)
+        mock_worker_db_class.return_value.__aenter__.return_value = (
+            mock_db_factory
+        )
+
+        mock_vertex_client = MagicMock()
+        mock_omni_client_init.return_value = mock_vertex_client
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interaction-xyz"
+        mock_step = MagicMock()
+        mock_step.type = "model_output"
+        mock_content = MagicMock()
+        mock_content.type = "video"
+        mock_content.data = "ZmFrZS1vbW5pLXZpZGVvLWJ5dGVz"
+        mock_content.mime_type = "video/mp4"
+        mock_step.content = [mock_content]
+        mock_interaction.steps = [mock_step]
+        mock_vertex_client.interactions.create.return_value = mock_interaction
+
+        mock_thumb.return_value = "/tmp/thumbnails/thumb.png"
+
+        with (
+            patch(
+                "src.videos.veo_service.MediaRepository",
+            ) as mock_media_repo_class,
+            patch(
+                "src.videos.veo_service.GcsService",
+            ) as mock_gcs_class,
+        ):
+            mock_media_repo = AsyncMock()
+            mock_media_repo_class.return_value = mock_media_repo
+
+            mock_gcs_service = MagicMock()
+            mock_gcs_class.return_value = mock_gcs_service
+            mock_gcs_service.upload_file_to_gcs.return_value = (
+                "gs://bucket/omni_flash_video.mp4"
+            )
+
+            _process_video_in_background(
+                media_item_id=1234,
+                request_dto=sample_dto,
+                user_email="test@user.com",
+            )
+
+            mock_media_repo.update.assert_called_once()
+            mock_vertex_client.interactions.create.assert_called_once()
+            call_kwargs = mock_vertex_client.interactions.create.call_args[1]
+            input_list = call_kwargs["input"]
+            assert any(
+                "9:16 vertical portrait format" in item.get("text", "")
+                for item in input_list
+                if item.get("type") == "text"
+            )
+            assert call_kwargs["response_format"] == {
+                "type": "video",
+                "duration": "4s",
+            }
+            update_dict = mock_media_repo.update.call_args[0][1]
+            assert update_dict["status"] == JobStatusEnum.COMPLETED
+            assert update_dict["gcs_uris"] == [
+                "gs://bucket/omni_flash_video.mp4"
+            ]

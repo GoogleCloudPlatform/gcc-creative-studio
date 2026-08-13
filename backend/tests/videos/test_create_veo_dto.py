@@ -169,3 +169,53 @@ def test_validate_resolution_by_model():
         generation_model=GenerationModelEnum.VEO_3_1_GENERATE_001,
         resolution="4K",
     )
+
+
+def test_validate_duration_seconds():
+    # 10s is valid for Gemini Omni Flash Preview
+    dto_flash = CreateVeoDto(
+        prompt="Test",
+        workspace_id=1,
+        generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+        duration_seconds=10,
+    )
+    assert dto_flash.duration_seconds == 10
+
+    # 10s is valid for Gemini Omni
+    dto_omni = CreateVeoDto(
+        prompt="Test",
+        workspace_id=1,
+        generation_model=GenerationModelEnum.GEMINI_OMNI,
+        duration_seconds=10,
+    )
+    assert dto_omni.duration_seconds == 10
+
+    # 8s is valid for Veo models
+    dto_veo = CreateVeoDto(
+        prompt="Test",
+        workspace_id=1,
+        generation_model=GenerationModelEnum.VEO_3_1_GENERATE_001,
+        duration_seconds=8,
+    )
+    assert dto_veo.duration_seconds == 8
+
+    # 10s is invalid for Veo models (max 8s)
+    with pytest.raises(ValidationError) as exc_info:
+        CreateVeoDto(
+            prompt="Test",
+            workspace_id=1,
+            generation_model=GenerationModelEnum.VEO_3_1_GENERATE_001,
+            duration_seconds=10,
+        )
+    assert "does not support duration '10s'" in str(exc_info.value)
+    assert "Maximum supported duration: 8s" in str(exc_info.value)
+
+    # 11s exceeds max limit
+    with pytest.raises(ValidationError) as exc_info:
+        CreateVeoDto(
+            prompt="Test",
+            workspace_id=1,
+            generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+            duration_seconds=11,
+        )
+    assert "less than or equal to 10" in str(exc_info.value)
