@@ -1861,6 +1861,17 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.selectedModel.set(model);
     this.isSettingsDropdownOpen.set(null);
     console.log('Selected Model:', model);
+
+    // Clamp resolution to one the newly selected model actually supports.
+    // Match on either 'value' or 'viewValue' since callers may pass either.
+    const modelConfig = MODEL_CONFIGS.find(
+      (m) => m.value === model || m.viewValue === model,
+    );
+    const allowed = modelConfig?.capabilities?.supportedResolutions;
+    if (allowed && allowed.length && this.searchRequest.resolution && !allowed.includes(this.searchRequest.resolution)) {
+      this.searchRequest.resolution = allowed[0];
+      this.saveState();
+    }
   }
 
   selectPreset(preset: string) {
