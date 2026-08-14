@@ -267,6 +267,7 @@ async def test_chat_process_stream_chunks():
 
         with patch("src.agents.agent_service.agent_engines") as mock_engines:
             mock_remote = MagicMock()
+            mock_remote.async_stream_query.return_value = chunks
             mock_remote.stream_query.return_value = chunks
             mock_engines.get.return_value = mock_remote
 

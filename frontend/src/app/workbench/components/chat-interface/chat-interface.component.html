@@ -110,8 +110,17 @@
     </div>
   </div>
 
+  <!-- Approval Gate Component (Visible only when agent is awaiting human review/approval) -->
+  <div class="mt-2" *ngIf="visibleApprovalGate() as gate">
+    <app-approval-gate
+      [gate]="gate"
+      [isSubmitting]="isTyping()"
+      (decisionSubmitted)="handleGateDecision($event)"
+    ></app-approval-gate>
+  </div>
+
   <!-- Chat Input -->
-  <div class="mt-2 flex flex-col gap-2" *ngIf="!agentUnavailable()">
+  <div class="mt-2 flex flex-col gap-2" *ngIf="!agentUnavailable() && !visibleApprovalGate()">
     <div
       class="flex gap-2 bg-gray-800 border border-gray-700 rounded-2xl px-3 py-2 focus-within:border-blue-500 flex items-center">
       <button (click)="openImageSelector()" class="p-1.5 hover:bg-neutral-700 rounded-lg text-gray-400 hover:text-white flex items-center justify-center flex-shrink-0 h-8 w-8 transition-colors"
