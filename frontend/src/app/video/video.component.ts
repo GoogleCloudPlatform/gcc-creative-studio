@@ -405,6 +405,20 @@ export class VideoComponent implements OnInit, AfterViewInit {
       this.selectedOutputs.set(1);
     }
 
+    // REAL_RESOLUTION_CLAMP_IN_SELECTMODEL_V2
+    // Clamp resolution (in selectModel, the method the template actually calls)
+    // to one the newly selected model supports.
+    const modelConfig = MODEL_CONFIGS.find((m) => m.value === model.value);
+    const allowedResolutions = modelConfig?.capabilities?.supportedResolutions;
+    if (
+      allowedResolutions &&
+      allowedResolutions.length &&
+      this.searchRequest.resolution &&
+      !allowedResolutions.includes(this.searchRequest.resolution)
+    ) {
+      this.searchRequest.resolution = allowedResolutions[0];
+    }
+
     this.aspectRatioOptions.forEach(opt => {
       opt.disabled = !supportedRatios.includes(opt.value);
     });
