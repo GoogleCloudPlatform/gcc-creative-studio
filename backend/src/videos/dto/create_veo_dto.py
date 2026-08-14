@@ -106,8 +106,8 @@ class CreateVeoDto(BaseDto):
     duration_seconds: int = Field(
         default=8,
         ge=1,
-        le=8,
-        description="Duration in seconds for the videos to generate (between 1 and 8 secs).",
+        le=10,
+        description="Duration in seconds for the videos to generate (between 1 and 10 secs).",
     )
     start_image_asset_id: AssetReferenceDto | None = Field(
         default=None,
@@ -161,6 +161,8 @@ class CreateVeoDto(BaseDto):
         1. Ensures that source_media_items have a valid role.
         2. Ensures references are not used with start/end frames or source videos.
         3. Ensures reference image roles are only used with correct model.
+        4. Validates model-specific resolution limits.
+        5. Validates model-specific duration limits.
         """
         conflicting_roles_present = False
         reference_roles_present = False
@@ -244,6 +246,20 @@ class CreateVeoDto(BaseDto):
             raise ValueError(
                 f"Model '{model.value}' does not support resolution '{self.resolution}'. "
                 f"Supported resolutions: {sorted(list(allowed_resolutions))}"
+            )
+
+        # Validate model-specific duration limits
+        max_duration = 8
+        if model in (
+            GenerationModelEnum.GEMINI_OMNI,
+            GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+        ):
+            max_duration = 10
+
+        if self.duration_seconds > max_duration:
+            raise ValueError(
+                f"Model '{model.value}' does not support duration '{self.duration_seconds}s'. "
+                f"Maximum supported duration: {max_duration}s."
             )
 
         return self

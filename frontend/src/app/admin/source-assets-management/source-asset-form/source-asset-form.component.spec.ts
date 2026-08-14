@@ -15,8 +15,18 @@
  */
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
-
+import {ReactiveFormsModule, FormsModule} from '@angular/forms';
+import {
+  MatDialogRef,
+  MAT_DIALOG_DATA,
+  MatDialogModule,
+} from '@angular/material/dialog';
+import {MatFormFieldModule} from '@angular/material/form-field';
+import {MatInputModule} from '@angular/material/input';
+import {MatSelectModule} from '@angular/material/select';
+import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {SourceAssetFormComponent} from './source-asset-form.component';
+import {AssetScopeEnum, AssetTypeEnum} from '../source-asset.model';
 
 describe('SourceAssetFormComponent', () => {
   let component: SourceAssetFormComponent;
@@ -25,6 +35,33 @@ describe('SourceAssetFormComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [SourceAssetFormComponent],
+      imports: [
+        ReactiveFormsModule,
+        FormsModule,
+        MatDialogModule,
+        MatFormFieldModule,
+        MatInputModule,
+        MatSelectModule,
+        NoopAnimationsModule,
+      ],
+      providers: [
+        {
+          provide: MatDialogRef,
+          useValue: {close: jasmine.createSpy('close')},
+        },
+        {
+          provide: MAT_DIALOG_DATA,
+          useValue: {
+            asset: {
+              id: '1',
+              originalFilename: 'test.png',
+              scope: AssetScopeEnum.SYSTEM,
+              assetType: AssetTypeEnum.GENERIC_IMAGE,
+              gcsUri: 'gs://bucket/test.png',
+            },
+          },
+        },
+      ],
     }).compileComponents();
 
     fixture = TestBed.createComponent(SourceAssetFormComponent);
