@@ -1509,9 +1509,9 @@ export class ChatInterfaceComponent
 
                 if (
                   agentMessageIndex === -1 ||
-                  msgs[agentMessageIndex].asset ||
-                  msgs[agentMessageIndex].sender !== 'agent' ||
-                  msgs[agentMessageIndex].isHidden
+                  msgs[agentMessageIndex]?.asset ||
+                  msgs[agentMessageIndex]?.sender !== 'agent' ||
+                  msgs[agentMessageIndex]?.isHidden
                 ) {
                   msgs.push({
                     sender: 'agent',
