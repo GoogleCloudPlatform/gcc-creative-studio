@@ -383,6 +383,8 @@
           (promptChanged)="onPromptChanged($event)" (aspectRatioChanged)="onAspectRatioChanged($event)"
           (resolutionChanged)="onResolutionChanged($event)" (outputsChanged)="onOutputsChanged($event)"
           (generateClicked)="onGenerateClicked()" (rewriteClicked)="onRewriteClicked()"
+          [temperature]="searchRequest.temperature ?? null"
+          (temperatureChanged)="onTemperatureChanged($event)"
           (modelSelected)="onModelSelected($event)" (openImageSelectorForReference)="onOpenImageSelectorForReference()"
           (onReferenceImageDrop)="onReferenceImageDrop($event)" (clearReferenceImage)="onClearReferenceImage($event)"
           (editReferenceImage)="onEditPromptReferenceImage($event)"

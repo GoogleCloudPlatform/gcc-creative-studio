@@ -852,6 +852,11 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
       });
   }
 
+  onTemperatureChanged(value: number | null): void {
+    this.searchRequest.temperature = value ?? undefined;
+    this.saveState();
+  }
+
   resetAllFilters() {
     this.searchRequest = {
       prompt: '',

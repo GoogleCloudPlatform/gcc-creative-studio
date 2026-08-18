@@ -104,6 +104,18 @@ class CreateImagenDto(BaseDto):
         default=False,
         description="Whether to use Google Search for image generation.",
     )
+    temperature: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=2.0,
+        description=(
+            "Sampling temperature for Gemini image models. Lower values stay "
+            "closer to the prompt and the reference images, which matters when "
+            "editing and you want the rest of the frame preserved; higher "
+            "values vary more. Left unset, the model's own default applies. "
+            "Ignored by Imagen models, which do not expose it."
+        ),
+    )
     resolution: Literal["1K", "2K", "4K"] = Field(
         default="1K",
         description="Resolution of the generated image.",
