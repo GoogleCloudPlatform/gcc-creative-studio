@@ -30,12 +30,18 @@ import {
   MODEL_CONFIGS,
 } from '../../../../common/config/model-config';
 import {StepConfig, StepInput, StepSetting} from './step.model';
-import {StepStatusEnum} from '../../../workflow.models';
+import {
+  StepInputValue,
+  StepOutputReference,
+  StepStatusEnum,
+} from '../../../workflow.models';
 import {
   DragSourcePort,
+  getMaxAllowedInputs,
   getPortTypeColor,
   getShortType,
   isInputAlreadyLinked,
+  isInputPortFull,
   isPortTypeCompatible,
   PortShortType,
 } from '../../../utils/workflow-magnetic.util';
@@ -98,6 +104,17 @@ export class GenericStepComponent implements OnInit, OnChanges {
     );
   }
 
+  isInputFull(inputName: string, inputType?: string): boolean {
+    const model = this.stepForm?.get('settings.model')?.value;
+    const currentVal = this.stepForm?.get('inputs')?.get(inputName)?.value;
+    return isInputPortFull(currentVal, inputName, model, inputType);
+  }
+
+  getMaxMediaItems(input: {name: string; type?: string} | StepInput): number {
+    const model = this.stepForm?.get('settings.model')?.value;
+    return getMaxAllowedInputs(input.name, model, input.type);
+  }
+
   isCompatibleWithActiveDrag(
     input: {name: string; type: string} | StepInput,
   ): boolean {
@@ -119,6 +136,10 @@ export class GenericStepComponent implements OnInit, OnChanges {
       ) {
         return false;
       }
+    }
+    // Block connection if input port is already full
+    if (this.isInputFull(input.name, input.type)) {
+      return false;
     }
     return isPortTypeCompatible(this.dragSourcePort.type, input.type);
   }

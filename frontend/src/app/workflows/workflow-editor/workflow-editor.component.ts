@@ -42,6 +42,8 @@ import {
 import {MediaResolutionService} from '../shared/media-resolution.service';
 import {
   NodeTypes,
+  StepInputValue,
+  StepOutputReference,
   StepStatusEnum,
   WorkflowBase,
   WorkflowCreateDto,
@@ -56,9 +58,11 @@ import {labelToName} from '../utils/workflow-step.util';
 import {
   DragSourcePort,
   findClosestMagneticPort,
+  getMaxAllowedInputs,
   getPortTypeColor,
   getShortType,
   isInputAlreadyLinked,
+  isInputPortFull,
   isPortTypeCompatible,
   MagneticPortCandidate,
   PortShortType,
@@ -714,6 +718,8 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       if (!config?.inputs) return;
 
       const inputsGroup = stepControl.get('inputs') as FormGroup;
+      const settingsGroup = stepControl.get('settings') as FormGroup;
+      const modelValue = settingsGroup?.get('model')?.value;
 
       config.inputs.forEach((input: any) => {
         if (input.hidden) return;
@@ -723,12 +729,17 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
           return;
         }
 
-        // Block if this input is already linked to the same source output
-        if (sourceOutputName && inputsGroup) {
+        // Block if this input is already linked to the same source output or full
+        if (inputsGroup) {
           const currentVal = inputsGroup.get(input.name)?.value;
           if (
+            sourceOutputName &&
             isInputAlreadyLinked(currentVal, sourceStepId, sourceOutputName)
           ) {
+            return;
+          }
+
+          if (isInputPortFull(currentVal, input.name, modelValue, input.type)) {
             return;
           }
         }
@@ -775,8 +786,8 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         const inputs = stepForm.get('inputs') as FormGroup;
         if (inputs && inputs.contains(event.inputName)) {
           const control = inputs.get(event.inputName);
-          const currentVal = control?.value;
-          const newValue = {
+          const currentVal: StepInputValue = control?.value;
+          const newValue: StepOutputReference = {
             step: this.dragSourcePort.stepId,
             output: this.dragSourcePort.outputName,
           };
@@ -817,8 +828,33 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             return;
           }
 
+          const modelValue = stepForm.get('settings.model')?.value;
+          // Block connection if target input port is already full
+          if (
+            isInputPortFull(
+              currentVal,
+              event.inputName,
+              modelValue,
+              inputConfig?.type,
+            )
+          ) {
+            this.dragSourcePort = null;
+            this.activeDragWire = null;
+            this.magneticTargetPort = null;
+            this.candidateMagneticPorts = [];
+            return;
+          }
+
           const targetShortType = getShortType(inputConfig?.type);
-          if (targetShortType === 'IMG' || targetShortType === 'VID') {
+          const maxAllowed = getMaxAllowedInputs(
+            event.inputName,
+            modelValue,
+            inputConfig?.type,
+          );
+          if (
+            (targetShortType === 'IMG' || targetShortType === 'VID') &&
+            maxAllowed > 1
+          ) {
             if (Array.isArray(currentVal)) {
               control?.setValue([...currentVal, newValue]);
             } else if (

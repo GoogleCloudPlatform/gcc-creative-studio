@@ -14,7 +14,11 @@
  * limitations under the License.
  */
 
-import {StepOutputReference} from '../workflow.models';
+import {MODEL_CONFIGS} from '../../common/config/model-config';
+import {ReferenceImage} from '../../common/models/search.model';
+import {StepInputValue, StepOutputReference} from '../workflow.models';
+
+export {StepInputValue, StepOutputReference};
 
 export type Point = {
   x: number;
@@ -118,11 +122,11 @@ export function findClosestMagneticPort(
  * Checks whether an input's current value is already linked to the specified source step and output.
  */
 export function isInputAlreadyLinked(
-  inputValue: null | StepOutputReference | StepOutputReference[],
+  inputValue: StepInputValue,
   sourceStepId: string,
   sourceOutputName: string,
 ): boolean {
-  let inputArray: StepOutputReference[] = [];
+  let inputArray: (StepOutputReference | ReferenceImage)[] = [];
   if (Array.isArray(inputValue)) {
     inputArray = inputValue;
   } else if (inputValue !== null && typeof inputValue === 'object') {
@@ -130,9 +134,10 @@ export function isInputAlreadyLinked(
   }
 
   return inputArray.some(
-    (item: StepOutputReference) =>
+    (item: StepOutputReference | ReferenceImage) =>
       item &&
       typeof item === 'object' &&
+      'step' in item &&
       item.step === sourceStepId &&
       item.output === sourceOutputName,
   );
@@ -163,4 +168,61 @@ export function getShortType(type: string | null | undefined): PortShortType {
  */
 export function getPortTypeColor(type: string | null | undefined): string {
   return PORT_TYPE_COLORS[getShortType(type)];
+}
+
+/**
+ * Counts the number of items or references currently configured in an input value.
+ */
+export function getCurrentItemCount(inputValue: StepInputValue | any): number {
+  if (inputValue === null || inputValue === undefined || inputValue === '') {
+    return 0;
+  }
+  if (Array.isArray(inputValue)) {
+    return inputValue.length;
+  }
+  if (typeof inputValue === 'object') {
+    if (Object.keys(inputValue).length === 0) {
+      return 0;
+    }
+    return 1;
+  }
+  return 1;
+}
+
+/**
+ * Determines the maximum number of items/references allowed for a specific input
+ * given the step configuration and selected model/settings.
+ */
+export function getMaxAllowedInputs(
+  inputName: string,
+  modelValue?: string | null,
+  inputType?: string | null,
+): number {
+  if (inputName === 'input_images' || inputName === 'reference_images') {
+    if (modelValue) {
+      const modelConfig = MODEL_CONFIGS.find(m => m.value === modelValue);
+      if (modelConfig?.capabilities?.maxReferenceImages !== undefined) {
+        return modelConfig.capabilities.maxReferenceImages;
+      }
+    }
+    return 14;
+  }
+  return 1;
+}
+
+/**
+ * Checks whether a target input port has reached its maximum capacity.
+ */
+export function isInputPortFull(
+  inputValue: StepInputValue | any,
+  inputName: string,
+  modelValue?: string | null,
+  inputType?: string | null,
+): boolean {
+  const maxAllowed = getMaxAllowedInputs(inputName, modelValue, inputType);
+  if (maxAllowed <= 0) {
+    return true;
+  }
+  const currentCount = getCurrentItemCount(inputValue);
+  return currentCount >= maxAllowed;
 }

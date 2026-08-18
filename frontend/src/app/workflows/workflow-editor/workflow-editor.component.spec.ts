@@ -357,4 +357,76 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
       },
     ]);
   });
+
+  it('should block connecting a 3rd image when target input allows maximum 2 images in onPortDrop', () => {
+    const stepTargetForm = fb.group({
+      stepId: ['step_image_node'],
+      type: ['image'],
+      settings: fb.group({
+        model: ['gemini-2.5-flash-image'],
+      }),
+      inputs: fb.group({
+        prompt: [''],
+        input_images: [
+          [
+            {step: 'source_1', output: 'img_1'},
+            {step: 'source_2', output: 'img_2'},
+          ],
+        ],
+      }),
+    });
+    component.stepsArray.push(stepTargetForm);
+
+    component.dragSourcePort = {
+      stepId: 'source_3',
+      outputName: 'img_3',
+      type: 'image',
+    };
+    component.activeDragWire = {path: 'M 0 0 L 100 100'};
+
+    component.onPortDrop(
+      {stepId: 'step_image_node', inputName: 'input_images'},
+      'step_image_node',
+    );
+
+    expect(component.dragSourcePort).toBeNull();
+    expect(component.activeDragWire).toBeNull();
+    // Input must still have only 2 images (3rd image is blocked)
+    const currentVal = stepTargetForm.get('inputs')?.get('input_images')?.value;
+    expect(currentVal?.length).toBe(2);
+    expect(currentVal).toEqual([
+      {step: 'source_1', output: 'img_1'},
+      {step: 'source_2', output: 'img_2'},
+    ]);
+  });
+
+  it('should exclude full target input ports in collectMagneticCandidatePorts', () => {
+    const stepTargetForm = fb.group({
+      stepId: ['step_image_node'],
+      type: ['image'],
+      settings: fb.group({
+        model: ['gemini-2.5-flash-image'],
+      }),
+      inputs: fb.group({
+        prompt: [''],
+        input_images: [
+          [
+            {step: 'source_1', output: 'img_1'},
+            {step: 'source_2', output: 'img_2'},
+          ],
+        ],
+      }),
+    });
+    component.stepsArray.push(stepTargetForm);
+
+    spyOn(document, 'querySelector').and.returnValue({} as any);
+    spyOn<any>(component, 'getPortPosition').and.returnValue({x: 100, y: 100});
+
+    const candidates = component.collectMagneticCandidatePorts(
+      'source_3',
+      'img_3',
+    );
+
+    expect(candidates.find(c => c.portName === 'input_images')).toBeUndefined();
+  });
 });
