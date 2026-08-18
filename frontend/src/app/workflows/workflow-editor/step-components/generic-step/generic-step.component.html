@@ -119,7 +119,7 @@
               $event.stopPropagation();
               portDrop.emit({
                 stepId: stepForm.value.stepId,
-                inputName: input.name
+                inputName: input.name,
               })
             "
           ></div>
@@ -134,7 +134,7 @@
             [mode]="inputModes[input.name]"
             [compatibleOutputs]="compatibleOutputs[input.name]"
             [showValidationErrors]="showValidationErrors"
-            [maxMediaItems]="currentMaxReferenceImages"
+            [maxMediaItems]="getMaxMediaItems(input)"
             (modeChange)="toggleInputMode(input.name, $event)"
           >
           </app-step-input-field>

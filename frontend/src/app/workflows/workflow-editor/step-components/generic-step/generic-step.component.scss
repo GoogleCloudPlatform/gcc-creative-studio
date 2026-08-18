@@ -165,12 +165,14 @@
   left: -24px;
   top: 50%;
   transform: translate(-50%, -50%);
+  cursor: default;
 }
 
 .output-port {
   right: -24px;
   top: 50%;
   transform: translate(-50%, -50%);
+  cursor: crosshair;
 }
 
 /* 1. Header Section */

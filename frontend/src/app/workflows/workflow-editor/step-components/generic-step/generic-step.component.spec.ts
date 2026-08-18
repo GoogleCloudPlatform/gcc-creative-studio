@@ -315,5 +315,65 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       expect(component.isCompatibleWithActiveDrag(textInput)).toBeFalse();
       expect(component.isIncompatibleWithActiveDrag(textInput)).toBeFalse();
     });
+
+    it('should block connection to input port when port is full', () => {
+      const inputImages: StepInput = {
+        name: 'input_images',
+        label: 'Input Images',
+        type: 'image',
+        required: false,
+      };
+
+      component.stepForm
+        .get('settings.model')
+        ?.setValue('gemini-2.5-flash-image'); // maxReferenceImages: 2
+      component.dragSourcePort = {
+        type: 'image',
+        stepId: 'other_step',
+        outputName: 'out_image_3',
+      };
+
+      // Initially empty: compatible
+      component.stepForm.get('inputs.input_images')?.setValue(null);
+      expect(component.isCompatibleWithActiveDrag(inputImages)).toBeTrue();
+      expect(component.isIncompatibleWithActiveDrag(inputImages)).toBeFalse();
+
+      // 1 image connected: still compatible (1 < 2)
+      component.stepForm
+        .get('inputs.input_images')
+        ?.setValue([{step: 'other_step_1', output: 'out_image_1'}]);
+      expect(component.isCompatibleWithActiveDrag(inputImages)).toBeTrue();
+
+      // 2 images connected: FULL (2 >= 2) -> should be incompatible
+      component.stepForm.get('inputs.input_images')?.setValue([
+        {step: 'other_step_1', output: 'out_image_1'},
+        {step: 'other_step_2', output: 'out_image_2'},
+      ]);
+      expect(component.isInputFull('input_images', 'image')).toBeTrue();
+      expect(component.isCompatibleWithActiveDrag(inputImages)).toBeFalse();
+      expect(component.isIncompatibleWithActiveDrag(inputImages)).toBeTrue();
+    });
+
+    it('should calculate getMaxMediaItems correctly for inputs', () => {
+      component.stepForm
+        .get('settings.model')
+        ?.setValue('gemini-2.5-flash-image');
+      expect(
+        component.getMaxMediaItems({
+          name: 'input_images',
+          label: 'Images',
+          type: 'image',
+          required: false,
+        }),
+      ).toBe(2);
+      expect(
+        component.getMaxMediaItems({
+          name: 'input_image',
+          label: 'Image',
+          type: 'image',
+          required: false,
+        }),
+      ).toBe(1);
+    });
   });
 });

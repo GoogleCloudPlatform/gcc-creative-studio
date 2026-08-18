@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import {ReferenceImage} from '../common/models/search.model';
+
 export enum NodeTypes {
   USER_INPUT = 'user_input',
   GENERATE_TEXT = 'generate_text',
@@ -30,7 +32,13 @@ export enum NodeTypes {
 export interface StepOutputReference {
   step: string;
   output: string;
+  _definitionId?: string;
 }
+
+export type StepInputValue =
+  | null
+  | StepOutputReference
+  | (StepOutputReference | ReferenceImage)[];
 
 export enum StepStatusEnum {
   IDLE = 'idle',

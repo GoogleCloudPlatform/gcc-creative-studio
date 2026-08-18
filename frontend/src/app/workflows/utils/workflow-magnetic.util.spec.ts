@@ -17,9 +17,12 @@
 import {
   calculateDistance,
   findClosestMagneticPort,
+  getCurrentItemCount,
+  getMaxAllowedInputs,
   getPortTypeColor,
   getShortType,
   isInputAlreadyLinked,
+  isInputPortFull,
   isPortTypeCompatible,
   MAGNETIC_RELEASE_RADIUS,
   MAGNETIC_SNAP_RADIUS,
@@ -219,6 +222,22 @@ describe('WorkflowMagneticUtil', () => {
       expect(isInputAlreadyLinked(val, 'step1', 'out2')).toBeFalse();
       expect(isInputAlreadyLinked(val, 'step3', 'out3')).toBeFalse();
     });
+
+    it('should handle mixed arrays containing ReferenceImage objects without error', () => {
+      const mixedVal = [
+        {previewUrl: 'https://example.com/img.png', sourceAssetId: 123},
+        {step: 'step1', output: 'out1'},
+      ];
+      expect(isInputAlreadyLinked(mixedVal, 'step1', 'out1')).toBeTrue();
+      expect(isInputAlreadyLinked(mixedVal, 'step1', 'out2')).toBeFalse();
+      expect(
+        isInputAlreadyLinked(
+          [{previewUrl: 'https://example.com/img.png'}],
+          'step1',
+          'out1',
+        ),
+      ).toBeFalse();
+    });
   });
 
   describe('getShortType', () => {
@@ -254,6 +273,132 @@ describe('WorkflowMagneticUtil', () => {
       expect(getPortTypeColor('audio')).toBe(PORT_TYPE_COLORS.AUD);
       expect(getPortTypeColor(null)).toBe(PORT_TYPE_COLORS.TXT);
       expect(getPortTypeColor(undefined)).toBe(PORT_TYPE_COLORS.TXT);
+    });
+  });
+
+  describe('getCurrentItemCount', () => {
+    it('should return 0 for null, undefined, empty string, empty array, or empty object', () => {
+      expect(getCurrentItemCount(null)).toBe(0);
+      expect(getCurrentItemCount(undefined)).toBe(0);
+      expect(getCurrentItemCount('')).toBe(0);
+      expect(getCurrentItemCount([])).toBe(0);
+      expect(getCurrentItemCount({})).toBe(0);
+    });
+
+    it('should return array length for array values', () => {
+      expect(getCurrentItemCount([{step: 's1', output: 'o1'}])).toBe(1);
+      expect(
+        getCurrentItemCount([
+          {step: 's1', output: 'o1'},
+          {step: 's2', output: 'o2'},
+        ]),
+      ).toBe(2);
+      expect(
+        getCurrentItemCount([
+          {previewUrl: 'http...'},
+          {step: 's1', output: 'o1'},
+          {step: 's2', output: 'o2'},
+        ]),
+      ).toBe(3);
+    });
+
+    it('should return 1 for single non-empty object or primitive value', () => {
+      expect(getCurrentItemCount({step: 's1', output: 'o1'})).toBe(1);
+      expect(getCurrentItemCount({previewUrl: 'http...'})).toBe(1);
+      expect(getCurrentItemCount('some prompt text')).toBe(1);
+      expect(getCurrentItemCount(42)).toBe(1);
+    });
+  });
+
+  describe('getMaxAllowedInputs', () => {
+    it('should return model capabilities maxReferenceImages for input_images or reference_images', () => {
+      // gemini-2.5-flash-image has maxReferenceImages: 2
+      expect(
+        getMaxAllowedInputs('input_images', 'gemini-2.5-flash-image'),
+      ).toBe(2);
+      expect(
+        getMaxAllowedInputs('reference_images', 'gemini-2.5-flash-image'),
+      ).toBe(2);
+      // veo-3.1-generate-001 has maxReferenceImages: 3
+      expect(getMaxAllowedInputs('input_images', 'veo-3.1-generate-001')).toBe(
+        3,
+      );
+    });
+
+    it('should fallback to 14 for input_images when model is unknown or null', () => {
+      expect(getMaxAllowedInputs('input_images', null)).toBe(14);
+      expect(getMaxAllowedInputs('input_images', undefined)).toBe(14);
+      expect(getMaxAllowedInputs('input_images', 'unknown-model')).toBe(14);
+    });
+
+    it('should return 1 for single-value inputs regardless of model', () => {
+      expect(getMaxAllowedInputs('prompt', 'gemini-2.5-flash-image')).toBe(1);
+      expect(getMaxAllowedInputs('input_image', 'gemini-2.5-flash-image')).toBe(
+        1,
+      );
+      expect(getMaxAllowedInputs('model_image', 'gemini-2.5-flash-image')).toBe(
+        1,
+      );
+      expect(getMaxAllowedInputs('start_frame', 'veo-3.1-generate-001')).toBe(
+        1,
+      );
+      expect(getMaxAllowedInputs('end_frame', 'veo-3.1-generate-001')).toBe(1);
+      expect(getMaxAllowedInputs('input_videos', 'gemini-2.5-pro')).toBe(1);
+    });
+  });
+
+  describe('isInputPortFull', () => {
+    it('should return false when input has fewer items than allowed max', () => {
+      // Max 2, currently empty
+      expect(
+        isInputPortFull(null, 'input_images', 'gemini-2.5-flash-image'),
+      ).toBeFalse();
+      expect(
+        isInputPortFull([], 'input_images', 'gemini-2.5-flash-image'),
+      ).toBeFalse();
+      // Max 2, currently has 1 item
+      expect(
+        isInputPortFull(
+          [{step: 's1', output: 'o1'}],
+          'input_images',
+          'gemini-2.5-flash-image',
+        ),
+      ).toBeFalse();
+    });
+
+    it('should return true when input has reached or exceeded allowed max', () => {
+      // Max 2, currently has 2 items -> full!
+      expect(
+        isInputPortFull(
+          [
+            {step: 's1', output: 'o1'},
+            {step: 's2', output: 'o2'},
+          ],
+          'input_images',
+          'gemini-2.5-flash-image',
+        ),
+      ).toBeTrue();
+
+      // Max 2, currently has 3 items -> full!
+      expect(
+        isInputPortFull(
+          [
+            {step: 's1', output: 'o1'},
+            {step: 's2', output: 'o2'},
+            {step: 's3', output: 'o3'},
+          ],
+          'input_images',
+          'gemini-2.5-flash-image',
+        ),
+      ).toBeTrue();
+    });
+
+    it('should return true for single-value inputs with 1 item', () => {
+      expect(
+        isInputPortFull({step: 's1', output: 'o1'}, 'prompt', 'gemini-2.5-pro'),
+      ).toBeTrue();
+      expect(isInputPortFull('hello', 'prompt', 'gemini-2.5-pro')).toBeTrue();
+      expect(isInputPortFull(null, 'prompt', 'gemini-2.5-pro')).toBeFalse();
     });
   });
 });
