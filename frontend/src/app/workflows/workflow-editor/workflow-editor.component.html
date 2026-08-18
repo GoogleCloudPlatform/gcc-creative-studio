@@ -18,104 +18,174 @@
   <!-- A. Global Header -->
   <header class="header-section">
     <div class="in-line-wrapper">
-        <!-- Breadcrumbs/Title Area -->
-        <div class="title-group flex-grow">
+      <!-- Breadcrumbs/Title Area -->
+      <div class="title-group flex-grow">
         <div *ngIf="isReadOnly; else editableHeader">
-            <h1 class="page-title">{{ displayedWorkflow?.name }}</h1>
-            <p class="text-sm text-neutral-400 mt-1">{{ displayedWorkflow?.description }}</p>
+          <h1 class="page-title">{{ displayedWorkflow?.name }}</h1>
+          <p class="text-sm text-neutral-400 mt-1">
+            {{ displayedWorkflow?.description }}
+          </p>
         </div>
         <ng-template #editableHeader>
-            <div [formGroup]="workflowForm">
-            <input formControlName="name" placeholder="Untitled Workflow"
-                class="page-title bg-transparent outline-none border-none p-0 w-full placeholder-white/30">
-            <input formControlName="description" placeholder="Add a description..."
-                class="text-sm text-neutral-400 bg-transparent outline-none border-none p-0 w-full mt-1">
-            </div>
+          <div [formGroup]="workflowForm">
+            <input
+              formControlName="name"
+              placeholder="Untitled Workflow"
+              class="page-title bg-transparent outline-none border-none p-0 w-full placeholder-white/30"
+            />
+            <input
+              formControlName="description"
+              placeholder="Add a description..."
+              class="text-sm text-neutral-400 bg-transparent outline-none border-none p-0 w-full mt-1"
+            />
+          </div>
         </ng-template>
-        </div>
+      </div>
 
-        <!-- Status Badge -->
-        <div class="mx-6">
+      <!-- Status Badge -->
+      <div class="mx-6">
         <ng-container [ngSwitch]="mode">
-            <mat-chip *ngSwitchCase="EditorMode.Run" [ngClass]="currentExecutionState | workflowStatus:'class'">
-            <mat-icon *ngIf="currentExecutionState" class="!text-sm !w-4 !h-4 mr-1">
-                {{ currentExecutionState | workflowStatus:'icon' }}
+          <mat-chip
+            *ngSwitchCase="EditorMode.Run"
+            [ngClass]="currentExecutionState | workflowStatus: 'class'"
+          >
+            <mat-icon
+              *ngIf="currentExecutionState"
+              class="!text-sm !w-4 !h-4 mr-1"
+            >
+              {{ currentExecutionState | workflowStatus: 'icon' }}
             </mat-icon>
             {{ currentExecutionState || 'IDLE' }}
-            </mat-chip>
+          </mat-chip>
         </ng-container>
-        </div>
+      </div>
 
-        <!-- Primary Actions -->
-        <div class="flex items-center gap-2">
-            <studio-button variant="cta" size="medium"
-              *ngIf="!isReadOnly"
-              mat-raised-button
-              
-              (click)="run()"
-              [disabled]="isLoading || stepsArray.length === 0"
-            >
-                <mat-icon>play_arrow</mat-icon>
-                Run
-            </studio-button>
-            <studio-button variant="primary" size="medium"
-              *ngIf="!isReadOnly"
-              mat-raised-button
-              
-              (click)="save()"
-              [disabled]="workflowForm.pristine || isLoading"
-            >Save</studio-button>
-            <button
-              mat-icon-button
-              (click)="goBack()"
-              matTooltip="Back"
-              class="ml-2"
-            >
-                <mat-icon>close</mat-icon>
-            </button>
-        </div>
+      <!-- Primary Actions -->
+      <div class="flex items-center gap-2">
+        <studio-button
+          variant="cta"
+          size="medium"
+          *ngIf="!isReadOnly"
+          mat-raised-button
+          (click)="run()"
+          [disabled]="isLoading || stepsArray.length === 0"
+        >
+          <mat-icon>play_arrow</mat-icon>
+          Run
+        </studio-button>
+        <studio-button
+          variant="primary"
+          size="medium"
+          *ngIf="!isReadOnly"
+          mat-raised-button
+          (click)="save()"
+          [disabled]="workflowForm.pristine || isLoading"
+          >Save</studio-button
+        >
+        <button
+          mat-icon-button
+          (click)="goBack()"
+          matTooltip="Back"
+          class="ml-2"
+        >
+          <mat-icon>close</mat-icon>
+        </button>
+      </div>
     </div>
   </header>
 
   <!-- Main Content Area (Canvas) -->
-  <div class="flex-grow flex overflow-hidden relative bg-neutral-900" #canvasContainer (mousedown)="onCanvasMouseDown($event)">
+  <div
+    class="flex-grow flex overflow-hidden relative bg-neutral-900"
+    #canvasContainer
+    (mousedown)="onCanvasMouseDown($event)"
+  >
     <div class="canvas-content absolute inset-0" #canvasContent>
-      <div class="transform-layer w-full h-full absolute top-0 left-0 origin-top-left">
+      <div
+        class="transform-layer w-full h-full absolute top-0 left-0 origin-top-left"
+      >
         <!-- Edges Layer (SVG) -->
-        <svg class="absolute inset-0 w-full h-full pointer-events-none overflow-visible" style="z-index: 10;">
-          <path *ngFor="let edge of edges" [class.animated-wire]="(!runId && !currentExecutionState) || edge.isTargetRunning" [attr.d]="edge.path" fill="none" [attr.stroke]="edge.color || '#4a5568'" stroke-width="3"
-            stroke-linecap="round" />
-          <path *ngIf="activeDragWire" [attr.d]="activeDragWire.path" fill="none" [attr.stroke]="activeDragWireColor" stroke-width="3"
-            stroke-dasharray="5,5" stroke-linecap="round" />
+        <svg
+          class="absolute inset-0 w-full h-full pointer-events-none overflow-visible"
+          style="z-index: 10"
+        >
+          <path
+            *ngFor="let edge of edges"
+            [class.animated-wire]="
+              (!runId && !currentExecutionState) || edge.isTargetRunning
+            "
+            [attr.d]="edge.path"
+            fill="none"
+            [attr.stroke]="edge.color || '#4a5568'"
+            stroke-width="3"
+            stroke-linecap="round"
+          />
+          <path
+            *ngIf="activeDragWire"
+            [attr.d]="activeDragWire.path"
+            fill="none"
+            [attr.stroke]="activeDragWireColor"
+            [attr.stroke-width]="magneticTargetPort ? 4 : 3"
+            [attr.stroke-dasharray]="magneticTargetPort ? 'none' : '5,5'"
+            [class.magnetic-locked]="!!magneticTargetPort"
+            stroke-linecap="round"
+          />
+          <circle
+            *ngIf="magneticTargetPort"
+            [attr.cx]="magneticTargetPort.position.x"
+            [attr.cy]="magneticTargetPort.position.y"
+            r="14"
+            fill="none"
+            [attr.stroke]="activeDragWireColor"
+            stroke-width="2"
+            class="magnetic-snap-indicator"
+          />
         </svg>
-    
-        <!-- Nodes Layer -->
-        <div class="nodes-container relative w-full h-full" style="z-index: 20;">
 
+        <!-- Nodes Layer -->
+        <div class="nodes-container relative w-full h-full" style="z-index: 20">
           <!-- User Input Node -->
-          <div class="user-input-node absolute z-10" 
-               [class.selected-node]="selectedNodeId === 'user_input'"
-               [style.left.px]="getNodePosition('user_input').x"
-               [style.top.px]="getNodePosition('user_input').y"
-               (mousedown)="onNodeMouseDown($event, 'user_input')"
-               [formGroup]="workflowForm" *ngIf="!isReadOnly">
-               
+          <div
+            class="user-input-node absolute z-10"
+            [class.selected-node]="selectedNodeId === 'user_input'"
+            [style.left.px]="getNodePosition('user_input').x"
+            [style.top.px]="getNodePosition('user_input').y"
+            (mousedown)="onNodeMouseDown($event, 'user_input')"
+            [formGroup]="workflowForm"
+            *ngIf="!isReadOnly"
+          >
             <div class="step-header">
               <div class="step-title">
                 <mat-icon>input</mat-icon>
                 Workflow Parameters
               </div>
             </div>
-            
-            <div class="step-content user-input-panel" formGroupName="userInput">
+
+            <div
+              class="step-content user-input-panel"
+              formGroupName="userInput"
+            >
               <div class="section">
                 <div formGroupName="settings" class="step-settings">
-                  <div formArrayName="definitions" class="definitions-list flex flex-col gap-4">
-                    <div *ngFor="let def of outputDefinitionsArray.controls; let i = index" [formGroupName]="i"
-                      class="definition-row flex gap-2 items-center">
+                  <div
+                    formArrayName="definitions"
+                    class="definitions-list flex flex-col gap-4"
+                  >
+                    <div
+                      *ngFor="
+                        let def of outputDefinitionsArray.controls;
+                        let i = index
+                      "
+                      [formGroupName]="i"
+                      class="definition-row flex gap-2 items-center"
+                    >
                       <mat-form-field appearance="outline" class="flex-grow">
                         <mat-label>Name</mat-label>
-                        <input matInput formControlName="name" placeholder="Prompt" />
+                        <input
+                          matInput
+                          formControlName="name"
+                          placeholder="Prompt"
+                        />
                       </mat-form-field>
                       <mat-form-field appearance="outline" class="w-24">
                         <mat-label>Type</mat-label>
@@ -124,82 +194,135 @@
                           <mat-option value="image">Image</mat-option>
                         </mat-select>
                       </mat-form-field>
-                      <button mat-icon-button color="warn" (click)="removeOutput(i)">
+                      <button
+                        mat-icon-button
+                        color="warn"
+                        (click)="removeOutput(i)"
+                      >
                         <mat-icon>delete</mat-icon>
                       </button>
                     </div>
                   </div>
                 </div>
-                <button mat-stroked-button color="primary" (click)="addOutput()" class="mt-4 w-full">
+                <button
+                  mat-stroked-button
+                  color="primary"
+                  (click)="addOutput()"
+                  class="mt-4 w-full"
+                >
                   Add Parameter
                 </button>
               </div>
             </div>
-            
+
             <div class="step-footer relative min-h-[40px] pb-4">
-              <div *ngFor="let def of outputDefinitionsArray.controls; let i = index" class="output-port-container">
+              <div
+                *ngFor="
+                  let def of outputDefinitionsArray.controls;
+                  let i = index
+                "
+                class="output-port-container"
+              >
                 <div class="port-label">{{ def.get('name')?.value }}</div>
-                <div class="port output-port"
-                     [style.background-color]="getTypeColor(def.get('type')?.value)"
-                     [style.border-color]="getTypeColor(def.get('type')?.value)"
-                     matTooltip="Drag to connect"
-                     [attr.data-node-id]="'user_input'"
-                     [attr.data-port-name]="def.get('name')?.value"
-                     [attr.data-port-type]="'output'"
-                     (mousedown)="onPortDragStart({stepId: 'user_input', outputName: def.get('name')?.value, mouseEvent: $event})">
-                </div>
-                <span class="port-type-chip output-chip" [attr.data-type]="def.get('type')?.value">{{ getShortType(def.get('type')?.value) }}</span>
+                <div
+                  class="port output-port"
+                  [style.background-color]="
+                    getTypeColor(def.get('type')?.value)
+                  "
+                  [style.border-color]="getTypeColor(def.get('type')?.value)"
+                  matTooltip="Drag to connect"
+                  [attr.data-node-id]="'user_input'"
+                  [attr.data-port-name]="def.get('name')?.value"
+                  [attr.data-port-type]="'output'"
+                  (mousedown)="
+                    onPortDragStart({
+                      stepId: 'user_input',
+                      outputName: def.get('name')?.value,
+                      mouseEvent: $event,
+                    })
+                  "
+                ></div>
+                <span
+                  class="port-type-chip output-chip"
+                  [attr.data-type]="def.get('type')?.value"
+                  >{{ getShortType(def.get('type')?.value) }}</span
+                >
               </div>
             </div>
-            
           </div>
 
           <!-- Steps -->
           <ng-container [formGroup]="workflowForm">
             <div formArrayName="steps">
-              <ng-container *ngFor="let step of stepsArray.controls; let i = index" [formGroupName]="i">
+              <ng-container
+                *ngFor="let step of stepsArray.controls; let i = index"
+                [formGroupName]="i"
+              >
                 <app-generic-step
-                class="absolute"
-                [style.left.px]="getNodePosition(step.value.stepId).x"
-                [style.top.px]="getNodePosition(step.value.stepId).y"
-                (mousedown)="onNodeMouseDown($event, step.value.stepId)"
-                (click)="selectedStepIndex = i"
-                [stepForm]="asFormGroup(step)"
-                [stepIndex]="i"
-                [config]="getStepConfig(step.value.type)"
-                [availableOutputs]="availableOutputsPerStep[i]"
-                [showValidationErrors]="submitted"
-                [stepExecution]="getStepExecution(step.value.stepId)"
-                [mediaUrlMap]="mediaUrlMap"
-                [isSelected]="selectedNodeId === step.value.stepId"
-                (portDragStart)="onPortDragStart($event)"
-                (portDrop)="onPortDrop($event, step.value.stepId)"
-                (delete)="deleteStep(i)"
-                (clone)="cloneStep(i)">
-              </app-generic-step>
-            </ng-container>
-          </div>
-        </ng-container>
+                  class="absolute"
+                  [style.left.px]="getNodePosition(step.value.stepId).x"
+                  [style.top.px]="getNodePosition(step.value.stepId).y"
+                  (mousedown)="onNodeMouseDown($event, step.value.stepId)"
+                  (click)="selectedStepIndex = i"
+                  [stepForm]="asFormGroup(step)"
+                  [stepIndex]="i"
+                  [config]="getStepConfig(step.value.type)"
+                  [availableOutputs]="availableOutputsPerStep[i]"
+                  [showValidationErrors]="submitted"
+                  [stepExecution]="getStepExecution(step.value.stepId)"
+                  [mediaUrlMap]="mediaUrlMap"
+                  [isSelected]="selectedNodeId === step.value.stepId"
+                  [activeMagneticPort]="magneticTargetPort"
+                  [dragSourcePort]="dragSourcePort"
+                  (portDragStart)="onPortDragStart($event)"
+                  (portDrop)="onPortDrop($event, step.value.stepId)"
+                  (delete)="deleteStep(i)"
+                  (clone)="cloneStep(i)"
+                >
+                </app-generic-step>
+              </ng-container>
+            </div>
+          </ng-container>
         </div>
       </div>
     </div>
     <!-- Floating Add Node Button -->
     <div class="add-btn-wrapper" *ngIf="!isReadOnly">
-      <div class="history-btns" *ngIf="historyIndex > 0 || historyIndex < historyStack.length - 1">
-        <button mat-mini-fab color="primary" class="mini-history-btn" *ngIf="historyIndex > 0" (click)="undo()" matTooltip="Undo (Ctrl+Z)">
+      <div
+        class="history-btns"
+        *ngIf="historyIndex > 0 || historyIndex < historyStack.length - 1"
+      >
+        <button
+          mat-mini-fab
+          color="primary"
+          class="mini-history-btn"
+          *ngIf="historyIndex > 0"
+          (click)="undo()"
+          matTooltip="Undo (Ctrl+Z)"
+        >
           <mat-icon>undo</mat-icon>
         </button>
-        <button mat-mini-fab color="primary" class="mini-history-btn" *ngIf="historyIndex < historyStack.length - 1" (click)="redo()" matTooltip="Redo (Ctrl+Y)">
+        <button
+          mat-mini-fab
+          color="primary"
+          class="mini-history-btn"
+          *ngIf="historyIndex < historyStack.length - 1"
+          (click)="redo()"
+          matTooltip="Redo (Ctrl+Y)"
+        >
           <mat-icon>redo</mat-icon>
         </button>
       </div>
       <div class="add-btn-container">
-        <studio-button variant="primary" size="large" (click)="openAddStepModal()">
+        <studio-button
+          variant="primary"
+          size="large"
+          (click)="openAddStepModal()"
+        >
           <mat-icon>add</mat-icon>
           Add Node
         </studio-button>
       </div>
     </div>
-
   </div>
 </div>

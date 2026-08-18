@@ -29,8 +29,16 @@ import {
   ASPECT_RATIO_LABELS,
   MODEL_CONFIGS,
 } from '../../../../common/config/model-config';
-import {StepConfig, StepSetting} from './step.model';
+import {StepConfig, StepInput, StepSetting} from './step.model';
 import {StepStatusEnum} from '../../../workflow.models';
+import {
+  DragSourcePort,
+  getPortTypeColor,
+  getShortType,
+  isInputAlreadyLinked,
+  isPortTypeCompatible,
+  PortShortType,
+} from '../../../utils/workflow-magnetic.util';
 
 @Component({
   selector: 'app-generic-step',
@@ -47,6 +55,9 @@ export class GenericStepComponent implements OnInit, OnChanges {
   @Input() stepExecution: any = null;
   @Input() mediaUrlMap!: Map<string, string>;
   @Input() isSelected = false;
+  @Input() activeMagneticPort: {stepId: string; inputName: string} | null =
+    null;
+  @Input() dragSourcePort: DragSourcePort | null = null;
 
   @Output() delete = new EventEmitter<void>();
   @Output() clone = new EventEmitter<void>();
@@ -72,24 +83,52 @@ export class GenericStepComponent implements OnInit, OnChanges {
 
   constructor(private fb: FormBuilder) {}
 
-  getShortType(type: string): string {
-    if (!type) return 'ANY';
-    const t = type.toLowerCase();
-    if (t.includes('image')) return 'IMG';
-    if (t.includes('text') || t.includes('string')) return 'TXT';
-    if (t.includes('video')) return 'VID';
-    if (t.includes('audio')) return 'AUD';
-    return type.substring(0, 3).toUpperCase();
+  getShortType(type: string): PortShortType {
+    return getShortType(type);
   }
 
   getTypeColor(type: string): string {
-    if (!type) return '#63b3ed'; // Default blue
-    const t = type.toLowerCase();
-    if (t.includes('image')) return '#d53f8c'; // Pink
-    if (t.includes('text') || t.includes('string')) return '#3182ce'; // Blue
-    if (t.includes('video')) return '#dd6b20'; // Orange
-    if (t.includes('audio')) return '#805ad5'; // Purple
-    return '#63b3ed'; // Default
+    return getPortTypeColor(type);
+  }
+
+  isMagneticTarget(inputName: string): boolean {
+    return (
+      this.activeMagneticPort?.stepId === this.stepForm?.value?.stepId &&
+      this.activeMagneticPort?.inputName === inputName
+    );
+  }
+
+  isCompatibleWithActiveDrag(
+    input: {name: string; type: string} | StepInput,
+  ): boolean {
+    if (!this.dragSourcePort?.type || !this.dragSourcePort?.stepId)
+      return false;
+    // Block same step self-connection
+    if (this.stepForm?.value?.stepId === this.dragSourcePort.stepId) {
+      return false;
+    }
+    // Block duplicate connection if already linked to this source output
+    if (this.dragSourcePort.outputName) {
+      const currentVal = this.stepForm?.get('inputs')?.get(input.name)?.value;
+      if (
+        isInputAlreadyLinked(
+          currentVal,
+          this.dragSourcePort.stepId,
+          this.dragSourcePort.outputName,
+        )
+      ) {
+        return false;
+      }
+    }
+    return isPortTypeCompatible(this.dragSourcePort.type, input.type);
+  }
+
+  isIncompatibleWithActiveDrag(
+    input: {name: string; type: string} | StepInput,
+  ): boolean {
+    if (!this.dragSourcePort?.type || !this.dragSourcePort?.stepId)
+      return false;
+    return !this.isCompatibleWithActiveDrag(input);
   }
 
   ngOnInit(): void {
@@ -356,7 +395,8 @@ export class GenericStepComponent implements OnInit, OnChanges {
           input.hidden = false;
           this.stepForm.get('inputs')?.get(input.name)?.enable();
           // Force mixed mode for list inputs if they are enabled
-          if (input.type === 'image' || input.type === 'video') {
+          const short = getShortType(input.type);
+          if (short === 'IMG' || short === 'VID') {
             this.inputModes[input.name] = 'mixed';
           }
         } else {
@@ -367,7 +407,8 @@ export class GenericStepComponent implements OnInit, OnChanges {
         if (currentMode === 'Frames to Video') {
           input.hidden = false;
           this.stepForm.get('inputs')?.get(input.name)?.enable();
-          if (input.type === 'image' || input.type === 'video') {
+          const short = getShortType(input.type);
+          if (short === 'IMG' || short === 'VID') {
             this.inputModes[input.name] = 'mixed';
           }
         } else {
@@ -376,7 +417,8 @@ export class GenericStepComponent implements OnInit, OnChanges {
         }
       } else {
         // Default for other inputs: if it allows multiple, set to mixed
-        if ((input.type === 'image' || input.type === 'video') && maxRefs > 1) {
+        const short = getShortType(input.type);
+        if ((short === 'IMG' || short === 'VID') && maxRefs > 1) {
           this.inputModes[input.name] = 'mixed';
         }
       }
@@ -386,10 +428,7 @@ export class GenericStepComponent implements OnInit, OnChanges {
   private updateCompatibleOutputs(): void {
     this.localConfig.inputs.forEach(input => {
       this.compatibleOutputs[input.name] = this.availableOutputs.filter(
-        output =>
-          output.type === input.type ||
-          (output.type === 'text' && input.type === 'textarea') ||
-          (output.type === 'image' && input.type === 'image'),
+        output => isPortTypeCompatible(output.type, input.type),
       );
     });
   }

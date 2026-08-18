@@ -25,7 +25,11 @@ describe('WorkflowService', () => {
 
   beforeEach(() => {
     TestBed.configureTestingModule({
-      providers: [provideHttpClient(), provideHttpClientTesting()],
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        WorkflowService,
+      ],
     });
     service = TestBed.inject(WorkflowService);
   });
