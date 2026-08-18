@@ -29,6 +29,7 @@ import {
   SourceAssetService,
 } from '../../../../../../common/services/source-asset.service';
 import {StepOutputReference} from '../../../../../workflow.models';
+import {isInputAlreadyLinked} from '../../../../../utils/workflow-magnetic.util';
 
 @Component({
   selector: 'app-step-media-input',
@@ -45,7 +46,7 @@ export class StepMediaInputComponent implements OnInit {
 
   // Helpers
   get items(): (ReferenceImage | StepOutputReference)[] {
-    const val = this.control.value;
+    const val = this.control?.value;
     if (Array.isArray(val)) return val;
     // If it's single item but we want to treat it as array for rendering
     // Actually, fixed mode can be single object or array?
@@ -58,7 +59,21 @@ export class StepMediaInputComponent implements OnInit {
     // In GenericStepComponent, `referenceImages` was the source of truth for display, and `updateInputControlWithError` synced it to control.
     // We should probably maintain a local `referenceImages` array and sync to control.
     if (!val) return [];
-    return Array.isArray(val) ? val : [val];
+    return [val];
+  }
+
+  get unlinkedCompatibleOutputs(): any[] {
+    if (!this.compatibleOutputs) return [];
+    return this.compatibleOutputs.filter(
+      out =>
+        !out?.value?.step ||
+        !out?.value?.output ||
+        !isInputAlreadyLinked(
+          this.control?.value,
+          out.value.step,
+          out.value.output,
+        ),
+    );
   }
 
   constructor(
@@ -74,12 +89,17 @@ export class StepMediaInputComponent implements OnInit {
   }
 
   isStepOutputReference(item: any): item is StepOutputReference {
-    return item && 'step' in item && 'output' in item;
+    return !!(
+      item &&
+      typeof item === 'object' &&
+      'step' in item &&
+      'output' in item
+    );
   }
 
   getLinkedOutputLabel(item: StepOutputReference): string {
-    const found = this.compatibleOutputs.find(
-      o => o.value.step === item.step && o.value.output === item.output,
+    const found = this.compatibleOutputs?.find(
+      o => o.value?.step === item.step && o.value?.output === item.output,
     );
     return found ? found.label : `${item.step}.${item.output}`;
   }
@@ -182,7 +202,15 @@ export class StepMediaInputComponent implements OnInit {
 
   addLinkedOutput(outputValue: any) {
     if (this.items.length >= this.maxItems) return;
-    this.addItem(outputValue.value);
+    const ref: StepOutputReference = outputValue?.value ?? outputValue;
+    if (
+      ref?.step &&
+      ref?.output &&
+      isInputAlreadyLinked(this.control?.value, ref.step, ref.output)
+    ) {
+      return;
+    }
+    this.addItem(ref);
   }
 
   clearReferenceImage(index: number) {

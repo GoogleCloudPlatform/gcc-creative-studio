@@ -74,10 +74,10 @@
     </div>
   
     <mat-menu #outputMenu="matMenu">
-      <button mat-menu-item *ngFor="let out of compatibleOutputs" (click)="addLinkedOutput(out)">
+      <button mat-menu-item *ngFor="let out of unlinkedCompatibleOutputs" (click)="addLinkedOutput(out)">
         {{ out.label }}
       </button>
-      <div *ngIf="!compatibleOutputs?.length" class="px-4 py-2 text-sm text-neutral-500">
+      <div *ngIf="!unlinkedCompatibleOutputs.length" class="px-4 py-2 text-sm text-neutral-500">
         No compatible outputs
       </div>
     </mat-menu>
