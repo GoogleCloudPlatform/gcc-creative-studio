@@ -53,6 +53,16 @@ import {
 // But wait, template calls getStepConfig.
 import {STEP_CONFIGS_MAP} from '../shared/step-configs.map'; // Kept for template
 import {labelToName} from '../utils/workflow-step.util';
+import {
+  DragSourcePort,
+  findClosestMagneticPort,
+  getPortTypeColor,
+  getShortType,
+  isInputAlreadyLinked,
+  isPortTypeCompatible,
+  MagneticPortCandidate,
+  PortShortType,
+} from '../utils/workflow-magnetic.util';
 import {WorkflowService} from '../workflow.service';
 import {AddStepModalComponent} from './add-step-modal/add-step-modal.component';
 import {RunWorkflowModalComponent} from './run-workflow-modal/run-workflow-modal.component';
@@ -60,18 +70,18 @@ import {RunWorkflowModalComponent} from './run-workflow-modal/run-workflow-modal
 import {WorkflowFormService} from './workflow-form.service';
 import * as d3 from 'd3';
 
-export interface Point {
+export type Point = {
   x: number;
   y: number;
-}
+};
 
-export interface Edge {
+export type Edge = {
   path: string;
   sourceId: string;
   targetId: string;
   color?: string;
   isTargetRunning?: boolean;
-}
+};
 
 @Component({
   selector: 'app-workflow-editor',
@@ -148,7 +158,14 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   nodePositions: {[stepId: string]: Point} = {};
   edges: Edge[] = [];
   activeDragWire: {path: string} | null = null;
-  dragSourcePort: {stepId: string; outputName: string} | null = null;
+  dragSourcePort: DragSourcePort | null = null;
+  magneticTargetPort: {
+    stepId: string;
+    inputName: string;
+    position: Point;
+    type?: string;
+  } | null = null;
+  candidateMagneticPorts: MagneticPortCandidate[] = [];
 
   get activeDragWireColor(): string {
     if (this.dragSourcePort) {
@@ -170,6 +187,16 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   @HostListener('document:keydown', ['$event'])
   onDocumentKeydown(event: KeyboardEvent): void {
     if (this.isReadOnly) return;
+
+    if (event.key === 'Escape') {
+      if (this.dragSourcePort) {
+        this.dragSourcePort = null;
+        this.activeDragWire = null;
+        this.magneticTargetPort = null;
+        this.candidateMagneticPorts = [];
+        return;
+      }
+    }
 
     const target = event.target as HTMLElement;
     if (
@@ -279,24 +306,12 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     return control as FormGroup;
   }
 
-  getShortType(type: string): string {
-    if (!type) return 'ANY';
-    const t = type.toLowerCase();
-    if (t.includes('image')) return 'IMG';
-    if (t.includes('text') || t.includes('string')) return 'TXT';
-    if (t.includes('video')) return 'VID';
-    if (t.includes('audio')) return 'AUD';
-    return type.substring(0, 3).toUpperCase();
+  getShortType(type: string): PortShortType {
+    return getShortType(type);
   }
 
   getTypeColor(type: string): string {
-    if (!type) return '#63b3ed'; // Default blue
-    const t = type.toLowerCase();
-    if (t.includes('image')) return '#d53f8c'; // Pink
-    if (t.includes('text') || t.includes('string')) return '#3182ce'; // Blue
-    if (t.includes('video')) return '#dd6b20'; // Orange
-    if (t.includes('audio')) return '#805ad5'; // Purple
-    return '#63b3ed'; // Default
+    return getPortTypeColor(type);
   }
 
   ngOnInit(): void {
@@ -558,6 +573,15 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     event.stopPropagation();
   }
 
+  getCurrentLocked(): {stepId: string; inputName: string} | null {
+    return this.magneticTargetPort
+      ? {
+          stepId: this.magneticTargetPort.stepId,
+          inputName: this.magneticTargetPort.inputName,
+        }
+      : null;
+  }
+
   @HostListener('window:mousemove', ['$event'])
   onMouseMove(event: MouseEvent): void {
     if (this.draggingNodeId) {
@@ -590,6 +614,8 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         (event.clientY - containerRect.top - this.currentTransform.y) /
         this.currentTransform.k;
 
+      const pointerPos: Point = {x: targetX, y: targetY};
+
       // Source position is the port position
       const sourcePos = this.getPortPosition(
         this.dragSourcePort.stepId,
@@ -598,9 +624,32 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       );
 
       if (sourcePos) {
-        this.activeDragWire = {
-          path: this.createBezierPath(sourcePos, {x: targetX, y: targetY}),
-        };
+        const sourceType = this.dragSourcePort.type;
+        const currentLocked = this.getCurrentLocked();
+
+        const closestCandidate = findClosestMagneticPort(
+          pointerPos,
+          this.candidateMagneticPorts,
+          sourceType,
+          currentLocked,
+        );
+
+        if (closestCandidate) {
+          this.magneticTargetPort = {
+            stepId: closestCandidate.stepId,
+            inputName: closestCandidate.portName,
+            position: closestCandidate.position,
+            type: closestCandidate.type,
+          };
+          this.activeDragWire = {
+            path: this.createBezierPath(sourcePos, closestCandidate.position),
+          };
+        } else {
+          this.magneticTargetPort = null;
+          this.activeDragWire = {
+            path: this.createBezierPath(sourcePos, pointerPos),
+          };
+        }
       }
     }
   }
@@ -613,8 +662,14 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       this.draggingNodeId = null;
     }
     if (this.dragSourcePort) {
+      const currentLocked = this.getCurrentLocked();
+      if (currentLocked) {
+        this.onPortDrop(currentLocked, currentLocked.stepId);
+      }
       this.dragSourcePort = null;
       this.activeDragWire = null;
+      this.magneticTargetPort = null;
+      this.candidateMagneticPorts = [];
     }
   }
 
@@ -623,10 +678,79 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     outputName: string;
     mouseEvent: MouseEvent;
   }): void {
-    this.dragSourcePort = {stepId: event.stepId, outputName: event.outputName};
+    const sourceType = this.getOutputType(event.stepId, event.outputName);
+    this.dragSourcePort = {
+      stepId: event.stepId,
+      outputName: event.outputName,
+      type: sourceType,
+    };
+    this.magneticTargetPort = null;
+    this.candidateMagneticPorts = this.collectMagneticCandidatePorts(
+      event.stepId,
+      event.outputName,
+    );
     event.mouseEvent.stopPropagation();
     // Prevent default to avoid text selection while dragging
     event.mouseEvent.preventDefault();
+  }
+
+  collectMagneticCandidatePorts(
+    sourceStepId: string,
+    sourceOutputName?: string,
+  ): MagneticPortCandidate[] {
+    const candidates: MagneticPortCandidate[] = [];
+    if (!isPlatformBrowser(this.platformId)) return candidates;
+
+    const sourceType = sourceOutputName
+      ? this.getOutputType(sourceStepId, sourceOutputName)
+      : null;
+
+    this.stepsArray.controls.forEach(stepControl => {
+      const stepId = stepControl.get('stepId')?.value;
+      if (!stepId || stepId === sourceStepId) return;
+
+      const stepType = stepControl.get('type')?.value;
+      const config = this.getStepConfig(stepType);
+      if (!config?.inputs) return;
+
+      const inputsGroup = stepControl.get('inputs') as FormGroup;
+
+      config.inputs.forEach((input: any) => {
+        if (input.hidden) return;
+
+        // Skip candidate if type is incompatible
+        if (sourceType && !isPortTypeCompatible(sourceType, input.type)) {
+          return;
+        }
+
+        // Block if this input is already linked to the same source output
+        if (sourceOutputName && inputsGroup) {
+          const currentVal = inputsGroup.get(input.name)?.value;
+          if (
+            isInputAlreadyLinked(currentVal, sourceStepId, sourceOutputName)
+          ) {
+            return;
+          }
+        }
+
+        const portEl = document.querySelector(
+          `[data-node-id="${stepId}"][data-port-name="${input.name}"][data-port-type="input"]`,
+        );
+        if (portEl) {
+          const pos = this.getPortPosition(stepId, input.name, 'input');
+          if (pos) {
+            candidates.push({
+              stepId,
+              portName: input.name,
+              type: input.type,
+              position: pos,
+            });
+          }
+        }
+      });
+    });
+
+    return candidates;
   }
 
   onPortDrop(
@@ -634,6 +758,15 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     targetStepId: string,
   ): void {
     if (this.dragSourcePort) {
+      // Prevent linking to the same node (self-connection)
+      if (this.dragSourcePort.stepId === targetStepId) {
+        this.dragSourcePort = null;
+        this.activeDragWire = null;
+        this.magneticTargetPort = null;
+        this.candidateMagneticPorts = [];
+        return;
+      }
+
       // Connect dragSourcePort to event target
       const stepForm = this.stepsArray.controls.find(
         c => c.get('stepId')?.value === targetStepId,
@@ -653,7 +786,39 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
           const inputConfig = config?.inputs?.find(
             (i: any) => i.name === event.inputName,
           );
-          if (inputConfig?.type === 'image' || inputConfig?.type === 'video') {
+
+          // Type Compatibility Check: Reject incompatible connections (e.g. TXT source to IMG target)
+          const sourceType =
+            this.dragSourcePort.type ||
+            this.getOutputType(
+              this.dragSourcePort.stepId,
+              this.dragSourcePort.outputName,
+            );
+          if (!isPortTypeCompatible(sourceType, inputConfig?.type)) {
+            this.dragSourcePort = null;
+            this.activeDragWire = null;
+            this.magneticTargetPort = null;
+            this.candidateMagneticPorts = [];
+            return;
+          }
+
+          // Block duplicate same portOut-portIN link
+          if (
+            isInputAlreadyLinked(
+              currentVal,
+              this.dragSourcePort.stepId,
+              this.dragSourcePort.outputName,
+            )
+          ) {
+            this.dragSourcePort = null;
+            this.activeDragWire = null;
+            this.magneticTargetPort = null;
+            this.candidateMagneticPorts = [];
+            return;
+          }
+
+          const targetShortType = getShortType(inputConfig?.type);
+          if (targetShortType === 'IMG' || targetShortType === 'VID') {
             if (Array.isArray(currentVal)) {
               control?.setValue([...currentVal, newValue]);
             } else if (
@@ -674,6 +839,8 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       }
       this.dragSourcePort = null;
       this.activeDragWire = null;
+      this.magneticTargetPort = null;
+      this.candidateMagneticPorts = [];
     }
   }
 
@@ -741,10 +908,10 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       if (type) {
         const config = this.getStepConfig(type);
         const output = config?.outputs?.find((o: any) => o.name === outputName);
-        return output?.type || 'any';
+        return output?.type || '';
       }
     }
-    return 'any';
+    return '';
   }
 
   private getPortPosition(
@@ -851,7 +1018,11 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   // ... (rest of the component logic will be updated in subsequent steps)
 
   getStepConfig(type: string) {
-    return (STEP_CONFIGS_MAP as any)[type];
+    if (!type) return undefined;
+    const normalized = type.replace(/-/g, '_');
+    return (
+      (STEP_CONFIGS_MAP as any)[type] || (STEP_CONFIGS_MAP as any)[normalized]
+    );
   }
 
   get isReadOnly(): boolean {

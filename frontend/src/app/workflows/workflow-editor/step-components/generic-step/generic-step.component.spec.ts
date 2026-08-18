@@ -17,8 +17,15 @@
 import {NO_ERRORS_SCHEMA} from '@angular/core';
 import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {FormBuilder, FormGroup, ReactiveFormsModule} from '@angular/forms';
+import {MatCheckboxModule} from '@angular/material/checkbox';
+import {MatFormFieldModule} from '@angular/material/form-field';
+import {MatInputModule} from '@angular/material/input';
+import {MatRadioModule} from '@angular/material/radio';
+import {MatSelectModule} from '@angular/material/select';
+import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {WorkflowStatusPipe} from '../../../workflow-status.pipe';
 import {IMAGE_STEP_CONFIG} from '../step-configs/image-step.config';
+import {StepInput} from './step.model';
 import {GenericStepComponent} from './generic-step.component';
 
 describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
@@ -29,7 +36,16 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [GenericStepComponent],
-      imports: [ReactiveFormsModule, WorkflowStatusPipe],
+      imports: [
+        ReactiveFormsModule,
+        MatFormFieldModule,
+        MatInputModule,
+        MatSelectModule,
+        MatCheckboxModule,
+        MatRadioModule,
+        NoopAnimationsModule,
+        WorkflowStatusPipe,
+      ],
       providers: [FormBuilder],
       schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();
@@ -229,5 +245,75 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
     expect(
       (upscaleStepForm.get('settings') as FormGroup).get('mode')?.value,
     ).toBe('upscale_image');
+  });
+
+  describe('Magnetic Snapping & Compatibility Methods', () => {
+    it('should correctly identify magnetic target input', () => {
+      component.activeMagneticPort = {
+        stepId: 'image_step_1',
+        inputName: 'prompt',
+      };
+      expect(component.isMagneticTarget('prompt')).toBeTrue();
+      expect(component.isMagneticTarget('input_image')).toBeFalse();
+
+      component.activeMagneticPort = {
+        stepId: 'other_step',
+        inputName: 'prompt',
+      };
+      expect(component.isMagneticTarget('prompt')).toBeFalse();
+    });
+
+    it('should evaluate compatibility with active drag source and block self-links and duplicates', () => {
+      const textInput: StepInput = {
+        name: 'prompt',
+        label: 'Prompt',
+        type: 'text',
+        required: true,
+      };
+      const imageInput: StepInput = {
+        name: 'input_image',
+        label: 'Input Image',
+        type: 'image',
+        required: false,
+      };
+
+      component.dragSourcePort = {
+        type: 'text',
+        stepId: 'other_step',
+        outputName: 'out_text',
+      };
+
+      expect(component.isCompatibleWithActiveDrag(textInput)).toBeTrue();
+      expect(component.isIncompatibleWithActiveDrag(textInput)).toBeFalse();
+      expect(component.isCompatibleWithActiveDrag(imageInput)).toBeFalse();
+      expect(component.isIncompatibleWithActiveDrag(imageInput)).toBeTrue();
+
+      // Block same-step (self) connection
+      component.dragSourcePort = {
+        type: 'text',
+        stepId: 'image_step_1',
+        outputName: 'out_text',
+      };
+      expect(component.isCompatibleWithActiveDrag(textInput)).toBeFalse();
+      expect(component.isIncompatibleWithActiveDrag(textInput)).toBeTrue();
+
+      // Block duplicate connection if already linked
+      component.dragSourcePort = {
+        type: 'text',
+        stepId: 'other_step',
+        outputName: 'out_text',
+      };
+      component.stepForm.get('inputs')?.get('prompt')?.setValue({
+        step: 'other_step',
+        output: 'out_text',
+      });
+      expect(component.isCompatibleWithActiveDrag(textInput)).toBeFalse();
+      expect(component.isIncompatibleWithActiveDrag(textInput)).toBeTrue();
+
+      // Null drag source should be incompatible
+      component.dragSourcePort = null;
+      expect(component.isCompatibleWithActiveDrag(textInput)).toBeFalse();
+      expect(component.isIncompatibleWithActiveDrag(textInput)).toBeFalse();
+    });
   });
 });
