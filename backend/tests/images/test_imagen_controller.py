@@ -138,7 +138,7 @@ def test_upload_upscale_success(client, mock_service, mock_workspace_auth):
         user_email="test@example.com",
         mime_type=MimeTypeEnum.IMAGE_PNG,
         status=JobStatusEnum.PROCESSING,
-        model=GenerationModelEnum.IMAGEN_4_UPSCALE_PREVIEW,
+        model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE,
         gcs_uris=[],
         presigned_urls=[],
         aspect_ratio="1:1",
@@ -146,12 +146,54 @@ def test_upload_upscale_success(client, mock_service, mock_workspace_auth):
     mock_service.start_upload_upscale_job.return_value = mock_response
 
     files = {"file": ("test.png", b"fake_bytes", "image/png")}
-    data = {"workspaceId": "1"}
+    data = {
+        "workspaceId": "1",
+        "enhanceInputImage": "true",
+        "imagePreservationFactor": "0.85",
+    }
 
     response = client.post("/api/images/upload-upscale", files=files, data=data)
 
     assert response.status_code == 200
     assert response.json()["id"] == 333
+    mock_service.start_upload_upscale_job.assert_called_once()
+    kwargs = mock_service.start_upload_upscale_job.call_args.kwargs
+    assert kwargs["enhance_input_image"] is True
+    assert kwargs["image_preservation_factor"] == 0.85
+
+
+def test_upload_upscale_snake_case_params(
+    client, mock_service, mock_workspace_auth
+):
+    _ = mock_workspace_auth
+    mock_response = MediaItemResponse(
+        id=334,
+        workspace_id=1,
+        user_id=1,
+        user_email="test@example.com",
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+        status=JobStatusEnum.PROCESSING,
+        model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE,
+        gcs_uris=[],
+        presigned_urls=[],
+        aspect_ratio="1:1",
+    )
+    mock_service.start_upload_upscale_job.return_value = mock_response
+
+    files = {"file": ("test.png", b"fake_bytes", "image/png")}
+    data = {
+        "workspaceId": "1",
+        "enhance_input_image": "true",
+        "image_preservation_factor": "0.6",
+    }
+
+    response = client.post("/api/images/upload-upscale", files=files, data=data)
+
+    assert response.status_code == 200
+    assert response.json()["id"] == 334
+    kwargs = mock_service.start_upload_upscale_job.call_args.kwargs
+    assert kwargs["enhance_input_image"] is True
+    assert kwargs["image_preservation_factor"] == 0.6
 
 
 def test_upscale_image_api_success(client, mock_service):
