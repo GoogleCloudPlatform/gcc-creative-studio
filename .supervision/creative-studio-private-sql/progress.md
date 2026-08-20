@@ -2,8 +2,8 @@
 
 ## Status
 
-- **State**: Completed
-- **Current Objective**: Private Cloud SQL connectivity is implemented and committed; deployment remains unapplied pending plan review.
+- **State**: Executing
+- **Current Objective**: Correct bootstrap branch reuse before resuming the private Cloud SQL deployment.
 
 ## Plan
 
@@ -12,11 +12,13 @@
 - [x] Phase 3: Implement Terraform networking and Cloud Run connectivity.
 - [x] Phase 4: Add deployment, validation, and teardown documentation.
 - [x] Phase 5: Run available validation and commit.
+- [ ] Phase 6: Validate and commit bootstrap branch-resume correction.
 
 ## Journal
 
 ### 2026-08-20 Private Cloud SQL Deployment
 
+- Resumed deployment investigation — **Finding**: Cloud SQL apply attempted a public IP despite the feature branch setting `ipv4_enabled = false`; bootstrap reuses an existing checkout without previously switching it to the branch entered by the user — **Decision**: update a clean existing checkout to the selected branch before reuse and document the recovery commands.
 - Committed implementation — **Finding**: static diagnostics and Git whitespace checks pass, while `uv`, `terraform`, and `gcloud` are unavailable locally — **Decision**: commit the reviewed change without apply; require Cloud Shell Terraform formatting, validation, plan review, and runtime validation before deployment.
 - Implemented private connectivity — **Finding**: the application selected `IPTypes.PUBLIC` when `USE_CLOUD_SQL_AUTH_PROXY` was unset, despite mounting the Cloud SQL socket — **Decision**: configure the Python Connector with an explicit validated IP type and set `CLOUD_SQL_IP_TYPE=PRIVATE` in the deployment.
 - Added VPC resources — **Finding**: the provider configuration has no version constraints or lock file — **Decision**: use the broadly supported Serverless VPC Access connector rather than Direct VPC egress; use `PRIVATE_RANGES_ONLY` to avoid requiring Cloud NAT for Internet traffic.

@@ -66,6 +66,31 @@ apply rather than creating a duplicate connection. Do not commit that state.
    `terraform validate` in that environment. Review `terraform plan` before
    answering yes to bootstrap's apply prompt.
 
+When resuming a prior bootstrap run, first confirm the existing checkout uses
+the feature branch. The bootstrap script updates a clean existing checkout to
+the selected branch. For an older checkout created before this behavior was
+available, run the following from its parent directory before resuming:
+
+```bash
+cd gcc-creative-studio
+git status --short
+git fetch origin feature/KN-DATAX-15064-deploy-creative-studio
+git switch feature/KN-DATAX-15064-deploy-creative-studio
+git pull --ff-only origin feature/KN-DATAX-15064-deploy-creative-studio
+gcloud services enable servicenetworking.googleapis.com vpcaccess.googleapis.com \
+  --project=iconic-ds-creative-studio-dev
+```
+
+Do not discard or overwrite `infra/environments/dev-infra/`; it contains the
+uncommitted generated Terraform configuration and resume state. Verify the
+module source after the branch update before running another plan:
+
+```bash
+grep -A3 'ip_configuration' infra/modules/postgresql/main.tf
+```
+
+It must show `ipv4_enabled = false` and `private_network = var.private_network`.
+
 The Cloud Build repository resource must reference owner `theiconic`, repository
 `gcc-creative-studio`, and the healthy `us-central1` connection. If Terraform
 reports that a manually linked repository already exists, import that resource
