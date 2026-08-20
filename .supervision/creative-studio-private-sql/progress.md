@@ -18,6 +18,7 @@
 
 ### 2026-08-20 Private Cloud SQL Deployment
 
+- Validated fresh Cloud Shell checkout — **Finding**: Terraform initialized the private-networking module, then Google provider v7.45.0 rejected `project` on `google_service_networking_connection` — **Decision**: remove the unsupported attribute; the fully qualified VPC self link identifies the network-owning project.
 - Resumed deployment investigation — **Finding**: Cloud SQL apply attempted a public IP despite the feature branch setting `ipv4_enabled = false`; bootstrap reuses an existing checkout without previously switching it to the branch entered by the user — **Decision**: update a clean existing checkout to the selected branch before reuse and document the recovery commands.
 - Committed implementation — **Finding**: static diagnostics and Git whitespace checks pass, while `uv`, `terraform`, and `gcloud` are unavailable locally — **Decision**: commit the reviewed change without apply; require Cloud Shell Terraform formatting, validation, plan review, and runtime validation before deployment.
 - Implemented private connectivity — **Finding**: the application selected `IPTypes.PUBLIC` when `USE_CLOUD_SQL_AUTH_PROXY` was unset, despite mounting the Cloud SQL socket — **Decision**: configure the Python Connector with an explicit validated IP type and set `CLOUD_SQL_IP_TYPE=PRIVATE` in the deployment.

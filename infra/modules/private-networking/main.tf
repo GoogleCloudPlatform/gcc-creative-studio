@@ -21,7 +21,6 @@ resource "google_compute_global_address" "private_services" {
 }
 
 resource "google_service_networking_connection" "private_services" {
-  project                 = var.network_project_id
   network                 = local.network_self_link
   service                 = "servicenetworking.googleapis.com"
   reserved_peering_ranges = [google_compute_global_address.private_services.name]
