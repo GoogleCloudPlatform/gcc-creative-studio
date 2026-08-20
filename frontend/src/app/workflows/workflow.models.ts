@@ -19,13 +19,9 @@ import {ReferenceImage} from '../common/models/search.model';
 export enum NodeTypes {
   USER_INPUT = 'user_input',
   GENERATE_TEXT = 'generate_text',
-  GENERATE_IMAGE = 'generate_image',
-  EDIT_IMAGE = 'edit_image',
   GENERATE_VIDEO = 'generate_video',
   CROP_IMAGE = 'crop_image',
-  VIRTUAL_TRY_ON = 'virtual_try_on',
   GENERATE_AUDIO = 'generate_audio',
-  UPSCALE_IMAGE = 'upscale_image',
   IMAGE = 'image',
 }
 

@@ -129,13 +129,6 @@ export class ExecutionDetailsModalComponent implements OnInit {
 
   isImageOutput(stepId: string): boolean {
     const type = this.getStepType(stepId);
-    return (
-      type === NodeTypes.GENERATE_IMAGE ||
-      type === NodeTypes.EDIT_IMAGE ||
-      type === NodeTypes.CROP_IMAGE ||
-      type === NodeTypes.VIRTUAL_TRY_ON ||
-      type === NodeTypes.UPSCALE_IMAGE ||
-      type === NodeTypes.IMAGE
-    );
+    return type === NodeTypes.IMAGE || type === NodeTypes.CROP_IMAGE;
   }
 }

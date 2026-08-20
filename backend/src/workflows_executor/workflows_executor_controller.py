@@ -17,14 +17,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header
 
 from src.workflows_executor.dto.workflows_executor_dto import (
-    EditImageRequest,
     GenerateAudioRequest,
-    GenerateImageRequest,
     GenerateTextRequest,
     GenerateVideoRequest,
     ImageStepRequest,
-    UpscaleImageRequest,
-    VirtualTryOnRequest,
 )
 from src.workflows_executor.workflows_executor_service import (
     WorkflowsExecutorService,
@@ -46,33 +42,6 @@ async def generate_text(
     return await service.generate_text(request, authorization)
 
 
-@router.post("/generate_image")
-async def generate_image(
-    request: GenerateImageRequest,
-    authorization: Annotated[str | None, Header()] = None,
-    service: WorkflowsExecutorService = Depends(),
-):
-    return await service.generate_image(request, authorization)
-
-
-@router.post("/edit_image")
-async def edit_image(
-    request: EditImageRequest,
-    authorization: Annotated[str | None, Header()] = None,
-    service: WorkflowsExecutorService = Depends(),
-):
-    return await service.edit_image(request, authorization)
-
-
-@router.post("/upscale_image")
-async def upscale_image(
-    request: UpscaleImageRequest,
-    authorization: Annotated[str | None, Header()] = None,
-    service: WorkflowsExecutorService = Depends(),
-):
-    return await service.upscale_image(request, authorization)
-
-
 @router.post("/image")
 async def execute_image(
     request: ImageStepRequest,
@@ -89,15 +58,6 @@ async def generate_video(
     service: WorkflowsExecutorService = Depends(),
 ):
     return await service.generate_video(request, authorization)
-
-
-@router.post("/virtual_try_on")
-async def virtual_try_on(
-    request: VirtualTryOnRequest,
-    authorization: Annotated[str | None, Header()] = None,
-    service: WorkflowsExecutorService = Depends(),
-):
-    return await service.virtual_try_on(request, authorization)
 
 
 @router.post("/generate_audio")

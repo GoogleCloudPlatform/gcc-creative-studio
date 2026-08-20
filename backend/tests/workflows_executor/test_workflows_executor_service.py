@@ -216,13 +216,6 @@ async def test_generate_text_stream(service):
 
 @pytest.mark.anyio
 async def test_generate_image(service):
-    request = MagicMock()
-    request.workspace_id = 1
-    request.inputs.prompt = "A cat"
-    request.config.model = "gemini-3.1-flash-image"
-    request.config.aspect_ratio = "1:1"
-    request.config.brand_guidelines = False
-
     service.mock_rest_client.post.return_value = Response(200, json={"id": 999})
 
     with patch.object(
@@ -230,22 +223,21 @@ async def test_generate_image(service):
         "_poll_job_status",
         AsyncMock(return_value=True),
     ) as mock_poll:
-        result = await service.generate_image(request)
-        assert result["generated_image"] == 999
+        result = await service._generate_image(
+            workspace_id=1,
+            prompt="A cat",
+            model="gemini-3.1-flash-image",
+            aspect_ratio="1:1",
+            brand_guidelines=False,
+            resolution="1K",
+        )
+        assert result == 999
         service.mock_rest_client.post.assert_called_once()
         mock_poll.assert_called_once_with(999, None)
 
 
 @pytest.mark.anyio
 async def test_edit_image(service):
-    request = MagicMock()
-    request.workspace_id = 1
-    request.inputs.prompt = "Add hat"
-    request.inputs.input_images = [123]
-    request.config.model = "gemini-3.1-flash-image"
-    request.config.aspect_ratio = "1:1"
-    request.config.brand_guidelines = False
-
     service.mock_rest_client.post.return_value = Response(200, json={"id": 888})
 
     with (
@@ -260,8 +252,16 @@ async def test_edit_image(service):
             AsyncMock(return_value=True),
         ) as mock_poll,
     ):
-        result = await service.edit_image(request)
-        assert result["edited_image"] == 888
+        result = await service._edit_image(
+            workspace_id=1,
+            prompt="Add hat",
+            input_images=[123],
+            model="gemini-3.1-flash-image",
+            aspect_ratio="1:1",
+            brand_guidelines=False,
+            resolution="1K",
+        )
+        assert result == 888
         service.mock_rest_client.post.assert_called_once()
         mock_poll.assert_called_once_with(888, None)
 
@@ -292,14 +292,6 @@ async def test_generate_video(service):
 
 @pytest.mark.anyio
 async def test_virtual_try_on(service):
-    request = MagicMock()
-    request.workspace_id = 1
-    request.inputs.model_image = 123
-    request.inputs.top_image = None
-    request.inputs.bottom_image = None
-    request.inputs.dress_image = None
-    request.inputs.shoes_image = None
-
     service.mock_rest_client.post.return_value = Response(200, json={"id": 666})
 
     with patch.object(
@@ -307,8 +299,15 @@ async def test_virtual_try_on(service):
         "_poll_job_status",
         AsyncMock(return_value=True),
     ) as mock_poll:
-        result = await service.virtual_try_on(request)
-        assert result["generated_image"] == 666
+        result = await service._virtual_try_on(
+            workspace_id=1,
+            model_image=123,
+            top_image=None,
+            bottom_image=None,
+            dress_image=None,
+            shoes_image=None,
+        )
+        assert result == 666
         service.mock_rest_client.post.assert_called_once()
         mock_poll.assert_called_once_with(666, None)
 
@@ -339,13 +338,6 @@ async def test_generate_audio(service):
 
 @pytest.mark.anyio
 async def test_upscale_image_success(service):
-    request = MagicMock()
-    request.workspace_id = 1
-    request.inputs.input_image = 123
-    request.config.upscale_factor = "x4"
-    request.config.enhance_input_image = True
-    request.config.image_preservation_factor = 0.8
-
     service.mock_rest_client.post.return_value = Response(200, json={"id": 444})
 
     with (
@@ -360,28 +352,30 @@ async def test_upscale_image_success(service):
             AsyncMock(return_value=True),
         ) as mock_poll,
     ):
-        result = await service.upscale_image(request)
-        assert result["upscaled_image"] == 444
+        result = await service._upscale_image(
+            workspace_id=1,
+            input_image=123,
+            upscale_factor="x4",
+            enhance_input_image=True,
+            image_preservation_factor=0.8,
+        )
+        assert result == 444
         service.mock_rest_client.post.assert_called_once()
         mock_poll.assert_called_once_with(444, None)
 
 
 @pytest.mark.anyio
 async def test_upscale_image_missing_input(service):
-    request = MagicMock()
-    request.workspace_id = 1
-    request.inputs.input_image = None
-    request.config.upscale_factor = "x2"
-    request.config.enhance_input_image = None
-    request.config.image_preservation_factor = None
-
     with patch.object(
         service,
         "_normalize_asset_inputs",
         return_value=([], []),
     ):
         with pytest.raises(HTTPException) as exc:
-            await service.upscale_image(request)
+            await service._upscale_image(
+                workspace_id=1,
+                input_image=None,
+            )
         assert exc.value.status_code == 400
 
 
@@ -398,8 +392,8 @@ async def test_execute_image_generate_mode(service):
 
     with patch.object(
         service,
-        "generate_image",
-        AsyncMock(return_value={"generated_image": 111}),
+        "_generate_image",
+        AsyncMock(return_value=111),
     ) as mock_gen:
         result = await service.execute_image(request)
         assert result == {"generated_image": 111}
@@ -420,8 +414,8 @@ async def test_execute_image_edit_mode(service):
 
     with patch.object(
         service,
-        "edit_image",
-        AsyncMock(return_value={"edited_image": 222}),
+        "_edit_image",
+        AsyncMock(return_value=222),
     ) as mock_edit:
         result = await service.execute_image(request)
         assert result == {"generated_image": 222}
@@ -440,8 +434,8 @@ async def test_execute_image_upscale_mode(service):
 
     with patch.object(
         service,
-        "upscale_image",
-        AsyncMock(return_value={"upscaled_image": 333}),
+        "_upscale_image",
+        AsyncMock(return_value=333),
     ) as mock_upscale:
         result = await service.execute_image(request)
         assert result == {"generated_image": 333}
@@ -461,8 +455,8 @@ async def test_execute_image_vto_mode(service):
 
     with patch.object(
         service,
-        "virtual_try_on",
-        AsyncMock(return_value={"generated_image": 444}),
+        "_virtual_try_on",
+        AsyncMock(return_value=444),
     ) as mock_vto:
         result = await service.execute_image(request)
         assert result == {"generated_image": 444}
