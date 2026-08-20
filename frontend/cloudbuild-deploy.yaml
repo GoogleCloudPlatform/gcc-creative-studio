@@ -28,7 +28,7 @@ steps:
       - '-c'
       - |
         # Inject into Angular app (environment.prod.ts)
-        sed -i "s|BACKEND_URL_PLACEHOLDER|$${_BACKEND_URL}/api|g" src/environments/environment.prod.ts
+        sed -i "s|BACKEND_URL_PLACEHOLDER|/api|g" src/environments/environment.prod.ts
         sed -i "s|GOOGLE_CLIENT_ID_PLACEHOLDER|$${GOOGLE_CLIENT_ID}|g" src/environments/environment.prod.ts
         # Inject Firebase config
         sed -i "s|FIREBASE_API_KEY_PLACEHOLDER|$${FIREBASE_API_KEY}|g" src/environments/environment.prod.ts
