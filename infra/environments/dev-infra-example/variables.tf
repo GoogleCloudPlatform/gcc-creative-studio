@@ -28,6 +28,36 @@ variable "environment" {
   description = "The name of the environment, e.g., 'development'."
 }
 
+variable "network_project_id" {
+  type        = string
+  description = "Project that owns the VPC and Private Services Access resources. Defaults to gcp_project_id."
+  default     = ""
+}
+
+variable "network_self_link" {
+  type        = string
+  description = "Approved existing VPC self link. Leave empty to create a dedicated VPC."
+  default     = ""
+}
+
+variable "private_services_range_address" {
+  type        = string
+  description = "Unused RFC 1918 base address for Private Services Access."
+  default     = "172.30.0.0"
+}
+
+variable "private_services_range_prefix_length" {
+  type        = number
+  description = "Prefix length for the Private Services Access range."
+  default     = 16
+}
+
+variable "vpc_connector_cidr" {
+  type        = string
+  description = "Unused /28 CIDR for the backend Serverless VPC Access connector."
+  default     = "172.31.0.0/28"
+}
+
 # --- Service Names ---
 variable "backend_service_name" {
   type        = string
@@ -122,6 +152,8 @@ variable "apis_to_enable" {
     "iam.googleapis.com",              # Required for IAM management
     "cloudbuild.googleapis.com",       # Required for Cloud Build
     "artifactregistry.googleapis.com", # Required for Artifact Registry
-    "run.googleapis.com"               # Required for Cloud Run
+    "run.googleapis.com",              # Required for Cloud Run
+    "servicenetworking.googleapis.com", # Required for Private Services Access
+    "vpcaccess.googleapis.com"          # Required for Serverless VPC Access
   ]
 }

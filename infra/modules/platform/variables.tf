@@ -16,6 +16,36 @@ variable "gcp_project_id" { type = string }
 variable "gcp_region" { type = string }
 variable "environment" { type = string }
 
+variable "network_project_id" {
+  type        = string
+  description = "Project that owns the VPC and Private Services Access resources. Defaults to the deployment project."
+  default     = ""
+}
+
+variable "network_self_link" {
+  type        = string
+  description = "Approved existing VPC self link. Leave empty to create a dedicated VPC."
+  default     = ""
+}
+
+variable "private_services_range_address" {
+  type        = string
+  description = "Unused RFC 1918 base address for Private Services Access."
+  default     = "172.30.0.0"
+}
+
+variable "private_services_range_prefix_length" {
+  type        = number
+  description = "Prefix length for the Private Services Access range."
+  default     = 16
+}
+
+variable "vpc_connector_cidr" {
+  type        = string
+  description = "Unused /28 CIDR for the backend Serverless VPC Access connector."
+  default     = "172.31.0.0/28"
+}
+
 
 variable "firebase_site_id" {
   type        = string

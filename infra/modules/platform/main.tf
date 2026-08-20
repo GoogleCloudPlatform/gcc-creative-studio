@@ -48,6 +48,10 @@ data "google_project" "project" {
   project_id = var.gcp_project_id
 }
 
+locals {
+  network_project_id = var.network_project_id != "" ? var.network_project_id : var.gcp_project_id
+}
+
 # --- Predictable URLs & Environment Variables ---
 locals {
   region_code  = join("", [for s in split("-", var.gcp_region) : substr(s, 0, 1)])
@@ -64,6 +68,7 @@ locals {
       "SIGNING_SA_EMAIL"       = google_service_account.bucket_reader_sa.email
       "BACKEND_URL"            = local.backend_url
       "WORKFLOWS_EXECUTOR_URL" = "${local.backend_url}/api/workflows-executor"
+      "CLOUD_SQL_IP_TYPE"      = "PRIVATE"
     }
   )
 }
@@ -86,14 +91,32 @@ data "google_secret_manager_secret_version" "db_password" {
   version = "latest"
 }
 
+module "private_networking" {
+  source = "../private-networking"
+
+  project_id                         = var.gcp_project_id
+  network_project_id                 = local.network_project_id
+  region                             = var.gcp_region
+  network_name                       = "cs-${var.environment}-private"
+  network_self_link                  = var.network_self_link
+  private_services_range_name        = "cs-${var.environment}-private-services"
+  private_services_range_address     = var.private_services_range_address
+  private_services_range_prefix_length = var.private_services_range_prefix_length
+  vpc_connector_name                 = "cs-${var.environment}-vpc"
+  vpc_connector_cidr                 = var.vpc_connector_cidr
+}
+
 # 2. Call PostgreSQL Module
 module "postgresql" {
   source      = "../postgresql"
   project_id  = var.gcp_project_id
   region      = var.gcp_region
+  private_network = module.private_networking.network_self_link
   
   # Pass the ACTUAL value to create the user
   db_password = data.google_secret_manager_secret_version.db_password.secret_data
+
+  depends_on = [module.private_networking]
 }
 
 # --- Service Module Calls ---
@@ -127,6 +150,7 @@ module "backend_service" {
 
   # database
   cloud_sql_connection_name = module.postgresql.connection_name
+  vpc_connector_id          = module.private_networking.vpc_connector_id
   db_name                   = module.postgresql.db_name
   db_user                   = module.postgresql.db_user
   

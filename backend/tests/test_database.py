@@ -17,6 +17,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from google.cloud.sql.connector import IPTypes
 
 from src.config.config_service import config_service
 from src.database import (
@@ -131,6 +132,7 @@ async def test_get_connection_cloud_sql():
             "INSTANCE_CONNECTION_NAME",
             "projects/p/locations/l/instances/i",
         ),
+        patch.object(config_service, "CLOUD_SQL_IP_TYPE", "PRIVATE"),
     ):
         mock_connector = AsyncMock()
         mock_connector.connect_async = AsyncMock(return_value="cloud_conn")
@@ -143,6 +145,14 @@ async def test_get_connection_cloud_sql():
 
             res = await get_connection()
             assert res == "cloud_conn"
+            mock_connector.connect_async.assert_awaited_once_with(
+                "projects/p/locations/l/instances/i",
+                "asyncpg",
+                user=config_service.DB_USER,
+                password=config_service.DB_PASS,
+                db=config_service.DB_NAME,
+                ip_type=IPTypes.PRIVATE,
+            )
 
 
 @pytest.mark.anyio

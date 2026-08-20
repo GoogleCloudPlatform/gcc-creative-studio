@@ -2,6 +2,14 @@ gcp_project_id = "YOUR_GCP_PROJECT_ID"
 gcp_region     = "us-central1"
 environment    = "development"
 
+# Use a dedicated VPC by default. For Shared VPC, set both values with the
+# approved host project and network self link, and use non-overlapping ranges.
+# network_project_id             = "YOUR_NETWORK_HOST_PROJECT_ID"
+# network_self_link              = "https://www.googleapis.com/compute/v1/projects/YOUR_NETWORK_HOST_PROJECT_ID/global/networks/YOUR_NETWORK_NAME"
+private_services_range_address = "172.30.0.0"
+private_services_range_prefix_length = 16
+vpc_connector_cidr            = "172.31.0.0/28"
+
 # --- Service Names ---
 backend_service_name  = "cstudio-backend-dev"
 frontend_service_name = "cstudio-frontend-dev" # This is the Cloud Run service name
@@ -71,4 +79,6 @@ apis_to_enable = [
   "firestore.googleapis.com",
   "texttospeech.googleapis.com",
   "workflows.googleapis.com",
+  "servicenetworking.googleapis.com",
+  "vpcaccess.googleapis.com",
 ]

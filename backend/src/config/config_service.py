@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any
+from typing import Any, Literal
 
 import google.auth
 from google.auth.exceptions import DefaultCredentialsError
@@ -67,6 +67,7 @@ class ConfigService(BaseSettings):
     DB_PASS: str = "password"
     DB_NAME: str = "creative_studio"
     USE_CLOUD_SQL_AUTH_PROXY: bool = False
+    CLOUD_SQL_IP_TYPE: Literal["PUBLIC", "PRIVATE"] = "PUBLIC"
     DB_HOST: str = "localhost"
     DB_PORT: str = "5432"
 

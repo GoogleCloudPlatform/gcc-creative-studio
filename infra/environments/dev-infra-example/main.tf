@@ -48,6 +48,11 @@ module "creative_studio_platform" {
   gcp_project_id            = var.gcp_project_id
   gcp_region                = var.gcp_region
   environment               = var.environment
+  network_project_id        = var.network_project_id
+  network_self_link         = var.network_self_link
+  private_services_range_address = var.private_services_range_address
+  private_services_range_prefix_length = var.private_services_range_prefix_length
+  vpc_connector_cidr        = var.vpc_connector_cidr
   backend_service_name      = var.backend_service_name
   backend_custom_audiences  = var.backend_custom_audiences
   be_env_vars               = var.be_env_vars

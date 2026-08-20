@@ -39,11 +39,9 @@ resource "google_cloud_run_v2_service" "this" {
 
   template {
     service_account = google_service_account.run_sa.email
-    volumes {
-      name = "cloudsql"
-      cloud_sql_instance {
-        instances = [var.cloud_sql_connection_name]
-      }
+    vpc_access {
+      connector = var.vpc_connector_id
+      egress    = "PRIVATE_RANGES_ONLY"
     }
     containers {
       image = "us-docker.pkg.dev/cloudrun/container/hello:latest"
@@ -57,10 +55,6 @@ resource "google_cloud_run_v2_service" "this" {
       env {
         name = "INSTANCE_CONNECTION_NAME"
         value = var.cloud_sql_connection_name
-      }
-      env {
-        name = "DB_HOST"
-        value = "/cloudsql/${var.cloud_sql_connection_name}"
       }
       env {
         name = "DB_NAME"
@@ -109,10 +103,6 @@ resource "google_cloud_run_v2_service" "this" {
         }
       }
 
-      volume_mounts {
-        name = "cloudsql"
-        mount_path = "/cloudsql"
-      }
     }
     scaling {
       min_instance_count = var.scaling_min_instances
