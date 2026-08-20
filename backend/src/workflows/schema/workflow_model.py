@@ -38,13 +38,9 @@ class NodeTypes(str, Enum):
 
     USER_INPUT = "user_input"
     GENERATE_TEXT = "generate_text"
-    GENERATE_IMAGE = "generate_image"
-    EDIT_IMAGE = "edit_image"
     GENERATE_VIDEO = "generate_video"
     CROP_IMAGE = "crop_image"
-    VIRTUAL_TRY_ON = "virtual_try_on"
     GENERATE_AUDIO = "generate_audio"
-    UPSCALE_IMAGE = "upscale_image"
     IMAGE = "image"
 
 
@@ -146,7 +142,7 @@ class UserInputSettings(BaseModel):
 
 # We inherit from BaseStep and pass in the concrete types for [InputT, SettingsT]
 class UserInputStep(BaseStep[UserInputInputs, UserInputSettings]):
-    type: Literal[NodeTypes.USER_INPUT]
+    type: Literal[NodeTypes.USER_INPUT] = NodeTypes.USER_INPUT
     inputs: UserInputInputs = Field(default_factory=UserInputInputs)
     settings: UserInputSettings = Field(default_factory=UserInputSettings)
 
@@ -164,47 +160,10 @@ class GenerateTextSettings(BaseModel):
 
 
 class GenerateTextStep(BaseStep[GenerateTextInputs, GenerateTextSettings]):
-    type: Literal[NodeTypes.GENERATE_TEXT]
+    type: Literal[NodeTypes.GENERATE_TEXT] = NodeTypes.GENERATE_TEXT
     # We must redeclare them here for Pydantic to know *exactly* which model to use for validation at runtime
     inputs: GenerateTextInputs
     settings: GenerateTextSettings
-
-
-# --- Generate Image ---
-class GenerateImageInputs(BaseModel):
-    prompt: StepOutputReference | str
-
-
-class GenerateImageSettings(BaseModel):
-    model: str
-    brand_guidelines: bool
-    aspect_ratio: str
-    resolution: Literal["1K", "2K", "4K"] = "1K"
-
-
-class GenerateImageStep(BaseStep[GenerateImageInputs, GenerateImageSettings]):
-    type: Literal[NodeTypes.GENERATE_IMAGE]
-    inputs: GenerateImageInputs
-    settings: GenerateImageSettings
-
-
-# --- Edit Image ---
-class EditImageInputs(BaseModel):
-    input_images: WorkflowInputItem
-    prompt: StepOutputReference | str
-
-
-class EditImageSettings(BaseModel):
-    model: str
-    brand_guidelines: bool
-    aspect_ratio: str
-    resolution: Literal["1K", "2K", "4K"] = "1K"
-
-
-class EditImageStep(BaseStep[EditImageInputs, EditImageSettings]):
-    type: Literal[NodeTypes.EDIT_IMAGE]
-    inputs: EditImageInputs
-    settings: EditImageSettings
 
 
 # --- Generate Video ---
@@ -224,28 +183,9 @@ class GenerateVideoSettings(BaseModel):
 
 
 class GenerateVideoStep(BaseStep[GenerateVideoInputs, GenerateVideoSettings]):
-    type: Literal[NodeTypes.GENERATE_VIDEO]
+    type: Literal[NodeTypes.GENERATE_VIDEO] = NodeTypes.GENERATE_VIDEO
     inputs: GenerateVideoInputs
     settings: GenerateVideoSettings
-
-
-# --- Virtual Try-On ---
-class VirtualTryOnInputs(BaseModel):
-    model_image: WorkflowInputItem
-    top_image: WorkflowInputItem | None = None
-    bottom_image: WorkflowInputItem | None = None
-    dress_image: WorkflowInputItem | None = None
-    shoes_image: WorkflowInputItem | None = None
-
-
-class VirtualTryOnSettings(BaseModel):
-    pass
-
-
-class VirtualTryOnStep(BaseStep[VirtualTryOnInputs, VirtualTryOnSettings]):
-    type: Literal[NodeTypes.VIRTUAL_TRY_ON]
-    inputs: VirtualTryOnInputs
-    settings: VirtualTryOnSettings
 
 
 # --- Generate Audio ---
@@ -269,27 +209,9 @@ class GenerateAudioSettings(BaseModel):
 
 
 class GenerateAudioStep(BaseStep[GenerateAudioInputs, GenerateAudioSettings]):
-    type: Literal[NodeTypes.GENERATE_AUDIO]
+    type: Literal[NodeTypes.GENERATE_AUDIO] = NodeTypes.GENERATE_AUDIO
     inputs: GenerateAudioInputs
     settings: GenerateAudioSettings
-
-
-# --- Upscale Image ---
-class UpscaleImageInputs(BaseModel):
-    input_image: WorkflowInputItem
-
-
-class UpscaleImageSettings(BaseModel):
-    model: str = "imagen-4-upscale-preview"
-    upscale_factor: Literal["x2", "x3", "x4"] = "x2"
-    enhance_input_image: bool = False
-    image_preservation_factor: float | None = None
-
-
-class UpscaleImageStep(BaseStep[UpscaleImageInputs, UpscaleImageSettings]):
-    type: Literal[NodeTypes.UPSCALE_IMAGE] = NodeTypes.UPSCALE_IMAGE
-    inputs: UpscaleImageInputs
-    settings: UpscaleImageSettings = Field(default_factory=UpscaleImageSettings)
 
 
 # --- Image (Unified) ---
@@ -327,18 +249,84 @@ class ImageStep(BaseStep[ImageInputs, ImageSettings]):
 
 
 # =========================================
+# Legacy Step Translation Helper
+# =========================================
+
+
+def translate_legacy_step(raw_step: dict | Any) -> dict | Any:
+    """Translates legacy image step dictionaries into unified ImageStep format."""
+    if not isinstance(raw_step, dict):
+        if isinstance(raw_step, BaseModel):
+            raw_step = raw_step.model_dump(by_alias=True)
+        else:
+            return raw_step
+
+    step_type = raw_step.get("type")
+    if step_type in (
+        "generate_image",
+        "edit_image",
+        "upscale_image",
+        "virtual_try_on",
+    ):
+        raw_inputs = raw_step.get("inputs") or {}
+        if isinstance(raw_inputs, BaseModel):
+            raw_inputs = raw_inputs.model_dump(by_alias=True)
+        raw_settings = raw_step.get("settings") or {}
+        if isinstance(raw_settings, BaseModel):
+            raw_settings = raw_settings.model_dump(by_alias=True)
+
+        new_settings = dict(raw_settings)
+        new_inputs = dict(raw_inputs)
+
+        if step_type == "generate_image":
+            new_settings.setdefault("mode", "generate_image")
+            new_settings.setdefault("model", "gemini-3.1-flash-image")
+            new_settings.setdefault("aspect_ratio", "1:1")
+        elif step_type == "edit_image":
+            new_settings.setdefault("mode", "edit_image")
+            new_settings.setdefault("model", "gemini-2.5-flash-image")
+            new_settings.setdefault("aspect_ratio", "1:1")
+        elif step_type == "upscale_image":
+            new_settings.setdefault("mode", "upscale_image")
+            new_settings.setdefault("upscale_factor", "x2")
+        elif step_type == "virtual_try_on":
+            new_settings.setdefault("mode", "virtual_try_on")
+
+        raw_outputs = raw_step.get("outputs")
+        new_outputs = {}
+        if isinstance(raw_outputs, dict):
+            img_val = (
+                raw_outputs.get("generated_image")
+                or raw_outputs.get("edited_image")
+                or raw_outputs.get("upscaled_image")
+                or raw_outputs.get("image_output")
+            )
+            if img_val is not None:
+                new_outputs = {"generated_image": img_val}
+            else:
+                new_outputs = raw_outputs
+
+        translated = {
+            **raw_step,
+            "type": NodeTypes.IMAGE.value,
+            "settings": new_settings,
+            "inputs": new_inputs,
+            "outputs": new_outputs,
+        }
+        return translated
+
+    return raw_step
+
+
+# =========================================
 # Workflow Step Union
 # =========================================
 
 WorkflowStepUnion = Union[
     UserInputStep,
     GenerateTextStep,
-    GenerateImageStep,
-    EditImageStep,
     GenerateVideoStep,
-    VirtualTryOnStep,
     GenerateAudioStep,
-    UpscaleImageStep,
     ImageStep,
 ]
 
@@ -391,6 +379,13 @@ class WorkflowBase(BaseModel):
     name: str
     description: str | None = None
     steps: list[WorkflowStep]
+
+    @field_validator("steps", mode="before")
+    @classmethod
+    def translate_legacy_steps(cls, v: Any) -> Any:
+        if isinstance(v, list):
+            return [translate_legacy_step(step) for step in v]
+        return v
 
 
 class WorkflowModel(BaseStringDocument, WorkflowBase):

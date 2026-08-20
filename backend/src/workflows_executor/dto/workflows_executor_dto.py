@@ -15,46 +15,20 @@
 from pydantic import BaseModel
 
 from src.workflows.schema.workflow_model import (
-    EditImageInputs,
-    EditImageSettings,
     GenerateAudioInputs,
     GenerateAudioSettings,
-    GenerateImageInputs,
-    GenerateImageSettings,
     GenerateTextInputs,
     GenerateTextSettings,
     GenerateVideoInputs,
     GenerateVideoSettings,
     ImageInputs,
     ImageSettings,
-    UpscaleImageInputs,
-    UpscaleImageSettings,
-    VirtualTryOnInputs,
-    VirtualTryOnSettings,
 )
 
 
 class GenerateTextRequest(BaseModel):
     inputs: GenerateTextInputs
     config: GenerateTextSettings
-
-
-class GenerateImageRequest(BaseModel):
-    workspace_id: int
-    inputs: GenerateImageInputs
-    config: GenerateImageSettings
-
-
-class EditImageRequest(BaseModel):
-    workspace_id: int
-    inputs: EditImageInputs
-    config: EditImageSettings
-
-
-class UpscaleImageRequest(BaseModel):
-    workspace_id: int
-    inputs: UpscaleImageInputs
-    config: UpscaleImageSettings
 
 
 class ImageStepRequest(BaseModel):
@@ -67,12 +41,6 @@ class GenerateVideoRequest(BaseModel):
     workspace_id: int
     inputs: GenerateVideoInputs
     config: GenerateVideoSettings
-
-
-class VirtualTryOnRequest(BaseModel):
-    workspace_id: int
-    inputs: VirtualTryOnInputs
-    config: VirtualTryOnSettings
 
 
 class GenerateAudioRequest(BaseModel):
