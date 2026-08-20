@@ -373,6 +373,145 @@ class TestGetExecutionDetails:
         # Verify lazy update was triggered (RUNNING -> SUCCEEDED transition)
         mock_run_repo.update.assert_called_once()
 
+    @pytest.mark.anyio
+    @patch("src.workflows.workflow_service.executions_v1.ExecutionsClient")
+    @patch("src.workflows.workflow_service.google.auth.default")
+    @patch("src.workflows.workflow_service.AuthorizedSession")
+    async def test_get_execution_details_image_step_filtering(
+        self,
+        mock_auth_session_class,
+        mock_auth_default,
+        mock_exec_client_class,
+        workflow_service,
+        mock_run_repo,
+    ):
+        from google.cloud.workflows import executions_v1 as exec_v1
+
+        from src.workflows.schema.workflow_model import (
+            UserInputInputs,
+            UserInputSettings,
+            UserInputStep,
+        )
+
+        # Setup image step workflow
+        image_workflow = WorkflowModel(
+            id="wf-image",
+            user_id=1,
+            name="Image Workflow",
+            description="Test image mode filtering",
+            steps=[
+                UserInputStep(
+                    step_id="user_input",
+                    type=NodeTypes.USER_INPUT,
+                    inputs=UserInputInputs(),
+                    settings=UserInputSettings(),
+                ),
+                ImageStep(
+                    step_id="img_step",
+                    type=NodeTypes.IMAGE,
+                    inputs=ImageInputs(
+                        prompt="A majestic eagle",
+                        input_images=None,
+                        input_image=None,
+                        model_image=None,
+                    ),
+                    settings=ImageSettings(mode="generate_image"),
+                ),
+                ImageStep(
+                    step_id="upscale_step",
+                    type=NodeTypes.IMAGE,
+                    inputs=ImageInputs(
+                        prompt=None,
+                        input_image=555,
+                        model_image=None,
+                    ),
+                    settings=ImageSettings(mode="upscale_image"),
+                ),
+            ],
+        )
+
+        mock_client = MagicMock()
+        mock_exec_client_class.return_value = mock_client
+        mock_execution = MagicMock()
+        mock_execution.name = (
+            "projects/p/locations/l/workflows/w/executions/e-456"
+        )
+        mock_execution.state = exec_v1.Execution.State.SUCCEEDED
+        mock_execution.argument = "{}"
+        mock_execution.result = "{}"
+        mock_execution.start_time = MagicMock()
+        mock_execution.end_time = MagicMock()
+        mock_client.get_execution.return_value = mock_execution
+
+        mock_auth_default.return_value = (MagicMock(), "project-id")
+        mock_session = MagicMock()
+        mock_auth_session_class.return_value = mock_session
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "stepEntries": [
+                {
+                    "step": "img_step",
+                    "state": "STATE_SUCCEEDED",
+                    "variableData": {
+                        "variables": {
+                            "img_step_result": {
+                                "body": {
+                                    "generated_image": 111,
+                                    "image_output": 111,
+                                }
+                            }
+                        }
+                    },
+                },
+                {
+                    "step": "upscale_step",
+                    "state": "STATE_SUCCEEDED",
+                    "variableData": {
+                        "variables": {
+                            "upscale_step_result": {
+                                "body": {
+                                    "upscaled_image": 222,
+                                    "image_output": 222,
+                                }
+                            }
+                        }
+                    },
+                },
+            ],
+        }
+        mock_session.get.return_value = mock_response
+
+        mock_run = MagicMock()
+        mock_run.id = "e-456"
+        mock_run.workflow_snapshot = image_workflow.model_dump(
+            mode="json", by_alias=True
+        )
+        mock_run.status = WorkflowRunStatusEnum.RUNNING.value
+        mock_run_repo.get_by_id.return_value = mock_run
+
+        workflow_service.get_by_id = AsyncMock(return_value=image_workflow)
+
+        details = await workflow_service.get_execution_details(
+            workflow_id="wf-image",
+            execution_id="e-456",
+        )
+
+        assert details is not None
+        step_entries = details["step_entries"]
+        # Entry 0 is user_input virtual step, Entry 1 is img_step, Entry 2 is upscale_step
+        img_entry = next(e for e in step_entries if e["step_id"] == "img_step")
+        upscale_entry = next(
+            e for e in step_entries if e["step_id"] == "upscale_step"
+        )
+
+        # In generate_image mode, only prompt is in step_inputs
+        assert img_entry["step_inputs"] == {"prompt": "A majestic eagle"}
+        assert img_entry["step_outputs"] == {"generated_image": 111}
+        # In upscale_image mode, only input_image is in step_inputs
+        assert upscale_entry["step_inputs"] == {"input_image": 555}
+        assert upscale_entry["step_outputs"] == {"generated_image": 222}
+
 
 class TestBatchExecuteWorkflow:
     """Tests for batch_execute_workflow method."""

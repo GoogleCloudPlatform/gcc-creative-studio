@@ -250,6 +250,7 @@
         [inputs]="stepExecution.step_inputs"
         [outputs]="stepExecution.step_outputs"
         [mediaUrlMap]="mediaUrlMap"
+        [mode]="stepForm.get('settings.mode')?.value || stepForm.value?.settings?.mode"
       >
       </app-step-execution-details>
     </div>

@@ -52,6 +52,7 @@ from src.workflows.schema.workflow_run_model import (
     WorkflowRunModel,
     WorkflowRunStatusEnum,
 )
+from src.workflows.workflow_constants import IMAGE_MODE_ALLOWED_INPUTS
 
 logger = logging.getLogger(__name__)
 PROJECT_ID = config_service.PROJECT_ID
@@ -767,15 +768,62 @@ class WorkflowService:
             step_state = entry.get("state")
 
             # Extract inputs from step
+            raw_inputs = (
+                current_step.inputs.model_dump()
+                if isinstance(current_step.inputs, BaseModel)
+                else (
+                    current_step.inputs
+                    if isinstance(current_step.inputs, dict)
+                    else {}
+                )
+            )
             step_inputs = {}
-            for inp_name, inp_value in current_step.inputs:
-                step_inputs[inp_name] = resolve_value(inp_value)
+
+            if current_step.type == NodeTypes.IMAGE:
+                settings_mode = (
+                    getattr(current_step.settings, "mode", "generate_image")
+                    if isinstance(current_step.settings, BaseModel)
+                    else (
+                        current_step.settings.get("mode", "generate_image")
+                        if isinstance(current_step.settings, dict)
+                        else "generate_image"
+                    )
+                )
+                allowed_inputs = IMAGE_MODE_ALLOWED_INPUTS.get(
+                    settings_mode, ["prompt"]
+                )
+                for inp_name, inp_value in raw_inputs.items():
+                    if inp_name in allowed_inputs and inp_value is not None:
+                        step_inputs[inp_name] = resolve_value(inp_value)
+            else:
+                for inp_name, inp_value in raw_inputs.items():
+                    if inp_value is not None:
+                        step_inputs[inp_name] = resolve_value(inp_value)
 
             # Extract outputs from step
             variable_data = entry.get("variableData", {})
             variables = variable_data.get("variables", {})
             step_results = variables.get(f"{step_id}_result", {})
-            step_outputs = step_results.get("body", {})
+            raw_outputs = step_results.get("body", {})
+
+            if current_step.type in [
+                NodeTypes.IMAGE,
+                NodeTypes.GENERATE_IMAGE,
+                NodeTypes.EDIT_IMAGE,
+                NodeTypes.UPSCALE_IMAGE,
+                NodeTypes.VIRTUAL_TRY_ON,
+            ] and isinstance(raw_outputs, dict):
+                img_val = (
+                    raw_outputs.get("generated_image")
+                    or raw_outputs.get("edited_image")
+                    or raw_outputs.get("upscaled_image")
+                    or raw_outputs.get("image_output")
+                )
+                step_outputs = (
+                    {"generated_image": img_val} if img_val is not None else {}
+                )
+            else:
+                step_outputs = raw_outputs
 
             # Store outputs for subsequent steps
             previous_outputs[step_id] = step_outputs

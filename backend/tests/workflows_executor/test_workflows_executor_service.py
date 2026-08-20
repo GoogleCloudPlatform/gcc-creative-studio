@@ -402,8 +402,7 @@ async def test_execute_image_generate_mode(service):
         AsyncMock(return_value={"generated_image": 111}),
     ) as mock_gen:
         result = await service.execute_image(request)
-        assert result["generated_image"] == 111
-        assert result["image_output"] == 111
+        assert result == {"generated_image": 111}
         mock_gen.assert_called_once()
 
 
@@ -425,9 +424,7 @@ async def test_execute_image_edit_mode(service):
         AsyncMock(return_value={"edited_image": 222}),
     ) as mock_edit:
         result = await service.execute_image(request)
-        assert result["generated_image"] == 222
-        assert result["edited_image"] == 222
-        assert result["image_output"] == 222
+        assert result == {"generated_image": 222}
         mock_edit.assert_called_once()
 
 
@@ -447,9 +444,7 @@ async def test_execute_image_upscale_mode(service):
         AsyncMock(return_value={"upscaled_image": 333}),
     ) as mock_upscale:
         result = await service.execute_image(request)
-        assert result["generated_image"] == 333
-        assert result["upscaled_image"] == 333
-        assert result["image_output"] == 333
+        assert result == {"generated_image": 333}
         mock_upscale.assert_called_once()
 
 
@@ -470,8 +465,7 @@ async def test_execute_image_vto_mode(service):
         AsyncMock(return_value={"generated_image": 444}),
     ) as mock_vto:
         result = await service.execute_image(request)
-        assert result["generated_image"] == 444
-        assert result["image_output"] == 444
+        assert result == {"generated_image": 444}
         mock_vto.assert_called_once()
 
 
