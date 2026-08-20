@@ -706,10 +706,7 @@ class WorkflowsExecutorService:
             )
             result = await self.generate_image(gen_req, authorization)
             media_id = result.get("generated_image")
-            return {
-                "generated_image": media_id,
-                "image_output": media_id,
-            }
+            return {"generated_image": media_id}
 
         elif mode == "edit_image":
             if not request.inputs.prompt:
@@ -737,11 +734,7 @@ class WorkflowsExecutorService:
             )
             result = await self.edit_image(edit_req, authorization)
             media_id = result.get("edited_image")
-            return {
-                "generated_image": media_id,
-                "edited_image": media_id,
-                "image_output": media_id,
-            }
+            return {"generated_image": media_id}
 
         elif mode == "upscale_image":
             if not request.inputs.input_image:
@@ -762,11 +755,7 @@ class WorkflowsExecutorService:
             )
             result = await self.upscale_image(upscale_req, authorization)
             media_id = result.get("upscaled_image")
-            return {
-                "generated_image": media_id,
-                "upscaled_image": media_id,
-                "image_output": media_id,
-            }
+            return {"generated_image": media_id}
 
         elif mode == "virtual_try_on":
             if not request.inputs.model_image:
@@ -787,10 +776,7 @@ class WorkflowsExecutorService:
             )
             result = await self.virtual_try_on(vto_req, authorization)
             media_id = result.get("generated_image")
-            return {
-                "generated_image": media_id,
-                "image_output": media_id,
-            }
+            return {"generated_image": media_id}
 
         else:
             raise HTTPException(

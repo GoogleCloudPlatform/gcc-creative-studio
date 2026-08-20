@@ -24,6 +24,19 @@ export const IMAGE_MODE_OPTIONS = [
   {value: 'virtual_try_on', label: 'Virtual Try-On'},
 ];
 
+export const IMAGE_MODE_ALLOWED_INPUTS: Record<string, string[]> = {
+  generate_image: ['prompt'],
+  edit_image: ['prompt', 'input_images'],
+  upscale_image: ['input_image'],
+  virtual_try_on: [
+    'model_image',
+    'top_image',
+    'bottom_image',
+    'dress_image',
+    'shoes_image',
+  ],
+};
+
 const model_options = MODEL_CONFIGS.filter(model => model.type === 'IMAGE').map(
   model => ({
     value: model.value,

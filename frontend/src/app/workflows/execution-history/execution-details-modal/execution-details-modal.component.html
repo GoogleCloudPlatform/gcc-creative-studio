@@ -74,7 +74,8 @@
                 [stepType]="getStepType(step.step_id) || ''"
                 [inputs]="step.step_inputs"
                 [outputs]="step.step_outputs"
-                [mediaUrlMap]="mediaUrlMap">
+                [mediaUrlMap]="mediaUrlMap"
+                [mode]="getStepMode(step.step_id)">
               </app-step-execution-details>
             </div>
             
