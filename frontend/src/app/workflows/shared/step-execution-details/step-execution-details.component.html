@@ -14,10 +14,10 @@
  limitations under the License.
 -->
 
-<label class="block text-sm font-medium text-neutral-300 mb-2">inputs</label>
-<div class="bg-neutral-700 p-3 rounded-lg mb-4">
+<label class="block text-sm font-medium text-neutral-300 mb-2" *ngIf="inputCount > 0">inputs</label>
+<div class="bg-neutral-700 p-3 rounded-lg mb-4" *ngIf="inputCount > 0">
   <div class="grid gap-2" [ngClass]="{'grid-cols-1': inputCount === 1, 'grid-cols-2': inputCount > 1}">
-     <ng-container *ngFor="let input of inputs | keyvalue">
+     <ng-container *ngFor="let input of filteredInputs | keyvalue">
         <!-- Image Input -->
         <div *ngIf="isImageInput(input.key)" class="col-span-full">
             <div *ngIf="input.value" class="grid gap-2 grid-cols-[repeat(auto-fit,minmax(150px,1fr))] p-2 bg-neutral-700/50 rounded-lg">
@@ -96,10 +96,10 @@
   </div>
 </div>
 
-<label class="block text-sm font-medium text-neutral-300 mb-2">outputs</label>
-<div class="bg-neutral-700 p-3 rounded-lg">
+<label class="block text-sm font-medium text-neutral-300 mb-2" *ngIf="outputCount > 0">outputs</label>
+<div class="bg-neutral-700 p-3 rounded-lg" *ngIf="outputCount > 0">
    <div class="grid gap-2" [ngClass]="{'grid-cols-1': outputCount === 1, 'grid-cols-2': outputCount > 1}">
-    <ng-container *ngFor="let output of outputs | keyvalue">
+    <ng-container *ngFor="let output of filteredOutputs | keyvalue">
        <!-- Image Output -->
        <div *ngIf="isImageOutput(output.key)" class="col-span-full">
            <div *ngIf="output.value" class="grid gap-2 grid-cols-[repeat(auto-fit,minmax(150px,1fr))] p-2 bg-neutral-700/50 rounded-lg">

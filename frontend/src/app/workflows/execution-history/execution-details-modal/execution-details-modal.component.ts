@@ -121,6 +121,12 @@ export class ExecutionDetailsModalComponent implements OnInit {
     return this.workflow?.steps.find(s => s.stepId === stepId)?.type;
   }
 
+  getStepMode(stepId: string): string | undefined {
+    return this.workflow?.steps.find(s => s.stepId === stepId)?.settings?.[
+      'mode'
+    ];
+  }
+
   isImageOutput(stepId: string): boolean {
     const type = this.getStepType(stepId);
     return (
