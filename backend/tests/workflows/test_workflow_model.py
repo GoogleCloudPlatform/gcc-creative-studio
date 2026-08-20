@@ -110,3 +110,134 @@ def test_workflow_step_discriminated_union_image_parsing():
     assert parsed.type == NodeTypes.IMAGE
     assert parsed.inputs.prompt == "A modern cityscape"
     assert parsed.settings.mode == "generate_image"
+
+
+def test_workflow_base_translate_legacy_generate_image():
+    """Verify legacy generate_image step is translated to ImageStep with mode=generate_image."""
+    from src.workflows.schema.workflow_model import WorkflowBase
+
+    legacy_data = {
+        "name": "Legacy Workflow",
+        "steps": [
+            {
+                "step_id": "legacy_gen_1",
+                "type": "generate_image",
+                "inputs": {"prompt": "A sunny day"},
+                "settings": {
+                    "model": "imagen-3",
+                    "brand_guidelines": True,
+                    "aspect_ratio": "16:9",
+                    "resolution": "2K",
+                },
+                "outputs": {"image_output": 123},
+            }
+        ],
+    }
+    wf = WorkflowBase.model_validate(legacy_data)
+    assert len(wf.steps) == 1
+    step = wf.steps[0]
+    assert isinstance(step, ImageStep)
+    assert step.type == NodeTypes.IMAGE
+    assert step.step_id == "legacy_gen_1"
+    assert step.inputs.prompt == "A sunny day"
+    assert step.settings.mode == "generate_image"
+    assert step.settings.model == "imagen-3"
+    assert step.settings.aspect_ratio == "16:9"
+    assert step.settings.resolution == "2K"
+    assert step.outputs == {"generated_image": 123}
+
+
+def test_workflow_base_translate_legacy_edit_image():
+    """Verify legacy edit_image step is translated to ImageStep with mode=edit_image."""
+    from src.workflows.schema.workflow_model import WorkflowBase
+
+    legacy_data = {
+        "name": "Legacy Edit Workflow",
+        "steps": [
+            {
+                "step_id": "legacy_edit_1",
+                "type": "edit_image",
+                "inputs": {
+                    "prompt": "Add a rainbow",
+                    "input_images": 999,
+                },
+                "settings": {
+                    "model": "gemini-2.5-flash-image",
+                    "aspect_ratio": "4:3",
+                },
+                "outputs": {"edited_image": 999},
+            }
+        ],
+    }
+    wf = WorkflowBase.model_validate(legacy_data)
+    assert len(wf.steps) == 1
+    step = wf.steps[0]
+    assert isinstance(step, ImageStep)
+    assert step.type == NodeTypes.IMAGE
+    assert step.settings.mode == "edit_image"
+    assert step.inputs.prompt == "Add a rainbow"
+    assert step.inputs.input_images == 999
+    assert step.outputs == {"generated_image": 999}
+
+
+def test_workflow_base_translate_legacy_upscale_image():
+    """Verify legacy upscale_image step is translated to ImageStep with mode=upscale_image."""
+    from src.workflows.schema.workflow_model import WorkflowBase
+
+    legacy_data = {
+        "name": "Legacy Upscale Workflow",
+        "steps": [
+            {
+                "step_id": "legacy_upscale_1",
+                "type": "upscale_image",
+                "inputs": {"input_image": 555},
+                "settings": {
+                    "upscale_factor": "x4",
+                    "enhance_input_image": True,
+                    "image_preservation_factor": 0.9,
+                },
+                "outputs": {"upscaled_image": 777},
+            }
+        ],
+    }
+    wf = WorkflowBase.model_validate(legacy_data)
+    assert len(wf.steps) == 1
+    step = wf.steps[0]
+    assert isinstance(step, ImageStep)
+    assert step.type == NodeTypes.IMAGE
+    assert step.settings.mode == "upscale_image"
+    assert step.inputs.input_image == 555
+    assert step.settings.upscale_factor == "x4"
+    assert step.settings.enhance_input_image is True
+    assert step.settings.image_preservation_factor == 0.9
+    assert step.outputs == {"generated_image": 777}
+
+
+def test_workflow_base_translate_legacy_virtual_try_on():
+    """Verify legacy virtual_try_on step is translated to ImageStep with mode=virtual_try_on."""
+    from src.workflows.schema.workflow_model import WorkflowBase
+
+    legacy_data = {
+        "name": "Legacy VTO Workflow",
+        "steps": [
+            {
+                "step_id": "legacy_vto_1",
+                "type": "virtual_try_on",
+                "inputs": {
+                    "model_image": 11,
+                    "top_image": 22,
+                },
+                "settings": {},
+                "outputs": {"generated_image": 33},
+            }
+        ],
+    }
+    wf = WorkflowBase.model_validate(legacy_data)
+    assert len(wf.steps) == 1
+    step = wf.steps[0]
+    assert isinstance(step, ImageStep)
+    assert step.type == NodeTypes.IMAGE
+    assert step.settings.mode == "virtual_try_on"
+    assert step.inputs.model_image == 11
+    assert step.inputs.top_image == 22
+    assert step.outputs == {"generated_image": 33}

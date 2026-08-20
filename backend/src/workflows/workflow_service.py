@@ -806,13 +806,9 @@ class WorkflowService:
             step_results = variables.get(f"{step_id}_result", {})
             raw_outputs = step_results.get("body", {})
 
-            if current_step.type in [
-                NodeTypes.IMAGE,
-                NodeTypes.GENERATE_IMAGE,
-                NodeTypes.EDIT_IMAGE,
-                NodeTypes.UPSCALE_IMAGE,
-                NodeTypes.VIRTUAL_TRY_ON,
-            ] and isinstance(raw_outputs, dict):
+            if current_step.type == NodeTypes.IMAGE and isinstance(
+                raw_outputs, dict
+            ):
                 img_val = (
                     raw_outputs.get("generated_image")
                     or raw_outputs.get("edited_image")

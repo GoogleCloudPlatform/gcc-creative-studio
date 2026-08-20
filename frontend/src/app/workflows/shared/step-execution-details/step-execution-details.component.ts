@@ -41,29 +41,11 @@ export class StepExecutionDetailsComponent implements OnInit {
   ngOnInit(): void {}
 
   private isImageStep(): boolean {
-    return (
-      this.stepType === NodeTypes.IMAGE ||
-      this.stepType === NodeTypes.GENERATE_IMAGE ||
-      this.stepType === NodeTypes.EDIT_IMAGE ||
-      this.stepType === NodeTypes.UPSCALE_IMAGE ||
-      this.stepType === NodeTypes.VIRTUAL_TRY_ON
-    );
+    return this.stepType === NodeTypes.IMAGE;
   }
 
   private getActiveImageMode(): string {
-    if (this.mode) {
-      return this.mode;
-    }
-    if (
-      [
-        NodeTypes.EDIT_IMAGE,
-        NodeTypes.UPSCALE_IMAGE,
-        NodeTypes.VIRTUAL_TRY_ON,
-      ].includes(this.stepType as NodeTypes)
-    ) {
-      return this.stepType;
-    }
-    return 'generate_image';
+    return this.mode || 'generate_image';
   }
 
   private hasValue(value: any): boolean {

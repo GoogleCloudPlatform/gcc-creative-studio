@@ -191,8 +191,9 @@ describe('StepExecutionDetailsComponent', () => {
   });
 
   describe('Legacy Image Step Types', () => {
-    it('should infer edit_image mode for legacy EDIT_IMAGE stepType', () => {
-      component.stepType = NodeTypes.EDIT_IMAGE;
+    it('should infer edit_image mode for legacy edit_image string stepType', () => {
+      component.stepType = 'edit_image';
+      component.mode = 'edit_image';
       component.inputs = {
         prompt: 'Edit prompt',
         input_images: [501],
@@ -212,8 +213,9 @@ describe('StepExecutionDetailsComponent', () => {
       });
     });
 
-    it('should infer upscale_image mode for legacy UPSCALE_IMAGE stepType', () => {
-      component.stepType = NodeTypes.UPSCALE_IMAGE;
+    it('should infer upscale_image mode for legacy upscale_image string stepType', () => {
+      component.stepType = 'upscale_image';
+      component.mode = 'upscale_image';
       component.inputs = {
         prompt: null,
         input_image: 601,

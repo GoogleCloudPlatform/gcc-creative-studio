@@ -366,40 +366,8 @@ export class WorkflowFormService {
     // 3. Rebuild Steps
     this.stepsArray.clear();
     otherSteps.forEach((step: any) => {
-      let stepType = step.type;
-      const stepSettings = {...(step.settings || {})};
-
-      // Automatically map legacy image steps to the unified image node with mode preset
-      if (
-        stepType === NodeTypes.GENERATE_IMAGE ||
-        stepType === 'generate_image'
-      ) {
-        stepType = NodeTypes.IMAGE;
-        if (!stepSettings.mode) stepSettings.mode = 'generate_image';
-      } else if (
-        stepType === NodeTypes.EDIT_IMAGE ||
-        stepType === 'edit_image'
-      ) {
-        stepType = NodeTypes.IMAGE;
-        if (!stepSettings.mode) stepSettings.mode = 'edit_image';
-      } else if (
-        stepType === NodeTypes.UPSCALE_IMAGE ||
-        stepType === 'upscale_image'
-      ) {
-        stepType = NodeTypes.IMAGE;
-        if (!stepSettings.mode) stepSettings.mode = 'upscale_image';
-      } else if (
-        stepType === NodeTypes.VIRTUAL_TRY_ON ||
-        stepType === 'virtual_try_on'
-      ) {
-        stepType = NodeTypes.IMAGE;
-        if (!stepSettings.mode) stepSettings.mode = 'virtual_try_on';
-      }
-
       const stepData = {
         ...step,
-        type: stepType,
-        settings: stepSettings,
         status: StepStatusEnum.IDLE,
       };
 
@@ -429,7 +397,7 @@ export class WorkflowFormService {
         }
       }
 
-      this.addStep(stepType, stepData);
+      this.addStep(step.type, stepData);
     });
 
     // Final sync
