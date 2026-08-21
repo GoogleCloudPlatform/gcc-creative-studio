@@ -442,6 +442,7 @@ class WorkflowsExecutorService:
             "start_image_asset_id": start_image_asset_id,
             "end_image_asset_id": end_image_asset_id,
             "number_of_media": 1,
+            "duration_seconds": request.config.duration_seconds,
         }
 
         headers = {"Authorization": authorization} if authorization else {}
