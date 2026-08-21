@@ -62,7 +62,7 @@ export const GENERATE_VIDEO_STEP_CONFIG: StepConfig = {
       label: 'Model',
       type: 'select',
       options: model_options,
-      defaultValue: 'veo-3.0-generate-001',
+      defaultValue: 'veo-3.1-generate-001',
     },
     {
       name: 'input_mode',
@@ -77,6 +77,17 @@ export const GENERATE_VIDEO_STEP_CONFIG: StepConfig = {
       type: 'select',
       options: [],
       defaultValue: '16:9',
+    },
+    {
+      name: 'duration_seconds',
+      label: 'Duration',
+      type: 'select',
+      options: [
+        {value: 4, label: '4s'},
+        {value: 6, label: '6s'},
+        {value: 8, label: '8s'},
+      ],
+      defaultValue: 8,
     },
     {
       name: 'brand_guidelines',

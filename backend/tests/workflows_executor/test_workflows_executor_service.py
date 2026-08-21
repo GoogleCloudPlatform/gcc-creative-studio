@@ -276,6 +276,8 @@ async def test_generate_video(service):
     request.inputs.end_frame = None
     request.config.model = "veo-3.1-generate-001"
     request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+    request.config.duration_seconds = 6
 
     service.mock_rest_client.post.return_value = Response(200, json={"id": 777})
 
@@ -287,6 +289,8 @@ async def test_generate_video(service):
         result = await service.generate_video(request)
         assert result["generated_video"] == 777
         service.mock_rest_client.post.assert_called_once()
+        _, kwargs = service.mock_rest_client.post.call_args
+        assert kwargs["json"]["duration_seconds"] == 6
         mock_poll.assert_called_once_with(777, None)
 
 

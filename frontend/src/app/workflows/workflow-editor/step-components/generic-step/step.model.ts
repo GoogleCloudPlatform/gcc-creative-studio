@@ -18,7 +18,7 @@ export interface StepInput {
   name: string;
   label: string;
   type: 'text' | 'textarea' | 'select' | 'image' | 'video' | 'audio';
-  options?: {value: string; label: string}[];
+  options?: {value: string | number; label: string}[];
   required: boolean;
   hidden?: boolean;
 }
@@ -27,7 +27,7 @@ export interface StepSetting {
   name: string;
   label: string;
   type: 'text' | 'textarea' | 'select' | 'checkbox' | 'slider' | 'radio';
-  options?: {value: string; label: string}[];
+  options?: {value: string | number; label: string}[];
   defaultValue: any;
   hidden?: boolean;
   min?: number;

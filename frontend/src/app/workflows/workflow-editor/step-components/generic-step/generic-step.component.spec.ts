@@ -25,6 +25,7 @@ import {MatSelectModule} from '@angular/material/select';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {WorkflowStatusPipe} from '../../../workflow-status.pipe';
 import {IMAGE_STEP_CONFIG} from '../step-configs/image-step.config';
+import {GENERATE_VIDEO_STEP_CONFIG} from '../step-configs/generate-video-step.config';
 import {StepInput} from './step.model';
 import {GenericStepComponent} from './generic-step.component';
 
@@ -374,6 +375,99 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
           required: false,
         }),
       ).toBe(1);
+    });
+  });
+
+  describe('Video Node Duration Settings', () => {
+    it('should initialize video node with duration_seconds setting and default value 8', () => {
+      const videoStepForm = fb.group({
+        stepId: ['video_step_1'],
+        type: ['generate_video'],
+        status: ['idle'],
+        inputs: fb.group({
+          prompt: ['A running horse'],
+          input_images: [null],
+          start_frame: [null],
+          end_frame: [null],
+        }),
+        settings: fb.group({
+          model: ['veo-3.1-generate-001'],
+          input_mode: ['Text to Video'],
+          aspect_ratio: ['16:9'],
+          duration_seconds: [8],
+          brand_guidelines: [false],
+        }),
+        outputs: fb.group({
+          generated_video: [{type: 'video'}],
+        }),
+      });
+
+      component.stepForm = videoStepForm;
+      component.config = GENERATE_VIDEO_STEP_CONFIG;
+      component.ngOnChanges({
+        stepForm: {
+          currentValue: videoStepForm,
+          previousValue: null,
+          firstChange: false,
+          isFirstChange: () => false,
+        },
+      });
+
+      const durationSetting = component.localConfig.settings.find(
+        s => s.name === 'duration_seconds',
+      );
+      expect(durationSetting).toBeDefined();
+      expect(durationSetting?.hidden).toBeFalse();
+      expect(durationSetting?.options).toEqual([
+        {value: 4, label: '4s'},
+        {value: 6, label: '6s'},
+        {value: 8, label: '8s'},
+      ]);
+      expect(videoStepForm.get('settings.duration_seconds')?.value).toBe(8);
+    });
+
+    it('should populate duration options dynamically when model changes', () => {
+      const videoStepForm = fb.group({
+        stepId: ['video_step_2'],
+        type: ['generate_video'],
+        status: ['idle'],
+        inputs: fb.group({
+          prompt: ['A spaceship landing'],
+          input_images: [null],
+          start_frame: [null],
+          end_frame: [null],
+        }),
+        settings: fb.group({
+          model: ['veo-3.1-fast-generate-001'],
+          input_mode: ['Text to Video'],
+          aspect_ratio: ['16:9'],
+          duration_seconds: [6],
+          brand_guidelines: [false],
+        }),
+        outputs: fb.group({
+          generated_video: [{type: 'video'}],
+        }),
+      });
+
+      component.stepForm = videoStepForm;
+      component.config = GENERATE_VIDEO_STEP_CONFIG;
+      component.ngOnInit();
+
+      const durationSetting = component.localConfig.settings.find(
+        s => s.name === 'duration_seconds',
+      );
+      expect(durationSetting?.options?.length).toBe(3);
+      expect(videoStepForm.get('settings.duration_seconds')?.value).toBe(6);
+
+      // Switch to another model
+      videoStepForm
+        .get('settings.model')
+        ?.setValue('gemini-omni-flash-preview');
+      expect(durationSetting?.options).toEqual([
+        {value: 4, label: '4s'},
+        {value: 6, label: '6s'},
+        {value: 8, label: '8s'},
+      ]);
     });
   });
 });

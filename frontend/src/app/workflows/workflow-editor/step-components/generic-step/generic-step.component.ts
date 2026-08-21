@@ -30,11 +30,7 @@ import {
   MODEL_CONFIGS,
 } from '../../../../common/config/model-config';
 import {StepConfig, StepInput, StepSetting} from './step.model';
-import {
-  StepInputValue,
-  StepOutputReference,
-  StepStatusEnum,
-} from '../../../workflow.models';
+import {StepStatusEnum} from '../../../workflow.models';
 import {
   DragSourcePort,
   getMaxAllowedInputs,
@@ -377,7 +373,44 @@ export class GenericStepComponent implements OnInit, OnChanges {
       }
     }
 
-    // 3. Update Audio Settings Visibility
+    // 3. Update Duration options
+    const durationSetting = this.localConfig.settings.find(
+      s => s.name === 'duration_seconds',
+    );
+    if (durationSetting) {
+      if (
+        modelMeta.supportedDurations &&
+        modelMeta.supportedDurations.length > 0
+      ) {
+        durationSetting.hidden = false;
+        durationSetting.options = modelMeta.supportedDurations.map(
+          duration => ({
+            value: duration,
+            label: `${duration}s`,
+          }),
+        );
+
+        // Reset value if current value is invalid
+        const currentDuration = this.stepForm.get(
+          'settings.duration_seconds',
+        )?.value;
+        if (
+          currentDuration &&
+          !modelMeta.supportedDurations.includes(Number(currentDuration))
+        ) {
+          const firstOption = durationSetting.options?.[0]?.value;
+          if (firstOption !== undefined) {
+            this.stepForm
+              .get('settings.duration_seconds')
+              ?.setValue(firstOption);
+          }
+        }
+      } else {
+        durationSetting.hidden = true;
+      }
+    }
+
+    // 4. Update Audio Settings Visibility
     this.localConfig.settings.forEach(setting => {
       if (setting.name === 'voice_name') {
         setting.hidden = !modelMeta.supportsVoice;
