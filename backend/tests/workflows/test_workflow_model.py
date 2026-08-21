@@ -16,6 +16,9 @@
 from pydantic import TypeAdapter
 
 from src.workflows.schema.workflow_model import (
+    GenerateVideoInputs,
+    GenerateVideoSettings,
+    GenerateVideoStep,
     ImageInputs,
     ImageSettings,
     ImageStep,
@@ -241,3 +244,65 @@ def test_workflow_base_translate_legacy_virtual_try_on():
     assert step.inputs.model_image == 11
     assert step.inputs.top_image == 22
     assert step.outputs == {"generated_image": 33}
+
+
+def test_generate_video_step_default_creation():
+    """Verify creating a default GenerateVideoStep with default duration_seconds."""
+    step = GenerateVideoStep(
+        step_id="step_video_1",
+        inputs=GenerateVideoInputs(prompt="A dog running on the beach"),
+        settings=GenerateVideoSettings(
+            model="veo-3.1-generate-001",
+            brand_guidelines=False,
+            aspect_ratio="16:9",
+        ),
+    )
+    assert step.type == NodeTypes.GENERATE_VIDEO
+    assert step.step_id == "step_video_1"
+    assert step.inputs.prompt == "A dog running on the beach"
+    assert step.settings.model == "veo-3.1-generate-001"
+    assert step.settings.duration_seconds == 8
+    assert step.settings.aspect_ratio == "16:9"
+
+
+def test_generate_video_step_custom_duration():
+    """Verify creating a GenerateVideoStep with custom duration_seconds."""
+    step = GenerateVideoStep(
+        step_id="step_video_2",
+        inputs=GenerateVideoInputs(prompt="A bird flying in slow motion"),
+        settings=GenerateVideoSettings(
+            model="veo-3.1-generate-001",
+            brand_guidelines=True,
+            aspect_ratio="9:16",
+            duration_seconds=4,
+            resolution="2K",
+        ),
+    )
+    assert step.type == NodeTypes.GENERATE_VIDEO
+    assert step.settings.duration_seconds == 4
+    assert step.settings.aspect_ratio == "9:16"
+    assert step.settings.resolution == "2K"
+    assert step.settings.brand_guidelines is True
+
+
+def test_workflow_step_discriminated_union_generate_video_parsing():
+    """Verify parsing serialized GenerateVideoStep JSON through WorkflowStep discriminated union."""
+    adapter = TypeAdapter(WorkflowStep)
+    raw_data = {
+        "stepId": "video_node_1",
+        "type": "generate_video",
+        "status": "idle",
+        "inputs": {"prompt": "A sunset time-lapse"},
+        "settings": {
+            "model": "veo-3.1-fast-generate-001",
+            "brand_guidelines": False,
+            "aspect_ratio": "16:9",
+            "duration_seconds": 6,
+        },
+        "outputs": {},
+    }
+    parsed = adapter.validate_python(raw_data)
+    assert isinstance(parsed, GenerateVideoStep)
+    assert parsed.type == NodeTypes.GENERATE_VIDEO
+    assert parsed.inputs.prompt == "A sunset time-lapse"
+    assert parsed.settings.duration_seconds == 6
