@@ -17,7 +17,7 @@ connector. Its Cloud SQL Python Connector is configured with
 
 - Use only project `iconic-ds-creative-studio-dev` and region `us-central1`.
 - Use the organisation fork `https://github.com/theiconic/gcc-creative-studio`.
-- Create the Cloud Build connection `gh-creative-studio-deploy-con` in
+- Create the Cloud Build connection `gh-creative-studio-deploy-con-ti` in
   `us-central1` and grant its GitHub App access to `theiconic/gcc-creative-studio`.
 - Enable or allow Terraform to enable `compute.googleapis.com`,
   `servicenetworking.googleapis.com`, `vpcaccess.googleapis.com`,
@@ -57,7 +57,7 @@ apply rather than creating a duplicate connection. Do not commit that state.
 2. Enter `https://github.com/theiconic/gcc-creative-studio.git` when prompted
    for the fork URL. Enter
    `feature/KN-DATAX-15064-deploy-creative-studio` when prompted for the Git
-   branch. Enter `gh-creative-studio-deploy-con` for the Cloud Build connection.
+  branch. Enter `gh-creative-studio-deploy-con-ti` for the Cloud Build connection.
 3. Use `iconic-ds-creative-studio-dev`; keep `us-central1` unchanged.
 4. In the generated `infra/environments/dev-infra/dev-infra.tfvars`, set the
    approved Shared VPC values if applicable. Never commit this directory,
@@ -134,6 +134,24 @@ as a member of `tech.data.datascience@theiconic.com.au`, and perform a workflow
 that reads and writes application data. Expected endpoints are the Firebase
 Hosting URL and the backend Cloud Run URL from `terraform output`; the database
 has no public endpoint.
+
+### Migrations and initial data
+
+The Cloud SQL Python Connector must use `CLOUD_SQL_IP_TYPE=PRIVATE` for both
+application connections and Alembic migrations. A Cloud Run revision that logs
+`CloudSQLIPTypeError` with preference `PRIMARY` is running code that predates
+the private-IP migration fix; rebuild it from the feature branch before
+continuing.
+
+Cloud Shell is not attached to the dedicated VPC, so the bootstrap script's
+local Cloud SQL Auth Proxy cannot seed this private-only database. Do not add a
+public SQL IP as a workaround. After the backend image is deployed successfully
+and migrations complete, use a one-time Cloud Run Job attached to
+`cs-development-vpc` with `private-ranges-only` egress to run
+`python -m bootstrap.bootstrap`. Configure the job with the backend runtime
+service account, the same `INSTANCE_CONNECTION_NAME`, `CLOUD_SQL_IP_TYPE=PRIVATE`,
+database settings, bucket name, admin email, and `DB_PASS` secret used by the
+backend service. Review and retain the execution logs as deployment evidence.
 
 ## Limits And Cost
 

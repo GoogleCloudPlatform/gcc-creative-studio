@@ -3,7 +3,7 @@
 ## Status
 
 - **State**: Executing
-- **Current Objective**: Correct bootstrap branch reuse before resuming the private Cloud SQL deployment.
+- **Current Objective**: Correct Alembic private-IP selection and complete private-network seeding.
 
 ## Plan
 
@@ -13,11 +13,13 @@
 - [x] Phase 4: Add deployment, validation, and teardown documentation.
 - [x] Phase 5: Run available validation and commit.
 - [ ] Phase 6: Validate and commit bootstrap branch-resume correction.
+- [ ] Phase 7: Validate and commit Alembic private-IP migration correction.
 
 ## Journal
 
 ### 2026-08-20 Private Cloud SQL Deployment
 
+- Validated deployed backend — **Finding**: Cloud SQL is `RUNNABLE` with only private IP `172.30.0.3`, but Alembic's connector was hard-coded to `IPTypes.PUBLIC`, producing `CloudSQLIPTypeError` with preference `PRIMARY` — **Decision**: make Alembic honor `CLOUD_SQL_IP_TYPE`; Cloud Shell remains unsuitable for private-only seeding, so use a VPC-attached Cloud Run Job after the corrected image deploys.
 - Validated fresh Cloud Shell checkout — **Finding**: Terraform initialized the private-networking module, then Google provider v7.45.0 rejected `project` on `google_service_networking_connection` — **Decision**: remove the unsupported attribute; the fully qualified VPC self link identifies the network-owning project.
 - Resumed deployment investigation — **Finding**: Cloud SQL apply attempted a public IP despite the feature branch setting `ipv4_enabled = false`; bootstrap reuses an existing checkout without previously switching it to the branch entered by the user — **Decision**: update a clean existing checkout to the selected branch before reuse and document the recovery commands.
 - Committed implementation — **Finding**: static diagnostics and Git whitespace checks pass, while `uv`, `terraform`, and `gcloud` are unavailable locally — **Decision**: commit the reviewed change without apply; require Cloud Shell Terraform formatting, validation, plan review, and runtime validation before deployment.
