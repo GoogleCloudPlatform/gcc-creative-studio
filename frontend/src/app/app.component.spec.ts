@@ -55,10 +55,11 @@ describe('AppComponent', () => {
     const app = fixture.componentInstance;
 
     fixture.detectChanges();
-    expect(fixture.nativeElement.querySelector('.trial-warning')?.textContent)
-      .toContain(
-        'Do not enter, upload, or generate sensitive, confidential, or personal information.',
-      );
+    expect(
+      fixture.nativeElement.querySelector('.trial-warning')?.textContent,
+    ).toContain(
+      'Do not enter, upload, or generate sensitive, confidential, or personal information.',
+    );
 
     app.showHeader = false;
     fixture.detectChanges();
