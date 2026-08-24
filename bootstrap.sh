@@ -366,6 +366,7 @@ setup_repo() {
             git checkout --track "origin/$SELECTED_BRANCH"
         fi
         git pull --ff-only origin "$SELECTED_BRANCH"
+        cd ..
     else
         info "Performing a sparse checkout of '$REPO_CLONE_DIR' (Branch: $SELECTED_BRANCH)..."
         
