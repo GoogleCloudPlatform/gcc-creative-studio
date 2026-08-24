@@ -20,6 +20,10 @@
   mode="indeterminate"
 ></mat-progress-bar>
 <app-notification-container></app-notification-container>
+<div *ngIf="showHeader" class="trial-warning" role="alert">
+  Trial environment: Do not enter, upload, or generate sensitive,
+  confidential, or personal information.
+</div>
 <app-header *ngIf="showHeader"></app-header>
 <div
   [ngClass]="showHeader ? 'content' : 'login'"

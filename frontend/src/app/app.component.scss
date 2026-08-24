@@ -25,6 +25,18 @@
   position: relative;
 }
 
+.trial-warning {
+  background-color: #b91c1c;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.4;
+  padding: 0.5rem 1rem;
+  position: relative;
+  text-align: center;
+  z-index: 40;
+}
+
 ::ng-deep .mat-mdc-snack-bar-container {
   &.green-snackbar {
     --mdc-snackbar-container-color: #0f9d58;

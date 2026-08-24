@@ -16,6 +16,7 @@
 
 import {TestBed} from '@angular/core/testing';
 import {RouterTestingModule} from '@angular/router/testing';
+import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {AppComponent} from './app.component';
 import {LoadingService} from './common/services/loading.service';
 import {of} from 'rxjs';
@@ -30,7 +31,7 @@ describe('AppComponent', () => {
     };
 
     await TestBed.configureTestingModule({
-      imports: [RouterTestingModule],
+      imports: [RouterTestingModule, NoopAnimationsModule],
       declarations: [AppComponent],
       providers: [{provide: LoadingService, useValue: loadingServiceMock}],
       schemas: [NO_ERRORS_SCHEMA],
@@ -47,5 +48,20 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
     expect(app.title).toEqual('creative-studio');
+  });
+
+  it('should show the trial warning only with the application header', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.trial-warning')?.textContent)
+      .toContain(
+        'Do not enter, upload, or generate sensitive, confidential, or personal information.',
+      );
+
+    app.showHeader = false;
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.trial-warning')).toBeNull();
   });
 });
