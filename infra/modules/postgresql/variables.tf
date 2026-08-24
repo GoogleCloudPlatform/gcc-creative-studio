@@ -14,6 +14,10 @@
 
 variable "project_id" {}
 variable "region" {}
+variable "private_network" {
+  type        = string
+  description = "VPC self link used for the Cloud SQL private IP address."
+}
 variable "db_name" { default = "creative_studio" }
 variable "db_user" { default = "studio_user" }
 variable "db_password" { sensitive = true }

@@ -349,6 +349,24 @@ setup_repo() {
     if [[ -d "$REPO_CLONE_DIR" ]]; then
         warn "Directory '$REPO_CLONE_DIR' already exists."; prompt "Do you want to use this existing directory? (y/n)"; read -r REPLY < /dev/tty
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then fail "Please remove the directory or run the script from a different location."; fi
+
+        cd "$REPO_CLONE_DIR"
+        git rev-parse --is-inside-work-tree > /dev/null 2>&1 || fail "Existing directory '$REPO_CLONE_DIR' is not a Git repository."
+        if ! git diff --quiet || ! git diff --cached --quiet; then
+            fail "Existing repository has uncommitted changes. Commit, stash, or use a new directory before continuing."
+        fi
+        if [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
+            fail "Existing repository has untracked files. Move them or use a new directory before continuing."
+        fi
+        info "Updating existing checkout to branch '$SELECTED_BRANCH'..."
+        git fetch origin "$SELECTED_BRANCH"
+        if git show-ref --verify --quiet "refs/heads/$SELECTED_BRANCH"; then
+            git checkout "$SELECTED_BRANCH"
+        else
+            git checkout --track "origin/$SELECTED_BRANCH"
+        fi
+        git pull --ff-only origin "$SELECTED_BRANCH"
+        cd ..
     else
         info "Performing a sparse checkout of '$REPO_CLONE_DIR' (Branch: $SELECTED_BRANCH)..."
         
@@ -356,7 +374,7 @@ setup_repo() {
         git clone --filter=blob:none --no-checkout --depth 1 --sparse -b "$SELECTED_BRANCH" "$GITHUB_REPO_URL" "$REPO_CLONE_DIR"
         
         cd "$REPO_CLONE_DIR"
-        
+
         # 2. Sparse checkout for ROOT folders only
         git sparse-checkout set "infra" "backend" "frontend" "bootstrap.sh"
         

@@ -32,7 +32,8 @@ resource "google_sql_database_instance" "default" {
     }
 
     ip_configuration {
-      ipv4_enabled = true # Easy connectivity from Cloud Run without VPC peering complexity
+      ipv4_enabled    = false
+      private_network = var.private_network
     }
   }
   

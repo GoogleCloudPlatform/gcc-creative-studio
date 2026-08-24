@@ -118,6 +118,11 @@ variable "runtime_secrets" {
   default     = {}
 }
 
+variable "vpc_connector_id" {
+  type        = string
+  description = "Serverless VPC Access connector used for private database traffic."
+}
+
 # database
 variable "cloud_sql_connection_name" {
   description = "Cloud SQL Instance Connection Name"
