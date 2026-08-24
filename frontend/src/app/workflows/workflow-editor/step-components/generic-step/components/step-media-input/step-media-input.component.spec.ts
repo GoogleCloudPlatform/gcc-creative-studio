@@ -19,6 +19,7 @@ import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {FormControl, ReactiveFormsModule} from '@angular/forms';
 import {MatDialog} from '@angular/material/dialog';
 import {MatMenuModule} from '@angular/material/menu';
+import {of} from 'rxjs';
 import {SourceAssetService} from '../../../../../../common/services/source-asset.service';
 import {StepMediaInputComponent} from './step-media-input.component';
 
@@ -51,6 +52,9 @@ describe('StepMediaInputComponent', () => {
       'uploadAsset',
     ]);
     mockDialog = jasmine.createSpyObj('MatDialog', ['open']);
+    mockDialog.open.and.returnValue({
+      afterClosed: () => of(null),
+    } as any);
 
     await TestBed.configureTestingModule({
       declarations: [StepMediaInputComponent],
@@ -257,6 +261,185 @@ describe('StepMediaInputComponent', () => {
           previewUrl: 'https://example.com/1.png',
         }),
       ).toBeFalse();
+    });
+  });
+
+  describe('openImageSelectorForReference with video and audio types', () => {
+    it('should configure dialog for video type', () => {
+      component.type = 'video';
+      component.control.setValue(null);
+      component.openImageSelectorForReference();
+
+      expect(mockDialog.open).toHaveBeenCalledWith(
+        jasmine.any(Function),
+        jasmine.objectContaining({
+          data: jasmine.objectContaining({
+            mimeType: 'video/*',
+            assetType: 'generic_video',
+          }),
+        }),
+      );
+    });
+
+    it('should configure dialog for audio type', () => {
+      component.type = 'audio';
+      component.control.setValue(null);
+      component.openImageSelectorForReference();
+
+      expect(mockDialog.open).toHaveBeenCalledWith(
+        jasmine.any(Function),
+        jasmine.objectContaining({
+          data: jasmine.objectContaining({
+            mimeType: 'audio/*',
+          }),
+        }),
+      );
+    });
+
+    it('should properly set previewUrl from presignedThumbnailUrl for SourceAsset video', () => {
+      component.type = 'video';
+      component.control.setValue(null);
+      const mockAsset = {
+        id: 123,
+        gcsUri: 'gs://bucket/video.mp4',
+        presignedUrl: 'https://example.com/video.mp4',
+        presignedThumbnailUrl: 'https://example.com/thumbnail.png',
+      };
+      mockDialog.open.and.returnValue({
+        afterClosed: () => of(mockAsset),
+      } as any);
+
+      component.openImageSelectorForReference();
+
+      expect(component.control.value).toEqual([
+        {
+          sourceAssetId: 123,
+          previewUrl: 'https://example.com/thumbnail.png',
+        },
+      ]);
+    });
+
+    it('should fallback to presignedUrl if presignedThumbnailUrl is missing for SourceAsset', () => {
+      component.type = 'video';
+      component.control.setValue(null);
+      const mockAsset = {
+        id: 123,
+        gcsUri: 'gs://bucket/video.mp4',
+        presignedUrl: 'https://example.com/video.mp4',
+      };
+      mockDialog.open.and.returnValue({
+        afterClosed: () => of(mockAsset),
+      } as any);
+
+      component.openImageSelectorForReference();
+
+      expect(component.control.value).toEqual([
+        {
+          sourceAssetId: 123,
+          previewUrl: 'https://example.com/video.mp4',
+        },
+      ]);
+    });
+
+    it('should properly set previewUrl from presignedThumbnailUrls and role reference_video for MediaItem', () => {
+      component.type = 'video';
+      component.control.setValue(null);
+      const mockMediaSelection = {
+        mediaItem: {
+          id: 456,
+          presignedUrls: ['https://example.com/generated_video.mp4'],
+          presignedThumbnailUrls: ['https://example.com/generated_thumb.png'],
+        },
+        selectedIndex: 0,
+      };
+      mockDialog.open.and.returnValue({
+        afterClosed: () => of(mockMediaSelection),
+      } as any);
+
+      component.openImageSelectorForReference();
+
+      expect(component.control.value).toEqual([
+        {
+          previewUrl: 'https://example.com/generated_thumb.png',
+          sourceMediaItem: {
+            mediaItemId: 456,
+            mediaIndex: 0,
+            role: 'reference_video',
+          },
+        },
+      ]);
+    });
+  });
+
+  describe('onReferenceImageDrop', () => {
+    it('should upload image asset and set previewUrl when image is dropped', () => {
+      component.type = 'image';
+      component.control.setValue(null);
+      const mockFile = new File(['image content'], 'test.png', {
+        type: 'image/png',
+      });
+      const mockDropEvent = {
+        preventDefault: jasmine.createSpy('preventDefault'),
+        dataTransfer: {files: [mockFile]},
+      } as unknown as DragEvent;
+
+      mockSourceAssetService.uploadAsset.and.returnValue(
+        of({
+          id: 789,
+          presignedUrl: 'https://example.com/img.png',
+          presignedThumbnailUrl: 'https://example.com/img_thumb.png',
+        } as any),
+      );
+
+      component.onReferenceImageDrop(mockDropEvent);
+
+      expect(mockSourceAssetService.uploadAsset).toHaveBeenCalledWith(
+        mockFile,
+        jasmine.objectContaining({
+          assetType: 'generic_image',
+        }),
+      );
+      expect(component.control.value).toEqual([
+        {
+          sourceAssetId: 789,
+          previewUrl: 'https://example.com/img_thumb.png',
+        },
+      ]);
+    });
+
+    it('should upload video asset and set previewUrl when video is dropped', () => {
+      component.type = 'video';
+      component.control.setValue(null);
+      const mockFile = new File(['video content'], 'test.mp4', {
+        type: 'video/mp4',
+      });
+      const mockDropEvent = {
+        preventDefault: jasmine.createSpy('preventDefault'),
+        dataTransfer: {files: [mockFile]},
+      } as unknown as DragEvent;
+
+      mockSourceAssetService.uploadAsset.and.returnValue(
+        of({
+          id: 999,
+          presignedUrl: 'https://example.com/video.mp4',
+          presignedThumbnailUrl: 'https://example.com/video_thumb.png',
+        } as any),
+      );
+
+      component.onReferenceImageDrop(mockDropEvent);
+
+      expect(mockSourceAssetService.uploadAsset).toHaveBeenCalledWith(
+        mockFile,
+        jasmine.objectContaining({
+          assetType: 'generic_video',
+        }),
+      );
+      expect(component.control.value).toEqual([
+        {
+          sourceAssetId: 999,
+          previewUrl: 'https://example.com/video_thumb.png',
+        },
+      ]);
     });
   });
 });

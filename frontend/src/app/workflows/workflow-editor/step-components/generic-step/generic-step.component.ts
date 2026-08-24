@@ -28,6 +28,7 @@ import {Subscription} from 'rxjs';
 import {
   ASPECT_RATIO_LABELS,
   MODEL_CONFIGS,
+  isGeminiOmniModel,
 } from '../../../../common/config/model-config';
 import {StepConfig, StepInput, StepSetting} from './step.model';
 import {StepStatusEnum} from '../../../workflow.models';
@@ -111,11 +112,19 @@ export class GenericStepComponent implements OnInit, OnChanges {
     return getMaxAllowedInputs(input.name, model, input.type);
   }
 
+  isInputDisabled(inputName: string): boolean {
+    return !!this.stepForm?.get('inputs')?.get(inputName)?.disabled;
+  }
+
   isCompatibleWithActiveDrag(
     input: {name: string; type: string} | StepInput,
   ): boolean {
     if (!this.dragSourcePort?.type || !this.dragSourcePort?.stepId)
       return false;
+    // Block connection if input port is disabled
+    if (this.isInputDisabled(input.name)) {
+      return false;
+    }
     // Block same step self-connection
     if (this.stepForm?.value?.stepId === this.dragSourcePort.stepId) {
       return false;
@@ -145,7 +154,36 @@ export class GenericStepComponent implements OnInit, OnChanges {
   ): boolean {
     if (!this.dragSourcePort?.type || !this.dragSourcePort?.stepId)
       return false;
+    if (this.isInputDisabled(input.name)) {
+      return true;
+    }
     return !this.isCompatibleWithActiveDrag(input);
+  }
+
+  getInputDisabledMessage(inputName: string): string {
+    if (this.localConfig.type === 'generate-video') {
+      const currentModel = this.stepForm?.get('settings.model')?.value;
+      if (!isGeminiOmniModel(currentModel)) {
+        if (inputName === 'input_audio') {
+          return 'This model does not support Audio as reference';
+        }
+        if (inputName === 'input_video') {
+          return 'This model does not support Video as reference';
+        }
+      }
+    }
+    return '';
+  }
+
+  onInputPortMouseUp(event: MouseEvent, inputName: string): void {
+    event.stopPropagation();
+    if (this.isInputDisabled(inputName)) {
+      return;
+    }
+    this.portDrop.emit({
+      stepId: this.stepForm?.value?.stepId,
+      inputName: inputName,
+    });
   }
 
   ngOnInit(): void {
@@ -435,23 +473,38 @@ export class GenericStepComponent implements OnInit, OnChanges {
 
   private updateInputVisibility(): void {
     const currentMode = this.stepForm.get('settings.input_mode')?.value;
+    const currentModel = this.stepForm.get('settings.model')?.value;
     const maxRefs = this.currentMaxReferenceImages;
 
     this.localConfig.inputs.forEach(input => {
       // Logic for specific inputs
       if (
         this.localConfig.type === 'generate-video' &&
-        (input.name === 'input_images' || input.name === 'reference_images')
+        (input.name === 'input_images' ||
+          input.name === 'reference_images' ||
+          input.name === 'input_video' ||
+          input.name === 'input_audio')
       ) {
         const showIngredients = currentMode === 'Ingredients to Video';
+        const isImageRef =
+          input.name === 'input_images' || input.name === 'reference_images';
+        const isAudioRef = input.name === 'input_audio';
+        const isVideoRef = input.name === 'input_video';
+        const isVisible = isImageRef
+          ? showIngredients && maxRefs > 0
+          : showIngredients;
 
-        if (showIngredients && maxRefs > 0) {
+        if (isVisible) {
           input.hidden = false;
-          this.stepForm.get('inputs')?.get(input.name)?.enable();
-          // Force mixed mode for list inputs if they are enabled
-          const short = getShortType(input.type);
-          if (short === 'IMG' || short === 'VID') {
-            this.inputModes[input.name] = 'mixed';
+          if ((isAudioRef || isVideoRef) && !isGeminiOmniModel(currentModel)) {
+            this.stepForm.get('inputs')?.get(input.name)?.disable();
+          } else {
+            this.stepForm.get('inputs')?.get(input.name)?.enable();
+            // Force mixed mode for list inputs if they are enabled
+            const short = getShortType(input.type);
+            if (short === 'IMG' || short === 'VID' || short === 'AUD') {
+              this.inputModes[input.name] = 'mixed';
+            }
           }
         } else {
           input.hidden = true;
@@ -462,7 +515,7 @@ export class GenericStepComponent implements OnInit, OnChanges {
           input.hidden = false;
           this.stepForm.get('inputs')?.get(input.name)?.enable();
           const short = getShortType(input.type);
-          if (short === 'IMG' || short === 'VID') {
+          if (short === 'IMG' || short === 'VID' || short === 'AUD') {
             this.inputModes[input.name] = 'mixed';
           }
         } else {
@@ -472,7 +525,10 @@ export class GenericStepComponent implements OnInit, OnChanges {
       } else {
         // Default for other inputs: if it allows multiple, set to mixed
         const short = getShortType(input.type);
-        if ((short === 'IMG' || short === 'VID') && maxRefs > 1) {
+        if (
+          (short === 'IMG' || short === 'VID' || short === 'AUD') &&
+          maxRefs > 1
+        ) {
           this.inputModes[input.name] = 'mixed';
         }
       }

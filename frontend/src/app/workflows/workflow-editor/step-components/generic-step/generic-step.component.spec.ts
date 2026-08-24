@@ -325,6 +325,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         required: false,
       };
 
+      component.stepForm.get('settings.mode')?.setValue('edit_image');
       component.stepForm
         .get('settings.model')
         ?.setValue('gemini-2.5-flash-image'); // maxReferenceImages: 2
@@ -467,7 +468,239 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         {value: 4, label: '4s'},
         {value: 6, label: '6s'},
         {value: 8, label: '8s'},
+        {value: 10, label: '10s'},
       ]);
+    });
+  });
+
+  describe('Video Node Ingredients Mode Reference Ports', () => {
+    let videoStepForm: FormGroup;
+
+    beforeEach(() => {
+      videoStepForm = fb.group({
+        stepId: ['video_step_ingredients'],
+        type: ['generate-video'],
+        status: ['idle'],
+        inputs: fb.group({
+          prompt: ['A dramatic movie scene'],
+          input_images: [null],
+          input_video: [null],
+          input_audio: [null],
+          start_frame: [null],
+          end_frame: [null],
+        }),
+        settings: fb.group({
+          model: ['veo-3.1-generate-001'],
+          input_mode: ['Text to Video'],
+          aspect_ratio: ['16:9'],
+          duration_seconds: [8],
+          brand_guidelines: [false],
+        }),
+        outputs: fb.group({
+          generated_video: [{type: 'video'}],
+        }),
+      });
+
+      component.stepForm = videoStepForm;
+      component.config = GENERATE_VIDEO_STEP_CONFIG;
+      component.ngOnInit();
+    });
+
+    it('should hide and disable input_video and input_audio when input_mode is Text to Video', () => {
+      const inputVideo = component.localConfig.inputs.find(
+        i => i.name === 'input_video',
+      );
+      const inputAudio = component.localConfig.inputs.find(
+        i => i.name === 'input_audio',
+      );
+      const inputImages = component.localConfig.inputs.find(
+        i => i.name === 'input_images',
+      );
+
+      expect(inputVideo?.hidden).toBeTrue();
+      expect(inputAudio?.hidden).toBeTrue();
+      expect(inputImages?.hidden).toBeTrue();
+      expect(videoStepForm.get('inputs.input_video')?.disabled).toBeTrue();
+      expect(videoStepForm.get('inputs.input_audio')?.disabled).toBeTrue();
+      expect(videoStepForm.get('inputs.input_images')?.disabled).toBeTrue();
+    });
+
+    it('should show input_audio and input_video as disabled with message when video model is not Gemini Omni in Ingredients to Video mode', () => {
+      // Model is 'veo-3.1-generate-001'
+      videoStepForm
+        .get('settings.input_mode')
+        ?.setValue('Ingredients to Video');
+
+      const inputVideo = component.localConfig.inputs.find(
+        i => i.name === 'input_video',
+      );
+      const inputAudio = component.localConfig.inputs.find(
+        i => i.name === 'input_audio',
+      );
+      const inputImages = component.localConfig.inputs.find(
+        i => i.name === 'input_images',
+      );
+
+      expect(inputVideo?.hidden).toBeFalse();
+      expect(inputAudio?.hidden).toBeFalse();
+      expect(inputImages?.hidden).toBeFalse();
+      expect(videoStepForm.get('inputs.input_images')?.enabled).toBeTrue();
+
+      // input_video should be disabled and show message
+      expect(videoStepForm.get('inputs.input_video')?.disabled).toBeTrue();
+      expect(component.getInputDisabledMessage('input_video')).toBe(
+        'This model does not support Video as reference',
+      );
+
+      // input_audio should be disabled and show message
+      expect(videoStepForm.get('inputs.input_audio')?.disabled).toBeTrue();
+      expect(component.getInputDisabledMessage('input_audio')).toBe(
+        'This model does not support Audio as reference',
+      );
+
+      // Dragging to disabled input_audio should not be compatible
+      component.dragSourcePort = {
+        stepId: 'other_step',
+        outputName: 'generated_audio',
+        type: 'audio',
+      };
+      expect(component.isCompatibleWithActiveDrag(inputAudio!)).toBeFalse();
+      expect(component.isIncompatibleWithActiveDrag(inputAudio!)).toBeTrue();
+
+      // Dragging to disabled input_video should not be compatible
+      component.dragSourcePort = {
+        stepId: 'other_step',
+        outputName: 'generated_video',
+        type: 'video',
+      };
+      expect(component.isCompatibleWithActiveDrag(inputVideo!)).toBeFalse();
+      expect(component.isIncompatibleWithActiveDrag(inputVideo!)).toBeTrue();
+    });
+
+    it('should show and enable input_audio and input_video when model is Gemini Omni in Ingredients to Video mode', () => {
+      videoStepForm
+        .get('settings.model')
+        ?.setValue('gemini-omni-flash-preview');
+      videoStepForm
+        .get('settings.input_mode')
+        ?.setValue('Ingredients to Video');
+
+      const inputAudio = component.localConfig.inputs.find(
+        i => i.name === 'input_audio',
+      );
+      const inputVideo = component.localConfig.inputs.find(
+        i => i.name === 'input_video',
+      );
+
+      expect(inputVideo?.hidden).toBeFalse();
+      expect(videoStepForm.get('inputs.input_video')?.enabled).toBeTrue();
+      expect(component.getInputDisabledMessage('input_video')).toBe('');
+      expect(component.inputModes['input_video']).toBe('mixed');
+
+      expect(inputAudio?.hidden).toBeFalse();
+      expect(videoStepForm.get('inputs.input_audio')?.enabled).toBeTrue();
+      expect(component.getInputDisabledMessage('input_audio')).toBe('');
+      expect(component.inputModes['input_audio']).toBe('mixed');
+
+      // Dragging to enabled input_audio should be compatible
+      component.dragSourcePort = {
+        stepId: 'other_step',
+        outputName: 'generated_audio',
+        type: 'audio',
+      };
+      expect(component.isCompatibleWithActiveDrag(inputAudio!)).toBeTrue();
+      expect(component.isIncompatibleWithActiveDrag(inputAudio!)).toBeFalse();
+
+      // Dragging to enabled input_video should be compatible
+      component.dragSourcePort = {
+        stepId: 'other_step',
+        outputName: 'generated_video',
+        type: 'video',
+      };
+      expect(component.isCompatibleWithActiveDrag(inputVideo!)).toBeTrue();
+      expect(component.isIncompatibleWithActiveDrag(inputVideo!)).toBeFalse();
+    });
+
+    it('should hide and disable ingredient ports when switching to Frames to Video', () => {
+      // First switch to Ingredients to Video
+      videoStepForm
+        .get('settings.input_mode')
+        ?.setValue('Ingredients to Video');
+      expect(
+        component.localConfig.inputs.find(i => i.name === 'input_video')
+          ?.hidden,
+      ).toBeFalse();
+
+      // Switch to Frames to Video
+      videoStepForm.get('settings.input_mode')?.setValue('Frames to Video');
+
+      const inputVideo = component.localConfig.inputs.find(
+        i => i.name === 'input_video',
+      );
+      const inputAudio = component.localConfig.inputs.find(
+        i => i.name === 'input_audio',
+      );
+      const inputImages = component.localConfig.inputs.find(
+        i => i.name === 'input_images',
+      );
+      const startFrame = component.localConfig.inputs.find(
+        i => i.name === 'start_frame',
+      );
+      const endFrame = component.localConfig.inputs.find(
+        i => i.name === 'end_frame',
+      );
+
+      expect(inputVideo?.hidden).toBeTrue();
+      expect(inputAudio?.hidden).toBeTrue();
+      expect(inputImages?.hidden).toBeTrue();
+      expect(videoStepForm.get('inputs.input_video')?.disabled).toBeTrue();
+      expect(videoStepForm.get('inputs.input_audio')?.disabled).toBeTrue();
+
+      expect(startFrame?.hidden).toBeFalse();
+      expect(endFrame?.hidden).toBeFalse();
+      expect(videoStepForm.get('inputs.start_frame')?.enabled).toBeTrue();
+      expect(videoStepForm.get('inputs.end_frame')?.enabled).toBeTrue();
+    });
+
+    it('should emit portDrop when onInputPortMouseUp is called on an enabled input', () => {
+      spyOn(component.portDrop, 'emit');
+      const mockEvent = jasmine.createSpyObj('MouseEvent', ['stopPropagation']);
+
+      component.onInputPortMouseUp(mockEvent, 'prompt');
+
+      expect(mockEvent.stopPropagation).toHaveBeenCalled();
+      expect(component.portDrop.emit).toHaveBeenCalledWith({
+        stepId: 'video_step_ingredients',
+        inputName: 'prompt',
+      });
+    });
+
+    it('should not emit portDrop when onInputPortMouseUp is called on a disabled input', () => {
+      spyOn(component.portDrop, 'emit');
+      const mockEvent = jasmine.createSpyObj('MouseEvent', ['stopPropagation']);
+
+      videoStepForm
+        .get('settings.input_mode')
+        ?.setValue('Ingredients to Video');
+      // input_audio is disabled on non-Omni model
+      expect(videoStepForm.get('inputs.input_audio')?.disabled).toBeTrue();
+
+      component.onInputPortMouseUp(mockEvent, 'input_audio');
+
+      expect(mockEvent.stopPropagation).toHaveBeenCalled();
+      expect(component.portDrop.emit).not.toHaveBeenCalled();
+    });
+
+    it('should correctly report isInputDisabled status', () => {
+      expect(component.isInputDisabled('prompt')).toBeFalse();
+
+      videoStepForm
+        .get('settings.input_mode')
+        ?.setValue('Ingredients to Video');
+      // input_audio is disabled on non-Omni model
+      expect(component.isInputDisabled('input_audio')).toBeTrue();
+      expect(component.isInputDisabled('input_video')).toBeTrue();
+      expect(component.isInputDisabled('input_images')).toBeFalse();
     });
   });
 });

@@ -170,6 +170,8 @@ class GenerateTextStep(BaseStep[GenerateTextInputs, GenerateTextSettings]):
 class GenerateVideoInputs(BaseModel):
     prompt: StepOutputReference | str
     input_images: WorkflowInputItem | None = None
+    input_video: WorkflowInputItem | None = None
+    input_audio: WorkflowInputItem | None = None
     start_frame: WorkflowInputItem | None = None
     end_frame: WorkflowInputItem | None = None
 

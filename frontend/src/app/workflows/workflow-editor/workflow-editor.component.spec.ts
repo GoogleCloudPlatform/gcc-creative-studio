@@ -429,4 +429,130 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
 
     expect(candidates.find(c => c.portName === 'input_images')).toBeUndefined();
   });
+
+  it('should include enabled video and audio input ports in collectMagneticCandidatePorts', () => {
+    const videoStepForm = fb.group({
+      stepId: ['step_video_node'],
+      type: ['generate-video'],
+      settings: fb.group({
+        model: ['gemini-experimental-omni'],
+        input_mode: ['Ingredients to Video'],
+      }),
+      inputs: fb.group({
+        prompt: [''],
+        input_images: [null],
+        input_video: [null],
+        input_audio: [null],
+      }),
+    });
+    component.stepsArray.push(videoStepForm);
+
+    spyOn(document, 'querySelector').and.returnValue({} as any);
+    spyOn<any>(component, 'getPortPosition').and.returnValue({x: 200, y: 300});
+
+    const videoCandidates = component.collectMagneticCandidatePorts(
+      'source_node',
+      'generated_video',
+    );
+    expect(
+      videoCandidates.find(c => c.portName === 'input_video'),
+    ).toBeDefined();
+
+    const audioCandidates = component.collectMagneticCandidatePorts(
+      'source_audio_node',
+      'generated_audio',
+    );
+    expect(
+      audioCandidates.find(c => c.portName === 'input_audio'),
+    ).toBeDefined();
+  });
+
+  it('should exclude disabled video/audio input ports in collectMagneticCandidatePorts', () => {
+    const videoControl = fb.control({value: null, disabled: true});
+    const videoStepForm = fb.group({
+      stepId: ['step_video_node'],
+      type: ['generate-video'],
+      settings: fb.group({
+        model: ['veo-3.1-generate-001'],
+      }),
+      inputs: fb.group({
+        prompt: [''],
+        input_video: videoControl,
+      }),
+    });
+    component.stepsArray.push(videoStepForm);
+
+    spyOn(document, 'querySelector').and.returnValue({} as any);
+    spyOn<any>(component, 'getPortPosition').and.returnValue({x: 200, y: 300});
+
+    const videoCandidates = component.collectMagneticCandidatePorts(
+      'source_node',
+      'generated_video',
+    );
+    expect(
+      videoCandidates.find(c => c.portName === 'input_video'),
+    ).toBeUndefined();
+  });
+
+  it('should allow connection from video source to input_video in onPortDrop', () => {
+    const videoStepForm = fb.group({
+      stepId: ['step_video_node'],
+      type: ['generate-video'],
+      inputs: fb.group({
+        prompt: [''],
+        input_video: [null],
+      }),
+    });
+    component.stepsArray.push(videoStepForm);
+
+    component.dragSourcePort = {
+      stepId: 'step_video_source',
+      outputName: 'generated_video',
+      type: 'video',
+    };
+
+    component.onPortDrop(
+      {stepId: 'step_video_node', inputName: 'input_video'},
+      'step_video_node',
+    );
+
+    expect(component.dragSourcePort).toBeNull();
+    expect(
+      videoStepForm.get('inputs')?.get('input_video')?.value as any,
+    ).toEqual({
+      step: 'step_video_source',
+      output: 'generated_video',
+    });
+  });
+
+  it('should allow connection from audio source to input_audio in onPortDrop', () => {
+    const videoStepForm = fb.group({
+      stepId: ['step_video_node'],
+      type: ['generate-video'],
+      inputs: fb.group({
+        prompt: [''],
+        input_audio: [null],
+      }),
+    });
+    component.stepsArray.push(videoStepForm);
+
+    component.dragSourcePort = {
+      stepId: 'step_audio_source',
+      outputName: 'generated_audio',
+      type: 'audio',
+    };
+
+    component.onPortDrop(
+      {stepId: 'step_video_node', inputName: 'input_audio'},
+      'step_video_node',
+    );
+
+    expect(component.dragSourcePort).toBeNull();
+    expect(
+      videoStepForm.get('inputs')?.get('input_audio')?.value as any,
+    ).toEqual({
+      step: 'step_audio_source',
+      output: 'generated_audio',
+    });
+  });
 });
