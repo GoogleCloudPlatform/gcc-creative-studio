@@ -136,6 +136,8 @@ export class MediaResolutionService {
 
     if (typeof val === 'number') {
       mediaItemIds.add(val);
+    } else if (typeof val === 'string' && /^\d+$/.test(val)) {
+      mediaItemIds.add(Number(val));
     } else if (Array.isArray(val)) {
       val.forEach(v =>
         this.collectMediaIds(v, mediaItemIds, sourceAssetIds, stepOutputsMap),

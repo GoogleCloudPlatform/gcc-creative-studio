@@ -42,6 +42,20 @@ export const GENERATE_VIDEO_STEP_CONFIG: StepConfig = {
       required: false,
     },
     {
+      name: 'input_video',
+      label: 'Video (Reference)',
+      type: 'video',
+      required: false,
+      hidden: true,
+    },
+    {
+      name: 'input_audio',
+      label: 'Audio (Reference)',
+      type: 'audio',
+      required: false,
+      hidden: true,
+    },
+    {
       name: 'start_frame',
       label: 'Start Frame',
       type: 'image',

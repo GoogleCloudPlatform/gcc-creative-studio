@@ -190,9 +190,9 @@ describe('StepExecutionDetailsComponent', () => {
     });
   });
 
-  describe('Legacy Image Step Types', () => {
-    it('should infer edit_image mode for legacy edit_image string stepType', () => {
-      component.stepType = 'edit_image';
+  describe('Image Step Modes', () => {
+    it('should filter inputs and outputs for edit_image mode', () => {
+      component.stepType = NodeTypes.IMAGE;
       component.mode = 'edit_image';
       component.inputs = {
         prompt: 'Edit prompt',
@@ -213,8 +213,8 @@ describe('StepExecutionDetailsComponent', () => {
       });
     });
 
-    it('should infer upscale_image mode for legacy upscale_image string stepType', () => {
-      component.stepType = 'upscale_image';
+    it('should filter inputs and outputs for upscale_image mode', () => {
+      component.stepType = NodeTypes.IMAGE;
       component.mode = 'upscale_image';
       component.inputs = {
         prompt: null,
@@ -243,7 +243,7 @@ describe('StepExecutionDetailsComponent', () => {
         extra_unknown_field: 'ignored',
       };
       component.outputs = {
-        text: 'Generated text article',
+        generated_text: 'Generated text article',
         extra_output: 'ignored',
       };
       fixture.detectChanges();
@@ -252,15 +252,70 @@ describe('StepExecutionDetailsComponent', () => {
         prompt: 'Generate an article',
       });
       expect(component.filteredOutputs).toEqual({
-        text: 'Generated text article',
+        generated_text: 'Generated text article',
       });
+    });
+
+    it('should filter inputs and outputs for generate_video and identify video/audio inputs', () => {
+      component.stepType = NodeTypes.GENERATE_VIDEO;
+      component.inputs = {
+        prompt: 'add an elephant here',
+        input_video: [{sourceAssetId: 10}],
+        input_audio: [{step: 'step_1', output: 'generated_audio'}],
+        extra_unknown_field: 'ignored',
+      };
+      component.outputs = {
+        generated_video: 102,
+      };
+      fixture.detectChanges();
+
+      expect(component.filteredInputs).toEqual({
+        prompt: 'add an elephant here',
+        input_video: [{sourceAssetId: 10}],
+        input_audio: [{step: 'step_1', output: 'generated_audio'}],
+      });
+      expect(component.filteredOutputs).toEqual({
+        generated_video: 102,
+      });
+
+      expect(component.isVideoInput('input_video')).toBeTrue();
+      expect(component.isAudioInput('input_audio')).toBeTrue();
+      expect(component.isImageInput('input_images')).toBeTrue();
+      expect(component.isVideoOutput('generated_video')).toBeTrue();
+    });
+
+    it('should filter inputs and outputs for generate_audio', () => {
+      component.stepType = NodeTypes.GENERATE_AUDIO;
+      component.inputs = {
+        prompt: 'ambient forest sounds',
+      };
+      component.outputs = {
+        generated_audio: 103,
+      };
+      fixture.detectChanges();
+
+      expect(component.filteredInputs).toEqual({
+        prompt: 'ambient forest sounds',
+      });
+      expect(component.filteredOutputs).toEqual({
+        generated_audio: 103,
+      });
+
+      expect(component.isAudioOutput('generated_audio')).toBeTrue();
     });
   });
 
   describe('Media URL resolution and helpers', () => {
-    it('should resolve media URL from mediaUrlMap for numbers and references', () => {
+    it('should resolve media URL from mediaUrlMap for numbers, string numbers, and references', () => {
       component.mediaUrlMap.set('media:101', 'https://example.com/image.png');
+      component.mediaUrlMap.set('asset:202', 'https://example.com/asset.mp4');
       expect(component.getMediaUrl(101)).toBe('https://example.com/image.png');
+      expect(component.getMediaUrl('101')).toBe(
+        'https://example.com/image.png',
+      );
+      expect(component.getMediaUrl({sourceAssetId: 202})).toBe(
+        'https://example.com/asset.mp4',
+      );
       expect(
         component.getMediaUrl({previewUrl: 'https://example.com/preview.png'}),
       ).toBe('https://example.com/preview.png');
@@ -269,11 +324,34 @@ describe('StepExecutionDetailsComponent', () => {
       );
     });
 
+    it('should track loaded media state for numbers and string numbers', () => {
+      component.onMediaLoaded(101);
+      expect(component.isLoaded(101)).toBeTrue();
+      expect(component.isLoaded('101')).toBeTrue();
+      expect(component.isLoaded(999)).toBeFalse();
+    });
+
     it('should flatten nested resolved values', () => {
       expect(component.getResolvedValues([1, [2, 3]])).toEqual([1, 2, 3]);
       expect(component.getResolvedValues({_resolvedValue: [4, 5]})).toEqual([
         4, 5,
       ]);
+      expect(
+        component.getResolvedValues([{step: 'step_1', _resolvedValue: 42}]),
+      ).toEqual([42]);
+    });
+
+    it('should provide stable tracking keys in trackByKey and trackByMedia', () => {
+      expect(component.trackByKey(0, {key: 'prompt', value: 'hello'})).toBe(
+        'prompt',
+      );
+      expect(component.trackByMedia(0, 101)).toBe('media:101');
+      expect(component.trackByMedia(0, '101')).toBe('media:101');
+      expect(component.trackByMedia(0, {sourceAssetId: 202})).toBe('asset:202');
+      expect(
+        component.trackByMedia(0, {previewUrl: 'https://example.com/test.mp4'}),
+      ).toBe('https://example.com/test.mp4');
+      expect(component.trackByMedia(3, null)).toBe(3);
     });
   });
 });

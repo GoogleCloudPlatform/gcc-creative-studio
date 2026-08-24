@@ -163,7 +163,10 @@ export class StepExecutionDetailsComponent implements OnInit {
   }
 
   private getKeyFromValue(value: any): string | null {
-    if (typeof value === 'number') {
+    if (
+      typeof value === 'number' ||
+      (typeof value === 'string' && /^\d+$/.test(value))
+    ) {
       return `media:${value}`;
     } else if (value && typeof value === 'object') {
       const assetId = value.sourceAssetId ?? value.source_asset_id;
@@ -179,6 +182,8 @@ export class StepExecutionDetailsComponent implements OnInit {
   private getIdFromValue(value: any): number | string | null {
     if (typeof value === 'number') {
       return value;
+    } else if (typeof value === 'string' && /^\d+$/.test(value)) {
+      return Number(value);
     } else if (value && typeof value === 'object') {
       const id =
         value.sourceAssetId ??
@@ -297,5 +302,27 @@ export class StepExecutionDetailsComponent implements OnInit {
 
   get outputCount(): number {
     return Object.keys(this.filteredOutputs).length;
+  }
+
+  trackByKey = (index: number, item: any): string => {
+    return item?.key || index.toString();
+  };
+
+  trackByMedia = (index: number, item: any): any => {
+    if (item === null || item === undefined) return index;
+    const key = this.getKeyFromValue(item);
+    if (key) return key;
+    if (typeof item === 'object' && item.previewUrl) return item.previewUrl;
+    if (typeof item === 'string' || typeof item === 'number') return item;
+    return index;
+  };
+
+  formatDisplayValue(value: any): string {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return String(value);
+    }
+    return JSON.stringify(value, null, 2);
   }
 }

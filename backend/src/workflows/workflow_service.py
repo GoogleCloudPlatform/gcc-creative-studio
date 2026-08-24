@@ -744,6 +744,14 @@ class WorkflowService:
         def resolve_value(value):
             if isinstance(value, StepOutputReference):
                 return previous_outputs.get(value.step, {}).get(value.output)
+            if (
+                isinstance(value, dict)
+                and "step" in value
+                and "output" in value
+            ):
+                return previous_outputs.get(value["step"], {}).get(
+                    value["output"]
+                )
             if isinstance(value, list):
                 return [resolve_value(item) for item in value]
             return value

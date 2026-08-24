@@ -219,3 +219,51 @@ def test_validate_duration_seconds():
             duration_seconds=11,
         )
     assert "less than or equal to 10" in str(exc_info.value)
+
+
+def test_validate_audio_reference_by_model():
+    # Gemini Omni with audio reference is OK
+    dto = CreateVeoDto(
+        prompt="Test Omni with audio",
+        workspace_id=1,
+        generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+        reference_audio={"id": 101, "type": "media_item"},
+    )
+    assert dto.reference_audio.id == 101
+
+    # Veo model with audio reference should fail validation
+    with pytest.raises(ValidationError) as exc_info:
+        CreateVeoDto(
+            prompt="Test Veo with audio",
+            workspace_id=1,
+            generation_model=GenerationModelEnum.VEO_3_1_GENERATE_001,
+            reference_audio={"id": 101, "type": "media_item"},
+        )
+    assert "does not support Audio as reference" in str(exc_info.value)
+    assert "Audio reference is only supported by Gemini Omni models" in str(
+        exc_info.value
+    )
+
+
+def test_validate_video_reference_by_model():
+    # Gemini Omni with video reference is OK
+    dto = CreateVeoDto(
+        prompt="Test Omni with video",
+        workspace_id=1,
+        generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+        reference_video={"id": 102, "type": "media_item"},
+    )
+    assert dto.reference_video.id == 102
+
+    # Veo model with video reference should fail validation
+    with pytest.raises(ValidationError) as exc_info:
+        CreateVeoDto(
+            prompt="Test Veo with video",
+            workspace_id=1,
+            generation_model=GenerationModelEnum.VEO_3_1_GENERATE_001,
+            reference_video={"id": 102, "type": "media_item"},
+        )
+    assert "does not support Video as reference" in str(exc_info.value)
+    assert "Video reference is only supported by Gemini Omni models" in str(
+        exc_info.value
+    )

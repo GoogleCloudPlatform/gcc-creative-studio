@@ -512,6 +512,147 @@ class TestGetExecutionDetails:
         assert upscale_entry["step_inputs"] == {"input_image": 555}
         assert upscale_entry["step_outputs"] == {"generated_image": 222}
 
+    @pytest.mark.anyio
+    @patch("src.workflows.workflow_service.executions_v1.ExecutionsClient")
+    @patch("src.workflows.workflow_service.google.auth.default")
+    @patch("src.workflows.workflow_service.AuthorizedSession")
+    async def test_get_execution_details_video_step_reference_resolution(
+        self,
+        mock_auth_session_class,
+        mock_auth_default,
+        mock_exec_client_class,
+        workflow_service,
+        mock_run_repo,
+    ):
+        from google.cloud.workflows import executions_v1 as exec_v1
+
+        from src.workflows.schema.workflow_model import (
+            GenerateVideoInputs,
+            GenerateVideoSettings,
+            GenerateVideoStep,
+            StepOutputReference,
+            UserInputInputs,
+            UserInputSettings,
+            UserInputStep,
+        )
+
+        video_workflow = WorkflowModel(
+            id="wf-video",
+            user_id=1,
+            name="Video Workflow",
+            description="Test video reference resolution",
+            steps=[
+                UserInputStep(
+                    step_id="user_input",
+                    type=NodeTypes.USER_INPUT,
+                    inputs=UserInputInputs(),
+                    settings=UserInputSettings(),
+                ),
+                GenerateVideoStep(
+                    step_id="step_1",
+                    type=NodeTypes.GENERATE_VIDEO,
+                    inputs=GenerateVideoInputs(
+                        prompt="A lion walking in savanna",
+                    ),
+                    settings=GenerateVideoSettings(
+                        model="veo-3.1-generate-001",
+                        brand_guidelines=False,
+                        aspect_ratio="16:9",
+                    ),
+                ),
+                GenerateVideoStep(
+                    step_id="step_2",
+                    type=NodeTypes.GENERATE_VIDEO,
+                    inputs=GenerateVideoInputs(
+                        prompt="add an elephant here",
+                        input_video=StepOutputReference(
+                            step="step_1", output="generated_video"
+                        ),
+                    ),
+                    settings=GenerateVideoSettings(
+                        model="veo-3.1-generate-001",
+                        input_mode="Ingredients to Video",
+                        brand_guidelines=False,
+                        aspect_ratio="16:9",
+                    ),
+                ),
+            ],
+        )
+
+        mock_client = MagicMock()
+        mock_exec_client_class.return_value = mock_client
+        mock_execution = MagicMock()
+        mock_execution.name = (
+            "projects/p/locations/l/workflows/w/executions/e-789"
+        )
+        mock_execution.state = exec_v1.Execution.State.SUCCEEDED
+        mock_execution.argument = "{}"
+        mock_execution.result = "{}"
+        mock_execution.start_time = MagicMock()
+        mock_execution.end_time = MagicMock()
+        mock_client.get_execution.return_value = mock_execution
+
+        mock_auth_default.return_value = (MagicMock(), "project-id")
+        mock_session = MagicMock()
+        mock_auth_session_class.return_value = mock_session
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "stepEntries": [
+                {
+                    "step": "step_1",
+                    "state": "STATE_SUCCEEDED",
+                    "variableData": {
+                        "variables": {
+                            "step_1_result": {
+                                "body": {
+                                    "generated_video": 888,
+                                }
+                            }
+                        }
+                    },
+                },
+                {
+                    "step": "step_2",
+                    "state": "STATE_SUCCEEDED",
+                    "variableData": {
+                        "variables": {
+                            "step_2_result": {
+                                "body": {
+                                    "generated_video": 999,
+                                }
+                            }
+                        }
+                    },
+                },
+            ],
+        }
+        mock_session.get.return_value = mock_response
+
+        mock_run = MagicMock()
+        mock_run.id = "e-789"
+        mock_run.workflow_snapshot = video_workflow.model_dump(
+            mode="json", by_alias=True
+        )
+        mock_run.status = WorkflowRunStatusEnum.RUNNING.value
+        mock_run_repo.get_by_id.return_value = mock_run
+
+        workflow_service.get_by_id = AsyncMock(return_value=video_workflow)
+
+        details = await workflow_service.get_execution_details(
+            workflow_id="wf-video",
+            execution_id="e-789",
+        )
+
+        assert details is not None
+        step_entries = details["step_entries"]
+        step_2_entry = next(e for e in step_entries if e["step_id"] == "step_2")
+
+        # input_video was a reference to step_1.generated_video (888)
+        assert step_2_entry["step_inputs"]["input_video"] == 888
+        assert step_2_entry["step_inputs"]["prompt"] == "add an elephant here"
+        assert step_2_entry["step_outputs"] == {"generated_video": 999}
+
 
 class TestBatchExecuteWorkflow:
     """Tests for batch_execute_workflow method."""

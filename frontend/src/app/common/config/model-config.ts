@@ -38,6 +38,7 @@ export interface ModelCapability {
   supportsLanguage?: boolean;
   supportsSeed?: boolean;
   supportsVideoReference?: boolean;
+  supportsAudioReference?: boolean;
 }
 
 export interface GenerationModelConfig {
@@ -240,6 +241,8 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportedResolutions: [],
       supportedDurations: [4, 6, 8, 10],
       supportsAudio: true,
+      supportsAudioReference: true,
+      supportsVideoReference: true,
     },
   },
   {
@@ -367,3 +370,24 @@ export const ASPECT_RATIO_LABELS: Record<string, string> = {
   '1:8': '1:8 (Tall Ribbon)',
   '8:1': '8:1 (Wide Ribbon)',
 };
+
+/**
+ * Checks whether a given model identifier or config corresponds to Gemini Omni,
+ * which supports Audio as a reference input.
+ */
+export function isGeminiOmniModel(modelValue?: string | null): boolean {
+  if (!modelValue) return false;
+  const config = MODEL_CONFIGS.find(
+    m => m.value === modelValue || m.viewValue === modelValue,
+  );
+  if (config?.capabilities?.supportsAudioReference) {
+    return true;
+  }
+  const val = modelValue.toLowerCase();
+  return (
+    val === 'gemini-omni-flash-preview' ||
+    val === 'gemini-omni' ||
+    val.includes('gemini-omni') ||
+    val.includes('gemini omni')
+  );
+}

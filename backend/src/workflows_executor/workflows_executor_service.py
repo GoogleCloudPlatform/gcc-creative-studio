@@ -20,6 +20,7 @@ from fastapi import HTTPException
 from google.genai import types
 from httpx import AsyncClient as RestClient
 
+from src.common.base_dto import GenerationModelEnum
 from src.common.schema.genai_model_setup import GenAIModelSetup
 from src.common.schema.media_item_model import AssetRoleEnum
 from src.config.config_service import config_service
@@ -431,6 +432,23 @@ class WorkflowsExecutorService:
         media_items.extend(end_media)
         end_image_asset_id = end_assets[0] if end_assets else None
 
+        # 4. Process Reference Video & Audio (Only for models that support them)
+        supports_audio_video_refs = request.config.model in (
+            GenerationModelEnum.GEMINI_OMNI,
+            GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+        )
+
+        reference_video = (
+            self._map_to_asset_reference(request.inputs.input_video)
+            if supports_audio_video_refs
+            else None
+        )
+        reference_audio = (
+            self._map_to_asset_reference(request.inputs.input_audio)
+            if supports_audio_video_refs
+            else None
+        )
+
         body = {
             "prompt": request.inputs.prompt,
             "workspace_id": request.workspace_id,
@@ -441,6 +459,8 @@ class WorkflowsExecutorService:
             "source_media_items": media_items,
             "start_image_asset_id": start_image_asset_id,
             "end_image_asset_id": end_image_asset_id,
+            "reference_video": reference_video,
+            "reference_audio": reference_audio,
             "number_of_media": 1,
             "duration_seconds": request.config.duration_seconds,
         }
@@ -469,6 +489,79 @@ class WorkflowsExecutorService:
         await self._poll_job_status(video_id, authorization)
 
         return {"generated_video": video_id}
+
+    def _map_to_asset_reference(
+        self,
+        input_data: Any,
+    ) -> dict | None:
+        if not input_data:
+            return None
+
+        # If input is a list, take the first element
+        if isinstance(input_data, list):
+            if len(input_data) == 0:
+                return None
+            input_data = input_data[0]
+
+        # Handle ReferenceMediaOrAsset
+        if isinstance(input_data, ReferenceMediaOrAsset):
+            if input_data.sourceMediaItem:
+                return {
+                    "id": input_data.sourceMediaItem.mediaItemId,
+                    "type": "media_item",
+                    "index": input_data.sourceMediaItem.mediaIndex or 0,
+                }
+            if input_data.sourceAssetId:
+                return {
+                    "id": input_data.sourceAssetId,
+                    "type": "source_asset",
+                    "index": 0,
+                }
+
+        if isinstance(input_data, int):
+            return {
+                "id": input_data,
+                "type": "media_item",
+                "index": 0,
+            }
+
+        if isinstance(input_data, str) and input_data.isdigit():
+            return {
+                "id": int(input_data),
+                "type": "media_item",
+                "index": 0,
+            }
+
+        if isinstance(input_data, dict):
+            if input_data.get("sourceMediaItem"):
+                smi = input_data["sourceMediaItem"]
+                return {
+                    "id": smi.get("mediaItemId") or smi.get("media_item_id"),
+                    "type": "media_item",
+                    "index": smi.get("mediaIndex")
+                    or smi.get("media_index")
+                    or 0,
+                }
+            if input_data.get("sourceAssetId"):
+                return {
+                    "id": input_data["sourceAssetId"],
+                    "type": "source_asset",
+                    "index": 0,
+                }
+            if input_data.get("source_asset_id"):
+                return {
+                    "id": input_data["source_asset_id"],
+                    "type": "source_asset",
+                    "index": 0,
+                }
+            if "id" in input_data and "type" in input_data:
+                return {
+                    "id": input_data["id"],
+                    "type": input_data["type"],
+                    "index": input_data.get("index", 0),
+                }
+
+        return None
 
     def _map_to_vto_input_link(
         self,

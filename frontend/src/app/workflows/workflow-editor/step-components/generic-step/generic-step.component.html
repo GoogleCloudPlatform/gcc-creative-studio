@@ -103,6 +103,7 @@
         <div
           class="port-row relative"
           [class.magnetic-target]="isMagneticTarget(input.name)"
+          [class.port-row-disabled]="isInputDisabled(input.name)"
           *ngIf="!input.hidden"
         >
           <div
@@ -110,18 +111,14 @@
             [class.magnetic-hover]="isMagneticTarget(input.name)"
             [class.port-compatible]="isCompatibleWithActiveDrag(input)"
             [class.port-incompatible]="isIncompatibleWithActiveDrag(input)"
+            [class.port-disabled]="isInputDisabled(input.name)"
             [style.background-color]="getTypeColor(input.type)"
             [style.border-color]="getTypeColor(input.type)"
             [attr.data-node-id]="stepForm.value.stepId"
             [attr.data-port-name]="input.name"
             [attr.data-port-type]="'input'"
-            (mouseup)="
-              $event.stopPropagation();
-              portDrop.emit({
-                stepId: stepForm.value.stepId,
-                inputName: input.name,
-              })
-            "
+            [attr.data-data-type]="input.type"
+            (mouseup)="onInputPortMouseUp($event, input.name)"
           ></div>
           <span
             class="port-type-chip input-chip"
@@ -135,6 +132,7 @@
             [compatibleOutputs]="compatibleOutputs[input.name]"
             [showValidationErrors]="showValidationErrors"
             [maxMediaItems]="getMaxMediaItems(input)"
+            [disabledMessage]="getInputDisabledMessage(input.name)"
             (modeChange)="toggleInputMode(input.name, $event)"
           >
           </app-step-input-field>
@@ -250,7 +248,9 @@
         [inputs]="stepExecution.step_inputs"
         [outputs]="stepExecution.step_outputs"
         [mediaUrlMap]="mediaUrlMap"
-        [mode]="stepForm.get('settings.mode')?.value || stepForm.value?.settings?.mode"
+        [mode]="
+          stepForm.get('settings.mode')?.value || stepForm.value?.settings?.mode
+        "
       >
       </app-step-execution-details>
     </div>

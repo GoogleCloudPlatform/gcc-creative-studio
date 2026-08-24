@@ -722,7 +722,13 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       const modelValue = settingsGroup?.get('model')?.value;
 
       config.inputs.forEach((input: any) => {
-        if (input.hidden) return;
+        // Skip candidate if input control is disabled in the form
+        if (inputsGroup) {
+          const control = inputsGroup.get(input.name);
+          if (control?.disabled) {
+            return;
+          }
+        }
 
         // Skip candidate if type is incompatible
         if (sourceType && !isPortTypeCompatible(sourceType, input.type)) {
@@ -845,16 +851,12 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             return;
           }
 
-          const targetShortType = getShortType(inputConfig?.type);
           const maxAllowed = getMaxAllowedInputs(
             event.inputName,
             modelValue,
             inputConfig?.type,
           );
-          if (
-            (targetShortType === 'IMG' || targetShortType === 'VID') &&
-            maxAllowed > 1
-          ) {
+          if (maxAllowed > 1) {
             if (Array.isArray(currentVal)) {
               control?.setValue([...currentVal, newValue]);
             } else if (
