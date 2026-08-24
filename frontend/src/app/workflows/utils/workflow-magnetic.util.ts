@@ -41,18 +41,62 @@ export type DragSourcePort = {
 export const MAGNETIC_SNAP_RADIUS = 48;
 export const MAGNETIC_RELEASE_RADIUS = 64;
 
+export type PortShortType = 'IMG' | 'VID' | 'TXT' | 'AUD';
+
+export const PORT_TYPE_COLORS: Record<PortShortType, string> = {
+  IMG: '#d53f8c', // Pink
+  TXT: '#3182ce', // Blue
+  VID: '#dd6b20', // Orange
+  AUD: '#805ad5', // Purple
+};
+
+/**
+ * Returns the standardized PortShortType for a given port type, normalizing synonyms
+ * (e.g., txt / textarea / string -> 'TXT', img / images -> 'IMG', vid -> 'VID', aud -> 'AUD').
+ * Returns null if the type is unknown or empty.
+ */
+export function getCanonicalType(
+  type: string | null | undefined,
+): PortShortType | null {
+  const t = (type ?? '').trim().toLowerCase();
+  if (!t) return null;
+  if (t === 'image' || t === 'img' || t === 'images' || t === 'input_images') {
+    return 'IMG';
+  }
+  if (t === 'video' || t === 'vid' || t === 'videos' || t === 'input_videos') {
+    return 'VID';
+  }
+  if (t === 'audio' || t === 'aud' || t === 'audios' || t === 'input_audios') {
+    return 'AUD';
+  }
+  if (
+    t === 'text' ||
+    t === 'txt' ||
+    t === 'string' ||
+    t === 'textarea' ||
+    t === 'prompt'
+  ) {
+    return 'TXT';
+  }
+  return null;
+}
+
 /**
  * Checks whether an output source data type is compatible with an input target data type.
+ * Only known compatible port types (text, image, video, audio) are supported.
  */
 export function isPortTypeCompatible(
   sourceType: string | null | undefined,
   targetType: string | null | undefined,
 ): boolean {
-  if (!sourceType?.trim() || !targetType?.trim()) {
+  const source = getCanonicalType(sourceType);
+  const target = getCanonicalType(targetType);
+
+  if (!source || !target) {
     return false;
   }
 
-  return getShortType(sourceType) === getShortType(targetType);
+  return source === target;
 }
 
 /**
@@ -143,24 +187,11 @@ export function isInputAlreadyLinked(
   );
 }
 
-export type PortShortType = 'IMG' | 'VID' | 'TXT' | 'AUD';
-
-export const PORT_TYPE_COLORS: Record<PortShortType, string> = {
-  IMG: '#d53f8c', // Pink
-  TXT: '#3182ce', // Blue
-  VID: '#dd6b20', // Orange
-  AUD: '#805ad5', // Purple
-};
-
 /**
  * Returns a standardized short display label for a port data type.
  */
 export function getShortType(type: string | null | undefined): PortShortType {
-  const t = (type ?? '').trim().toLowerCase();
-  if (t.includes('image') || t === 'img') return 'IMG';
-  if (t.includes('video') || t === 'vid') return 'VID';
-  if (t.includes('audio') || t === 'aud') return 'AUD';
-  return 'TXT';
+  return getCanonicalType(type) ?? 'TXT';
 }
 
 /**

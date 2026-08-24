@@ -306,3 +306,130 @@ def test_workflow_step_discriminated_union_generate_video_parsing():
     assert parsed.type == NodeTypes.GENERATE_VIDEO
     assert parsed.inputs.prompt == "A sunset time-lapse"
     assert parsed.settings.duration_seconds == 6
+
+
+def test_generate_video_step_with_video_and_audio_ingredients():
+    """Verify GenerateVideoStep creation with input_video and input_audio."""
+    from src.workflows.schema.workflow_model import (
+        ReferenceMediaOrAsset,
+        SourceMediaItemLink,
+        StepOutputReference,
+    )
+
+    # 1. With StepOutputReference
+    step_with_refs = GenerateVideoStep(
+        step_id="step_video_ingredients_1",
+        inputs=GenerateVideoInputs(
+            prompt="A car driving through the rain",
+            input_video=StepOutputReference(
+                step="step_upstream_video", output="generated_video"
+            ),
+            input_audio=StepOutputReference(
+                step="step_upstream_audio", output="generated_audio"
+            ),
+        ),
+        settings=GenerateVideoSettings(
+            model="veo-3.1-generate-001",
+            brand_guidelines=False,
+            aspect_ratio="16:9",
+            input_mode="Ingredients to Video",
+        ),
+    )
+    assert step_with_refs.type == NodeTypes.GENERATE_VIDEO
+    assert isinstance(step_with_refs.inputs.input_video, StepOutputReference)
+    assert step_with_refs.inputs.input_video.step == "step_upstream_video"
+    assert step_with_refs.inputs.input_video.output == "generated_video"
+    assert isinstance(step_with_refs.inputs.input_audio, StepOutputReference)
+    assert step_with_refs.inputs.input_audio.step == "step_upstream_audio"
+    assert step_with_refs.inputs.input_audio.output == "generated_audio"
+
+    # 2. With ReferenceMediaOrAsset
+    step_with_assets = GenerateVideoStep(
+        step_id="step_video_ingredients_2",
+        inputs=GenerateVideoInputs(
+            prompt="A car driving through the rain",
+            input_video=ReferenceMediaOrAsset(
+                previewUrl="https://example.com/video.mp4",
+                sourceMediaItem=SourceMediaItemLink(
+                    mediaItemId=101, mediaIndex=0, role="video_reference_asset"
+                ),
+            ),
+            input_audio=ReferenceMediaOrAsset(
+                previewUrl="https://example.com/audio.wav",
+                sourceAssetId=202,
+            ),
+        ),
+        settings=GenerateVideoSettings(
+            model="veo-3.1-generate-001",
+            brand_guidelines=False,
+            aspect_ratio="16:9",
+        ),
+    )
+    assert isinstance(
+        step_with_assets.inputs.input_video, ReferenceMediaOrAsset
+    )
+    assert (
+        step_with_assets.inputs.input_video.sourceMediaItem.mediaItemId == 101
+    )
+    assert isinstance(
+        step_with_assets.inputs.input_audio, ReferenceMediaOrAsset
+    )
+    assert step_with_assets.inputs.input_audio.sourceAssetId == 202
+
+    # 3. With raw integer IDs
+    step_with_ints = GenerateVideoStep(
+        step_id="step_video_ingredients_3",
+        inputs=GenerateVideoInputs(
+            prompt="A car driving through the rain",
+            input_video=301,
+            input_audio=302,
+        ),
+        settings=GenerateVideoSettings(
+            model="veo-3.1-generate-001",
+            brand_guidelines=False,
+            aspect_ratio="16:9",
+        ),
+    )
+    assert step_with_ints.inputs.input_video == 301
+    assert step_with_ints.inputs.input_audio == 302
+
+
+def test_workflow_step_discriminated_union_generate_video_ingredients_parsing():
+    """Verify parsing serialized GenerateVideoStep with video & audio ingredients via discriminated union."""
+    adapter = TypeAdapter(WorkflowStep)
+    raw_data = {
+        "stepId": "video_ingredients_node",
+        "type": "generate_video",
+        "status": "idle",
+        "inputs": {
+            "prompt": "An astronaut walking on Mars",
+            "input_video": {
+                "step": "step_video_source",
+                "output": "generated_video",
+            },
+            "input_audio": {
+                "step": "step_audio_source",
+                "output": "generated_audio",
+            },
+            "input_images": [
+                {
+                    "previewUrl": "https://example.com/img.png",
+                    "sourceAssetId": 12,
+                }
+            ],
+        },
+        "settings": {
+            "model": "veo-3.1-generate-001",
+            "brand_guidelines": True,
+            "aspect_ratio": "16:9",
+            "duration_seconds": 8,
+            "input_mode": "Ingredients to Video",
+        },
+        "outputs": {},
+    }
+    parsed = adapter.validate_python(raw_data)
+    assert isinstance(parsed, GenerateVideoStep)
+    assert parsed.type == NodeTypes.GENERATE_VIDEO
+    assert parsed.inputs.input_video.step == "step_video_source"
+    assert parsed.inputs.input_audio.step == "step_audio_source"
+    assert parsed.settings.input_mode == "Ingredients to Video"

@@ -159,6 +159,17 @@
     opacity: 0.35;
     cursor: not-allowed;
   }
+
+  &.port-disabled {
+    opacity: 0.25;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+}
+
+.port-row-disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .input-port {

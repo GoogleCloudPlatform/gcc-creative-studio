@@ -17,6 +17,7 @@
 import {
   calculateDistance,
   findClosestMagneticPort,
+  getCanonicalType,
   getCurrentItemCount,
   getMaxAllowedInputs,
   getPortTypeColor,
@@ -32,6 +33,38 @@ import {
 } from './workflow-magnetic.util';
 
 describe('WorkflowMagneticUtil', () => {
+  describe('getCanonicalType', () => {
+    it('should return null for null, undefined, or empty types', () => {
+      expect(getCanonicalType(null)).toBeNull();
+      expect(getCanonicalType(undefined)).toBeNull();
+      expect(getCanonicalType('')).toBeNull();
+      expect(getCanonicalType('   ')).toBeNull();
+      expect(getCanonicalType('unknown_type')).toBeNull();
+    });
+
+    it('should return PortShortType for known type synonyms', () => {
+      expect(getCanonicalType('image')).toBe('IMG');
+      expect(getCanonicalType('img')).toBe('IMG');
+      expect(getCanonicalType('images')).toBe('IMG');
+      expect(getCanonicalType('input_images')).toBe('IMG');
+
+      expect(getCanonicalType('video')).toBe('VID');
+      expect(getCanonicalType('vid')).toBe('VID');
+      expect(getCanonicalType('videos')).toBe('VID');
+      expect(getCanonicalType('input_videos')).toBe('VID');
+
+      expect(getCanonicalType('audio')).toBe('AUD');
+      expect(getCanonicalType('aud')).toBe('AUD');
+      expect(getCanonicalType('audios')).toBe('AUD');
+      expect(getCanonicalType('input_audios')).toBe('AUD');
+
+      expect(getCanonicalType('text')).toBe('TXT');
+      expect(getCanonicalType('txt')).toBe('TXT');
+      expect(getCanonicalType('string')).toBe('TXT');
+      expect(getCanonicalType('textarea')).toBe('TXT');
+      expect(getCanonicalType('prompt')).toBe('TXT');
+    });
+  });
   describe('isPortTypeCompatible', () => {
     it('should return false for null, undefined, or empty types', () => {
       expect(isPortTypeCompatible(null, 'text')).toBeFalse();
@@ -69,9 +102,14 @@ describe('WorkflowMagneticUtil', () => {
       expect(isPortTypeCompatible('text', 'image')).toBeFalse();
       expect(isPortTypeCompatible('TXT', 'IMG')).toBeFalse();
       expect(isPortTypeCompatible('IMG', 'TXT')).toBeFalse();
-      expect(isPortTypeCompatible('video', 'audio')).toBeFalse();
       expect(isPortTypeCompatible('audio', 'image')).toBeFalse();
       expect(isPortTypeCompatible('text', 'video')).toBeFalse();
+    });
+
+    it('should reject unknown types', () => {
+      expect(isPortTypeCompatible('custom', 'custom')).toBeFalse();
+      expect(isPortTypeCompatible('custom', 'text')).toBeFalse();
+      expect(isPortTypeCompatible('unknown', 'video')).toBeFalse();
     });
   });
 
@@ -259,7 +297,6 @@ describe('WorkflowMagneticUtil', () => {
       expect(getShortType('vid')).toBe('VID');
       expect(getShortType('audio')).toBe('AUD');
       expect(getShortType('aud')).toBe('AUD');
-      expect(getShortType('custom')).toBe('TXT');
     });
   });
 

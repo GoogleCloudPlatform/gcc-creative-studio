@@ -272,6 +272,8 @@ async def test_generate_video(service):
     request.workspace_id = 1
     request.inputs.prompt = "A running dog"
     request.inputs.input_images = [123]
+    request.inputs.input_video = None
+    request.inputs.input_audio = None
     request.inputs.start_frame = None
     request.inputs.end_frame = None
     request.config.model = "veo-3.1-generate-001"
@@ -291,7 +293,215 @@ async def test_generate_video(service):
         service.mock_rest_client.post.assert_called_once()
         _, kwargs = service.mock_rest_client.post.call_args
         assert kwargs["json"]["duration_seconds"] == 6
+        assert kwargs["json"]["reference_video"] is None
+        assert kwargs["json"]["reference_audio"] is None
         mock_poll.assert_called_once_with(777, None)
+
+
+@pytest.mark.anyio
+async def test_generate_video_with_reference_video_and_audio(service):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "A running dog with music"
+    request.inputs.input_images = None
+    request.inputs.input_video = 888  # Media item ID from upstream step
+    request.inputs.input_audio = 999  # Media item ID from upstream step
+    request.inputs.start_frame = None
+    request.inputs.start_frame = None
+    request.inputs.end_frame = None
+    request.config.model = "gemini-omni-flash-preview"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+    request.config.duration_seconds = 8
+
+    service.mock_rest_client.post.return_value = Response(
+        200, json={"id": 1234}
+    )
+
+    with patch.object(
+        service,
+        "_poll_job_status",
+        AsyncMock(return_value=True),
+    ) as mock_poll:
+        result = await service.generate_video(request)
+        assert result["generated_video"] == 1234
+        service.mock_rest_client.post.assert_called_once()
+        _, kwargs = service.mock_rest_client.post.call_args
+        assert kwargs["json"]["reference_video"] == {
+            "id": 888,
+            "type": "media_item",
+            "index": 0,
+        }
+        assert kwargs["json"]["reference_audio"] == {
+            "id": 999,
+            "type": "media_item",
+            "index": 0,
+        }
+        mock_poll.assert_called_once_with(1234, None)
+
+
+@pytest.mark.anyio
+async def test_generate_video_with_source_asset_video_and_audio(service):
+    from src.workflows.schema.workflow_model import (
+        ReferenceMediaOrAsset,
+        SourceMediaItemLink,
+    )
+
+    video_ref = ReferenceMediaOrAsset(
+        previewUrl="https://example.com/vid.mp4",
+        sourceMediaItem=SourceMediaItemLink(
+            mediaItemId=501, mediaIndex=1, role="video_reference_asset"
+        ),
+    )
+    audio_ref = ReferenceMediaOrAsset(
+        previewUrl="https://example.com/aud.mp3",
+        sourceAssetId=601,
+    )
+
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "A cinematic shot"
+    request.inputs.input_images = None
+    request.inputs.input_video = video_ref
+    request.inputs.input_audio = audio_ref
+    request.inputs.start_frame = None
+    request.inputs.end_frame = None
+    request.config.model = "gemini-omni-flash-preview"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+    request.config.duration_seconds = 8
+
+    service.mock_rest_client.post.return_value = Response(
+        200, json={"id": 5678}
+    )
+
+    with patch.object(
+        service,
+        "_poll_job_status",
+        AsyncMock(return_value=True),
+    ) as mock_poll:
+        result = await service.generate_video(request)
+        assert result["generated_video"] == 5678
+        _, kwargs = service.mock_rest_client.post.call_args
+        assert kwargs["json"]["reference_video"] == {
+            "id": 501,
+            "type": "media_item",
+            "index": 1,
+        }
+        assert kwargs["json"]["reference_audio"] == {
+            "id": 601,
+            "type": "source_asset",
+            "index": 0,
+        }
+        mock_poll.assert_called_once_with(5678, None)
+
+
+@pytest.mark.anyio
+async def test_generate_video_skips_unsupported_references_for_veo(service):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "A running dog with ignored refs"
+    request.inputs.input_images = None
+    request.inputs.input_video = 888  # Leftover/disabled in UI
+    request.inputs.input_audio = 999  # Leftover/disabled in UI
+    request.inputs.start_frame = None
+    request.inputs.end_frame = None
+    request.config.model = "veo-3.1-generate-001"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+    request.config.duration_seconds = 8
+
+    service.mock_rest_client.post.return_value = Response(
+        200, json={"id": 9999}
+    )
+
+    with patch.object(
+        service,
+        "_poll_job_status",
+        AsyncMock(return_value=True),
+    ) as mock_poll:
+        result = await service.generate_video(request)
+        assert result["generated_video"] == 9999
+        _, kwargs = service.mock_rest_client.post.call_args
+        # Verify references were skipped (None) for Veo model
+        assert kwargs["json"]["reference_video"] is None
+        assert kwargs["json"]["reference_audio"] is None
+        mock_poll.assert_called_once_with(9999, None)
+
+
+def test_map_to_asset_reference_helper(service):
+    from src.workflows.schema.workflow_model import (
+        ReferenceMediaOrAsset,
+        SourceMediaItemLink,
+    )
+
+    # 1. None or empty
+    assert service._map_to_asset_reference(None) is None
+    assert service._map_to_asset_reference([]) is None
+
+    # 2. Integer
+    assert service._map_to_asset_reference(123) == {
+        "id": 123,
+        "type": "media_item",
+        "index": 0,
+    }
+
+    # 3. String digits
+    assert service._map_to_asset_reference("456") == {
+        "id": 456,
+        "type": "media_item",
+        "index": 0,
+    }
+
+    # 4. ReferenceMediaOrAsset with sourceMediaItem
+    ref_media = ReferenceMediaOrAsset(
+        previewUrl="",
+        sourceMediaItem=SourceMediaItemLink(
+            mediaItemId=789, mediaIndex=2, role="video_reference_asset"
+        ),
+    )
+    assert service._map_to_asset_reference(ref_media) == {
+        "id": 789,
+        "type": "media_item",
+        "index": 2,
+    }
+
+    # 5. ReferenceMediaOrAsset with sourceAssetId
+    ref_asset = ReferenceMediaOrAsset(
+        previewUrl="",
+        sourceAssetId=999,
+    )
+    assert service._map_to_asset_reference(ref_asset) == {
+        "id": 999,
+        "type": "source_asset",
+        "index": 0,
+    }
+
+    # 6. Dict with sourceMediaItem
+    dict_media = {
+        "sourceMediaItem": {"mediaItemId": 111, "mediaIndex": 0},
+    }
+    assert service._map_to_asset_reference(dict_media) == {
+        "id": 111,
+        "type": "media_item",
+        "index": 0,
+    }
+
+    # 7. Dict with sourceAssetId
+    dict_asset = {"sourceAssetId": 222}
+    assert service._map_to_asset_reference(dict_asset) == {
+        "id": 222,
+        "type": "source_asset",
+        "index": 0,
+    }
+
+    # 8. Dict with explicit id and type
+    dict_direct = {"id": 333, "type": "media_item", "index": 1}
+    assert service._map_to_asset_reference(dict_direct) == {
+        "id": 333,
+        "type": "media_item",
+        "index": 1,
+    }
 
 
 @pytest.mark.anyio

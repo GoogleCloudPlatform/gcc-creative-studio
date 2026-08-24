@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 
+import {MediaItemSelection} from '../../common/components/image-selector/image-selector.component';
+import {SourceAssetResponseDto} from '../../common/services/source-asset.service';
+
 /**
  * Converts a user input name to a human-readable label.
  * @param name The user input name to convert.
@@ -30,4 +33,34 @@ export function nameToLabel(name: string): string {
  */
 export function labelToName(label: string): string {
   return label ? label.trim().replace(/\s+/g, '_') : label;
+}
+
+/**
+ * Extracts the appropriate preview URL (preferring thumbnails) from a selected asset or media item.
+ * @param result The selected source asset or gallery media item.
+ * @returns The resolved preview URL or empty string.
+ */
+export function getPreviewUrl(
+  result?: MediaItemSelection | SourceAssetResponseDto | null,
+): string {
+  if (!result) return '';
+  if ('gcsUri' in result) {
+    return result.presignedThumbnailUrl || result.presignedUrl || '';
+  }
+  const thumbnail =
+    result.mediaItem?.presignedThumbnailUrls?.[result.selectedIndex];
+  return (
+    thumbnail || result.mediaItem?.presignedUrls?.[result.selectedIndex] || ''
+  );
+}
+
+/**
+ * Checks whether a given URL points to a video file based on its extension.
+ * @param url The URL to check.
+ * @returns True if the URL ends with a known video extension.
+ */
+export function isVideoUrl(url?: string): boolean {
+  if (!url) return false;
+  const cleanUrl = url.split('?')[0].toLowerCase();
+  return /\.(mp4|webm|mov|avi|mkv|m4v)$/i.test(cleanUrl);
 }

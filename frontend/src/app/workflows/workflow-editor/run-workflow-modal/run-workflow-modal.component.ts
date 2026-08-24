@@ -31,7 +31,11 @@ import {
   SourceAssetResponseDto,
   SourceAssetService,
 } from '../../../common/services/source-asset.service';
-import {labelToName, nameToLabel} from '../../utils/workflow-step.util';
+import {
+  getPreviewUrl,
+  labelToName,
+  nameToLabel,
+} from '../../utils/workflow-step.util';
 import {WorkflowStep} from '../../workflow.models';
 
 @Component({
@@ -127,11 +131,10 @@ export class RunWorkflowModalComponent implements OnInit {
           if ('gcsUri' in result) {
             newImage = {
               sourceAssetId: result.id,
-              previewUrl: result.presignedUrl || '',
+              previewUrl: getPreviewUrl(result),
             };
           } else {
-            const previewUrl =
-              result.mediaItem.presignedUrls?.[result.selectedIndex];
+            const previewUrl = getPreviewUrl(result);
             if (previewUrl) {
               newImage = {
                 previewUrl: previewUrl,
@@ -165,7 +168,7 @@ export class RunWorkflowModalComponent implements OnInit {
           if (result && result.id) {
             this.referenceImages[inputName] = {
               sourceAssetId: result.id,
-              previewUrl: result.presignedUrl || '',
+              previewUrl: getPreviewUrl(result),
             };
             this.updateInputControlWithError(inputName);
           }

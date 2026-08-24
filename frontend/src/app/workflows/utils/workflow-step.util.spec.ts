@@ -14,7 +14,12 @@
  * limitations under the License.
  */
 
-import {labelToName, nameToLabel} from './workflow-step.util';
+import {
+  getPreviewUrl,
+  isVideoUrl,
+  labelToName,
+  nameToLabel,
+} from './workflow-step.util';
 
 describe('WorkflowStepUtil', () => {
   describe('nameToLabel', () => {
@@ -48,6 +53,80 @@ describe('WorkflowStepUtil', () => {
       expect(labelToName('')).toBe('');
       expect(labelToName(null as unknown as string)).toBeNull();
       expect(labelToName(undefined as unknown as string)).toBeUndefined();
+    });
+  });
+
+  describe('getPreviewUrl', () => {
+    it('should return empty string for null or undefined input', () => {
+      expect(getPreviewUrl(null)).toBe('');
+      expect(getPreviewUrl(undefined)).toBe('');
+    });
+
+    it('should prefer presignedThumbnailUrl for SourceAssetResponseDto', () => {
+      const sourceAsset = {
+        id: 1,
+        gcsUri: 'gs://bucket/test.mp4',
+        presignedUrl: 'https://example.com/test.mp4',
+        presignedThumbnailUrl: 'https://example.com/thumb.png',
+      } as any;
+      expect(getPreviewUrl(sourceAsset)).toBe('https://example.com/thumb.png');
+    });
+
+    it('should fallback to presignedUrl for SourceAssetResponseDto if thumbnail is not available', () => {
+      const sourceAsset = {
+        id: 1,
+        gcsUri: 'gs://bucket/test.mp4',
+        presignedUrl: 'https://example.com/test.mp4',
+      } as any;
+      expect(getPreviewUrl(sourceAsset)).toBe('https://example.com/test.mp4');
+    });
+
+    it('should prefer presignedThumbnailUrls for MediaItemSelection', () => {
+      const mediaSelection = {
+        mediaItem: {
+          id: 2,
+          presignedUrls: ['https://example.com/item.mp4'],
+          presignedThumbnailUrls: ['https://example.com/item_thumb.png'],
+        },
+        selectedIndex: 0,
+      } as any;
+      expect(getPreviewUrl(mediaSelection)).toBe(
+        'https://example.com/item_thumb.png',
+      );
+    });
+
+    it('should fallback to presignedUrls for MediaItemSelection if thumbnail is not available', () => {
+      const mediaSelection = {
+        mediaItem: {
+          id: 2,
+          presignedUrls: ['https://example.com/item.mp4'],
+        },
+        selectedIndex: 0,
+      } as any;
+      expect(getPreviewUrl(mediaSelection)).toBe(
+        'https://example.com/item.mp4',
+      );
+    });
+  });
+
+  describe('isVideoUrl', () => {
+    it('should return true for video extensions', () => {
+      expect(isVideoUrl('https://example.com/video.mp4')).toBeTrue();
+      expect(isVideoUrl('https://example.com/video.webm?token=123')).toBeTrue();
+      expect(isVideoUrl('https://example.com/video.MOV')).toBeTrue();
+      expect(isVideoUrl('https://example.com/video.mkv')).toBeTrue();
+      expect(isVideoUrl('https://example.com/video.avi')).toBeTrue();
+      expect(isVideoUrl('https://example.com/video.m4v')).toBeTrue();
+    });
+
+    it('should return false for image extensions, audio, and empty values', () => {
+      expect(isVideoUrl('https://example.com/thumb.png')).toBeFalse();
+      expect(isVideoUrl('https://example.com/thumb.jpg?token=123')).toBeFalse();
+      expect(isVideoUrl('https://example.com/thumb.jpeg')).toBeFalse();
+      expect(isVideoUrl('https://example.com/thumb.webp')).toBeFalse();
+      expect(isVideoUrl('https://example.com/audio.mp3')).toBeFalse();
+      expect(isVideoUrl('')).toBeFalse();
+      expect(isVideoUrl(undefined)).toBeFalse();
     });
   });
 });
