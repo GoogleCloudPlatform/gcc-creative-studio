@@ -178,8 +178,8 @@ class GenerateVideoInputs(BaseModel):
 
 class GenerateVideoSettings(BaseModel):
     model: str
-    brand_guidelines: bool
-    aspect_ratio: str
+    brand_guidelines: bool = False
+    aspect_ratio: str = "16:9"
     duration_seconds: int = 8
     input_mode: str | None = None
     resolution: Literal["1K", "2K", "4K"] = "1K"
