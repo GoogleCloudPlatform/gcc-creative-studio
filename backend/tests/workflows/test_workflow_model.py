@@ -253,8 +253,6 @@ def test_generate_video_step_default_creation():
         inputs=GenerateVideoInputs(prompt="A dog running on the beach"),
         settings=GenerateVideoSettings(
             model="veo-3.1-generate-001",
-            brand_guidelines=False,
-            aspect_ratio="16:9",
         ),
     )
     assert step.type == NodeTypes.GENERATE_VIDEO
@@ -263,6 +261,8 @@ def test_generate_video_step_default_creation():
     assert step.settings.model == "veo-3.1-generate-001"
     assert step.settings.duration_seconds == 8
     assert step.settings.aspect_ratio == "16:9"
+    assert step.settings.brand_guidelines is False
+    assert step.settings.resolution == "1K"
 
 
 def test_generate_video_step_custom_duration():

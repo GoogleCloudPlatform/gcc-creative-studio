@@ -453,6 +453,7 @@ class WorkflowsExecutorService:
             "prompt": request.inputs.prompt,
             "workspace_id": request.workspace_id,
             "generation_model": request.config.model,
+            "aspect_ratio": request.config.aspect_ratio or "16:9",
             "resolution": request.config.resolution,
             "use_brand_guidelines": request.config.brand_guidelines,
             "reference_images": reference_images,

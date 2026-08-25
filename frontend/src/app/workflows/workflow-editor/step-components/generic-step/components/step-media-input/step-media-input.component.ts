@@ -19,9 +19,7 @@ import {AbstractControl, FormBuilder} from '@angular/forms';
 import {MatDialog} from '@angular/material/dialog';
 import {iif} from 'rxjs';
 import {AssetTypeEnum} from '../../../../../../admin/source-assets-management/source-asset.model';
-import {
-  ImageSelectorComponent,
-} from '../../../../../../common/components/image-selector/image-selector.component';
+import {ImageSelectorComponent} from '../../../../../../common/components/image-selector/image-selector.component';
 import {ReferenceImage} from '../../../../../../common/models/search.model';
 import {
   SourceAssetResponseDto,

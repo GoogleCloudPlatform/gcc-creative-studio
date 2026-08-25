@@ -250,13 +250,18 @@ def setup_e2e_mocks():
     # Apply GenAIModelSetup overrides
     orig_get_client = GenAIModelSetup.get_client
     orig_get_omni_client = GenAIModelSetup.get_omni_client
+    orig_get_global_client = GenAIModelSetup.get_global_client
+    orig_get_regional_client = GenAIModelSetup.get_regional_client
     orig_init = GenAIModelSetup.init
 
     GenAIModelSetup.get_client = classmethod(mock_get_client)
     GenAIModelSetup.get_omni_client = classmethod(mock_get_omni_client)
+    GenAIModelSetup.get_global_client = classmethod(mock_get_client)
+    GenAIModelSetup.get_regional_client = classmethod(mock_get_client)
     GenAIModelSetup.init = staticmethod(mock_init)
     GenAIModelSetup._client = mock_client_instance
     GenAIModelSetup._omni_client = mock_client_instance
+    GenAIModelSetup._global_client = mock_client_instance
 
     # Patch Vertex AI Prediction Service & Text-to-Speech
     wav_buf = io.BytesIO()
@@ -315,9 +320,12 @@ def setup_e2e_mocks():
     # Restore GenAIModelSetup
     GenAIModelSetup.get_client = orig_get_client
     GenAIModelSetup.get_omni_client = orig_get_omni_client
+    GenAIModelSetup.get_global_client = orig_get_global_client
+    GenAIModelSetup.get_regional_client = orig_get_regional_client
     GenAIModelSetup.init = orig_init
     GenAIModelSetup._client = None
     GenAIModelSetup._omni_client = None
+    GenAIModelSetup._global_client = None
 
 
 # --- 4. Authenticated Clients Fixtures ---
