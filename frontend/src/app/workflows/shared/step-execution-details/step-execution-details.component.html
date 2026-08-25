@@ -98,7 +98,7 @@
         <!-- Non-Image/Video/Audio Input -->
         <div *ngIf="!isImageInput(input.key) && !isVideoInput(input.key) && !isAudioInput(input.key)" class="col-span-2 bg-neutral-900 p-2 rounded border border-neutral-800 mb-2">
             <span class="text-xs text-neutral-500 block mb-1">{{ input.key }}</span>
-            <p class="text-xs text-neutral-300 font-mono whitespace-pre-wrap">{{ input.value | json }}</p>
+            <p class="text-xs text-neutral-300 font-mono whitespace-pre-wrap">{{ formatDisplayValue(input.value) }}</p>
         </div>
      </ng-container>
   </div>
@@ -188,7 +188,7 @@
        <!-- Text/Other Output -->
        <div *ngIf="!isImageOutput(output.key) && !isVideoOutput(output.key) && !isAudioOutput(output.key)" class="col-span-2 bg-neutral-900 p-2 rounded border border-neutral-800 mb-2">
             <span class="text-xs text-neutral-500 block mb-1">{{ output.key }}</span>
-            <p class="text-sm text-neutral-200 whitespace-pre-wrap font-mono">{{ output.value | json }}</p>
+            <p class="text-sm text-neutral-200 whitespace-pre-wrap font-mono">{{ formatDisplayValue(output.value) }}</p>
        </div>
     </ng-container>
    </div>

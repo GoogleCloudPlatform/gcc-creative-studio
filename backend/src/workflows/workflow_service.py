@@ -714,7 +714,23 @@ class WorkflowService:
                     )
         # --- Lazy Status Update End ---
 
-        user_input_step_id = workflow_model.steps[0].step_id
+        user_input_step = next(
+            (
+                step
+                for step in workflow_model.steps
+                if step.type == NodeTypes.USER_INPUT
+            ),
+            None,
+        )
+        user_input_step_id = (
+            user_input_step.step_id
+            if user_input_step
+            else (
+                workflow_model.steps[0].step_id
+                if workflow_model.steps
+                else "user_input"
+            )
+        )
 
         previous_outputs = {}
         formatted_step_entries = []
@@ -722,6 +738,8 @@ class WorkflowService:
         # 1. Add User Input Step Entry (Virtual)
         # This ensures the User Input step appears in the history and its outputs are available for resolution
         previous_outputs[user_input_step_id] = user_inputs
+        if "user_input" not in previous_outputs:
+            previous_outputs["user_input"] = user_inputs
         formatted_step_entries.append(
             {
                 "step_id": user_input_step_id,
@@ -754,7 +772,22 @@ class WorkflowService:
                 )
             if isinstance(value, list):
                 return [resolve_value(item) for item in value]
-            return value
+            else:
+                return value
+
+            step_outs = previous_outputs.get(ref_step, {})
+            if ref_output in step_outs:
+                return step_outs[ref_output]
+            alt_key = ref_output.replace(" ", "_")
+            if alt_key in step_outs:
+                return step_outs[alt_key]
+            for k, v in step_outs.items():
+                if (
+                    k.lower() == ref_output.lower()
+                    or k.lower() == alt_key.lower()
+                ):
+                    return v
+            return None
 
         for entry in step_entries:
             step_id = entry.get("step")
