@@ -39,11 +39,13 @@ describe('RunWorkflowModalComponent', () => {
     outputs: {
       user_prompt: {type: 'text'},
       input_image: {type: 'image'},
+      input_video: {type: 'video'},
     },
     settings: {
       definitions: [
         {id: 'def-1', name: 'User Prompt', type: 'text'},
         {id: 'def-2', name: 'Input Image', type: 'image'},
+        {id: 'def-3', name: 'Input Video', type: 'video'},
       ],
     },
   };
@@ -79,6 +81,7 @@ describe('RunWorkflowModalComponent', () => {
     expect(component).toBeTruthy();
     expect(component.runForm.contains('user_prompt')).toBeTrue();
     expect(component.runForm.contains('input_image')).toBeTrue();
+    expect(component.runForm.contains('input_video')).toBeTrue();
   });
 
   it('should close dialog with form values on onRun when valid', () => {
@@ -86,6 +89,10 @@ describe('RunWorkflowModalComponent', () => {
     component.runForm.get('input_image')?.setValue({
       previewUrl: 'https://example.com/test.png',
       sourceAssetId: 1,
+    });
+    component.runForm.get('input_video')?.setValue({
+      previewUrl: 'https://example.com/test.mp4',
+      sourceAssetId: 2,
     });
 
     component.onRun();
@@ -117,6 +124,31 @@ describe('RunWorkflowModalComponent', () => {
     expect(component.runForm.get('input_image')?.value).toEqual({
       sourceAssetId: 101,
       previewUrl: 'https://example.com/thumb.png',
+    });
+  });
+
+  it('should set referenceMedia previewUrl from MediaItem selection for video', () => {
+    const mockMediaSelection = {
+      mediaItem: {
+        id: 202,
+        presignedUrls: ['https://example.com/media.mp4'],
+        presignedThumbnailUrls: ['https://example.com/media_thumb.png'],
+      },
+      selectedIndex: 0,
+    };
+    mockDialog.open.and.returnValue({
+      afterClosed: () => of(mockMediaSelection),
+    } as any);
+
+    component.openImageSelectorForReference('input_video');
+
+    expect(component.referenceImages['input_video']).toEqual({
+      previewUrl: 'https://example.com/media_thumb.png',
+      sourceMediaItem: {
+        mediaItemId: 202,
+        mediaIndex: 0,
+        role: 'reference_video',
+      },
     });
   });
 
@@ -165,6 +197,29 @@ describe('RunWorkflowModalComponent', () => {
     expect(component.referenceImages['input_image']).toEqual({
       sourceAssetId: 303,
       previewUrl: 'https://example.com/drop_thumb.png',
+    });
+  });
+
+  it('should upload video asset and set previewUrl on video drag and drop', () => {
+    const mockFile = new File(['video'], 'drop.mp4', {type: 'video/mp4'});
+    const mockDropEvent = {
+      preventDefault: jasmine.createSpy('preventDefault'),
+      dataTransfer: {files: [mockFile]},
+    } as unknown as DragEvent;
+
+    mockSourceAssetService.uploadAsset.and.returnValue(
+      of({
+        id: 404,
+        presignedUrl: 'https://example.com/drop.mp4',
+        presignedThumbnailUrl: 'https://example.com/drop_video_thumb.png',
+      } as any),
+    );
+
+    component.onReferenceImageDrop(mockDropEvent, 'input_video');
+
+    expect(component.referenceImages['input_video']).toEqual({
+      sourceAssetId: 404,
+      previewUrl: 'https://example.com/drop_video_thumb.png',
     });
   });
 

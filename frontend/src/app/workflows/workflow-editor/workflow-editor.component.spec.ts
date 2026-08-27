@@ -555,4 +555,41 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
       output: 'generated_audio',
     });
   });
+
+  it('should support adding video output definition to user input node and connecting it to video input', () => {
+    formService.addOutputDefinition('User Video', 'video');
+    const lastDef = component.outputDefinitionsArray.at(
+      component.outputDefinitionsArray.length - 1,
+    );
+    expect(lastDef.get('type')?.value).toBe('video');
+    expect(lastDef.get('name')?.value).toBe('User Video');
+
+    const stepVideoForm = fb.group({
+      stepId: ['step_video_node'],
+      type: ['generate-video'],
+      inputs: fb.group({
+        prompt: [''],
+        input_video: [null],
+      }),
+    });
+    component.stepsArray.push(stepVideoForm);
+
+    component.dragSourcePort = {
+      stepId: 'user_input',
+      outputName: 'User Video',
+      type: 'video',
+    };
+
+    component.onPortDrop(
+      {stepId: 'step_video_node', inputName: 'input_video'},
+      'step_video_node',
+    );
+
+    expect(
+      stepVideoForm.get('inputs')?.get('input_video')?.value as any,
+    ).toEqual({
+      step: 'user_input',
+      output: 'User Video',
+    });
+  });
 });

@@ -44,13 +44,21 @@ export function getPreviewUrl(
   result?: MediaItemSelection | SourceAssetResponseDto | null,
 ): string {
   if (!result) return '';
-  if ('gcsUri' in result) {
-    return result.presignedThumbnailUrl || result.presignedUrl || '';
+  if (
+    'gcsUri' in result ||
+    'presignedThumbnailUrl' in result ||
+    'presignedUrl' in result
+  ) {
+    const resultTyped = result as SourceAssetResponseDto;
+    return resultTyped.presignedThumbnailUrl || resultTyped.presignedUrl || '';
   }
+  const resultTyped = result as MediaItemSelection;
   const thumbnail =
-    result.mediaItem?.presignedThumbnailUrls?.[result.selectedIndex];
+    resultTyped.mediaItem?.presignedThumbnailUrls?.[resultTyped.selectedIndex];
   return (
-    thumbnail || result.mediaItem?.presignedUrls?.[result.selectedIndex] || ''
+    thumbnail ||
+    resultTyped.mediaItem?.presignedUrls?.[resultTyped.selectedIndex] ||
+    ''
   );
 }
 
