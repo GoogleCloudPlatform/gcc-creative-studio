@@ -14,43 +14,90 @@
  limitations under the License.
 -->
 
-<div class="approval-gate-container rounded-xl bg-neutral-900 border border-indigo-500/30 p-3 shadow-xl animate-fadeIn">
+<div
+  class="approval-gate-container rounded-xl bg-neutral-900 border border-indigo-500/30 p-3.5 shadow-xl animate-fadeIn flex flex-col gap-3"
+>
   <!-- Header: Stage Indicator & Title -->
-  <div class="flex items-start justify-between pb-2 border-b border-neutral-800">
-    <div>
-      <span class="text-base font-semibold text-neutral-200 leading-tight">{{ stageTitle() }}</span>
-      <p class="text-[11px] text-neutral-400 leading-tight mt-0.5">{{ stageDescription() }}</p>
+  <div
+    class="flex items-center justify-between pb-2 border-b border-neutral-800"
+  >
+    <div class="flex items-center gap-2.5 min-w-0">
+      <div
+        class="w-7 h-7 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shrink-0"
+      >
+        <mat-icon class="!text-[16px] !w-[16px] !h-[16px]">{{
+          stageIcon()
+        }}</mat-icon>
+      </div>
+      <div class="min-w-0">
+        <span
+          class="text-[10px] font-semibold text-indigo-400 uppercase tracking-wider block leading-none mb-0.5"
+          >{{ stepLabel() }}</span
+        >
+        <span
+          class="text-sm font-semibold text-neutral-100 leading-tight block truncate"
+          >{{ stageTitle() }}</span
+        >
+      </div>
     </div>
     <span
-      class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] leading-none font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20 shrink-0">
-      <span class="w-1.5 h-1.5 rounded-full bg-amber-400 mr-1 animate-pulse"></span>
+      class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] leading-none font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20 shrink-0 ml-2"
+    >
+      <span
+        class="w-1.5 h-1.5 rounded-full bg-amber-400 mr-1 animate-pulse"
+      ></span>
       Awaiting Review
     </span>
   </div>
 
-  <!-- 3 Options (Smaller, compact buttons) -->
+  <!-- Message Body from payload.message -->
+  <div
+    class="message-container text-xs text-neutral-200 leading-relaxed bg-neutral-950/70 rounded-lg p-2.5 border border-neutral-800/80 whitespace-pre-wrap"
+  >
+    {{ displayMessage() }}
+  </div>
+
+  <!-- 3 Options (Accept, Modify, Regenerate) -->
   <div class="grid grid-cols-3 gap-2" *ngIf="!isModifyOpen()">
     <!-- Accept Button -->
-    <button type="button" (click)="submitDirectDecision('accept')" [disabled]="isSubmitting"
-      class="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-emerald-950/40 border border-emerald-500/30 hover:bg-emerald-900/60 hover:border-emerald-400 text-emerald-200 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-      matTooltip="Approve and proceed to the next stage">
-      <mat-icon class="!text-[15px] !w-[15px] !h-[15px] text-emerald-400">check_circle</mat-icon>
+    <button
+      type="button"
+      (click)="submitDirectDecision('accept')"
+      [disabled]="isSubmitting"
+      class="flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg bg-emerald-950/40 border border-emerald-500/30 hover:bg-emerald-900/60 hover:border-emerald-400 text-emerald-200 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+      matTooltip="Approve and proceed to the next stage"
+    >
+      <mat-icon class="!text-[15px] !w-[15px] !h-[15px] text-emerald-400"
+        >check_circle</mat-icon
+      >
       <span>Accept</span>
     </button>
 
     <!-- Modify Button -->
-    <button type="button" (click)="toggleModify()" [disabled]="isSubmitting"
-      class="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-amber-950/40 border border-amber-500/30 hover:bg-amber-900/60 hover:border-amber-400 text-amber-200 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-      matTooltip="Request targeted changes with custom guidance">
-      <mat-icon class="!text-[15px] !w-[15px] !h-[15px] text-amber-400">edit_note</mat-icon>
+    <button
+      type="button"
+      (click)="toggleModify()"
+      [disabled]="isSubmitting"
+      class="flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg bg-amber-950/40 border border-amber-500/30 hover:bg-amber-900/60 hover:border-amber-400 text-amber-200 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+      matTooltip="Request targeted changes with custom guidance"
+    >
+      <mat-icon class="!text-[15px] !w-[15px] !h-[15px] text-amber-400"
+        >edit_note</mat-icon
+      >
       <span>Modify</span>
     </button>
 
     <!-- Regenerate Button -->
-    <button type="button" (click)="submitDirectDecision('regenerate')" [disabled]="isSubmitting"
-      class="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-rose-950/40 border border-rose-500/30 hover:bg-rose-900/60 hover:border-rose-400 text-rose-200 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-      matTooltip="Reject and redo this stage completely">
-      <mat-icon class="!text-[15px] !w-[15px] !h-[15px] text-rose-400">restart_alt</mat-icon>
+    <button
+      type="button"
+      (click)="submitDirectDecision('regenerate')"
+      [disabled]="isSubmitting"
+      class="flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg bg-rose-950/40 border border-rose-500/30 hover:bg-rose-900/60 hover:border-rose-400 text-rose-200 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+      matTooltip="Reject and redo this stage completely"
+    >
+      <mat-icon class="!text-[15px] !w-[15px] !h-[15px] text-rose-400"
+        >restart_alt</mat-icon
+      >
       <span>Regenerate</span>
     </button>
   </div>
@@ -59,17 +106,28 @@
   <div *ngIf="isModifyOpen()" class="flex flex-col gap-2 animate-fadeIn">
     <!-- Sub-header with text and Back button -->
     <div class="flex items-center justify-between">
-      <span class="text-xs text-amber-300 font-medium">Modify: Request targeted changes with custom guidance</span>
-      <button type="button" (click)="toggleModify()" [disabled]="isSubmitting"
+      <span class="text-xs text-amber-300 font-medium"
+        >Modify: Request targeted changes</span
+      >
+      <button
+        type="button"
+        (click)="toggleModify()"
+        [disabled]="isSubmitting"
         class="flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-neutral-800 text-neutral-400 hover:text-white text-xs transition-colors cursor-pointer"
-        matTooltip="Back to decisions">
-        <mat-icon class="!text-[14px] !w-[14px] !h-[14px] flex items-center justify-center leading-none">arrow_back</mat-icon>
+        matTooltip="Back to decisions"
+      >
+        <mat-icon
+          class="!text-[14px] !w-[14px] !h-[14px] flex items-center justify-center leading-none"
+          >arrow_back</mat-icon
+        >
         <span>Back</span>
       </button>
     </div>
 
     <!-- Modify Input Bar -->
-    <div class="flex items-center gap-2 bg-neutral-950 border border-neutral-700 focus-within:border-amber-500 rounded-2xl px-3 py-1.5">
+    <div
+      class="flex items-center gap-2 bg-neutral-950 border border-neutral-700 focus-within:border-amber-500 rounded-xl px-3 py-1.5"
+    >
       <textarea
         [ngModel]="guidanceText()"
         (ngModelChange)="guidanceText.set($event)"
@@ -89,7 +147,9 @@
         [disabled]="!guidanceText().trim() || isSubmitting"
         (click)="submitModify()"
       >
-        <mat-icon class="!w-5 !h-5 flex items-center justify-center">send</mat-icon>
+        <mat-icon class="!w-5 !h-5 flex items-center justify-center"
+          >send</mat-icon
+        >
       </studio-button>
     </div>
   </div>

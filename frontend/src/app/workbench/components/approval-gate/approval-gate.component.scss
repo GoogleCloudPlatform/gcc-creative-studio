@@ -15,10 +15,17 @@
  */
 
 .approval-gate-container {
-  background: linear-gradient(180deg, rgba(24, 24, 27, 0.95) 0%, rgba(18, 18, 20, 0.98) 100%);
+  background: linear-gradient(
+    180deg,
+    rgba(24, 24, 27, 0.95) 0%,
+    rgba(18, 18, 20, 0.98) 100%
+  );
   backdrop-filter: blur(16px);
   border: 1px solid rgba(99, 102, 241, 0.35);
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5), 0 0 20px -5px rgba(99, 102, 241, 0.2);
+  box-shadow:
+    0 10px 25px -5px rgba(0, 0, 0, 0.5),
+    0 8px 10px -6px rgba(0, 0, 0, 0.5),
+    0 0 20px -5px rgba(99, 102, 241, 0.2);
 }
 
 .custom-scrollbar::-webkit-scrollbar {

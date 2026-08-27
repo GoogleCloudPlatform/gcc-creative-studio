@@ -102,128 +102,7 @@ export class ChatInterfaceComponent
   agentUnavailable = signal<boolean>(false);
   activeApprovalGate = signal<ApprovalGateInfo | null>(null);
   visibleApprovalGate = computed<ApprovalGateInfo | null>(() => {
-    const visibleMsgs = this.filteredChatMessages();
-    if (visibleMsgs.length === 0) return null;
-
-    const lastMsg = visibleMsgs[visibleMsgs.length - 1];
-    if (lastMsg.sender !== 'agent') return null;
-
-    const currentGate = this.activeApprovalGate();
-    const text = (lastMsg.text || '').toLowerCase();
-
-    // 1. If an explicit approval gate is active in the session (from await_*_approval)
-    if (currentGate) {
-      // Only hide if the agent has clearly moved past to media/video generation
-      const isPastGate =
-        text.includes('generating scene media') ||
-        text.includes('rendering final video') ||
-        text.includes('stitching video') ||
-        text.includes('video generation complete') ||
-        text.includes('video rendered');
-
-      if (!isPastGate) {
-        return currentGate;
-      }
-    }
-
-    // 2. Progression / Completion phrases — NEVER show gate on these
-    const isProgression =
-      text.includes('creative perspective synced') ||
-      text.includes('storyboard locked') ||
-      text.includes('storyboard approved') ||
-      text.includes('final cut approved') ||
-      text.includes('generating scene media') ||
-      text.includes('generating scenes') ||
-      text.includes('generating storyboard scenes') ||
-      text.includes('rendering final video') ||
-      text.includes('stitching video') ||
-      text.includes('video generation complete') ||
-      text.includes('video rendered') ||
-      text.includes('assets cataloged') ||
-      text.includes('extraction complete');
-
-    if (isProgression) {
-      return null;
-    }
-
-    // 3. Storyboard Review Checkpoint:
-    const hasStoryboardText =
-      text.includes('storyboard') ||
-      text.includes('scenes and voiceovers') ||
-      text.includes('scene 1:') ||
-      text.includes('scene 1');
-
-    const hasReviewPrompt =
-      text.includes('what is your verdict') ||
-      text.includes('decision required') ||
-      text.includes('your verdict') ||
-      text.includes('respond with one of the following') ||
-      text.includes('please review the scenes') ||
-      text.includes('approve this storyboard');
-
-    const isStoryboardReview = hasStoryboardText && hasReviewPrompt;
-
-    if (isStoryboardReview) {
-      return {
-        callId: currentGate?.callId || 'storyboard_review',
-        toolName: currentGate?.toolName || 'await_storyboard_approval',
-        stage: 'storyboard',
-        options: currentGate?.options || ['accept', 'modify', 'regenerate'],
-        payload: currentGate?.payload || null,
-      };
-    }
-
-    // 4. Final Cut Review Checkpoint:
-    const hasFinalCutText =
-      text.includes('final cut') ||
-      text.includes('timeline') ||
-      text.includes('assembled video');
-
-    const isFinalCutReview =
-      hasFinalCutText &&
-      (text.includes('what is your verdict') ||
-        text.includes('decision required') ||
-        text.includes('please review the final cut') ||
-        text.includes('review the assembled video'));
-
-    if (isFinalCutReview) {
-      return {
-        callId: currentGate?.callId || 'final_cut_review',
-        toolName: currentGate?.toolName || 'await_final_cut_approval',
-        stage: 'final_cut',
-        options: currentGate?.options || ['accept', 'modify', 'regenerate'],
-        payload: currentGate?.payload || null,
-      };
-    }
-
-    // 5. Strategy Review Checkpoint:
-    const hasStrategyText =
-      text.includes('strategic blueprint') ||
-      text.includes('campaign strategy blueprint') ||
-      text.includes('proposed strategy') ||
-      text.includes('strategic foundation') ||
-      text.includes('lock in this strategy');
-
-    const isStrategyReview =
-      hasStrategyText &&
-      (text.includes('decision required') ||
-        text.includes('what is your verdict') ||
-        text.includes('verdict') ||
-        text.includes('verdicts') ||
-        text.includes('please review the proposed') ||
-        text.includes('please review this strategy'));
-
-    if (isStrategyReview) {
-      return {
-        callId: currentGate?.callId || 'strategy_review',
-        toolName: currentGate?.toolName || 'await_strategy_approval',
-        stage: 'strategy',
-        options: currentGate?.options || ['accept', 'modify', 'regenerate'],
-        payload: currentGate?.payload || null,
-      };
-    }
-
-    return null;
+    return this.activeApprovalGate();
   });
   currentSessionId: string | null = this.agentChatService.selectedSessionId();
   private lastWorkspaceId: number | null =
@@ -1189,7 +1068,12 @@ export class ChatInterfaceComponent
             // ignore
           }
         }
-        if (result?.status === 'awaiting_human_review') {
+        if (
+          result &&
+          (typeof result === 'object' ||
+            result.status === 'awaiting_human_review' ||
+            result.message)
+        ) {
           return {
             callId: fr.id || '',
             toolName: fr.name,
@@ -1242,7 +1126,20 @@ export class ChatInterfaceComponent
       const gate = this.extractGateFromEvent(events[i]);
       if (gate) {
         lastGateIndex = i;
-        lastGateInfo = gate;
+        if (
+          lastGateInfo !== null &&
+          (gate.toolName === lastGateInfo.toolName || !gate.callId)
+        ) {
+          lastGateInfo = {
+            callId: gate.callId || lastGateInfo.callId,
+            toolName: gate.toolName || lastGateInfo.toolName,
+            stage: gate.stage || lastGateInfo.stage,
+            options: gate.options || lastGateInfo.options,
+            payload: gate.payload || lastGateInfo.payload,
+          };
+        } else {
+          lastGateInfo = gate;
+        }
       }
     }
 
@@ -1422,7 +1319,15 @@ export class ChatInterfaceComponent
       onMessage: (data: any) => {
         const gate = this.extractGateFromEvent(data);
         if (gate) {
-          this.activeApprovalGate.set(gate);
+          this.activeApprovalGate.update(existing => {
+            if (!existing) return gate;
+            return {
+              ...existing,
+              ...gate,
+              callId: gate.callId || existing.callId || '',
+              payload: gate.payload || existing.payload,
+            };
+          });
           this.isTyping.set(false);
           this.agentChatService.isGeneratingStoryboard.set(false);
         } else if (this.activeApprovalGate()) {

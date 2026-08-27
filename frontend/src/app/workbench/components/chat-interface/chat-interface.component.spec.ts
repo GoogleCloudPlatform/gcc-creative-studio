@@ -1207,6 +1207,56 @@ describe('ChatInterfaceComponent', () => {
       expect(gate).toBeNull();
     });
 
+    it('should extract payload from functionResponse event', () => {
+      const event = {
+        content: {
+          parts: [
+            {
+              functionResponse: {
+                id: 'call_999',
+                name: 'await_strategy_approval',
+                response: {
+                  result: JSON.stringify({
+                    status: 'awaiting_human_review',
+                    stage: 'strategy',
+                    message: 'Please review the strategy before proceeding.',
+                  }),
+                },
+              },
+            },
+          ],
+        },
+      };
+      const gate = component['extractGateFromEvent'](event);
+      expect(gate).toBeTruthy();
+      expect(gate?.toolName).toBe('await_strategy_approval');
+      expect(gate?.payload?.message).toBe(
+        'Please review the strategy before proceeding.',
+      );
+    });
+
+    it('should drive visibleApprovalGate directly from activeApprovalGate', () => {
+      expect(component.visibleApprovalGate()).toBeNull();
+
+      component.activeApprovalGate.set({
+        callId: 'call_123',
+        toolName: 'await_strategy_approval',
+        stage: 'strategy',
+        payload: {
+          message: 'Check the campaign brief',
+        },
+      });
+
+      expect(component.visibleApprovalGate()).toEqual({
+        callId: 'call_123',
+        toolName: 'await_strategy_approval',
+        stage: 'strategy',
+        payload: {
+          message: 'Check the campaign brief',
+        },
+      });
+    });
+
     it('should send function_response when handleGateDecision is called', () => {
       component.currentSessionId = 'sess-123';
       component.activeApprovalGate.set({

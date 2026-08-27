@@ -45,6 +45,32 @@ export interface ApprovalGateSubmission {
   guidance: string;
 }
 
+export function asText(value: unknown): string {
+  if (value === null || value === undefined || value === '') {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(asText).filter(Boolean).join(', ');
+  }
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return asText(
+      record['message'] ??
+        record['text'] ??
+        record['name'] ??
+        record['id'] ??
+        '',
+    );
+  }
+  return String(value);
+}
+
 @Component({
   selector: 'app-approval-gate',
   standalone: true,
@@ -81,14 +107,27 @@ export class ApprovalGateComponent {
     return 'review';
   });
 
+  stepLabel = computed(() => {
+    switch (this.stage()) {
+      case 'strategy':
+        return 'Checkpoint 1 of 3';
+      case 'storyboard':
+        return 'Checkpoint 2 of 3';
+      case 'final_cut':
+        return 'Checkpoint 3 of 3';
+      default:
+        return 'Review Checkpoint';
+    }
+  });
+
   stageTitle = computed(() => {
     switch (this.stage()) {
       case 'strategy':
-        return 'Checkpoint A — Strategy Review';
+        return 'Campaign Strategy Review';
       case 'storyboard':
-        return 'Checkpoint B — Storyboard Review';
+        return 'Storyboard Review';
       case 'final_cut':
-        return 'Checkpoint C — Final Cut Review';
+        return 'Final Cut Review';
       default:
         return 'Approval Checkpoint';
     }
@@ -107,6 +146,15 @@ export class ApprovalGateComponent {
     }
   });
 
+  displayMessage = computed(() => {
+    const rawMsg = this.gate?.payload?.message;
+    if (rawMsg) {
+      const parsed = asText(rawMsg).trim();
+      if (parsed) return parsed;
+    }
+    return this.stageDescription();
+  });
+
   stageIcon = computed(() => {
     switch (this.stage()) {
       case 'strategy':
@@ -123,11 +171,11 @@ export class ApprovalGateComponent {
   modifyPlaceholder = computed(() => {
     switch (this.stage()) {
       case 'strategy':
-        return 'E.g., "Change target audience to Gen Z, switch visual Look to Organic Wellness..."';
+        return 'What have I misunderstood? E.g., "Change target audience to Gen Z, switch visual Look to Outdoor Adventure..."';
       case 'storyboard':
-        return 'E.g., "Shorten scene 2 to 2 seconds and set it at night..."';
+        return 'What should change before anything is rendered? E.g., "Shorten scene 2 to 3 seconds and set it at night..."';
       case 'final_cut':
-        return 'E.g., "Scene 2 is too dark, re-render it with higher contrast..."';
+        return 'Which clips need another take? E.g., "Scene 2 is too dark, re-render it with higher contrast..."';
       default:
         return 'Enter specific guidance or requested changes...';
     }

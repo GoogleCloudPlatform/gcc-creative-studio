@@ -52,9 +52,53 @@ describe('ApprovalGateComponent', () => {
     fixture.detectChanges();
   });
 
-  it('should create the component', () => {
+  it('should create the component with correct stepLabel and stageTitle', () => {
     expect(component).toBeTruthy();
-    expect(component.stageTitle()).toContain('Checkpoint A — Strategy Review');
+    expect(component.stepLabel()).toBe('Checkpoint 1 of 3');
+    expect(component.stageTitle()).toBe('Campaign Strategy Review');
+  });
+
+  it('should return displayMessage from payload.message when provided', () => {
+    component.gate = {
+      ...mockGate,
+      payload: {
+        message:
+          'Before I write a single scene, please check I have understood the brief.',
+      },
+    };
+    fixture.detectChanges();
+    expect(component.displayMessage()).toBe(
+      'Before I write a single scene, please check I have understood the brief.',
+    );
+  });
+
+  it('should fallback displayMessage to stageDescription when payload is missing', () => {
+    component.gate = {
+      ...mockGate,
+      payload: undefined,
+    };
+    fixture.detectChanges();
+    expect(component.displayMessage()).toBe(
+      'Review campaign brief, tone, key message, and chosen visual Look.',
+    );
+  });
+
+  it('should return correct step labels for each stage', () => {
+    component.gate = {
+      ...mockGate,
+      stage: 'storyboard',
+      toolName: 'await_storyboard_approval',
+    };
+    expect(component.stepLabel()).toBe('Checkpoint 2 of 3');
+    expect(component.stageTitle()).toBe('Storyboard Review');
+
+    component.gate = {
+      ...mockGate,
+      stage: 'final_cut',
+      toolName: 'await_final_cut_approval',
+    };
+    expect(component.stepLabel()).toBe('Checkpoint 3 of 3');
+    expect(component.stageTitle()).toBe('Final Cut Review');
   });
 
   it('should emit direct decision when accept is clicked', () => {
