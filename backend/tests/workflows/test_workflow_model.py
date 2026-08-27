@@ -23,6 +23,9 @@ from src.workflows.schema.workflow_model import (
     ImageSettings,
     ImageStep,
     NodeTypes,
+    UserInputDefinition,
+    UserInputSettings,
+    UserInputStep,
     WorkflowStep,
 )
 
@@ -433,3 +436,43 @@ def test_workflow_step_discriminated_union_generate_video_ingredients_parsing():
     assert parsed.inputs.input_video.step == "step_video_source"
     assert parsed.inputs.input_audio.step == "step_audio_source"
     assert parsed.settings.input_mode == "Ingredients to Video"
+
+
+def test_user_input_step_with_video_definition():
+    """Verify creating and parsing a UserInputStep with a video definition."""
+    step = UserInputStep(
+        step_id="user_input",
+        settings=UserInputSettings(
+            definitions=[
+                UserInputDefinition(id="def-1", name="Prompt", type="text"),
+                UserInputDefinition(
+                    id="def-2", name="Input Video", type="video"
+                ),
+            ]
+        ),
+        outputs={
+            "Prompt": {"type": "text"},
+            "Input Video": {"type": "video"},
+        },
+    )
+    assert step.type == NodeTypes.USER_INPUT
+    assert len(step.settings.definitions) == 2
+    assert step.settings.definitions[1].type == "video"
+    assert step.outputs["Input Video"]["type"] == "video"
+
+    adapter = TypeAdapter(WorkflowStep)
+    raw_data = {
+        "stepId": "user_input",
+        "type": "user_input",
+        "status": "idle",
+        "inputs": {},
+        "settings": {
+            "definitions": [
+                {"id": "def-vid", "name": "source_video", "type": "video"}
+            ]
+        },
+        "outputs": {"source_video": {"type": "video"}},
+    }
+    parsed = adapter.validate_python(raw_data)
+    assert isinstance(parsed, UserInputStep)
+    assert parsed.settings.definitions[0].type == "video"

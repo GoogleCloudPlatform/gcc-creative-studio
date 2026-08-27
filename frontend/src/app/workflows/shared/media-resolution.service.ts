@@ -61,7 +61,21 @@ export class MediaResolutionService {
       if (!type) return;
 
       const config = STEP_CONFIGS_MAP[type as keyof typeof STEP_CONFIGS_MAP];
-      if (!config) return;
+      if (!config) {
+        [step.step_outputs, step.step_inputs].forEach(io => {
+          if (io) {
+            Object.values(io).forEach(val => {
+              this.collectMediaIds(
+                val,
+                mediaItemIds,
+                sourceAssetIds,
+                stepOutputsMap,
+              );
+            });
+          }
+        });
+        return;
+      }
 
       // Helper to process inputs/outputs
       const processIO = (ioConfig: any[], sourceData: any) => {
