@@ -18,6 +18,7 @@ import {Component, Input, OnInit} from '@angular/core';
 import {Router} from '@angular/router';
 import {NodeTypes} from '../../workflow.models';
 import {IMAGE_MODE_ALLOWED_INPUTS} from '../../workflow-editor/step-components/step-configs/image-step.config';
+import {isVideoUrl} from '../../utils/workflow-step.util';
 import {STEP_CONFIGS_MAP} from '../step-configs.map';
 
 @Component({
@@ -231,7 +232,21 @@ export class StepExecutionDetailsComponent implements OnInit {
       return true;
     }
     const config = this.getStepConfig();
-    if (!config) return false;
+    if (!config) {
+      if (outputName && this.outputs) {
+        const val = this.outputs[outputName];
+        if (
+          val &&
+          typeof val === 'object' &&
+          (val.previewUrl || val.sourceAssetId || val.sourceMediaItem)
+        ) {
+          if (!this.isVideoOutput(outputName)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
 
     if (outputName) {
       const output = config.outputs?.find(
@@ -245,7 +260,13 @@ export class StepExecutionDetailsComponent implements OnInit {
 
   isTextOutput(outputName?: any): boolean {
     const config = this.getStepConfig();
-    if (!config) return false;
+    if (!config) {
+      return (
+        !this.isImageOutput(outputName) &&
+        !this.isVideoOutput(outputName) &&
+        !this.isAudioOutput(outputName)
+      );
+    }
 
     if (outputName) {
       const output = config.outputs?.find(
@@ -258,7 +279,20 @@ export class StepExecutionDetailsComponent implements OnInit {
 
   isVideoOutput(outputName?: any): boolean {
     const config = this.getStepConfig();
-    if (!config) return false;
+    if (!config) {
+      if (outputName && this.outputs) {
+        const val = this.outputs[outputName];
+        if (
+          val &&
+          typeof val === 'object' &&
+          ((val.previewUrl && isVideoUrl(val.previewUrl)) ||
+            val.sourceMediaItem?.role === 'reference_video')
+        ) {
+          return true;
+        }
+      }
+      return false;
+    }
 
     if (outputName) {
       const output = config.outputs?.find(
