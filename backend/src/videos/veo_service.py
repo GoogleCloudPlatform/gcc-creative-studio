@@ -378,6 +378,7 @@ def _process_video_in_background(
                         if request_dto.generation_model in [
                             GenerationModelEnum.GEMINI_OMNI,
                             GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+                            GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
                         ]:
                             worker_logger.info(
                                 "Running Gemini Omni video generation via Interactions API..."
@@ -626,10 +627,17 @@ def _process_video_in_background(
                                 if request_dto.duration_seconds
                                 else "8s"
                             )
-                            omni_response_format = {
+                            omni_response_format: dict[str, str] = {
                                 "type": "video",
                                 "duration": duration_str,
                             }
+                            if request_dto.aspect_ratio in (
+                                AspectRatioEnum.RATIO_9_16,
+                                AspectRatioEnum.RATIO_16_9,
+                            ):
+                                omni_response_format["aspect_ratio"] = (
+                                    request_dto.aspect_ratio.value
+                                )
 
                             num_outputs = 1
                             worker_logger.info(
@@ -920,6 +928,11 @@ def _process_video_in_background(
                                 operation.response.generated_videos or [],
                             )
 
+                        if request_dto.generation_model not in [
+                            GenerationModelEnum.GEMINI_OMNI,
+                            GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+                            GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+                        ]:
                             valid_generated_videos = [
                                 img
                                 for img in all_generated_videos
