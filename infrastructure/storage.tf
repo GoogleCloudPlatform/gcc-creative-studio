@@ -65,6 +65,22 @@ resource "google_secret_manager_secret" "app_secrets" {
     component  = "security"
     managed_by = "terraform"
   })
+
+  depends_on = [google_project_service.apis]
+}
+
+# Create a dummy placeholder version for each secret.
+# Cloud Run requires a valid 'latest' version to exist before it can start.
+# ignore_changes prevents Terraform from overwriting the real secrets populated by bootstrap.sh later.
+resource "google_secret_manager_secret_version" "app_secrets_placeholder" {
+  for_each = var.application_secrets
+
+  secret      = google_secret_manager_secret.app_secrets[each.key].id
+  secret_data = "placeholder_value_waiting_for_bootstrap_sh"
+
+  lifecycle {
+    ignore_changes = [secret_data]
+  }
 }
 
 # Grant Secret Access directly to the Cloud Run Service Account

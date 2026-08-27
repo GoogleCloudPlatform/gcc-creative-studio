@@ -235,12 +235,14 @@ setup_project() {
     # try detecting current project on the current terminal
     CURRENT_GCLOUD_PROJECT=$(gcloud config get-value project 2>/dev/null || echo "")
 
-    if [ -n "$GCP_PROJECT_ID" ] && [ "$GCP_PROJECT_ID" != "unassigned" ]; then
-        info "Using Google Cloud Project ID from confirmed profile: ${C_YELLOW}${GCP_PROJECT_ID}${C_RESET}"
-        gcloud config set project "$GCP_PROJECT_ID" 2>/dev/null || true
-        write_state "GCP_PROJECT_ID" "$GCP_PROJECT_ID"
-        success "Project '$GCP_PROJECT_ID' is configured."
-        return 0
+    if [ -n "$GCP_PROJECT_ID" ]; then
+        prompt "Found project '$GCP_PROJECT_ID' from a previous run. Use this project? (y/n)"; read -r REPLY < /dev/tty
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            gcloud config set project "$GCP_PROJECT_ID"
+            write_state "GCP_PROJECT_ID" "$GCP_PROJECT_ID"
+            success "Project '$GCP_PROJECT_ID' is configured."
+            return
+        fi
     elif [ -n "$CURRENT_GCLOUD_PROJECT" ]; then
         prompt "Detected active gcloud project '$CURRENT_GCLOUD_PROJECT'. Use this project? (y/n)"
         read -r REPLY < /dev/tty
@@ -300,29 +302,10 @@ setup_repo() {
     fi
     DEFAULT_BRANCH_NAME="$SELECTED_BRANCH"
 
-    if [ -d "infrastructure" ] && [ -f "bootstrap.sh" ] && [ -d "backend" ] && [ -d "frontend" ]; then
-        info "Currently executing inside active repository root $(pwd). Bypassing sparse git clone..."
-        REPO_ROOT=$(pwd)
-        export REPO_ROOT
-        write_state "REPO_ROOT" "$REPO_ROOT"
-        success "Project root successfully verified at: $REPO_ROOT"
-        GITHUB_REPO_OWNER=$(git remote get-url origin 2>/dev/null | sed -n 's/.*github.com[:\/]\([^/]*\)\/.*/\1/p' || echo "GoogleCloudPlatform")
-        GITHUB_REPO_NAME=$(basename "$(pwd)" .git)
-        info "Detected GitHub owner: $GITHUB_REPO_OWNER"
-        info "Detected GitHub repo name: $GITHUB_REPO_NAME"
-        return 0
-    fi
-
     local REPO_CLONE_DIR=$(basename "$GITHUB_REPO_URL" .git)
 
     if [[ -d "$REPO_CLONE_DIR" ]]; then
-        warn "Directory '$REPO_CLONE_DIR' already exists."
-        if [ "$TF_AUTO_APPROVE" = "true" ]; then
-            info "Auto-approve flag detected. Reusing existing repository directory '$REPO_CLONE_DIR'."
-            REPLY="y"
-        else
-            prompt "Do you want to use this existing directory? (y/n)"; read -r REPLY < /dev/tty
-        fi
+        warn "Directory '$REPO_CLONE_DIR' already exists."; prompt "Do you want to use this existing directory? (y/n)"; read -r REPLY < /dev/tty
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then fail "Please remove the directory or run the script from a different location."; fi
     else
         info "Performing a sparse checkout of '$REPO_CLONE_DIR' (Branch: $SELECTED_BRANCH)..."
@@ -379,12 +362,7 @@ configure_environment() {
     TFVARS_FILE_PATH="$ENV_DIR/$ENV_NAME.tfvars"
     if [ ! -s "$TFVARS_FILE_PATH" ] || ! grep -q "project_id[[:space:]]*=" "$TFVARS_FILE_PATH"; then
         info "Configuring environment files in flattened infrastructure directory..."
-        if [ "$TF_AUTO_APPROVE" = "true" ]; then
-            info "Auto-approve flag detected. Defaulting to creating a GCS storage bucket automatically."
-            REPLY="n"
-        else
-            prompt "Do you have an existing GCS bucket for Terraform state? (y/n)"; read -r REPLY < /dev/tty
-        fi
+        prompt "Do you have an existing GCS bucket for Terraform state? (y/n)"; read -r REPLY < /dev/tty
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             prompt "Please enter the name of your GCS bucket:"; read -p "   Bucket Name: " BUCKET_NAME < /dev/tty
         else
@@ -428,11 +406,7 @@ handle_manual_steps() {
     warn "\nTerraform cannot accept legal terms on your behalf."; info "Please perform this one-time manual step for Firebase:"
     echo "1. Open this URL in your browser:"; echo -e "   ${C_YELLOW}https://console.firebase.google.com/?project=${GCP_PROJECT_ID}${C_RESET}"
     echo "2. You should be prompted to 'Add Firebase' to your existing project."; echo "3. Follow the prompts and accept the terms."
-    if [ "$TF_AUTO_APPROVE" != "true" ]; then
-        prompt "Press [Enter] to continue after you have linked the project."; read -r < /dev/tty
-    else
-        info "Auto-approve flag detected. Bypassing interactive pause for Firebase project linking."
-    fi
+    prompt "Press [Enter] to continue after you have linked the project."; read -r < /dev/tty
     rm -f "$TFVARS_FILE_PATH.bak"
 
     # --- Automate .tfvars placeholder replacement ---
@@ -548,32 +522,9 @@ populate_oauth_secrets() {
     success "Audiences updated in .tfvars file."
 }
 
-setup_db_secrets() {
-    step 9 "Configuring Database Secrets" # Renumber subsequent steps
+setup_agent_secrets() {
+    step 9 "Configuring Agent Secrets"
     
-    local SECRET_NAME="creative-studio-db-password"
-    
-    # 2. Check if the secret already exists
-    if gcloud secrets describe "$SECRET_NAME" --project="$GCP_PROJECT_ID" > /dev/null 2>&1; then
-        info "Secret '$SECRET_NAME' already exists. Skipping creation."
-    else
-        info "Creating new secret '$SECRET_NAME'..."
-        
-        # 3. Generate a secure random password (alphanumeric, no special chars that break URLs)
-        # using openssl. We use base64 but strip non-alphanumeric chars to be safe for DB connection strings
-        local DB_PASSWORD=$(openssl rand -base64 20 | tr -dc 'a-zA-Z0-9' | head -c 16)
-        
-        # 4. Create the secret and add the first version
-        # We use printf to avoid trailing newlines
-        printf "%s" "$DB_PASSWORD" | gcloud secrets create "$SECRET_NAME" \
-            --data-file=- \
-            --replication-policy="automatic" \
-            --project="$GCP_PROJECT_ID" \
-            --quiet
-
-        success "Secret '$SECRET_NAME' created successfully."
-    fi
-
     # 5. Configure Agent Engine Secrets
     local AGENT_TOKEN_SECRET="agent_engine_user_auth_token_key"
     if ! gcloud secrets describe "$AGENT_TOKEN_SECRET" --project="$GCP_PROJECT_ID" > /dev/null 2>&1; then
@@ -622,7 +573,7 @@ run_terraform() {
 
     if [ "$TF_AUTO_APPROVE" = "true" ]; then
         info "Auto-approve flag (--auto-approve) detected. Applying infrastructure modifications automatically..."
-        terraform apply "tfplan" -parallelism=30
+        terraform apply -parallelism=30 "tfplan"
     else
         warn "ℹ️  Database Upgrade Notice: If upgrading an existing installation, Terraform will provision a new Private PostgreSQL instance while keeping your existing database online."
         warn "   After provisioning completes, the script will automatically transfer your data to the new private instance."
@@ -634,7 +585,7 @@ run_terraform() {
             warn "Apply cancelled by user."
             return 0
         fi
-        terraform apply "tfplan" -parallelism=30
+        terraform apply -parallelism=30 "tfplan"
     fi
     rm -f tfplan
 }
@@ -745,10 +696,6 @@ update_secrets() {
 
         else
             # This fallback is now only for secrets that are not auto-discovered
-            if [ "$TF_AUTO_APPROVE" = "true" ]; then
-                info "  Auto-approve enabled. Skipping manual input for ${SECRET_NAME}."
-                continue
-            fi
             warn "  This secret requires manual input."
             echo -e "${C_CYAN}  It is safe to paste your secret. The value is read securely, not displayed, and not stored in history.${C_RESET}"
             read -s -p "  Enter new value: " SECRET_VALUE < /dev/tty; echo
@@ -835,12 +782,7 @@ seed_database() {
 
 trigger_builds() {
     step 13 "Triggering Initial Builds"; cd "$REPO_ROOT"
-    if [ "$TF_AUTO_APPROVE" = "true" ]; then
-        info "Auto-approve flag detected. Triggering initial container builds automatically."
-        REPLY="y"
-    else
-        prompt "Would you like to trigger the initial builds for the frontend and backend now? (y/n)"; read -r REPLY < /dev/tty
-    fi
+    prompt "Would you like to trigger the initial builds for the frontend and backend now? (y/n)"; read -r REPLY < /dev/tty
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then info "You can trigger the builds manually later by pushing a commit or via the Cloud Build UI."; return; fi
 
     local BRANCH_TO_USE
@@ -937,13 +879,6 @@ select_deployment_profile() {
         STATE_FILE="$PROFILE_DIR/$PROFILE_NAME"
         info "Loading targeted deployment profile via CLI flag: ${C_YELLOW}${STATE_FILE}${C_RESET}"
         read_state
-        if [ -z "$REPO_ROOT" ] || [ ! -d "$REPO_ROOT/infrastructure" ]; then
-            local SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-            if [ -d "$SCRIPT_DIR/infrastructure" ]; then REPO_ROOT="$SCRIPT_DIR";
-            elif [ -d "$(pwd)/gcc-creative-studio/infrastructure" ]; then REPO_ROOT="$(pwd)/gcc-creative-studio";
-            elif [ -d "infrastructure" ]; then REPO_ROOT="$(pwd)"; fi
-        fi
-        if [ -n "$REPO_ROOT" ]; then export REPO_ROOT; write_state "REPO_ROOT" "$REPO_ROOT"; fi
         return 0
     fi
 
@@ -1091,7 +1026,7 @@ main() {
         "configure_environment"
         "handle_manual_steps"
         "setup_firebase_app"
-        "setup_db_secrets"
+        "setup_agent_secrets"
         "run_terraform"
         "auto_migrate_database"
         "populate_oauth_secrets"

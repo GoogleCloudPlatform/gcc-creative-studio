@@ -47,7 +47,7 @@ variable "database_version" {
 variable "db_tier" {
   type        = string
   description = "The machine tier/type for the Cloud SQL instance."
-  default     = "db-c4a-highmem-4"
+  default     = "db-perf-optimized-N-2"
 }
 
 variable "db_availability_type" {

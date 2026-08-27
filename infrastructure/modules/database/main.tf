@@ -29,6 +29,7 @@ resource "google_secret_manager_secret_version" "db_secret_version" {
   # Using a write-only argument prevents the password 
   # from being captured in the terraform.tfstate file.
   secret_data_wo = ephemeral.random_password.db_pass.result
+  secret_data_wo_version = var.db_password_version
 }
 
 resource "google_sql_database_instance" "default" {
@@ -39,7 +40,7 @@ resource "google_sql_database_instance" "default" {
 
 
   settings {
-    tier              = var.db_tier # "db-perf-optimized-N-2"
+    tier              = var.db_tier
     availability_type = var.db_availability_type
 
     # Enable IAM Authentication for better security
@@ -47,12 +48,6 @@ resource "google_sql_database_instance" "default" {
       name  = "cloudsql.iam_authentication"
       value = "on"
     }
-
-    # --- Storage Flexibility ---
-    disk_type             = "PD_SSD"
-    disk_size             = var.initial_disk_size
-    disk_autoresize       = true              # Allows growth as needed
-    disk_autoresize_limit = var.max_disk_size # Prevents unlimited expansion/billing surprises
 
     backup_configuration {
       enabled                        = true
