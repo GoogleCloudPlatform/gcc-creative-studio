@@ -25,6 +25,9 @@ env:
   TF_VERSION: "1.9.8"
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
+  # Terraform only auto-loads terraform.tfvars and *.auto.tfvars.
+  # This file is named dev.tfvars, so it must be passed explicitly.
+  TFVARS_FILE: dev.tfvars
 
   # From `terraform output` on the landing zone:
   #   workload_wif_provider_name / workload_deploy_sa_email
@@ -61,7 +64,7 @@ jobs:
         run: terraform init -input=false -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
 
       - name: Terraform plan
-        run: terraform plan -input=false -out=tfplan
+        run: terraform plan -input=false -var-file="${{ env.TFVARS_FILE }}" -out=tfplan
 
       # Plan and apply share one job on purpose. A saved plan stores variable
       # values in cleartext — db_password included — so it is never uploaded as
