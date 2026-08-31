@@ -24,7 +24,7 @@ resource "google_sql_database_instance" "default" {
 
   settings {
     tier = "db-perf-optimized-N-2"
-    
+
     # Enable IAM Authentication for better security (optional but recommended)
     database_flags {
       name  = "cloudsql.iam_authentication"
@@ -39,7 +39,7 @@ resource "google_sql_database_instance" "default" {
       private_network = var.private_network
     }
   }
-  
+
   deletion_protection = false # Set to true for production
 }
 

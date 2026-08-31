@@ -99,16 +99,18 @@ variable "scaling_max_instances" {
 
 variable "source_repository_id" {
   type        = string
-  description = "The ID of the Cloud Build V2 source repository."
+  description = "The ID of the Cloud Build V2 source repository. Null when enable_cloudbuild_triggers is false."
+  default     = null
+  nullable    = true
 }
 
 variable "cpu" {
-  type = string
+  type    = string
   default = "2000m"
 }
 
 variable "memory" {
-  type = string
+  type    = string
   default = "2048Mi"
 }
 
@@ -141,4 +143,13 @@ variable "vpc_subnetwork" {
   description = "Shared VPC subnetwork for Direct VPC egress."
   type        = string
   default     = null
+}
+
+# --- Cloud Build GitHub triggers (Rain workaround) ---
+# false when the Cloud Build GitHub App has no access to the source repo.
+# The repository + triggers are skipped; images are built and deployed with
+# `gcloud builds submit`, which uploads local source and needs no GitHub link.
+variable "enable_cloudbuild_triggers" {
+  type    = bool
+  default = true
 }

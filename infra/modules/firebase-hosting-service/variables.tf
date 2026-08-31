@@ -13,12 +13,16 @@
 # limitations under the License.
 
 variable "gcp_project_id" { type = string }
-variable "gcp_region" {type = string}
+variable "gcp_region" { type = string }
 variable "firebase_project_id" { type = string }
 variable "service_name" { type = string }
 variable "environment" { type = string }
 variable "resource_prefix" { type = string }
-variable "source_repository_id" { type = string }
+variable "source_repository_id" {
+  type     = string
+  default  = null
+  nullable = true
+}
 variable "github_branch_name" { type = string }
 variable "cloudbuild_yaml_path" { type = string }
 variable "included_files_glob" { type = list(string) }
@@ -26,4 +30,13 @@ variable "build_substitutions" { type = map(string) }
 variable "firebase_site_id" {
   description = "The unique identifier for the Firebase Hosting site."
   type        = string
+}
+
+# --- Cloud Build GitHub triggers (Rain workaround) ---
+# false when the Cloud Build GitHub App has no access to the source repo.
+# The repository + triggers are skipped; images are built and deployed with
+# `gcloud builds submit`, which uploads local source and needs no GitHub link.
+variable "enable_cloudbuild_triggers" {
+  type    = bool
+  default = true
 }

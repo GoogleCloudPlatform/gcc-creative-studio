@@ -15,8 +15,8 @@
 # 1. Creates the Firebase Hosting site to deploy to
 resource "google_firebase_hosting_site" "this" {
   provider = google-beta
-  project = var.firebase_project_id
-  site_id = var.firebase_site_id
+  project  = var.firebase_project_id
+  site_id  = var.firebase_site_id
 }
 
 # 2. Create a dedicated Service Account for the frontend trigger
@@ -27,6 +27,8 @@ resource "google_service_account" "trigger_sa" {
 
 # 3. Create the build trigger
 resource "google_cloudbuild_trigger" "this" {
+  count = var.enable_cloudbuild_triggers ? 1 : 0
+
   name            = "${var.service_name}-trigger"
   location        = var.gcp_region
   service_account = google_service_account.trigger_sa.id

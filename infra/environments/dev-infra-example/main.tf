@@ -47,6 +47,8 @@ provider "google-beta" {
 module "creative_studio_platform" {
   source = "../../modules/platform"
 
+  enable_cloudbuild_triggers = var.enable_cloudbuild_triggers
+
   gcp_project_id            = var.gcp_project_id
   gcp_region                = var.gcp_region
   environment               = var.environment

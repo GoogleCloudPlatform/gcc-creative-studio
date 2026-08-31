@@ -98,13 +98,13 @@ variable "fe_build_substitutions" {
 variable "frontend_secrets" {
   type        = list(string)
   description = "A list of secret names required by the frontend build."
-  default = []
+  default     = []
 }
 
 variable "backend_secrets" {
   type        = list(string)
   description = "A list of secret names required by the backend build."
-  default = []
+  default     = []
 }
 
 variable "backend_runtime_secrets" {
@@ -124,4 +124,13 @@ variable "apis_to_enable" {
     "artifactregistry.googleapis.com", # Required for Artifact Registry
     "run.googleapis.com"               # Required for Cloud Run
   ]
+}
+
+# --- Cloud Build GitHub triggers (Rain workaround) ---
+# false when the Cloud Build GitHub App has no access to the source repo.
+# The repository + triggers are skipped; images are built and deployed with
+# `gcloud builds submit`, which uploads local source and needs no GitHub link.
+variable "enable_cloudbuild_triggers" {
+  type    = bool
+  default = true
 }
