@@ -1,21 +1,23 @@
-gcp_project_id = "YOUR_GCP_PROJECT_ID"
+gcp_project_id = "rain-frontrunner-wkld-01"
 gcp_region     = "africa-south1"  # POPIA residency: gcp.resourceLocations on teams/
 environment    = "development"
 
 # --- Service Names ---
 backend_service_name  = "cstudio-backend-dev"
 frontend_service_name = "cstudio-frontend-dev" # This is the Cloud Run service name
-firebase_site_id      = "YOUR_FIREBASE_SITE_ID" # (Optional) Custom Firebase Hosting Site ID, defaults to the gcp_project_id
+firebase_site_id      = "" # empty => defaults to gcp_project_id
 
 # --- GitHub Repo Details ---
-github_conn_name   = "gh-repo-owner-con"
-github_repo_owner  = "RepoOwnerName"
-github_repo_name   = "repo-owner-gcc-creative-studio"
-github_branch_name = "develop"
+# Must match a Cloud Build GitHub connection created in the console first
+# (Cloud Build > Repositories > Connect host). Terraform cannot create it.
+github_conn_name   = "rain-poc-workload-con"
+github_repo_owner  = "rainsouthafrica"
+github_repo_name   = "poc-workload"
+github_branch_name = "main"
 
 # --- Custom Audiences ---
-backend_custom_audiences  = ["YOUR_OAUTH_WEB_CLIENT_ID_HERE", "YOUR_GCP_PROJECT_ID"]
-frontend_custom_audiences = ["YOUR_OAUTH_WEB_CLIENT_ID_HERE", "YOUR_GCP_PROJECT_ID"]
+backend_custom_audiences  = ["YOUR_OAUTH_WEB_CLIENT_ID_HERE", "rain-frontrunner-wkld-01"]
+frontend_custom_audiences = ["YOUR_OAUTH_WEB_CLIENT_ID_HERE", "rain-frontrunner-wkld-01"]
 
 # --- Service-Specific Environment Variables ---
 be_env_vars = {
