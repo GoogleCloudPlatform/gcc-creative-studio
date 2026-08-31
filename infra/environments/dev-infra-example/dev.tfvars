@@ -16,8 +16,8 @@ github_repo_name   = "poc-workload"
 github_branch_name = "main"
 
 # --- Custom Audiences ---
-backend_custom_audiences  = ["YOUR_OAUTH_WEB_CLIENT_ID_HERE", "rain-frontrunner-wkld-01"]
-frontend_custom_audiences = ["YOUR_OAUTH_WEB_CLIENT_ID_HERE", "rain-frontrunner-wkld-01"]
+backend_custom_audiences  = ["678869232430-i4ice1rtf86bsvq1fbc402ejfvpj5aj3.apps.googleusercontent.com", "rain-frontrunner-wkld-01"]
+frontend_custom_audiences = ["678869232430-i4ice1rtf86bsvq1fbc402ejfvpj5aj3.apps.googleusercontent.com", "rain-frontrunner-wkld-01"]
 
 # --- Service-Specific Environment Variables ---
 be_env_vars = {
@@ -26,12 +26,12 @@ be_env_vars = {
   }
   development = {
     ENVIRONMENT  = "development"
-    GOOGLE_TOKEN_AUDIENCE = "YOUR_OAUTH_WEB_CLIENT_ID_HERE"
+    GOOGLE_TOKEN_AUDIENCE = "678869232430-i4ice1rtf86bsvq1fbc402ejfvpj5aj3.apps.googleusercontent.com"
     IDENTITY_PLATFORM_ALLOWED_ORGS = "" # If empty then any org is allowed
   }
   production = {
     ENVIRONMENT  = "production"
-    GOOGLE_TOKEN_AUDIENCE = "YOUR_OAUTH_WEB_CLIENT_ID_HERE"
+    GOOGLE_TOKEN_AUDIENCE = "678869232430-i4ice1rtf86bsvq1fbc402ejfvpj5aj3.apps.googleusercontent.com"
     IDENTITY_PLATFORM_ALLOWED_ORGS = "" # If empty then any org is allowed
   }
 }
