@@ -17,3 +17,10 @@ variable "region" {}
 variable "db_name" { default = "creative_studio" }
 variable "db_user" { default = "studio_user" }
 variable "db_password" { sensitive = true }
+
+# Shared VPC network the instance draws its private IP from. Requires a
+# google_service_networking_connection on that VPC (landing zone: network-psa.tf).
+variable "private_network" {
+  type    = string
+  default = "projects/rain-net-hub-506515-v2/global/networks/rain-vpc"
+}

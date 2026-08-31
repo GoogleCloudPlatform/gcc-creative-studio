@@ -125,6 +125,10 @@ module "backend_service" {
     }
   )
 
+  # Shared VPC egress — required to reach the Cloud SQL private IP.
+  vpc_network    = var.vpc_network
+  vpc_subnetwork = var.vpc_subnetwork
+
   # database
   cloud_sql_connection_name = module.postgresql.connection_name
   db_name                   = module.postgresql.db_name

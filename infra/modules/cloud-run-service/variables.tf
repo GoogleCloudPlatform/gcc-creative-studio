@@ -129,3 +129,16 @@ variable "db_secret_id" {
 }
 variable "db_name" { type = string }
 variable "db_user" { type = string }
+
+# --- Shared VPC (Rain landing zone) ---
+variable "vpc_network" {
+  description = "Shared VPC network for Direct VPC egress. Null disables VPC egress."
+  type        = string
+  default     = null
+}
+
+variable "vpc_subnetwork" {
+  description = "Shared VPC subnetwork for Direct VPC egress."
+  type        = string
+  default     = null
+}

@@ -32,7 +32,11 @@ resource "google_sql_database_instance" "default" {
     }
 
     ip_configuration {
-      ipv4_enabled = true # Easy connectivity from Cloud Run without VPC peering complexity
+      # Public IP is denied by constraints/sql.restrictPublicIp on the teams/
+      # folder. Traffic reaches this instance over the Shared VPC private path;
+      # requires Private Service Access peering on the host VPC.
+      ipv4_enabled    = false
+      private_network = var.private_network
     }
   }
   

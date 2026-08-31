@@ -87,3 +87,14 @@ variable "backend_runtime_secrets" {
   description = "Secrets to mount in the backend container at runtime."
   default     = {}
 }
+
+# --- Shared VPC (Rain landing zone) ---
+variable "vpc_network" {
+  type    = string
+  default = "projects/rain-net-hub-506515-v2/global/networks/rain-vpc"
+}
+
+variable "vpc_subnetwork" {
+  type    = string
+  default = "projects/rain-net-hub-506515-v2/regions/africa-south1/subnetworks/rain-hub-af-south1"
+}

@@ -1,5 +1,5 @@
 gcp_project_id = "YOUR_GCP_PROJECT_ID"
-gcp_region     = "us-central1"
+gcp_region     = "africa-south1"  # POPIA residency: gcp.resourceLocations on teams/
 environment    = "development"
 
 # --- Service Names ---

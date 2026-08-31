@@ -39,6 +39,20 @@ resource "google_cloud_run_v2_service" "this" {
 
   template {
     service_account = google_service_account.run_sa.email
+
+    # Direct VPC egress. Cloud Run has NO path into a VPC by default, so
+    # without this the service cannot reach the Cloud SQL private IP at all.
+    # PRIVATE_RANGES_ONLY keeps internet egress on the default path.
+    dynamic "vpc_access" {
+      for_each = var.vpc_network == null ? [] : [1]
+      content {
+        egress = "PRIVATE_RANGES_ONLY"
+        network_interfaces {
+          network    = var.vpc_network
+          subnetwork = var.vpc_subnetwork
+        }
+      }
+    }
     volumes {
       name = "cloudsql"
       cloud_sql_instance {
