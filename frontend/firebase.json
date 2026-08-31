@@ -12,7 +12,7 @@
         "source": "/api/**",
         "run": {
           "serviceId": "BACKEND_SERVICE_ID_PLACEHOLDER",
-          "region": "us-central1"
+          "region": "africa-south1"
         }
       },
       {
