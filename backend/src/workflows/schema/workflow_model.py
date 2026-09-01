@@ -23,7 +23,7 @@ from typing import (
     Union,
 )
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -149,6 +149,7 @@ class UserInputStep(BaseStep[UserInputInputs, UserInputSettings]):
 
 # --- Generate Text ---
 class GenerateTextInputs(BaseModel):
+    model_config = ConfigDict(extra="allow")
     prompt: StepOutputReference | str
     input_images: WorkflowInputItem | None = None
     input_videos: WorkflowInputItem | None = None
