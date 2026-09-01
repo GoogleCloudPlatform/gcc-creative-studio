@@ -18,6 +18,7 @@ module "compute" {
   region          = var.region
   resource_prefix = var.resource_prefix
   environment     = var.environment
+  depends_on      = [google_secret_manager_secret_version.app_secrets_placeholder]
   
   # The deployment script dynamically sets this value (e.g., "latest" or "v1.2.0")
   app_version     = var.app_version

@@ -65,6 +65,16 @@ fail() { echo -e "${C_RED}❌  $1${C_RESET}" >&2; exit 1; }
 success() { echo -e "${C_GREEN}✅  $1${C_RESET}"; }
 step() { echo -e "\n${C_BLUE}--- Step $1: $2 ---${C_RESET}"; }
 
+ensure_secret() {
+    local secret_name=$1
+    local secret_value=$2
+    if ! gcloud secrets describe "$secret_name" --project="$GCP_PROJECT_ID" > /dev/null 2>&1; then
+        echo -n "$secret_value" | gcloud secrets create "$secret_name" --data-file="-" --replication-policy="automatic" --project="$GCP_PROJECT_ID" --quiet
+    else
+        echo -n "$secret_value" | gcloud secrets versions add "$secret_name" --data-file="-" --project="$GCP_PROJECT_ID" --quiet
+    fi
+}
+
 # --- Pre-flight Checks & Auto-configuration ---
 
 # Function to automatically determine and set the Firebase Site ID in the .tfvars file
@@ -512,8 +522,8 @@ populate_oauth_secrets() {
     fi
 
     info "Populating secrets with Client ID: ${C_YELLOW}${AUTO_OAUTH_CLIENT_ID}${C_RESET}"
-    echo -n "$AUTO_OAUTH_CLIENT_ID" | gcloud secrets versions add GOOGLE_CLIENT_ID --data-file="-" --project="$GCP_PROJECT_ID" --quiet
-    echo -n "$AUTO_OAUTH_CLIENT_ID" | gcloud secrets versions add GOOGLE_TOKEN_AUDIENCE --data-file="-" --project="$GCP_PROJECT_ID" --quiet
+    ensure_secret GOOGLE_CLIENT_ID "$AUTO_OAUTH_CLIENT_ID"
+    ensure_secret GOOGLE_TOKEN_AUDIENCE "$AUTO_OAUTH_CLIENT_ID"
     success "Secrets 'GOOGLE_CLIENT_ID' and 'GOOGLE_TOKEN_AUDIENCE' have been populated."
 
     info "Updating audiences in $TFVARS_FILE_PATH..."
@@ -522,33 +532,6 @@ populate_oauth_secrets() {
     success "Audiences updated in .tfvars file."
 }
 
-setup_agent_secrets() {
-    step 9 "Configuring Agent Secrets"
-    
-    # 5. Configure Agent Engine Secrets
-    local AGENT_TOKEN_SECRET="agent_engine_user_auth_token_key"
-    if ! gcloud secrets describe "$AGENT_TOKEN_SECRET" --project="$GCP_PROJECT_ID" > /dev/null 2>&1; then
-        info "Creating secret '$AGENT_TOKEN_SECRET' with generated auth token..."
-        local AGENT_TOKEN=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32)
-        printf "%s" "$AGENT_TOKEN" | gcloud secrets create "$AGENT_TOKEN_SECRET" \
-            --data-file=- \
-            --replication-policy="automatic" \
-            --project="$GCP_PROJECT_ID" \
-            --quiet
-        success "Secret '$AGENT_TOKEN_SECRET' created."
-    fi
-
-    local AGENT_RES_SECRET="agent_engine_resource_name"
-    if ! gcloud secrets describe "$AGENT_RES_SECRET" --project="$GCP_PROJECT_ID" > /dev/null 2>&1; then
-        info "Creating empty secret shell '$AGENT_RES_SECRET'..."
-        printf "" | gcloud secrets create "$AGENT_RES_SECRET" \
-            --data-file=- \
-            --replication-policy="automatic" \
-            --project="$GCP_PROJECT_ID" \
-            --quiet
-        success "Secret '$AGENT_RES_SECRET' shell created."
-    fi
-}
 
 run_terraform() {
     step 10 "Deploying Infrastructure with Terraform";
@@ -684,6 +667,14 @@ update_secrets() {
             "FIREBASE_MESSAGING_SENDER_ID")   SECRET_VALUE=$AUTO_FIREBASE_MESSAGING_SENDER_ID; AUTO_DISCOVERED=true ;;
             "FIREBASE_APP_ID")                SECRET_VALUE=$AUTO_FIREBASE_APP_ID; AUTO_DISCOVERED=true ;;
             "FIREBASE_MEASUREMENT_ID")        SECRET_VALUE=$AUTO_FIREBASE_MEASUREMENT_ID; AUTO_DISCOVERED=true ;;
+            "agent_engine_user_auth_token_key") 
+                SECRET_VALUE=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32)
+                AUTO_DISCOVERED=true 
+                ;;
+            "agent_engine_resource_name") 
+                SECRET_VALUE=""
+                AUTO_DISCOVERED=true 
+                ;;
             # GOOGLE_CLIENT_ID is handled by populate_oauth_secrets, so we skip it here
             "GOOGLE_CLIENT_ID")               info "  Value is handled by the OAuth population step. Skipping."; continue ;;
             "GOOGLE_TOKEN_AUDIENCE")          info "  Value is handled by the OAuth population step. Skipping."; continue ;;
@@ -691,7 +682,7 @@ update_secrets() {
 
         if [ "$AUTO_DISCOVERED" = true ] && [ -n "$SECRET_VALUE" ]; then
             info "  Value was auto-detected from Firebase. Populating automatically."
-            echo -n "$SECRET_VALUE" | gcloud secrets versions add "$SECRET_NAME" --data-file="-" --project="$GCP_PROJECT_ID" --quiet
+            ensure_secret "$SECRET_NAME" "$SECRET_VALUE"
             success "  Successfully added new version for ${SECRET_NAME}."
 
         else
@@ -701,7 +692,7 @@ update_secrets() {
             read -s -p "  Enter new value: " SECRET_VALUE < /dev/tty; echo
 
             if [ -z "$SECRET_VALUE" ]; then warn "  No value provided. Skipping ${SECRET_NAME}."; continue; fi
-            echo -n "$SECRET_VALUE" | gcloud secrets versions add "$SECRET_NAME" --data-file="-" --project="$GCP_PROJECT_ID" --quiet
+            ensure_secret "$SECRET_NAME" "$SECRET_VALUE"
             success "  Successfully added new version for ${SECRET_NAME}."
         fi
     done; success "All secrets have been populated."
@@ -1026,7 +1017,6 @@ main() {
         "configure_environment"
         "handle_manual_steps"
         "setup_firebase_app"
-        "setup_agent_secrets"
         "run_terraform"
         "auto_migrate_database"
         "populate_oauth_secrets"

@@ -44,7 +44,23 @@ variable "custom_domain" {
 variable "application_secrets" {
   type        = set(string)
   description = "The list of application secret identifiers required by the backend application layer."
-  default     = ["database_url", "third_party_api_key", "agent_engine_resource_name", "agent_engine_user_auth_token_key"]
+  default     = ["database_url", "agent_engine_resource_name", "agent_engine_user_auth_token_key"]
+}
+
+variable "frontend_secrets" {
+  type        = set(string)
+  description = "The list of application secret identifiers required by the frontend application layer."
+  default     = [
+    "FIREBASE_API_KEY",
+    "FIREBASE_AUTH_DOMAIN",
+    "FIREBASE_PROJECT_ID",
+    "FIREBASE_STORAGE_BUCKET",
+    "FIREBASE_MESSAGING_SENDER_ID",
+    "FIREBASE_APP_ID",
+    "FIREBASE_MEASUREMENT_ID",
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_TOKEN_AUDIENCE"
+  ]
 }
 
 variable "resource_prefix" {

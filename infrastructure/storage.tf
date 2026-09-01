@@ -46,9 +46,13 @@ resource "google_storage_bucket_iam_member" "object_creator_binding" {
 }
 
 # --- Secret Manager ---
+locals {
+  all_secrets = toset(concat(tolist(var.application_secrets), tolist(var.frontend_secrets)))
+}
+
 # Create the "shell" for each secret in the specified application list
 resource "google_secret_manager_secret" "app_secrets" {
-  for_each = var.application_secrets
+  for_each = local.all_secrets
 
   project   = var.project_id
   secret_id = each.key
@@ -73,7 +77,7 @@ resource "google_secret_manager_secret" "app_secrets" {
 # Cloud Run requires a valid 'latest' version to exist before it can start.
 # ignore_changes prevents Terraform from overwriting the real secrets populated by bootstrap.sh later.
 resource "google_secret_manager_secret_version" "app_secrets_placeholder" {
-  for_each = var.application_secrets
+  for_each = local.all_secrets
 
   secret      = google_secret_manager_secret.app_secrets[each.key].id
   secret_data = "placeholder_value_waiting_for_bootstrap_sh"

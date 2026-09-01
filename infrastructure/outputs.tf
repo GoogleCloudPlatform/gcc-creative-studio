@@ -53,7 +53,7 @@ output "backend_secrets" {
 
 output "frontend_secrets" {
   description = "Application secrets created for the frontend layer."
-  value       = []
+  value       = tolist(var.frontend_secrets)
 }
 
 
