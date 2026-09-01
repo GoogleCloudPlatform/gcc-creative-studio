@@ -383,6 +383,16 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
     );
   }
 
+  isOmniModel(model?: any): boolean {
+    const activeModel = model || this.getSelectedModelObject();
+    const val = activeModel?.value;
+    return (
+      val === 'gemini-omni-flash-preview' ||
+      val === 'gemini-omni-1.1-flash-preview' ||
+      val === 'gemini-omni'
+    );
+  }
+
   getSelectedModelResolutions(model?: any): ('1K' | '2K' | '4K')[] {
     const activeModel = model || this.getSelectedModelObject();
     if (this.isExtendVideo()) {
