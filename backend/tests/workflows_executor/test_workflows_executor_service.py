@@ -766,3 +766,137 @@ async def test_execute_image_invalid_mode(service):
     with pytest.raises(HTTPException) as exc:
         await service.execute_image(request)
     assert exc.value.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_generate_text_simple(service):
+    request = MagicMock()
+    request.inputs.prompt = "Write a haiku about clouds."
+    request.inputs.input_images = None
+    request.inputs.input_videos = None
+    request.inputs.model_dump.return_value = {
+        "prompt": "Write a haiku about clouds."
+    }
+    request.config.model = "gemini-3-flash-preview"
+    request.config.temperature = 0.7
+
+    mock_chunk = MagicMock()
+    mock_chunk.text = "White fluffy shapes float"
+    service.mock_genai_client.models.generate_content_stream.return_value = [
+        mock_chunk
+    ]
+
+    result = await service.generate_text(request)
+    assert result == {"generated_text": "White fluffy shapes float"}
+    service.mock_genai_client.models.generate_content_stream.assert_called_once()
+    _, kwargs = (
+        service.mock_genai_client.models.generate_content_stream.call_args
+    )
+    assert kwargs["model"] == "gemini-3-flash-preview"
+    contents = kwargs["contents"]
+    assert len(contents) == 1
+    assert contents[0].text == "Write a haiku about clouds."
+
+
+@pytest.mark.anyio
+async def test_generate_text_prompt_variable_substitution(service):
+    request = MagicMock()
+    request.inputs.prompt = "Create a story about a <animal> wearing a <article_of_clothing> in <city>."
+    request.inputs.input_images = None
+    request.inputs.input_videos = None
+    request.inputs.model_dump.return_value = {
+        "prompt": "Create a story about a <animal> wearing a <article_of_clothing> in <city>.",
+        "animal": "golden retriever",
+        "article_of_clothing": "detective hat",
+        "city": "London",
+    }
+    request.config.model = "gemini-3-flash-preview"
+    request.config.temperature = 0.5
+
+    mock_chunk1 = MagicMock()
+    mock_chunk1.text = "Once upon a time "
+    mock_chunk2 = MagicMock()
+    mock_chunk2.text = "in London..."
+    service.mock_genai_client.models.generate_content_stream.return_value = [
+        mock_chunk1,
+        mock_chunk2,
+    ]
+
+    result = await service.generate_text(request)
+    assert result == {"generated_text": "Once upon a time in London..."}
+    _, kwargs = (
+        service.mock_genai_client.models.generate_content_stream.call_args
+    )
+    contents = kwargs["contents"]
+    assert len(contents) == 1
+    assert contents[0].text == (
+        "Create a story about a golden retriever wearing a detective hat in London."
+    )
+
+
+@pytest.mark.anyio
+async def test_generate_text_prompt_variable_substitution_dict_and_missing_values(
+    service,
+):
+    request = MagicMock()
+    request.inputs.prompt = "Compare <item1> with <item2> and <missing_item>."
+    request.inputs.input_images = None
+    request.inputs.input_videos = None
+    request.inputs.model_dump.return_value = {
+        "prompt": "Compare <item1> with <item2> and <missing_item>.",
+        "item1": {"generated_text": "Quantum Computing"},
+        "item2": {"text": "Classical Computing"},
+        "missing_item": None,
+    }
+    request.config.model = "gemini-3-flash-preview"
+    request.config.temperature = 0.7
+
+    mock_chunk = MagicMock()
+    mock_chunk.text = "Comparison result"
+    service.mock_genai_client.models.generate_content_stream.return_value = [
+        mock_chunk
+    ]
+
+    result = await service.generate_text(request)
+    assert result == {"generated_text": "Comparison result"}
+    _, kwargs = (
+        service.mock_genai_client.models.generate_content_stream.call_args
+    )
+    contents = kwargs["contents"]
+    assert len(contents) == 1
+    assert (
+        contents[0].text
+        == "Compare Quantum Computing with Classical Computing and ."
+    )
+
+
+@pytest.mark.anyio
+async def test_generate_text_prompt_variable_substitution_case_insensitive(
+    service,
+):
+    request = MagicMock()
+    request.inputs.prompt = "Story of a <ANIMAL> with a <Hat_Type>."
+    request.inputs.input_images = None
+    request.inputs.input_videos = None
+    request.inputs.model_dump.return_value = {
+        "prompt": "Story of a <ANIMAL> with a <Hat_Type>.",
+        "animal": "tiger",
+        "hat_type": "beanie",
+    }
+    request.config.model = "gemini-3-flash-preview"
+    request.config.temperature = 0.5
+
+    mock_chunk = MagicMock()
+    mock_chunk.text = "Tiger story"
+    service.mock_genai_client.models.generate_content_stream.return_value = [
+        mock_chunk
+    ]
+
+    result = await service.generate_text(request)
+    assert result == {"generated_text": "Tiger story"}
+    _, kwargs = (
+        service.mock_genai_client.models.generate_content_stream.call_args
+    )
+    contents = kwargs["contents"]
+    assert len(contents) == 1
+    assert contents[0].text == "Story of a tiger with a beanie."

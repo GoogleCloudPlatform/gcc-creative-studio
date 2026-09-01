@@ -99,7 +99,7 @@
 
     <div class="section inputs" formGroupName="inputs">
       <h3>Inputs</h3>
-      <ng-container *ngFor="let input of localConfig.inputs">
+      <ng-container *ngFor="let input of getBaseInputs()">
         <div
           class="port-row relative"
           [class.magnetic-target]="isMagneticTarget(input.name)"
@@ -134,8 +134,123 @@
             [maxMediaItems]="getMaxMediaItems(input)"
             [disabledMessage]="getInputDisabledMessage(input.name)"
             (modeChange)="toggleInputMode(input.name, $event)"
+            (fieldBlur)="onInputFieldBlur(input.name)"
           >
           </app-step-input-field>
+        </div>
+
+        <!-- Prompt Variables Section (rendered directly after 'prompt' input for generate-text step) -->
+        <div
+          class="prompt-variables my-3"
+          [class.disabled-section]="inputModes['prompt'] !== 'fixed'"
+          *ngIf="localConfig.type === 'generate-text' && input.name === 'prompt'"
+        >
+          <div class="prompt-variables-header flex flex-col gap-2 mb-3">
+            <div class="flex items-center justify-between">
+              <span class="prompt-variables-title">Prompt variables</span>
+              <span
+                *ngIf="inputModes['prompt'] !== 'fixed'"
+                class="text-[11px] text-slate-400 italic"
+              >
+                (Prompt is linked - variables inactive)
+              </span>
+            </div>
+            <div
+              class="add-variable-form flex items-center gap-2 w-full"
+              *ngIf="mode !== 'run'"
+            >
+              <mat-form-field
+                appearance="outline"
+                class="add-variable-input flex-grow"
+                subscriptSizing="dynamic"
+              >
+                <input
+                  matInput
+                  [(ngModel)]="newVariableName"
+                  [ngModelOptions]="{standalone: true}"
+                  placeholder="New variable name"
+                  [disabled]="inputModes['prompt'] !== 'fixed'"
+                  (keydown.enter)="$event.preventDefault(); addCustomVariable()"
+                />
+              </mat-form-field>
+              <button
+                mat-stroked-button
+                type="button"
+                color="primary"
+                class="add-variable-btn"
+                [disabled]="
+                  inputModes['prompt'] !== 'fixed' || !isValidNewVariableName()
+                "
+                (click)="addCustomVariable()"
+              >
+                <mat-icon>add</mat-icon> Add variable
+              </button>
+            </div>
+          </div>
+
+          <div class="variables-list flex flex-col gap-3">
+            <ng-container *ngFor="let variable of getVariableInputs()">
+              <div class="variable-row flex flex-col gap-1">
+                <div
+                  class="port-row relative flex items-center"
+                  [class.magnetic-target]="isMagneticTarget(variable.name)"
+                  [class.port-row-disabled]="isInputDisabled(variable.name)"
+                >
+                  <div
+                    class="port input-port"
+                    [class.magnetic-hover]="isMagneticTarget(variable.name)"
+                    [class.port-compatible]="isCompatibleWithActiveDrag(variable)"
+                    [class.port-incompatible]="isIncompatibleWithActiveDrag(variable)"
+                    [class.port-disabled]="isInputDisabled(variable.name)"
+                    [style.background-color]="getTypeColor('text')"
+                    [style.border-color]="getTypeColor('text')"
+                    [attr.data-node-id]="stepForm.value.stepId"
+                    [attr.data-port-name]="variable.name"
+                    [attr.data-port-type]="'input'"
+                    [attr.data-data-type]="'text'"
+                    (mouseup)="onInputPortMouseUp($event, variable.name)"
+                  ></div>
+                  <span class="port-type-chip input-chip" data-type="text">TXT</span>
+
+                  <div class="flex-grow">
+                    <app-step-input-field
+                      [control]="$any(stepForm.get('inputs')?.get(variable.name))"
+                      [config]="variable"
+                      [mode]="inputModes[variable.name]"
+                      [compatibleOutputs]="compatibleOutputs[variable.name]"
+                      [showValidationErrors]="showValidationErrors"
+                      [disabledMessage]="getInputDisabledMessage(variable.name)"
+                      (modeChange)="toggleInputMode(variable.name, $event)"
+                      (fieldBlur)="onInputFieldBlur(variable.name)"
+                    >
+                      <!-- Warning below variable label with embedded add to prompt and remove actions -->
+                      <div
+                        warning
+                        *ngIf="inputModes['prompt'] === 'fixed' && !isVariableUsedInPrompt(variable.name)"
+                        class="variable-warning flex items-center gap-1 text-xs text-amber-400 mt-0.5"
+                      >
+                        <mat-icon class="!text-xs !w-3.5 !h-3.5">warning</mat-icon>
+                        <span>
+                          Variable is not used,
+                          <button
+                            type="button"
+                            class="action-var-link underline hover:text-amber-200 cursor-pointer bg-transparent border-0 p-0 text-xs text-amber-400 font-medium"
+                            (click)="appendToPrompt(variable.name)"
+                          >add to prompt</button>
+                          or
+                          <button
+                            type="button"
+                            class="action-var-link underline hover:text-amber-200 cursor-pointer bg-transparent border-0 p-0 text-xs text-amber-400 font-medium"
+                            (click)="removeVariable(variable.name)"
+                          >remove</button>
+                        </span>
+                      </div>
+                    </app-step-input-field>
+                  </div>
+                </div>
+              </div>
+            </ng-container>
+          </div>
         </div>
       </ng-container>
     </div>

@@ -54,7 +54,8 @@ import {
 // import { STEP_CONFIGS_MAP } from '../shared/step-configs.map'; // Removed as only used by getStepConfig which is now in service (mostly)
 // But wait, template calls getStepConfig.
 import {STEP_CONFIGS_MAP} from '../shared/step-configs.map'; // Kept for template
-import {labelToName} from '../utils/workflow-step.util';
+import {GENERATE_TEXT_STEP_CONFIG} from './step-components/step-configs/generate-text-step.config';
+import {isStepOutputReference, labelToName} from '../utils/workflow-step.util';
 import {
   DragSourcePort,
   findClosestMagneticPort,
@@ -698,6 +699,41 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     event.mouseEvent.preventDefault();
   }
 
+  getDynamicInputs(
+    config: any,
+    inputsGroup?: FormGroup | null,
+  ): Array<{name: string; label: string; type: string}> {
+    const dynamicInputs: Array<{
+      name: string;
+      label: string;
+      type: string;
+    }> = [];
+    if (!inputsGroup || !config?.inputs) {
+      return dynamicInputs;
+    }
+
+    const configuredNames = new Set(config.inputs.map((i: any) => i.name));
+    const promptVal = inputsGroup.get('prompt')?.value;
+    const isPromptLinked =
+      config.type === NodeTypes.GENERATE_TEXT &&
+      isStepOutputReference(promptVal);
+
+    Object.keys(inputsGroup.controls).forEach(controlName => {
+      if (!configuredNames.has(controlName)) {
+        if (isPromptLinked) {
+          return;
+        }
+        dynamicInputs.push({
+          name: controlName,
+          label: controlName,
+          type: 'text',
+        });
+      }
+    });
+
+    return dynamicInputs;
+  }
+
   collectMagneticCandidatePorts(
     sourceStepId: string,
     sourceOutputName?: string,
@@ -721,7 +757,12 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       const settingsGroup = stepControl.get('settings') as FormGroup;
       const modelValue = settingsGroup?.get('model')?.value;
 
-      config.inputs.forEach((input: any) => {
+      const allInputs = [
+        ...config.inputs,
+        ...this.getDynamicInputs(config, inputsGroup),
+      ];
+
+      allInputs.forEach((input: any) => {
         // Skip candidate if input control is disabled in the form
         if (inputsGroup) {
           const control = inputsGroup.get(input.name);
@@ -800,9 +841,16 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
 
           const stepType = stepForm.get('type')?.value;
           const config = this.getStepConfig(stepType);
-          const inputConfig = config?.inputs?.find(
+          let inputConfig = config?.inputs?.find(
             (i: any) => i.name === event.inputName,
           );
+          if (!inputConfig && inputs.contains(event.inputName)) {
+            inputConfig = {
+              name: event.inputName,
+              label: event.inputName,
+              type: 'text',
+            };
+          }
 
           // Type Compatibility Check: Reject incompatible connections (e.g. TXT source to IMG target)
           const sourceType =
@@ -1409,6 +1457,27 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             newInputs[key] = this.cleanInputValue(val);
           }
         });
+
+        // If generate-text step has a linked/non-fixed prompt, do not save dynamic variables
+        if (
+          newStep.type === NodeTypes.GENERATE_TEXT ||
+          newStep.type === 'generate-text'
+        ) {
+          const promptVal = newInputs['prompt'];
+          const isPromptFixed = typeof promptVal === 'string';
+
+          if (!isPromptFixed) {
+            const baseNames = new Set(
+              GENERATE_TEXT_STEP_CONFIG.inputs.map(i => i.name.toLowerCase()),
+            );
+            Object.keys(newInputs).forEach(k => {
+              if (!baseNames.has(k.toLowerCase())) {
+                delete newInputs[k];
+              }
+            });
+          }
+        }
+
         newStep.inputs = newInputs;
       }
       return newStep;

@@ -16,6 +16,9 @@
 from pydantic import TypeAdapter
 
 from src.workflows.schema.workflow_model import (
+    GenerateTextInputs,
+    GenerateTextSettings,
+    GenerateTextStep,
     GenerateVideoInputs,
     GenerateVideoSettings,
     GenerateVideoStep,
@@ -23,6 +26,7 @@ from src.workflows.schema.workflow_model import (
     ImageSettings,
     ImageStep,
     NodeTypes,
+    StepOutputReference,
     UserInputDefinition,
     UserInputSettings,
     UserInputStep,
@@ -476,3 +480,55 @@ def test_user_input_step_with_video_definition():
     parsed = adapter.validate_python(raw_data)
     assert isinstance(parsed, UserInputStep)
     assert parsed.settings.definitions[0].type == "video"
+
+
+def test_generate_text_inputs_dynamic_variables():
+    """Verify GenerateTextInputs accepts arbitrary extra variable fields."""
+    inputs = GenerateTextInputs(
+        prompt="Create an image of a <animal> wearing a <article_of_clothing>",
+        animal="cat",
+        article_of_clothing=StepOutputReference(
+            step="user_input", output="clothing"
+        ),
+    )
+    dumped = inputs.model_dump()
+    assert dumped["prompt"] == (
+        "Create an image of a <animal> wearing a <article_of_clothing>"
+    )
+    assert dumped["animal"] == "cat"
+    assert dumped["article_of_clothing"] == {
+        "step": "user_input",
+        "output": "clothing",
+    }
+
+
+def test_generate_text_step_discriminated_union_dynamic_variables():
+    """Verify parsing GenerateTextStep with extra dynamic variable inputs via discriminated union."""
+    adapter = TypeAdapter(WorkflowStep)
+    raw_data = {
+        "stepId": "generate_text_node",
+        "type": "generate_text",
+        "status": "idle",
+        "inputs": {
+            "prompt": "Hello <name>, welcome to <location>!",
+            "name": "Alice",
+            "location": {
+                "step": "step_location_gen",
+                "output": "generated_text",
+            },
+        },
+        "settings": {
+            "model": "gemini-3-flash-preview",
+            "temperature": 0.7,
+        },
+        "outputs": {"generated_text": {"type": "text"}},
+    }
+    parsed = adapter.validate_python(raw_data)
+    assert isinstance(parsed, GenerateTextStep)
+    assert parsed.type == NodeTypes.GENERATE_TEXT
+    dumped = parsed.inputs.model_dump()
+    assert dumped["name"] == "Alice"
+    assert dumped["location"] == {
+        "step": "step_location_gen",
+        "output": "generated_text",
+    }
