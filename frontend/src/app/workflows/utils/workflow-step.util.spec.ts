@@ -16,6 +16,7 @@
 
 import {
   getPreviewUrl,
+  isStepOutputReference,
   isVideoUrl,
   labelToName,
   nameToLabel,
@@ -127,6 +128,33 @@ describe('WorkflowStepUtil', () => {
       expect(isVideoUrl('https://example.com/audio.mp3')).toBeFalse();
       expect(isVideoUrl('')).toBeFalse();
       expect(isVideoUrl(undefined)).toBeFalse();
+    });
+  });
+
+  describe('isStepOutputReference', () => {
+    it('should return true for valid StepOutputReference objects', () => {
+      expect(
+        isStepOutputReference({step: 'step_1', output: 'image'}),
+      ).toBeTrue();
+      expect(
+        isStepOutputReference({
+          step: 'step_1',
+          output: 'text',
+          _definitionId: 'def_1',
+        }),
+      ).toBeTrue();
+    });
+
+    it('should return false for invalid or non-StepOutputReference values', () => {
+      expect(isStepOutputReference(null)).toBeFalse();
+      expect(isStepOutputReference(undefined)).toBeFalse();
+      expect(isStepOutputReference('')).toBeFalse();
+      expect(isStepOutputReference('plain_text')).toBeFalse();
+      expect(isStepOutputReference(123)).toBeFalse();
+      expect(isStepOutputReference([])).toBeFalse();
+      expect(isStepOutputReference({})).toBeFalse();
+      expect(isStepOutputReference({step: 'step_1'})).toBeFalse();
+      expect(isStepOutputReference({output: 'out_1'})).toBeFalse();
     });
   });
 });
