@@ -27,6 +27,7 @@ from src.config.config_service import config_service
 from src.workflows.schema.workflow_model import (
     ReferenceMediaOrAsset,
 )
+from src.workflows.workflow_utils import interpolate_prompt_variables
 from src.workflows_executor.dto.workflows_executor_dto import (
     GenerateAudioRequest,
     GenerateTextRequest,
@@ -260,7 +261,14 @@ class WorkflowsExecutorService:
         logger.info("generate_text inputs: %s", request.inputs)
         # 1. Add Text Prompt
         if isinstance(request.inputs.prompt, str):
-            contents.append(types.Part.from_text(text=request.inputs.prompt))
+            prompt_text = request.inputs.prompt
+            inputs_dict = request.inputs.model_dump()
+            resolved_prompt = interpolate_prompt_variables(
+                prompt=prompt_text,
+                variables=inputs_dict,
+                keep_unresolved=False,
+            )
+            contents.append(types.Part.from_text(text=resolved_prompt))
 
         # 2. Add Images
         if request.inputs.input_images:

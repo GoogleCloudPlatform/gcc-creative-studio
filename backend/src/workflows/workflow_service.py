@@ -16,6 +16,7 @@ import asyncio
 import datetime
 import json
 import logging
+from typing import Any
 import uuid
 
 import google.auth
@@ -53,6 +54,7 @@ from src.workflows.schema.workflow_run_model import (
     WorkflowRunStatusEnum,
 )
 from src.workflows.workflow_constants import IMAGE_MODE_ALLOWED_INPUTS
+from src.workflows.workflow_utils import interpolate_prompt_variables
 
 logger = logging.getLogger(__name__)
 PROJECT_ID = config_service.PROJECT_ID
@@ -567,6 +569,18 @@ class WorkflowService:
 
         return BatchExecutionResponseDto(results=results)
 
+    @staticmethod
+    def _interpolate_prompt_variables(
+        prompt: str,
+        step_inputs: dict[str, Any],
+    ) -> str:
+        """Interpolates <var_name> placeholders in prompt using step inputs."""
+        return interpolate_prompt_variables(
+            prompt=prompt,
+            variables=step_inputs,
+            keep_unresolved=True,
+        )
+
     async def get_execution_details(
         self,
         workflow_id: str,
@@ -840,6 +854,15 @@ class WorkflowService:
                 for inp_name, inp_value in raw_inputs.items():
                     if inp_value is not None:
                         step_inputs[inp_name] = resolve_value(inp_value)
+
+                if current_step.type == NodeTypes.GENERATE_TEXT:
+                    prompt_val = step_inputs.get("prompt")
+                    if isinstance(prompt_val, str):
+                        step_inputs["prompt"] = (
+                            self._interpolate_prompt_variables(
+                                prompt_val, step_inputs
+                            )
+                        )
 
             # Extract outputs from step
             variable_data = entry.get("variableData", {})

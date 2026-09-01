@@ -21,6 +21,7 @@ export interface StepInput {
   options?: {value: string | number; label: string}[];
   required: boolean;
   hidden?: boolean;
+  isVariable?: boolean;
 }
 
 export interface StepSetting {

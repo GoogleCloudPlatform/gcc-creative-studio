@@ -16,6 +16,24 @@
 
 import {MediaItemSelection} from '../../common/components/image-selector/image-selector.component';
 import {SourceAssetResponseDto} from '../../common/services/source-asset.service';
+import {StepOutputReference} from '../workflow.models';
+
+/**
+ * Checks whether a given value is a valid StepOutputReference.
+ * @param value The value to check.
+ * @returns True if the value is a StepOutputReference object.
+ */
+export function isStepOutputReference(
+  value: unknown,
+): value is StepOutputReference {
+  return !!(
+    value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    'step' in value &&
+    'output' in value
+  );
+}
 
 /**
  * Converts a user input name to a human-readable label.

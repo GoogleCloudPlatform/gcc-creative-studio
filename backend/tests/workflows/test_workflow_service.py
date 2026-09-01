@@ -14,6 +14,7 @@
 """Tests for Workflow Service."""
 
 
+import datetime
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -29,6 +30,7 @@ from src.workflows.schema.workflow_model import (
     ImageSettings,
     ImageStep,
     NodeTypes,
+    StepOutputReference,
     WorkflowCreateDto,
     WorkflowModel,
 )
@@ -179,6 +181,58 @@ class TestWorkflowServiceConfig:
         assert image_step["call"] == "http.post"
         assert image_step["args"]["url"].endswith("/image")
         assert image_step["args"]["body"]["config"]["mode"] == "generate_image"
+
+    def test_generate_workflow_yaml_with_generate_text_dynamic_variables(
+        self, workflow_service
+    ):
+        from src.config.config_service import config_service
+
+        config_service.WORKFLOWS_LOCATION = "us-central1"
+
+        workflow_model = WorkflowModel(
+            id="id-text-vars-wf",
+            user_id=1,
+            name="Text Variables Workflow",
+            description="Workflow with Generate Text step using dynamic prompt variables",
+            steps=[
+                GenerateTextStep(
+                    step_id="step_gen_text",
+                    type=NodeTypes.GENERATE_TEXT,
+                    inputs=GenerateTextInputs(
+                        prompt="Create an image of a <animal> wearing a <outfit>",
+                        animal="cat",
+                        outfit=StepOutputReference(
+                            step="step_outfit_source",
+                            output="generated_text",
+                        ),
+                    ),
+                    settings=GenerateTextSettings(
+                        model="gemini-3-flash-preview",
+                        temperature=0.7,
+                    ),
+                ),
+            ],
+        )
+
+        yaml_output = workflow_service._generate_workflow_yaml(workflow_model)
+        parsed = yaml.safe_load(yaml_output)
+
+        steps = parsed["main"]["steps"]
+        assert len(steps) == 1
+        assert "step_gen_text" in steps[0]
+        step_entry = steps[0]["step_gen_text"]
+        assert step_entry["call"] == "http.post"
+        assert step_entry["args"]["url"].endswith("/generate_text")
+        inputs_body = step_entry["args"]["body"]["inputs"]
+        assert (
+            inputs_body["prompt"]
+            == "Create an image of a <animal> wearing a <outfit>"
+        )
+        assert inputs_body["animal"] == "cat"
+        assert (
+            inputs_body["outfit"]
+            == "${step_outfit_source_result.body.generated_text}"
+        )
 
 
 class TestCreateWorkflow:
@@ -774,6 +828,147 @@ class TestGetExecutionDetails:
         assert img_entry["step_inputs"] == {
             "prompt": "A photo of a cyberpunk city at night",
         }
+
+    @pytest.mark.anyio
+    @patch("google.auth.default")
+    @patch("src.workflows.workflow_service.AuthorizedSession")
+    @patch("google.cloud.workflows.executions_v1.ExecutionsClient")
+    async def test_get_execution_details_resolves_generate_text_prompt_variables(
+        self,
+        mock_executions_client_cls,
+        mock_auth_session_cls,
+        mock_auth_default,
+        workflow_service,
+        mock_run_repo,
+    ):
+        from google.cloud.workflows import executions_v1 as exec_v1
+
+        mock_auth_default.return_value = (MagicMock(), "test-project")
+        mock_session = MagicMock()
+        mock_auth_session_cls.return_value = mock_session
+
+        mock_exec_client = MagicMock()
+        mock_executions_client_cls.return_value = mock_exec_client
+
+        mock_execution = MagicMock()
+        mock_execution.name = "projects/test-proj/locations/us-central1/workflows/wf-text-vars/executions/e-text-1"
+        mock_execution.state = exec_v1.Execution.State.SUCCEEDED
+        mock_execution.result = json.dumps({"status": "completed"})
+        mock_execution.start_time = datetime.datetime.now(datetime.UTC)
+        mock_execution.end_time = datetime.datetime.now(datetime.UTC)
+        mock_execution.argument = json.dumps({"workspace_id": 1})
+        mock_exec_client.get_execution.return_value = mock_execution
+
+        from src.workflows.schema.workflow_model import (
+            UserInputInputs,
+            UserInputSettings,
+            UserInputStep,
+        )
+
+        wf_with_vars = WorkflowModel(
+            id="wf-text-vars",
+            user_id=1,
+            name="Text Variables Test Workflow",
+            steps=[
+                UserInputStep(
+                    step_id="user_input",
+                    type=NodeTypes.USER_INPUT,
+                    inputs=UserInputInputs(),
+                    settings=UserInputSettings(),
+                ),
+                GenerateTextStep(
+                    step_id="text_step",
+                    type=NodeTypes.GENERATE_TEXT,
+                    inputs=GenerateTextInputs(
+                        prompt="create a short story of a <animal> with a <color> hat",
+                        animal="cat",
+                        color="red",
+                    ),
+                    settings=GenerateTextSettings(
+                        model="gemini-3-flash-preview",
+                        temperature=0.7,
+                    ),
+                ),
+            ],
+        )
+
+        mock_run = MagicMock()
+        mock_run.id = "e-text-1"
+        mock_run.workflow_snapshot = wf_with_vars.model_dump(
+            mode="json", by_alias=True
+        )
+        mock_run.status = WorkflowRunStatusEnum.RUNNING.value
+        mock_run_repo.get_by_id.return_value = mock_run
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "stepEntries": [
+                {
+                    "step": "text_step",
+                    "state": "STATE_SUCCEEDED",
+                    "createTime": "2026-08-31T20:00:00Z",
+                    "updateTime": "2026-08-31T20:00:05Z",
+                    "variableData": {
+                        "variables": {
+                            "text_step_result": {
+                                "body": {
+                                    "generated_text": "Barnaby was a cat..."
+                                }
+                            }
+                        }
+                    },
+                },
+            ],
+        }
+        mock_session.get.return_value = mock_response
+
+        workflow_service.get_by_id = AsyncMock(return_value=wf_with_vars)
+
+        details = await workflow_service.get_execution_details(
+            workflow_id="wf-text-vars",
+            execution_id="e-text-1",
+        )
+
+        assert details is not None
+        step_entries = details["step_entries"]
+        text_entry = next(
+            e for e in step_entries if e["step_id"] == "text_step"
+        )
+
+        # The prompt input must be resolved with <animal> and <color> replaced
+        assert text_entry["step_inputs"] == {
+            "prompt": "create a short story of a cat with a red hat",
+            "animal": "cat",
+            "color": "red",
+        }
+
+    def test_interpolate_prompt_variables(self, workflow_service):
+        prompt = "Hello <name>, your score is <score>. Missing: <missing>."
+        inputs = {
+            "name": "Alice",
+            "score": 100,
+            "extra": "ignored",
+        }
+        resolved = workflow_service._interpolate_prompt_variables(
+            prompt, inputs
+        )
+        assert resolved == "Hello Alice, your score is 100. Missing: <missing>."
+
+    def test_interpolate_prompt_variables_dict_values(self, workflow_service):
+        prompt = "Generated: <gen_text> and Text: <text_only> and Empty: <empty_dict>"
+        inputs = {
+            "gen_text": {"generated_text": "sample output"},
+            "text_only": {"text": "plain output"},
+            "empty_dict": {},
+        }
+        resolved = workflow_service._interpolate_prompt_variables(
+            prompt, inputs
+        )
+        assert (
+            resolved
+            == "Generated: sample output and Text: plain output and Empty: "
+        )
 
 
 class TestBatchExecuteWorkflow:
