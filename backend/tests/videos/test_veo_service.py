@@ -1357,6 +1357,7 @@ class TestBackgroundWorkers:
             assert call_kwargs["response_format"] == {
                 "type": "video",
                 "duration": "5s",
+                "aspect_ratio": "16:9",
             }
 
     @patch("src.database.WorkerDatabase")
@@ -1462,6 +1463,7 @@ class TestBackgroundWorkers:
             assert call_kwargs["response_format"] == {
                 "type": "video",
                 "duration": "8s",
+                "aspect_ratio": "16:9",
             }
 
     @patch("src.database.WorkerDatabase")
@@ -1711,6 +1713,7 @@ class TestBackgroundWorkers:
             assert call_kwargs["response_format"] == {
                 "type": "video",
                 "duration": "4s",
+                "aspect_ratio": "9:16",
             }
             update_dict = mock_media_repo.update.call_args[0][1]
             assert update_dict["status"] == JobStatusEnum.COMPLETED

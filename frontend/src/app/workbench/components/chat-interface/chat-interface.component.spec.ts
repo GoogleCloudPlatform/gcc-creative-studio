@@ -34,6 +34,7 @@ import {AgentChatService} from '../../services/agent-chat.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
 import {StoryboardService} from '../../../services/storyboard/storyboard.service';
 import {TimelineStateService} from '../../services/timeline-state.service';
+import {ApprovalGateComponent} from '../approval-gate/approval-gate.component';
 
 describe('ChatInterfaceComponent', () => {
   let component: ChatInterfaceComponent;
@@ -169,6 +170,7 @@ describe('ChatInterfaceComponent', () => {
         MatDialogModule,
         MatSnackBarModule,
         MarkdownModule.forRoot(),
+        ApprovalGateComponent,
       ],
       providers: [
         {provide: AgentChatService, useValue: mockAgentChatService},
@@ -1126,6 +1128,169 @@ describe('ChatInterfaceComponent', () => {
     it('should call stopPolling on onAgentChange', () => {
       component.onAgentChange('script_writer');
       expect(agentChatService.stopPolling).toHaveBeenCalled();
+    });
+  });
+
+  describe('Approval Gate Checkpoints', () => {
+    it('should detect approval gate function calls from stream event', () => {
+      const event = {
+        content: {
+          parts: [
+            {
+              functionCall: {
+                id: 'call_999',
+                name: 'await_strategy_approval',
+              },
+            },
+          ],
+        },
+      };
+      const gate = component['extractGateFromEvent'](event);
+      expect(gate).toBeTruthy();
+      expect(gate?.callId).toBe('call_999');
+      expect(gate?.toolName).toBe('await_strategy_approval');
+      expect(gate?.stage).toBe('strategy');
+    });
+
+    it('should detect unresolved gate in session events', () => {
+      const events = [
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  id: 'call_sb_1',
+                  name: 'await_storyboard_approval',
+                },
+              },
+            ],
+          },
+        },
+      ];
+      const gate = component['checkUnresolvedGate'](events);
+      expect(gate).toBeTruthy();
+      expect(gate?.callId).toBe('call_sb_1');
+      expect(gate?.stage).toBe('storyboard');
+    });
+
+    it('should ignore gate if already resolved by user function response', () => {
+      const events = [
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  id: 'call_sb_1',
+                  name: 'await_storyboard_approval',
+                },
+              },
+            ],
+          },
+        },
+        {
+          author: 'user',
+          content: {
+            parts: [
+              {
+                functionResponse: {
+                  id: 'call_sb_1',
+                  name: 'await_storyboard_approval',
+                },
+              },
+            ],
+          },
+        },
+      ];
+      const gate = component['checkUnresolvedGate'](events);
+      expect(gate).toBeNull();
+    });
+
+    it('should extract payload from functionResponse event', () => {
+      const event = {
+        content: {
+          parts: [
+            {
+              functionResponse: {
+                id: 'call_999',
+                name: 'await_strategy_approval',
+                response: {
+                  result: JSON.stringify({
+                    status: 'awaiting_human_review',
+                    stage: 'strategy',
+                    message: 'Please review the strategy before proceeding.',
+                  }),
+                },
+              },
+            },
+          ],
+        },
+      };
+      const gate = component['extractGateFromEvent'](event);
+      expect(gate).toBeTruthy();
+      expect(gate?.toolName).toBe('await_strategy_approval');
+      expect(gate?.payload?.message).toBe(
+        'Please review the strategy before proceeding.',
+      );
+    });
+
+    it('should drive visibleApprovalGate directly from activeApprovalGate', () => {
+      expect(component.visibleApprovalGate()).toBeNull();
+
+      component.activeApprovalGate.set({
+        callId: 'call_123',
+        toolName: 'await_strategy_approval',
+        stage: 'strategy',
+        payload: {
+          message: 'Check the campaign brief',
+        },
+      });
+
+      expect(component.visibleApprovalGate()).toEqual({
+        callId: 'call_123',
+        toolName: 'await_strategy_approval',
+        stage: 'strategy',
+        payload: {
+          message: 'Check the campaign brief',
+        },
+      });
+    });
+
+    it('should send function_response when handleGateDecision is called', () => {
+      component.currentSessionId = 'sess-123';
+      component.activeApprovalGate.set({
+        callId: 'call_gate_1',
+        toolName: 'await_storyboard_approval',
+        stage: 'storyboard',
+      });
+      agentChatService.sendMessage = jasmine
+        .createSpy('sendMessage')
+        .and.returnValue(Promise.resolve());
+
+      component.handleGateDecision({
+        decision: 'modify',
+        guidance: 'Make scene 1 shorter',
+      });
+
+      expect(component.activeApprovalGate()).toBeNull();
+      expect(agentChatService.sendMessage).toHaveBeenCalledWith(
+        'sess-123',
+        [
+          {
+            function_response: {
+              id: 'call_gate_1',
+              name: 'await_storyboard_approval',
+              response: {
+                decision: 'modify',
+                guidance: 'Make scene 1 shorter',
+              },
+            },
+          },
+        ],
+        1,
+        jasmine.any(Object),
+      );
     });
   });
 });
