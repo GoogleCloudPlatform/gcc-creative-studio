@@ -129,3 +129,14 @@ variable "db_secret_id" {
 }
 variable "db_name" { type = string }
 variable "db_user" { type = string }
+
+variable "vpc_network_id" {
+  description = "The ID of the VPC network"
+  type        = string
+}
+
+variable "vpc_subnetwork_id" {
+  description = "The ID of the subnetwork"
+  type        = string
+}
+
