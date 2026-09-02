@@ -95,7 +95,7 @@ class ConfigService(BaseSettings):
     ADMIN_USER_EMAIL: str = "system"
 
     # --- Workflows ---
-    WORKFLOWS_LOCATION: str = "us-central1"
+    WORKFLOWS_LOCATION: str = "asia-southeast1"
     WORKFLOWS_EXECUTOR_URL: str = (
         "http://localhost:8080"  # This service could be deployed alone in the future
     )
