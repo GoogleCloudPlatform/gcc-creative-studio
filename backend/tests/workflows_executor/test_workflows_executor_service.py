@@ -674,6 +674,66 @@ async def test_execute_image_edit_mode(service):
 
 
 @pytest.mark.anyio
+async def test_execute_image_generate_mode_auto_aspect_ratio_fallback(service):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "A futuristic city"
+    request.config.mode = "generate_image"
+    request.config.model = "gemini-3.1-flash-image"
+    request.config.aspect_ratio = "auto"
+    request.config.brand_guidelines = False
+    request.config.resolution = "2K"
+
+    with patch.object(
+        service,
+        "_generate_image",
+        AsyncMock(return_value=112),
+    ) as mock_gen:
+        result = await service.execute_image(request)
+        assert result == {"generated_image": 112}
+        mock_gen.assert_called_once_with(
+            workspace_id=1,
+            prompt="A futuristic city",
+            model="gemini-3.1-flash-image",
+            aspect_ratio="1:1",
+            brand_guidelines=False,
+            resolution="2K",
+            authorization=None,
+        )
+
+
+@pytest.mark.anyio
+async def test_execute_image_edit_mode_auto_aspect_ratio_preserved(service):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "Add fireworks"
+    request.inputs.input_images = [10]
+    request.config.mode = "edit_image"
+    request.config.model = "gemini-3.1-flash-image"
+    request.config.aspect_ratio = "auto"
+    request.config.brand_guidelines = False
+    request.config.resolution = "4K"
+
+    with patch.object(
+        service,
+        "_edit_image",
+        AsyncMock(return_value=223),
+    ) as mock_edit:
+        result = await service.execute_image(request)
+        assert result == {"generated_image": 223}
+        mock_edit.assert_called_once_with(
+            workspace_id=1,
+            prompt="Add fireworks",
+            input_images=[10],
+            model="gemini-3.1-flash-image",
+            aspect_ratio="auto",
+            brand_guidelines=False,
+            resolution="4K",
+            authorization=None,
+        )
+
+
+@pytest.mark.anyio
 async def test_execute_image_upscale_mode(service):
     request = MagicMock()
     request.workspace_id = 1

@@ -138,6 +138,17 @@ export const IMAGE_STEP_CONFIG: StepConfig = {
       defaultValue: '1:1',
     },
     {
+      name: 'resolution',
+      label: 'Resolution',
+      type: 'select',
+      options: [
+        {value: '1K', label: '1K'},
+        {value: '2K', label: '2K'},
+        {value: '4K', label: '4K'},
+      ],
+      defaultValue: '1K',
+    },
+    {
       name: 'brand_guidelines',
       label: 'Use Brand Guidelines',
       type: 'checkbox',

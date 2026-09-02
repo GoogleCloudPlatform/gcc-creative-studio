@@ -26,7 +26,9 @@ import {
 import {FormBuilder, FormGroup, Validators} from '@angular/forms';
 import {Subscription} from 'rxjs';
 import {
+  ASPECT_RATIO_AUTO,
   ASPECT_RATIO_LABELS,
+  ASPECT_RATIO_SQUARE,
   MODEL_CONFIGS,
   isGeminiOmniModel,
 } from '../../../../common/config/model-config';
@@ -396,26 +398,71 @@ export class GenericStepComponent implements OnInit, OnChanges {
         s => s.name === 'aspect_ratio',
       );
       if (aspectRatioSetting) {
+        const isImageStep = this.localConfig.type === 'image';
+        const currentMode = this.stepForm.get('settings.mode')?.value;
+        const isEditImage = currentMode === 'edit_image';
+
         // Generate options dynamically using ASPECT_RATIO_LABELS
         aspectRatioSetting.options = modelMeta.supportedAspectRatios.map(
           ratio => ({
             value: ratio,
             label: ASPECT_RATIO_LABELS[ratio] || ratio,
+            disabled:
+              isImageStep && ratio === ASPECT_RATIO_AUTO && !isEditImage,
           }),
         );
 
-        // Reset value if current value is invalid
+        // Reset value if current value is invalid or disabled
         const currentAspectRatio = this.stepForm.get(
           'settings.aspect_ratio',
         )?.value;
+        const currentOption = aspectRatioSetting.options.find(
+          o => o.value === currentAspectRatio,
+        );
         if (
-          currentAspectRatio &&
+          !currentOption ||
+          currentOption.disabled ||
           !modelMeta.supportedAspectRatios.includes(currentAspectRatio)
         ) {
-          // Set to first available option
-          const firstOption = aspectRatioSetting.options?.[0]?.value;
-          if (firstOption) {
-            this.stepForm.get('settings.aspect_ratio')?.setValue(firstOption);
+          // Set to 1:1 if available and not disabled, else first available enabled option
+          const fallbackOption =
+            aspectRatioSetting.options.find(o => !o.disabled)?.value ||
+            ASPECT_RATIO_SQUARE;
+          if (fallbackOption) {
+            this.stepForm
+              .get('settings.aspect_ratio')
+              ?.setValue(fallbackOption);
+          }
+        }
+      }
+    }
+
+    // Update Resolution options
+    if (modelMeta.supportedResolutions) {
+      const resolutionSetting = this.localConfig.settings.find(
+        s => s.name === 'resolution',
+      );
+      if (resolutionSetting) {
+        if (modelMeta.supportedResolutions.length > 0) {
+          resolutionSetting.options = modelMeta.supportedResolutions.map(
+            res => ({
+              value: res,
+              label: res,
+            }),
+          );
+
+          // Reset value if current value is invalid
+          const currentResolution = this.stepForm.get(
+            'settings.resolution',
+          )?.value;
+          if (
+            currentResolution &&
+            !modelMeta.supportedResolutions.includes(currentResolution)
+          ) {
+            const firstOption = resolutionSetting.options?.[0]?.value;
+            if (firstOption) {
+              this.stepForm.get('settings.resolution')?.setValue(firstOption);
+            }
           }
         }
       }
@@ -622,6 +669,7 @@ export class GenericStepComponent implements OnInit, OnChanges {
       mode: true,
       model: mode === 'generate_image' || mode === 'edit_image',
       aspect_ratio: mode === 'generate_image' || mode === 'edit_image',
+      resolution: mode === 'generate_image' || mode === 'edit_image',
       brand_guidelines: mode === 'generate_image' || mode === 'edit_image',
       upscale_factor: mode === 'upscale_image',
       enhance_input_image: mode === 'upscale_image',
@@ -660,6 +708,35 @@ export class GenericStepComponent implements OnInit, OnChanges {
         setting.hidden = !settingVisibility[setting.name];
       }
     });
+
+    // Update aspect ratio 'auto' option enabled state based on mode
+    if (this.localConfig?.type === 'image') {
+      const aspectRatioSetting = this.localConfig.settings.find(
+        s => s.name === 'aspect_ratio',
+      );
+      const isEditImage = mode === 'edit_image';
+      if (aspectRatioSetting?.options) {
+        aspectRatioSetting.options.forEach(opt => {
+          if (opt.value === ASPECT_RATIO_AUTO) {
+            opt.disabled = !isEditImage;
+          }
+        });
+
+        // If aspect_ratio was set to 'auto' but current mode is not 'edit_image', reset to '1:1'
+        const currentAspectRatio = this.stepForm.get(
+          'settings.aspect_ratio',
+        )?.value;
+        const isCurrentDisabled =
+          aspectRatioSetting.options.find(o => o.value === currentAspectRatio)
+            ?.disabled === true;
+        if (isCurrentDisabled) {
+          const fallbackOption =
+            aspectRatioSetting.options.find(o => !o.disabled)?.value ||
+            ASPECT_RATIO_SQUARE;
+          this.stepForm.get('settings.aspect_ratio')?.setValue(fallbackOption);
+        }
+      }
+    }
 
     this.updateCompatibleOutputs();
   }

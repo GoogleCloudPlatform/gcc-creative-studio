@@ -90,6 +90,7 @@
           <mat-option
             *ngFor="let option of modeSetting.options"
             [value]="option.value"
+            [disabled]="!!option.disabled"
           >
             {{ option.label }}
           </mat-option>
@@ -269,6 +270,7 @@
                 <mat-option
                   *ngFor="let option of setting.options"
                   [value]="option.value"
+                  [disabled]="!!option.disabled"
                   >{{ option.label }}</mat-option
                 >
               </mat-select>

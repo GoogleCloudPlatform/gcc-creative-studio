@@ -796,11 +796,14 @@ class WorkflowsExecutorService:
                     status_code=400,
                     detail="Prompt is required for Text to Image generation",
                 )
+            aspect_ratio = request.config.aspect_ratio or "1:1"
+            if aspect_ratio == "auto":
+                aspect_ratio = "1:1"
             image_id = await self._generate_image(
                 workspace_id=request.workspace_id,
                 prompt=request.inputs.prompt,
                 model=request.config.model or "gemini-3.1-flash-image",
-                aspect_ratio=request.config.aspect_ratio or "1:1",
+                aspect_ratio=aspect_ratio,
                 brand_guidelines=request.config.brand_guidelines,
                 resolution=request.config.resolution or "1K",
                 authorization=authorization,

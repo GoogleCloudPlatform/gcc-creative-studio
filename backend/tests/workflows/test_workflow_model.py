@@ -65,6 +65,27 @@ def test_image_step_edit_mode():
     assert step.inputs.input_images == 123
     assert step.settings.mode == "edit_image"
     assert step.settings.aspect_ratio == "16:9"
+    assert step.settings.resolution == "1K"
+
+
+def test_image_step_auto_aspect_ratio_and_resolution():
+    """Verify ImageStep configuration with auto aspect ratio and custom resolution."""
+    step = ImageStep(
+        step_id="step_auto_1",
+        inputs=ImageInputs(
+            prompt="Make the background dynamic",
+            input_images=123,
+        ),
+        settings=ImageSettings(
+            mode="edit_image",
+            aspect_ratio="auto",
+            resolution="4K",
+        ),
+    )
+    assert step.type == NodeTypes.IMAGE
+    assert step.settings.mode == "edit_image"
+    assert step.settings.aspect_ratio == "auto"
+    assert step.settings.resolution == "4K"
 
 
 def test_image_step_upscale_mode():
