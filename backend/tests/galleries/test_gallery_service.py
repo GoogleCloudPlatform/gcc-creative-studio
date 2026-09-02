@@ -51,6 +51,7 @@ def fixture_service():
     mock_imagen_service = AsyncMock()
     mock_gcs_service = MagicMock()
     mock_tags_repo = AsyncMock()
+    mock_folder_repo = AsyncMock()
 
     service = GalleryService(
         media_repo=mock_media_repo,
@@ -63,6 +64,7 @@ def fixture_service():
         imagen_service=mock_imagen_service,
         gcs_service=mock_gcs_service,
         tags_repo=mock_tags_repo,
+        folder_repo=mock_folder_repo,
     )
 
     # Attach mocks for ease of use in tests
@@ -75,6 +77,7 @@ def fixture_service():
     service.mock_workspace_auth = mock_workspace_auth
     service.mock_gcs_service = mock_gcs_service
     service.mock_tags_repo = mock_tags_repo
+    service.mock_folder_repo = mock_folder_repo
 
     return service
 
@@ -171,6 +174,81 @@ async def test_get_paginated_gallery_regular_user(service):
 
 
 @pytest.mark.anyio
+async def test_get_paginated_gallery_with_folder_id_success(service):
+    current_user = UserModel(
+        id=2,
+        email="user@test.com",
+        name="User",
+        roles=[UserRoleEnum.USER],
+    )
+    search_dto = GallerySearchDto(
+        workspace_id=1, folder_id=10, limit=10, offset=0
+    )
+
+    mock_folder = MagicMock()
+    mock_folder.id = 10
+    mock_folder.workspace_id = 1
+    mock_folder.name = "Folder 10"
+    service.mock_folder_repo.get_folder_by_id.return_value = mock_folder
+
+    mock_query_result = MagicMock()
+    mock_query_result.data = []
+    mock_query_result.count = 0
+    mock_query_result.page = 1
+    mock_query_result.page_size = 10
+    mock_query_result.total_pages = 0
+    service.mock_unified_gallery_repo.query.return_value = mock_query_result
+
+    res = await service.get_paginated_gallery(search_dto, current_user)
+    assert res.count == 0
+
+
+@pytest.mark.anyio
+async def test_get_paginated_gallery_with_folder_id_not_found(service):
+    current_user = UserModel(
+        id=2,
+        email="user@test.com",
+        name="User",
+        roles=[UserRoleEnum.USER],
+    )
+    search_dto = GallerySearchDto(
+        workspace_id=1, folder_id=999, limit=10, offset=0
+    )
+
+    service.mock_folder_repo.get_folder_by_id.return_value = None
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.get_paginated_gallery(search_dto, current_user)
+    assert exc_info.value.status_code == 404
+    assert "not found in this workspace" in exc_info.value.detail
+
+
+@pytest.mark.anyio
+async def test_get_paginated_gallery_with_folder_id_workspace_mismatch(service):
+    current_user = UserModel(
+        id=2,
+        email="user@test.com",
+        name="User",
+        roles=[UserRoleEnum.USER],
+    )
+    search_dto = GallerySearchDto(
+        workspace_id=1, folder_id=10, limit=10, offset=0
+    )
+
+    # Folder belongs to workspace 2 instead of workspace 1
+    mock_folder = MagicMock()
+    mock_folder.id = 10
+    mock_folder.workspace_id = 2
+    mock_folder.name = "Folder in WS2"
+    service.mock_folder_repo.get_folder_by_id.return_value = mock_folder
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.get_paginated_gallery(search_dto, current_user)
+    assert exc_info.value.status_code == 404
+    assert "not found in this workspace" in exc_info.value.detail
+
+
+@pytest.mark.anyio
 async def test_get_media_by_id_success(service):
     current_user = UserModel(
         id=1,
@@ -254,6 +332,7 @@ async def test_bulk_copy_success(service):
     class DummyMedia(BaseModel):
         id: int
         workspace_id: int
+        folder_id: int | None = None
         user_id: int
         user_email: str
         gcs_uris: list
@@ -272,6 +351,7 @@ async def test_bulk_copy_success(service):
     mock_media = DummyMedia(
         id=1,
         workspace_id=99,
+        folder_id=12,
         user_id=1,
         user_email="user@test.com",
         gcs_uris=[],
@@ -285,6 +365,7 @@ async def test_bulk_copy_success(service):
     service.mock_media_repo.create.assert_called_once()
     args, kwargs = service.mock_media_repo.create.call_args
     assert args[0]["workspace_id"] == 88
+    assert "folder_id" not in args[0]
 
 
 @pytest.mark.anyio
@@ -448,6 +529,7 @@ async def test_bulk_copy_source_asset(service):
     asset = SourceAssetModel(
         id=5,
         workspace_id=99,
+        folder_id=15,
         user_id=1,
         gcs_uri="gs://b",
         original_filename="a",
@@ -461,6 +543,9 @@ async def test_bulk_copy_source_asset(service):
     result = await service.bulk_copy(bulk_dto, current_user)
     assert result["copied_count"] == 1
     service.mock_source_asset_repo.create.assert_called_once()
+    args, kwargs = service.mock_source_asset_repo.create.call_args
+    assert args[0]["workspace_id"] == 88
+    assert "folder_id" not in args[0]
 
 
 @pytest.mark.anyio
@@ -636,3 +721,203 @@ def test_unified_gallery_item_response_none_gcs_uris_filter():
     item = UnifiedGalleryItemResponse.model_validate(raw_data)
     assert item.gcs_uris == []
     assert item.thumbnail_uris == []
+
+
+@pytest.mark.anyio
+async def test_bulk_move_media_item_success(service):
+    from pydantic import BaseModel
+
+    from src.galleries.dto.bulk_move_dto import BulkMoveDto, BulkMoveItemDto
+
+    class DummyMedia(BaseModel):
+        id: int
+        workspace_id: int
+        folder_id: int | None = None
+        user_id: int
+        user_email: str
+        gcs_uris: list
+
+    bulk_dto = BulkMoveDto(
+        target_workspace_id=88,
+        items=[BulkMoveItemDto(id=1, type="media_item")],
+    )
+    current_user = UserModel(
+        id=1,
+        email="user@test.com",
+        name="User",
+        roles=[UserRoleEnum.USER],
+    )
+
+    mock_media = DummyMedia(
+        id=1,
+        workspace_id=99,
+        folder_id=12,
+        user_id=1,
+        user_email="user@test.com",
+        gcs_uris=[],
+    )
+    service.mock_media_repo.get_by_id.return_value = mock_media
+
+    result = await service.bulk_move(bulk_dto, current_user)
+
+    assert result["moved_count"] == 1
+    service.mock_media_repo.update.assert_called_once_with(
+        1, {"workspace_id": 88, "folder_id": None}
+    )
+
+
+@pytest.mark.anyio
+async def test_bulk_move_source_asset_success(service):
+    from src.galleries.dto.bulk_move_dto import BulkMoveDto, BulkMoveItemDto
+    from src.source_assets.schema.source_asset_model import (
+        AssetScopeEnum,
+        AssetTypeEnum,
+        SourceAssetModel,
+    )
+
+    bulk_dto = BulkMoveDto(
+        target_workspace_id=88,
+        items=[BulkMoveItemDto(id=5, type="source_asset")],
+    )
+    current_user = UserModel(
+        id=1,
+        email="user@test.com",
+        name="User",
+        roles=[UserRoleEnum.USER],
+    )
+
+    asset = SourceAssetModel(
+        id=5,
+        workspace_id=99,
+        folder_id=15,
+        user_id=1,
+        gcs_uri="gs://b",
+        original_filename="a",
+        file_hash="h",
+        scope=AssetScopeEnum.PRIVATE,
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+        asset_type=AssetTypeEnum.GENERIC_IMAGE,
+    )
+    service.mock_source_asset_repo.get_by_id.return_value = asset
+
+    result = await service.bulk_move(bulk_dto, current_user)
+    assert result["moved_count"] == 1
+    service.mock_source_asset_repo.update.assert_called_once_with(
+        5, {"workspace_id": 88, "folder_id": None}
+    )
+
+
+@pytest.mark.anyio
+async def test_bulk_move_folder_success(service):
+    from pydantic import BaseModel
+    from src.galleries.dto.bulk_move_dto import BulkMoveDto, BulkMoveItemDto
+
+    class DummyFolder(BaseModel):
+        id: int
+        workspace_id: int
+        name: str
+
+    bulk_dto = BulkMoveDto(
+        target_workspace_id=88,
+        items=[BulkMoveItemDto(id=10, type="folder")],
+    )
+    current_user = UserModel(
+        id=1,
+        email="user@test.com",
+        name="User",
+        roles=[UserRoleEnum.USER],
+    )
+
+    folder = DummyFolder(id=10, workspace_id=99, name="Campaigns")
+    service.mock_folder_repo.get_folder_by_id.return_value = folder
+    service.mock_folder_repo.move_folder_to_workspace.return_value = {
+        "folders_moved": 2,
+        "media_moved": 3,
+        "assets_moved": 1,
+    }
+
+    result = await service.bulk_move(bulk_dto, current_user)
+    assert result["moved_count"] == 1
+    service.mock_workspace_auth.authorize.assert_any_call(
+        workspace_id=88, user=current_user
+    )
+    service.mock_workspace_auth.authorize.assert_any_call(
+        workspace_id=99, user=current_user
+    )
+    service.mock_folder_repo.move_folder_to_workspace.assert_called_once_with(
+        folder_id=10, target_workspace_id=88
+    )
+
+
+@pytest.mark.anyio
+async def test_bulk_move_folder_same_workspace(service):
+    from pydantic import BaseModel
+    from src.galleries.dto.bulk_move_dto import BulkMoveDto, BulkMoveItemDto
+
+    class DummyFolder(BaseModel):
+        id: int
+        workspace_id: int
+        name: str
+
+    bulk_dto = BulkMoveDto(
+        target_workspace_id=88,
+        items=[BulkMoveItemDto(id=10, type="folder")],
+    )
+    current_user = UserModel(
+        id=1,
+        email="user@test.com",
+        name="User",
+        roles=[UserRoleEnum.USER],
+    )
+
+    folder = DummyFolder(id=10, workspace_id=88, name="Campaigns")
+    service.mock_folder_repo.get_folder_by_id.return_value = folder
+
+    result = await service.bulk_move(bulk_dto, current_user)
+    assert result["moved_count"] == 0
+    service.mock_folder_repo.move_folder_to_workspace.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_bulk_copy_folder_success(service):
+    from pydantic import BaseModel
+    from src.galleries.dto.bulk_copy_dto import BulkCopyDto, BulkCopyItemDto
+
+    class DummyFolder(BaseModel):
+        id: int
+        workspace_id: int
+        name: str
+
+    bulk_dto = BulkCopyDto(
+        target_workspace_id=88,
+        items=[BulkCopyItemDto(id=10, type="folder")],
+    )
+    current_user = UserModel(
+        id=1,
+        email="user@test.com",
+        name="User",
+        roles=[UserRoleEnum.USER],
+    )
+
+    folder = DummyFolder(id=10, workspace_id=99, name="Campaigns")
+    service.mock_folder_repo.get_folder_by_id.return_value = folder
+    service.mock_folder_repo.copy_folder_to_workspace.return_value = {
+        "folders_copied": 2,
+        "media_copied": 3,
+        "assets_copied": 1,
+    }
+
+    result = await service.bulk_copy(bulk_dto, current_user)
+    assert result["copied_count"] == 1
+    service.mock_workspace_auth.authorize.assert_any_call(
+        workspace_id=88, user=current_user
+    )
+    service.mock_workspace_auth.authorize.assert_any_call(
+        workspace_id=99, user=current_user
+    )
+    service.mock_folder_repo.copy_folder_to_workspace.assert_called_once_with(
+        folder_id=10,
+        target_workspace_id=88,
+        user_id=1,
+        user_email="user@test.com",
+    )
