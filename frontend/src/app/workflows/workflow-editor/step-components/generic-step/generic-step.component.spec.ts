@@ -86,6 +86,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         mode: ['generate_image'],
         model: ['gemini-3.1-flash-image'],
         aspect_ratio: ['1:1'],
+        resolution: ['1K'],
         brand_guidelines: [false],
         upscale_factor: ['x2'],
         enhance_input_image: [false],
@@ -1155,6 +1156,89 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         expect(component.inputModes['var_fixed']).toBe('fixed');
         expect(component.inputModes['var_linked']).toBe('linked');
       });
+    });
+  });
+
+  describe('Image node resolution and aspect ratio features', () => {
+    it('should include auto in aspect ratio options, disabled in generate_image and enabled in edit_image mode', () => {
+      const aspectRatioSetting = component.localConfig.settings.find(
+        s => s.name === 'aspect_ratio',
+      );
+      expect(aspectRatioSetting).toBeDefined();
+      const autoOption = aspectRatioSetting?.options?.find(
+        o => o.value === 'auto',
+      );
+      expect(autoOption).toBeDefined();
+      expect(autoOption?.label).toBe('Auto (Dynamic)');
+
+      // Default mode is generate_image -> auto must be disabled
+      expect(autoOption?.disabled).toBeTrue();
+
+      // Switch to edit_image ("Edit Image / Inpainting") -> auto must be enabled
+      component.stepForm.get('settings.mode')?.setValue('edit_image');
+      fixture.detectChanges();
+      expect(autoOption?.disabled).toBeFalse();
+
+      // Set aspect_ratio to auto in edit_image mode
+      component.stepForm.get('settings.aspect_ratio')?.setValue('auto');
+      expect(component.stepForm.get('settings.aspect_ratio')?.value).toBe(
+        'auto',
+      );
+
+      // Switch back to generate_image -> auto must become disabled and reset to 1:1
+      component.stepForm.get('settings.mode')?.setValue('generate_image');
+      fixture.detectChanges();
+      expect(autoOption?.disabled).toBeTrue();
+      expect(component.stepForm.get('settings.aspect_ratio')?.value).toBe(
+        '1:1',
+      );
+    });
+
+    it('should have resolution setting visible in generate_image and edit_image modes, and hidden in upscale/vto', () => {
+      const resolutionSetting = component.localConfig.settings.find(
+        s => s.name === 'resolution',
+      );
+      expect(resolutionSetting).toBeDefined();
+
+      // Default mode is generate_image
+      expect(resolutionSetting?.hidden).toBeFalse();
+
+      // Switch to edit_image
+      component.stepForm.get('settings.mode')?.setValue('edit_image');
+      expect(resolutionSetting?.hidden).toBeFalse();
+
+      // Switch to upscale_image
+      component.stepForm.get('settings.mode')?.setValue('upscale_image');
+      expect(resolutionSetting?.hidden).toBeTrue();
+
+      // Switch to virtual_try_on
+      component.stepForm.get('settings.mode')?.setValue('virtual_try_on');
+      expect(resolutionSetting?.hidden).toBeTrue();
+    });
+
+    it('should update resolution options based on model capabilities and reset if invalid', () => {
+      // Default model is gemini-3.1-flash-image which supports 1K, 2K, 4K
+      const resolutionSetting = component.localConfig.settings.find(
+        s => s.name === 'resolution',
+      );
+      expect(resolutionSetting?.options?.map(o => o.value)).toEqual([
+        '1K',
+        '2K',
+        '4K',
+      ]);
+
+      // Set resolution to 4K
+      component.stepForm.get('settings.resolution')?.setValue('4K');
+      expect(component.stepForm.get('settings.resolution')?.value).toBe('4K');
+
+      // Change model to gemini-3.1-flash-lite-image which only supports 1K
+      component.stepForm
+        .get('settings.model')
+        ?.setValue('gemini-3.1-flash-lite-image');
+
+      expect(resolutionSetting?.options?.map(o => o.value)).toEqual(['1K']);
+      // Should automatically reset to first option (1K) since 4K is not supported
+      expect(component.stepForm.get('settings.resolution')?.value).toBe('1K');
     });
   });
 });

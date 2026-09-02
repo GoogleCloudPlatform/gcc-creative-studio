@@ -422,6 +422,7 @@ export class WorkflowFormService {
         mode: 'generate_image',
         model: 'gemini-3.1-flash-image',
         aspect_ratio: '1:1',
+        resolution: '1K',
         brand_guidelines: false,
       };
     }
