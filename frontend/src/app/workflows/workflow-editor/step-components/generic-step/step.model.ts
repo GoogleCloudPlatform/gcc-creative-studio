@@ -14,11 +14,17 @@
  * limitations under the License.
  */
 
+interface Option {
+  value: string | number;
+  label: string;
+  disabled?: boolean;
+}
+
 export interface StepInput {
   name: string;
   label: string;
   type: 'text' | 'textarea' | 'select' | 'image' | 'video' | 'audio';
-  options?: {value: string | number; label: string}[];
+  options?: Option[];
   required: boolean;
   hidden?: boolean;
   isVariable?: boolean;
@@ -28,7 +34,7 @@ export interface StepSetting {
   name: string;
   label: string;
   type: 'text' | 'textarea' | 'select' | 'checkbox' | 'slider' | 'radio';
-  options?: {value: string | number; label: string}[];
+  options?: Option[];
   defaultValue: any;
   hidden?: boolean;
   min?: number;
