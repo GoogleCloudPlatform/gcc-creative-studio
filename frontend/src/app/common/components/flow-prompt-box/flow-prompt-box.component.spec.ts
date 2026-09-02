@@ -148,12 +148,12 @@ describe('FlowPromptBoxComponent', () => {
       expect(component.hasDurationOptions()).toBeTrue();
     });
 
-    it('should return only the longest duration (10s) for Gemini Omni 1.1 Flash in Ingredients to Video mode', () => {
+    it('should support [4, 6, 8, 10] durations for Gemini Omni 1.1 Flash in Ingredients to Video mode', () => {
       component.selectedGenerationModel = geminiOmni.viewValue;
       component.mode = 'Ingredients to Video';
 
       const durations = component.getSelectedModelDurations();
-      expect(durations).toEqual([10]);
+      expect(durations).toEqual([4, 6, 8, 10]);
     });
 
     it('should identify omni models correctly with isOmniModel', () => {
@@ -175,6 +175,55 @@ describe('FlowPromptBoxComponent', () => {
       component.selectDuration(10);
       expect(component.selectedDuration()).toBe(10);
       expect(component.durationChanged.emit).toHaveBeenCalledWith(10);
+    });
+  });
+
+  describe('Video to Image / Video Reference Support', () => {
+    const nanoBanana2 = MODEL_CONFIGS.find(
+      m => m.value === 'gemini-3.1-flash-image',
+    )!;
+    const unsupportedModel = {
+      value: 'unsupported-image-model',
+      viewValue: 'Unsupported Image Model',
+      type: 'IMAGE' as const,
+      capabilities: {
+        supportedModes: ['Text to Image' as const],
+        maxReferenceImages: 0,
+        supportedAspectRatios: ['1:1'],
+        supportedResolutions: ['1K' as const],
+        supportedDurations: [],
+        supportsVideoReference: false,
+      },
+    };
+
+    beforeEach(() => {
+      component.generationModels = [...MODEL_CONFIGS, unsupportedModel];
+    });
+
+    it('should allow selecting models with supportsVideoReference in Video to Image mode', () => {
+      component.mode = 'Video to Image';
+      spyOn(component.modelSelected, 'emit');
+
+      component.selectInternalModel(nanoBanana2);
+      expect(component.modelSelected.emit).toHaveBeenCalledWith(nanoBanana2);
+    });
+
+    it('should prevent selecting models without supportsVideoReference in Video to Image mode', () => {
+      component.mode = 'Video to Image';
+      spyOn(component.modelSelected, 'emit');
+
+      component.selectInternalModel(unsupportedModel);
+      expect(component.modelSelected.emit).not.toHaveBeenCalled();
+    });
+
+    it('should allow selecting models without supportsVideoReference when not in Video to Image mode', () => {
+      component.mode = 'Text to Image';
+      spyOn(component.modelSelected, 'emit');
+
+      component.selectInternalModel(unsupportedModel);
+      expect(component.modelSelected.emit).toHaveBeenCalledWith(
+        unsupportedModel,
+      );
     });
   });
 });
