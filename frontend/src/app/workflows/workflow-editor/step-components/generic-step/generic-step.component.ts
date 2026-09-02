@@ -411,10 +411,45 @@ export class GenericStepComponent implements OnInit, OnChanges {
           currentAspectRatio &&
           !modelMeta.supportedAspectRatios.includes(currentAspectRatio)
         ) {
-          // Set to first available option
-          const firstOption = aspectRatioSetting.options?.[0]?.value;
-          if (firstOption) {
-            this.stepForm.get('settings.aspect_ratio')?.setValue(firstOption);
+          // Set to 1:1 if available, else first available option
+          const fallbackOption =
+            aspectRatioSetting.options?.find(o => o.value === '1:1')?.value ||
+            aspectRatioSetting.options?.[0]?.value;
+          if (fallbackOption) {
+            this.stepForm
+              .get('settings.aspect_ratio')
+              ?.setValue(fallbackOption);
+          }
+        }
+      }
+    }
+
+    // Update Resolution options
+    if (modelMeta.supportedResolutions) {
+      const resolutionSetting = this.localConfig.settings.find(
+        s => s.name === 'resolution',
+      );
+      if (resolutionSetting) {
+        if (modelMeta.supportedResolutions.length > 0) {
+          resolutionSetting.options = modelMeta.supportedResolutions.map(
+            res => ({
+              value: res,
+              label: res,
+            }),
+          );
+
+          // Reset value if current value is invalid
+          const currentResolution = this.stepForm.get(
+            'settings.resolution',
+          )?.value;
+          if (
+            currentResolution &&
+            !modelMeta.supportedResolutions.includes(currentResolution)
+          ) {
+            const firstOption = resolutionSetting.options?.[0]?.value;
+            if (firstOption) {
+              this.stepForm.get('settings.resolution')?.setValue(firstOption);
+            }
           }
         }
       }
@@ -621,6 +656,7 @@ export class GenericStepComponent implements OnInit, OnChanges {
       mode: true,
       model: mode === 'generate_image' || mode === 'edit_image',
       aspect_ratio: mode === 'generate_image' || mode === 'edit_image',
+      resolution: mode === 'generate_image' || mode === 'edit_image',
       brand_guidelines: mode === 'generate_image' || mode === 'edit_image',
       upscale_factor: mode === 'upscale_image',
       enhance_input_image: mode === 'upscale_image',

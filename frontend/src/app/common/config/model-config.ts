@@ -64,6 +64,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportedModes: ['Text to Image', 'Ingredients to Image'],
       maxReferenceImages: 14,
       supportedAspectRatios: [
+        'auto',
         '1:1',
         '16:9',
         '9:16',
@@ -95,6 +96,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportedModes: ['Text to Image', 'Ingredients to Image'],
       maxReferenceImages: 14,
       supportedAspectRatios: [
+        'auto',
         '1:1',
         '16:9',
         '9:16',
@@ -125,6 +127,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportedModes: ['Text to Image', 'Ingredients to Image'],
       maxReferenceImages: 14,
       supportedAspectRatios: [
+        'auto',
         '1:1',
         '16:9',
         '9:16',
@@ -151,6 +154,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportedModes: ['Text to Image', 'Ingredients to Image'],
       maxReferenceImages: 2,
       supportedAspectRatios: [
+        'auto',
         '1:1',
         '16:9',
         '9:16',
@@ -355,6 +359,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
 ];
 
 export const ASPECT_RATIO_LABELS: Record<string, string> = {
+  auto: 'Auto (Dynamic)',
   '1:1': '1:1 (Square)',
   '16:9': '16:9 (Landscape)',
   '9:16': '9:16 (Portrait)',
