@@ -21,3 +21,8 @@ output "db_name" {
 output "db_user" {
   value = google_sql_user.default.name
 }
+
+output "private_ip_address" {
+  value = google_sql_database_instance.default.private_ip_address
+  description = "The private IPv4 address assigned to the Cloud SQL instance"
+}

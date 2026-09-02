@@ -118,6 +118,13 @@ resource "google_cloud_run_v2_service" "this" {
       min_instance_count = var.scaling_min_instances
       max_instance_count = var.scaling_max_instances
     }
+    vpc_access {
+      network_interfaces {
+        network    = var.network_id
+        subnetwork = var.subnetwork_id
+      }
+      egress = "PRIVATE_RANGES_ONLY"
+    }
   }
 
   lifecycle {

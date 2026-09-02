@@ -1,0 +1,242 @@
+From 06c835680c083f4980e32a16e565f4086d76b9e2 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Iv=C3=A1n=20Herrera?= <ivanherrera@google.com>
+Date: Wed, 2 Sep 2026 11:34:55 -0600
+Subject: [PATCH] Necessary changes to allow for private ip connectivity to
+ cloud sql
+
+---
+ backend/alembic/env.py                       |  2 +-
+ backend/src/database.py                      |  4 +-
+ bootstrap.sh                                 |  4 +-
+ infra/modules/cloud-run-service/main.tf      |  7 +++
+ infra/modules/cloud-run-service/variables.tf |  8 ++++
+ infra/modules/platform/main.tf               | 48 ++++++++++++++++++++
+ infra/modules/postgresql/main.tf             |  4 +-
+ infra/modules/postgresql/outputs.tf          |  5 ++
+ infra/modules/postgresql/variables.tf        | 10 ++++
+ 9 files changed, 86 insertions(+), 6 deletions(-)
+
+diff --git a/backend/alembic/env.py b/backend/alembic/env.py
+index 0f98577..a3d7486 100644
+--- a/backend/alembic/env.py
++++ b/backend/alembic/env.py
+@@ -115,7 +115,7 @@ async def alembic_get_connection():
+         user=config_service.DB_USER,
+         password=config_service.DB_PASS,
+         db=config_service.DB_NAME,
+-        ip_type=IPTypes.PUBLIC,
++        ip_type=IPTypes.PRIVATE,
+     )
+     return conn
+ 
+diff --git a/backend/src/database.py b/backend/src/database.py
+index 7666f34..4c58acf 100644
+--- a/backend/src/database.py
++++ b/backend/src/database.py
+@@ -131,7 +131,7 @@ async def get_connection():
+         user=config_service.DB_USER,
+         password=config_service.DB_PASS,
+         db=config_service.DB_NAME,
+-        ip_type=IPTypes.PUBLIC,  # Adjust if using Private IP
++        ip_type=IPTypes.PRIVATE,  # Adjust if using Private IP
+     )
+ 
+     return conn
+@@ -196,7 +196,7 @@ class WorkerDatabase:
+                     user=config_service.DB_USER,
+                     password=config_service.DB_PASS,
+                     db=config_service.DB_NAME,
+-                    ip_type=IPTypes.PUBLIC,
++                    ip_type=IPTypes.PRIVATE,
+                 )
+ 
+             self.engine = create_async_engine(
+diff --git a/bootstrap.sh b/bootstrap.sh
+index 7b9c2f1..ce7af89 100644
+--- a/bootstrap.sh
++++ b/bootstrap.sh
+@@ -157,7 +157,7 @@ start_sql_proxy() {
+     fi
+ 
+     # 3. Start Proxy in Background (Port 5432)
+-    ./cloud-sql-proxy --address 0.0.0.0 --port 5432 "$DB_INSTANCE_NAME" > /dev/null 2>&1 &
++    ./cloud-sql-proxy --private-ip --address 0.0.0.0 --port 5432 "$DB_INSTANCE_NAME" > /dev/null 2>&1 &
+     PROXY_PID=$!
+     export PROXY_PID
+     
+@@ -449,7 +449,7 @@ configure_environment() {
+ 
+ handle_manual_steps() {
+     step 6 "Manual Steps Required"; cd "$REPO_ROOT/infra"; TFVARS_FILE_PATH="$ENV_DIR/$ENV_NAME.tfvars"
+-    info "Enabling required Google Cloud APIs..."; gcloud services enable cloudbuild.googleapis.com secretmanager.googleapis.com firebase.googleapis.com iap.googleapis.com identitytoolkit.googleapis.com texttospeech.googleapis.com workflows.googleapis.com --project="$GCP_PROJECT_ID"
++    info "Enabling required Google Cloud APIs..."; gcloud services enable cloudbuild.googleapis.com secretmanager.googleapis.com firebase.googleapis.com iap.googleapis.com identitytoolkit.googleapis.com texttospeech.googleapis.com workflows.googleapis.com compute.googleapis.com servicenetworking.googleapis.com networkconnectivity.googleapis.com --project="$GCP_PROJECT_ID"
+     if [ -z "$GITHUB_CONN_NAME" ]; then
+         prompt "\nDo you already have a Cloud Build Host Connection for GitHub in this project? (y/n)"; read -r REPLY < /dev/tty
+         if [[ $REPLY =~ ^[Yy]$ ]]; then prompt "Please enter the existing connection name:"; read -p "   Connection Name: " GITHUB_CONN_NAME < /dev/tty
+diff --git a/infra/modules/cloud-run-service/main.tf b/infra/modules/cloud-run-service/main.tf
+index a3c96a0..329a3d7 100644
+--- a/infra/modules/cloud-run-service/main.tf
++++ b/infra/modules/cloud-run-service/main.tf
+@@ -118,6 +118,13 @@ resource "google_cloud_run_v2_service" "this" {
+       min_instance_count = var.scaling_min_instances
+       max_instance_count = var.scaling_max_instances
+     }
++    vpc_access {
++      network_interfaces {
++        network    = var.network_id
++        subnetwork = var.subnetwork_id
++      }
++      egress = "PRIVATE_RANGES_ONLY"
++    }
+   }
+ 
+   lifecycle {
+diff --git a/infra/modules/cloud-run-service/variables.tf b/infra/modules/cloud-run-service/variables.tf
+index 2ae9353..d86e2c3 100644
+--- a/infra/modules/cloud-run-service/variables.tf
++++ b/infra/modules/cloud-run-service/variables.tf
+@@ -129,3 +129,11 @@ variable "db_secret_id" {
+ }
+ variable "db_name" { type = string }
+ variable "db_user" { type = string }
++
++variable "network_id" {
++  type = string
++}
++
++variable "subnetwork_id" {
++  type = string
++}
+diff --git a/infra/modules/platform/main.tf b/infra/modules/platform/main.tf
+index 1c542c4..4ee0f95 100644
+--- a/infra/modules/platform/main.tf
++++ b/infra/modules/platform/main.tf
+@@ -68,6 +68,36 @@ locals {
+   )
+ }
+ 
++# VPC Network
++resource "google_compute_network" "main" {
++  name                    = "cs-network-${var.environment}"
++  auto_create_subnetworks = false
++}
++
++# Subnet for Cloud Run Direct VPC Egress
++resource "google_compute_subnetwork" "main" {
++  name          = "cs-subnet-${var.environment}"
++  ip_cidr_range = "10.0.0.0/24" # Larger range recommended for scaling
++  region        = var.gcp_region
++  network       = google_compute_network.main.id
++}
++
++# Private IP for Cloud SQL
++resource "google_compute_global_address" "private_ip_address" {
++  name          = "cs-sql-private-ip-${var.environment}"
++  purpose       = "VPC_PEERING"
++  address_type  = "INTERNAL"
++  prefix_length = 16
++  network       = google_compute_network.main.id
++}
++
++# VPC Peering Connection
++resource "google_service_networking_connection" "private_vpc_connection" {
++  network                 = google_compute_network.main.id
++  service                 = "servicenetworking.googleapis.com"
++  reserved_peering_ranges = [google_compute_global_address.private_ip_address.name]
++}
++
+ 
+ # --- Cloud Build Repository Connection ---
+ resource "google_cloudbuildv2_repository" "source_repo" {
+@@ -94,6 +124,8 @@ module "postgresql" {
+   
+   # Pass the ACTUAL value to create the user
+   db_password = data.google_secret_manager_secret_version.db_password.secret_data
++  network_id = google_compute_network.main.id
++  private_vpc_connection_id = google_service_networking_connection.private_vpc_connection.id
+ }
+ 
+ # --- Service Module Calls ---
+@@ -132,6 +164,8 @@ module "backend_service" {
+   
+   # Pass the Secret ID reference (NOT the value) for Cloud Run
+   db_secret_id              = "creative-studio-db-password"
++  network_id = google_compute_network.main.id
++  subnetwork_id = google_compute_subnetwork.main.id
+ }
+ 
+ resource "google_firebase_project" "default" {
+@@ -195,3 +229,17 @@ resource "google_cloud_run_v2_service_iam_member" "fe_trigger_can_view_backend"
+   role     = "roles/run.viewer"
+   member   = "serviceAccount:${module.frontend_service.trigger_sa_email}"
+ }
++
++# Firewall rule to allow IAP SSH access to VMs in the private subnet
++resource "google_compute_firewall" "allow_iap_ssh" {
++  name    = "cs-allow-iap-ssh-${var.environment}"
++  network = google_compute_network.main.name
++
++  allow {
++    protocol = "tcp"
++    ports    = ["22"]
++  }
++
++  source_ranges = ["35.235.240.0/20"]
++  description   = "Allow SSH from Identity-Aware Proxy (IAP) to VMs in the VPC"
++}
+diff --git a/infra/modules/postgresql/main.tf b/infra/modules/postgresql/main.tf
+index 2239899..083cdd1 100644
+--- a/infra/modules/postgresql/main.tf
++++ b/infra/modules/postgresql/main.tf
+@@ -21,6 +21,7 @@ resource "google_sql_database_instance" "default" {
+   database_version = "POSTGRES_18" # Latest stable version
+   region           = var.region
+   project          = var.project_id
++  depends_on       = [var.private_vpc_connection_id]
+ 
+   settings {
+     tier = "db-perf-optimized-N-2"
+@@ -32,7 +33,8 @@ resource "google_sql_database_instance" "default" {
+     }
+ 
+     ip_configuration {
+-      ipv4_enabled = true # Easy connectivity from Cloud Run without VPC peering complexity
++      ipv4_enabled    = false
++      private_network = var.network_id
+     }
+   }
+   
+diff --git a/infra/modules/postgresql/outputs.tf b/infra/modules/postgresql/outputs.tf
+index 7d9d368..c94d636 100644
+--- a/infra/modules/postgresql/outputs.tf
++++ b/infra/modules/postgresql/outputs.tf
+@@ -21,3 +21,8 @@ output "db_name" {
+ output "db_user" {
+   value = google_sql_user.default.name
+ }
++
++output "private_ip_address" {
++  value = google_sql_database_instance.default.private_ip_address
++  description = "The private IPv4 address assigned to the Cloud SQL instance"
++}
+diff --git a/infra/modules/postgresql/variables.tf b/infra/modules/postgresql/variables.tf
+index 63c7bdd..abf0d90 100644
+--- a/infra/modules/postgresql/variables.tf
++++ b/infra/modules/postgresql/variables.tf
+@@ -17,3 +17,13 @@ variable "region" {}
+ variable "db_name" { default = "creative_studio" }
+ variable "db_user" { default = "studio_user" }
+ variable "db_password" { sensitive = true }
++
++variable "network_id" {
++  type = string
++  description = "The ID of the VPC network"
++}
++
++variable "private_vpc_connection_id" {
++  type = string
++  description = "Required to enforce dependency on peering"
++}
+-- 
+2.55.0.979.g7e5102b832-goog
+

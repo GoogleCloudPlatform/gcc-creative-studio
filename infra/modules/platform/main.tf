@@ -68,6 +68,36 @@ locals {
   )
 }
 
+# VPC Network
+resource "google_compute_network" "main" {
+  name                    = "cs-network-${var.environment}"
+  auto_create_subnetworks = false
+}
+
+# Subnet for Cloud Run Direct VPC Egress
+resource "google_compute_subnetwork" "main" {
+  name          = "cs-subnet-${var.environment}"
+  ip_cidr_range = "10.0.0.0/24" # Larger range recommended for scaling
+  region        = var.gcp_region
+  network       = google_compute_network.main.id
+}
+
+# Private IP for Cloud SQL
+resource "google_compute_global_address" "private_ip_address" {
+  name          = "cs-sql-private-ip-${var.environment}"
+  purpose       = "VPC_PEERING"
+  address_type  = "INTERNAL"
+  prefix_length = 16
+  network       = google_compute_network.main.id
+}
+
+# VPC Peering Connection
+resource "google_service_networking_connection" "private_vpc_connection" {
+  network                 = google_compute_network.main.id
+  service                 = "servicenetworking.googleapis.com"
+  reserved_peering_ranges = [google_compute_global_address.private_ip_address.name]
+}
+
 
 # --- Cloud Build Repository Connection ---
 resource "google_cloudbuildv2_repository" "source_repo" {
@@ -94,6 +124,8 @@ module "postgresql" {
   
   # Pass the ACTUAL value to create the user
   db_password = data.google_secret_manager_secret_version.db_password.secret_data
+  network_id = google_compute_network.main.id
+  private_vpc_connection_id = google_service_networking_connection.private_vpc_connection.id
 }
 
 # --- Service Module Calls ---
@@ -132,6 +164,8 @@ module "backend_service" {
   
   # Pass the Secret ID reference (NOT the value) for Cloud Run
   db_secret_id              = "creative-studio-db-password"
+  network_id = google_compute_network.main.id
+  subnetwork_id = google_compute_subnetwork.main.id
 }
 
 resource "google_firebase_project" "default" {
@@ -194,4 +228,18 @@ resource "google_cloud_run_v2_service_iam_member" "fe_trigger_can_view_backend" 
   location = module.backend_service.location
   role     = "roles/run.viewer"
   member   = "serviceAccount:${module.frontend_service.trigger_sa_email}"
+}
+
+# Firewall rule to allow IAP SSH access to VMs in the private subnet
+resource "google_compute_firewall" "allow_iap_ssh" {
+  name    = "cs-allow-iap-ssh-${var.environment}"
+  network = google_compute_network.main.name
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+
+  source_ranges = ["35.235.240.0/20"]
+  description   = "Allow SSH from Identity-Aware Proxy (IAP) to VMs in the VPC"
 }
