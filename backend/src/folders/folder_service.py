@@ -227,10 +227,7 @@ class FolderService:
             folder.name = unique_name
         else:
             # Standard Rename (within same parent)
-            if (
-                dto.name is not None
-                and target_name.lower() != folder.name.lower()
-            ):
+            if dto.name is not None and target_name != folder.name:
                 if await self.folder_repo.is_folder_name_taken(
                     workspace_id=folder.workspace_id,
                     parent_id=folder.parent_id,
