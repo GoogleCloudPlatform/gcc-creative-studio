@@ -51,22 +51,22 @@ variable "github_repo_name" { type = string }
 variable "github_branch_name" { type = string }
 
 variable "be_cpu" {
-  type = string
+  type    = string
   default = "2000m"
 }
 
 variable "be_memory" {
-  type = string
+  type    = string
   default = "2048Mi"
 }
 
 variable "fe_cpu" {
-  type = string
+  type    = string
   default = "2000m"
 }
 
 variable "fe_memory" {
-  type = string
+  type    = string
   default = "2048Mi"
 }
 
@@ -86,4 +86,24 @@ variable "backend_runtime_secrets" {
   type        = map(string)
   description = "Secrets to mount in the backend container at runtime."
   default     = {}
+}
+
+# --- Shared VPC (Rain landing zone) ---
+variable "vpc_network" {
+  type    = string
+  default = "projects/rain-net-hub-506515-v2/global/networks/rain-vpc"
+}
+
+variable "vpc_subnetwork" {
+  type    = string
+  default = "projects/rain-net-hub-506515-v2/regions/africa-south1/subnetworks/rain-hub-af-south1"
+}
+
+# --- Cloud Build GitHub triggers (Rain workaround) ---
+# false when the Cloud Build GitHub App has no access to the source repo.
+# The repository + triggers are skipped; images are built and deployed with
+# `gcloud builds submit`, which uploads local source and needs no GitHub link.
+variable "enable_cloudbuild_triggers" {
+  type    = bool
+  default = true
 }

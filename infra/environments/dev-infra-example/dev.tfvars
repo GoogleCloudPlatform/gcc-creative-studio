@@ -1,21 +1,23 @@
-gcp_project_id = "YOUR_GCP_PROJECT_ID"
-gcp_region     = "us-central1"
+gcp_project_id = "rain-frontrunner-wkld-01"
+gcp_region     = "africa-south1" # POPIA residency: gcp.resourceLocations on teams/
 environment    = "development"
 
 # --- Service Names ---
 backend_service_name  = "cstudio-backend-dev"
 frontend_service_name = "cstudio-frontend-dev" # This is the Cloud Run service name
-firebase_site_id      = "YOUR_FIREBASE_SITE_ID" # (Optional) Custom Firebase Hosting Site ID, defaults to the gcp_project_id
+firebase_site_id      = ""                     # empty => defaults to gcp_project_id
 
 # --- GitHub Repo Details ---
-github_conn_name   = "gh-repo-owner-con"
-github_repo_owner  = "RepoOwnerName"
-github_repo_name   = "repo-owner-gcc-creative-studio"
-github_branch_name = "develop"
+# Must match a Cloud Build GitHub connection created in the console first
+# (Cloud Build > Repositories > Connect host). Terraform cannot create it.
+github_conn_name   = "rain-poc-workload-con"
+github_repo_owner  = "rainsouthafrica"
+github_repo_name   = "poc-workload"
+github_branch_name = "main"
 
 # --- Custom Audiences ---
-backend_custom_audiences  = ["YOUR_OAUTH_WEB_CLIENT_ID_HERE", "YOUR_GCP_PROJECT_ID"]
-frontend_custom_audiences = ["YOUR_OAUTH_WEB_CLIENT_ID_HERE", "YOUR_GCP_PROJECT_ID"]
+backend_custom_audiences  = ["678869232430-i4ice1rtf86bsvq1fbc402ejfvpj5aj3.apps.googleusercontent.com", "rain-frontrunner-wkld-01"]
+frontend_custom_audiences = ["678869232430-i4ice1rtf86bsvq1fbc402ejfvpj5aj3.apps.googleusercontent.com", "rain-frontrunner-wkld-01"]
 
 # --- Service-Specific Environment Variables ---
 be_env_vars = {
@@ -23,13 +25,13 @@ be_env_vars = {
     LOG_LEVEL = "INFO"
   }
   development = {
-    ENVIRONMENT  = "development"
-    GOOGLE_TOKEN_AUDIENCE = "YOUR_OAUTH_WEB_CLIENT_ID_HERE"
+    ENVIRONMENT                    = "development"
+    GOOGLE_TOKEN_AUDIENCE          = "678869232430-i4ice1rtf86bsvq1fbc402ejfvpj5aj3.apps.googleusercontent.com"
     IDENTITY_PLATFORM_ALLOWED_ORGS = "" # If empty then any org is allowed
   }
   production = {
-    ENVIRONMENT  = "production"
-    GOOGLE_TOKEN_AUDIENCE = "YOUR_OAUTH_WEB_CLIENT_ID_HERE"
+    ENVIRONMENT                    = "production"
+    GOOGLE_TOKEN_AUDIENCE          = "678869232430-i4ice1rtf86bsvq1fbc402ejfvpj5aj3.apps.googleusercontent.com"
     IDENTITY_PLATFORM_ALLOWED_ORGS = "" # If empty then any org is allowed
   }
 }
@@ -39,14 +41,14 @@ fe_build_substitutions = {
 }
 
 frontend_secrets = [
-  "FIREBASE_API_KEY",          # Your Firebase Web API Key
-  "FIREBASE_AUTH_DOMAIN",      # Your Firebase Auth Domain (e.g., project-id.firebaseapp.com)
-  "FIREBASE_PROJECT_ID",       # Your Firebase Project ID
-  "FIREBASE_STORAGE_BUCKET",   # Your Firebase Storage Bucket (e.g., project-id.appspot.com)
+  "FIREBASE_API_KEY",             # Your Firebase Web API Key
+  "FIREBASE_AUTH_DOMAIN",         # Your Firebase Auth Domain (e.g., project-id.firebaseapp.com)
+  "FIREBASE_PROJECT_ID",          # Your Firebase Project ID
+  "FIREBASE_STORAGE_BUCKET",      # Your Firebase Storage Bucket (e.g., project-id.appspot.com)
   "FIREBASE_MESSAGING_SENDER_ID", # Your Firebase Cloud Messaging Sender ID
-  "FIREBASE_APP_ID",           # Your Firebase Web App ID
-  "FIREBASE_MEASUREMENT_ID",   # Your Google Analytics Measurement ID
-  "GOOGLE_CLIENT_ID",          # Your Google OAuth 2.0 Client ID for web
+  "FIREBASE_APP_ID",              # Your Firebase Web App ID
+  "FIREBASE_MEASUREMENT_ID",      # Your Google Analytics Measurement ID
+  "GOOGLE_CLIENT_ID",             # Your Google OAuth 2.0 Client ID for web
 ]
 
 backend_secrets = [
@@ -72,3 +74,8 @@ apis_to_enable = [
   "texttospeech.googleapis.com",
   "workflows.googleapis.com",
 ]
+
+# Cloud Build GitHub App has no access to rainsouthafrica/poc-workload and we
+# cannot grant it. Skip the repo link + triggers; build and deploy images with
+# `gcloud builds submit` instead. Set back to true once App access is granted.
+enable_cloudbuild_triggers = false

@@ -1,0 +1,74 @@
+# Deploy Creative Studio into rain-frontrunner via Workload Identity Federation.
+#
+# Keyless: GitHub mints a short-lived OIDC token, GCP STS exchanges it, and the
+# deploy SA is impersonated for the job. No service account key exists, which is
+# also required — constraints/iam.disableServiceAccountKeyCreation is enforced
+# on the teams/ folder.
+#
+# The WIF provider trusts THIS repository only (attribute_condition pinned to
+# it in the landing zone). Forking or renaming the repo breaks auth by design.
+name: Deploy Infra
+
+on:
+  pull_request:
+    paths: ["infra/**"]
+  push:
+    branches: [main]
+    paths: ["infra/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  TF_VERSION: "1.9.8"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  # Terraform only auto-loads terraform.tfvars and *.auto.tfvars.
+  # This file is named dev.tfvars, so it must be passed explicitly.
+  TFVARS_FILE: dev.tfvars
+
+  # From `terraform output` on the landing zone:
+  #   workload_wif_provider_name / workload_deploy_sa_email
+  WIF_PROVIDER: projects/678869232430/locations/global/workloadIdentityPools/frontrunner-github/providers/github-oidc
+  DEPLOY_SA: frontrunner-deploy@rain-frontrunner-wkld-01.iam.gserviceaccount.com
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    # Manual runs apply; everything else stops at plan.
+    environment: ${{ github.event_name == 'workflow_dispatch' && 'production' || '' }}
+    defaults:
+      run:
+        working-directory: infra/environments/dev-infra-example
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      # backend.tf still carries the upstream example bucket, so the real one is
+      # injected here. Set repo variable TF_STATE_BUCKET to a GCS bucket in
+      # africa-south1 that DEPLOY_SA can write to.
+      - name: Terraform init
+        run: terraform init -input=false -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+
+      - name: Terraform plan
+        run: terraform plan -input=false -var-file="${{ env.TFVARS_FILE }}" -out=tfplan
+
+      # Plan and apply share one job on purpose. A saved plan stores variable
+      # values in cleartext — db_password included — so it is never uploaded as
+      # an artifact where anyone with repo read access could download it.
+      - name: Terraform apply
+        if: github.event_name == 'workflow_dispatch'
+        run: terraform apply -input=false tfplan

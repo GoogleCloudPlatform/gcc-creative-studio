@@ -29,21 +29,25 @@ provider "google-beta" {
   region  = var.gcp_region
 }
 
-# --- Enable the required Google Cloud APIs ---
-resource "google_project_service" "apis" {
-  # Use a for_each loop to enable each API from the variable list
-  for_each = toset(var.apis_to_enable)
-
-  project = var.gcp_project_id
-  service = each.key
-
-  # This prevents Terraform from disabling APIs when you run `terraform destroy`
-  disable_on_destroy = false
-}
+# --- API enablement is owned by the Rain landing zone ---
+# DISABLED for the Rain deployment. The landing zone vends every API this app
+# needs via google_project_service.frontrunner in
+# code-matic/landing-zone-rain:project-workload-frontrunner.tf. Two Terraform
+# states managing google_project_service on one project drift against each
+# other, so the road is paved there and this config assumes it.
+#
+# resource "google_project_service" "apis" {
+#   for_each           = toset(var.apis_to_enable)
+#   project            = var.gcp_project_id
+#   service            = each.key
+#   disable_on_destroy = false
+# }
 
 # Call the platform module, passing in all the required variables.
 module "creative_studio_platform" {
   source = "../../modules/platform"
+
+  enable_cloudbuild_triggers = var.enable_cloudbuild_triggers
 
   gcp_project_id            = var.gcp_project_id
   gcp_region                = var.gcp_region
@@ -63,5 +67,6 @@ module "creative_studio_platform" {
   backend_secrets        = var.backend_secrets
   fe_build_substitutions = var.fe_build_substitutions
 
-  depends_on = [ google_project_service.apis ]
+  # depends_on on google_project_service.apis removed with that block; the
+  # landing zone enables the APIs before this config is ever applied.
 }
