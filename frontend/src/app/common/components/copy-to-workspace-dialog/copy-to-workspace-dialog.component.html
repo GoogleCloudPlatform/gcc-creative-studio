@@ -19,42 +19,79 @@
 
 <div class="copy-dialog-container glass-morphism">
   <div class="dialog-header">
-    <h2 class="dialog-title">Copy to Workspace</h2>
-    <p class="dialog-subtitle">
-      Select the target workspace for the {{ data.itemCount }} selected items.
-    </p>
+    <div class="flex items-center gap-3">
+      <div class="header-icon">
+        <mat-icon>content_copy</mat-icon>
+      </div>
+      <div>
+        <h2 class="dialog-title">{{ data.title || 'Copy Items' }}</h2>
+        <p class="dialog-subtitle">
+          {{
+            data.subtitle ||
+              ('Select the target workspace for the ' +
+                (data.itemCount || 0) +
+                ' item' +
+                ((data.itemCount || 0) === 1 ? '' : 's'))
+          }}
+        </p>
+      </div>
+    </div>
   </div>
 
   <div class="dialog-content">
-    <div class="search-container">
-      <studio-search-filter
-        [(value)]="searchQuery"
+    <div class="search-box mb-4">
+      <mat-icon class="search-icon">search</mat-icon>
+      <input
+        type="text"
+        class="search-input"
         placeholder="Search workspaces..."
-        size="small"
-      ></studio-search-filter>
+        [(ngModel)]="searchQuery"
+      />
     </div>
 
-    <div class="workspace-list custom-scrollbar">
-      <div
-        *ngFor="let workspace of filteredWorkspaces"
-        class="workspace-item"
-        [class.selected]="selectedWorkspaceId === workspace.id"
-        (click)="selectWorkspace(workspace)"
-      >
-        <div class="workspace-info">
-          <span class="workspace-name">{{ workspace.name }}</span>
-          <span class="workspace-scope">{{ workspace.scope }}</span>
-        </div>
-        <mat-icon *ngIf="selectedWorkspaceId === workspace.id"
-          >check_circle</mat-icon
-        >
+    @if (isLoading) {
+      <div class="flex justify-center items-center py-8">
+        <mat-progress-spinner mode="indeterminate" diameter="32"></mat-progress-spinner>
       </div>
-
-      <div *ngIf="filteredWorkspaces.length === 0" class="no-results">
-        No workspaces found matching "{{ searchQuery }}"
+    }
+    @else {
+      <div class="folder-list custom-scrollbar">
+        @for (workspace of filteredWorkspaces; track workspace.id) {
+          <div
+            class="folder-option-row"
+            [class.selected]="selectedWorkspaceId === workspace.id"
+            [class.disabled]="workspace.disabled"
+            (click)="selectWorkspace(workspace)"
+          >
+            <div class="flex items-center gap-3 flex-1 min-w-0">
+              <mat-icon
+                class="folder-opt-icon"
+              >
+                {{ workspace.scope === 'public' ? 'public' : 'lock' }}
+              </mat-icon>
+              <span class="folder-opt-name truncate">{{ workspace.name }}</span>
+              @if (workspace.disabled) {
+                <span class="disabled-hint">(Current Workspace)</span>
+              }
+            </div>
+            
+            @if (selectedWorkspaceId === workspace.id) {
+              <mat-icon class="check-icon">
+                check_circle
+              </mat-icon>
+            }
+          </div>
+        }
+        
+        @if (filteredWorkspaces.length === 0) {
+          <div class="no-results">
+            No workspaces match "{{ searchQuery }}"
+          </div>
+        }
       </div>
-    </div>
+    }
   </div>
+
 
   <div class="dialog-footer">
     <studio-button variant="primary" size="medium" (click)="dialogRef.close()">
@@ -63,16 +100,10 @@
     <studio-button
       variant="primary"
       size="medium"
+      [disabled]="isLoading || !selectedWorkspaceId"
       (click)="confirm()"
-      [disabled]="!selectedWorkspaceId || isCopying"
     >
-      <mat-progress-spinner
-        *ngIf="isCopying"
-        mode="indeterminate"
-        [diameter]="18"
-        class="inline-spinner"
-      ></mat-progress-spinner>
-      {{ isCopying ? 'Copying...' : 'Copy Items' }}
+      {{ data.title || 'Copy Items' }}
     </studio-button>
   </div>
 </div>
