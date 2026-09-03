@@ -670,8 +670,8 @@ update_secrets() {
                 AUTO_DISCOVERED=true 
                 ;;
             "agent_engine_resource_name") 
-                SECRET_VALUE=""
-                AUTO_DISCOVERED=true 
+                info "  Value will be populated automatically during Agent Engine deployment. Skipping."
+                continue
                 ;;
             # GOOGLE_CLIENT_ID is handled by populate_oauth_secrets, so we skip it here
             "GOOGLE_CLIENT_ID")               info "  Value is handled by the OAuth population step. Skipping."; continue ;;
@@ -679,7 +679,7 @@ update_secrets() {
         esac
 
         if [ "$AUTO_DISCOVERED" = true ] && [ -n "$SECRET_VALUE" ]; then
-            info "  Value was auto-detected from Firebase. Populating automatically."
+            info "  Value was auto-generated or detected. Populating automatically."
             echo -n "$SECRET_VALUE" | gcloud secrets versions add "$SECRET_NAME" --data-file="-" --project="$GCP_PROJECT_ID" --quiet
             success "  Successfully added new version for ${SECRET_NAME}."
 

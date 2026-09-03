@@ -44,7 +44,7 @@ variable "custom_domain" {
 variable "application_secrets" {
   type        = set(string)
   description = "The list of application secret identifiers required by the backend application layer."
-  default     = ["database_url", "agent_engine_resource_name", "agent_engine_user_auth_token_key"]
+  default     = ["agent_engine_resource_name", "agent_engine_user_auth_token_key"]
 }
 
 variable "frontend_secrets" {
