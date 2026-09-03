@@ -65,16 +65,6 @@ fail() { echo -e "${C_RED}❌  $1${C_RESET}" >&2; exit 1; }
 success() { echo -e "${C_GREEN}✅  $1${C_RESET}"; }
 step() { echo -e "\n${C_BLUE}--- Step $1: $2 ---${C_RESET}"; }
 
-ensure_secret() {
-    local secret_name=$1
-    local secret_value=$2
-    if ! gcloud secrets describe "$secret_name" --project="$GCP_PROJECT_ID" > /dev/null 2>&1; then
-        echo -n "$secret_value" | gcloud secrets create "$secret_name" --data-file="-" --replication-policy="automatic" --project="$GCP_PROJECT_ID" --quiet
-    else
-        echo -n "$secret_value" | gcloud secrets versions add "$secret_name" --data-file="-" --project="$GCP_PROJECT_ID" --quiet
-    fi
-}
-
 # --- Pre-flight Checks & Auto-configuration ---
 
 # Function to automatically determine and set the Firebase Site ID in the .tfvars file
@@ -367,6 +357,9 @@ configure_environment() {
         prompt "What would you like to call this deployment environment?"; read -p "   Environment Name [default value: $DEFAULT_ENV_NAME]: " ENV_NAME < /dev/tty
         ENV_NAME=${ENV_NAME:-$DEFAULT_ENV_NAME}
     else info "Using previously configured environment: $ENV_NAME"; fi
+    
+    BE_SERVICE_NAME="cs-${ENV_NAME}-backend"
+    FE_SERVICE_NAME="cs-${ENV_NAME}-frontend"
     # Use flattened structure directly under infrastructure/
     ENV_DIR="$REPO_ROOT/infrastructure"
     TFVARS_FILE_PATH="$ENV_DIR/$ENV_NAME.tfvars"
@@ -383,11 +376,15 @@ configure_environment() {
         info "Creating backend config file ${ENV_NAME}.backend.tfvars..."; echo -e "bucket = \"$BUCKET_NAME\"\nprefix = \"$BUCKET_PREFIX\"" > "$ENV_DIR/${ENV_NAME}.backend.tfvars"
         info "Creating or repairing $TFVARS_FILE_PATH with required root parameters..."
         cat <<EOF > "$TFVARS_FILE_PATH"
-project_id       = "$GCP_PROJECT_ID"
-region           = "us-central1"
-environment      = "$ENV_NAME"
-resource_prefix  = "cs"
-firebase_site_id = "YOUR_FIREBASE_SITE_ID"
+project_id         = "$GCP_PROJECT_ID"
+region             = "us-central1"
+environment        = "$ENV_NAME"
+resource_prefix    = "cs"
+firebase_site_id   = "YOUR_FIREBASE_SITE_ID"
+github_repo_owner  = "$GITHUB_REPO_OWNER"
+github_repo_name   = "$GITHUB_REPO_NAME"
+github_branch_name = "$GITHUB_BRANCH"
+github_conn_name   = ""
 EOF
         info "Default service names will be '$BE_SERVICE_NAME' and '$FE_SERVICE_NAME'."
         write_state "ENV_NAME" "$ENV_NAME"; write_state "BE_SERVICE_NAME" "$BE_SERVICE_NAME"; write_state "FE_SERVICE_NAME" "$FE_SERVICE_NAME"; write_state "GITHUB_BRANCH" "$GITHUB_BRANCH"
@@ -522,8 +519,8 @@ populate_oauth_secrets() {
     fi
 
     info "Populating secrets with Client ID: ${C_YELLOW}${AUTO_OAUTH_CLIENT_ID}${C_RESET}"
-    ensure_secret GOOGLE_CLIENT_ID "$AUTO_OAUTH_CLIENT_ID"
-    ensure_secret GOOGLE_TOKEN_AUDIENCE "$AUTO_OAUTH_CLIENT_ID"
+    echo -n "$AUTO_OAUTH_CLIENT_ID" | gcloud secrets versions add GOOGLE_CLIENT_ID --data-file="-" --project="$GCP_PROJECT_ID" --quiet
+    echo -n "$AUTO_OAUTH_CLIENT_ID" | gcloud secrets versions add GOOGLE_TOKEN_AUDIENCE --data-file="-" --project="$GCP_PROJECT_ID" --quiet
     success "Secrets 'GOOGLE_CLIENT_ID' and 'GOOGLE_TOKEN_AUDIENCE' have been populated."
 
     info "Updating audiences in $TFVARS_FILE_PATH..."
@@ -531,6 +528,7 @@ populate_oauth_secrets() {
     rm -f "$TFVARS_FILE_PATH.bak"
     success "Audiences updated in .tfvars file."
 }
+
 
 
 run_terraform() {
@@ -682,7 +680,7 @@ update_secrets() {
 
         if [ "$AUTO_DISCOVERED" = true ] && [ -n "$SECRET_VALUE" ]; then
             info "  Value was auto-detected from Firebase. Populating automatically."
-            ensure_secret "$SECRET_NAME" "$SECRET_VALUE"
+            echo -n "$SECRET_VALUE" | gcloud secrets versions add "$SECRET_NAME" --data-file="-" --project="$GCP_PROJECT_ID" --quiet
             success "  Successfully added new version for ${SECRET_NAME}."
 
         else
@@ -692,7 +690,7 @@ update_secrets() {
             read -s -p "  Enter new value: " SECRET_VALUE < /dev/tty; echo
 
             if [ -z "$SECRET_VALUE" ]; then warn "  No value provided. Skipping ${SECRET_NAME}."; continue; fi
-            ensure_secret "$SECRET_NAME" "$SECRET_VALUE"
+            echo -n "$SECRET_VALUE" | gcloud secrets versions add "$SECRET_NAME" --data-file="-" --project="$GCP_PROJECT_ID" --quiet
             success "  Successfully added new version for ${SECRET_NAME}."
         fi
     done; success "All secrets have been populated."
@@ -873,48 +871,76 @@ select_deployment_profile() {
         return 0
     fi
 
-    local profiles=()
-    while IFS= read -r file; do
-        [ -f "$file" ] && profiles+=("$file")
-    done < <(find "$PROFILE_DIR" -maxdepth 1 -name "*.cstudio_bootstrap.conf" 2>/dev/null | sort)
+    while true; do
+        local profiles=()
+        while IFS= read -r file; do
+            [ -f "$file" ] && profiles+=("$file")
+        done < <(find "$PROFILE_DIR" -maxdepth 1 -name "*.cstudio_bootstrap.conf" 2>/dev/null | sort)
 
-    if [ ${#profiles[@]} -eq 0 ]; then
-        info "No persistent profiles detected in $PROFILE_DIR. Initializing 'default.cstudio_bootstrap.conf'..."
-        STATE_FILE="$PROFILE_DIR/default.cstudio_bootstrap.conf"
-        write_state "PROFILE_INITIALIZED" "true"
-        return 0
-    fi
+        if [ ${#profiles[@]} -eq 0 ]; then
+            info "No persistent profiles detected in $PROFILE_DIR. Initializing 'default.cstudio_bootstrap.conf'..."
+            STATE_FILE="$PROFILE_DIR/default.cstudio_bootstrap.conf"
+            write_state "PROFILE_INITIALIZED" "true"
+            return 0
+        fi
 
-    echo -e "${C_CYAN}➡️  Detected persistent deployment profiles in ${PROFILE_DIR}:${C_RESET}"
-    for i in "${!profiles[@]}"; do
-        local p_file="${profiles[$i]}"
-        local p_name=$(basename "$p_file")
-        local p_proj=$(grep "^GCP_PROJECT_ID=" "$p_file" | cut -d'=' -f2 || echo "unassigned")
-        local p_branch=$(grep "^GITHUB_BRANCH=" "$p_file" | cut -d'=' -f2 || echo "main")
-        echo -e "    [$((i + 1))] ${C_YELLOW}${p_name}${C_RESET} (Project: ${p_proj} | Branch: ${p_branch})"
+        echo -e "${C_CYAN}➡️  Detected persistent deployment profiles in ${PROFILE_DIR}:${C_RESET}"
+        for i in "${!profiles[@]}"; do
+            local p_file="${profiles[$i]}"
+            local p_name=$(basename "$p_file")
+            local p_proj=$(grep "^GCP_PROJECT_ID=" "$p_file" | cut -d'=' -f2 || echo "unassigned")
+            local p_branch=$(grep "^GITHUB_BRANCH=" "$p_file" | cut -d'=' -f2 || echo "main")
+            echo -e "    [$((i + 1))] ${C_YELLOW}${p_name}${C_RESET} (Project: ${p_proj} | Branch: ${p_branch})"
+        done
+        echo "    [N] + Create a brand new deployment profile"
+        echo "    [D] - Delete an existing deployment profile"
+
+        prompt "Which deployment profile would you like to use? [Default: 1 / N for new / D to delete]"
+        read -p "   Select Profile [1]: " PROF_CHOICE < /dev/tty
+        PROF_CHOICE=${PROF_CHOICE:-1}
+
+        if [[ "$PROF_CHOICE" =~ ^[dD]$ ]]; then
+            prompt "Which profile would you like to delete? [1-${#profiles[@]}]"
+            read -p "   Delete Profile: " DEL_CHOICE < /dev/tty
+            if [[ "$DEL_CHOICE" =~ ^[0-9]+$ ]]; then
+                local idx=$((DEL_CHOICE - 1))
+                if [ -n "${profiles[$idx]}" ]; then
+                    local del_file="${profiles[$idx]}"
+                    rm -f "$del_file"
+                    success "Deleted profile: $(basename "$del_file")"
+                    echo ""
+                    continue
+                fi
+            fi
+            warn "Invalid selection. Going back to profile selection."
+            echo ""
+            continue
+        fi
+
+        if [[ "$PROF_CHOICE" =~ ^[nN]$ ]]; then
+            prompt "Enter a name for your new deployment profile (e.g. dev, staging, prod):"
+            read -p "   Profile Name: " NEW_PROF_NAME < /dev/tty
+            NEW_PROF_NAME=${NEW_PROF_NAME:-custom}
+            NEW_PROF_NAME="${NEW_PROF_NAME%.cstudio_bootstrap.conf}.cstudio_bootstrap.conf"
+            STATE_FILE="$PROFILE_DIR/$NEW_PROF_NAME"
+            info "Created new deployment profile at: $STATE_FILE"
+            write_state "PROFILE_INITIALIZED" "true"
+            return 0
+        fi
+
+        local idx=$((PROF_CHOICE - 1))
+        if [ -n "${profiles[$idx]}" ]; then
+            STATE_FILE="${profiles[$idx]}"
+            info "Loading deployment profile: ${C_YELLOW}${STATE_FILE}${C_RESET}"
+            read_state
+            break
+        else
+            warn "Invalid selection. Defaulting to first profile..."
+            STATE_FILE="${profiles[0]}"
+            read_state
+            break
+        fi
     done
-    echo "    [N] + Create a brand new deployment profile"
-
-    prompt "Which deployment profile would you like to use? [Default: 1 / N for new]"
-    read -p "   Select Profile [1]: " PROF_CHOICE < /dev/tty
-    PROF_CHOICE=${PROF_CHOICE:-1}
-
-    if [[ "$PROF_CHOICE" =~ ^[nN]$ ]]; then
-        prompt "Enter a name for your new deployment profile (e.g. dev, staging, prod):"
-        read -p "   Profile Name: " NEW_PROF_NAME < /dev/tty
-        NEW_PROF_NAME=${NEW_PROF_NAME:-custom}
-        NEW_PROF_NAME="${NEW_PROF_NAME%.cstudio_bootstrap.conf}.cstudio_bootstrap.conf"
-        STATE_FILE="$PROFILE_DIR/$NEW_PROF_NAME"
-        info "Created new deployment profile at: $STATE_FILE"
-        write_state "PROFILE_INITIALIZED" "true"
-        return 0
-    fi
-
-    local idx=$((PROF_CHOICE - 1))
-    if [ -n "${profiles[$idx]}" ]; then
-        STATE_FILE="${profiles[$idx]}"
-        info "Loading deployment profile: ${C_YELLOW}${STATE_FILE}${C_RESET}"
-        read_state
         
         if [ -z "$GCP_PROJECT_ID" ] && [ -z "$GITHUB_REPO_URL" ]; then
             info "Profile '${C_YELLOW}$(basename "$STATE_FILE" .cstudio_bootstrap.conf)${C_RESET}' is fresh or unassigned. Interactive prompts will now guide you to complete missing settings and automatically save them to this profile!"

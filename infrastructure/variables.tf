@@ -123,3 +123,24 @@ variable "agent_engine_user_auth_token_key" {
   description = "Auth token key for Agent Engine"
   default     = ""
 }
+
+# --- GitHub CI/CD Configuration ---
+variable "github_conn_name" {
+  type        = string
+  description = "The name of the Cloud Build GitHub connection."
+}
+
+variable "github_repo_owner" {
+  type        = string
+  description = "The owner of the GitHub repository."
+}
+
+variable "github_repo_name" {
+  type        = string
+  description = "The name of the GitHub repository."
+}
+
+variable "github_branch_name" {
+  type        = string
+  description = "The branch name to trigger builds from."
+}
