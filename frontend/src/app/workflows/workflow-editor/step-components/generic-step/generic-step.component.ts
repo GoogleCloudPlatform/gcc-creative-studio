@@ -33,7 +33,11 @@ import {
   isGeminiOmniModel,
 } from '../../../../common/config/model-config';
 import {StepConfig, StepInput, StepSetting} from './step.model';
-import {StepOutputReference, StepStatusEnum} from '../../../workflow.models';
+import {
+  NodeTypes,
+  StepOutputReference,
+  StepStatusEnum,
+} from '../../../workflow.models';
 import {isStepOutputReference} from '../../../utils/workflow-step.util';
 import {
   DragSourcePort,
@@ -75,6 +79,7 @@ export class GenericStepComponent implements OnInit, OnChanges {
   @Output() portDrop = new EventEmitter<{stepId: string; inputName: string}>();
 
   StepStatusEnum = StepStatusEnum;
+  NodeTypes = NodeTypes;
 
   localConfig!: StepConfig;
   private settingsSubscription?: Subscription;
@@ -118,7 +123,7 @@ export class GenericStepComponent implements OnInit, OnChanges {
 
   private isPromptLinkedVariable(inputName: string): boolean {
     return (
-      this.localConfig?.type === 'generate-text' &&
+      this.localConfig?.type === NodeTypes.GENERATE_TEXT &&
       !this.isBasePortCollision(inputName) &&
       this.inputModes['prompt'] !== 'fixed'
     );
@@ -179,7 +184,7 @@ export class GenericStepComponent implements OnInit, OnChanges {
     if (this.isPromptLinkedVariable(inputName)) {
       return 'Prompt is linked - variables inactive';
     }
-    if (this.localConfig?.type === 'generate-video') {
+    if (this.localConfig?.type === NodeTypes.GENERATE_VIDEO) {
       const currentModel = this.stepForm?.get('settings.model')?.value;
       if (!isGeminiOmniModel(currentModel)) {
         if (inputName === 'input_audio') {
@@ -269,7 +274,7 @@ export class GenericStepComponent implements OnInit, OnChanges {
       }
     });
 
-    if (this.localConfig.type === 'generate-text') {
+    if (this.localConfig.type === NodeTypes.GENERATE_TEXT) {
       const baseInputNames = new Set(
         this.getBaseInputs().map(i => i.name.toLowerCase()),
       );
@@ -559,7 +564,7 @@ export class GenericStepComponent implements OnInit, OnChanges {
     this.localConfig.inputs.forEach(input => {
       // Logic for specific inputs
       if (
-        this.localConfig.type === 'generate-video' &&
+        this.localConfig.type === NodeTypes.GENERATE_VIDEO &&
         (input.name === 'input_images' ||
           input.name === 'reference_images' ||
           input.name === 'input_video' ||
@@ -804,7 +809,7 @@ export class GenericStepComponent implements OnInit, OnChanges {
   }
 
   addVariable(name?: string): void {
-    if (this.localConfig?.type !== 'generate-text') return;
+    if (this.localConfig?.type !== NodeTypes.GENERATE_TEXT) return;
     const inputs = this.stepForm?.get('inputs') as FormGroup;
     if (!inputs) return;
 
@@ -868,7 +873,10 @@ export class GenericStepComponent implements OnInit, OnChanges {
   }
 
   onInputFieldBlur(inputName: string): void {
-    if (inputName === 'prompt' && this.localConfig.type === 'generate-text') {
+    if (
+      inputName === 'prompt' &&
+      this.localConfig.type === NodeTypes.GENERATE_TEXT
+    ) {
       const promptVal = this.stepForm.get('inputs.prompt')?.value;
       this.updatePromptVariables(promptVal);
     }
@@ -877,7 +885,7 @@ export class GenericStepComponent implements OnInit, OnChanges {
   updatePromptVariables(
     promptValue: string | StepOutputReference | null | undefined,
   ): void {
-    if (this.localConfig.type !== 'generate-text') return;
+    if (this.localConfig.type !== NodeTypes.GENERATE_TEXT) return;
     const inputs = this.stepForm?.get('inputs') as FormGroup;
     if (!inputs) return;
 

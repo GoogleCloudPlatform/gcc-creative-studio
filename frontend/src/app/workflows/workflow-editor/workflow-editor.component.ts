@@ -1098,10 +1098,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
 
   getStepConfig(type: string) {
     if (!type) return undefined;
-    const normalized = type.replace(/-/g, '_');
-    return (
-      (STEP_CONFIGS_MAP as any)[type] || (STEP_CONFIGS_MAP as any)[normalized]
-    );
+    return (STEP_CONFIGS_MAP as any)[type];
   }
 
   get isReadOnly(): boolean {
@@ -1458,11 +1455,8 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
           }
         });
 
-        // If generate-text step has a linked/non-fixed prompt, do not save dynamic variables
-        if (
-          newStep.type === NodeTypes.GENERATE_TEXT ||
-          newStep.type === 'generate-text'
-        ) {
+        // If generate_text step has a linked/non-fixed prompt, do not save dynamic variables
+        if (newStep.type === NodeTypes.GENERATE_TEXT) {
           const promptVal = newInputs['prompt'];
           const isPromptFixed = typeof promptVal === 'string';
 

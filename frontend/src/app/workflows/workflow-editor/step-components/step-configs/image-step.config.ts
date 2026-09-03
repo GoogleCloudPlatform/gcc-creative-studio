@@ -15,6 +15,7 @@
  */
 
 import {MODEL_CONFIGS} from '../../../../common/config/model-config';
+import {NodeTypes} from '../../../workflow.models';
 import {StepConfig} from '../generic-step/step.model';
 
 export const IMAGE_MODE_OPTIONS = [
@@ -51,7 +52,7 @@ const UPSCALE_FACTORS = [
 ];
 
 export const IMAGE_STEP_CONFIG: StepConfig = {
-  type: 'image',
+  type: NodeTypes.IMAGE,
   title: 'Image',
   icon: 'image',
   inputs: [

@@ -33,6 +33,7 @@ import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {GENERATE_TEXT_STEP_CONFIG} from '../step-configs/generate-text-step.config';
 import {GENERATE_VIDEO_STEP_CONFIG} from '../step-configs/generate-video-step.config';
 import {IMAGE_STEP_CONFIG} from '../step-configs/image-step.config';
+import {NodeTypes} from '../../../workflow.models';
 import {StepInput} from './step.model';
 import {StudioSliderComponent} from '../../../../common/components/studio-slider/studio-slider.component';
 import {WorkflowStatusPipe} from '../../../workflow-status.pipe';
@@ -506,7 +507,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       // Switch to another model
       videoStepForm
         .get('settings.model')
-        ?.setValue('gemini-omni-flash-preview');
+        ?.setValue('gemini-omni-1.1-flash-preview');
       expect(durationSetting?.options).toEqual([
         {value: 4, label: '4s'},
         {value: 6, label: '6s'},
@@ -522,7 +523,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
     beforeEach(() => {
       videoStepForm = fb.group({
         stepId: ['video_step_ingredients'],
-        type: ['generate-video'],
+        type: [NodeTypes.GENERATE_VIDEO],
         status: ['idle'],
         inputs: fb.group({
           prompt: ['A dramatic movie scene'],
@@ -657,7 +658,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
     it('should show and enable input_audio and input_video when model is Gemini Omni in Ingredients to Video mode', () => {
       videoStepForm
         .get('settings.model')
-        ?.setValue('gemini-omni-flash-preview');
+        ?.setValue('gemini-omni-1.1-flash-preview');
       videoStepForm
         .get('settings.input_mode')
         ?.setValue('Ingredients to Video');
@@ -822,7 +823,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
 
       textStepForm = fb.group({
         stepId: ['text_step_1'],
-        type: ['generate-text'],
+        type: [NodeTypes.GENERATE_TEXT],
         status: ['idle'],
         inputs: fb.group({
           prompt: [''],
@@ -845,7 +846,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
     });
 
     it('should initialize without dynamic inputs when prompt is empty', () => {
-      expect(component.localConfig.type).toBe('generate-text');
+      expect(component.localConfig.type).toBe(NodeTypes.GENERATE_TEXT);
       expect(component.getBaseInputs().length).toBe(3);
       expect(component.getBaseInputs().map(i => i.name)).toEqual([
         'prompt',
@@ -1094,7 +1095,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
     it('should restore dynamic variables on initialization when loading existing form state', () => {
       const existingForm = fb.group({
         stepId: ['text_step_existing'],
-        type: ['generate-text'],
+        type: [NodeTypes.GENERATE_TEXT],
         status: ['idle'],
         inputs: fb.group({
           prompt: ['Write a story about <protagonist> in <setting>'],
