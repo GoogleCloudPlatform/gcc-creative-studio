@@ -26,6 +26,7 @@ import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {ActivatedRoute, Router} from '@angular/router';
 import {of} from 'rxjs';
 import {MediaResolutionService} from '../shared/media-resolution.service';
+import {NodeTypes} from '../workflow.models';
 import {WorkflowStatusPipe} from '../workflow-status.pipe';
 import {WorkflowService} from '../workflow.service';
 import {WorkflowEditorComponent} from './workflow-editor.component';
@@ -433,7 +434,7 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
   it('should include enabled video and audio input ports in collectMagneticCandidatePorts', () => {
     const videoStepForm = fb.group({
       stepId: ['step_video_node'],
-      type: ['generate-video'],
+      type: [NodeTypes.GENERATE_VIDEO],
       settings: fb.group({
         model: ['gemini-experimental-omni'],
         input_mode: ['Ingredients to Video'],
@@ -471,7 +472,7 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
     const videoControl = fb.control({value: null, disabled: true});
     const videoStepForm = fb.group({
       stepId: ['step_video_node'],
-      type: ['generate-video'],
+      type: [NodeTypes.GENERATE_VIDEO],
       settings: fb.group({
         model: ['veo-3.1-generate-001'],
       }),
@@ -497,7 +498,7 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
   it('should allow connection from video source to input_video in onPortDrop', () => {
     const videoStepForm = fb.group({
       stepId: ['step_video_node'],
-      type: ['generate-video'],
+      type: [NodeTypes.GENERATE_VIDEO],
       inputs: fb.group({
         prompt: [''],
         input_video: [null],
@@ -528,7 +529,7 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
   it('should allow connection from audio source to input_audio in onPortDrop', () => {
     const videoStepForm = fb.group({
       stepId: ['step_video_node'],
-      type: ['generate-video'],
+      type: [NodeTypes.GENERATE_VIDEO],
       inputs: fb.group({
         prompt: [''],
         input_audio: [null],
@@ -566,7 +567,7 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
 
     const stepVideoForm = fb.group({
       stepId: ['step_video_node'],
-      type: ['generate-video'],
+      type: [NodeTypes.GENERATE_VIDEO],
       inputs: fb.group({
         prompt: [''],
         input_video: [null],
@@ -596,7 +597,7 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
   it('should allow connection from text source to dynamic prompt variable input in onPortDrop', () => {
     const textStepForm = fb.group({
       stepId: ['step_text_node'],
-      type: ['generate-text'],
+      type: [NodeTypes.GENERATE_TEXT],
       inputs: fb.group({
         prompt: ['A <animal> wearing a <hat>'],
         animal: [null],
@@ -633,7 +634,7 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
       steps: [
         {
           stepId: 'text_step_linked',
-          type: 'generate-text',
+          type: NodeTypes.GENERATE_TEXT,
           inputs: {
             prompt: {step: 'upstream_step', output: 'generated_text'},
             animal: 'Lion',
@@ -661,7 +662,7 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
 
   it('should return dynamic inputs in getDynamicInputs', () => {
     const config = {
-      type: 'generate-text',
+      type: NodeTypes.GENERATE_TEXT,
       inputs: [{name: 'prompt', label: 'Prompt', type: 'text'}],
     };
     const inputsGroup = fb.group({
@@ -677,9 +678,9 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
     ]);
   });
 
-  it('should return empty list in getDynamicInputs when prompt is linked for generate-text', () => {
+  it('should return empty list in getDynamicInputs when prompt is linked for generate_text', () => {
     const config = {
-      type: 'generate-text',
+      type: NodeTypes.GENERATE_TEXT,
       inputs: [{name: 'prompt', label: 'Prompt', type: 'text'}],
     };
     const inputsGroup = fb.group({
