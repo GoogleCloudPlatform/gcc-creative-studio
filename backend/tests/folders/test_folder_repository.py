@@ -163,6 +163,26 @@ class TestFolderRepository:
         assert res == [1, 2]
 
     @pytest.mark.anyio
+    async def test_get_folder_depth(self, folder_repo, mock_db):
+        mock_row1 = SimpleNamespace(id=1, name="Root", parent_id=None)
+        mock_row2 = SimpleNamespace(id=2, name="Child", parent_id=1)
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [mock_row1, mock_row2]
+        mock_db.execute.return_value = mock_result
+
+        depth = await folder_repo.get_folder_depth(2)
+        assert depth == 2
+
+    @pytest.mark.anyio
+    async def test_get_subtree_depth(self, folder_repo, mock_db):
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = 3
+        mock_db.execute.return_value = mock_result
+
+        depth = await folder_repo.get_subtree_depth(1)
+        assert depth == 3
+
+    @pytest.mark.anyio
     async def test_get_tree(self, folder_repo, mock_db):
         f1 = Folder(
             id=1,

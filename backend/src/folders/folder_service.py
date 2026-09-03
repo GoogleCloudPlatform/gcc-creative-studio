@@ -32,6 +32,8 @@ from src.users.user_model import UserModel
 
 logger = logging.getLogger(__name__)
 
+MAX_FOLDER_DEPTH: int = 20
+
 
 class FolderService:
     """Service layer handling validation, hierarchy integrity, and business logic for folders."""
@@ -56,6 +58,14 @@ class FolderService:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Parent folder not found in this workspace.",
+                )
+            parent_depth = await self.folder_repo.get_folder_depth(
+                dto.parent_id
+            )
+            if parent_depth >= MAX_FOLDER_DEPTH:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot create folder: maximum folder tree depth of {MAX_FOLDER_DEPTH} levels reached.",
                 )
 
         if await self.folder_repo.is_folder_name_taken(
@@ -207,6 +217,18 @@ class FolderService:
 
             if new_parent_id != folder.parent_id:
                 is_moving = True
+                if new_parent_id is not None:
+                    dest_depth = await self.folder_repo.get_folder_depth(
+                        new_parent_id
+                    )
+                    subtree_depth = await self.folder_repo.get_subtree_depth(
+                        folder.id
+                    )
+                    if dest_depth + subtree_depth > MAX_FOLDER_DEPTH:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Cannot move folder: would exceed maximum folder tree depth of {MAX_FOLDER_DEPTH} levels.",
+                        )
                 folder.parent_id = new_parent_id
 
         target_name = dto.name.strip() if dto.name is not None else folder.name
@@ -276,6 +298,7 @@ class FolderService:
     ) -> dict[str, int]:
         """Batch moves media items, source assets, and folders to a destination folder."""
         dest_folder_id = dto.destination_folder_id
+        dest_depth = 0
         if dest_folder_id is not None:
             dest_folder = await self.folder_repo.get_folder_by_id(
                 dest_folder_id
@@ -285,8 +308,9 @@ class FolderService:
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Destination folder not found in this workspace.",
                 )
+            dest_depth = await self.folder_repo.get_folder_depth(dest_folder_id)
 
-        # Validate folder moves against cycle creation
+        # Validate folder moves against cycle creation and tree depth limit
         valid_folder_ids: list[int] = []
         if dto.folder_ids:
             for f_id in dto.folder_ids:
@@ -303,6 +327,14 @@ class FolderService:
                         raise HTTPException(
                             status_code=status.HTTP_400_BAD_REQUEST,
                             detail=f"Cannot move folder {f_id} into its own subfolder.",
+                        )
+                    subtree_depth = await self.folder_repo.get_subtree_depth(
+                        f_id
+                    )
+                    if dest_depth + subtree_depth > MAX_FOLDER_DEPTH:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Cannot move folder: would exceed maximum folder tree depth of {MAX_FOLDER_DEPTH} levels.",
                         )
                 valid_folder_ids.append(f_id)
 

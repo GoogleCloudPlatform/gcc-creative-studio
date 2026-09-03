@@ -32,6 +32,7 @@ import {
 })
 export class FolderService {
   private readonly apiUrl = `${environment.backendURL}/folders`;
+  readonly maxDepth = 20;
 
   constructor(private readonly http: HttpClient) {}
 

@@ -154,8 +154,9 @@
             <studio-button
               variant="primary"
               size="small"
+              [disabled]="breadcrumbs.length >= folderMaxDepth"
               (click)="openCreateFolderDialog()"
-              title="Create a new folder"
+              [title]="breadcrumbs.length >= folderMaxDepth ? 'Maximum folder depth of ' + folderMaxDepth + ' reached' : 'Create a new folder'"
             >
               <mat-icon class="mr-1">create_new_folder</mat-icon>
               <span>New Folder</span>

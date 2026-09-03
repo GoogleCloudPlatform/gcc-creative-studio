@@ -37,6 +37,8 @@ def fixture_mock_folder_repo():
     mock = AsyncMock()
     mock.db = AsyncMock()
     mock.is_folder_name_taken.return_value = False
+    mock.get_folder_depth.return_value = 1
+    mock.get_subtree_depth.return_value = 1
     return mock
 
 
@@ -134,6 +136,28 @@ class TestCreateFolder:
         with pytest.raises(HTTPException) as exc_info:
             await folder_service.create_folder(dto, sample_user)
         assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+
+    @pytest.mark.anyio
+    async def test_create_subfolder_max_depth_exceeded(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        dto = FolderCreateDto(
+            name="TooDeep",
+            workspace_id=1,
+            parent_id=5,
+        )
+        mock_folder_repo.get_folder_by_id.return_value = Folder(
+            id=5, workspace_id=1, user_email="a@b.com", name="Parent"
+        )
+        mock_folder_repo.get_folder_depth.return_value = 20
+
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.create_folder(dto, sample_user)
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert (
+            "maximum folder tree depth of 20 levels reached"
+            in exc_info.value.detail
+        )
 
     @pytest.mark.anyio
     async def test_create_subfolder_parent_not_found(
@@ -402,6 +426,39 @@ class TestUpdateFolder:
             await folder_service.update_folder(1, dto, sample_user)
         assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
 
+    @pytest.mark.anyio
+    async def test_update_parent_max_depth_exceeded(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        folder = Folder(
+            id=1,
+            workspace_id=1,
+            user_email="a@b.com",
+            name="Folder1",
+            parent_id=None,
+        )
+        mock_folder_repo.get_folder_by_id.side_effect = [
+            folder,
+            Folder(
+                id=4,
+                workspace_id=1,
+                user_email="a@b.com",
+                name="TargetParent",
+            ),
+        ]
+        mock_folder_repo.get_descendant_ids.return_value = [1]
+        mock_folder_repo.get_folder_depth.return_value = 19
+        mock_folder_repo.get_subtree_depth.return_value = 2
+
+        dto = FolderUpdateDto(parent_id=4)
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.update_folder(1, dto, sample_user)
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert (
+            "would exceed maximum folder tree depth of 20 levels"
+            in exc_info.value.detail
+        )
+
 
 class TestDeleteFolder:
     """Tests for FolderService.delete_folder."""
@@ -467,3 +524,28 @@ class TestMoveItems:
         with pytest.raises(HTTPException) as exc_info:
             await folder_service.move_items(dto, sample_user)
         assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+
+    @pytest.mark.anyio
+    async def test_move_items_folder_max_depth_exceeded(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.get_folder_by_id.return_value = Folder(
+            id=5, workspace_id=1, user_email="a@b.com", name="Target"
+        )
+        mock_folder_repo.get_descendant_ids.return_value = [2]
+        mock_folder_repo.get_folder_depth.return_value = 19
+        mock_folder_repo.get_subtree_depth.return_value = 2
+
+        dto = MoveItemsDto(
+            workspace_id=1,
+            folder_ids=[2],
+            destination_folder_id=5,
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.move_items(dto, sample_user)
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert (
+            "would exceed maximum folder tree depth of 20 levels"
+            in exc_info.value.detail
+        )

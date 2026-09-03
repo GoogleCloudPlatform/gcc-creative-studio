@@ -66,7 +66,7 @@
                   </mat-icon>
                   <span class="folder-opt-name truncate">{{ opt.name }}</span>
                   @if (opt.disabled) {
-                    <span class="disabled-hint">(Current / Invalid)</span>
+                    <span class="disabled-hint">({{ opt.disabledReason || 'Invalid' }})</span>
                   }
                 </div>
                 

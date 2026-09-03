@@ -36,6 +36,7 @@ export interface FlattenedFolderOption {
   depth: number;
   color?: string | null;
   disabled: boolean;
+  disabledReason?: string;
 }
 
 export interface FlattenedWorkspaceOption {
@@ -91,6 +92,43 @@ export class MoveToFolderDialogComponent implements OnInit {
           disabled: workspace.id === this.data.workspaceId,
         }));
 
+        // Helper functions to calculate subtree depth and enforce max depth
+        const getSubtreeHeight = (node: FolderTreeNode): number => {
+          if (!node.children || node.children.length === 0) {
+            return 1;
+          }
+          return 1 + Math.max(...node.children.map(c => getSubtreeHeight(c)));
+        };
+
+        const findNode = (
+          nodes: FolderTreeNode[],
+          id: number,
+        ): FolderTreeNode | null => {
+          for (const n of nodes) {
+            if (n.id === id) return n;
+            if (n.children && n.children.length > 0) {
+              const found = findNode(n.children, id);
+              if (found) return found;
+            }
+          }
+          return null;
+        };
+
+        const movingFolderIds = new Set<number>(
+          this.data.movingFolderIds || [],
+        );
+
+        let maxMovingSubtreeHeight = 0;
+        if (this.data.movingFolderIds && this.data.movingFolderIds.length > 0) {
+          for (const fid of this.data.movingFolderIds) {
+            const movingNode = findNode(tree, fid);
+            const h = movingNode ? getSubtreeHeight(movingNode) : 1;
+            if (h > maxMovingSubtreeHeight) {
+              maxMovingSubtreeHeight = h;
+            }
+          }
+        }
+
         // process tree
         const options: FlattenedFolderOption[] = [];
         // Add Root option
@@ -101,13 +139,10 @@ export class MoveToFolderDialogComponent implements OnInit {
           depth: 0,
           color: '#8AB4F8',
           disabled: isCurrentRoot,
+          disabledReason: isCurrentRoot ? 'Current location' : undefined,
         });
 
         // Flatten the tree into indented rows
-        const movingFolderIds = new Set<number>(
-          this.data.movingFolderIds || [],
-        );
-
         const traverse = (
           nodes: FolderTreeNode[],
           depth: number,
@@ -115,10 +150,22 @@ export class MoveToFolderDialogComponent implements OnInit {
         ) => {
           for (const node of nodes) {
             const isSelfMoving = movingFolderIds.has(node.id);
+            const isCurrent = this.data.currentFolderId === node.id;
+            const wouldExceedDepth =
+              maxMovingSubtreeHeight > 0 &&
+              depth + maxMovingSubtreeHeight > this.folderService.maxDepth;
+
+            let disabledReason: string | undefined;
+            if (isCurrent) {
+              disabledReason = 'Current location';
+            } else if (isSelfMoving || isMovingParent) {
+              disabledReason = 'Cannot move into self/subfolder';
+            } else if (wouldExceedDepth) {
+              disabledReason = `Max depth (${this.folderService.maxDepth}) reached`;
+            }
+
             const isDisabled =
-              isMovingParent ||
-              isSelfMoving ||
-              this.data.currentFolderId === node.id;
+              isMovingParent || isSelfMoving || isCurrent || wouldExceedDepth;
 
             options.push({
               id: node.id,
@@ -126,6 +173,7 @@ export class MoveToFolderDialogComponent implements OnInit {
               depth,
               color: node.color,
               disabled: isDisabled,
+              disabledReason,
             });
 
             if (node.children && node.children.length > 0) {

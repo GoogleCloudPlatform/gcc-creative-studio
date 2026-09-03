@@ -35,7 +35,7 @@ import {MatSnackBar} from '@angular/material/snack-bar';
 import {MatIconRegistry} from '@angular/material/icon';
 import {DomSanitizer} from '@angular/platform-browser';
 import {ActivatedRoute, Router} from '@angular/router';
-import {Subscription, firstValueFrom, forkJoin} from 'rxjs';
+import {Subscription, forkJoin} from 'rxjs';
 import {MediaItemSelection} from '../../common/components/image-selector/image-selector.component';
 import {CopyToWorkspaceDialogComponent} from '../../common/components/copy-to-workspace-dialog/copy-to-workspace-dialog.component';
 import {DropdownOption} from '../../common/components/studio-dropdown/studio-dropdown.component';
@@ -237,6 +237,10 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     }
 
     this.searchTerm(); // Trigger search
+  }
+
+  get folderMaxDepth(): number {
+    return this.folderService.maxDepth;
   }
 
   isBrowser: boolean;
@@ -1075,6 +1079,15 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
     if (!workspaceId) return;
 
+    if (this.breadcrumbs.length >= this.folderService.maxDepth) {
+      this.snackBar.open(
+        `Maximum folder tree depth of ${this.folderService.maxDepth} levels reached.`,
+        'Close',
+        {duration: 3000},
+      );
+      return;
+    }
+
     const dialogRef = this.dialog.open(CreateFolderDialogComponent, {
       data: {
         workspaceId,
@@ -1466,7 +1479,8 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
           this.folders = prevFolders;
           this.updateGroups();
           this.isMoving = false;
-          this.snackBar.open('Failed to move items', 'Close', {
+          const message = err.error?.detail || 'Failed to move items';
+          this.snackBar.open(message, 'Close', {
             duration: 3000,
           });
         },

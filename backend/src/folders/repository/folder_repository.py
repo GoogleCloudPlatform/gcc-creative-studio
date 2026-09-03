@@ -288,6 +288,32 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         result = await self.db.execute(cte_query, {"folder_id": folder_id})
         return [row.id for row in result.fetchall()]
 
+    async def get_folder_depth(self, folder_id: int) -> int:
+        """Returns the depth of a folder from the workspace root (root folder = 1)."""
+        breadcrumbs = await self.get_breadcrumbs(folder_id)
+        return len(breadcrumbs)
+
+    async def get_subtree_depth(self, folder_id: int) -> int:
+        """Returns the maximum depth of the subtree rooted at folder_id (single folder with no subfolders = 1)."""
+        cte_query = text(
+            """
+            WITH RECURSIVE subtree AS (
+                SELECT id, 1 AS depth
+                FROM folders
+                WHERE id = :folder_id AND deleted_at IS NULL
+                UNION ALL
+                SELECT f.id, s.depth + 1
+                FROM folders f
+                JOIN subtree s ON f.parent_id = s.id
+                WHERE f.deleted_at IS NULL
+            )
+            SELECT COALESCE(MAX(depth), 0) FROM subtree;
+            """
+        )
+        result = await self.db.execute(cte_query, {"folder_id": folder_id})
+        val = result.scalar()
+        return int(val) if val is not None else 0
+
     async def get_tree(self, workspace_id: int) -> list[FolderTreeNodeDto]:
         """Fetch full folder hierarchy tree for a workspace."""
         query = (
