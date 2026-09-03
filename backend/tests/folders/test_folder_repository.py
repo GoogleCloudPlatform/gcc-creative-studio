@@ -365,10 +365,12 @@ class TestFolderRepository:
         mock_get_root = MagicMock()
         mock_get_root.scalars.return_value.first.return_value = root_folder
 
-        mock_row1 = MagicMock(
-            id=1, name="ExistingRoot", color="#fff", parent_id=None
+        mock_row1 = SimpleNamespace(
+            id=1, name="ExistingRoot", color="#fff", parent_id=None, depth=0
         )
-        mock_row2 = MagicMock(id=2, name="Subfolder", color="#fff", parent_id=1)
+        mock_row2 = SimpleNamespace(
+            id=2, name="Subfolder", color="#fff", parent_id=1, depth=1
+        )
         mock_desc_res = MagicMock()
         mock_desc_res.fetchall.return_value = [mock_row1, mock_row2]
 
@@ -454,6 +456,114 @@ class TestFolderRepository:
         assert result["folders_copied"] == 2
         assert result["media_copied"] == 1
         assert result["assets_copied"] == 1
+        assert mock_db.flush.call_count == 2
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_copy_folder_to_workspace_batches_flush_by_depth(
+        self, folder_repo, mock_db
+    ):
+        root_folder = Folder(
+            id=1,
+            workspace_id=1,
+            user_email="a@b.com",
+            name="BatchRoot",
+            parent_id=None,
+            color="#fff",
+        )
+        mock_get_root = MagicMock()
+        mock_get_root.scalars.return_value.first.return_value = root_folder
+
+        # 6 folders across 3 depth levels:
+        # Depth 0: Root (id 1)
+        # Depth 1: Subfolder 1 (id 2), Subfolder 2 (id 3), Subfolder 3 (id 4)
+        # Depth 2: Sub-subfolder 1 (id 5, parent 2), Sub-subfolder 2 (id 6, parent 3)
+        mock_rows = [
+            SimpleNamespace(
+                id=1, name="BatchRoot", color="#fff", parent_id=None, depth=0
+            ),
+            SimpleNamespace(
+                id=2, name="Sub 1", color="#fff", parent_id=1, depth=1
+            ),
+            SimpleNamespace(
+                id=3, name="Sub 2", color="#fff", parent_id=1, depth=1
+            ),
+            SimpleNamespace(
+                id=4, name="Sub 3", color="#fff", parent_id=1, depth=1
+            ),
+            SimpleNamespace(
+                id=5, name="Sub-sub 1", color="#fff", parent_id=2, depth=2
+            ),
+            SimpleNamespace(
+                id=6, name="Sub-sub 2", color="#fff", parent_id=3, depth=2
+            ),
+        ]
+        mock_desc_res = MagicMock()
+        mock_desc_res.fetchall.return_value = mock_rows
+
+        mock_existing_root_res = MagicMock()
+        mock_existing_root_res.fetchall.return_value = []
+
+        mock_media_res = MagicMock()
+        mock_media_res.scalars.return_value.all.return_value = []
+
+        mock_asset_res = MagicMock()
+        mock_asset_res.scalars.return_value.all.return_value = []
+
+        mock_db.execute.side_effect = [
+            mock_get_root,
+            mock_desc_res,
+            mock_existing_root_res,
+            mock_media_res,
+            mock_asset_res,
+        ]
+
+        # Simulate DB assigning auto-increment primary key ID on flush
+        next_id = 100
+        added_folders: list[Folder] = []
+
+        def mock_add(obj):
+            if isinstance(obj, Folder):
+                added_folders.append(obj)
+
+        mock_db.add = MagicMock(side_effect=mock_add)
+
+        async def fake_flush():
+            nonlocal next_id
+            for folder in added_folders:
+                if getattr(folder, "id", None) is None:
+                    next_id += 1
+                    folder.id = next_id
+
+        mock_db.flush.side_effect = fake_flush
+
+        result = await folder_repo.copy_folder_to_workspace(
+            folder_id=1,
+            target_workspace_id=99,
+            user_id=1,
+            user_email="tester@test.com",
+        )
+
+        assert result["folders_copied"] == 6
+        # Crucial check: flush must be called exactly 3 times (depth 0, depth 1, depth 2), NOT 6 times!
+        assert mock_db.flush.call_count == 3
+
+        # Verify parent-child ID chaining
+        # Root (depth 0) -> ID 101, parent_id is None
+        assert added_folders[0].name == "BatchRoot"
+        assert added_folders[0].parent_id is None
+        assert added_folders[0].id == 101
+
+        # Depth 1: folders 1, 2, 3 -> IDs 102, 103, 104, parent_id is 101
+        for folder in added_folders[1:4]:
+            assert folder.parent_id == 101
+
+        # Depth 2: folder 5 has parent_id 102 (from folder 2), folder 6 has parent_id 103 (from folder 3)
+        assert added_folders[4].name == "Sub-sub 1"
+        assert added_folders[4].parent_id == 102
+        assert added_folders[5].name == "Sub-sub 2"
+        assert added_folders[5].parent_id == 103
+
         mock_db.commit.assert_called_once()
 
     @pytest.mark.anyio

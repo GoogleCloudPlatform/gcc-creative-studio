@@ -570,30 +570,49 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
             root_folder.name, existing_root_names
         )
 
-        id_map: dict[int, int] = {}
+        # Group folder rows by hierarchy depth to batch insert and flush once per level.
+        # This reduces roundtrips from N (total folders) to D (tree depth, typically < 5).
+        depth_map: dict[int, list] = {}
+        row_depth_map: dict[int, int] = {}
         for row in folder_rows:
-            if row.id == folder_id:
-                new_folder = Folder(
-                    workspace_id=target_workspace_id,
-                    user_id=user_id,
-                    user_email=user_email or root_folder.user_email,
-                    name=disambiguated_root_name,
-                    parent_id=None,
-                    color=row.color,
-                )
+            if isinstance(getattr(row, "depth", None), int):
+                depth = row.depth
+            elif row.id == folder_id or row.parent_id is None:
+                depth = 0
             else:
-                new_parent_id = id_map.get(row.parent_id)
-                new_folder = Folder(
-                    workspace_id=target_workspace_id,
-                    user_id=user_id,
-                    user_email=user_email or root_folder.user_email,
-                    name=row.name,
-                    parent_id=new_parent_id,
-                    color=row.color,
-                )
-            self.db.add(new_folder)
+                depth = row_depth_map.get(row.parent_id, 0) + 1
+            row_depth_map[row.id] = depth
+            depth_map.setdefault(depth, []).append(row)
+
+        id_map: dict[int, int] = {}
+        for depth in sorted(depth_map.keys()):
+            folders_at_depth: list[tuple[int, Folder]] = []
+            for row in depth_map[depth]:
+                if row.id == folder_id:
+                    new_folder = Folder(
+                        workspace_id=target_workspace_id,
+                        user_id=user_id,
+                        user_email=user_email or root_folder.user_email,
+                        name=disambiguated_root_name,
+                        parent_id=None,
+                        color=row.color,
+                    )
+                else:
+                    new_parent_id = id_map.get(row.parent_id)
+                    new_folder = Folder(
+                        workspace_id=target_workspace_id,
+                        user_id=user_id,
+                        user_email=user_email or root_folder.user_email,
+                        name=row.name,
+                        parent_id=new_parent_id,
+                        color=row.color,
+                    )
+                self.db.add(new_folder)
+                folders_at_depth.append((row.id, new_folder))
+
             await self.db.flush()
-            id_map[row.id] = new_folder.id
+            for old_id, new_folder in folders_at_depth:
+                id_map[old_id] = new_folder.id
 
         old_folder_ids = list(id_map.keys())
 
