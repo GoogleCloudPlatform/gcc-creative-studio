@@ -197,6 +197,8 @@ class TestFolderRepository:
 
         res = await folder_repo.soft_delete(folder_id=1, user_id=10)
         assert res is True
+        # Executes: 1) CTE get descendants, 2) media soft-delete, 3) asset soft-delete, 4) folder soft-delete
+        assert mock_db.execute.call_count == 4
         mock_db.commit.assert_called_once()
 
     @pytest.mark.anyio
@@ -280,7 +282,6 @@ class TestFolderRepository:
             mock_media_res,
             mock_asset_res,
             mock_other_res,
-            mock_other_res,
         ]
 
         result = await folder_repo.move_folder_to_workspace(
@@ -289,6 +290,9 @@ class TestFolderRepository:
         assert result["folders_moved"] == 2
         assert result["media_moved"] == 3
         assert result["assets_moved"] == 2
+        assert root_folder.workspace_id == 99
+        assert root_folder.parent_id is None
+        assert root_folder.name == "ExistingRoot (1)"
         mock_db.commit.assert_called_once()
 
     @pytest.mark.anyio

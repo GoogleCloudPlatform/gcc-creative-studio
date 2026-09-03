@@ -785,13 +785,17 @@ class GalleryService:
                         user=current_user,
                     )
 
-                    await self.folder_repo.copy_folder_to_workspace(
+                    copy_results = await self.folder_repo.copy_folder_to_workspace(
                         folder_id=folder.id,
                         target_workspace_id=bulk_copy_dto.target_workspace_id,
                         user_id=current_user.id,
                         user_email=current_user.email,
                     )
-                    copied_count += 1
+                    copied_count += (
+                        copy_results.get("folders_copied", 0)
+                        + copy_results.get("media_copied", 0)
+                        + copy_results.get("assets_copied", 0)
+                    )
 
             except Exception as e:
                 logger.error(f"Error copying {item.type} {item.id}: {e}")

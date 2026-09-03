@@ -330,6 +330,28 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
             return False
 
         now = datetime.now(timezone.utc)
+
+        # 1. Soft-delete all media items in the deleted folder hierarchy
+        media_stmt = (
+            update(MediaItem)
+            .where(
+                MediaItem.folder_id.in_(descendant_ids),
+                MediaItem.deleted_at.is_(None),
+            )
+            .values(deleted_at=now, deleted_by=user_id)
+        )
+        await self.db.execute(media_stmt)
+        # 2. Soft-delete all source assets in the deleted folder hierarchy
+        asset_stmt = (
+            update(SourceAsset)
+            .where(
+                SourceAsset.folder_id.in_(descendant_ids),
+                SourceAsset.deleted_at.is_(None),
+            )
+            .values(deleted_at=now, deleted_by=user_id)
+        )
+        await self.db.execute(asset_stmt)
+
         stmt = (
             update(self.model)
             .where(self.model.id.in_(descendant_ids))
@@ -474,19 +496,9 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
             await self.db.execute(child_folders_stmt)
 
         # 4. Update the root folder being moved: set workspace_id, reset parent_id to None, and apply disambiguated name
-        root_folder_stmt = (
-            update(Folder)
-            .where(
-                Folder.id == folder_id,
-                Folder.deleted_at.is_(None),
-            )
-            .values(
-                workspace_id=target_workspace_id,
-                parent_id=None,
-                name=disambiguated_name,
-            )
-        )
-        await self.db.execute(root_folder_stmt)
+        root_folder.workspace_id = target_workspace_id
+        root_folder.parent_id = None
+        root_folder.name = disambiguated_name
 
         await self.db.commit()
 
