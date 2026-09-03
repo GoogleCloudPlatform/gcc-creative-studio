@@ -271,6 +271,8 @@ class TestFolderRepository:
         mock_existing_root_res = MagicMock()
         mock_existing_root_res.fetchall.return_value = [("existingroot",)]
 
+        mock_delete_media_tags = MagicMock()
+        mock_delete_asset_tags = MagicMock()
         mock_media_res = MagicMock(rowcount=3)
         mock_asset_res = MagicMock(rowcount=2)
         mock_other_res = MagicMock(rowcount=1)
@@ -279,6 +281,8 @@ class TestFolderRepository:
             mock_get_root,
             mock_desc_res,
             mock_existing_root_res,
+            mock_delete_media_tags,
+            mock_delete_asset_tags,
             mock_media_res,
             mock_asset_res,
             mock_other_res,
@@ -293,6 +297,46 @@ class TestFolderRepository:
         assert root_folder.workspace_id == 99
         assert root_folder.parent_id is None
         assert root_folder.name == "ExistingRoot (1)"
+        assert mock_db.execute.call_count == 8
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_move_folder_to_workspace_same_workspace(
+        self, folder_repo, mock_db
+    ):
+        root_folder = Folder(
+            id=1,
+            workspace_id=99,
+            user_email="a@b.com",
+            name="Root",
+            parent_id=None,
+        )
+        mock_get_root = MagicMock()
+        mock_get_root.scalars.return_value.first.return_value = root_folder
+
+        mock_row1 = MagicMock(id=1)
+        mock_desc_res = MagicMock()
+        mock_desc_res.fetchall.return_value = [mock_row1]
+
+        mock_existing_root_res = MagicMock()
+        mock_existing_root_res.fetchall.return_value = []
+
+        mock_media_res = MagicMock(rowcount=1)
+        mock_asset_res = MagicMock(rowcount=1)
+
+        mock_db.execute.side_effect = [
+            mock_get_root,
+            mock_desc_res,
+            mock_existing_root_res,
+            mock_media_res,
+            mock_asset_res,
+        ]
+
+        result = await folder_repo.move_folder_to_workspace(
+            folder_id=1, target_workspace_id=99
+        )
+        assert result["folders_moved"] == 1
+        assert mock_db.execute.call_count == 5
         mock_db.commit.assert_called_once()
 
     @pytest.mark.anyio

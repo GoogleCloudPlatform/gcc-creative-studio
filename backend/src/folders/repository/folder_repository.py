@@ -15,7 +15,7 @@
 import re
 from datetime import datetime, timezone
 from fastapi import Depends
-from sqlalchemy import func, select, update, text
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.base_repository import BaseRepository
@@ -28,6 +28,7 @@ from src.folders.dto.folder_dto import (
 )
 from src.folders.schema.folder_model import Folder, FolderModel
 from src.source_assets.schema.source_asset_model import SourceAsset
+from src.tags.schema.tags_model import media_item_tags, source_asset_tags
 
 
 def generate_disambiguated_name(
@@ -465,6 +466,26 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         disambiguated_name = generate_disambiguated_name(
             root_folder.name, existing_root_names
         )
+
+        if root_folder.workspace_id != target_workspace_id:
+            # Remove tag associations from media items and source assets being moved across workspaces
+            media_tags_delete = delete(media_item_tags).where(
+                media_item_tags.c.media_item_id.in_(
+                    select(MediaItem.id).where(
+                        MediaItem.folder_id.in_(descendant_ids)
+                    )
+                )
+            )
+            await self.db.execute(media_tags_delete)
+
+            asset_tags_delete = delete(source_asset_tags).where(
+                source_asset_tags.c.source_asset_id.in_(
+                    select(SourceAsset.id).where(
+                        SourceAsset.folder_id.in_(descendant_ids)
+                    )
+                )
+            )
+            await self.db.execute(asset_tags_delete)
 
         # 1. Update media items belonging to any folder in the subtree
         media_stmt = (

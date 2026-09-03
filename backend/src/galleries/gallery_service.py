@@ -828,6 +828,12 @@ class GalleryService:
                         user=current_user,
                     )
 
+                    if (
+                        media_item.workspace_id
+                        != bulk_move_dto.target_workspace_id
+                    ):
+                        await self.tags_repo.clear_tags_for_media_item(item.id)
+
                     await self.media_repo.update(
                         item.id,
                         {
@@ -847,6 +853,11 @@ class GalleryService:
                         workspace_id=asset.workspace_id,
                         user=current_user,
                     )
+
+                    if asset.workspace_id != bulk_move_dto.target_workspace_id:
+                        await self.tags_repo.clear_tags_for_source_asset(
+                            item.id
+                        )
 
                     await self.source_asset_repo.update(
                         item.id,
