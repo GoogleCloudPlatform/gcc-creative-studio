@@ -629,15 +629,11 @@ update_secrets() {
     # --- Double-check for Firebase config if variables are not set ---
     # This handles cases where the script is resumed after step 7
     if [ -z "$AUTO_FIREBASE_API_KEY" ]; then
-        info "Auto-discovered Firebase variables not set. Re-running discovery..."
-        local FE_APP_NAME=$(grep 'frontend_service_name' "$TFVARS_FILE_PATH" | awk -F'"' '{print $2}')
-        if [ -z "$FE_APP_NAME" ]; then
-            warn "Could not determine frontend service name from .tfvars. Cannot auto-discover Firebase secrets."
-        else
-            local APP_ID=$( (firebase apps:list --project="$GCP_PROJECT_ID" --json 2>/dev/null || echo "{}") | jq -r --arg name "$FE_SERVICE_NAME" 'try (.result[]? | select(.displayName == $name) | .appId) catch ""' 2>/dev/null || echo "" )
-            if [ -n "$APP_ID" ]; then
-                local SDK_CONFIG_JSON=$(firebase apps:sdkconfig WEB "$APP_ID" --project="$GCP_PROJECT_ID" --json 2>/dev/null || echo "{}")
-				AUTO_FIREBASE_API_KEY=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.apiKey // "") catch ""' 2>/dev/null || echo "" )
+        info "Auto-discovered Firebase variables not set in memory. Re-fetching from Firebase API..."
+        local APP_ID=$( (firebase apps:list --project="$GCP_PROJECT_ID" --json 2>/dev/null || echo "{}") | jq -r --arg name "$FE_SERVICE_NAME" 'try (.result[]? | select(.displayName == $name) | .appId) catch ""' 2>/dev/null || echo "" )
+        if [ -n "$APP_ID" ]; then
+            local SDK_CONFIG_JSON=$(firebase apps:sdkconfig WEB "$APP_ID" --project="$GCP_PROJECT_ID" --json 2>/dev/null || echo "{}")
+            AUTO_FIREBASE_API_KEY=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.apiKey // "") catch ""' 2>/dev/null || echo "" )
                 # ... (re-populate all other AUTO_... variables)
 				AUTO_FIREBASE_AUTH_DOMAIN=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.authDomain // "") catch ""' 2>/dev/null || echo "" )
 				AUTO_FIREBASE_PROJECT_ID=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.projectId // "") catch ""' 2>/dev/null || echo "" )
@@ -647,7 +643,6 @@ update_secrets() {
 				AUTO_FIREBASE_MEASUREMENT_ID=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.measurementId // "") catch ""' 2>/dev/null || echo "" )
                 success "Successfully re-discovered Firebase configuration."
             fi
-        fi
     fi
 
     for SECRET_NAME in $ALL_SECRETS; do
@@ -794,7 +789,7 @@ trigger_builds() {
     fi
 
     info "Triggering backend build..."; gcloud builds triggers run "${BE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="us-central1"
-    info "Triggering frontend build..."; gcloud builds triggers run "${GCP_PROJECT_ID}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="us-central1"
+    info "Triggering frontend build..."; gcloud builds triggers run "${FE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="us-central1"
 
     success "Builds have been triggered."; info "You can monitor their progress in the Cloud Build console:"; echo -e "   ${C_YELLOW}https://console.cloud.google.com/cloud-build/builds?project=${GCP_PROJECT_ID}${C_RESET}"
 }

@@ -50,7 +50,7 @@ resource "google_project_iam_member" "logging_writer" {
 
 # --- Frontend Trigger ---
 resource "google_cloudbuild_trigger" "frontend_trigger" {
-  name            = "${var.project_id}-trigger"
+  name            = "${var.resource_prefix}-${var.environment}-frontend-trigger"
   location        = var.region
   service_account = google_service_account.trigger_sa.id
   filename        = "frontend/cloudbuild-deploy.yaml"
@@ -73,7 +73,7 @@ resource "google_cloudbuild_trigger" "backend_trigger" {
   name            = "${module.compute.service_name}-trigger"
   location        = var.region
   service_account = google_service_account.trigger_sa.id
-  filename        = "backend/cloudbuild-deploy.yaml"
+  filename        = "backend/cloudbuild.yaml"
   substitutions = {
     _GCP_PROJECT_ID   = var.project_id
     _GCP_REGION       = var.region
