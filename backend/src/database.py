@@ -107,6 +107,7 @@ async def get_connection():
             database=config_service.DB_NAME,
             host=config_service.DB_HOST,
             port=config_service.DB_PORT,
+            ssl=False,
         )
         return conn
 
@@ -158,6 +159,9 @@ else:
     engine = create_async_engine(
         get_conn_string(),
         echo=config_service.LOG_LEVEL == "DEBUG",
+        connect_args=(
+            {"ssl": False} if config_service.USE_CLOUD_SQL_AUTH_PROXY else {}
+        ),
     )
 
 # Create the Session Factory
@@ -209,6 +213,9 @@ class WorkerDatabase:
             self.engine = create_async_engine(
                 get_conn_string(),
                 echo=config_service.LOG_LEVEL == "DEBUG",
+                connect_args=(
+                    {"ssl": False} if config_service.USE_CLOUD_SQL_AUTH_PROXY else {}
+                ),
             )
 
         self.sessionmaker = async_sessionmaker(
