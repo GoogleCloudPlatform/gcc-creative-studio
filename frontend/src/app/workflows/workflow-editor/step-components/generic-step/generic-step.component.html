@@ -140,11 +140,14 @@
           </app-step-input-field>
         </div>
 
-        <!-- Prompt Variables Section (rendered directly after 'prompt' input for generate-text step) -->
+        <!-- Prompt Variables Section (rendered directly after 'prompt' input for generate_text step) -->
         <div
           class="prompt-variables my-3"
           [class.disabled-section]="inputModes['prompt'] !== 'fixed'"
-          *ngIf="localConfig.type === 'generate-text' && input.name === 'prompt'"
+          *ngIf="
+            localConfig.type === NodeTypes.GENERATE_TEXT &&
+            input.name === 'prompt'
+          "
         >
           <div class="prompt-variables-header flex flex-col gap-2 mb-3">
             <div class="flex items-center justify-between">

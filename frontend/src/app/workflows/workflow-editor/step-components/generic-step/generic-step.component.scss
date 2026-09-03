@@ -50,39 +50,52 @@
   }
 
   /* --- Step Type Specific Top Borders --- */
+  &.user_input,
   &.user-input {
     border-top: 4px solid #f87171;
   }
 
   /* Red */
+  &.generate_text,
   &.generate-text {
     border-top: 4px solid #339af0;
   }
 
   /* Blue */
+  &.generate_image,
   &.generate-image,
   &.image {
     border-top: 4px solid #51cf66;
   }
 
   /* Green */
+  &.edit_image,
   &.edit-image {
     border-top: 4px solid #ff922b;
   }
 
   /* Orange */
+  &.generate_video,
   &.generate-video {
     border-top: 4px solid #fcc419;
   }
 
   /* Purple */
+  &.crop_image,
   &.crop-image {
     border-top: 4px solid #22b8cf;
   }
 
   /* Cyan */
+  &.virtual_try_on,
   &.virtual-try-on {
     border-top: 4px solid #8b5cf6;
+  }
+
+  /* Audio */
+  &.generate_audio,
+  &.generate-audio {
+    border-top: 4px solid #e8590c;
   }
 
   /* Purple */
