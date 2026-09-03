@@ -971,11 +971,6 @@ select_deployment_profile() {
         else
             success "Deployment parameters locked in from profile!"
         fi
-    else
-        warn "Invalid selection. Defaulting to first profile..."
-        STATE_FILE="${profiles[0]}"
-        read_state
-    fi
 }
 
 
