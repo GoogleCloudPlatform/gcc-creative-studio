@@ -359,6 +359,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
           lastWorkspaceId !== workspaceId &&
           this.currentFolderId !== null
         ) {
+          lastWorkspaceId = workspaceId;
           void this.router.navigate(['/gallery']);
         } else {
           lastWorkspaceId = workspaceId;
