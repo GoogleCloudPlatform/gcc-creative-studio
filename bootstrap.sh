@@ -1011,6 +1011,14 @@ main() {
     echo ""
 
     read_state; LAST_COMPLETED_STEP=${LAST_COMPLETED_STEP:-0}
+    
+    if [ -n "$REPO_ROOT" ] && [ ! -d "$REPO_ROOT/infrastructure" ]; then
+        warn "Saved repository directory '$REPO_ROOT' not found. Resetting progress to re-clone..."
+        LAST_COMPLETED_STEP=0
+        write_state "LAST_COMPLETED_STEP" "0"
+        REPO_ROOT=""
+    fi
+
     if [ -z "$REPO_ROOT" ] || [ ! -d "$REPO_ROOT/infrastructure" ]; then
         local SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         if [ -d "$SCRIPT_DIR/infrastructure" ]; then
