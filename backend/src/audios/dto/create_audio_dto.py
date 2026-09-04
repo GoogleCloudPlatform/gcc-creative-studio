@@ -29,7 +29,7 @@ class CreateAudioDto(BaseDto):
     """
 
     model: GenerationModelEnum = Field(
-        default=GenerationModelEnum.LYRIA_002,
+        default=GenerationModelEnum.LYRIA_3_CLIP,
         description="The model to use for generation (Lyria, Chirp, Gemini TTS).",
     )
 
@@ -96,8 +96,8 @@ class CreateAudioDto(BaseDto):
     ) -> GenerationModelEnum:
         allowed_audio_models = {
             GenerationModelEnum.LYRIA_002,
-            GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
-            GenerationModelEnum.LYRIA_3_PRO_PREVIEW,
+            GenerationModelEnum.LYRIA_3_CLIP,
+            GenerationModelEnum.LYRIA_3_PRO,
             GenerationModelEnum.CHIRP_3,
             GenerationModelEnum.GEMINI_2_5_FLASH_TTS,
             GenerationModelEnum.GEMINI_2_5_FLASH_LITE_PREVIEW_TTS,

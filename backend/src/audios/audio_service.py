@@ -406,8 +406,8 @@ class AudioService:
     }
     MUSIC_MODELS = {
         GenerationModelEnum.LYRIA_002,
-        GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
-        GenerationModelEnum.LYRIA_3_PRO_PREVIEW,
+        GenerationModelEnum.LYRIA_3_CLIP,
+        GenerationModelEnum.LYRIA_3_PRO,
     }
 
     def __init__(

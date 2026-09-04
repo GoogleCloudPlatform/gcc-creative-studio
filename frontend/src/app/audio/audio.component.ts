@@ -259,7 +259,7 @@ export class AudioComponent implements OnInit {
     let backendModel: GenerationModelEnum;
 
     if (this.selectedModel === 'lyria') {
-      backendModel = GenerationModelEnum.LYRIA_002;
+      backendModel = GenerationModelEnum.LYRIA_3_CLIP;
     } else if (this.selectedModel === 'chirp') {
       backendModel = GenerationModelEnum.CHIRP_3;
     } else {

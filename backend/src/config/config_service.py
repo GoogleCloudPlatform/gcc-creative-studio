@@ -79,7 +79,7 @@ class ConfigService(BaseSettings):
     VTO_MODEL_ID: str = "virtual-try-on-001"
 
     # --- Lyria ---
-    LYRIA_MODEL_VERSION: str = "lyria-002"
+    LYRIA_MODEL_VERSION: str = "lyria-3-clip"
     LYRIA_PROJECT_ID: str = ""
 
     # --- Imagen ---

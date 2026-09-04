@@ -25,8 +25,8 @@ import {MediaItem} from '../../common/models/media-item.model';
 export enum GenerationModelEnum {
   // Music
   LYRIA_002 = 'lyria-002',
-  LYRIA_3_CLIP_PREVIEW = 'lyria-3-clip-preview',
-  LYRIA_3_PRO_PREVIEW = 'lyria-3-pro-preview',
+  LYRIA_3_CLIP = 'lyria-3-clip',
+  LYRIA_3_PRO = 'lyria-3-pro',
 
   // Speech
   CHIRP_3 = 'chirp_3',

@@ -277,13 +277,29 @@ class TestBackgroundWorkers:
         )
 
     def test_new_audio_models_validation(self):
-        lyria3_dto = CreateAudioDto(
+        # Default model is upgraded to LYRIA_3_CLIP
+        default_dto = CreateAudioDto(
             workspace_id=1,
-            prompt="Lyria 3 prompt",
-            model=GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+            prompt="Default prompt",
             sample_count=1,
         )
-        assert lyria3_dto.model == GenerationModelEnum.LYRIA_3_CLIP_PREVIEW
+        assert default_dto.model == GenerationModelEnum.LYRIA_3_CLIP
+
+        lyria3_clip_dto = CreateAudioDto(
+            workspace_id=1,
+            prompt="Lyria 3 Clip prompt",
+            model=GenerationModelEnum.LYRIA_3_CLIP,
+            sample_count=1,
+        )
+        assert lyria3_clip_dto.model == GenerationModelEnum.LYRIA_3_CLIP
+
+        lyria3_pro_dto = CreateAudioDto(
+            workspace_id=1,
+            prompt="Lyria 3 Pro prompt",
+            model=GenerationModelEnum.LYRIA_3_PRO,
+            sample_count=1,
+        )
+        assert lyria3_pro_dto.model == GenerationModelEnum.LYRIA_3_PRO
 
         gemini31_dto = CreateAudioDto(
             workspace_id=1,
