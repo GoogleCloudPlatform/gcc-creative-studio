@@ -882,11 +882,15 @@ class GalleryService:
                     if folder.workspace_id == bulk_move_dto.target_workspace_id:
                         continue
 
-                    await self.folder_repo.move_folder_to_workspace(
+                    move_results = await self.folder_repo.move_folder_to_workspace(
                         folder_id=folder.id,
                         target_workspace_id=bulk_move_dto.target_workspace_id,
                     )
-                    moved_count += 1
+                    moved_count += (
+                        move_results.get("folders_moved", 0)
+                        + move_results.get("media_moved", 0)
+                        + move_results.get("assets_moved", 0)
+                    )
 
             except Exception as e:
                 logger.error(f"Error moving {item.type} {item.id}: {e}")

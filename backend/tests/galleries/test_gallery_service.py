@@ -926,7 +926,7 @@ async def test_bulk_move_folder_success(service):
     }
 
     result = await service.bulk_move(bulk_dto, current_user)
-    assert result["moved_count"] == 1
+    assert result["moved_count"] == 6
     service.mock_workspace_auth.authorize.assert_any_call(
         workspace_id=88, user=current_user
     )
