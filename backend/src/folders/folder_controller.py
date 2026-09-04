@@ -129,8 +129,17 @@ async def get_folder_breadcrumbs(
             workspace_id=workspace_id,
             user=current_user,
         )
+        return await service.get_breadcrumbs(
+            folder_id=folder_id, workspace_id=workspace_id
+        )
+
+    folder = await service.get_folder_by_id(folder_id=folder_id)
+    await workspace_auth.authorize(
+        workspace_id=folder.workspace_id,
+        user=current_user,
+    )
     return await service.get_breadcrumbs(
-        folder_id=folder_id, workspace_id=workspace_id
+        folder_id=folder_id, workspace_id=folder.workspace_id
     )
 
 
@@ -154,9 +163,16 @@ async def get_folder(
             workspace_id=workspace_id,
             user=current_user,
         )
-    return await service.get_folder_by_id(
-        folder_id=folder_id, workspace_id=workspace_id
+        return await service.get_folder_by_id(
+            folder_id=folder_id, workspace_id=workspace_id
+        )
+
+    folder = await service.get_folder_by_id(folder_id=folder_id)
+    await workspace_auth.authorize(
+        workspace_id=folder.workspace_id,
+        user=current_user,
     )
+    return folder
 
 
 @router.patch(

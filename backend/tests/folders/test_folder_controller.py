@@ -145,7 +145,19 @@ class TestGetFolderTree:
 class TestGetFolderBreadcrumbs:
     """Tests for GET /api/folders/{folder_id}/breadcrumbs."""
 
-    def test_get_breadcrumbs_success(self, api_client, mock_folder_service):
+    def test_get_breadcrumbs_success(
+        self, api_client, mock_folder_service, mock_workspace_auth
+    ):
+        mock_folder_service.get_folder_by_id.return_value = FolderResponseDto(
+            id=2,
+            workspace_id=1,
+            user_id=1,
+            user_email="user@example.com",
+            name="Child",
+            parent_id=1,
+            item_count=0,
+            subfolder_count=0,
+        )
         mock_folder_service.get_breadcrumbs.return_value = [
             FolderBreadcrumbDto(id=1, name="Root", parent_id=None),
             FolderBreadcrumbDto(id=2, name="Child", parent_id=1),
@@ -157,8 +169,12 @@ class TestGetFolderBreadcrumbs:
         assert len(data) == 2
         assert data[0]["name"] == "Root"
         assert data[1]["name"] == "Child"
+        mock_folder_service.get_folder_by_id.assert_called_once_with(
+            folder_id=2
+        )
+        mock_workspace_auth.authorize.assert_called_once()
         mock_folder_service.get_breadcrumbs.assert_called_once_with(
-            folder_id=2, workspace_id=None
+            folder_id=2, workspace_id=1
         )
 
     def test_get_breadcrumbs_with_workspace_id(
@@ -179,7 +195,9 @@ class TestGetFolderBreadcrumbs:
 class TestGetFolderById:
     """Tests for GET /api/folders/{folder_id}."""
 
-    def test_get_folder_by_id_success(self, api_client, mock_folder_service):
+    def test_get_folder_by_id_success(
+        self, api_client, mock_folder_service, mock_workspace_auth
+    ):
         mock_folder_service.get_folder_by_id.return_value = FolderResponseDto(
             id=1,
             workspace_id=1,
@@ -197,8 +215,9 @@ class TestGetFolderById:
         assert data["id"] == 1
         assert data["itemCount"] == 5
         mock_folder_service.get_folder_by_id.assert_called_once_with(
-            folder_id=1, workspace_id=None
+            folder_id=1
         )
+        mock_workspace_auth.authorize.assert_called_once()
 
     def test_get_folder_by_id_with_workspace_id(
         self, api_client, mock_folder_service, mock_workspace_auth
