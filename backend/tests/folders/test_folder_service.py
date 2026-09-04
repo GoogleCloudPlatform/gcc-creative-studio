@@ -39,6 +39,7 @@ def fixture_mock_folder_repo():
     mock.is_folder_name_taken.return_value = False
     mock.get_folder_depth.return_value = 1
     mock.get_subtree_depth.return_value = 1
+    mock.get_folders_by_ids.return_value = []
     return mock
 
 
@@ -488,6 +489,9 @@ class TestMoveItems:
         mock_folder_repo.get_folder_by_id.return_value = Folder(
             id=5, workspace_id=1, user_email="a@b.com", name="Target"
         )
+        mock_folder_repo.get_folders_by_ids.return_value = [
+            Folder(id=2, workspace_id=1, user_email="a@b.com", name="Folder 2")
+        ]
         mock_folder_repo.get_descendant_ids.return_value = [2]
         mock_folder_repo.move_media_items.return_value = 2
         mock_folder_repo.move_source_assets.return_value = 1
@@ -532,6 +536,9 @@ class TestMoveItems:
         mock_folder_repo.get_folder_by_id.return_value = Folder(
             id=5, workspace_id=1, user_email="a@b.com", name="Target"
         )
+        mock_folder_repo.get_folders_by_ids.return_value = [
+            Folder(id=2, workspace_id=1, user_email="a@b.com", name="Folder 2")
+        ]
         mock_folder_repo.get_descendant_ids.return_value = [2]
         mock_folder_repo.get_folder_depth.return_value = 19
         mock_folder_repo.get_subtree_depth.return_value = 2
@@ -549,3 +556,125 @@ class TestMoveItems:
             "would exceed maximum folder tree depth of 20 levels"
             in exc_info.value.detail
         )
+
+    @pytest.mark.anyio
+    async def test_move_items_cycle_subfolder_error(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.get_folder_by_id.return_value = Folder(
+            id=5, workspace_id=1, user_email="a@b.com", name="Target"
+        )
+        mock_folder_repo.get_folders_by_ids.return_value = [
+            Folder(id=2, workspace_id=1, user_email="a@b.com", name="Folder 2")
+        ]
+        # Folder 5 is in descendants of folder 2 (cycle)
+        mock_folder_repo.get_descendant_ids.return_value = [2, 5]
+
+        dto = MoveItemsDto(
+            workspace_id=1,
+            folder_ids=[2],
+            destination_folder_id=5,
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.move_items(dto, sample_user)
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert (
+            "Cannot move folder 2 into its own subfolder."
+            in exc_info.value.detail
+        )
+
+    @pytest.mark.anyio
+    async def test_move_items_foreign_folder_skipped_no_recursive_queries(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.get_folder_by_id.return_value = Folder(
+            id=5, workspace_id=1, user_email="a@b.com", name="Target"
+        )
+        # Folder 999 belongs to another workspace, so get_folders_by_ids returns empty
+        mock_folder_repo.get_folders_by_ids.return_value = []
+        mock_folder_repo.move_media_items.return_value = 0
+        mock_folder_repo.move_source_assets.return_value = 0
+        mock_folder_repo.move_folders.return_value = 0
+
+        dto = MoveItemsDto(
+            workspace_id=1,
+            folder_ids=[999],
+            destination_folder_id=5,
+        )
+
+        result = await folder_service.move_items(dto, sample_user)
+        mock_folder_repo.get_folders_by_ids.assert_awaited_once_with(
+            folder_ids=[999], workspace_id=1
+        )
+        mock_folder_repo.get_descendant_ids.assert_not_called()
+        mock_folder_repo.get_subtree_depth.assert_not_called()
+        mock_folder_repo.move_folders.assert_awaited_once_with(
+            folder_ids=[], workspace_id=1, destination_folder_id=5
+        )
+        assert result["folders_moved"] == 0
+        assert result["total_moved"] == 0
+
+    @pytest.mark.anyio
+    async def test_move_items_mixed_valid_and_foreign_folders(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.get_folder_by_id.return_value = Folder(
+            id=5, workspace_id=1, user_email="a@b.com", name="Target"
+        )
+        # Folder 2 belongs to workspace 1, folder 999 belongs to workspace 2
+        mock_folder_repo.get_folders_by_ids.return_value = [
+            Folder(id=2, workspace_id=1, user_email="a@b.com", name="Folder 2")
+        ]
+        mock_folder_repo.get_descendant_ids.return_value = [2]
+        mock_folder_repo.move_media_items.return_value = 0
+        mock_folder_repo.move_source_assets.return_value = 0
+        mock_folder_repo.move_folders.return_value = 1
+
+        dto = MoveItemsDto(
+            workspace_id=1,
+            folder_ids=[2, 999],
+            destination_folder_id=5,
+        )
+
+        result = await folder_service.move_items(dto, sample_user)
+        mock_folder_repo.get_folders_by_ids.assert_awaited_once_with(
+            folder_ids=[2, 999], workspace_id=1
+        )
+        # Recursive queries only called for folder 2, never for folder 999
+        mock_folder_repo.get_descendant_ids.assert_called_once_with(2)
+        mock_folder_repo.get_subtree_depth.assert_called_once_with(2)
+        mock_folder_repo.move_folders.assert_awaited_once_with(
+            folder_ids=[2], workspace_id=1, destination_folder_id=5
+        )
+        assert result["folders_moved"] == 1
+        assert result["total_moved"] == 1
+
+    @pytest.mark.anyio
+    async def test_move_items_to_root_success(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.get_folders_by_ids.return_value = [
+            Folder(id=2, workspace_id=1, user_email="a@b.com", name="Folder 2")
+        ]
+        mock_folder_repo.move_media_items.return_value = 0
+        mock_folder_repo.move_source_assets.return_value = 0
+        mock_folder_repo.move_folders.return_value = 1
+
+        dto = MoveItemsDto(
+            workspace_id=1,
+            folder_ids=[2],
+            destination_folder_id=None,
+        )
+
+        result = await folder_service.move_items(dto, sample_user)
+        mock_folder_repo.get_folders_by_ids.assert_awaited_once_with(
+            folder_ids=[2], workspace_id=1
+        )
+        mock_folder_repo.get_descendant_ids.assert_not_called()
+        mock_folder_repo.get_subtree_depth.assert_not_called()
+        mock_folder_repo.move_folders.assert_awaited_once_with(
+            folder_ids=[2], workspace_id=1, destination_folder_id=None
+        )
+        assert result["folders_moved"] == 1
+        assert result["total_moved"] == 1

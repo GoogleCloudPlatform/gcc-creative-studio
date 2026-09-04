@@ -319,6 +319,16 @@ class FolderService:
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Folder {f_id} cannot be moved into itself.",
                     )
+
+            # Validate workspace ownership in a single batch query beforehand to prevent
+            # executing expensive recursive queries on foreign/invalid folders.
+            folders = await self.folder_repo.get_folders_by_ids(
+                folder_ids=dto.folder_ids,
+                workspace_id=dto.workspace_id,
+            )
+
+            for folder in folders:
+                f_id = folder.id
                 if dest_folder_id is not None:
                     descendant_ids = await self.folder_repo.get_descendant_ids(
                         f_id

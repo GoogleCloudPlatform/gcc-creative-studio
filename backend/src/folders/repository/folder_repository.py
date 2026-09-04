@@ -133,6 +133,23 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         result = await self.db.execute(query)
         return result.scalars().first()
 
+    async def get_folders_by_ids(
+        self,
+        folder_ids: list[int],
+        workspace_id: int | None = None,
+        include_deleted: bool = False,
+    ) -> list[Folder]:
+        """Fetch multiple active folders by IDs, optionally scoped to a workspace."""
+        if not folder_ids:
+            return []
+        query = select(self.model).where(self.model.id.in_(folder_ids))
+        if not include_deleted:
+            query = query.where(self.model.deleted_at.is_(None))
+        if workspace_id is not None:
+            query = query.where(self.model.workspace_id == workspace_id)
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
+
     async def list_by_parent(
         self, workspace_id: int, parent_id: int | None = None
     ) -> list[FolderResponseDto]:

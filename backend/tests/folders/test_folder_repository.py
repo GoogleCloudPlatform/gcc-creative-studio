@@ -117,6 +117,32 @@ class TestFolderRepository:
         assert res.name == "Folder"
 
     @pytest.mark.anyio
+    async def test_get_folders_by_ids_empty(self, folder_repo, mock_db):
+        res = await folder_repo.get_folders_by_ids([])
+        assert res == []
+        mock_db.execute.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_get_folders_by_ids_with_workspace(
+        self, folder_repo, mock_db
+    ):
+        folder1 = Folder(
+            id=1, workspace_id=1, user_email="a@b.com", name="Folder 1"
+        )
+        folder2 = Folder(
+            id=2, workspace_id=1, user_email="a@b.com", name="Folder 2"
+        )
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [folder1, folder2]
+        mock_db.execute.return_value = mock_result
+
+        res = await folder_repo.get_folders_by_ids([1, 2], workspace_id=1)
+        assert len(res) == 2
+        assert res[0].id == 1
+        assert res[1].id == 2
+        mock_db.execute.assert_called_once()
+
+    @pytest.mark.anyio
     async def test_list_by_parent(self, folder_repo, mock_db):
         folder = Folder(
             id=1, workspace_id=1, user_email="a@b.com", name="Folder 1"
