@@ -102,7 +102,11 @@ def test_upload_source_asset_success(
     mock_service.upload_asset.return_value = mock_response
 
     files = {"file": ("test.png", b"fake_image_bytes", "image/png")}
-    data = {"workspaceId": "1"}
+    data = {
+        "workspaceId": "1",
+        "enhanceInputImage": "true",
+        "imagePreservationFactor": "0.75",
+    }
 
     response = client.post("/api/source_assets/upload", files=files, data=data)
 
@@ -111,6 +115,9 @@ def test_upload_source_asset_success(
     assert response.json()["presignedUrl"] == "https://signed.url"
     mock_workspace_auth.authorize.assert_called_once()
     mock_service.upload_asset.assert_called_once()
+    kwargs = mock_service.upload_asset.call_args.kwargs
+    assert kwargs["enhance_input_image"] is True
+    assert kwargs["image_preservation_factor"] == 0.75
 
 
 def test_convert_image_to_png_success(client, mock_service):

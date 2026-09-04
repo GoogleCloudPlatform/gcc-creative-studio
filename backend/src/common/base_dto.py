@@ -49,14 +49,12 @@ class GenerationModelEnum(str, Enum):
     """Enum representing the available generation models."""
 
     # Image-Specific Models
-    IMAGEN_4_UPSCALE_PREVIEW = "imagen-4.0-upscale-preview"
     GEMINI_2_5_PRO = "gemini-2.5-pro"
     GEMINI_2_5_FLASH = "gemini-2.5-flash"
     GEMINI_3_5_FLASH = "gemini-3.5-flash"
     GEMINI_1_5_FLASH = "gemini-1.5-flash"
     GEMINI_2_5_FLASH_IMAGE_PREVIEW = "gemini-2.5-flash-image-preview"
     GEMINI_2_5_FLASH_IMAGE = "gemini-2.5-flash-image"
-    GEMINI_3_PRO_PREVIEW = "gemini-3-pro-preview"
     GEMINI_3_PRO_IMAGE = "gemini-3-pro-image"
     GEMINI_3_1_FLASH_IMAGE = "gemini-3.1-flash-image"
     GEMINI_3_1_FLASH_LITE_IMAGE = "gemini-3.1-flash-lite-image"
@@ -64,10 +62,12 @@ class GenerationModelEnum(str, Enum):
     VTO = "virtual-try-on-001"
 
     # Text / LLM Models
+    GEMINI_3_8_FLASH = "gemini-3.8-flash"
     GEMINI_3_7_FLASH = "gemini-3.7-flash"
+    GEMINI_3_6_FLASH = "gemini-3.6-flash"
+    GEMINI_3_5_FLASH_LITE = "gemini-3.5-flash-lite"
     GEMINI_3_1_PRO_PREVIEW = "gemini-3.1-pro-preview"
-    GEMINI_3_1_FLASH_PREVIEW = "gemini-3.1-flash-preview"
-    GEMINI_3_1_FLASH_LITE_PREVIEW = "gemini-3.1-flash-lite-preview"
+    GEMINI_3_1_FLASH_LITE = "gemini-3.1-flash-lite"
 
     # Video-Specific Models
     GEMINI_OMNI = "gemini-omni-generate-preview"
@@ -84,8 +84,8 @@ class GenerationModelEnum(str, Enum):
     VEO_3_QUALITY_PREVIEW = "veo-3.0-generate-preview"
     # Audio-Specific Models
     LYRIA_002 = "lyria-002"
-    LYRIA_3_CLIP_PREVIEW = "lyria-3-clip-preview"
-    LYRIA_3_PRO_PREVIEW = "lyria-3-pro-preview"
+    LYRIA_3_CLIP = "lyria-3-clip"
+    LYRIA_3_PRO = "lyria-3-pro"
     CHIRP_3 = "chirp_3"
     GEMINI_2_5_FLASH_TTS = "gemini-2.5-flash-tts"
     GEMINI_2_5_FLASH_LITE_PREVIEW_TTS = "gemini-2.5-flash-lite-preview-tts"
@@ -97,6 +97,8 @@ class GenerationModelEnum(str, Enum):
 
     # Deprecated models (For old generations only, do not use)
     _DEPRECATED_VTO = "virtual-try-on-preview-08-04"
+    GEMINI_3_PRO_PREVIEW = "gemini-3-pro-preview"
+    GEMINI_3_1_FLASH_LITE_PREVIEW = "gemini-3.1-flash-lite-preview"
     GEMINI_3_PRO_IMAGE_PREVIEW = "gemini-3-pro-image-preview"
     GEMINI_3_1_FLASH_IMAGE_PREVIEW = "gemini-3.1-flash-image-preview"
     IMAGEN_4_001 = "imagen-4.0-generate-001"
@@ -113,6 +115,8 @@ class GenerationModelEnum(str, Enum):
     VEO_2_FAST = "veo-2.0-generate-001"
     VEO_2_QUALITY = "veo-2.0-fast-generate-001"
     VEO_2_GENERATE_EXP = "veo-2.0-generate-exp"
+    LYRIA_3_CLIP_PREVIEW = "lyria-3-clip-preview"
+    LYRIA_3_PRO_PREVIEW = "lyria-3-pro-preview"
 
     @property
     def is_gemini_image_model(self) -> bool:

@@ -121,13 +121,14 @@ export class ExecutionDetailsModalComponent implements OnInit {
     return this.workflow?.steps.find(s => s.stepId === stepId)?.type;
   }
 
+  getStepMode(stepId: string): string | undefined {
+    return this.workflow?.steps.find(s => s.stepId === stepId)?.settings?.[
+      'mode'
+    ];
+  }
+
   isImageOutput(stepId: string): boolean {
     const type = this.getStepType(stepId);
-    return (
-      type === NodeTypes.GENERATE_IMAGE ||
-      type === NodeTypes.EDIT_IMAGE ||
-      type === NodeTypes.CROP_IMAGE ||
-      type === NodeTypes.VIRTUAL_TRY_ON
-    );
+    return type === NodeTypes.IMAGE || type === NodeTypes.CROP_IMAGE;
   }
 }

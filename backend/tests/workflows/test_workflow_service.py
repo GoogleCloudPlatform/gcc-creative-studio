@@ -14,6 +14,8 @@
 """Tests for Workflow Service."""
 
 
+import datetime
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -24,7 +26,11 @@ from src.workflows.schema.workflow_model import (
     GenerateTextInputs,
     GenerateTextSettings,
     GenerateTextStep,
+    ImageInputs,
+    ImageSettings,
+    ImageStep,
     NodeTypes,
+    StepOutputReference,
     WorkflowCreateDto,
     WorkflowModel,
 )
@@ -140,6 +146,93 @@ class TestWorkflowServiceConfig:
         assert "args" in step_1
         assert "url" in step_1["args"]
         assert "body" in step_1["args"]
+
+    def test_generate_workflow_yaml_with_image_step(self, workflow_service):
+        from src.config.config_service import config_service
+
+        config_service.WORKFLOWS_LOCATION = "us-central1"
+
+        workflow_model = WorkflowModel(
+            id="id-img-wf",
+            user_id=1,
+            name="Image Workflow",
+            description="Workflow with Image step",
+            steps=[
+                ImageStep(
+                    step_id="image_step_1",
+                    type=NodeTypes.IMAGE,
+                    inputs=ImageInputs(prompt="A futuristic flying car"),
+                    settings=ImageSettings(
+                        mode="generate_image",
+                        model="gemini-3.1-flash-image",
+                        aspect_ratio="16:9",
+                    ),
+                ),
+            ],
+        )
+
+        yaml_output = workflow_service._generate_workflow_yaml(workflow_model)
+        parsed = yaml.safe_load(yaml_output)
+
+        steps = parsed["main"]["steps"]
+        assert len(steps) == 1
+        assert "image_step_1" in steps[0]
+        image_step = steps[0]["image_step_1"]
+        assert image_step["call"] == "http.post"
+        assert image_step["args"]["url"].endswith("/image")
+        assert image_step["args"]["body"]["config"]["mode"] == "generate_image"
+
+    def test_generate_workflow_yaml_with_generate_text_dynamic_variables(
+        self, workflow_service
+    ):
+        from src.config.config_service import config_service
+
+        config_service.WORKFLOWS_LOCATION = "us-central1"
+
+        workflow_model = WorkflowModel(
+            id="id-text-vars-wf",
+            user_id=1,
+            name="Text Variables Workflow",
+            description="Workflow with Generate Text step using dynamic prompt variables",
+            steps=[
+                GenerateTextStep(
+                    step_id="step_gen_text",
+                    type=NodeTypes.GENERATE_TEXT,
+                    inputs=GenerateTextInputs(
+                        prompt="Create an image of a <animal> wearing a <outfit>",
+                        animal="cat",
+                        outfit=StepOutputReference(
+                            step="step_outfit_source",
+                            output="generated_text",
+                        ),
+                    ),
+                    settings=GenerateTextSettings(
+                        model="gemini-3-flash-preview",
+                        temperature=0.7,
+                    ),
+                ),
+            ],
+        )
+
+        yaml_output = workflow_service._generate_workflow_yaml(workflow_model)
+        parsed = yaml.safe_load(yaml_output)
+
+        steps = parsed["main"]["steps"]
+        assert len(steps) == 1
+        assert "step_gen_text" in steps[0]
+        step_entry = steps[0]["step_gen_text"]
+        assert step_entry["call"] == "http.post"
+        assert step_entry["args"]["url"].endswith("/generate_text")
+        inputs_body = step_entry["args"]["body"]["inputs"]
+        assert (
+            inputs_body["prompt"]
+            == "Create an image of a <animal> wearing a <outfit>"
+        )
+        assert inputs_body["animal"] == "cat"
+        assert (
+            inputs_body["outfit"]
+            == "${step_outfit_source_result.body.generated_text}"
+        )
 
 
 class TestCreateWorkflow:
@@ -334,6 +427,548 @@ class TestGetExecutionDetails:
 
         # Verify lazy update was triggered (RUNNING -> SUCCEEDED transition)
         mock_run_repo.update.assert_called_once()
+
+    @pytest.mark.anyio
+    @patch("src.workflows.workflow_service.executions_v1.ExecutionsClient")
+    @patch("src.workflows.workflow_service.google.auth.default")
+    @patch("src.workflows.workflow_service.AuthorizedSession")
+    async def test_get_execution_details_image_step_filtering(
+        self,
+        mock_auth_session_class,
+        mock_auth_default,
+        mock_exec_client_class,
+        workflow_service,
+        mock_run_repo,
+    ):
+        from google.cloud.workflows import executions_v1 as exec_v1
+
+        from src.workflows.schema.workflow_model import (
+            UserInputInputs,
+            UserInputSettings,
+            UserInputStep,
+        )
+
+        # Setup image step workflow
+        image_workflow = WorkflowModel(
+            id="wf-image",
+            user_id=1,
+            name="Image Workflow",
+            description="Test image mode filtering",
+            steps=[
+                UserInputStep(
+                    step_id="user_input",
+                    type=NodeTypes.USER_INPUT,
+                    inputs=UserInputInputs(),
+                    settings=UserInputSettings(),
+                ),
+                ImageStep(
+                    step_id="img_step",
+                    type=NodeTypes.IMAGE,
+                    inputs=ImageInputs(
+                        prompt="A majestic eagle",
+                        input_images=None,
+                        input_image=None,
+                        model_image=None,
+                    ),
+                    settings=ImageSettings(mode="generate_image"),
+                ),
+                ImageStep(
+                    step_id="upscale_step",
+                    type=NodeTypes.IMAGE,
+                    inputs=ImageInputs(
+                        prompt=None,
+                        input_image=555,
+                        model_image=None,
+                    ),
+                    settings=ImageSettings(mode="upscale_image"),
+                ),
+            ],
+        )
+
+        mock_client = MagicMock()
+        mock_exec_client_class.return_value = mock_client
+        mock_execution = MagicMock()
+        mock_execution.name = (
+            "projects/p/locations/l/workflows/w/executions/e-456"
+        )
+        mock_execution.state = exec_v1.Execution.State.SUCCEEDED
+        mock_execution.argument = "{}"
+        mock_execution.result = "{}"
+        mock_execution.start_time = MagicMock()
+        mock_execution.end_time = MagicMock()
+        mock_client.get_execution.return_value = mock_execution
+
+        mock_auth_default.return_value = (MagicMock(), "project-id")
+        mock_session = MagicMock()
+        mock_auth_session_class.return_value = mock_session
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "stepEntries": [
+                {
+                    "step": "img_step",
+                    "state": "STATE_SUCCEEDED",
+                    "variableData": {
+                        "variables": {
+                            "img_step_result": {
+                                "body": {
+                                    "generated_image": 111,
+                                    "image_output": 111,
+                                }
+                            }
+                        }
+                    },
+                },
+                {
+                    "step": "upscale_step",
+                    "state": "STATE_SUCCEEDED",
+                    "variableData": {
+                        "variables": {
+                            "upscale_step_result": {
+                                "body": {
+                                    "upscaled_image": 222,
+                                    "image_output": 222,
+                                }
+                            }
+                        }
+                    },
+                },
+            ],
+        }
+        mock_session.get.return_value = mock_response
+
+        mock_run = MagicMock()
+        mock_run.id = "e-456"
+        mock_run.workflow_snapshot = image_workflow.model_dump(
+            mode="json", by_alias=True
+        )
+        mock_run.status = WorkflowRunStatusEnum.RUNNING.value
+        mock_run_repo.get_by_id.return_value = mock_run
+
+        workflow_service.get_by_id = AsyncMock(return_value=image_workflow)
+
+        details = await workflow_service.get_execution_details(
+            workflow_id="wf-image",
+            execution_id="e-456",
+        )
+
+        assert details is not None
+        step_entries = details["step_entries"]
+        # Entry 0 is user_input virtual step, Entry 1 is img_step, Entry 2 is upscale_step
+        img_entry = next(e for e in step_entries if e["step_id"] == "img_step")
+        upscale_entry = next(
+            e for e in step_entries if e["step_id"] == "upscale_step"
+        )
+
+        # In generate_image mode, only prompt is in step_inputs
+        assert img_entry["step_inputs"] == {"prompt": "A majestic eagle"}
+        assert img_entry["step_outputs"] == {"generated_image": 111}
+        # In upscale_image mode, only input_image is in step_inputs
+        assert upscale_entry["step_inputs"] == {"input_image": 555}
+        assert upscale_entry["step_outputs"] == {"generated_image": 222}
+
+    @pytest.mark.anyio
+    @patch("src.workflows.workflow_service.executions_v1.ExecutionsClient")
+    @patch("src.workflows.workflow_service.google.auth.default")
+    @patch("src.workflows.workflow_service.AuthorizedSession")
+    async def test_get_execution_details_video_step_reference_resolution(
+        self,
+        mock_auth_session_class,
+        mock_auth_default,
+        mock_exec_client_class,
+        workflow_service,
+        mock_run_repo,
+    ):
+        from google.cloud.workflows import executions_v1 as exec_v1
+
+        from src.workflows.schema.workflow_model import (
+            GenerateVideoInputs,
+            GenerateVideoSettings,
+            GenerateVideoStep,
+            StepOutputReference,
+            UserInputInputs,
+            UserInputSettings,
+            UserInputStep,
+        )
+
+        video_workflow = WorkflowModel(
+            id="wf-video",
+            user_id=1,
+            name="Video Workflow",
+            description="Test video reference resolution",
+            steps=[
+                UserInputStep(
+                    step_id="user_input",
+                    type=NodeTypes.USER_INPUT,
+                    inputs=UserInputInputs(),
+                    settings=UserInputSettings(),
+                ),
+                GenerateVideoStep(
+                    step_id="step_1",
+                    type=NodeTypes.GENERATE_VIDEO,
+                    inputs=GenerateVideoInputs(
+                        prompt="A lion walking in savanna",
+                    ),
+                    settings=GenerateVideoSettings(
+                        model="veo-3.1-generate-001",
+                        brand_guidelines=False,
+                        aspect_ratio="16:9",
+                    ),
+                ),
+                GenerateVideoStep(
+                    step_id="step_2",
+                    type=NodeTypes.GENERATE_VIDEO,
+                    inputs=GenerateVideoInputs(
+                        prompt="add an elephant here",
+                        input_video=StepOutputReference(
+                            step="step_1", output="generated_video"
+                        ),
+                    ),
+                    settings=GenerateVideoSettings(
+                        model="veo-3.1-generate-001",
+                        input_mode="Ingredients to Video",
+                        brand_guidelines=False,
+                        aspect_ratio="16:9",
+                    ),
+                ),
+            ],
+        )
+
+        mock_client = MagicMock()
+        mock_exec_client_class.return_value = mock_client
+        mock_execution = MagicMock()
+        mock_execution.name = (
+            "projects/p/locations/l/workflows/w/executions/e-789"
+        )
+        mock_execution.state = exec_v1.Execution.State.SUCCEEDED
+        mock_execution.argument = "{}"
+        mock_execution.result = "{}"
+        mock_execution.start_time = MagicMock()
+        mock_execution.end_time = MagicMock()
+        mock_client.get_execution.return_value = mock_execution
+
+        mock_auth_default.return_value = (MagicMock(), "project-id")
+        mock_session = MagicMock()
+        mock_auth_session_class.return_value = mock_session
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "stepEntries": [
+                {
+                    "step": "step_1",
+                    "state": "STATE_SUCCEEDED",
+                    "variableData": {
+                        "variables": {
+                            "step_1_result": {
+                                "body": {
+                                    "generated_video": 888,
+                                }
+                            }
+                        }
+                    },
+                },
+                {
+                    "step": "step_2",
+                    "state": "STATE_SUCCEEDED",
+                    "variableData": {
+                        "variables": {
+                            "step_2_result": {
+                                "body": {
+                                    "generated_video": 999,
+                                }
+                            }
+                        }
+                    },
+                },
+            ],
+        }
+        mock_session.get.return_value = mock_response
+
+        mock_run = MagicMock()
+        mock_run.id = "e-789"
+        mock_run.workflow_snapshot = video_workflow.model_dump(
+            mode="json", by_alias=True
+        )
+        mock_run.status = WorkflowRunStatusEnum.RUNNING.value
+        mock_run_repo.get_by_id.return_value = mock_run
+
+        workflow_service.get_by_id = AsyncMock(return_value=video_workflow)
+
+        details = await workflow_service.get_execution_details(
+            workflow_id="wf-video",
+            execution_id="e-789",
+        )
+
+        assert details is not None
+        step_entries = details["step_entries"]
+        step_2_entry = next(e for e in step_entries if e["step_id"] == "step_2")
+
+        # input_video was a reference to step_1.generated_video (888)
+        assert step_2_entry["step_inputs"]["input_video"] == 888
+        assert step_2_entry["step_inputs"]["prompt"] == "add an elephant here"
+        assert step_2_entry["step_outputs"] == {"generated_video": 999}
+
+    @pytest.mark.anyio
+    @patch("src.workflows.workflow_service.executions_v1.ExecutionsClient")
+    @patch("src.workflows.workflow_service.google.auth.default")
+    @patch("src.workflows.workflow_service.AuthorizedSession")
+    async def test_get_execution_details_resolves_step_output_references(
+        self,
+        mock_auth_session_class,
+        mock_auth_default,
+        mock_exec_client_class,
+        workflow_service,
+        mock_run_repo,
+    ):
+        from google.cloud.workflows import executions_v1 as exec_v1
+
+        from src.workflows.schema.workflow_model import (
+            StepOutputReference,
+            UserInputInputs,
+            UserInputSettings,
+            UserInputStep,
+        )
+
+        wf_with_refs = WorkflowModel(
+            id="wf-ref-test",
+            user_id=1,
+            name="Ref Test Workflow",
+            description="Test resolving references from user input and steps",
+            steps=[
+                UserInputStep(
+                    step_id="user_input",
+                    type=NodeTypes.USER_INPUT,
+                    inputs=UserInputInputs(),
+                    settings=UserInputSettings(),
+                    outputs={
+                        "User_Text_Input": {
+                            "type": "text",
+                            "label": "User Text Input",
+                        },
+                    },
+                ),
+                ImageStep(
+                    step_id="img_step",
+                    type=NodeTypes.IMAGE,
+                    inputs=ImageInputs(
+                        prompt=StepOutputReference(
+                            step="user_input",
+                            output="User_Text_Input",
+                        ),
+                        input_images=None,
+                        input_image=None,
+                        model_image=None,
+                    ),
+                    settings=ImageSettings(mode="generate_image"),
+                ),
+            ],
+        )
+
+        mock_client = MagicMock()
+        mock_exec_client_class.return_value = mock_client
+        mock_execution = MagicMock()
+        mock_execution.name = (
+            "projects/p/locations/l/workflows/w/executions/e-ref-1"
+        )
+        mock_execution.state = exec_v1.Execution.State.SUCCEEDED
+        mock_execution.argument = json.dumps(
+            {
+                "User_Text_Input": "A photo of a cyberpunk city at night",
+            }
+        )
+        mock_execution.result = "{}"
+        mock_execution.start_time = MagicMock()
+        mock_execution.end_time = MagicMock()
+        mock_client.get_execution.return_value = mock_execution
+
+        mock_auth_default.return_value = (MagicMock(), "project-id")
+        mock_session = MagicMock()
+        mock_auth_session_class.return_value = mock_session
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "stepEntries": [
+                {
+                    "step": "img_step",
+                    "state": "STATE_SUCCEEDED",
+                    "variableData": {
+                        "variables": {
+                            "img_step_result": {
+                                "body": {
+                                    "generated_image": 777,
+                                }
+                            }
+                        }
+                    },
+                },
+            ],
+        }
+        mock_session.get.return_value = mock_response
+
+        mock_run = MagicMock()
+        mock_run.id = "e-ref-1"
+        mock_run.workflow_snapshot = wf_with_refs.model_dump(
+            mode="json", by_alias=True
+        )
+        mock_run.status = WorkflowRunStatusEnum.RUNNING.value
+        mock_run_repo.get_by_id.return_value = mock_run
+
+        workflow_service.get_by_id = AsyncMock(return_value=wf_with_refs)
+
+        details = await workflow_service.get_execution_details(
+            workflow_id="wf-ref-test",
+            execution_id="e-ref-1",
+        )
+
+        assert details is not None
+        step_entries = details["step_entries"]
+        img_entry = next(e for e in step_entries if e["step_id"] == "img_step")
+
+        # The prompt input must be resolved to the prompt text value, NOT the raw StepOutputReference JSON
+        assert img_entry["step_inputs"] == {
+            "prompt": "A photo of a cyberpunk city at night",
+        }
+
+    @pytest.mark.anyio
+    @patch("google.auth.default")
+    @patch("src.workflows.workflow_service.AuthorizedSession")
+    @patch("google.cloud.workflows.executions_v1.ExecutionsClient")
+    async def test_get_execution_details_resolves_generate_text_prompt_variables(
+        self,
+        mock_executions_client_cls,
+        mock_auth_session_cls,
+        mock_auth_default,
+        workflow_service,
+        mock_run_repo,
+    ):
+        from google.cloud.workflows import executions_v1 as exec_v1
+
+        mock_auth_default.return_value = (MagicMock(), "test-project")
+        mock_session = MagicMock()
+        mock_auth_session_cls.return_value = mock_session
+
+        mock_exec_client = MagicMock()
+        mock_executions_client_cls.return_value = mock_exec_client
+
+        mock_execution = MagicMock()
+        mock_execution.name = "projects/test-proj/locations/us-central1/workflows/wf-text-vars/executions/e-text-1"
+        mock_execution.state = exec_v1.Execution.State.SUCCEEDED
+        mock_execution.result = json.dumps({"status": "completed"})
+        mock_execution.start_time = datetime.datetime.now(datetime.UTC)
+        mock_execution.end_time = datetime.datetime.now(datetime.UTC)
+        mock_execution.argument = json.dumps({"workspace_id": 1})
+        mock_exec_client.get_execution.return_value = mock_execution
+
+        from src.workflows.schema.workflow_model import (
+            UserInputInputs,
+            UserInputSettings,
+            UserInputStep,
+        )
+
+        wf_with_vars = WorkflowModel(
+            id="wf-text-vars",
+            user_id=1,
+            name="Text Variables Test Workflow",
+            steps=[
+                UserInputStep(
+                    step_id="user_input",
+                    type=NodeTypes.USER_INPUT,
+                    inputs=UserInputInputs(),
+                    settings=UserInputSettings(),
+                ),
+                GenerateTextStep(
+                    step_id="text_step",
+                    type=NodeTypes.GENERATE_TEXT,
+                    inputs=GenerateTextInputs(
+                        prompt="create a short story of a <animal> with a <color> hat",
+                        animal="cat",
+                        color="red",
+                    ),
+                    settings=GenerateTextSettings(
+                        model="gemini-3-flash-preview",
+                        temperature=0.7,
+                    ),
+                ),
+            ],
+        )
+
+        mock_run = MagicMock()
+        mock_run.id = "e-text-1"
+        mock_run.workflow_snapshot = wf_with_vars.model_dump(
+            mode="json", by_alias=True
+        )
+        mock_run.status = WorkflowRunStatusEnum.RUNNING.value
+        mock_run_repo.get_by_id.return_value = mock_run
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "stepEntries": [
+                {
+                    "step": "text_step",
+                    "state": "STATE_SUCCEEDED",
+                    "createTime": "2026-08-31T20:00:00Z",
+                    "updateTime": "2026-08-31T20:00:05Z",
+                    "variableData": {
+                        "variables": {
+                            "text_step_result": {
+                                "body": {
+                                    "generated_text": "Barnaby was a cat..."
+                                }
+                            }
+                        }
+                    },
+                },
+            ],
+        }
+        mock_session.get.return_value = mock_response
+
+        workflow_service.get_by_id = AsyncMock(return_value=wf_with_vars)
+
+        details = await workflow_service.get_execution_details(
+            workflow_id="wf-text-vars",
+            execution_id="e-text-1",
+        )
+
+        assert details is not None
+        step_entries = details["step_entries"]
+        text_entry = next(
+            e for e in step_entries if e["step_id"] == "text_step"
+        )
+
+        # The prompt input must be resolved with <animal> and <color> replaced
+        assert text_entry["step_inputs"] == {
+            "prompt": "create a short story of a cat with a red hat",
+            "animal": "cat",
+            "color": "red",
+        }
+
+    def test_interpolate_prompt_variables(self, workflow_service):
+        prompt = "Hello <name>, your score is <score>. Missing: <missing>."
+        inputs = {
+            "name": "Alice",
+            "score": 100,
+            "extra": "ignored",
+        }
+        resolved = workflow_service._interpolate_prompt_variables(
+            prompt, inputs
+        )
+        assert resolved == "Hello Alice, your score is 100. Missing: <missing>."
+
+    def test_interpolate_prompt_variables_dict_values(self, workflow_service):
+        prompt = "Generated: <gen_text> and Text: <text_only> and Empty: <empty_dict>"
+        inputs = {
+            "gen_text": {"generated_text": "sample output"},
+            "text_only": {"text": "plain output"},
+            "empty_dict": {},
+        }
+        resolved = workflow_service._interpolate_prompt_variables(
+            prompt, inputs
+        )
+        assert (
+            resolved
+            == "Generated: sample output and Text: plain output and Empty: "
+        )
 
 
 class TestBatchExecuteWorkflow:

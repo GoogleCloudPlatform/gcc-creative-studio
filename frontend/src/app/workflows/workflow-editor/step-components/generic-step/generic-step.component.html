@@ -14,62 +14,247 @@
  limitations under the License.
 -->
 
-
-<div class="step-card" [formGroup]="stepForm" [ngClass]="localConfig.type" [class.invalid-step]="stepForm.invalid && showValidationErrors" [class.selected-node]="isSelected" [class.running-node]="stepForm.get('status')?.value === StepStatusEnum.RUNNING">
+<div
+  class="step-card"
+  [formGroup]="stepForm"
+  [ngClass]="localConfig.type"
+  [class.invalid-step]="stepForm.invalid && showValidationErrors"
+  [class.selected-node]="isSelected"
+  [class.running-node]="
+    stepForm.get('status')?.value === StepStatusEnum.RUNNING
+  "
+>
   <div class="step-header">
     <div class="step-title">
       <mat-icon>{{ localConfig.icon }}</mat-icon>
       <span>{{ localConfig.title }}</span>
-      <mat-icon *ngIf="stepForm.invalid && showValidationErrors" class="!text-red-500 ml-2" matTooltip="Step has errors">error</mat-icon>
+      <mat-icon
+        *ngIf="stepForm.invalid && showValidationErrors"
+        class="!text-red-500 ml-2"
+        matTooltip="Step has errors"
+        >error</mat-icon
+      >
       <span class="step-id-subtle">#{{ stepIndex + 1 }}</span>
       <!-- Status Chip -->
-      <mat-chip *ngIf="stepForm.get('status')?.value !== StepStatusEnum.IDLE" 
-                [ngClass]="stepForm.get('status')?.value | workflowStatus:'class'"
-                class="ml-2">
+      <mat-chip
+        *ngIf="stepForm.get('status')?.value !== StepStatusEnum.IDLE"
+        [ngClass]="stepForm.get('status')?.value | workflowStatus: 'class'"
+        class="ml-2"
+      >
         <mat-icon class="!text-sm !w-4 !h-4 mr-1">
-          {{ stepForm.get('status')?.value | workflowStatus:'icon' }}
+          {{ stepForm.get('status')?.value | workflowStatus: 'icon' }}
         </mat-icon>
         {{ stepForm.get('status')?.value | uppercase }}
       </mat-chip>
     </div>
     <div class="step-actions">
-      <button *ngIf="mode !== 'run'" mat-icon-button color="primary"
-              (click)="$event.stopPropagation(); clone.emit()" matTooltip="Clone step">
+      <button
+        *ngIf="mode !== 'run'"
+        mat-icon-button
+        color="primary"
+        (click)="$event.stopPropagation(); clone.emit()"
+        matTooltip="Clone step"
+      >
         <mat-icon>content_copy</mat-icon>
       </button>
-      <button *ngIf="mode !== 'run'" mat-icon-button color="warn"
-              (click)="$event.stopPropagation(); delete.emit()" matTooltip="Delete step">
+      <button
+        *ngIf="mode !== 'run'"
+        mat-icon-button
+        color="warn"
+        (click)="$event.stopPropagation(); delete.emit()"
+        matTooltip="Delete step"
+      >
         <mat-icon>delete</mat-icon>
       </button>
-      <button mat-icon-button class="collapse-icon" (click)="isCollapsed = !isCollapsed">
+      <button
+        mat-icon-button
+        class="collapse-icon"
+        (click)="isCollapsed = !isCollapsed"
+      >
         <mat-icon>{{ isCollapsed ? 'expand_more' : 'expand_less' }}</mat-icon>
       </button>
     </div>
   </div>
 
   <div class="step-body" *ngIf="!isCollapsed">
+    <!-- Mode Section (Prominently displayed at the top of the node) -->
+    <div
+      class="section mode-section"
+      *ngIf="getModeSetting() as modeSetting"
+      formGroupName="settings"
+    >
+      <h3>Mode</h3>
+      <mat-form-field appearance="outline" class="w-full">
+        <mat-label>{{ modeSetting.label }}</mat-label>
+        <mat-select [formControlName]="modeSetting.name">
+          <mat-option
+            *ngFor="let option of modeSetting.options"
+            [value]="option.value"
+            [disabled]="!!option.disabled"
+          >
+            {{ option.label }}
+          </mat-option>
+        </mat-select>
+      </mat-form-field>
+    </div>
+
     <div class="section inputs" formGroupName="inputs">
       <h3>Inputs</h3>
-      <ng-container *ngFor="let input of localConfig.inputs">
-        <div class="port-row relative" *ngIf="!input.hidden">
-          <div class="port input-port"
-               [style.background-color]="getTypeColor(input.type)"
-               [style.border-color]="getTypeColor(input.type)"
-               [attr.data-node-id]="stepForm.value.stepId"
-               [attr.data-port-name]="input.name"
-               [attr.data-port-type]="'input'"
-               (mouseup)="$event.stopPropagation(); portDrop.emit({stepId: stepForm.value.stepId, inputName: input.name})">
-          </div>
-          <span class="port-type-chip input-chip" [attr.data-type]="input.type">{{ getShortType(input.type) }}</span>
+      <ng-container *ngFor="let input of getBaseInputs()">
+        <div
+          class="port-row relative"
+          [class.magnetic-target]="isMagneticTarget(input.name)"
+          [class.port-row-disabled]="isInputDisabled(input.name)"
+          *ngIf="!input.hidden"
+        >
+          <div
+            class="port input-port"
+            [class.magnetic-hover]="isMagneticTarget(input.name)"
+            [class.port-compatible]="isCompatibleWithActiveDrag(input)"
+            [class.port-incompatible]="isIncompatibleWithActiveDrag(input)"
+            [class.port-disabled]="isInputDisabled(input.name)"
+            [style.background-color]="getTypeColor(input.type)"
+            [style.border-color]="getTypeColor(input.type)"
+            [attr.data-node-id]="stepForm.value.stepId"
+            [attr.data-port-name]="input.name"
+            [attr.data-port-type]="'input'"
+            [attr.data-data-type]="input.type"
+            (mouseup)="onInputPortMouseUp($event, input.name)"
+          ></div>
+          <span
+            class="port-type-chip input-chip"
+            [attr.data-type]="input.type"
+            >{{ getShortType(input.type) }}</span
+          >
           <app-step-input-field
             [control]="$any(stepForm.get('inputs')?.get(input.name))"
             [config]="input"
             [mode]="inputModes[input.name]"
             [compatibleOutputs]="compatibleOutputs[input.name]"
             [showValidationErrors]="showValidationErrors"
-            [maxMediaItems]="currentMaxReferenceImages"
-            (modeChange)="toggleInputMode(input.name, $event)">
+            [maxMediaItems]="getMaxMediaItems(input)"
+            [disabledMessage]="getInputDisabledMessage(input.name)"
+            (modeChange)="toggleInputMode(input.name, $event)"
+            (fieldBlur)="onInputFieldBlur(input.name)"
+          >
           </app-step-input-field>
+        </div>
+
+        <!-- Prompt Variables Section (rendered directly after 'prompt' input for generate_text step) -->
+        <div
+          class="prompt-variables my-3"
+          [class.disabled-section]="inputModes['prompt'] !== 'fixed'"
+          *ngIf="
+            localConfig.type === NodeTypes.GENERATE_TEXT &&
+            input.name === 'prompt'
+          "
+        >
+          <div class="prompt-variables-header flex flex-col gap-2 mb-3">
+            <div class="flex items-center justify-between">
+              <span class="prompt-variables-title">Prompt variables</span>
+              <span
+                *ngIf="inputModes['prompt'] !== 'fixed'"
+                class="text-[11px] text-slate-400 italic"
+              >
+                (Prompt is linked - variables inactive)
+              </span>
+            </div>
+            <div
+              class="add-variable-form flex items-center gap-2 w-full"
+              *ngIf="mode !== 'run'"
+            >
+              <mat-form-field
+                appearance="outline"
+                class="add-variable-input flex-grow"
+                subscriptSizing="dynamic"
+              >
+                <input
+                  matInput
+                  [(ngModel)]="newVariableName"
+                  [ngModelOptions]="{standalone: true}"
+                  placeholder="New variable name"
+                  [disabled]="inputModes['prompt'] !== 'fixed'"
+                  (keydown.enter)="$event.preventDefault(); addCustomVariable()"
+                />
+              </mat-form-field>
+              <button
+                mat-stroked-button
+                type="button"
+                color="primary"
+                class="add-variable-btn"
+                [disabled]="
+                  inputModes['prompt'] !== 'fixed' || !isValidNewVariableName()
+                "
+                (click)="addCustomVariable()"
+              >
+                <mat-icon>add</mat-icon> Add variable
+              </button>
+            </div>
+          </div>
+
+          <div class="variables-list flex flex-col gap-3">
+            <ng-container *ngFor="let variable of getVariableInputs()">
+              <div class="variable-row flex flex-col gap-1">
+                <div
+                  class="port-row relative flex items-center"
+                  [class.magnetic-target]="isMagneticTarget(variable.name)"
+                  [class.port-row-disabled]="isInputDisabled(variable.name)"
+                >
+                  <div
+                    class="port input-port"
+                    [class.magnetic-hover]="isMagneticTarget(variable.name)"
+                    [class.port-compatible]="isCompatibleWithActiveDrag(variable)"
+                    [class.port-incompatible]="isIncompatibleWithActiveDrag(variable)"
+                    [class.port-disabled]="isInputDisabled(variable.name)"
+                    [style.background-color]="getTypeColor('text')"
+                    [style.border-color]="getTypeColor('text')"
+                    [attr.data-node-id]="stepForm.value.stepId"
+                    [attr.data-port-name]="variable.name"
+                    [attr.data-port-type]="'input'"
+                    [attr.data-data-type]="'text'"
+                    (mouseup)="onInputPortMouseUp($event, variable.name)"
+                  ></div>
+                  <span class="port-type-chip input-chip" data-type="text">TXT</span>
+
+                  <div class="flex-grow">
+                    <app-step-input-field
+                      [control]="$any(stepForm.get('inputs')?.get(variable.name))"
+                      [config]="variable"
+                      [mode]="inputModes[variable.name]"
+                      [compatibleOutputs]="compatibleOutputs[variable.name]"
+                      [showValidationErrors]="showValidationErrors"
+                      [disabledMessage]="getInputDisabledMessage(variable.name)"
+                      (modeChange)="toggleInputMode(variable.name, $event)"
+                      (fieldBlur)="onInputFieldBlur(variable.name)"
+                    >
+                      <!-- Warning below variable label with embedded add to prompt and remove actions -->
+                      <div
+                        warning
+                        *ngIf="inputModes['prompt'] === 'fixed' && !isVariableUsedInPrompt(variable.name)"
+                        class="variable-warning flex items-center gap-1 text-xs text-amber-400 mt-0.5"
+                      >
+                        <mat-icon class="!text-xs !w-3.5 !h-3.5">warning</mat-icon>
+                        <span>
+                          Variable is not used,
+                          <button
+                            type="button"
+                            class="action-var-link underline hover:text-amber-200 cursor-pointer bg-transparent border-0 p-0 text-xs text-amber-400 font-medium"
+                            (click)="appendToPrompt(variable.name)"
+                          >add to prompt</button>
+                          or
+                          <button
+                            type="button"
+                            class="action-var-link underline hover:text-amber-200 cursor-pointer bg-transparent border-0 p-0 text-xs text-amber-400 font-medium"
+                            (click)="removeVariable(variable.name)"
+                          >remove</button>
+                        </span>
+                      </div>
+                    </app-step-input-field>
+                  </div>
+                </div>
+              </div>
+            </ng-container>
+          </div>
         </div>
       </ng-container>
     </div>
@@ -78,38 +263,59 @@
       <h3>Settings</h3>
       <div class="settings-grid">
         <ng-container *ngFor="let setting of localConfig.settings">
-          <ng-container *ngIf="!setting.hidden">
-          <mat-form-field *ngIf="setting.type === 'select'" appearance="outline">
-            <mat-label>{{ setting.label }}</mat-label>
-            <mat-select [formControlName]="setting.name">
-              <mat-option *ngFor="let option of setting.options" [value]="option.value">{{ option.label }}</mat-option>
-            </mat-select>
-          </mat-form-field>
-          <mat-form-field *ngIf="setting.type === 'text' || setting.type === 'textarea'" appearance="outline">
-            <mat-label>{{ setting.label }}</mat-label>
-            <input matInput [formControlName]="setting.name">
-          </mat-form-field>
-          <div *ngIf="setting.type === 'checkbox'" class="checkbox-group">
-            <mat-checkbox [formControlName]="setting.name">{{ setting.label }}</mat-checkbox>
-          </div>
-          <div *ngIf="setting.type === 'slider'" class="slider-group">
-            <studio-slider
-              label="{{ setting.label }}"
-              [valueText]="stepForm.get('settings')?.get(setting.name)?.value"
-              [min]="setting.min || 0"
-              [max]="setting.max || 1"
-              [step]="setting.step || 0.1"
-              [formControlName]="setting.name"
-            ></studio-slider>
-          </div>
-          <div *ngIf="setting.type === 'radio'" class="radio-group">
-            <label>{{ setting.label }}</label>
-            <mat-radio-group [formControlName]="setting.name">
-              <mat-radio-button *ngFor="let option of setting.options" [value]="option.value">
-                {{ option.label }}
-              </mat-radio-button>
-            </mat-radio-group>
-          </div>
+          <ng-container *ngIf="!setting.hidden && setting.name !== 'mode'">
+            <mat-form-field
+              *ngIf="setting.type === 'select'"
+              appearance="outline"
+            >
+              <mat-label>{{ setting.label }}</mat-label>
+              <mat-select [formControlName]="setting.name">
+                <mat-option
+                  *ngFor="let option of setting.options"
+                  [value]="option.value"
+                  [disabled]="!!option.disabled"
+                  >{{ option.label }}</mat-option
+                >
+              </mat-select>
+            </mat-form-field>
+            <mat-form-field
+              *ngIf="setting.type === 'text' || setting.type === 'textarea'"
+              appearance="outline"
+            >
+              <mat-label>{{ setting.label }}</mat-label>
+              <input matInput [formControlName]="setting.name" />
+            </mat-form-field>
+            <div *ngIf="setting.type === 'checkbox'" class="checkbox-group">
+              <mat-checkbox [formControlName]="setting.name">{{
+                setting.label
+              }}</mat-checkbox>
+            </div>
+            <div
+              *ngIf="setting.type === 'slider'"
+              class="slider-group"
+              (mousedown)="$event.stopPropagation()"
+              (pointerdown)="$event.stopPropagation()"
+            >
+              <studio-slider
+                label="{{ setting.label }}"
+                [valueText]="stepForm.get('settings')?.get(setting.name)?.value"
+                [min]="setting.min || 0"
+                [max]="setting.max || 1"
+                [step]="setting.step || 0.1"
+                [formControlName]="setting.name"
+              ></studio-slider>
+            </div>
+            <div *ngIf="setting.type === 'radio'" class="radio-group">
+              <label>{{ setting.label }}</label>
+              <mat-radio-group [formControlName]="setting.name">
+                <mat-radio-button
+                  *ngFor="let option of setting.options"
+                  [value]="option.value"
+                >
+                  {{ option.label }}
+                </mat-radio-button>
+              </mat-radio-group>
+            </div>
           </ng-container>
         </ng-container>
       </div>
@@ -118,32 +324,54 @@
     <div class="section outputs">
       <h3>Outputs</h3>
       <div class="flex flex-col gap-2">
-        <div *ngFor="let output of localConfig.outputs" class="output-row relative w-full flex items-center justify-between">
+        <div
+          *ngFor="let output of localConfig.outputs"
+          class="output-row relative w-full flex items-center justify-between"
+        >
           <div class="output-pill relative">
             <mat-icon>{{ output.type }}</mat-icon> {{ output.label }}
           </div>
-          <div class="port output-port"
-               [style.background-color]="getTypeColor(output.type)"
-               [style.border-color]="getTypeColor(output.type)"
-               [attr.data-node-id]="stepForm.value.stepId"
-               [attr.data-port-name]="output.name"
-               [attr.data-port-type]="'output'"
-               (mousedown)="$event.stopPropagation(); portDragStart.emit({stepId: stepForm.value.stepId, outputName: output.name, mouseEvent: $event})">
-          </div>
-          <span class="port-type-chip output-chip" [attr.data-type]="output.type">{{ getShortType(output.type) }}</span>
+          <div
+            class="port output-port"
+            [style.background-color]="getTypeColor(output.type)"
+            [style.border-color]="getTypeColor(output.type)"
+            [attr.data-node-id]="stepForm.value.stepId"
+            [attr.data-port-name]="output.name"
+            [attr.data-port-type]="'output'"
+            (mousedown)="
+              $event.stopPropagation();
+              portDragStart.emit({
+                stepId: stepForm.value.stepId,
+                outputName: output.name,
+                mouseEvent: $event,
+              })
+            "
+          ></div>
+          <span
+            class="port-type-chip output-chip"
+            [attr.data-type]="output.type"
+            >{{ getShortType(output.type) }}</span
+          >
         </div>
       </div>
     </div>
 
     <!-- Execution Results embedded inside the Node -->
-    <div class="section execution-results" *ngIf="stepExecution && (stepExecution | keyvalue)?.length">
+    <div
+      class="section execution-results"
+      *ngIf="stepExecution && (stepExecution | keyvalue)?.length"
+    >
       <h3>Results</h3>
       <app-step-execution-details
         [stepId]="stepForm.value.stepId"
         [stepType]="stepForm.value.type"
         [inputs]="stepExecution.step_inputs"
         [outputs]="stepExecution.step_outputs"
-        [mediaUrlMap]="mediaUrlMap">
+        [mediaUrlMap]="mediaUrlMap"
+        [mode]="
+          stepForm.get('settings.mode')?.value || stepForm.value?.settings?.mode
+        "
+      >
       </app-step-execution-details>
     </div>
   </div>

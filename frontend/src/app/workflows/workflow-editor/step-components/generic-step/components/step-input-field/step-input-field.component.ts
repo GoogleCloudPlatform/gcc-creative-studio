@@ -30,8 +30,14 @@ export class StepInputFieldComponent {
   @Input() compatibleOutputs: any[] = [];
   @Input() showValidationErrors = false;
   @Input() maxMediaItems = 1;
+  @Input() disabledMessage = '';
 
   @Output() modeChange = new EventEmitter<'fixed' | 'linked' | 'mixed'>();
+  @Output() fieldBlur = new EventEmitter<void>();
+
+  onBlur(): void {
+    this.fieldBlur.emit();
+  }
 
   toggleInputMode(newMode: 'fixed' | 'linked' | 'mixed') {
     this.modeChange.emit(newMode);

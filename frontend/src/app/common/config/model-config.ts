@@ -38,6 +38,7 @@ export interface ModelCapability {
   supportsLanguage?: boolean;
   supportsSeed?: boolean;
   supportsVideoReference?: boolean;
+  supportsAudioReference?: boolean;
 }
 
 export interface GenerationModelConfig {
@@ -63,6 +64,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportedModes: ['Text to Image', 'Ingredients to Image'],
       maxReferenceImages: 14,
       supportedAspectRatios: [
+        'auto',
         '1:1',
         '16:9',
         '9:16',
@@ -94,6 +96,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportedModes: ['Text to Image', 'Ingredients to Image'],
       maxReferenceImages: 14,
       supportedAspectRatios: [
+        'auto',
         '1:1',
         '16:9',
         '9:16',
@@ -124,6 +127,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportedModes: ['Text to Image', 'Ingredients to Image'],
       maxReferenceImages: 14,
       supportedAspectRatios: [
+        'auto',
         '1:1',
         '16:9',
         '9:16',
@@ -150,6 +154,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportedModes: ['Text to Image', 'Ingredients to Image'],
       maxReferenceImages: 2,
       supportedAspectRatios: [
+        'auto',
         '1:1',
         '16:9',
         '9:16',
@@ -196,8 +201,8 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
     },
   },
   {
-    value: 'gemini-3-pro-preview',
-    viewValue: 'Gemini 3 Pro Preview',
+    value: 'gemini-3-flash-preview',
+    viewValue: 'Gemini 3 Flash Preview',
     type: 'TEXT',
     icon: 'gemini-spark-icon',
     isSvg: true,
@@ -210,8 +215,8 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
     },
   },
   {
-    value: 'gemini-3-flash-preview',
-    viewValue: 'Gemini 3 Flash Preview',
+    value: 'gemini-3.8-flash',
+    viewValue: 'Gemini 3.8 Flash',
     type: 'TEXT',
     icon: 'gemini-spark-icon',
     isSvg: true,
@@ -238,6 +243,48 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
     },
   },
   {
+    value: 'gemini-3.6-flash',
+    viewValue: 'Gemini 3.6 Flash',
+    type: 'TEXT',
+    icon: 'gemini-spark-icon',
+    isSvg: true,
+    capabilities: {
+      supportedModes: ['Multimodal to text'],
+      maxReferenceImages: 10,
+      supportedAspectRatios: [],
+      supportedResolutions: [],
+      supportedDurations: [],
+    },
+  },
+  {
+    value: 'gemini-3.5-flash',
+    viewValue: 'Gemini 3.5 Flash',
+    type: 'TEXT',
+    icon: 'gemini-spark-icon',
+    isSvg: true,
+    capabilities: {
+      supportedModes: ['Multimodal to text'],
+      maxReferenceImages: 10,
+      supportedAspectRatios: [],
+      supportedResolutions: [],
+      supportedDurations: [],
+    },
+  },
+  {
+    value: 'gemini-3.5-flash-lite',
+    viewValue: 'Gemini 3.5 Flash-Lite',
+    type: 'TEXT',
+    icon: 'gemini-spark-icon',
+    isSvg: true,
+    capabilities: {
+      supportedModes: ['Multimodal to text'],
+      maxReferenceImages: 10,
+      supportedAspectRatios: [],
+      supportedResolutions: [],
+      supportedDurations: [],
+    },
+  },
+  {
     value: 'gemini-3.1-pro-preview',
     viewValue: 'Gemini 3.1 Pro Preview',
     type: 'TEXT',
@@ -252,22 +299,8 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
     },
   },
   {
-    value: 'gemini-3.1-flash-preview',
-    viewValue: 'Gemini 3.1 Flash Preview',
-    type: 'TEXT',
-    icon: 'gemini-spark-icon',
-    isSvg: true,
-    capabilities: {
-      supportedModes: ['Multimodal to text'],
-      maxReferenceImages: 10,
-      supportedAspectRatios: [],
-      supportedResolutions: [],
-      supportedDurations: [],
-    },
-  },
-  {
-    value: 'gemini-3.1-flash-lite-preview',
-    viewValue: 'Gemini 3.1 Flash Lite Preview',
+    value: 'gemini-3.1-flash-lite',
+    viewValue: 'Gemini 3.1 Flash-Lite',
     type: 'TEXT',
     icon: 'gemini-spark-icon',
     isSvg: true,
@@ -296,6 +329,8 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportedResolutions: [],
       supportedDurations: [4, 6, 8, 10],
       supportsAudio: true,
+      supportsAudioReference: true,
+      supportsVideoReference: true,
     },
   },
   {
@@ -373,42 +408,42 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
 
   // --- Audio Models ---
   {
+    value: 'lyria-3-clip',
+    viewValue: 'Lyria 3 Clip',
+    type: 'AUDIO',
+    icon: 'music_note',
+    capabilities: {
+      supportedModes: ['Text to Audio'],
+      maxReferenceImages: 0,
+      supportedAspectRatios: [],
+      supportedResolutions: [],
+      supportedDurations: [],
+      supportsSeed: true,
+      supportsNegativePrompt: true,
+      supportsVoice: false,
+      supportsLanguage: false,
+    },
+  },
+  {
+    value: 'lyria-3-pro',
+    viewValue: 'Lyria 3 Pro',
+    type: 'AUDIO',
+    icon: 'music_note',
+    capabilities: {
+      supportedModes: ['Text to Audio'],
+      maxReferenceImages: 0,
+      supportedAspectRatios: [],
+      supportedResolutions: [],
+      supportedDurations: [],
+      supportsSeed: true,
+      supportsNegativePrompt: true,
+      supportsVoice: false,
+      supportsLanguage: false,
+    },
+  },
+  {
     value: 'lyria-002',
-    viewValue: 'Lyria',
-    type: 'AUDIO',
-    icon: 'music_note',
-    capabilities: {
-      supportedModes: ['Text to Audio'],
-      maxReferenceImages: 0,
-      supportedAspectRatios: [],
-      supportedResolutions: [],
-      supportedDurations: [],
-      supportsSeed: true,
-      supportsNegativePrompt: true,
-      supportsVoice: false,
-      supportsLanguage: false,
-    },
-  },
-  {
-    value: 'lyria-3-clip-preview',
-    viewValue: 'Lyria 3 Clip Preview',
-    type: 'AUDIO',
-    icon: 'music_note',
-    capabilities: {
-      supportedModes: ['Text to Audio'],
-      maxReferenceImages: 0,
-      supportedAspectRatios: [],
-      supportedResolutions: [],
-      supportedDurations: [],
-      supportsSeed: true,
-      supportsNegativePrompt: true,
-      supportsVoice: false,
-      supportsLanguage: false,
-    },
-  },
-  {
-    value: 'lyria-3-pro-preview',
-    viewValue: 'Lyria 3 Pro Preview',
+    viewValue: 'Lyria (Legacy)',
     type: 'AUDIO',
     icon: 'music_note',
     capabilities: {
@@ -476,8 +511,12 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
   },
 ];
 
+export const ASPECT_RATIO_AUTO = 'auto';
+export const ASPECT_RATIO_SQUARE = '1:1';
+
 export const ASPECT_RATIO_LABELS: Record<string, string> = {
-  '1:1': '1:1 (Square)',
+  [ASPECT_RATIO_AUTO]: 'Auto (Dynamic)',
+  [ASPECT_RATIO_SQUARE]: '1:1 (Square)',
   '16:9': '16:9 (Landscape)',
   '9:16': '9:16 (Portrait)',
   '4:3': '4:3 (Standard)',
@@ -492,3 +531,24 @@ export const ASPECT_RATIO_LABELS: Record<string, string> = {
   '1:8': '1:8 (Tall Ribbon)',
   '8:1': '8:1 (Wide Ribbon)',
 };
+
+/**
+ * Checks whether a given model identifier or config corresponds to Gemini Omni,
+ * which supports Audio as a reference input.
+ */
+export function isGeminiOmniModel(modelValue?: string | null): boolean {
+  if (!modelValue) return false;
+  const config = MODEL_CONFIGS.find(
+    m => m.value === modelValue || m.viewValue === modelValue,
+  );
+  if (config?.capabilities?.supportsAudioReference) {
+    return true;
+  }
+  const val = modelValue.toLowerCase();
+  return (
+    val === 'gemini-omni-flash-preview' ||
+    val === 'gemini-omni' ||
+    val.includes('gemini-omni') ||
+    val.includes('gemini omni')
+  );
+}

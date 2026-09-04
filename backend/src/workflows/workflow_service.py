@@ -16,6 +16,7 @@ import asyncio
 import datetime
 import json
 import logging
+from typing import Any
 import uuid
 
 import google.auth
@@ -52,6 +53,8 @@ from src.workflows.schema.workflow_run_model import (
     WorkflowRunModel,
     WorkflowRunStatusEnum,
 )
+from src.workflows.workflow_constants import IMAGE_MODE_ALLOWED_INPUTS
+from src.workflows.workflow_utils import interpolate_prompt_variables
 
 logger = logging.getLogger(__name__)
 PROJECT_ID = config_service.PROJECT_ID
@@ -566,6 +569,18 @@ class WorkflowService:
 
         return BatchExecutionResponseDto(results=results)
 
+    @staticmethod
+    def _interpolate_prompt_variables(
+        prompt: str,
+        step_inputs: dict[str, Any],
+    ) -> str:
+        """Interpolates <var_name> placeholders in prompt using step inputs."""
+        return interpolate_prompt_variables(
+            prompt=prompt,
+            variables=step_inputs,
+            keep_unresolved=True,
+        )
+
     async def get_execution_details(
         self,
         workflow_id: str,
@@ -713,7 +728,23 @@ class WorkflowService:
                     )
         # --- Lazy Status Update End ---
 
-        user_input_step_id = workflow_model.steps[0].step_id
+        user_input_step = next(
+            (
+                step
+                for step in workflow_model.steps
+                if step.type == NodeTypes.USER_INPUT
+            ),
+            None,
+        )
+        user_input_step_id = (
+            user_input_step.step_id
+            if user_input_step
+            else (
+                workflow_model.steps[0].step_id
+                if workflow_model.steps
+                else "user_input"
+            )
+        )
 
         previous_outputs = {}
         formatted_step_entries = []
@@ -721,6 +752,8 @@ class WorkflowService:
         # 1. Add User Input Step Entry (Virtual)
         # This ensures the User Input step appears in the history and its outputs are available for resolution
         previous_outputs[user_input_step_id] = user_inputs
+        if "user_input" not in previous_outputs:
+            previous_outputs["user_input"] = user_inputs
         formatted_step_entries.append(
             {
                 "step_id": user_input_step_id,
@@ -743,9 +776,32 @@ class WorkflowService:
         def resolve_value(value):
             if isinstance(value, StepOutputReference):
                 return previous_outputs.get(value.step, {}).get(value.output)
+            if (
+                isinstance(value, dict)
+                and "step" in value
+                and "output" in value
+            ):
+                return previous_outputs.get(value["step"], {}).get(
+                    value["output"]
+                )
             if isinstance(value, list):
                 return [resolve_value(item) for item in value]
-            return value
+            else:
+                return value
+
+            step_outs = previous_outputs.get(ref_step, {})
+            if ref_output in step_outs:
+                return step_outs[ref_output]
+            alt_key = ref_output.replace(" ", "_")
+            if alt_key in step_outs:
+                return step_outs[alt_key]
+            for k, v in step_outs.items():
+                if (
+                    k.lower() == ref_output.lower()
+                    or k.lower() == alt_key.lower()
+                ):
+                    return v
+            return None
 
         for entry in step_entries:
             step_id = entry.get("step")
@@ -767,15 +823,67 @@ class WorkflowService:
             step_state = entry.get("state")
 
             # Extract inputs from step
+            raw_inputs = (
+                current_step.inputs.model_dump()
+                if isinstance(current_step.inputs, BaseModel)
+                else (
+                    current_step.inputs
+                    if isinstance(current_step.inputs, dict)
+                    else {}
+                )
+            )
             step_inputs = {}
-            for inp_name, inp_value in current_step.inputs:
-                step_inputs[inp_name] = resolve_value(inp_value)
+
+            if current_step.type == NodeTypes.IMAGE:
+                settings_mode = (
+                    getattr(current_step.settings, "mode", "generate_image")
+                    if isinstance(current_step.settings, BaseModel)
+                    else (
+                        current_step.settings.get("mode", "generate_image")
+                        if isinstance(current_step.settings, dict)
+                        else "generate_image"
+                    )
+                )
+                allowed_inputs = IMAGE_MODE_ALLOWED_INPUTS.get(
+                    settings_mode, ["prompt"]
+                )
+                for inp_name, inp_value in raw_inputs.items():
+                    if inp_name in allowed_inputs and inp_value is not None:
+                        step_inputs[inp_name] = resolve_value(inp_value)
+            else:
+                for inp_name, inp_value in raw_inputs.items():
+                    if inp_value is not None:
+                        step_inputs[inp_name] = resolve_value(inp_value)
+
+                if current_step.type == NodeTypes.GENERATE_TEXT:
+                    prompt_val = step_inputs.get("prompt")
+                    if isinstance(prompt_val, str):
+                        step_inputs["prompt"] = (
+                            self._interpolate_prompt_variables(
+                                prompt_val, step_inputs
+                            )
+                        )
 
             # Extract outputs from step
             variable_data = entry.get("variableData", {})
             variables = variable_data.get("variables", {})
             step_results = variables.get(f"{step_id}_result", {})
-            step_outputs = step_results.get("body", {})
+            raw_outputs = step_results.get("body", {})
+
+            if current_step.type == NodeTypes.IMAGE and isinstance(
+                raw_outputs, dict
+            ):
+                img_val = (
+                    raw_outputs.get("generated_image")
+                    or raw_outputs.get("edited_image")
+                    or raw_outputs.get("upscaled_image")
+                    or raw_outputs.get("image_output")
+                )
+                step_outputs = (
+                    {"generated_image": img_val} if img_val is not None else {}
+                )
+            else:
+                step_outputs = raw_outputs
 
             # Store outputs for subsequent steps
             previous_outputs[step_id] = step_outputs
