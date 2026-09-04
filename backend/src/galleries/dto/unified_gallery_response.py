@@ -31,6 +31,7 @@ class UnifiedGalleryItemResponse(BaseModel):
 
     id: int
     workspace_id: int
+    folder_id: int | None = None
     created_at: datetime
     item_type: str  # 'media_item' or 'source_asset'
     status: str | None = None

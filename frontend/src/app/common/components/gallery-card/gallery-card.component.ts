@@ -33,6 +33,7 @@ import {UserRolesEnum} from '../../models/user.model';
 import {AssignTagsDialogComponent} from '../assign-tags-dialog/assign-tags-dialog.component';
 import {MediaItem} from '../../models/media-item.model';
 import {TagModel} from '../../services/tags.service';
+import {GalleryDragPayload} from '../../models/folder.model';
 
 @Component({
   selector: 'app-gallery-card',
@@ -53,8 +54,10 @@ export class GalleryCardComponent implements OnDestroy {
   }
   @Input() item!: GalleryItem;
   @Input() isSelectionMode = false;
+  @Input() isSelectorMode = false;
   @Input() isSelected = false;
   @Input() anyItemSelected = false;
+  @Input() selectedItems: Set<string> = new Set();
   @Input() filteredTags: string[] = [];
 
   @Output() mediaItemSelected = new EventEmitter<MediaItemSelection>();
@@ -65,6 +68,8 @@ export class GalleryCardComponent implements OnDestroy {
     selectedIndex: number;
   }>();
 
+  isDragging = false;
+  private wasDragged = false;
   currentImageIndex = 0;
   loadedMedia: Record<number, boolean> = {};
   hoveredVideoId: number | null = null;
@@ -231,7 +236,99 @@ export class GalleryCardComponent implements OnDestroy {
       : ['/gallery', this.item.id];
   }
 
+  onDragStart(event: DragEvent): void {
+    if (this.isSelectorMode) {
+      event.preventDefault();
+      return;
+    }
+    event.stopPropagation();
+
+    this.isDragging = true;
+
+    // Determine if this item or multi-selected items are being dragged
+    let mediaItemIds: number[] = [];
+    let sourceAssetIds: number[] = [];
+    let itemCount = 1;
+
+    const currentKey = `${this.item.itemType}:${this.item.id}`;
+    if (
+      this.isSelected &&
+      this.selectedItems &&
+      this.selectedItems.size > 0 &&
+      this.selectedItems.has(currentKey)
+    ) {
+      const selected = Array.from(this.selectedItems);
+      mediaItemIds = selected
+        .filter(id => id.startsWith('media_item:'))
+        .map(id => parseInt(id.split(':')[1]));
+      sourceAssetIds = selected
+        .filter(id => id.startsWith('source_asset:'))
+        .map(id => parseInt(id.split(':')[1]));
+      itemCount = this.selectedItems.size;
+    } else {
+      if (this.item.itemType === 'media_item') {
+        mediaItemIds = [this.item.id];
+      } else if (this.item.itemType === 'source_asset') {
+        sourceAssetIds = [this.item.id];
+      }
+      itemCount = 1;
+    }
+
+    const payload: GalleryDragPayload = {
+      mediaItemIds,
+      sourceAssetIds,
+      itemCount,
+    };
+
+    if (event.dataTransfer) {
+      event.dataTransfer.setData('application/json', JSON.stringify(payload));
+      event.dataTransfer.effectAllowed = 'move';
+
+      if (isPlatformBrowser(this.platformId)) {
+        const ghost = document.createElement('div');
+        ghost.style.position = 'absolute';
+        ghost.style.top = '-9999px';
+        ghost.style.left = '-9999px';
+        ghost.style.padding = '6px 14px';
+        ghost.style.borderRadius = '20px';
+        ghost.style.background = 'rgba(30, 31, 32, 0.95)';
+        ghost.style.backdropFilter = 'blur(10px)';
+        ghost.style.border = '1px solid #8ab4f8';
+        ghost.style.color = '#ffffff';
+        ghost.style.fontSize = '12px';
+        ghost.style.fontWeight = '600';
+        ghost.style.display = 'flex';
+        ghost.style.alignItems = 'center';
+        ghost.style.gap = '6px';
+        ghost.style.boxShadow = '0 6px 20px rgba(0, 0, 0, 0.4)';
+        ghost.style.zIndex = '99999';
+        ghost.innerHTML = `<span>📁 Moving ${itemCount} ${itemCount === 1 ? 'item' : 'items'}</span>`;
+        document.body.appendChild(ghost);
+        event.dataTransfer.setDragImage(ghost, 20, 20);
+        setTimeout(() => {
+          if (ghost.parentNode) {
+            ghost.parentNode.removeChild(ghost);
+          }
+        }, 0);
+      }
+    }
+  }
+
+  onDragEnd(event: DragEvent): void {
+    this.isDragging = false;
+    this.wasDragged = true;
+    setTimeout(() => {
+      this.wasDragged = false;
+    }, 150);
+  }
+
   onCardClick(event: MouseEvent): void {
+    if (this.wasDragged) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
     if (this.isSelectionMode || this.anyItemSelected) {
       event.preventDefault();
       event.stopPropagation();

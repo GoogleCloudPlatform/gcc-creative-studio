@@ -16,12 +16,15 @@
 
 import {Component, Inject, OnInit} from '@angular/core';
 import {MAT_DIALOG_DATA, MatDialogRef} from '@angular/material/dialog';
-import {Workspace} from '../../models/workspace.model';
+import {Workspace, WorkspaceScope} from '../../models/workspace.model';
 import {WorkspaceService} from '../../../services/workspace/workspace.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
+import {FlattenedWorkspaceOption} from '../move-to-folder-dialog/move-to-folder-dialog.component';
 
 export interface CopyToWorkspaceDialogData {
-  itemCount: number;
+  itemCount?: number;
+  title?: string;
+  subtitle?: string;
 }
 
 @Component({
@@ -30,10 +33,10 @@ export interface CopyToWorkspaceDialogData {
   styleUrls: ['./copy-to-workspace-dialog.component.scss'],
 })
 export class CopyToWorkspaceDialogComponent implements OnInit {
-  workspaces: Workspace[] = [];
+  workspaces: FlattenedWorkspaceOption[] = [];
   searchQuery = '';
   selectedWorkspaceId: number | null = null;
-  isCopying = false;
+  isLoading = false;
   currentWorkspaceId: number | null = null;
 
   constructor(
@@ -50,20 +53,26 @@ export class CopyToWorkspaceDialogComponent implements OnInit {
   }
 
   loadWorkspaces(): void {
+    this.isLoading = true;
     this.workspaceService.getWorkspaces().subscribe({
       next: workspaces => {
-        // Filter out the current workspace (no point in copying to itself)
-        this.workspaces = workspaces.filter(
-          w => w.id !== this.currentWorkspaceId,
-        );
+        this.workspaces = workspaces.map(workspace => ({
+          id: workspace.id,
+          name: workspace.name,
+          scope:
+            workspace.scope === WorkspaceScope.PUBLIC ? 'public' : 'private',
+          disabled: workspace.id === this.currentWorkspaceId,
+        }));
+        this.isLoading = false;
       },
       error: err => {
         console.error('Failed to load workspaces', err);
+        this.isLoading = false;
       },
     });
   }
 
-  get filteredWorkspaces(): Workspace[] {
+  get filteredWorkspaces(): FlattenedWorkspaceOption[] {
     if (!this.searchQuery) {
       return this.workspaces;
     }
@@ -71,7 +80,10 @@ export class CopyToWorkspaceDialogComponent implements OnInit {
     return this.workspaces.filter(w => w.name.toLowerCase().includes(query));
   }
 
-  selectWorkspace(workspace: Workspace): void {
+  selectWorkspace(workspace: FlattenedWorkspaceOption): void {
+    if (workspace.disabled) {
+      return;
+    }
     this.selectedWorkspaceId = workspace.id;
   }
 

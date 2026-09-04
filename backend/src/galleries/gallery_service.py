@@ -33,6 +33,7 @@ from src.common.storage_service import GcsService
 from src.galleries.dto.bulk_copy_dto import BulkCopyDto
 from src.galleries.dto.bulk_delete_dto import BulkDeleteDto
 from src.galleries.dto.bulk_download_dto import BulkDownloadDto
+from src.galleries.dto.bulk_move_dto import BulkMoveDto
 from src.galleries.dto.gallery_response_dto import (
     MediaItemResponse,
     SourceAssetLinkResponse,
@@ -57,6 +58,7 @@ from src.users.user_model import UserModel, UserRoleEnum
 from src.workspaces.repository.workspace_repository import WorkspaceRepository
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
 from src.tags.repository.tags_repository import TagsRepository
+from src.folders.repository.folder_repository import FolderRepository
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +78,7 @@ class GalleryService:
         imagen_service: ImagenService = Depends(),
         gcs_service: GcsService = Depends(),
         tags_repo: TagsRepository = Depends(),
+        folder_repo: FolderRepository = Depends(),
     ):
         """Initializes the service with its dependencies."""
         self.media_repo = media_repo
@@ -88,6 +91,7 @@ class GalleryService:
         self.imagen_service = imagen_service
         self.gcs_service = gcs_service
         self.tags_repo = tags_repo
+        self.folder_repo = folder_repo
 
     async def _enrich_source_asset_link(
         self,
@@ -364,6 +368,20 @@ class GalleryService:
         # If the user is not an admin, force the search to only show completed items
         if not is_admin:
             search_dto.status = JobStatusEnum.COMPLETED
+
+        # If searching within a specific folder, validate the folder exists and belongs to this workspace
+        if search_dto.folder_id is not None:
+            folder = await self.folder_repo.get_folder_by_id(
+                search_dto.folder_id
+            )
+            if not folder or (
+                search_dto.workspace_id is not None
+                and folder.workspace_id != search_dto.workspace_id
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Folder with ID {search_dto.folder_id} not found in this workspace.",
+                )
 
         # Run the database query directly (it is async)
         # We assume UnifiedGalleryRepository.query handles filtering
@@ -700,7 +718,7 @@ class GalleryService:
                     )
 
                     # Create a new MediaItem instance with updated workspace_id
-                    # exclude 'id', 'created_at', 'updated_at', 'deleted_at', 'deleted_by'
+                    # exclude 'id', 'created_at', 'updated_at', 'deleted_at', 'deleted_by', 'folder_id'
                     new_item_data = media_item.model_dump(
                         exclude={
                             "id",
@@ -709,6 +727,7 @@ class GalleryService:
                             "deleted_at",
                             "deleted_by",
                             "workspace_id",
+                            "folder_id",
                         },
                     )
                     new_item_data["workspace_id"] = (
@@ -742,6 +761,7 @@ class GalleryService:
                             "deleted_at",
                             "deleted_by",
                             "workspace_id",
+                            "folder_id",
                         },
                     )
                     new_asset_data["workspace_id"] = (
@@ -754,7 +774,127 @@ class GalleryService:
                     await self.source_asset_repo.create(new_asset_data)
                     copied_count += 1
 
+                elif item.type == "folder":
+                    folder = await self.folder_repo.get_folder_by_id(item.id)
+                    if not folder:
+                        continue
+
+                    # Authorize source workspace access
+                    await self.workspace_auth.authorize(
+                        workspace_id=folder.workspace_id,
+                        user=current_user,
+                    )
+
+                    copy_results = await self.folder_repo.copy_folder_to_workspace(
+                        folder_id=folder.id,
+                        target_workspace_id=bulk_copy_dto.target_workspace_id,
+                        user_id=current_user.id,
+                        user_email=current_user.email,
+                    )
+                    copied_count += (
+                        copy_results.get("folders_copied", 0)
+                        + copy_results.get("media_copied", 0)
+                        + copy_results.get("assets_copied", 0)
+                    )
+
             except Exception as e:
                 logger.error(f"Error copying {item.type} {item.id}: {e}")
 
         return {"copied_count": copied_count}
+
+    async def bulk_move(
+        self,
+        bulk_move_dto: BulkMoveDto,
+        current_user: UserModel,
+    ) -> dict:
+        """Moves multiple gallery items to a target workspace."""
+        # 1. Authorize target workspace access
+        await self.workspace_auth.authorize(
+            workspace_id=bulk_move_dto.target_workspace_id,
+            user=current_user,
+        )
+
+        moved_count = 0
+        for item in bulk_move_dto.items:
+            try:
+                if item.type == "media_item":
+                    media_item = await self.media_repo.get_by_id(item.id)
+                    if not media_item:
+                        continue
+
+                    # Authorize source workspace access (where the item is currently)
+                    await self.workspace_auth.authorize(
+                        workspace_id=media_item.workspace_id,
+                        user=current_user,
+                    )
+
+                    if (
+                        media_item.workspace_id
+                        != bulk_move_dto.target_workspace_id
+                    ):
+                        await self.tags_repo.clear_tags_for_media_item(item.id)
+
+                    await self.media_repo.update(
+                        item.id,
+                        {
+                            "workspace_id": bulk_move_dto.target_workspace_id,
+                            "folder_id": None,
+                        },
+                    )
+                    moved_count += 1
+
+                elif item.type == "source_asset":
+                    asset = await self.source_asset_repo.get_by_id(item.id)
+                    if not asset:
+                        continue
+
+                    # Authorize source workspace access
+                    await self.workspace_auth.authorize(
+                        workspace_id=asset.workspace_id,
+                        user=current_user,
+                    )
+
+                    if asset.workspace_id != bulk_move_dto.target_workspace_id:
+                        await self.tags_repo.clear_tags_for_source_asset(
+                            item.id
+                        )
+
+                    await self.source_asset_repo.update(
+                        item.id,
+                        {
+                            "workspace_id": bulk_move_dto.target_workspace_id,
+                            "folder_id": None,
+                        },
+                    )
+                    moved_count += 1
+
+                elif item.type == "folder":
+                    folder = await self.folder_repo.get_folder_by_id(item.id)
+                    if not folder:
+                        continue
+
+                    # Authorize source workspace access
+                    await self.workspace_auth.authorize(
+                        workspace_id=folder.workspace_id,
+                        user=current_user,
+                    )
+
+                    if folder.workspace_id == bulk_move_dto.target_workspace_id:
+                        continue
+
+                    move_results = await self.folder_repo.move_folder_to_workspace(
+                        folder_id=folder.id,
+                        target_workspace_id=bulk_move_dto.target_workspace_id,
+                    )
+                    moved_count += (
+                        move_results.get("folders_moved", 0)
+                        + move_results.get("media_moved", 0)
+                        + move_results.get("assets_moved", 0)
+                    )
+
+            except Exception as e:
+                logger.error(f"Error moving {item.type} {item.id}: {e}")
+
+        return {"moved_count": moved_count}
+
+    bulk_move_items = bulk_move
