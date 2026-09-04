@@ -262,7 +262,7 @@ class FolderService:
                     )
                 folder.name = target_name
 
-        if dto.color is not None:
+        if dto.color is not None or "color" in dto.model_fields_set:
             folder.color = dto.color
 
         try:
