@@ -384,7 +384,7 @@ firebase_site_id   = "YOUR_FIREBASE_SITE_ID"
 github_repo_owner  = "$GITHUB_REPO_OWNER"
 github_repo_name   = "$GITHUB_REPO_NAME"
 github_branch_name = "$GITHUB_BRANCH"
-github_conn_name   = ""
+github_conn_name   = "${GITHUB_CONN_NAME:-}"
 EOF
         info "Default service names will be '$BE_SERVICE_NAME' and '$FE_SERVICE_NAME'."
         write_state "ENV_NAME" "$ENV_NAME"; write_state "BE_SERVICE_NAME" "$BE_SERVICE_NAME"; write_state "FE_SERVICE_NAME" "$FE_SERVICE_NAME"; write_state "GITHUB_BRANCH" "$GITHUB_BRANCH"
