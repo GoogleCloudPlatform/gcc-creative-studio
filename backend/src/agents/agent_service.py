@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 # Initialize Vertex AI SDK
 vertexai.init(
     project=config_service.PROJECT_ID,
-    location=config_service.WORKFLOWS_LOCATION,
+    location=config_service.AGENT_LOCATION,
     api_transport="grpc",  # Options: "grpc" or "rest"
 )
 
@@ -80,7 +80,7 @@ class AgentService:
         self.project_service = project_service
         self.client = vertexai.Client(
             project=config_service.PROJECT_ID,
-            location=config_service.WORKFLOWS_LOCATION,
+            location=config_service.AGENT_LOCATION,
         )
 
     def _get_agent_config(self, appName: str) -> dict:
@@ -106,7 +106,7 @@ class AgentService:
     def _get_remote_agent(self, appName: str = APP_NAME) -> Any:
         vertexai.init(
             project=config_service.PROJECT_ID,
-            location=config_service.WORKFLOWS_LOCATION,
+            location=config_service.AGENT_LOCATION,
             api_transport="grpc",
         )
         agent_name = self._get_validated_agent_name(appName)

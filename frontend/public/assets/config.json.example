@@ -1,0 +1,15 @@
+{
+  "production": true,
+  "isLocal": false,
+  "backendURL": "https://cstudio-backend-dev.mydomain.com/api",
+  "GOOGLE_CLIENT_ID": "your-oauth-web-client-id-here.apps.googleusercontent.com",
+  "firebase": {
+    "apiKey": "your-firebase-api-key",
+    "authDomain": "your-firebase-auth-domain.firebaseapp.com",
+    "projectId": "your-firebase-project-id",
+    "storageBucket": "your-firebase-storage-bucket.appspot.com",
+    "messagingSenderId": "your-firebase-messaging-sender-id",
+    "appId": "your-firebase-web-app-id",
+    "measurementId": "your-google-analytics-measurement-id"
+  }
+}

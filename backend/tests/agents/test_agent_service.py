@@ -26,7 +26,7 @@ def test_safe_cast():
 
 @pytest.mark.anyio
 async def test_get_remote_agent():
-    with patch("vertexai.Client"):
+    with patch("vertexai.Client"), patch("vertexai.init") as mock_init:
         service = AgentService(
             agent_repo=MagicMock(),
             workspace_service=MagicMock(),
@@ -37,6 +37,13 @@ async def test_get_remote_agent():
         with patch("src.agents.agent_service.agent_engines") as mock_engines:
             mock_engines.get.return_value = "mock_agent"
             assert service._get_remote_agent("ads_x") == "mock_agent"
+            from src.config.config_service import config_service
+
+            mock_init.assert_called_with(
+                project=config_service.PROJECT_ID,
+                location=config_service.AGENT_LOCATION,
+                api_transport="grpc",
+            )
 
 
 @pytest.mark.anyio

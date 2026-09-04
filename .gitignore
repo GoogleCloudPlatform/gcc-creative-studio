@@ -10,6 +10,7 @@ local/
 
 # Terraform state and providers
 /.terraform/
+.terraform/
 
 # Ignore all content inside environments directories...
 **/environments/*
@@ -20,3 +21,8 @@ local/
 genmedia-agent-demos
 .gemini
 .agents
+
+# Persistent deployment configuration profiles
+*.cstudio_bootstrap.conf
+cstudio_profiles/
+**/infrastructure/profiles/
