@@ -235,14 +235,12 @@ setup_project() {
     # try detecting current project on the current terminal
     CURRENT_GCLOUD_PROJECT=$(gcloud config get-value project 2>/dev/null || echo "")
 
-    if [ -n "$GCP_PROJECT_ID" ]; then
-        prompt "Found project '$GCP_PROJECT_ID' from a previous run. Use this project? (y/n)"; read -r REPLY < /dev/tty
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            gcloud config set project "$GCP_PROJECT_ID"
-            write_state "GCP_PROJECT_ID" "$GCP_PROJECT_ID"
-            success "Project '$GCP_PROJECT_ID' is configured."
-            return
-        fi
+    if [ -n "$GCP_PROJECT_ID" ] && [ "$GCP_PROJECT_ID" != "unassigned" ]; then
+        info "Using stored project ID from profile: ${C_YELLOW}${GCP_PROJECT_ID}${C_RESET}"
+        gcloud config set project "$GCP_PROJECT_ID"
+        write_state "GCP_PROJECT_ID" "$GCP_PROJECT_ID"
+        success "Project '$GCP_PROJECT_ID' is configured."
+        return
     elif [ -n "$CURRENT_GCLOUD_PROJECT" ]; then
         prompt "Detected active gcloud project '$CURRENT_GCLOUD_PROJECT'. Use this project? (y/n)"
         read -r REPLY < /dev/tty
@@ -305,8 +303,10 @@ setup_repo() {
     local REPO_CLONE_DIR=$(basename "$GITHUB_REPO_URL" .git)
 
     if [[ -d "$REPO_CLONE_DIR" ]]; then
-        warn "Directory '$REPO_CLONE_DIR' already exists."; prompt "Do you want to use this existing directory? (y/n)"; read -r REPLY < /dev/tty
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then fail "Please remove the directory or run the script from a different location."; fi
+        info "Directory '$REPO_CLONE_DIR' already exists. Updating from remote..."
+        cd "$REPO_CLONE_DIR"
+        git pull origin "$SELECTED_BRANCH" || warn "Could not pull latest changes. Continuing with local version."
+        cd ..
     else
         info "Performing a sparse checkout of '$REPO_CLONE_DIR' (Branch: $SELECTED_BRANCH)..."
         
@@ -345,6 +345,8 @@ setup_repo() {
 
     GITHUB_REPO_OWNER=$(git remote get-url origin 2>/dev/null | sed -n 's/.*github.com[:\/]\([^/]*\)\/.*/\1/p' || echo "")
     GITHUB_REPO_NAME=$REPO_CLONE_DIR
+    write_state "GITHUB_REPO_OWNER" "$GITHUB_REPO_OWNER"
+    write_state "GITHUB_REPO_NAME" "$GITHUB_REPO_NAME"
 
     info "Detected GitHub owner: $GITHUB_REPO_OWNER"
     info "Detected GitHub repo name: $GITHUB_REPO_NAME"
@@ -363,8 +365,11 @@ configure_environment() {
     # Use flattened structure directly under infrastructure/
     ENV_DIR="$REPO_ROOT/infrastructure"
     TFVARS_FILE_PATH="$ENV_DIR/$ENV_NAME.tfvars"
-    if [ ! -s "$TFVARS_FILE_PATH" ] || ! grep -q "project_id[[:space:]]*=" "$TFVARS_FILE_PATH"; then
-        info "Configuring environment files in flattened infrastructure directory..."
+    info "Configuring environment files in flattened infrastructure directory..."
+    if [ -n "$TF_BUCKET_NAME" ] && [ "$TF_BUCKET_NAME" != "unassigned" ]; then
+        info "Using stored Terraform state bucket from profile: ${C_YELLOW}${TF_BUCKET_NAME}${C_RESET}"
+        BUCKET_NAME="$TF_BUCKET_NAME"
+    else
         prompt "Do you have an existing GCS bucket for Terraform state? (y/n)"; read -r REPLY < /dev/tty
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             prompt "Please enter the name of your GCS bucket:"; read -p "   Bucket Name: " BUCKET_NAME < /dev/tty
@@ -372,10 +377,19 @@ configure_environment() {
             BUCKET_SUFFIX=$(printf "$GCS_BUCKET_SUFFIX_FORMAT" "$ENV_NAME"); BUCKET_NAME="${GCP_PROJECT_ID}-${BUCKET_SUFFIX}"
             info "Creating GCS bucket '$BUCKET_NAME' for Terraform state..."; gsutil mb -p "$GCP_PROJECT_ID" "gs://${BUCKET_NAME}" || warn "Bucket 'gs://${BUCKET_NAME}' may already exist. Continuing..."
         fi
-        BUCKET_PREFIX=$(printf "$GCS_BUCKET_PREFIX_FORMAT" "$ENV_NAME")
-        info "Creating backend config file ${ENV_NAME}.backend.tfvars..."; echo -e "bucket = \"$BUCKET_NAME\"\nprefix = \"$BUCKET_PREFIX\"" > "$ENV_DIR/${ENV_NAME}.backend.tfvars"
-        info "Creating or repairing $TFVARS_FILE_PATH with required root parameters..."
-        cat <<EOF > "$TFVARS_FILE_PATH"
+    fi
+    BUCKET_PREFIX=$(printf "$GCS_BUCKET_PREFIX_FORMAT" "$ENV_NAME")
+    info "Creating backend config file ${ENV_NAME}.backend.tfvars..."; echo -e "bucket = \"$BUCKET_NAME\"\nprefix = \"$BUCKET_PREFIX\"" > "$ENV_DIR/${ENV_NAME}.backend.tfvars"
+    
+    if [ -z "$GITHUB_REPO_NAME" ]; then
+        GITHUB_REPO_NAME=$(basename "$GITHUB_REPO_URL" .git)
+        GITHUB_REPO_OWNER=$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null | sed -n 's/.*github.com[:\/]\([^/]*\)\/.*/\1/p' || echo "")
+        write_state "GITHUB_REPO_NAME" "$GITHUB_REPO_NAME"
+        write_state "GITHUB_REPO_OWNER" "$GITHUB_REPO_OWNER"
+    fi
+
+    info "Creating or repairing $TFVARS_FILE_PATH with required root parameters..."
+    cat <<EOF > "$TFVARS_FILE_PATH"
 project_id         = "$GCP_PROJECT_ID"
 region             = "us-central1"
 environment        = "$ENV_NAME"
@@ -386,9 +400,8 @@ github_repo_name   = "$GITHUB_REPO_NAME"
 github_branch_name = "$GITHUB_BRANCH"
 github_conn_name   = "${GITHUB_CONN_NAME:-}"
 EOF
-        info "Default service names will be '$BE_SERVICE_NAME' and '$FE_SERVICE_NAME'."
-        write_state "ENV_NAME" "$ENV_NAME"; write_state "BE_SERVICE_NAME" "$BE_SERVICE_NAME"; write_state "FE_SERVICE_NAME" "$FE_SERVICE_NAME"; write_state "GITHUB_BRANCH" "$GITHUB_BRANCH"
-    else info "Environment directory '$ENV_DIR' already configured."; fi
+    info "Default service names will be '$BE_SERVICE_NAME' and '$FE_SERVICE_NAME'."
+    write_state "ENV_NAME" "$ENV_NAME"; write_state "BE_SERVICE_NAME" "$BE_SERVICE_NAME"; write_state "FE_SERVICE_NAME" "$FE_SERVICE_NAME"; write_state "GITHUB_BRANCH" "$GITHUB_BRANCH"; write_state "TF_BUCKET_NAME" "$BUCKET_NAME"
     success "Configuration files for '$ENV_NAME' environment are ready."
 }
 
@@ -410,10 +423,13 @@ handle_manual_steps() {
         sed -i.bak "s|^[#[:space:]]*github_conn_name[[:space:]]*=.*|github_conn_name = \"$GITHUB_CONN_NAME\"|g" "$TFVARS_FILE_PATH"
         write_state "GITHUB_CONN_NAME" "$GITHUB_CONN_NAME"
     fi
-    warn "\nTerraform cannot accept legal terms on your behalf."; info "Please perform this one-time manual step for Firebase:"
-    echo "1. Open this URL in your browser:"; echo -e "   ${C_YELLOW}https://console.firebase.google.com/?project=${GCP_PROJECT_ID}${C_RESET}"
-    echo "2. You should be prompted to 'Add Firebase' to your existing project."; echo "3. Follow the prompts and accept the terms."
-    prompt "Press [Enter] to continue after you have linked the project."; read -r < /dev/tty
+    if [ -z "$FIREBASE_TERMS_ACCEPTED" ]; then
+        warn "\nTerraform cannot accept legal terms on your behalf."; info "Please perform this one-time manual step for Firebase:"
+        echo "1. Open this URL in your browser:"; echo -e "   ${C_YELLOW}https://console.firebase.google.com/?project=${GCP_PROJECT_ID}${C_RESET}"
+        echo "2. You should be prompted to 'Add Firebase' to your existing project."; echo "3. Follow the prompts and accept the terms."
+        prompt "Press [Enter] to continue after you have linked the project."; read -r < /dev/tty
+        write_state "FIREBASE_TERMS_ACCEPTED" "true"
+    fi
     rm -f "$TFVARS_FILE_PATH.bak"
 
     # --- Automate .tfvars placeholder replacement ---
@@ -947,6 +963,7 @@ select_deployment_profile() {
         echo "    • Fork Repository URL:    ${GITHUB_REPO_URL:-unassigned}"
         echo "    • Deployment Branch:      ${GITHUB_BRANCH:-main}"
         echo "    • Environment Name:       ${ENV_NAME:-unassigned}"
+        echo "    • Terraform State Bucket: ${TF_BUCKET_NAME:-unassigned}"
         echo "    • Cloud Build Conn Name:  ${GITHUB_CONN_NAME:-unassigned}"
         echo "    • OAuth Web Client ID:    ${AUTO_OAUTH_CLIENT_ID:-unassigned}"
         echo "    • Firebase Site ID:       ${AUTO_FIREBASE_SITE_ID:-unassigned}"
@@ -1010,14 +1027,8 @@ main() {
     info "   If upgrading an existing installation, data will be migrated automatically to the new private instance during deployment."
     echo ""
 
-    read_state; LAST_COMPLETED_STEP=${LAST_COMPLETED_STEP:-0}
-    
-    if [ -n "$REPO_ROOT" ] && [ ! -d "$REPO_ROOT/infrastructure" ]; then
-        warn "Saved repository directory '$REPO_ROOT' not found. Resetting progress to re-clone..."
-        LAST_COMPLETED_STEP=0
-        write_state "LAST_COMPLETED_STEP" "0"
-        REPO_ROOT=""
-    fi
+    read_state
+
 
     if [ -z "$REPO_ROOT" ] || [ ! -d "$REPO_ROOT/infrastructure" ]; then
         local SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1051,10 +1062,7 @@ main() {
         "deploy_izumi_agent"
     )
     for i in "${!steps_to_run[@]}"; do
-        step_num=$((i + 1))
-        if (( LAST_COMPLETED_STEP < step_num )); then
-            ${steps_to_run[$i]}; write_state "LAST_COMPLETED_STEP" "$step_num"
-        fi
+        ${steps_to_run[$i]}
     done
 
     step 16 "🎉 Deployment Complete! 🎉";
