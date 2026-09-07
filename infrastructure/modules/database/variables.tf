@@ -86,11 +86,7 @@ variable "db_user" {
   default     = "app_user"
 }
 
-variable "db_password_version" {
-  type        = number
-  description = "The version integer for the database user password to track updates."
-  default     = 1
-}
+
 
 variable "deletion_protection" {
   type        = bool

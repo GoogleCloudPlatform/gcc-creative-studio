@@ -1,6 +1,5 @@
-# This generates the password in memory during the Terraform run.
-# It is immediately discarded after the run completes.
-ephemeral "random_password" "db_pass" {
+# This generates the password and stores it in the Terraform state.
+resource "random_password" "db_pass" {
   length  = 24
   special = true
 }
@@ -24,12 +23,8 @@ resource "google_secret_manager_secret" "db_secret" {
 }
 
 resource "google_secret_manager_secret_version" "db_secret_version" {
-  secret = google_secret_manager_secret.db_secret.id
-
-  # Using a write-only argument prevents the password 
-  # from being captured in the terraform.tfstate file.
-  secret_data_wo = ephemeral.random_password.db_pass.result
-  secret_data_wo_version = var.db_password_version
+  secret      = google_secret_manager_secret.db_secret.id
+  secret_data = random_password.db_pass.result
 }
 
 resource "google_sql_database_instance" "default" {
@@ -92,9 +87,5 @@ resource "google_sql_user" "app_user" {
   name     = var.db_user
   instance = google_sql_database_instance.default.name
   project  = var.project_id
-
-  # We read the ephemeral value while creating the DB user,
-  # keeping the DB state clean of plaintext passwords.
-  password_wo         = ephemeral.random_password.db_pass.result
-  password_wo_version = var.db_password_version
+  password = random_password.db_pass.result
 }
