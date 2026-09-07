@@ -18,11 +18,13 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 import pytest
 
+from src.common.schema.media_item_model import MediaItem
 from src.folders.repository.folder_repository import (
     FolderRepository,
     generate_disambiguated_name,
 )
 from src.folders.schema.folder_model import Folder
+from src.source_assets.schema.source_asset_model import SourceAsset
 
 
 @pytest.fixture(name="mock_db")
@@ -429,7 +431,7 @@ class TestFolderRepository:
             user_email="a@b.com",
             mime_type="image/png",
             model="imagen",
-            titles=[],
+            titles=["copied_media_title"],
             descriptions=[],
             prompt="p",
             original_prompt="op",
@@ -471,7 +473,7 @@ class TestFolderRepository:
             folder_id=2,
             gcs_uri="gs://bucket/file.png",
             original_filename="file.png",
-            titles=[],
+            titles=["copied_asset_title"],
             descriptions=[],
             mime_type="image/png",
             aspect_ratio="1:1",
@@ -504,6 +506,16 @@ class TestFolderRepository:
         assert result["assets_copied"] == 1
         assert mock_db.flush.call_count == 2
         mock_db.commit.assert_called_once()
+
+        added_entities = [call.args[0] for call in mock_db.add.call_args_list]
+        added_media = [e for e in added_entities if isinstance(e, MediaItem)]
+        added_assets = [e for e in added_entities if isinstance(e, SourceAsset)]
+        assert len(added_media) == 1
+        assert len(added_assets) == 1
+        assert added_media[0].titles == ["copied_media_title"]
+        assert added_media[0].titles is not mock_media1.titles
+        assert added_assets[0].titles == ["copied_asset_title"]
+        assert added_assets[0].titles is not mock_asset1.titles
 
     @pytest.mark.anyio
     async def test_copy_folder_to_workspace_batches_flush_by_depth(

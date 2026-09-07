@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import re
 from datetime import datetime, timezone
 from fastapi import Depends
@@ -667,56 +668,38 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         media_res = await self.db.execute(media_stmt)
         media_items = media_res.scalars().all()
 
+        media_exclude = {
+            "id",
+            "created_at",
+            "updated_at",
+            "deleted_at",
+            "deleted_by",
+            "workspace_id",
+            "folder_id",
+            "user_id",
+            "user_email",
+        }
+        media_columns = [
+            c.key
+            for c in MediaItem.__table__.columns
+            if c.key not in media_exclude
+        ]
+
         media_copied_count = 0
         for item in media_items:
+            kwargs = {}
+            for col in media_columns:
+                val = getattr(item, col)
+                if isinstance(val, (list, dict)):
+                    val = copy.deepcopy(val)
+                kwargs[col] = val
+
             new_media = MediaItem(
                 workspace_id=target_workspace_id,
                 folder_id=id_map[item.folder_id],
                 user_id=user_id,
                 user_email=user_email or item.user_email,
-                mime_type=item.mime_type,
-                model=item.model,
-                titles=list(item.titles) if item.titles else [],
-                descriptions=(
-                    list(item.descriptions) if item.descriptions else []
-                ),
-                prompt=item.prompt,
-                original_prompt=item.original_prompt,
-                rewritten_prompt=item.rewritten_prompt,
-                num_media=item.num_media,
-                generation_time=item.generation_time,
-                error_message=item.error_message,
-                thumbnail_uris=(
-                    list(item.thumbnail_uris) if item.thumbnail_uris else []
-                ),
-                aspect_ratio=item.aspect_ratio,
-                style=item.style,
-                lighting=item.lighting,
-                color_and_tone=item.color_and_tone,
-                composition=item.composition,
-                negative_prompt=item.negative_prompt,
-                add_watermark=item.add_watermark,
-                status=item.status,
-                source_assets=item.source_assets,
-                source_media_items=item.source_media_items,
-                gcs_uris=list(item.gcs_uris) if item.gcs_uris else [],
-                original_gcs_uris=(
-                    list(item.original_gcs_uris)
-                    if item.original_gcs_uris
-                    else []
-                ),
-                duration_seconds=item.duration_seconds,
-                comment=item.comment,
-                seed=item.seed,
-                critique=item.critique,
-                google_search=item.google_search,
-                resolution=item.resolution,
-                grounding_metadata=item.grounding_metadata,
-                audio_analysis=item.audio_analysis,
-                voice_name=item.voice_name,
-                language_code=item.language_code,
-                raw_data=item.raw_data,
-                created_from_template_id=item.created_from_template_id,
+                **kwargs,
             )
             self.db.add(new_media)
             media_copied_count += 1
@@ -729,26 +712,36 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         asset_res = await self.db.execute(asset_stmt)
         assets = asset_res.scalars().all()
 
+        asset_exclude = {
+            "id",
+            "created_at",
+            "updated_at",
+            "deleted_at",
+            "deleted_by",
+            "workspace_id",
+            "folder_id",
+            "user_id",
+        }
+        asset_columns = [
+            c.key
+            for c in SourceAsset.__table__.columns
+            if c.key not in asset_exclude
+        ]
+
         assets_copied_count = 0
         for asset in assets:
+            kwargs = {}
+            for col in asset_columns:
+                val = getattr(asset, col)
+                if isinstance(val, (list, dict)):
+                    val = copy.deepcopy(val)
+                kwargs[col] = val
+
             new_asset = SourceAsset(
                 workspace_id=target_workspace_id,
                 folder_id=id_map[asset.folder_id],
                 user_id=user_id,
-                gcs_uri=asset.gcs_uri,
-                original_filename=asset.original_filename,
-                titles=list(asset.titles) if asset.titles else [],
-                descriptions=(
-                    list(asset.descriptions) if asset.descriptions else []
-                ),
-                mime_type=asset.mime_type,
-                aspect_ratio=asset.aspect_ratio,
-                file_hash=asset.file_hash,
-                scope=asset.scope,
-                asset_type=asset.asset_type,
-                thumbnail_gcs_uri=asset.thumbnail_gcs_uri,
-                original_gcs_uri=asset.original_gcs_uri,
-                external_url=asset.external_url,
+                **kwargs,
             )
             self.db.add(new_asset)
             assets_copied_count += 1

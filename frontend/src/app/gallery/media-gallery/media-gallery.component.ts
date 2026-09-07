@@ -1273,7 +1273,10 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
               },
               error: err => {
                 console.error('Error moving folder:', err);
-                this.snackBar.open('Failed to move folder', 'Close', {
+                const detail = err.error?.detail;
+                const message =
+                  typeof detail === 'string' ? detail : 'Failed to move folder';
+                this.snackBar.open(message, 'Close', {
                   duration: 3000,
                 });
               },
@@ -1480,7 +1483,9 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
           this.folders = prevFolders;
           this.updateGroups();
           this.isMoving = false;
-          const message = err.error?.detail || 'Failed to move items';
+          const detail = err.error?.detail;
+          const message =
+            typeof detail === 'string' ? detail : 'Failed to move items';
           this.snackBar.open(message, 'Close', {
             duration: 3000,
           });
@@ -1556,7 +1561,10 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
           this.folders = prevFolders;
           this.updateGroups();
           this.isMoving = false;
-          this.snackBar.open('Failed to move items', 'Close', {
+          const detail = err.error?.detail;
+          const message =
+            typeof detail === 'string' ? detail : 'Failed to move items';
+          this.snackBar.open(message, 'Close', {
             duration: 3000,
           });
         },
