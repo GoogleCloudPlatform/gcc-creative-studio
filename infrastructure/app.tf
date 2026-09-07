@@ -23,6 +23,7 @@ module "compute" {
   # The deployment script dynamically sets this value (e.g., "latest" or "v1.2.0")
   app_version     = var.app_version
   service_name    = "${var.resource_prefix}-${var.environment}-backend"
+  memory          = "2Gi"
 
   # Direct VPC routing configurations
   vpc_network_name = module.network.network_name

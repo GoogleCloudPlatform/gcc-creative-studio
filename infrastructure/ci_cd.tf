@@ -27,6 +27,13 @@ resource "google_service_account_iam_member" "backend_sa_user" {
   member             = "serviceAccount:${google_service_account.trigger_sa.email}"
 }
 
+# Give the trigger SA permission to access secrets
+resource "google_project_iam_member" "secret_accessor" {
+  project = var.project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${google_service_account.trigger_sa.email}"
+}
+
 # Give the trigger SA permission to deploy to Firebase Hosting
 resource "google_project_iam_member" "firebase_admin" {
   project = var.project_id

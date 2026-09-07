@@ -32,6 +32,8 @@ DEFAULT_ENV_NAME="dev-infra"
 DEFAULT_BRANCH_NAME="main"
 GCS_BUCKET_SUFFIX_FORMAT="cstudio-%s-tfstate"
 GCS_BUCKET_PREFIX_FORMAT="infra/%s/state"
+DEPLOY_REGION="us-central1"
+RES_PREFIX="cs"
 BE_SERVICE_NAME="cstudio-be"
 FE_SERVICE_NAME="cstudio-fe"
 
