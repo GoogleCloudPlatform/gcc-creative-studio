@@ -15,6 +15,12 @@
  */
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {FormsModule} from '@angular/forms';
+import {MatDialogRef, MatDialogModule} from '@angular/material/dialog';
+import {MatFormFieldModule} from '@angular/material/form-field';
+import {MatInputModule} from '@angular/material/input';
+import {MatIconModule} from '@angular/material/icon';
+import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 
 import {AddVoiceDialogComponent} from './add-voice-dialog.component';
 
@@ -25,6 +31,20 @@ describe('AddVoiceDialogComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [AddVoiceDialogComponent],
+      imports: [
+        FormsModule,
+        MatDialogModule,
+        MatFormFieldModule,
+        MatInputModule,
+        MatIconModule,
+        NoopAnimationsModule,
+      ],
+      providers: [
+        {
+          provide: MatDialogRef,
+          useValue: {close: jasmine.createSpy('close')},
+        },
+      ],
     }).compileComponents();
 
     fixture = TestBed.createComponent(AddVoiceDialogComponent);
