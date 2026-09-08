@@ -244,8 +244,14 @@ setup_project() {
         success "Project '$GCP_PROJECT_ID' is configured."
         return
     elif [ -n "$CURRENT_GCLOUD_PROJECT" ]; then
-        prompt "Detected active gcloud project '$CURRENT_GCLOUD_PROJECT'. Use this project? (y/n)"
-        read -r REPLY < /dev/tty
+        if [ -n "$CLI_PROFILE" ]; then
+            info "Headless mode: Automatically using detected gcloud project '$CURRENT_GCLOUD_PROJECT'."
+            REPLY="y"
+        else
+            prompt "Detected active gcloud project '$CURRENT_GCLOUD_PROJECT'. Use this project? (y/n)"
+            read -r REPLY < /dev/tty
+        fi
+        
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             GCP_PROJECT_ID=$CURRENT_GCLOUD_PROJECT
             info "Using existing project '$GCP_PROJECT_ID'."
@@ -372,7 +378,13 @@ configure_environment() {
         info "Using stored Terraform state bucket from profile: ${C_YELLOW}${TF_BUCKET_NAME}${C_RESET}"
         BUCKET_NAME="$TF_BUCKET_NAME"
     else
-        prompt "Do you have an existing GCS bucket for Terraform state? (y/n)"; read -r REPLY < /dev/tty
+        if [ -n "$CLI_PROFILE" ]; then
+            info "Headless mode: Automatically determining Terraform state bucket."
+            REPLY="n"
+        else
+            prompt "Do you have an existing GCS bucket for Terraform state? (y/n)"; read -r REPLY < /dev/tty
+        fi
+        
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             prompt "Please enter the name of your GCS bucket:"; read -p "   Bucket Name: " BUCKET_NAME < /dev/tty
         else
@@ -897,7 +909,7 @@ trigger_builds() {
 
     if [ "$CLI_FORCE_BUILDS" != "true" ]; then
         echo -e "\n${C_BLUE}🤔  Would you like to trigger new builds for the frontend and backend now? (y/n)${C_RESET}"
-        read -r run_builds
+        read -r run_builds < /dev/tty || true
         if [ "$run_builds" != "y" ]; then
             info "Skipping builds."
             export BE_BUILD_ID=""
