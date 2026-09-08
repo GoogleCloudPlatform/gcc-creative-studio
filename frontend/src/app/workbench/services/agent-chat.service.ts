@@ -72,6 +72,7 @@ export class AgentChatService {
   private http = inject(HttpClient);
   private authService = inject(AuthService);
   private activePollInterval: any = null;
+  private activePollAbortController: AbortController | null = null;
 
   // Global parsed storyboard
   currentStoryboard = signal<any>(null);
@@ -243,12 +244,20 @@ export class AgentChatService {
 
   startPolling(sessionId: string, callbacks: SSECallbacks<any>): any {
     this.stopPolling();
+    const abortController = new AbortController();
+    this.activePollAbortController = abortController;
     const pollUrl = `${this.apiUrl}/sessions/${sessionId}/poll`;
     const pollInterval = setInterval(async () => {
+      if (abortController.signal.aborted) {
+        clearInterval(pollInterval);
+        return;
+      }
       try {
         const pollToken = await firstValueFrom(
           this.authService.getValidIdentityPlatformToken$(),
         );
+
+        if (abortController.signal.aborted) return;
 
         const pollResp = await fetch(pollUrl, {
           method: 'GET',
@@ -256,7 +265,10 @@ export class AgentChatService {
             Authorization: `Bearer ${pollToken}`,
             'Content-Type': 'application/json',
           },
+          signal: abortController.signal,
         });
+
+        if (abortController.signal.aborted) return;
 
         if (!pollResp.ok) {
           console.warn('Poll failed with status', pollResp.status);
@@ -264,8 +276,11 @@ export class AgentChatService {
         }
 
         const pollData = await pollResp.json();
+        if (abortController.signal.aborted) return;
+
         if (pollData && pollData.events) {
           for (const line of pollData.events) {
+            if (abortController.signal.aborted) return;
             if (line.startsWith('data: ')) {
               const data = line.substring(6);
               if (data.trim() === '[DONE]') {
@@ -305,7 +320,10 @@ export class AgentChatService {
             }
           }
         }
-      } catch (pollErr) {
+      } catch (pollErr: any) {
+        if (pollErr?.name === 'AbortError' || abortController.signal.aborted) {
+          return;
+        }
         console.error('Polling tick failed:', pollErr);
       }
     }, 2500);
@@ -314,6 +332,10 @@ export class AgentChatService {
   }
 
   stopPolling() {
+    if (this.activePollAbortController) {
+      this.activePollAbortController.abort();
+      this.activePollAbortController = null;
+    }
     if (this.activePollInterval) {
       clearInterval(this.activePollInterval);
       this.activePollInterval = null;

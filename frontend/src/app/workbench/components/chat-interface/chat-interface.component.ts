@@ -98,12 +98,15 @@ export class ChatInterfaceComponent
   });
   selectedImages = signal<(SourceAssetResponseDto | MediaItemSelection)[]>([]);
   isTyping = signal<boolean>(false);
+  isSubmittingGate = signal<boolean>(false);
+  isBusy = computed<boolean>(() => this.isTyping() || this.isSubmittingGate());
   isLoadingHistory = signal<boolean>(false);
   agentUnavailable = signal<boolean>(false);
   activeApprovalGate = signal<ApprovalGateInfo | null>(null);
   visibleApprovalGate = computed<ApprovalGateInfo | null>(() => {
     return this.activeApprovalGate();
   });
+  private submittedGateCallIds = new Set<string>();
   currentSessionId: string | null = this.agentChatService.selectedSessionId();
   private lastWorkspaceId: number | null =
     this.workspaceStateService.getActiveWorkspaceId();
@@ -886,6 +889,7 @@ export class ChatInterfaceComponent
     });
   }
   sendChatMessage(text: string) {
+    if (this.isBusy()) return;
     if ((!text || !text.trim()) && this.selectedImages().length === 0) return;
 
     if (!this.currentSessionId) {
@@ -971,7 +975,11 @@ export class ChatInterfaceComponent
 
   handleGateDecision(submission: ApprovalGateSubmission) {
     const gate = this.visibleApprovalGate() || this.activeApprovalGate();
-    if (!gate || !this.currentSessionId) return;
+    if (!gate || !this.currentSessionId || this.isSubmittingGate()) return;
+
+    if (gate.callId) {
+      this.submittedGateCallIds.add(gate.callId);
+    }
 
     const decisionText =
       submission.decision === 'accept'
@@ -1003,12 +1011,16 @@ export class ChatInterfaceComponent
       },
     ];
 
+    this.isSubmittingGate.set(true);
     this.activeApprovalGate.set(null);
     this.isTyping.set(true);
     if (this.currentAgent === 'ads_x') {
       this.agentChatService.isGeneratingStoryboard.set(true);
     }
     this.shouldScrollToBottom = true;
+
+    // Immediately stop current polling to abort any in-flight poll fetches
+    this.agentChatService.stopPolling();
 
     const callbacks = this.setupCallbacks();
     void this.agentChatService.sendMessage(
@@ -1021,9 +1033,21 @@ export class ChatInterfaceComponent
 
   private extractGateFromEvent(event: any): ApprovalGateInfo | null {
     if (!event) return null;
+
+    // Filter out user messages completely - user messages are never approval gates!
+    if (
+      event.author === 'user' ||
+      event.role === 'user' ||
+      event.content?.role === 'user' ||
+      event.raw_event?.author === 'user'
+    ) {
+      return null;
+    }
+
     const approvalFunctions = new Set([
       'await_strategy_approval',
       'await_storyboard_approval',
+      'await_frame_approval',
       'await_final_cut_approval',
     ]);
 
@@ -1042,6 +1066,11 @@ export class ChatInterfaceComponent
           (event.long_running_tool_ids && event.long_running_tool_ids[0]) ||
           (event.longRunningToolIds && event.longRunningToolIds[0]) ||
           '';
+
+        if (callId && this.submittedGateCallIds.has(callId)) {
+          return null;
+        }
+
         return {
           callId,
           toolName: fc.name,
@@ -1049,7 +1078,9 @@ export class ChatInterfaceComponent
             ? 'strategy'
             : fc.name.includes('storyboard')
               ? 'storyboard'
-              : 'final_cut',
+              : fc.name.includes('frame')
+                ? 'frames'
+                : 'final_cut',
           options: ['accept', 'modify', 'regenerate'],
         };
       }
@@ -1068,14 +1099,20 @@ export class ChatInterfaceComponent
             // ignore
           }
         }
+        // Result must explicitly indicate awaiting human review and must NOT be a user decision payload
         if (
           result &&
-          (typeof result === 'object' ||
-            result.status === 'awaiting_human_review' ||
-            result.message)
+          !result.decision &&
+          (result.status === 'awaiting_human_review' ||
+            (result.message && result.expected_response))
         ) {
+          const callId = fr.id || '';
+          if (callId && this.submittedGateCallIds.has(callId)) {
+            return null;
+          }
+
           return {
-            callId: fr.id || '',
+            callId,
             toolName: fr.name,
             stage:
               result.stage ||
@@ -1083,7 +1120,9 @@ export class ChatInterfaceComponent
                 ? 'strategy'
                 : fr.name.includes('storyboard')
                   ? 'storyboard'
-                  : 'final_cut'),
+                  : fr.name.includes('frame')
+                    ? 'frames'
+                    : 'final_cut'),
             payload: result,
             options: result.expected_response?.decision || [
               'accept',
@@ -1098,6 +1137,9 @@ export class ChatInterfaceComponent
     const lrtIds = event.long_running_tool_ids || event.longRunningToolIds;
     const approvalFn = event.approval_function || event.approvalFunction;
     if (approvalFn && lrtIds && lrtIds.length > 0) {
+      if (this.submittedGateCallIds.has(lrtIds[0])) {
+        return null;
+      }
       return {
         callId: lrtIds[0],
         toolName: approvalFn,
@@ -1105,7 +1147,9 @@ export class ChatInterfaceComponent
           ? 'strategy'
           : approvalFn.includes('storyboard')
             ? 'storyboard'
-            : 'final_cut',
+            : approvalFn.includes('frame')
+              ? 'frames'
+              : 'final_cut',
         options: ['accept', 'modify', 'regenerate'],
       };
     }
@@ -1119,39 +1163,120 @@ export class ChatInterfaceComponent
   ): ApprovalGateInfo | null {
     if (!events || events.length === 0) return null;
 
-    let lastGateIndex = -1;
-    let lastGateInfo: ApprovalGateInfo | null = null;
+    const resolvingToolNames = new Set([
+      'record_strategy_decision',
+      'record_storyboard_decision',
+      'record_frame_decision',
+      'record_final_cut_decision',
+      'generate_scene_frames',
+      'frames_agent',
+      'generate_scene_videos',
+      'videos_agent',
+      'stitch_final_video',
+      'storyboard_agent_creative',
+      'storyboard_agent_templated',
+      'director_agent',
+      'generate_scene_media',
+      'stitch_video_timeline',
+      'render_clip',
+      'edit_scene',
+      'add_scene',
+      'remove_scene',
+      'reorder_scenes',
+      'regenerate_scene',
+      'regenerate_storyboard',
+      'regenerate_all_media',
+      'regenerate_music',
+    ]);
+
+    let candidateGate: ApprovalGateInfo | null = null;
 
     for (let i = 0; i < events.length; i++) {
-      const gate = this.extractGateFromEvent(events[i]);
-      if (gate) {
-        lastGateIndex = i;
+      const ev = events[i];
+      const isUser =
+        ev.author === 'user' ||
+        ev.role === 'user' ||
+        ev.content?.role === 'user' ||
+        ev.raw_event?.author === 'user';
+
+      if (!isUser) {
+        const gate = this.extractGateFromEvent(ev);
+        if (gate) {
+          if (!gate.callId || !this.submittedGateCallIds.has(gate.callId)) {
+            if (
+              candidateGate !== null &&
+              candidateGate.stage === gate.stage &&
+              (candidateGate.toolName === gate.toolName || !gate.callId)
+            ) {
+              candidateGate = {
+                callId: gate.callId || candidateGate.callId,
+                toolName: gate.toolName || candidateGate.toolName,
+                stage: gate.stage || candidateGate.stage,
+                options: gate.options || candidateGate.options,
+                payload: gate.payload || candidateGate.payload,
+              };
+            } else {
+              candidateGate = gate;
+            }
+            continue;
+          }
+        }
+      }
+
+      if (candidateGate) {
+        const content = ev.content || ev.raw_event?.content || {};
+        const parts = content.parts || [];
+        let isResolved = false;
+
+        for (const p of parts) {
+          const fc =
+            p.functionCall || p.function_call || p.toolCall || p.tool_call;
+          const fr =
+            p.functionResponse ||
+            p.function_response ||
+            p.toolResponse ||
+            p.tool_response;
+
+          if (
+            (isUser &&
+              fr &&
+              (fr.name === candidateGate.toolName ||
+                (candidateGate.callId && fr.id === candidateGate.callId))) ||
+            (fc && resolvingToolNames.has(fc.name)) ||
+            (fr && resolvingToolNames.has(fr.name))
+          ) {
+            isResolved = true;
+            break;
+          }
+        }
+
+        const delta =
+          ev.actions?.state_delta || ev.raw_event?.actions?.state_delta || {};
         if (
-          lastGateInfo !== null &&
-          (gate.toolName === lastGateInfo.toolName || !gate.callId)
+          (candidateGate.stage === 'strategy' && delta.strategy_decision) ||
+          (candidateGate.stage === 'storyboard' && delta.storyboard_decision) ||
+          (candidateGate.stage === 'frames' && delta.frame_decision) ||
+          (candidateGate.stage === 'final_cut' && delta.final_cut_decision)
         ) {
-          lastGateInfo = {
-            callId: gate.callId || lastGateInfo.callId,
-            toolName: gate.toolName || lastGateInfo.toolName,
-            stage: gate.stage || lastGateInfo.stage,
-            options: gate.options || lastGateInfo.options,
-            payload: gate.payload || lastGateInfo.payload,
-          };
-        } else {
-          lastGateInfo = gate;
+          isResolved = true;
+        }
+
+        if (isResolved) {
+          candidateGate = null;
         }
       }
     }
 
-    if (lastGateIndex === -1 || !lastGateInfo) return null;
+    if (!candidateGate) return null;
 
     // Check if session state shows the stage is already decided
     if (state) {
-      if (lastGateInfo.stage === 'strategy' && state.strategy_decision)
+      if (candidateGate.stage === 'strategy' && state.strategy_decision)
         return null;
-      if (lastGateInfo.stage === 'storyboard' && state.storyboard_decision)
+      if (candidateGate.stage === 'storyboard' && state.storyboard_decision)
         return null;
-      if (lastGateInfo.stage === 'final_cut' && state.final_cut_decision)
+      if (candidateGate.stage === 'frames' && state.frame_decision) return null;
+      if (candidateGate.stage === 'final_cut' && state.final_cut_decision)
         return null;
       if (
         state.stage_completed === 'generation' ||
@@ -1160,53 +1285,7 @@ export class ChatInterfaceComponent
         return null;
     }
 
-    // Check if any event after the gate resolved it
-    const resolvingToolNames = new Set([
-      'record_strategy_decision',
-      'record_storyboard_decision',
-      'record_final_cut_decision',
-      'storyboard_agent_creative',
-      'director_agent',
-      'generate_scene_media',
-      'stitch_video_timeline',
-      'render_clip',
-    ]);
-
-    for (let i = lastGateIndex + 1; i < events.length; i++) {
-      const ev = events[i];
-      const content = ev.content || ev.raw_event?.content || {};
-      const parts = content.parts || [];
-      for (const p of parts) {
-        const fc =
-          p.functionCall || p.function_call || p.toolCall || p.tool_call;
-        const fr =
-          p.functionResponse ||
-          p.function_response ||
-          p.toolResponse ||
-          p.tool_response;
-        if (
-          (ev.author === 'user' &&
-            fr &&
-            (fr.name === lastGateInfo.toolName ||
-              fr.id === lastGateInfo.callId)) ||
-          (fc && resolvingToolNames.has(fc.name)) ||
-          (fr && resolvingToolNames.has(fr.name))
-        ) {
-          return null;
-        }
-      }
-      const delta =
-        ev.actions?.state_delta || ev.raw_event?.actions?.state_delta || {};
-      if (
-        (lastGateInfo.stage === 'strategy' && delta.strategy_decision) ||
-        (lastGateInfo.stage === 'storyboard' && delta.storyboard_decision) ||
-        (lastGateInfo.stage === 'final_cut' && delta.final_cut_decision)
-      ) {
-        return null;
-      }
-    }
-
-    return lastGateInfo;
+    return candidateGate;
   }
 
   private resumePolling(sessionId: string) {
@@ -1320,7 +1399,7 @@ export class ChatInterfaceComponent
         const gate = this.extractGateFromEvent(data);
         if (gate) {
           this.activeApprovalGate.update(existing => {
-            if (!existing) return gate;
+            if (!existing || existing.stage !== gate.stage) return gate;
             return {
               ...existing,
               ...gate,
@@ -1329,17 +1408,33 @@ export class ChatInterfaceComponent
             };
           });
           this.isTyping.set(false);
+          this.isSubmittingGate.set(false);
           this.agentChatService.isGeneratingStoryboard.set(false);
-        } else if (this.activeApprovalGate()) {
+        } else {
           const resolvingToolNames = new Set([
             'record_strategy_decision',
             'record_storyboard_decision',
+            'record_frame_decision',
             'record_final_cut_decision',
+            'generate_scene_frames',
+            'frames_agent',
+            'generate_scene_videos',
+            'videos_agent',
+            'stitch_final_video',
             'storyboard_agent_creative',
+            'storyboard_agent_templated',
             'director_agent',
             'generate_scene_media',
             'stitch_video_timeline',
             'render_clip',
+            'edit_scene',
+            'add_scene',
+            'remove_scene',
+            'reorder_scenes',
+            'regenerate_scene',
+            'regenerate_storyboard',
+            'regenerate_all_media',
+            'regenerate_music',
           ]);
           const parts =
             data.content?.parts || data.raw_event?.content?.parts || [];
@@ -1367,12 +1462,14 @@ export class ChatInterfaceComponent
           if (
             delta.strategy_decision ||
             delta.storyboard_decision ||
+            delta.frame_decision ||
             delta.final_cut_decision
           ) {
             shouldClear = true;
           }
           if (shouldClear) {
             this.activeApprovalGate.set(null);
+            this.isSubmittingGate.set(false);
           }
         }
         if (data.actions?.storyboard) {
@@ -1862,6 +1959,7 @@ export class ChatInterfaceComponent
   }
 
   submitChat() {
+    if (this.isBusy()) return;
     const val = this.chatInputValue();
     if ((!val || !val.trim()) && this.selectedImages().length === 0) return;
     this.sendChatMessage(val);

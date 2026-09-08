@@ -35,7 +35,7 @@ export type GateDecisionType = 'accept' | 'modify' | 'regenerate';
 export interface ApprovalGateInfo {
   callId: string;
   toolName: string;
-  stage?: 'strategy' | 'storyboard' | 'final_cut' | string;
+  stage?: 'strategy' | 'storyboard' | 'frames' | 'final_cut' | string;
   payload?: any;
   options?: GateDecisionType[];
 }
@@ -93,6 +93,11 @@ export class ApprovalGateComponent {
 
   isModifyOpen = signal<boolean>(false);
   guidanceText = signal<string>('');
+  isLocalSubmitting = signal<boolean>(false);
+
+  isBusy = computed<boolean>(() => {
+    return this.isSubmitting || this.isLocalSubmitting();
+  });
 
   activeMode = computed<'select' | 'modify' | 'regenerate'>(() => {
     return this.isModifyOpen() ? 'modify' : 'select';
@@ -103,6 +108,7 @@ export class ApprovalGateComponent {
     const name = this.gate?.toolName || '';
     if (name.includes('strategy')) return 'strategy';
     if (name.includes('storyboard')) return 'storyboard';
+    if (name.includes('frame')) return 'frames';
     if (name.includes('final_cut')) return 'final_cut';
     return 'review';
   });
@@ -110,11 +116,13 @@ export class ApprovalGateComponent {
   stepLabel = computed(() => {
     switch (this.stage()) {
       case 'strategy':
-        return 'Checkpoint 1 of 3';
+        return 'Checkpoint 1 of 4';
       case 'storyboard':
-        return 'Checkpoint 2 of 3';
+        return 'Checkpoint 2 of 4';
+      case 'frames':
+        return 'Checkpoint 3 of 4';
       case 'final_cut':
-        return 'Checkpoint 3 of 3';
+        return 'Checkpoint 4 of 4';
       default:
         return 'Review Checkpoint';
     }
@@ -126,6 +134,8 @@ export class ApprovalGateComponent {
         return 'Campaign Strategy Review';
       case 'storyboard':
         return 'Storyboard Review';
+      case 'frames':
+        return 'First Frame Review';
       case 'final_cut':
         return 'Final Cut Review';
       default:
@@ -139,6 +149,8 @@ export class ApprovalGateComponent {
         return 'Review campaign brief, tone, key message, and chosen visual Look.';
       case 'storyboard':
         return 'Review scenes, actions, voiceovers, and durations before rendering media.';
+      case 'frames':
+        return 'Review rendered first frames for each scene before video generation.';
       case 'final_cut':
         return 'Review clips in timeline.';
       default:
@@ -161,6 +173,8 @@ export class ApprovalGateComponent {
         return 'psychology';
       case 'storyboard':
         return 'movie_filter';
+      case 'frames':
+        return 'image';
       case 'final_cut':
         return 'video_camera_front';
       default:
@@ -174,6 +188,8 @@ export class ApprovalGateComponent {
         return 'What have I misunderstood? E.g., "Change target audience to Gen Z, switch visual Look to Outdoor Adventure..."';
       case 'storyboard':
         return 'What should change before anything is rendered? E.g., "Shorten scene 2 to 3 seconds and set it at night..."';
+      case 'frames':
+        return 'Which frames need to be redone? E.g., "Scene 1 frame is too blurry, redo it with sharper focus..."';
       case 'final_cut':
         return 'Which clips need another take? E.g., "Scene 2 is too dark, re-render it with higher contrast..."';
       default:
@@ -196,6 +212,8 @@ export class ApprovalGateComponent {
   }
 
   submitDirectDecision(decision: GateDecisionType) {
+    if (this.isBusy()) return;
+    this.isLocalSubmitting.set(true);
     this.decisionSubmitted.emit({
       decision,
       guidance: this.guidanceText().trim(),
@@ -204,7 +222,8 @@ export class ApprovalGateComponent {
 
   submitModify() {
     const guidance = this.guidanceText().trim();
-    if (!guidance) return;
+    if (!guidance || this.isBusy()) return;
+    this.isLocalSubmitting.set(true);
     this.decisionSubmitted.emit({
       decision: 'modify',
       guidance,
@@ -212,6 +231,8 @@ export class ApprovalGateComponent {
   }
 
   submitRegenerate() {
+    if (this.isBusy()) return;
+    this.isLocalSubmitting.set(true);
     this.decisionSubmitted.emit({
       decision: 'regenerate',
       guidance: this.guidanceText().trim(),

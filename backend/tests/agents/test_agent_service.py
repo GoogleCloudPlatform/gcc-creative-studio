@@ -328,3 +328,193 @@ async def test_chat_process_stream_chunks():
                 == "fallback_string"
             )
             assert calls[6].kwargs["payload"]["raw"] == "data: [DONE]\n\n"
+
+
+@pytest.mark.anyio
+async def test_chat_detects_frame_approval_gate():
+    import asyncio
+    import json
+
+    with patch("vertexai.Client"):
+        mock_workspace_auth = AsyncMock()
+        service = AgentService(
+            agent_repo=MagicMock(),
+            workspace_service=MagicMock(),
+            storyboard_repo=MagicMock(),
+            workspace_auth=mock_workspace_auth,
+            project_service=MagicMock(),
+        )
+
+        user = MagicMock(spec=UserModel)
+        payload = MagicMock()
+        payload.model_dump.return_value = {
+            "sessionId": "s-frame-1",
+            "workspaceId": 10,
+            "newMessage": {"role": "user", "parts": [{"text": "approve"}]},
+        }
+        request = MagicMock(spec=Request)
+
+        # Chunk with await_frame_approval functionCall
+        gate_chunk = {
+            "content": {
+                "parts": [
+                    {
+                        "functionCall": {
+                            "name": "await_frame_approval",
+                            "args": {},
+                        }
+                    }
+                ]
+            },
+            "long_running_tool_ids": ["call_frame_123"],
+            "invocation_id": "inv_frame_456",
+        }
+
+        with patch("src.agents.agent_service.agent_engines") as mock_engines:
+            mock_remote = MagicMock()
+            mock_remote.async_stream_query.return_value = [gate_chunk]
+            mock_remote.stream_query.return_value = [gate_chunk]
+            mock_engines.get.return_value = mock_remote
+
+            mock_db_session = AsyncMock()
+            mock_repo_instance = AsyncMock()
+
+            with patch(
+                "src.agents.agent_service.async_session_local"
+            ) as mock_db_ctx:
+                mock_db_ctx.return_value.__aenter__.return_value = (
+                    mock_db_session
+                )
+                with patch(
+                    "src.agents.agent_service.AgentRepository"
+                ) as mock_repo_cls:
+                    mock_repo_cls.return_value = mock_repo_instance
+
+                    await service.chat(
+                        current_user=user,
+                        user_id="999",
+                        payload=payload,
+                        request=request,
+                    )
+
+                    await asyncio.sleep(0.1)
+
+            calls = mock_repo_instance.add_chat_event.call_args_list
+            assert len(calls) == 2  # gate chunk + [DONE]
+            recorded_chunk = json.loads(
+                calls[0].kwargs["payload"]["raw"].strip().split("data: ")[1]
+            )
+            assert (
+                recorded_chunk["content"]["parts"][0]["functionCall"]["name"]
+                == "await_frame_approval"
+            )
+
+
+def test_detect_approval_function():
+    # 1. Genuine assistant function calls for each gate
+    for fn in [
+        "await_strategy_approval",
+        "await_storyboard_approval",
+        "await_frame_approval",
+        "await_final_cut_approval",
+    ]:
+        evt = {
+            "content": {
+                "parts": [
+                    {
+                        "functionCall": {
+                            "name": fn,
+                            "args": {"some": "arg"},
+                        }
+                    }
+                ]
+            }
+        }
+        assert AgentService.detect_approval_function(evt) == fn
+
+    # 2. Assistant function response with status=awaiting_human_review
+    evt_resp = {
+        "content": {
+            "parts": [
+                {
+                    "functionResponse": {
+                        "name": "await_storyboard_approval",
+                        "response": {
+                            "status": "awaiting_human_review",
+                            "message": "Please review",
+                        },
+                    }
+                }
+            ]
+        }
+    }
+    assert (
+        AgentService.detect_approval_function(evt_resp)
+        == "await_storyboard_approval"
+    )
+
+    # 3. User message / user function response answering a gate MUST return None
+    user_evt_author = {
+        "author": "user",
+        "content": {
+            "parts": [
+                {
+                    "functionResponse": {
+                        "name": "await_storyboard_approval",
+                        "response": {"decision": "accept"},
+                    }
+                }
+            ]
+        },
+    }
+    assert AgentService.detect_approval_function(user_evt_author) is None
+
+    user_evt_role = {
+        "role": "user",
+        "content": {
+            "parts": [
+                {
+                    "functionCall": {
+                        "name": "await_storyboard_approval",
+                    }
+                }
+            ]
+        },
+    }
+    assert AgentService.detect_approval_function(user_evt_role) is None
+
+    user_evt_content_role = {
+        "content": {
+            "role": "user",
+            "parts": [
+                {
+                    "functionResponse": {
+                        "name": "await_storyboard_approval",
+                        "response": {"decision": "accept"},
+                    }
+                }
+            ],
+        }
+    }
+    assert AgentService.detect_approval_function(user_evt_content_role) is None
+
+    # 4. Non-approval function calls return None
+    non_gate_evt = {
+        "content": {
+            "parts": [
+                {
+                    "functionCall": {
+                        "name": "generate_scene_frames",
+                        "args": {"scene_num": 1},
+                    }
+                }
+            ]
+        }
+    }
+    assert AgentService.detect_approval_function(non_gate_evt) is None
+
+    # 5. Non-dict or malformed objects return None safely
+    assert AgentService.detect_approval_function(None) is None
+    assert AgentService.detect_approval_function("just text") is None
+    assert AgentService.detect_approval_function(12345) is None
+    assert AgentService.detect_approval_function({}) is None
