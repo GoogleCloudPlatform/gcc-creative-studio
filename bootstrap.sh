@@ -728,23 +728,51 @@ seed_database() {
     info "Database: ${DB_CONN_NAME}"
     info "Subnetwork Egress: ${SUBNET_NAME}"
 
-    info "Waiting for Cloud Build to deploy the backend container..."
     local STABLE_IMAGE=""
-    local attempts=0
-    while true; do
+    if [ -n "$BE_BUILD_ID" ]; then
+        info "Waiting for backend Cloud Build to complete and deploy the new container..."
+        echo -n -e "${C_CYAN}➡️  Polling Cloud Build status${C_RESET}"
+        local attempts=0
+        while true; do
+            local BUILD_STATUS=$(gcloud builds describe "$BE_BUILD_ID" --project="$GCP_PROJECT_ID" --region="us-central1" --format="value(status)" 2>/dev/null || echo "UNKNOWN")
+            if [ "$BUILD_STATUS" == "SUCCESS" ]; then
+                echo -e "\n"
+                success "Backend build and deployment completed successfully!"
+                break
+            elif [ "$BUILD_STATUS" == "FAILURE" ] || [ "$BUILD_STATUS" == "TIMEOUT" ] || [ "$BUILD_STATUS" == "INTERNAL_ERROR" ] || [ "$BUILD_STATUS" == "CANCELLED" ]; then
+                echo -e "\n"
+                fail "Backend build failed with status: $BUILD_STATUS. Aborting database migrations."
+            fi
+            
+            attempts=$((attempts + 1))
+            if [ $attempts -gt 60 ]; then
+                echo -e "\n"
+                fail "Backend build timed out after 30 minutes. Aborting database migrations."
+            fi
+            echo -n "."
+            sleep 30
+        done
         STABLE_IMAGE=$(gcloud run services describe ${BE_SERVICE_NAME} --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(image)" 2>/dev/null || echo "")
-        if [[ -n "$STABLE_IMAGE" ]] && [[ "$STABLE_IMAGE" != *"cloudrun/container/hello"* ]]; then
-            break
-        fi
-        attempts=$((attempts + 1))
-        if [ $attempts -gt 30 ]; then
-            warn "Backend service not updated after 15 minutes. Please verify Cloud Build completion."
-            fail "Database seeding aborted."
-        fi
-        echo -n "."
-        sleep 30
-    done
-    echo ""
+    else
+        info "Waiting for a valid backend container to be deployed..."
+        echo -n -e "${C_CYAN}➡️  Checking Cloud Run image${C_RESET}"
+        local attempts=0
+        while true; do
+            STABLE_IMAGE=$(gcloud run services describe ${BE_SERVICE_NAME} --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(image)" 2>/dev/null || echo "")
+            if [[ -n "$STABLE_IMAGE" ]] && [[ "$STABLE_IMAGE" != *"cloudrun/container/hello"* ]]; then
+                echo -e "\n"
+                break
+            fi
+            attempts=$((attempts + 1))
+            if [ $attempts -gt 30 ]; then
+                echo -e "\n"
+                warn "Backend service not updated after 15 minutes. Please verify Cloud Build completion."
+                fail "Database seeding aborted."
+            fi
+            echo -n "."
+            sleep 30
+        done
+    fi
     info "Target secure runtime image: ${C_YELLOW}${STABLE_IMAGE}${C_RESET}"
     
     local RUN_SA=$(gcloud run services describe ${BE_SERVICE_NAME} --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(template.serviceAccount)" 2>/dev/null || echo "")
@@ -815,16 +843,19 @@ seed_database() {
 
     echo -n -e "${C_CYAN}➡️  Waiting for execution to complete${C_RESET}"
     while true; do
-        STATUS=$(gcloud run jobs executions describe "$EXECUTION_ID" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(status.conditions[?(@.type=='Completed')].status)" 2>/dev/null)
-        if [ "$STATUS" == "True" ]; then
-            echo -e "\n"
-            success "Database migrations and initial database data seeding executed successfully!"
-            break
-        elif [ "$STATUS" == "False" ]; then
-            echo -e "\n"
-            warn "Database seeding failed. Check logs inside Cloud Run Job console."
-            gcloud run jobs delete temp-db-bootstrap-job --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || true
-            fail "Database initialization aborted due to seeding job error."
+        IS_DONE=$(gcloud run jobs executions describe "$EXECUTION_ID" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(status.completionTime)" 2>/dev/null)
+        if [ -n "$IS_DONE" ]; then
+            SUCCEEDED=$(gcloud run jobs executions describe "$EXECUTION_ID" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(status.succeededCount)" 2>/dev/null)
+            if [ "$SUCCEEDED" == "1" ]; then
+                echo -e "\n"
+                success "Database migrations and initial database data seeding executed successfully!"
+                break
+            else
+                echo -e "\n"
+                warn "Database seeding failed. Check logs inside Cloud Run Job console."
+                gcloud run jobs delete temp-db-bootstrap-job --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || true
+                fail "Database initialization aborted due to seeding job error."
+            fi
         fi
         echo -n "."
         sleep 5
@@ -858,14 +889,35 @@ trigger_builds() {
         info "Detected current Git branch: ${C_YELLOW}${BRANCH_TO_USE}${C_RESET}"
     fi
 
+    if [ "$CLI_SKIP_BUILDS" = "true" ]; then
+        info "Skipping builds (--skip-builds flag is set)."
+        export BE_BUILD_ID=""
+        return 0
+    fi
+
+    if [ "$CLI_FORCE_BUILDS" != "true" ]; then
+        echo -e "\n${C_BLUE}🤔  Would you like to trigger new builds for the frontend and backend now? (y/n)${C_RESET}"
+        read -r run_builds
+        if [ "$run_builds" != "y" ]; then
+            info "Skipping builds."
+            export BE_BUILD_ID=""
+            return 0
+        fi
+    else
+        info "Forcing builds (--force-builds flag is set)."
+    fi
+
+    info "Triggering backend build..."
     local BE_BUILD_ID=$(gcloud builds triggers run "${BE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="us-central1" --format="value(metadata.build.id)" 2>/dev/null)
     if [ -n "$BE_BUILD_ID" ]; then success "Backend build triggered (ID: $BE_BUILD_ID)"; else warn "Backend build triggered (Could not parse ID)"; fi
+    export BE_BUILD_ID
     
     info "Triggering frontend build..."
     local FE_BUILD_ID=$(gcloud builds triggers run "${FE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="us-central1" --format="value(metadata.build.id)" 2>/dev/null)
     if [ -n "$FE_BUILD_ID" ]; then success "Frontend build triggered (ID: $FE_BUILD_ID)"; else warn "Frontend build triggered (Could not parse ID)"; fi
 
     success "Builds have been triggered."; info "You can monitor their progress in the Cloud Build console:"; echo -e "   ${C_YELLOW}https://console.cloud.google.com/cloud-build/builds?project=${GCP_PROJECT_ID}${C_RESET}"
+
 }
 
 deploy_izumi_agent() {
@@ -1055,6 +1107,8 @@ select_deployment_profile() {
 main() {
     TF_AUTO_APPROVE="false"
     CLI_PROFILE=""
+    CLI_SKIP_BUILDS="false"
+    CLI_FORCE_BUILDS="false"
     while [[ $# -gt 0 ]]; do
         case $1 in
             --profile|-p)
@@ -1066,8 +1120,20 @@ main() {
                 shift
                 ;;
             --help|-h)
-                echo "Usage: $0 [--profile <profile_name>] [--auto-approve]"
+                echo "Usage: $0 [--profile <profile_name>] [--auto-approve] [--skip-builds] [--force-builds]"
+                echo "  --profile, -p        Automatically load the specified profile and skip confirmation."
+                echo "  --auto-approve, -a   Skip Terraform confirmation prompts."
+                echo "  --skip-builds        Skip triggering Cloud Build and skip waiting for the backend deployment."
+                echo "  --force-builds       Force trigger Cloud Build without prompting."
                 exit 0
+                ;;
+            --skip-builds)
+                CLI_SKIP_BUILDS="true"
+                shift
+                ;;
+            --force-builds)
+                CLI_FORCE_BUILDS="true"
+                shift
                 ;;
             *)
                 warn "Unknown parameter: $1. Ignoring."
