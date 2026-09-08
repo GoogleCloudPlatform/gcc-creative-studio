@@ -725,26 +725,28 @@ seed_database() {
         fail "Could not query network or database outputs. Verify Terraform apply ran successfully."
     fi
 
-    # 2. Deduce target runtime image URL from local Artifact Registry repository
-    local STABLE_IMAGE="${DEPLOY_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${RES_PREFIX}-${ENV_NAME}-repo/backend:latest"
-    info "Target secure runtime image: ${C_YELLOW}${STABLE_IMAGE}${C_RESET}"
-    
     info "Database: ${DB_CONN_NAME}"
     info "Subnetwork Egress: ${SUBNET_NAME}"
 
-    info "Verifying backend container image in Artifact Registry..."
+    info "Waiting for Cloud Build to deploy the backend container..."
+    local STABLE_IMAGE=""
     local attempts=0
-    while ! gcloud artifacts docker images describe "$STABLE_IMAGE" --project="$GCP_PROJECT_ID" >/dev/null 2>&1; do
+    while true; do
+        STABLE_IMAGE=$(gcloud run services describe ${BE_SERVICE_NAME} --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(image)" 2>/dev/null || echo "")
+        if [[ -n "$STABLE_IMAGE" ]] && [[ "$STABLE_IMAGE" != *"cloudrun/container/hello"* ]]; then
+            break
+        fi
         attempts=$((attempts + 1))
         if [ $attempts -gt 30 ]; then
-            warn "Container image not ready after 15 minutes. Please verify Cloud Build completion."
-            fail "Database seeding aborted because container image was not found."
+            warn "Backend service not updated after 15 minutes. Please verify Cloud Build completion."
+            fail "Database seeding aborted."
         fi
-        echo -n "." # waiting for Cloud Build
+        echo -n "."
         sleep 30
     done
     echo ""
-    success "Container image confirmed available in Artifact Registry!"
+    info "Target secure runtime image: ${C_YELLOW}${STABLE_IMAGE}${C_RESET}"
+    success "Backend container successfully deployed to Cloud Run!"
 
     local CURRENT_USER=$(gcloud config get-value account 2>/dev/null || echo "system")
     local BUCKET_ASSETS="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
@@ -784,8 +786,6 @@ seed_database() {
 
 trigger_builds() {
     step 13 "Triggering Initial Builds"; cd "$REPO_ROOT"
-    prompt "Would you like to trigger the initial builds for the frontend and backend now? (y/n)"; read -r REPLY < /dev/tty
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then info "You can trigger the builds manually later by pushing a commit or via the Cloud Build UI."; return; fi
 
     local BRANCH_TO_USE
     BRANCH_TO_USE=$(git branch --show-current 2>/dev/null)
@@ -806,8 +806,12 @@ trigger_builds() {
         info "Detected current Git branch: ${C_YELLOW}${BRANCH_TO_USE}${C_RESET}"
     fi
 
-    info "Triggering backend build..."; gcloud builds triggers run "${BE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="us-central1"
-    info "Triggering frontend build..."; gcloud builds triggers run "${FE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="us-central1"
+    local BE_BUILD_ID=$(gcloud builds triggers run "${BE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="us-central1" --format="value(metadata.build.id)" 2>/dev/null)
+    if [ -n "$BE_BUILD_ID" ]; then success "Backend build triggered (ID: $BE_BUILD_ID)"; else warn "Backend build triggered (Could not parse ID)"; fi
+    
+    info "Triggering frontend build..."
+    local FE_BUILD_ID=$(gcloud builds triggers run "${FE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="us-central1" --format="value(metadata.build.id)" 2>/dev/null)
+    if [ -n "$FE_BUILD_ID" ]; then success "Frontend build triggered (ID: $FE_BUILD_ID)"; else warn "Frontend build triggered (Could not parse ID)"; fi
 
     success "Builds have been triggered."; info "You can monitor their progress in the Cloud Build console:"; echo -e "   ${C_YELLOW}https://console.cloud.google.com/cloud-build/builds?project=${GCP_PROJECT_ID}${C_RESET}"
 }
