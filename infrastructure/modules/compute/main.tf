@@ -41,11 +41,6 @@ resource "google_cloud_run_v2_service" "backend" {
 
   template {
     service_account = google_service_account.run_sa.email
-    
-    # Workaround for "Domain Restricted Sharing" org policies
-    annotations = {
-      "run.googleapis.com/invoker-iam-disabled" = "true"
-    }
 
     vpc_access {
       network_interfaces {
