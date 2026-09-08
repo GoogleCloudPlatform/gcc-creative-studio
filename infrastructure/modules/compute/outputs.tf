@@ -43,3 +43,8 @@ output "agent_service_account_email" {
   description = "The email address of the dedicated AI Agent service account."
   value       = google_service_account.agent_sa.email
 }
+
+output "agent_service_account_name" {
+  description = "The fully-qualified name of the dedicated AI Agent service account."
+  value       = google_service_account.agent_sa.name
+}

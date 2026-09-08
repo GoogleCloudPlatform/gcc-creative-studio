@@ -34,6 +34,20 @@ resource "google_project_iam_member" "secret_accessor" {
   member  = "serviceAccount:${google_service_account.trigger_sa.email}"
 }
 
+# Give the trigger SA permission to deploy to Vertex AI (Reasoning Engine)
+resource "google_project_iam_member" "aiplatform_user" {
+  project = var.project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_service_account.trigger_sa.email}"
+}
+
+# Give the trigger SA permission to act as the AI Agent service account
+resource "google_service_account_iam_member" "agent_sa_user" {
+  service_account_id = module.compute.agent_service_account_name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.trigger_sa.email}"
+}
+
 # Give the trigger SA permission to deploy to Firebase Hosting
 resource "google_project_iam_member" "firebase_admin" {
   project = var.project_id

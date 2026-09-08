@@ -834,36 +834,43 @@ deploy_izumi_agent() {
     info "Cloning Izumi Agent repository (branch: ${IZUMI_BRANCH})..."
     git clone -b "$IZUMI_BRANCH" https://github.com/GoogleCloudPlatform/genmedia-izumi-agent.git /tmp/izumi-agent
 
-    info "Setting up Python virtual environment and installing dependencies using uv..."
     pushd /tmp/izumi-agent > /dev/null
-    uv venv .venv
-    uv pip install --python .venv/bin/python -e .
 
     if [ "$MOCK_IZUMI_DEPLOY" = "true" ]; then
         info "MOCK_IZUMI_DEPLOY is set to true. Skipping real GCP connection."
         info "Mock execution of deploy_to_agent_engine.py successful."
     else
-        info "Executing deployment script..."
+        info "Executing deployment via serverless Cloud Build..."
         AGENT_SA_EMAIL=""
         local ENV_TF_DIR="$REPO_ROOT/infrastructure"
         if [ -d "$ENV_TF_DIR" ]; then
             AGENT_SA_EMAIL=$(cd "$ENV_TF_DIR" && terraform output -raw agent_service_account_email 2>/dev/null || echo "")
         fi
 
-        # Fetch generated auth token secret from Secret Manager
-        AGENT_AUTH_TOKEN=$(gcloud secrets versions access latest --secret="agent_engine_user_auth_token_key" --project="$GCP_PROJECT_ID" 2>/dev/null || echo "")
-        if [ -n "$AGENT_AUTH_TOKEN" ]; then
-            export AGENT_ENGINE_USER_AUTH_TOKEN_KEY="$AGENT_AUTH_TOKEN"
-        fi
+        # Find the trigger service account to run the build securely
+        local TRIG_SA="${RES_PREFIX}-trig-sa@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
 
-        CMD=".venv/bin/python scripts/deploy_to_agent_engine.py"
-        if [ -n "$AGENT_SA_EMAIL" ] && [ "$AGENT_SA_EMAIL" != "null" ]; then
-            info "Using dedicated AI Agent Service Account: $AGENT_SA_EMAIL"
-            CMD="$CMD --service-account=$AGENT_SA_EMAIL"
-        fi
+        cat << YAML > /tmp/izumi-agent/cloudbuild.yaml
+steps:
+  - name: 'python:3.12-slim'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        pip install .
+        python scripts/deploy_to_agent_engine.py --service-account=\${_AGENT_SA_EMAIL}
+    secretEnv: ['AGENT_ENGINE_USER_AUTH_TOKEN_KEY']
+availableSecrets:
+  secretManager:
+  - versionName: projects/\$PROJECT_ID/secrets/agent_engine_user_auth_token_key/versions/latest
+    env: 'AGENT_ENGINE_USER_AUTH_TOKEN_KEY'
+serviceAccount: 'projects/\$PROJECT_ID/serviceAccounts/\${_TRIG_SA_EMAIL}'
+options:
+  logging: CLOUD_LOGGING_ONLY
+YAML
 
         DEPLOY_LOG=$(mktemp)
-        if $CMD 2>&1 | tee "$DEPLOY_LOG"; then
+        if gcloud builds submit /tmp/izumi-agent --config=/tmp/izumi-agent/cloudbuild.yaml --project="$GCP_PROJECT_ID" --substitutions="_AGENT_SA_EMAIL=$AGENT_SA_EMAIL,_TRIG_SA_EMAIL=$TRIG_SA" 2>&1 | tee "$DEPLOY_LOG"; then
             RESOURCE_NAME=$(grep -oE "projects/[^/]+/locations/[^/]+/reasoningEngines/[0-9]+" "$DEPLOY_LOG" | tail -n 1 || echo "")
             if [ -n "$RESOURCE_NAME" ]; then
                 info "Captured Agent Engine Resource Name: ${C_YELLOW}${RESOURCE_NAME}${C_RESET}"
@@ -872,7 +879,7 @@ deploy_izumi_agent() {
             fi
         else
             rm -f "$DEPLOY_LOG"
-            fail "Izumi Agent deployment failed."
+            fail "Izumi Agent deployment failed via Cloud Build."
         fi
         rm -f "$DEPLOY_LOG"
     fi
