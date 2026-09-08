@@ -776,14 +776,29 @@ seed_database() {
         --quiet
 
     # 4. Trigger Job execution serverless and wait for completion
-    info "Triggering migration and seeding execution in Cloud Run Job..."
-    if gcloud run jobs execute temp-db-bootstrap-job --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --wait --quiet; then
-        success "Database migrations and initial database data seeding executed successfully!"
-    else
-        warn "Database seeding failed. Retrying in background or check logs inside Cloud Run Job console."
-        gcloud run jobs delete temp-db-bootstrap-job --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || true
-        fail "Database initialization aborted due to seeding job error."
+    info "Executing database migration job serverless... (This may take 1-2 minutes)"
+    EXECUTION_ID=$(gcloud run jobs execute temp-db-bootstrap-job --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(metadata.name)" 2>/dev/null)
+
+    if [ -z "$EXECUTION_ID" ]; then
+        fail "Failed to start Database Migration Job."
     fi
+
+    echo -n -e "${C_CYAN}➡️  Waiting for execution to complete${C_RESET}"
+    while true; do
+        STATUS=$(gcloud run jobs executions describe "$EXECUTION_ID" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(status.conditions[?(@.type=='Completed')].status)" 2>/dev/null)
+        if [ "$STATUS" == "True" ]; then
+            echo -e "\n"
+            success "Database migrations and initial database data seeding executed successfully!"
+            break
+        elif [ "$STATUS" == "False" ]; then
+            echo -e "\n"
+            warn "Database seeding failed. Check logs inside Cloud Run Job console."
+            gcloud run jobs delete temp-db-bootstrap-job --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || true
+            fail "Database initialization aborted due to seeding job error."
+        fi
+        echo -n "."
+        sleep 5
+    done
 
     # 5. Clean up administrative Job
     info "Cleaning up temporary seeding job..."
