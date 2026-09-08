@@ -770,8 +770,7 @@ seed_database() {
         $SA_FLAG \
         --command="python" \
         --args="-m,bootstrap.bootstrap" \
-        --set-cloudsql-instances="$DB_CONN_NAME" \
-        --set-env-vars="INSTANCE_CONNECTION_NAME=${DB_CONN_NAME},DB_HOST=/cloudsql/${DB_CONN_NAME},DB_NAME=${DB_NAME},DB_USER=${DB_USER},USE_CLOUD_SQL_AUTH_PROXY=true,PROJECT_ID=${GCP_PROJECT_ID},GENMEDIA_BUCKET=${BUCKET_ASSETS},ADMIN_USER_EMAIL=${CURRENT_USER},ENVIRONMENT=development" \
+        --set-env-vars="INSTANCE_CONNECTION_NAME=${DB_CONN_NAME},DB_NAME=${DB_NAME},DB_USER=${DB_USER},PROJECT_ID=${GCP_PROJECT_ID},GENMEDIA_BUCKET=${BUCKET_ASSETS},ADMIN_USER_EMAIL=${CURRENT_USER},ENVIRONMENT=development" \
         --set-secrets="DB_PASS=${DB_PASS_SECRET}:latest" \
         --project="$GCP_PROJECT_ID" \
         --quiet
