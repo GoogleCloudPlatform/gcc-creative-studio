@@ -746,6 +746,10 @@ seed_database() {
     done
     echo ""
     info "Target secure runtime image: ${C_YELLOW}${STABLE_IMAGE}${C_RESET}"
+    
+    local RUN_SA=$(gcloud run services describe ${BE_SERVICE_NAME} --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(template.serviceAccount)" 2>/dev/null || echo "")
+    if [ -z "$RUN_SA" ]; then warn "Could not detect service account from backend service. Using default."; fi
+    
     success "Backend container successfully deployed to Cloud Run!"
 
     local CURRENT_USER=$(gcloud config get-value account 2>/dev/null || echo "system")
@@ -756,13 +760,17 @@ seed_database() {
     
     gcloud run jobs delete temp-db-bootstrap-job --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || true
 
+    local SA_FLAG=""
+    if [ -n "$RUN_SA" ]; then SA_FLAG="--service-account=$RUN_SA"; fi
+
     gcloud run jobs create temp-db-bootstrap-job \
         --image="$STABLE_IMAGE" \
         --region="$DEPLOY_REGION" \
         --subnet="$SUBNET_NAME" \
+        $SA_FLAG \
         --command="python" \
         --args="-m,bootstrap.bootstrap" \
-        --add-cloudsql-instances="$DB_CONN_NAME" \
+        --set-cloudsql-instances="$DB_CONN_NAME" \
         --set-env-vars="INSTANCE_CONNECTION_NAME=${DB_CONN_NAME},DB_HOST=/cloudsql/${DB_CONN_NAME},DB_NAME=${DB_NAME},DB_USER=${DB_USER},USE_CLOUD_SQL_AUTH_PROXY=true,PROJECT_ID=${GCP_PROJECT_ID},GENMEDIA_BUCKET=${BUCKET_ASSETS},ADMIN_USER_EMAIL=${CURRENT_USER},ENVIRONMENT=development" \
         --set-secrets="DB_PASS=${DB_PASS_SECRET}:latest" \
         --project="$GCP_PROJECT_ID" \
