@@ -67,6 +67,41 @@ fail() { echo -e "${C_RED}❌  $1${C_RESET}" >&2; exit 1; }
 success() { echo -e "${C_GREEN}✅  $1${C_RESET}"; }
 step() { echo -e "\n${C_BLUE}--- Step $1: $2 ---${C_RESET}"; }
 
+SPINNER_PID=""
+cleanup_spinner() {
+    if [ -n "$SPINNER_PID" ]; then
+        kill "$SPINNER_PID" >/dev/null 2>&1 || true
+        printf "\r\033[K"
+        SPINNER_PID=""
+    fi
+}
+trap cleanup_spinner EXIT INT TERM
+
+start_spinner() {
+    local msg="$1"
+    cleanup_spinner
+    (
+        local spin='-\|/'
+        local i=0
+        local dots=""
+        local loops=0
+        while :; do
+            i=$(( (i+1) %4 ))
+            if [ $(( loops % 50 )) -eq 0 ] && [ $loops -gt 0 ]; then
+                dots="${dots}."
+            fi
+            printf "\r${C_CYAN}➡️  %s %s %s\033[K${C_RESET}" "$msg" "${spin:$i:1}" "$dots"
+            sleep 0.1
+            loops=$((loops + 1))
+        done
+    ) &
+    SPINNER_PID=$!
+}
+
+stop_spinner() {
+    cleanup_spinner
+}
+
 # --- Pre-flight Checks & Auto-configuration ---
 
 # Function to automatically determine and set the Firebase Site ID in the .tfvars file
@@ -743,46 +778,44 @@ seed_database() {
     local STABLE_IMAGE=""
     if [ -n "$BE_BUILD_ID" ]; then
         info "Waiting for backend Cloud Build to complete and deploy the new container..."
-        echo -n -e "${C_CYAN}➡️  Polling Cloud Build status${C_RESET}"
+        start_spinner "Polling Cloud Build status"
         local attempts=0
         while true; do
             local BUILD_STATUS=$(gcloud builds describe "$BE_BUILD_ID" --project="$GCP_PROJECT_ID" --region="us-central1" --format="value(status)" 2>/dev/null || echo "UNKNOWN")
             if [ "$BUILD_STATUS" == "SUCCESS" ]; then
-                echo -e "\n"
+                stop_spinner
                 success "Backend build and deployment completed successfully!"
                 break
             elif [ "$BUILD_STATUS" == "FAILURE" ] || [ "$BUILD_STATUS" == "TIMEOUT" ] || [ "$BUILD_STATUS" == "INTERNAL_ERROR" ] || [ "$BUILD_STATUS" == "CANCELLED" ]; then
-                echo -e "\n"
+                stop_spinner
                 fail "Backend build failed with status: $BUILD_STATUS. Aborting database migrations."
             fi
             
             attempts=$((attempts + 1))
-            if [ $attempts -gt 60 ]; then
-                echo -e "\n"
+            if [ $attempts -gt 180 ]; then
+                stop_spinner
                 fail "Backend build timed out after 30 minutes. Aborting database migrations."
             fi
-            echo -n "."
-            sleep 30
+            sleep 10
         done
         STABLE_IMAGE=$(gcloud run services describe ${BE_SERVICE_NAME} --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(image)" 2>/dev/null || echo "")
     else
         info "Waiting for a valid backend container to be deployed..."
-        echo -n -e "${C_CYAN}➡️  Checking Cloud Run image${C_RESET}"
+        start_spinner "Checking Cloud Run image"
         local attempts=0
         while true; do
             STABLE_IMAGE=$(gcloud run services describe ${BE_SERVICE_NAME} --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(image)" 2>/dev/null || echo "")
             if [[ -n "$STABLE_IMAGE" ]] && [[ "$STABLE_IMAGE" != *"cloudrun/container/hello"* ]]; then
-                echo -e "\n"
+                stop_spinner
                 break
             fi
             attempts=$((attempts + 1))
-            if [ $attempts -gt 30 ]; then
-                echo -e "\n"
+            if [ $attempts -gt 90 ]; then
+                stop_spinner
                 warn "Backend service not updated after 15 minutes. Please verify Cloud Build completion."
                 fail "Database seeding aborted."
             fi
-            echo -n "."
-            sleep 30
+            sleep 10
         done
     fi
     info "Target secure runtime image: ${C_YELLOW}${STABLE_IMAGE}${C_RESET}"
@@ -805,7 +838,7 @@ seed_database() {
 
     # 3. Create the temporary Job
     info "Creating temporary serverless seeding job..."
-    echo -n -e "${C_CYAN}➡️  Provisioning infrastructure${C_RESET}"
+    start_spinner "Provisioning infrastructure"
     
     gcloud run jobs create temp-db-bootstrap-job \
         --image="$STABLE_IMAGE" \
@@ -820,56 +853,50 @@ seed_database() {
         --quiet >/dev/null 2>&1 &
     
     local CREATE_PID=$!
-    while kill -0 $CREATE_PID 2>/dev/null; do
-        echo -n "."
-        sleep 2
-    done
-    wait $CREATE_PID
-    if [ $? -ne 0 ]; then
-        echo -e "\n"
+    if ! wait $CREATE_PID; then
+        stop_spinner
         fail "Failed to create Database Migration Job."
     fi
-    echo -e "\n${C_GREEN}✅  Job provisioned.${C_RESET}"
+    stop_spinner
+    success "Job provisioned."
 
     # 4. Trigger Job execution serverless and wait for completion
     info "Executing database migration job serverless... (This may take 1-2 minutes)"
-    echo -n -e "${C_CYAN}➡️  Starting execution${C_RESET}"
+    start_spinner "Starting execution"
     
     local EXEC_TMP
     EXEC_TMP=$(mktemp)
     gcloud run jobs execute temp-db-bootstrap-job --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(metadata.name)" > "$EXEC_TMP" 2>/dev/null &
     
     local EXEC_PID=$!
-    while kill -0 $EXEC_PID 2>/dev/null; do
-        echo -n "."
-        sleep 2
-    done
-    wait $EXEC_PID
-    EXECUTION_ID=$(cat "$EXEC_TMP")
-    rm -f "$EXEC_TMP"
-    echo -e "\n"
-
-    if [ -z "$EXECUTION_ID" ]; then
+    if ! wait $EXEC_PID; then
+        stop_spinner
         fail "Failed to start Database Migration Job."
     fi
+    stop_spinner
+    EXECUTION_ID=$(cat "$EXEC_TMP")
+    rm -f "$EXEC_TMP"
 
-    echo -n -e "${C_CYAN}➡️  Waiting for execution to complete${C_RESET}"
+    if [ -z "$EXECUTION_ID" ]; then
+        fail "Failed to capture Database Migration Execution ID."
+    fi
+
+    start_spinner "Waiting for execution to complete"
     while true; do
         IS_DONE=$(gcloud run jobs executions describe "$EXECUTION_ID" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(status.completionTime)" 2>/dev/null)
         if [ -n "$IS_DONE" ]; then
             SUCCEEDED=$(gcloud run jobs executions describe "$EXECUTION_ID" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(status.succeededCount)" 2>/dev/null)
             if [ "$SUCCEEDED" == "1" ]; then
-                echo -e "\n"
+                stop_spinner
                 success "Database migrations and initial database data seeding executed successfully!"
                 break
             else
-                echo -e "\n"
+                stop_spinner
                 warn "Database seeding failed. Check logs inside Cloud Run Job console."
                 gcloud run jobs delete temp-db-bootstrap-job --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || true
                 fail "Database initialization aborted due to seeding job error."
             fi
         fi
-        echo -n "."
         sleep 5
     done
 
@@ -937,7 +964,7 @@ deploy_izumi_agent() {
     info "Deploying Izumi Agent..."
 
     rm -rf /tmp/izumi-agent
-    trap 'rm -rf /tmp/izumi-agent' EXIT INT TERM
+    trap 'rm -rf /tmp/izumi-agent; cleanup_spinner' EXIT INT TERM
 
     IZUMI_BRANCH="${IZUMI_AGENT_BRANCH:-feat/unified-mediagent-interface}"
     info "Cloning Izumi Agent repository (branch: ${IZUMI_BRANCH})..."
@@ -995,7 +1022,7 @@ YAML
     fi
     popd > /dev/null
     rm -rf /tmp/izumi-agent
-    trap - EXIT INT TERM
+    trap cleanup_spinner EXIT INT TERM
     success "Izumi Agent deployed successfully."
 }
 
