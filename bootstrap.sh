@@ -763,6 +763,10 @@ seed_database() {
     local SA_FLAG=""
     if [ -n "$RUN_SA" ]; then SA_FLAG="--service-account=$RUN_SA"; fi
 
+    # 3. Create the temporary Job
+    info "Creating temporary serverless seeding job..."
+    echo -n -e "${C_CYAN}➡️  Provisioning infrastructure${C_RESET}"
+    
     gcloud run jobs create temp-db-bootstrap-job \
         --image="$STABLE_IMAGE" \
         --region="$DEPLOY_REGION" \
@@ -773,11 +777,37 @@ seed_database() {
         --set-env-vars="INSTANCE_CONNECTION_NAME=${DB_CONN_NAME},DB_NAME=${DB_NAME},DB_USER=${DB_USER},PROJECT_ID=${GCP_PROJECT_ID},GENMEDIA_BUCKET=${BUCKET_ASSETS},ADMIN_USER_EMAIL=${CURRENT_USER},ENVIRONMENT=development" \
         --set-secrets="DB_PASS=${DB_PASS_SECRET}:latest" \
         --project="$GCP_PROJECT_ID" \
-        --quiet
+        --quiet >/dev/null 2>&1 &
+    
+    local CREATE_PID=$!
+    while kill -0 $CREATE_PID 2>/dev/null; do
+        echo -n "."
+        sleep 2
+    done
+    wait $CREATE_PID
+    if [ $? -ne 0 ]; then
+        echo -e "\n"
+        fail "Failed to create Database Migration Job."
+    fi
+    echo -e "\n${C_GREEN}✅  Job provisioned.${C_RESET}"
 
     # 4. Trigger Job execution serverless and wait for completion
     info "Executing database migration job serverless... (This may take 1-2 minutes)"
-    EXECUTION_ID=$(gcloud run jobs execute temp-db-bootstrap-job --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(metadata.name)" 2>/dev/null)
+    echo -n -e "${C_CYAN}➡️  Starting execution${C_RESET}"
+    
+    local EXEC_TMP
+    EXEC_TMP=$(mktemp)
+    gcloud run jobs execute temp-db-bootstrap-job --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(metadata.name)" > "$EXEC_TMP" 2>/dev/null &
+    
+    local EXEC_PID=$!
+    while kill -0 $EXEC_PID 2>/dev/null; do
+        echo -n "."
+        sleep 2
+    done
+    wait $EXEC_PID
+    EXECUTION_ID=$(cat "$EXEC_TMP")
+    rm -f "$EXEC_TMP"
+    echo -e "\n"
 
     if [ -z "$EXECUTION_ID" ]; then
         fail "Failed to start Database Migration Job."
