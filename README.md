@@ -88,16 +88,11 @@ The `bootstrap.sh` script supports several command-line flags to enable fully au
 - **`--force-builds`**: Forces the Cloud Build triggers to run without asking for interactive confirmation.
 - **`--help`** (`-h`): Prints the usage menu.
 
-**Example: Fully automated, headless deployment (If downloaded locally)**
-
-```bash
-./bootstrap.sh --profile dev-infra.cstudio_bootstrap.conf --auto-approve --skip-builds
-```
 
 **Example: Passing flags directly via curl**
 When piping the script from `curl` to `bash`, you must use `bash -s --` so that Bash passes the flags to the script rather than trying to parse them itself:
 ```bash
-curl https://raw.githubusercontent.com/GoogleCloudPlatform/gcc-creative-studio/refs/heads/main/bootstrap.sh | bash -s -- --help
+curl https://raw.githubusercontent.com/GoogleCloudPlatform/gcc-creative-studio/refs/heads/main/bootstrap.sh | bash -s -- --profile default --auto-approve --skip-builds
 ```
 
 For better guidance, [we recorded a video](./screenshots/how_to_deploy_creative_studio.mp4) to showcase how to deploy Creative Studio in a completely new and fresh GCP Account.

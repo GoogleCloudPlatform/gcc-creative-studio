@@ -920,12 +920,12 @@ trigger_builds() {
     fi
 
     info "Triggering backend build..."
-    local BE_BUILD_ID=$(gcloud builds triggers run "${BE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="us-central1" --format="value(metadata.build.id)" 2>/dev/null)
+    BE_BUILD_ID=$(gcloud builds triggers run "${BE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="us-central1" --format="value(metadata.build.id)" 2>/dev/null)
     if [ -n "$BE_BUILD_ID" ]; then success "Backend build triggered (ID: $BE_BUILD_ID)"; else warn "Backend build triggered (Could not parse ID)"; fi
     export BE_BUILD_ID
     
     info "Triggering frontend build..."
-    local FE_BUILD_ID=$(gcloud builds triggers run "${FE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="us-central1" --format="value(metadata.build.id)" 2>/dev/null)
+    FE_BUILD_ID=$(gcloud builds triggers run "${FE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="us-central1" --format="value(metadata.build.id)" 2>/dev/null)
     if [ -n "$FE_BUILD_ID" ]; then success "Frontend build triggered (ID: $FE_BUILD_ID)"; else warn "Frontend build triggered (Could not parse ID)"; fi
 
     success "Builds have been triggered."; info "You can monitor their progress in the Cloud Build console:"; echo -e "   ${C_YELLOW}https://console.cloud.google.com/cloud-build/builds?project=${GCP_PROJECT_ID}${C_RESET}"
@@ -967,7 +967,7 @@ steps:
       - '-c'
       - |
         pip install .
-        python scripts/deploy_to_agent_engine.py --service-account=\${_AGENT_SA_EMAIL}
+        python scripts/deploy_to_agent_platform.py --service-account=\${_AGENT_SA_EMAIL}
     secretEnv: ['AGENT_ENGINE_USER_AUTH_TOKEN_KEY']
 availableSecrets:
   secretManager:
@@ -979,7 +979,8 @@ options:
 YAML
 
         DEPLOY_LOG=$(mktemp)
-        if gcloud builds submit /tmp/izumi-agent --config=/tmp/izumi-agent/cloudbuild.yaml --project="$GCP_PROJECT_ID" --substitutions="_AGENT_SA_EMAIL=$AGENT_SA_EMAIL,_TRIG_SA_EMAIL=$TRIG_SA" 2>&1 | tee "$DEPLOY_LOG"; then
+        gcloud builds submit /tmp/izumi-agent --config=/tmp/izumi-agent/cloudbuild.yaml --project="$GCP_PROJECT_ID" --substitutions="_AGENT_SA_EMAIL=$AGENT_SA_EMAIL,_TRIG_SA_EMAIL=$TRIG_SA" 2>&1 | tee "$DEPLOY_LOG"
+        if [ ${PIPESTATUS[0]} -eq 0 ]; then
             RESOURCE_NAME=$(grep -oE "projects/[^/]+/locations/[^/]+/reasoningEngines/[0-9]+" "$DEPLOY_LOG" | tail -n 1 || echo "")
             if [ -n "$RESOURCE_NAME" ]; then
                 info "Captured Agent Engine Resource Name: ${C_YELLOW}${RESOURCE_NAME}${C_RESET}"
