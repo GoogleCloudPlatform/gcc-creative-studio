@@ -269,6 +269,7 @@
     <mat-paginator
       [length]="totalItems"
       [pageSize]="limit"
+      [pageIndex]="currentPageIndex"
       [pageSizeOptions]="[5, 10, 25, 50]"
       (page)="handlePageEvent($event)"
       class="!bg-transparent"

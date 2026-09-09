@@ -83,6 +83,11 @@ export class TagsManagementComponent implements OnInit {
       if (this.paginator) {
         this.paginator.pageIndex = 0;
       }
+      // Material recomputes pageIndex to keep the first visible row in view,
+      // so event.pageIndex is not 0 here. Loading it would undo the reset
+      // above the moment loadTags reassigns currentPageIndex.
+      this.loadTags(0);
+      return;
     }
     this.loadTags(event.pageIndex);
   }
