@@ -135,13 +135,6 @@ resource "google_service_account_iam_member" "run_sa_act_as_self" {
   member             = "serviceAccount:${google_service_account.run_sa.email}"
 }
 
-resource "google_service_account_iam_member" "run_sa_token_creator" {
-  service_account_id = google_service_account.run_sa.name
-  role               = "roles/iam.serviceAccountTokenCreator"
-  member             = "serviceAccount:${google_service_account.run_sa.email}"
-}
-
-
 
 resource "google_service_account" "agent_sa" {
   account_id   = "${var.resource_prefix}-${var.environment}-agent"

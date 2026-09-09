@@ -46,6 +46,7 @@ module "compute" {
     INSTANCE_CONNECTION_NAME         = module.database.instance_connection_name
     GENMEDIA_BUCKET                  = google_storage_bucket.genmedia.name
     AGENT_LOCATION                   = var.agent_location
+    SIGNING_SA_EMAIL                 = google_service_account.bucket_reader_sa.email
   }
 
   runtime_secrets = {
