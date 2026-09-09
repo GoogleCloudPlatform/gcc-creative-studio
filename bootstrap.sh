@@ -986,15 +986,26 @@ deploy_izumi_agent() {
         # Find the trigger service account to run the build securely
         local TRIG_SA="${RES_PREFIX}-trig-sa@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
 
+        local ASSET_BUCKET="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
+        local BE_URL=$(gcloud run services describe ${BE_SERVICE_NAME} --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(status.url)" 2>/dev/null || echo "")
+        local FE_URL="https://${GCP_PROJECT_ID}.web.app"
+
         cat << YAML > /tmp/izumi-agent/cloudbuild.yaml
 steps:
   - name: 'python:3.12-slim'
     entrypoint: 'bash'
+    env:
+      - 'PROJECT_ID=\$PROJECT_ID'
+      - 'GOOGLE_CLOUD_PROJECT=\$PROJECT_ID'
+      - 'ASSET_SERVICE_GCS_BUCKET=${ASSET_BUCKET}'
+      - 'USE_CREATIVE_STUDIO=True'
+      - 'CREATIVE_STUDIO_BACKEND_URL=${BE_URL}'
+      - 'CREATIVE_STUDIO_FRONTEND_URL=${FE_URL}'
     args:
       - '-c'
       - |
         pip install .
-        python scripts/deploy_to_agent_platform.py --service-account=\${_AGENT_SA_EMAIL}
+        python scripts/deploy_to_agent_platform.py --project=\$PROJECT_ID --service-account=\${_AGENT_SA_EMAIL}
     secretEnv: ['AGENT_ENGINE_USER_AUTH_TOKEN_KEY']
 availableSecrets:
   secretManager:
