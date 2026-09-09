@@ -24,6 +24,7 @@ module "compute" {
   app_version     = var.app_version
   service_name    = "${var.resource_prefix}-${var.environment}-backend"
   memory          = "2Gi"
+  scaling_min_instances = 1
 
   # Direct VPC routing configurations
   vpc_network_name = module.network.network_name

@@ -1023,17 +1023,31 @@ YAML
         stop_spinner
 
         if [ $BUILD_STATUS -eq 0 ]; then
-            RESOURCE_NAME=$(grep -oE "projects/[^/]+/locations/[^/]+/reasoningEngines/[0-9]+" "$DEPLOY_LOG" | tail -n 1 || echo "")
-            if [ -n "$RESOURCE_NAME" ]; then
-                info "Captured Agent Engine Resource Name: ${C_YELLOW}${RESOURCE_NAME}${C_RESET}"
-                echo -n "$RESOURCE_NAME" | gcloud secrets versions add agent_engine_resource_name --data-file="-" --project="$GCP_PROJECT_ID" --quiet
-                success "Stored agent_engine_resource_name in Secret Manager."
-            fi
             rm -f "$DEPLOY_LOG"
+            success "Izumi Agent successfully deployed via Cloud Build."
         else
             cat "$DEPLOY_LOG"
             rm -f "$DEPLOY_LOG"
-            fail "Izumi Agent deployment failed via Cloud Build."
+            warn "Izumi Agent deployment via Cloud Build encountered an error."
+        fi
+
+        # Always try to fetch the latest agent resource name via API as an idempotent fallback
+        info "Verifying Agent Engine resource name from Vertex AI API..."
+        local AUTH_TOKEN=$(gcloud auth print-access-token 2>/dev/null)
+        local API_RESPONSE=$(curl -s -X GET \
+            -H "Authorization: Bearer $AUTH_TOKEN" \
+            "https://${DEPLOY_REGION}-aiplatform.googleapis.com/v1beta1/projects/$GCP_PROJECT_ID/locations/${DEPLOY_REGION}/reasoningEngines")
+        
+        # Extract the resource name of the reasoning engine with displayName "izumi-ads-x-agent"
+        local API_RESOURCE_NAME=$( (echo "$API_RESPONSE" 2>/dev/null || echo "{}") | jq -r 'try (.reasoningEngines[]? | select(.displayName == "izumi-ads-x-agent") | .name) catch ""' | head -n 1)
+
+        if [ -n "$API_RESOURCE_NAME" ] && [ "$API_RESOURCE_NAME" != "null" ]; then
+            info "Found active Agent Engine: ${C_YELLOW}${API_RESOURCE_NAME}${C_RESET}"
+            echo -n "$API_RESOURCE_NAME" | gcloud secrets versions add agent_engine_resource_name --data-file="-" --project="$GCP_PROJECT_ID" --quiet
+            success "Stored agent_engine_resource_name in Secret Manager."
+        else
+            warn "Could not resolve the Agent Engine Resource Name via API."
+            warn "The backend may fail to connect to Izumi until this secret is populated."
         fi
         rm -f "$DEPLOY_LOG"
     fi
