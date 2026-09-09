@@ -1017,15 +1017,21 @@ options:
 YAML
 
         DEPLOY_LOG=$(mktemp)
-        gcloud builds submit /tmp/izumi-agent --config=/tmp/izumi-agent/cloudbuild.yaml --project="$GCP_PROJECT_ID" --substitutions="_AGENT_SA_EMAIL=$AGENT_SA_EMAIL,_TRIG_SA_EMAIL=$TRIG_SA" 2>&1 | tee "$DEPLOY_LOG"
-        if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        start_spinner "Building and deploying agent to Vertex AI"
+        gcloud builds submit /tmp/izumi-agent --config=/tmp/izumi-agent/cloudbuild.yaml --project="$GCP_PROJECT_ID" --substitutions="_AGENT_SA_EMAIL=$AGENT_SA_EMAIL,_TRIG_SA_EMAIL=$TRIG_SA" > "$DEPLOY_LOG" 2>&1
+        local BUILD_STATUS=$?
+        stop_spinner
+
+        if [ $BUILD_STATUS -eq 0 ]; then
             RESOURCE_NAME=$(grep -oE "projects/[^/]+/locations/[^/]+/reasoningEngines/[0-9]+" "$DEPLOY_LOG" | tail -n 1 || echo "")
             if [ -n "$RESOURCE_NAME" ]; then
                 info "Captured Agent Engine Resource Name: ${C_YELLOW}${RESOURCE_NAME}${C_RESET}"
                 echo -n "$RESOURCE_NAME" | gcloud secrets versions add agent_engine_resource_name --data-file="-" --project="$GCP_PROJECT_ID" --quiet
                 success "Stored agent_engine_resource_name in Secret Manager."
             fi
+            rm -f "$DEPLOY_LOG"
         else
+            cat "$DEPLOY_LOG"
             rm -f "$DEPLOY_LOG"
             fail "Izumi Agent deployment failed via Cloud Build."
         fi

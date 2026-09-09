@@ -48,10 +48,10 @@ resource "google_service_account_iam_member" "agent_sa_user" {
   member             = "serviceAccount:${google_service_account.trigger_sa.email}"
 }
 
-# Give the trigger SA permission to read from the Cloud Build source bucket
-resource "google_project_iam_member" "storage_viewer" {
+# Give the trigger SA permission to manage the Cloud Build and Agent source buckets
+resource "google_project_iam_member" "storage_admin" {
   project = var.project_id
-  role    = "roles/storage.objectViewer"
+  role    = "roles/storage.admin"
   member  = "serviceAccount:${google_service_account.trigger_sa.email}"
 }
 
