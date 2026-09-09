@@ -83,6 +83,12 @@ export class WorkspaceSwitcherComponent implements OnInit {
       this.activeWorkspaceId = typeof id === 'string' ? parseInt(id, 10) : id;
       this.activeWorkspace =
         this.workspaces.find(w => w.id === this.activeWorkspaceId) || null;
+      if (this.isBrowser && this.activeWorkspaceId) {
+        localStorage.setItem(
+          'activeWorkspaceId',
+          this.activeWorkspaceId.toString(),
+        );
+      }
     });
 
     this.brandGuidelineService.activeBrandGuidelineJob$.subscribe(job => {
@@ -126,12 +132,15 @@ export class WorkspaceSwitcherComponent implements OnInit {
 
     const storedWorkspaceId = localStorage.getItem('activeWorkspaceId');
     const queryParamId = this.route.snapshot.queryParamMap.get('workspaceId');
+    const currentActiveId = this.workspaceStateService.getActiveWorkspaceId();
 
-    // Order of precedence: URL query param > localStorage > default public.
+    // Order of precedence: URL query param > current active > localStorage > default public.
     let preferredWorkspaceId: number | null = null;
 
     if (queryParamId) {
       preferredWorkspaceId = parseInt(queryParamId, 10);
+    } else if (currentActiveId) {
+      preferredWorkspaceId = currentActiveId;
     } else if (storedWorkspaceId) {
       preferredWorkspaceId = parseInt(storedWorkspaceId, 10);
     }

@@ -130,6 +130,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   breadcrumbs: FolderBreadcrumb[] = [];
   isLoadingFolders = false;
   dragOverBreadcrumbId: number | string | null = null;
+  private isProgrammaticWorkspaceSwitch = false;
 
   selectedItems: Set<string> = new Set();
   lastSelectedIndex: number | null = null;
@@ -337,10 +338,9 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     if (!this.isSelectionMode && !this.isSelectorMode) {
       this.routeSub = this.route.paramMap.subscribe(params => {
         const folderIdParam = params.get('folderId');
-        const wasRootOrIsInitializing = this.currentFolderId === null;
         this.currentFolderId = folderIdParam ? Number(folderIdParam) : null;
 
-        if (wasRootOrIsInitializing || !this.currentFolderId) {
+        if (!this.isInitialized) {
           return;
         }
 
@@ -359,14 +359,22 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
           lastWorkspaceId !== workspaceId &&
           this.currentFolderId !== null
         ) {
-          lastWorkspaceId = workspaceId;
-          void this.router.navigate(['/gallery']);
+          if (this.isProgrammaticWorkspaceSwitch) {
+            this.isProgrammaticWorkspaceSwitch = false;
+            lastWorkspaceId = workspaceId;
+            this.reload();
+          } else {
+            lastWorkspaceId = workspaceId;
+            void this.router.navigate(['/gallery']);
+          }
         } else {
           lastWorkspaceId = workspaceId;
           this.reload();
         }
       },
     );
+
+    this.isInitialized = true;
   }
 
   private reload() {
@@ -1041,13 +1049,73 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
         error: err => {
           console.error('Error loading breadcrumbs:', err);
           if (!this.isSelectionMode && !this.isSelectorMode) {
-            const message =
-              err?.error?.detail || 'Folder not found in this workspace.';
-            this.snackBar.open(message, 'Close', {duration: 3000});
-            void this.router.navigate(['/gallery']);
+            this.handleFolderLoadError(err);
           }
         },
       });
+  }
+
+  private handleFolderLoadError(err: any): void {
+    if (this.isSelectionMode || this.isSelectorMode) {
+      return;
+    }
+
+    if (err?.status === 404 && this.currentFolderId !== null) {
+      const requestedFolderId = this.currentFolderId;
+      this.folderService.getFolderById(requestedFolderId).subscribe({
+        next: folder => {
+          if (this.currentFolderId !== requestedFolderId) {
+            return;
+          }
+          const currentWorkspaceId =
+            this.workspaceStateService.getActiveWorkspaceId();
+          if (folder.workspaceId && folder.workspaceId !== currentWorkspaceId) {
+            this.isProgrammaticWorkspaceSwitch = true;
+            if (typeof window !== 'undefined' && window.localStorage) {
+              localStorage.setItem(
+                'activeWorkspaceId',
+                folder.workspaceId.toString(),
+              );
+            }
+            this.snackBar.open("Switched to folder's workspace.", 'Close', {
+              duration: 3000,
+            });
+            this.workspaceStateService.setActiveWorkspaceId(folder.workspaceId);
+            return;
+          }
+          this.snackBar.open('Folder not found in this workspace.', 'Close', {
+            duration: 3000,
+          });
+          void this.router.navigate(['/gallery']);
+        },
+        error: folderErr => {
+          if (folderErr?.status === 403) {
+            const message =
+              folderErr?.error?.detail ||
+              'You do not have permission to access this folder.';
+            this.snackBar.open(message, 'Close', {duration: 3000});
+          } else {
+            const message = folderErr?.error?.detail || 'Folder not found.';
+            this.snackBar.open(message, 'Close', {duration: 3000});
+          }
+          void this.router.navigate(['/gallery']);
+        },
+      });
+      return;
+    }
+
+    if (err?.status === 403) {
+      const message =
+        err?.error?.detail ||
+        'You do not have permission to access this folder.';
+      this.snackBar.open(message, 'Close', {duration: 3000});
+      void this.router.navigate(['/gallery']);
+      return;
+    }
+
+    const message = err?.error?.detail || 'Folder not found in this workspace.';
+    this.snackBar.open(message, 'Close', {duration: 3000});
+    void this.router.navigate(['/gallery']);
   }
 
   navigateToFolder(folder: Folder): void {

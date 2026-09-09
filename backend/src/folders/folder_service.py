@@ -124,9 +124,12 @@ class FolderService:
     ) -> FolderResponseDto:
         """Fetch folder by ID with item and subfolder counts."""
         folder = await self.folder_repo.get_folder_by_id(folder_id)
-        if not folder or (
-            workspace_id is not None and folder.workspace_id != workspace_id
-        ):
+        if not folder:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Folder with ID {folder_id} not found.",
+            )
+        if workspace_id is not None and folder.workspace_id != workspace_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Folder with ID {folder_id} not found in this workspace.",
@@ -159,9 +162,12 @@ class FolderService:
     ) -> list[FolderBreadcrumbDto]:
         """Fetch ancestor breadcrumb trail from root to the given folder."""
         folder = await self.folder_repo.get_folder_by_id(folder_id)
-        if not folder or (
-            workspace_id is not None and folder.workspace_id != workspace_id
-        ):
+        if not folder:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Folder with ID {folder_id} not found.",
+            )
+        if workspace_id is not None and folder.workspace_id != workspace_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Folder with ID {folder_id} not found in this workspace.",

@@ -36,6 +36,7 @@ import {TagsService} from '../../common/services/tags.service';
 import {MediaUploadService} from '../../common/services/media-upload/media-upload.service';
 import {GoogleDriveService} from '../../common/services/google-drive/google-drive.service';
 import {FolderService} from '../../common/services/folder.service';
+import {Folder} from '../../common/models/folder.model';
 import {MatSnackBar} from '@angular/material/snack-bar';
 
 describe('MediaGalleryComponent', () => {
@@ -57,6 +58,7 @@ describe('MediaGalleryComponent', () => {
     const folderServiceSpy = jasmine.createSpyObj('FolderService', [
       'getFolders',
       'getBreadcrumbs',
+      'getFolderById',
       'moveItems',
       'createFolder',
       'updateFolder',
@@ -64,6 +66,7 @@ describe('MediaGalleryComponent', () => {
     ]);
     folderServiceSpy.getFolders.and.returnValue(of([]));
     folderServiceSpy.getBreadcrumbs.and.returnValue(of([]));
+    folderServiceSpy.getFolderById.and.returnValue(of({} as Folder));
     folderServiceSpy.moveItems.and.returnValue(of({total_moved: 1}));
 
     await TestBed.configureTestingModule({
@@ -131,6 +134,8 @@ describe('MediaGalleryComponent', () => {
           useValue: {
             activeWorkspaceId$: activeWorkspaceIdSubject.asObservable(),
             getActiveWorkspaceId: () => activeWorkspaceIdSubject.value,
+            setActiveWorkspaceId: (id: number | null) =>
+              activeWorkspaceIdSubject.next(id),
           },
         },
         {
@@ -349,6 +354,7 @@ describe('MediaGalleryComponent', () => {
 
     it('should call galleryService.bulkMove when moving items across workspaces', () => {
       spyOn(galleryService, 'bulkMove').and.returnValue(of({moved_count: 2}));
+      spyOn(component, 'searchTerm');
       component.images = [
         {id: 1, itemType: 'media_item'} as any,
         {id: 2, itemType: 'source_asset'} as any,
@@ -474,7 +480,7 @@ describe('MediaGalleryComponent', () => {
       expect(component.currentFolderId).toBe(42);
       expect(component.loadFolders).toHaveBeenCalled();
       expect(component.loadBreadcrumbs).toHaveBeenCalled();
-      expect(folderService.getBreadcrumbs).toHaveBeenCalledWith(42);
+      expect(folderService.getBreadcrumbs).toHaveBeenCalledWith(42, 1);
       expect(component.searchTerm).toHaveBeenCalled();
     });
 
@@ -583,6 +589,133 @@ describe('MediaGalleryComponent', () => {
 
       activeWorkspaceIdSubject.next(2);
 
+      expect(routerSpy.navigate).toHaveBeenCalledWith(['/gallery']);
+    });
+
+    it('should automatically switch workspace and show toast when folder belongs to another accessible workspace', () => {
+      const snackBar = TestBed.inject(MatSnackBar);
+      component.isSelectorMode = false;
+      component.isSelectionMode = false;
+      component.currentFolderId = 5;
+
+      folderService.getBreadcrumbs.and.callFake(
+        (folderId: number, wsId?: number) => {
+          if (wsId === 2) {
+            return of([{id: 5, name: 'Folder 5', parentId: null}]);
+          }
+          return throwError(() => ({
+            status: 404,
+            error: {detail: 'Folder with ID 5 not found in this workspace.'},
+          }));
+        },
+      );
+      folderService.getFolderById.and.returnValue(
+        of({
+          id: 5,
+          workspaceId: 2,
+          name: 'Folder 5',
+          userEmail: 'user@example.com',
+          itemCount: 0,
+          subfolderCount: 0,
+        }),
+      );
+
+      component.loadBreadcrumbs();
+
+      expect(folderService.getFolderById).toHaveBeenCalledWith(5);
+      expect(snackBar.open).toHaveBeenCalledWith(
+        "Switched to folder's workspace.",
+        'Close',
+        {duration: 3000},
+      );
+      expect(activeWorkspaceIdSubject.value).toBe(2);
+      expect(routerSpy.navigate).not.toHaveBeenCalledWith(['/gallery']);
+    });
+
+    it('should redirect to /gallery and show error snackbar when user lacks permission to access folder workspace (403)', () => {
+      const snackBar = TestBed.inject(MatSnackBar);
+      component.isSelectorMode = false;
+      component.isSelectionMode = false;
+      component.currentFolderId = 5;
+
+      folderService.getBreadcrumbs.and.returnValue(
+        throwError(() => ({status: 404})),
+      );
+      folderService.getFolderById.and.returnValue(
+        throwError(() => ({
+          status: 403,
+          error: {
+            detail: 'You do not have permission to access this workspace.',
+          },
+        })),
+      );
+
+      component.loadBreadcrumbs();
+
+      expect(folderService.getFolderById).toHaveBeenCalledWith(5);
+      expect(snackBar.open).toHaveBeenCalledWith(
+        'You do not have permission to access this workspace.',
+        'Close',
+        {duration: 3000},
+      );
+      expect(routerSpy.navigate).toHaveBeenCalledWith(['/gallery']);
+    });
+
+    it('should redirect to /gallery and show error snackbar when folder does not exist at all (404 from getFolderById)', () => {
+      const snackBar = TestBed.inject(MatSnackBar);
+      component.isSelectorMode = false;
+      component.isSelectionMode = false;
+      component.currentFolderId = 999;
+
+      folderService.getBreadcrumbs.and.returnValue(
+        throwError(() => ({status: 404})),
+      );
+      folderService.getFolderById.and.returnValue(
+        throwError(() => ({
+          status: 404,
+          error: {detail: 'Folder with ID 999 not found.'},
+        })),
+      );
+
+      component.loadBreadcrumbs();
+
+      expect(folderService.getFolderById).toHaveBeenCalledWith(999);
+      expect(snackBar.open).toHaveBeenCalledWith(
+        'Folder with ID 999 not found.',
+        'Close',
+        {duration: 3000},
+      );
+      expect(routerSpy.navigate).toHaveBeenCalledWith(['/gallery']);
+    });
+
+    it('should redirect to /gallery when folder workspace matches current workspace but still returned 404', () => {
+      const snackBar = TestBed.inject(MatSnackBar);
+      component.isSelectorMode = false;
+      component.isSelectionMode = false;
+      component.currentFolderId = 5;
+
+      folderService.getBreadcrumbs.and.returnValue(
+        throwError(() => ({status: 404})),
+      );
+      folderService.getFolderById.and.returnValue(
+        of({
+          id: 5,
+          workspaceId: 1,
+          name: 'Folder 5',
+          userEmail: 'user@example.com',
+          itemCount: 0,
+          subfolderCount: 0,
+        }),
+      );
+
+      component.loadBreadcrumbs();
+
+      expect(folderService.getFolderById).toHaveBeenCalledWith(5);
+      expect(snackBar.open).toHaveBeenCalledWith(
+        'Folder not found in this workspace.',
+        'Close',
+        {duration: 3000},
+      );
       expect(routerSpy.navigate).toHaveBeenCalledWith(['/gallery']);
     });
 
