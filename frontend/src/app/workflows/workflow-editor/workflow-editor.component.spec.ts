@@ -20,16 +20,17 @@ import {FormBuilder, ReactiveFormsModule} from '@angular/forms';
 import {MatDialog} from '@angular/material/dialog';
 import {MatFormFieldModule} from '@angular/material/form-field';
 import {MatInputModule} from '@angular/material/input';
+import {MatMenuModule} from '@angular/material/menu';
 import {MatSelectModule} from '@angular/material/select';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {ActivatedRoute, Router} from '@angular/router';
-import {of} from 'rxjs';
+import {of, throwError} from 'rxjs';
 import {MediaResolutionService} from '../shared/media-resolution.service';
 import {NodeTypes} from '../workflow.models';
 import {WorkflowStatusPipe} from '../workflow-status.pipe';
 import {WorkflowService} from '../workflow.service';
-import {WorkflowEditorComponent} from './workflow-editor.component';
+import {EditorMode, WorkflowEditorComponent} from './workflow-editor.component';
 import {WorkflowFormService} from './workflow-form.service';
 
 describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
@@ -64,6 +65,9 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
 
     const workflowServiceMock = {
       getWorkflow: jasmine.createSpy('getWorkflow').and.returnValue(of(null)),
+      getWorkflowById: jasmine
+        .createSpy('getWorkflowById')
+        .and.returnValue(of(null)),
       createWorkflow: jasmine
         .createSpy('createWorkflow')
         .and.returnValue(of({})),
@@ -73,6 +77,21 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
       executeWorkflow: jasmine
         .createSpy('executeWorkflow')
         .and.returnValue(of({})),
+      createTemplate: jasmine
+        .createSpy('createTemplate')
+        .and.returnValue(of({id: 'tpl-1', name: 'Saved Template', steps: []})),
+      getUserTemplates: jasmine
+        .createSpy('getUserTemplates')
+        .and.returnValue(of([])),
+      deleteTemplate: jasmine
+        .createSpy('deleteTemplate')
+        .and.returnValue(of({message: 'Deleted'})),
+      getPredefinedTemplates: jasmine
+        .createSpy('getPredefinedTemplates')
+        .and.returnValue([]),
+      validateWorkflow: jasmine
+        .createSpy('validateWorkflow')
+        .and.returnValue(of({valid: true, message: 'Valid'})),
     };
 
     const dialogMock = {
@@ -94,6 +113,7 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
         MatFormFieldModule,
         MatSelectModule,
         MatInputModule,
+        MatMenuModule,
         NoopAnimationsModule,
         WorkflowStatusPipe,
       ],
@@ -690,5 +710,252 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
 
     const dynamicInputs = component.getDynamicInputs(config, inputsGroup);
     expect(dynamicInputs).toEqual([]);
+  });
+
+  describe('Workflow Templates Integration', () => {
+    it('should open and close welcome view', () => {
+      component.mode = EditorMode.Edit;
+      component.openWelcomeView();
+      expect(component.showWelcomeView).toBeTrue();
+
+      component.closeWelcomeView();
+      expect(component.showWelcomeView).toBeFalse();
+    });
+
+    it('should navigate back if closeWelcomeView is called in initial empty create mode', () => {
+      component.mode = EditorMode.Create;
+      spyOn(component, 'goBack');
+
+      component.closeWelcomeView();
+
+      expect(component.goBack).toHaveBeenCalled();
+    });
+
+    it('should not render header when welcome view is showing', () => {
+      component.showWelcomeView = true;
+      fixture.detectChanges();
+
+      const headerEl = fixture.nativeElement.querySelector(
+        'header.header-section',
+      );
+      expect(headerEl).toBeNull();
+
+      component.showWelcomeView = false;
+      fixture.detectChanges();
+
+      const visibleHeaderEl = fixture.nativeElement.querySelector(
+        'header.header-section',
+      );
+      expect(visibleHeaderEl).not.toBeNull();
+    });
+
+    it('should not render add-btn-wrapper when welcome view is showing', () => {
+      component.mode = EditorMode.Create;
+      component.showWelcomeView = true;
+      fixture.detectChanges();
+
+      const addBtnWrapper =
+        fixture.nativeElement.querySelector('.add-btn-wrapper');
+      expect(addBtnWrapper).toBeNull();
+
+      component.showWelcomeView = false;
+      fixture.detectChanges();
+
+      const visibleAddBtnWrapper =
+        fixture.nativeElement.querySelector('.add-btn-wrapper');
+      expect(visibleAddBtnWrapper).not.toBeNull();
+    });
+
+    it('should reset canvas when blank workflow is selected', () => {
+      component.showWelcomeView = true;
+      component.onTemplateSelected(null);
+
+      expect(component.showWelcomeView).toBeFalse();
+      expect(component.stepsArray.length).toBe(0);
+      expect(component.workflowForm.get('name')?.value).toBe(
+        'Untitled Workflow',
+      );
+    });
+
+    it('should populate form and positions when a template is selected', () => {
+      const mockTemplate: any = {
+        id: 'tpl-100',
+        name: 'Human Model Outfit Editor',
+        description: 'Edits suit or dress color',
+        steps: [
+          {
+            stepId: 'user_input',
+            type: NodeTypes.USER_INPUT,
+            outputs: {model_image: {type: 'image'}},
+            inputs: {},
+            settings: {},
+          },
+          {
+            stepId: 'gen_text',
+            type: NodeTypes.GENERATE_TEXT,
+            inputs: {prompt: 'Prompt'},
+            outputs: {generated_text: {type: 'text'}},
+            settings: {model: 'gemini-3.8-flash', temperature: 0.7},
+          },
+        ],
+        positions: {
+          user_input: {x: 80, y: 150},
+          gen_text: {x: 450, y: 150},
+        },
+      };
+
+      component.onTemplateSelected(mockTemplate);
+
+      expect(component.showWelcomeView).toBeFalse();
+      expect(component.workflowForm.get('name')?.value).toBe('');
+      expect(component.hasWorkflowName).toBeFalse();
+      expect(component.workflowForm.get('description')?.value).toBe(
+        'Edits suit or dress color',
+      );
+      expect(component.nodePositions['gen_text']).toEqual({x: 450, y: 150});
+      expect(component.workflowForm.dirty).toBeTrue();
+    });
+
+    it('should disable Run button when workflow has no name and enable when name is provided', () => {
+      const mockTemplate: any = {
+        id: 'tpl-100',
+        name: 'Human Model Outfit Editor',
+        description: 'Edits suit or dress color',
+        steps: [
+          {
+            stepId: 'user_input',
+            type: NodeTypes.USER_INPUT,
+            outputs: {model_image: {type: 'image'}},
+            inputs: {},
+            settings: {},
+          },
+          {
+            stepId: 'gen_text',
+            type: NodeTypes.GENERATE_TEXT,
+            inputs: {prompt: 'Prompt'},
+            outputs: {generated_text: {type: 'text'}},
+            settings: {model: 'gemini-3.8-flash', temperature: 0.7},
+          },
+        ],
+      };
+
+      component.onTemplateSelected(mockTemplate);
+      fixture.detectChanges();
+
+      expect(component.hasWorkflowName).toBeFalse();
+      expect(component.isRunDisabled).toBeTrue();
+      const runBtn = fixture.nativeElement.querySelector('#workflow-run-btn');
+      expect(runBtn.disabled).toBeTrue();
+
+      // Set only whitespace name
+      component.workflowForm.get('name')?.setValue('   ');
+      fixture.detectChanges();
+      expect(component.hasWorkflowName).toBeFalse();
+      expect(component.isRunDisabled).toBeTrue();
+      expect(runBtn.disabled).toBeTrue();
+
+      // Set valid name
+      component.workflowForm.get('name')?.setValue('My Brand New Workflow');
+      fixture.detectChanges();
+      expect(component.hasWorkflowName).toBeTrue();
+      expect(component.isRunDisabled).toBeFalse();
+      expect(runBtn.disabled).toBeFalse();
+    });
+
+    it('should not call saveWorkflow or createWorkflow when run is called without a workflow name', () => {
+      const workflowService = TestBed.inject(WorkflowService);
+      (workflowService.createWorkflow as jasmine.Spy).calls.reset();
+      spyOn(component, 'saveWorkflow').and.callThrough();
+
+      component.workflowForm.get('name')?.setValue('');
+      expect(component.isRunDisabled).toBeTrue();
+      component.run();
+
+      expect(component.saveWorkflow).not.toHaveBeenCalled();
+      expect(workflowService.createWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('should open SaveTemplateModalComponent and call createTemplate when saveAsNewTemplate succeeds without saving workflow', () => {
+      const dialog = TestBed.inject(MatDialog);
+      const workflowService = TestBed.inject(WorkflowService);
+      (workflowService.createWorkflow as jasmine.Spy).calls.reset();
+      (workflowService.updateWorkflow as jasmine.Spy).calls.reset();
+      (workflowService.validateWorkflow as jasmine.Spy).calls.reset();
+      (dialog.open as jasmine.Spy).and.returnValue({
+        afterClosed: () => of({name: 'My Blueprint', description: 'Desc'}),
+      });
+
+      component.saveAsNewTemplate();
+
+      expect(workflowService.validateWorkflow).toHaveBeenCalled();
+      expect(workflowService.createWorkflow).not.toHaveBeenCalled();
+      expect(workflowService.updateWorkflow).not.toHaveBeenCalled();
+      expect(dialog.open).toHaveBeenCalled();
+      expect(workflowService.createTemplate).toHaveBeenCalledWith(
+        jasmine.objectContaining({
+          name: 'My Blueprint',
+          description: 'Desc',
+        }),
+      );
+    });
+
+    it('should not call createTemplate when save template dialog is cancelled', () => {
+      const dialog = TestBed.inject(MatDialog);
+      const workflowService = TestBed.inject(WorkflowService);
+      (workflowService.createTemplate as jasmine.Spy).calls.reset();
+      (dialog.open as jasmine.Spy).and.returnValue({
+        afterClosed: () => of(null),
+      });
+
+      component.saveAsNewTemplate();
+
+      expect(dialog.open).toHaveBeenCalled();
+      expect(workflowService.createTemplate).not.toHaveBeenCalled();
+    });
+
+    it('should not open save template dialog when steps are empty', () => {
+      const dialog = TestBed.inject(MatDialog);
+      (dialog.open as jasmine.Spy).calls.reset();
+      spyOn<any>(component, 'prepareSteps').and.returnValue([]);
+
+      component.saveAsNewTemplate();
+
+      expect(dialog.open).not.toHaveBeenCalled();
+    });
+
+    it('should not open save template dialog when cycle is detected', () => {
+      const dialog = TestBed.inject(MatDialog);
+      (dialog.open as jasmine.Spy).calls.reset();
+      spyOn<any>(component, 'hasCycle').and.returnValue(true);
+
+      component.saveAsNewTemplate();
+
+      expect(dialog.open).not.toHaveBeenCalled();
+    });
+
+    it('should not open save template dialog when validateWorkflow fails', () => {
+      const dialog = TestBed.inject(MatDialog);
+      const workflowService = TestBed.inject(WorkflowService);
+      (dialog.open as jasmine.Spy).calls.reset();
+      (workflowService.validateWorkflow as jasmine.Spy).and.returnValue(
+        throwError(() => ({error: {detail: 'Invalid structure'}})),
+      );
+
+      component.saveAsNewTemplate();
+
+      expect(dialog.open).not.toHaveBeenCalled();
+    });
+
+    it('should not save workflow when form is pristine during save()', () => {
+      const workflowService = TestBed.inject(WorkflowService);
+      (workflowService.createWorkflow as jasmine.Spy).calls.reset();
+      (workflowService.updateWorkflow as jasmine.Spy).calls.reset();
+      component.workflowForm.markAsPristine();
+
+      component.save();
+
+      expect(workflowService.createWorkflow).not.toHaveBeenCalled();
+      expect(workflowService.updateWorkflow).not.toHaveBeenCalled();
+    });
   });
 });

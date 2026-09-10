@@ -1,0 +1,102 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<div class="save-template-modal-container" id="save-template-modal-container">
+  <div class="modal-header">
+    <div class="title-row">
+      <mat-icon class="title-icon">dashboard_customize</mat-icon>
+      <h2 mat-dialog-title class="dialog-title">Save as a Template</h2>
+    </div>
+    <button
+      mat-icon-button
+      class="close-btn"
+      id="btn-close-save-template-modal"
+      (click)="onCancel()"
+      aria-label="Close dialog"
+    >
+      <mat-icon>close</mat-icon>
+    </button>
+  </div>
+
+  <mat-dialog-content class="modal-content">
+    <p class="modal-subtitle">
+      Save your current workflow steps and configurations as a reusable starting blueprint. Each template must have a unique name.
+    </p>
+
+    <div *ngIf="errorMessage()" class="error-banner" role="alert">
+      <mat-icon>error_outline</mat-icon>
+      <span>{{ errorMessage() }}</span>
+    </div>
+
+    <form [formGroup]="templateForm" class="template-form">
+      <!-- Template Name -->
+      <mat-form-field appearance="outline" class="w-full form-field">
+        <mat-label>Template Name</mat-label>
+        <input
+          matInput
+          id="input-template-name"
+          formControlName="name"
+          placeholder="e.g. Fashion Model Inpainting"
+          required
+        />
+        <mat-error *ngIf="templateForm.get('name')?.hasError('required')">
+          Template name is required.
+        </mat-error>
+        <mat-error *ngIf="templateForm.get('name')?.hasError('minlength')">
+          Name must be at least 2 characters.
+        </mat-error>
+      </mat-form-field>
+
+      <!-- Description -->
+      <mat-form-field appearance="outline" class="w-full form-field">
+        <mat-label>Description (optional)</mat-label>
+        <textarea
+          matInput
+          id="input-template-description"
+          formControlName="description"
+          rows="3"
+          placeholder="Briefly describe what this template generates or how to use it..."
+        ></textarea>
+        <mat-hint align="end">
+          {{ templateForm.get('description')?.value?.length || 0 }}/500
+        </mat-hint>
+      </mat-form-field>
+    </form>
+  </mat-dialog-content>
+
+  <mat-dialog-actions align="end" class="modal-actions">
+    <button
+      mat-button
+      class="cancel-btn"
+      id="btn-cancel-save-template"
+      (click)="onCancel()"
+      [disabled]="isSubmitting()"
+    >
+      Cancel
+    </button>
+    <button
+      mat-flat-button
+      color="primary"
+      class="save-btn"
+      id="btn-confirm-save-template"
+      (click)="onSave()"
+      [disabled]="isFormInvalid || isSubmitting()"
+    >
+      <mat-icon *ngIf="!isSubmitting()">bookmark_add</mat-icon>
+      <span>Save Template</span>
+    </button>
+  </mat-dialog-actions>
+</div>

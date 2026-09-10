@@ -404,6 +404,17 @@ class WorkflowCreateDto(WorkflowBase, BaseDto):
     """DTO for creating a new workflow. Inherits fields from WorkflowBase."""
 
 
+class WorkflowValidateDto(WorkflowBase, BaseDto):
+    """DTO for validating a workflow structure without persistence."""
+
+
+class WorkflowValidationResponseDto(BaseModel):
+    """Response model for workflow validation."""
+
+    valid: bool = True
+    message: str = "Workflow structure is valid."
+
+
 class WorkflowExecuteDto(BaseModel):
     args: dict[str, Any]
 
