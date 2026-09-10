@@ -118,6 +118,8 @@ import {UpscaleComponent} from './upscale/upscale.component';
 import {StoryboardComponent} from './workbench/components/storyboard/storyboard.component';
 import {TimeRulerComponent} from './workbench/components/time-ruler/time-ruler.component';
 import {TransitionIndicatorComponent} from './workbench/components/transition-indicator/transition-indicator.component';
+import {ApprovalGateComponent} from './workbench/components/approval-gate/approval-gate.component';
+import {SafeUrlPipe} from './common/pipes/safe-url.pipe';
 
 @NgModule({
   declarations: [
@@ -200,7 +202,9 @@ import {TransitionIndicatorComponent} from './workbench/components/transition-in
     StoryboardComponent,
     TimeRulerComponent,
     TransitionIndicatorComponent,
+    ApprovalGateComponent,
     TextFieldModule,
+    SafeUrlPipe,
   ],
   providers: [
     provideClientHydration(),

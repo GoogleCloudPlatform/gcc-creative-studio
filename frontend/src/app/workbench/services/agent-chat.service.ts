@@ -39,6 +39,16 @@ export interface ChatMessagePart {
     mediaIndex: number;
     role: string;
   };
+  function_response?: {
+    id: string;
+    name: string;
+    response: {
+      decision: string;
+      guidance?: string;
+      [key: string]: any;
+    };
+  };
+  functionResponse?: any;
 }
 
 export interface ChatMessage {

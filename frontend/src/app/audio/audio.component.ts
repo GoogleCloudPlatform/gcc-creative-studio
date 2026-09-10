@@ -73,7 +73,7 @@ export class AudioComponent implements OnInit {
   prompt = '';
   negativePrompt = '';
   seed: number | undefined;
-  sampleCount = 4;
+  sampleCount = 1;
 
   // TTS & Chirp Specific Inputs
   selectedLanguage: LanguageEnum = LanguageEnum.EN_US;

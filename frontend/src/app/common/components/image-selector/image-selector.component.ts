@@ -70,6 +70,7 @@ export class ImageSelectorComponent implements OnInit {
       multiSelect?: boolean;
       showFooter?: boolean;
       maxSelection?: number;
+      includeExternal?: boolean;
     },
   ) {
     this.dialogRef.addPanelClass('image-selector-dialog');

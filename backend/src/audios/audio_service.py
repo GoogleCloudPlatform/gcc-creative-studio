@@ -289,7 +289,7 @@ def _process_audio_in_background(
                                         instance_dict, instance_value
                                     )
 
-                                    endpoint = f"projects/{cfg.PROJECT_ID}/locations/global/publishers/google/models/lyria-002"
+                                    endpoint = f"projects/{cfg.PROJECT_ID}/locations/global/publishers/google/models/{request_dto.model.value}"
                                     response = await asyncio.to_thread(
                                         ai_client.predict,
                                         endpoint=endpoint,
@@ -399,12 +399,15 @@ class AudioService:
         GenerationModelEnum.GEMINI_2_5_FLASH_TTS,
         GenerationModelEnum.GEMINI_2_5_FLASH_LITE_PREVIEW_TTS,
         GenerationModelEnum.GEMINI_2_5_PRO_TTS,
+        GenerationModelEnum.GEMINI_3_1_FLASH_TTS_PREVIEW,
     }
     TTS_MODELS = {
         GenerationModelEnum.CHIRP_3,
     }
     MUSIC_MODELS = {
         GenerationModelEnum.LYRIA_002,
+        GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+        GenerationModelEnum.LYRIA_3_PRO_PREVIEW,
     }
 
     def __init__(

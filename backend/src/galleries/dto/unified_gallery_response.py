@@ -48,6 +48,14 @@ class UnifiedGalleryItemResponse(BaseModel):
         default_factory=dict, validation_alias="metadata_"
     )
 
+    @field_validator("gcs_uris", "thumbnail_uris", mode="before")
+    @classmethod
+    def filter_none_uris(cls, v: Any) -> list[str]:
+        """Ensures None or non-string elements are removed from URI lists."""
+        if isinstance(v, list):
+            return [x for x in v if isinstance(x, str) and x]
+        return []
+
     @field_validator("metadata", mode="after")
     @classmethod
     def convert_metadata_keys(cls, v: dict[str, Any]) -> dict[str, Any]:

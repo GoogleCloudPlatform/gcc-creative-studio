@@ -37,12 +37,19 @@ class SourceMediaItemLinkDto(BaseModel):
 
 
 class ChatMessagePart(BaseModel):
+    model_config = {"extra": "allow"}
+
     text: Optional[str] = None
     inlineData: Optional[InlineDataRecord] = None
     fileData: Optional[FileDataRecord] = None
     # For communicating specific source assets to the UI
     sourceAssetId: Optional[int] = None
     sourceMediaItem: Optional[SourceMediaItemLinkDto] = None
+    # Function calls / responses for approval gates and tools
+    function_response: Optional[Dict[str, Any]] = None
+    functionResponse: Optional[Dict[str, Any]] = None
+    function_call: Optional[Dict[str, Any]] = None
+    functionCall: Optional[Dict[str, Any]] = None
 
 
 class ChatMessage(BaseModel):

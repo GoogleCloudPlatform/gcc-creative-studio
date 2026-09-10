@@ -275,3 +275,24 @@ class TestBackgroundWorkers:
             called_config.speech_config.voice_config.prebuilt_voice_config.voice_name
             == "Aoede"
         )
+
+    def test_new_audio_models_validation(self):
+        lyria3_dto = CreateAudioDto(
+            workspace_id=1,
+            prompt="Lyria 3 prompt",
+            model=GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+            sample_count=1,
+        )
+        assert lyria3_dto.model == GenerationModelEnum.LYRIA_3_CLIP_PREVIEW
+
+        gemini31_dto = CreateAudioDto(
+            workspace_id=1,
+            prompt="Gemini 3.1 prompt",
+            model=GenerationModelEnum.GEMINI_3_1_FLASH_TTS_PREVIEW,
+            language_code=LanguageEnum.EN_US,
+            voice_name=VoiceEnum.PUCK,
+        )
+        assert (
+            gemini31_dto.model
+            == GenerationModelEnum.GEMINI_3_1_FLASH_TTS_PREVIEW
+        )

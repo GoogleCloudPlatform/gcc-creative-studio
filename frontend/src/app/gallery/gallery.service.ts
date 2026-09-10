@@ -258,7 +258,17 @@ export class GalleryService implements OnDestroy {
       presignedUrls: item.presignedUrls,
       presignedThumbnailUrls: item.presignedThumbnailUrls,
       metadata: metadata,
-      mimeType: metadata.mimeType || metadata.mime_type || item.mimeType,
+      mimeType:
+        metadata.mimeType ||
+        metadata.mime_type ||
+        item.mimeType ||
+        (metadata.isVideo ||
+        metadata.is_video ||
+        metadata.assetType === 'youtube_video' ||
+        metadata.asset_type === 'youtube_video' ||
+        item.assetType === 'youtube_video'
+          ? 'video/mp4'
+          : undefined),
       aspectRatio:
         metadata.aspectRatio || metadata.aspect_ratio || item.aspectRatio,
       prompt:

@@ -621,54 +621,66 @@ class AgentService:
         if "newMessage" in body:
             new_msg = body["newMessage"]
             if "parts" in new_msg and new_msg["parts"]:
-                sanitized_parts = []
-                attached_assets = []
-                for p in new_msg["parts"]:
-                    if not isinstance(p, dict):
-                        sanitized_parts.append(p)
-                        continue
-                    s_asset_id = p.pop("sourceAssetId", None)
-                    s_media = p.pop("sourceMediaItem", None)
-                    if s_asset_id is not None:
-                        attached_assets.append(
-                            f'<creative_studio_asset id={s_asset_id} type="source_asset" />'
-                        )
-                    if s_media is not None:
-                        media_id = s_media.get("mediaItemId")
-                        attached_assets.append(
-                            f'<creative_studio_asset id={media_id} type="media_item" />'
-                        )
-                    if p:
-                        sanitized_parts.append(p)
+                is_function_response = any(
+                    isinstance(p, dict)
+                    and ("function_response" in p or "functionResponse" in p)
+                    for p in new_msg["parts"]
+                )
+                if not is_function_response:
+                    sanitized_parts = []
+                    attached_assets = []
+                    for p in new_msg["parts"]:
+                        if not isinstance(p, dict):
+                            sanitized_parts.append(p)
+                            continue
+                        s_asset_id = p.pop("sourceAssetId", None)
+                        s_media = p.pop("sourceMediaItem", None)
+                        if s_asset_id is not None:
+                            attached_assets.append(
+                                f'<creative_studio_asset id={s_asset_id} type="source_asset" />'
+                            )
+                        if s_media is not None:
+                            media_id = s_media.get("mediaItemId")
+                            attached_assets.append(
+                                f'<creative_studio_asset id={media_id} type="media_item" />'
+                            )
+                        if p:
+                            sanitized_parts.append(p)
 
-                if attached_assets:
-                    asset_list = "\n".join(
-                        [f"- {aid}" for aid in attached_assets]
-                    )
-                    injections.append(
-                        f"The user has attached the following reference assets:\n{asset_list}"
-                    )
+                    if attached_assets:
+                        asset_list = "\n".join(
+                            [f"- {aid}" for aid in attached_assets]
+                        )
+                        injections.append(
+                            f"The user has attached the following reference assets:\n{asset_list}"
+                        )
 
-                if injections:
-                    injection_str = (
-                        "\n\n[System Note:\n" + "\n".join(injections) + "\n]"
-                    )
-                    text_part_found = False
-                    for p in sanitized_parts:
-                        if "text" in p:
-                            p["text"] += injection_str
-                            text_part_found = True
-                            break
-                    if not text_part_found:
-                        sanitized_parts.append({"text": injection_str})
-                new_msg["parts"] = sanitized_parts
+                    if injections:
+                        injection_str = (
+                            "\n\n[System Note:\n"
+                            + "\n".join(injections)
+                            + "\n]"
+                        )
+                        text_part_found = False
+                        for p in sanitized_parts:
+                            if "text" in p:
+                                p["text"] += injection_str
+                                text_part_found = True
+                                break
+                        if not text_part_found:
+                            sanitized_parts.append({"text": injection_str})
+                    new_msg["parts"] = sanitized_parts
 
         # Internal background task function
         async def process_stream():
             try:
                 import datetime
+                import json
 
                 app_name = body.get("appName") or APP_NAME
+                logger.info(
+                    f"[Agent Stream] Starting process_stream for session_id={session_id}, user_id={user_id}, app_name={app_name}"
+                )
                 remote_agent = self._get_remote_agent(app_name)
                 agent_config = self._get_agent_config(app_name)
                 auth_header = request.headers.get("Authorization", "")
@@ -678,6 +690,9 @@ class AgentService:
                     agent_name = self._get_validated_agent_name(app_name)
                     full_session_name = f"{agent_name}/sessions/{session_id}"
                     try:
+                        logger.info(
+                            f"[Agent Stream] Appending state delta token propagation for session_id={session_id}"
+                        )
                         self.client.agent_engines.sessions.events.append(
                             name=full_session_name,
                             author="system",
@@ -691,49 +706,174 @@ class AgentService:
                                 }
                             },
                         )
+                        logger.info(
+                            f"[Agent Stream] State delta token propagation appended successfully for session_id={session_id}"
+                        )
                     except Exception as upd_err:
                         logger.warning(
-                            f"Could not append state delta event: {upd_err}"
+                            f"[Agent Stream] Could not append state delta event: {upd_err}"
                         )
 
                 msg_payload = body.get("newMessage")
 
-                response_stream = remote_agent.stream_query(
+                logger.info(
+                    f"[Agent Stream] Invoking async_stream_query for session_id={session_id}, user_id={user_id}"
+                )
+                response_stream = remote_agent.async_stream_query(
                     user_id=user_id,
                     session_id=session_id,
                     message=msg_payload,
                 )
-                import json
-                import threading
 
-                queue = asyncio.Queue()
-                loop = asyncio.get_running_loop()
+                if hasattr(response_stream, "__await__") and not hasattr(
+                    response_stream, "__aiter__"
+                ):
+                    response_stream = await response_stream
 
-                def producer():
-                    try:
-                        for chunk in response_stream:
-                            logger.info(
-                                f"[Agent Stream Chunk Received] Raw chunk: {chunk}"
-                            )
-                            loop.call_soon_threadsafe(queue.put_nowait, chunk)
-                        loop.call_soon_threadsafe(queue.put_nowait, None)
-                    except Exception as prod_err:
-                        logger.error(
-                            f"[Agent Stream Exception] {prod_err}",
-                            exc_info=True,
+                APPROVAL_FUNCTIONS = {
+                    "await_strategy_approval",
+                    "await_storyboard_approval",
+                    "await_final_cut_approval",
+                }
+
+                def to_dict_safe(obj: Any) -> Any:
+                    if isinstance(obj, dict):
+                        return obj
+                    if isinstance(obj, str):
+                        try:
+                            return json.loads(obj)
+                        except Exception:
+                            return obj
+                    if hasattr(obj, "model_dump"):
+                        try:
+                            return obj.model_dump()
+                        except Exception:
+                            pass
+                    if hasattr(obj, "to_dict"):
+                        try:
+                            return obj.to_dict()
+                        except Exception:
+                            pass
+                    return getattr(obj, "__dict__", obj)
+
+                def texts_of(evt: Any) -> list[str]:
+                    data = to_dict_safe(evt)
+                    if isinstance(data, str):
+                        return [data]
+                    if isinstance(data, dict):
+                        content = data.get("content")
+                        parts = (
+                            content.get("parts")
+                            if isinstance(content, dict)
+                            else data.get("parts")
                         )
-                        loop.call_soon_threadsafe(queue.put_nowait, prod_err)
+                        if isinstance(parts, list):
+                            return [
+                                str(p.get("text", ""))
+                                for p in parts
+                                if isinstance(p, dict) and "text" in p
+                            ]
+                        if "text" in data:
+                            return [str(data["text"])]
+                    return (
+                        [str(getattr(evt, "text", ""))]
+                        if hasattr(evt, "text")
+                        else []
+                    )
 
-                threading.Thread(target=producer, daemon=True).start()
+                def detect_approval_function(evt: Any) -> str | None:
+                    data = to_dict_safe(evt)
+
+                    def search(obj: Any) -> str | None:
+                        if isinstance(obj, dict):
+                            for v in obj.values():
+                                if (
+                                    isinstance(v, str)
+                                    and v in APPROVAL_FUNCTIONS
+                                ):
+                                    return v
+                                res = search(v)
+                                if res:
+                                    return res
+                        elif isinstance(obj, list):
+                            for item in obj:
+                                if (
+                                    isinstance(item, str)
+                                    and item in APPROVAL_FUNCTIONS
+                                ):
+                                    return item
+                                res = search(item)
+                                if res:
+                                    return res
+                        return None
+
+                    if isinstance(data, (dict, list)):
+                        found = search(data)
+                        if found:
+                            return found
+
+                    evt_str = str(evt)
+                    for fn in APPROVAL_FUNCTIONS:
+                        if fn in evt_str:
+                            return fn
+                    return None
+
+                def extract_event_meta(evt: Any):
+                    data = to_dict_safe(evt)
+                    if isinstance(data, dict):
+                        return (
+                            data.get("invocation_id"),
+                            data.get("long_running_tool_ids"),
+                        )
+                    return (
+                        getattr(evt, "invocation_id", None),
+                        getattr(evt, "long_running_tool_ids", None),
+                    )
+
+                invocation_id = None
+                paused_signal = False
+                seen_texts = []
 
                 async with async_session_local() as db_session:
                     repo = AgentRepository(db_session)
-                    while True:
-                        chunk = await queue.get()
-                        if chunk is None:
-                            break
-                        if isinstance(chunk, Exception):
-                            raise chunk
+                    chunk_count = 0
+
+                    async def handle_chunk(chunk):
+                        nonlocal chunk_count, invocation_id, paused_signal
+                        chunk_count += 1
+
+                        cur_inv_id, cur_lrt_ids = extract_event_meta(chunk)
+                        if cur_inv_id:
+                            invocation_id = cur_inv_id
+
+                        detected_approval = detect_approval_function(chunk)
+
+                        if cur_lrt_ids or detected_approval:
+                            paused_signal = True
+                            gate_desc = (
+                                cur_lrt_ids
+                                if cur_lrt_ids
+                                else detected_approval
+                            )
+                            print(f"  gate emitted: {gate_desc}")
+                            if detected_approval:
+                                print(
+                                    f"  [Approval Gate] Detected '{detected_approval}'. Waiting for user response."
+                                )
+                            logger.info(
+                                f"[Agent Stream Gate Emitted] Agent is waiting for user response. "
+                                f"long_running_tool_ids: {cur_lrt_ids}, approval_function: {detected_approval}, "
+                                f"invocation_id: {invocation_id}"
+                            )
+
+                        seen_texts.extend(texts_of(chunk))
+
+                        print(
+                            f"[Agent Stream Event #{chunk_count}] invocation_id={invocation_id}, long_running_tool_ids={cur_lrt_ids}, approval_function={detected_approval}, response={chunk}"
+                        )
+                        logger.info(
+                            f"[Agent Stream Chunk Received #{chunk_count}] invocation_id={invocation_id}, long_running_tool_ids={cur_lrt_ids}, approval_function={detected_approval}, Raw chunk: {chunk}"
+                        )
 
                         if isinstance(chunk, str):
                             chunk_text = chunk
@@ -749,35 +889,73 @@ class AgentService:
                                     chunk_text = json.dumps(str(chunk))
                             except Exception as parse_err:
                                 logger.warning(
-                                    f"Failed standard JSON parse/dump for chunk, falling back: {parse_err}"
+                                    f"[Agent Stream] Failed standard JSON parse/dump for chunk #{chunk_count}, falling back: {parse_err}"
                                 )
                                 chunk_text = json.dumps(str(chunk))
 
-                        logger.info(f"[Agent Stream Parsed JSON] {chunk_text}")
+                        logger.info(
+                            f"[Agent Stream Parsed JSON #{chunk_count}] {chunk_text}"
+                        )
                         await repo.add_chat_event(
                             user_id=user_id,
                             session_id=session_id,
                             payload={"raw": f"data: {chunk_text}\n\n"},
                         )
 
+                    if hasattr(response_stream, "__aiter__"):
+                        async for chunk in response_stream:
+                            await handle_chunk(chunk)
+                    else:
+                        for chunk in response_stream:
+                            await handle_chunk(chunk)
+
+                    if paused_signal:
+                        print(
+                            f"  [Agent Stream Paused] Waiting for user response. invocation_id: {invocation_id}"
+                        )
+                        logger.info(
+                            f"[Agent Stream Paused] Stream paused waiting for user response. "
+                            f"invocation_id={invocation_id}, seen_texts_count={len(seen_texts)}"
+                        )
+
+                    logger.info(
+                        f"[Agent Stream Completed] Total chunks processed: {chunk_count} for session_id={session_id}, paused_signal={paused_signal}"
+                    )
                     await repo.add_chat_event(
                         user_id=user_id,
                         session_id=session_id,
                         payload={"raw": "data: [DONE]\n\n"},
                     )
+                    logger.info(
+                        f"[Agent Stream] [DONE] event added to repository for session_id={session_id}"
+                    )
 
             except Exception as e:
                 logger.error(
-                    f"Error streaming from Agent Engine: {e}", exc_info=True
+                    f"[Agent Stream Error] Error streaming from Agent Engine: {e}",
+                    exc_info=True,
                 )
-                async with async_session_local() as db_session:
-                    repo = AgentRepository(db_session)
-                    error_msg = f"Internal error streaming from agent: {str(e)}"
-                    error_event = json.dumps({"error": error_msg})
-                    await repo.add_chat_event(
-                        user_id=user_id,
-                        session_id=session_id,
-                        payload={"raw": f"data: {error_event}\n\n"},
+                try:
+                    import json
+
+                    async with async_session_local() as db_session:
+                        repo = AgentRepository(db_session)
+                        error_msg = (
+                            f"Internal error streaming from agent: {str(e)}"
+                        )
+                        error_event = json.dumps({"error": error_msg})
+                        await repo.add_chat_event(
+                            user_id=user_id,
+                            session_id=session_id,
+                            payload={"raw": f"data: {error_event}\n\n"},
+                        )
+                        logger.info(
+                            f"[Agent Stream] Error event saved for session_id={session_id}"
+                        )
+                except Exception as save_err:
+                    logger.error(
+                        f"[Agent Stream] Failed to save error event: {save_err}",
+                        exc_info=True,
                     )
 
         asyncio.create_task(process_stream())

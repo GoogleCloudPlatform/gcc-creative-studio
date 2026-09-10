@@ -27,6 +27,7 @@ import {
   OnInit,
   OnDestroy,
   inject,
+  OnChanges,
 } from '@angular/core';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {ReferenceImage} from '../../models/search.model';
@@ -37,6 +38,10 @@ import {FormsModule} from '@angular/forms';
 import {MatButtonModule} from '@angular/material/button';
 import {MatMenuModule} from '@angular/material/menu';
 import {MatTooltipModule} from '@angular/material/tooltip';
+import {
+  extractYouTubeVideoId,
+  getYouTubeThumbnailUrl,
+} from '../../../utils/youtube.utils';
 
 export type NumPos = 1 | 2;
 
@@ -61,7 +66,7 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   @Input() isLoading = false;
   @Input() prompt = '';
   @Input() aspectRatio = '16:9';
-  @Input() outputs = 4;
+  @Input() outputs = 1;
   @Input() aspectRatioOptions: {
     value: string;
     viewValue: string;
@@ -145,6 +150,8 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   @Output() clearReferenceVideo = new EventEmitter<Event>();
   @Output() openAudioSelectorForReference = new EventEmitter<void>();
   @Output() clearReferenceAudio = new EventEmitter<Event>();
+  @Output() openVideoUrlInputForReference = new EventEmitter<void>();
+  @Output() clearExternalUrl = new EventEmitter<void>();
 
   @Input() image1Preview: string | null = null;
   @Input() image2Preview: string | null = null;
@@ -152,6 +159,15 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   @Input() referenceImagesType: 'ASSET' | 'STYLE' = 'ASSET';
   @Input() referenceVideo: any | null = null;
   @Input() referenceAudio: any | null = null;
+  private _externalUrl: string | null = null;
+  private externalUrlSignal = signal<string | null>(null);
+  @Input() set externalUrl(val: string | null) {
+    this._externalUrl = val;
+    this.externalUrlSignal.set(val);
+  }
+  get externalUrl(): string | null {
+    return this._externalUrl;
+  }
 
   @ViewChild('modeTrigger') modeTrigger!: ElementRef;
   @ViewChild('modeMenu') modeMenu!: ElementRef;
@@ -219,6 +235,7 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
     () => this.selectedMode() === 'Ingredients to Image',
   );
   isTextToVideo = computed(() => this.selectedMode() === 'Text to Video');
+  isVideoToImage = computed(() => this.selectedMode() === 'Video to Image');
   isImageMode = computed(() => this.selectedMode().includes('Image'));
   canEditImgSlot = computed(
     () => !this.isExtendVideo() && !this.isConcatenateVideo(),
@@ -228,6 +245,14 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
     () =>
       (this.getSelectedModelObject()?.capabilities?.supportedDurations ?? [])
         .length > 0,
+  );
+
+  youtubeVideoId = computed(() =>
+    extractYouTubeVideoId(this.externalUrlSignal()),
+  );
+
+  youtubeThumbnailUrl = computed(() =>
+    getYouTubeThumbnailUrl(this.youtubeVideoId()),
   );
 
   // --- Lifecycle Hooks ---
@@ -313,6 +338,24 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
     this.isSettingsDropdownOpen.set(null);
   }
 
+  getAspectRatioIcon(aspectRatio: string): string {
+    if (!aspectRatio) return 'crop_landscape';
+    const matched = this.aspectRatioOptions?.find(
+      o => o.viewValue === aspectRatio || o.value === aspectRatio,
+    );
+    if (matched && matched.icon) {
+      return matched.icon;
+    }
+    const lowerRatio = aspectRatio.toLowerCase();
+    if (lowerRatio.includes('auto')) {
+      return 'hdr_auto';
+    }
+    if (lowerRatio.includes('1:1') || lowerRatio.includes('square')) {
+      return 'crop_square';
+    }
+    return aspectRatio.includes('16:9') ? 'crop_landscape' : 'crop_portrait';
+  }
+
   selectOutputs(count: number) {
     this.outputsChanged.emit(count);
     this.isSettingsDropdownOpen.set(null);
@@ -320,6 +363,10 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
 
   // Triggered from internal dropdown
   selectInternalModel(model: any) {
+    if (this.isVideoToImage() && !model.capabilities?.supportsVideoReference) {
+      return;
+    }
+
     this.isSettingsDropdownOpen.set(null);
     this.modelSelected.emit(model);
 
@@ -336,9 +383,19 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
     );
   }
 
+  isOmniModel(model?: any): boolean {
+    const activeModel = model || this.getSelectedModelObject();
+    const val = activeModel?.value;
+    return (
+      val === 'gemini-omni-flash-preview' ||
+      val === 'gemini-omni-1.1-flash-preview' ||
+      val === 'gemini-omni'
+    );
+  }
+
   getSelectedModelResolutions(model?: any): ('1K' | '2K' | '4K')[] {
     const activeModel = model || this.getSelectedModelObject();
-    if (this.isExtendVideo() || this.isIngredientsToImage()) {
+    if (this.isExtendVideo()) {
       const smallest = activeModel?.capabilities?.supportedResolutions?.[0];
       return smallest ? [smallest] : [];
     }

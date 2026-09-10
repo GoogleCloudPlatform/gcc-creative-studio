@@ -47,7 +47,7 @@
     [@fadeSlideInOut]
   >
 
-    <!-- 1st: Media Generation Dropdown (Image, Video, Audio, Upscale) -->
+    <!-- 1st: Media Generation Dropdown (Image, Video, Audio) -->
     <div
       class="relative md:mb-[10px]"
       (mouseenter)="onGenEnter()"
@@ -58,7 +58,7 @@
         class="cursor-pointer md:w-14 md:h-14 w-10 h-10 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-1.5 md:gap-2.5 overflow-hidden transition-colors duration-200"
       >
         <div
-          *ngIf="router.isActive('/', true) || router.isActive('/video', true) || router.isActive('/audio', true) || router.isActive('/imagen-upscale', true)"
+          *ngIf="router.isActive('/', true) || router.isActive('/video', true) || router.isActive('/audio', true)"
           class="flex-1 h-14 bg-gradient-to-r from-blue-500 via-violet-500 to-red-400 rounded-full blur-[3px] backdrop-blur-md"
         ></div>
         <div class="w-6 h-6 left-[9px] top-[9px] md:left-[16px] md:top-[16px] absolute overflow-hidden">
@@ -120,20 +120,6 @@
           <div class="relative flex items-center px-4 w-full z-10">
             <mat-icon svgIcon="audio-generation-icon" class="text-neutral-200 mr-3"></mat-icon>
             <span class="text-neutral-200 font-medium text-sm whitespace-nowrap">Audio Generation</span>
-          </div>
-        </div>
-
-        <div
-          routerLink="/imagen-upscale"
-          class="cursor-pointer w-full h-12 bg-blend-soft-light bg-white/40 rounded-xl shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl relative overflow-hidden flex items-center group hover:bg-white/50 transition-all"
-        >
-          <div
-            *ngIf="router.isActive('/imagen-upscale', true)"
-            class="absolute inset-0 bg-gradient-to-r from-blue-500 via-violet-500 to-red-400 opacity-80 blur-[3px] backdrop-blur-md"
-          ></div>
-          <div class="relative flex items-center px-4 w-full z-10">
-            <mat-icon class="text-neutral-200 mr-3">hd</mat-icon>
-            <span class="text-neutral-200 font-medium text-sm whitespace-nowrap">Imagen Upscale</span>
           </div>
         </div>
       </div>

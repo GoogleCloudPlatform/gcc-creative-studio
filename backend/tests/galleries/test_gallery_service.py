@@ -596,3 +596,43 @@ async def test_get_media_by_id_with_both_source_references(service):
     assert (
         result.enriched_source_assets[0].presigned_url == "https://signed.url"
     )
+
+
+@pytest.mark.anyio
+async def test_enrich_unified_item_youtube_asset(service):
+    mock_item = UnifiedGalleryItemResponse(
+        id=10,
+        workspace_id=99,
+        created_at=datetime.now(),
+        item_type="source_asset",
+        gcs_uris=[],
+        thumbnail_uris=[],
+        metadata={
+            "asset_type": "youtube_video",
+            "external_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        },
+    )
+
+    enriched = await service._enrich_unified_item(mock_item)
+
+    assert enriched.presigned_urls == [
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    ]
+    assert enriched.presigned_thumbnail_urls == [
+        "https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg"
+    ]
+
+
+def test_unified_gallery_item_response_none_gcs_uris_filter():
+    # Test that None elements in gcs_uris or thumbnail_uris are stripped out
+    raw_data = {
+        "id": 1,
+        "workspace_id": 1,
+        "created_at": datetime.now(),
+        "item_type": "source_asset",
+        "gcs_uris": [None],
+        "thumbnail_uris": [None],
+    }
+    item = UnifiedGalleryItemResponse.model_validate(raw_data)
+    assert item.gcs_uris == []
+    assert item.thumbnail_uris == []

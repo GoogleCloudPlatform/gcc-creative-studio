@@ -60,6 +60,10 @@ import {
   ChatSession,
   SessionDetailResponse,
 } from '../../../common/models/workbench.model';
+import {
+  ApprovalGateInfo,
+  ApprovalGateSubmission,
+} from '../approval-gate/approval-gate.component';
 
 interface DropdownOption {
   value: string;
@@ -96,6 +100,10 @@ export class ChatInterfaceComponent
   isTyping = signal<boolean>(false);
   isLoadingHistory = signal<boolean>(false);
   agentUnavailable = signal<boolean>(false);
+  activeApprovalGate = signal<ApprovalGateInfo | null>(null);
+  visibleApprovalGate = computed<ApprovalGateInfo | null>(() => {
+    return this.activeApprovalGate();
+  });
   currentSessionId: string | null = this.agentChatService.selectedSessionId();
   private lastWorkspaceId: number | null =
     this.workspaceStateService.getActiveWorkspaceId();
@@ -403,6 +411,7 @@ export class ChatInterfaceComponent
           this.agentChatService.selectedSessionId.set(null);
           this.chatMessages.set([]);
           this.sessions.set([]);
+          this.activeApprovalGate.set(null);
           this.agentChatService.currentStoryboard.set(null);
           this.addWelcomeMessage();
           this.shouldScrollToBottom = true;
@@ -510,6 +519,11 @@ export class ChatInterfaceComponent
                         const mappedMessages =
                           this.mapEventsToMessages(messages);
                         this.chatMessages.set(mappedMessages);
+                        const pendingGate = this.checkUnresolvedGate(
+                          messages,
+                          res.session?.state,
+                        );
+                        this.activeApprovalGate.set(pendingGate);
                         this.shouldScrollToBottom = true;
                         this.checkAndResumePolling(res);
 
@@ -531,6 +545,7 @@ export class ChatInterfaceComponent
                         this.currentSessionId = null;
                         this.agentChatService.selectedSessionId.set(null);
                         this.chatMessages.set([]);
+                        this.activeApprovalGate.set(null);
                         this.addWelcomeMessage();
                         this.shouldScrollToBottom = true;
 
@@ -624,6 +639,11 @@ export class ChatInterfaceComponent
             const messages = (res.session && res.session.events) || [];
             const mappedMessages = this.mapEventsToMessages(messages);
             this.chatMessages.set(mappedMessages);
+            const pendingGate = this.checkUnresolvedGate(
+              messages,
+              res.session?.state,
+            );
+            this.activeApprovalGate.set(pendingGate);
             this.checkAndResumePolling(res);
             if (mappedMessages.length === 0) {
               this.addWelcomeMessage();
@@ -795,6 +815,7 @@ export class ChatInterfaceComponent
     this.currentSessionId = null;
     this.agentChatService.selectedSessionId.set(null);
     this.chatMessages.set([]);
+    this.activeApprovalGate.set(null);
     this.agentChatService.currentStoryboard.set(null);
     this.addWelcomeMessage();
     this.shouldScrollToBottom = true;
@@ -811,6 +832,7 @@ export class ChatInterfaceComponent
   }
   onSessionChange(sessionId: string) {
     if (sessionId && sessionId !== this.currentSessionId) {
+      this.activeApprovalGate.set(null);
       this.currentSessionId = sessionId;
       this.loadChatMessages(sessionId);
     }
@@ -819,6 +841,7 @@ export class ChatInterfaceComponent
     this.agentChatService.stopPolling();
     this.agentChatService.activeAgent.set(agentValue);
     this.currentSessionId = null;
+    this.activeApprovalGate.set(null);
     this.chatMessages.set([]);
     this.sessions.set([]);
     this.loadChatSessions();
@@ -920,279 +943,7 @@ export class ChatInterfaceComponent
       this.agentChatService.isGeneratingStoryboard.set(true);
     }
     this.shouldScrollToBottom = true;
-    let agentMessageIndex = -1;
-    let lastInvocationId = '';
-    let isInJsonBlock = false;
-    const callbacks: SSECallbacks<any> = {
-      onMessage: (data: any) => {
-        if (data.actions?.storyboard) {
-          this.isTyping.set(false);
-          this.agentChatService.isGeneratingStoryboard.set(false);
-        }
-        if (data.content && data.content.parts) {
-          const currentInvocationId = data.id || data.invocation_id || '';
-          if (currentInvocationId && currentInvocationId !== lastInvocationId) {
-            agentMessageIndex = -1;
-          }
-          for (const part of data.content.parts) {
-            if (part.text) {
-              const textChunk = part.text;
-              this.isTyping.set(false);
-              const jsonStartIndex = textChunk.indexOf('{\n');
-
-              this.chatMessages.update(msgs => {
-                if (jsonStartIndex !== -1) {
-                  isInJsonBlock = true;
-                  const textPart = textChunk.substring(0, jsonStartIndex);
-                  const jsonPart = textChunk.substring(jsonStartIndex);
-
-                  // Handle text part if not empty
-                  if (textPart.trim()) {
-                    if (
-                      agentMessageIndex === -1 ||
-                      msgs[agentMessageIndex].asset
-                    ) {
-                      msgs.push({
-                        sender: 'agent',
-                        text: textPart,
-                        timestamp: new Date(),
-                      });
-                      agentMessageIndex = msgs.length - 1;
-                      lastInvocationId = currentInvocationId;
-                    } else {
-                      msgs[agentMessageIndex].text += textPart;
-                    }
-                  }
-
-                  // Create a NEW hidden message for JSON data
-                  msgs.push({
-                    sender: 'agent',
-                    text: jsonPart,
-                    isHidden: true,
-                    timestamp: new Date(),
-                  });
-
-                  if (jsonPart.includes('}')) {
-                    isInJsonBlock = false;
-                  }
-
-                  return [...msgs];
-                } else if (isInJsonBlock) {
-                  // Append to last hidden message
-                  let lastHiddenIndex = -1;
-                  for (let i = msgs.length - 1; i >= 0; i--) {
-                    if (msgs[i].isHidden) {
-                      lastHiddenIndex = i;
-                      break;
-                    }
-                  }
-
-                  if (lastHiddenIndex !== -1) {
-                    msgs[lastHiddenIndex].text += textChunk;
-                  } else {
-                    msgs.push({
-                      sender: 'agent',
-                      text: textChunk,
-                      isHidden: true,
-                      timestamp: new Date(),
-                    });
-                  }
-
-                  if (textChunk.includes('}')) {
-                    isInJsonBlock = false;
-                  }
-
-                  return [...msgs];
-                } else {
-                  const isJsonChunk =
-                    textChunk.trim().startsWith('{') ||
-                    textChunk.includes('"scenes"') ||
-                    textChunk.includes('"campaign_brief"') ||
-                    textChunk.includes('"template_name"') ||
-                    textChunk.includes('"campaign_name"') ||
-                    textChunk.includes('"session_id"') ||
-                    textChunk.includes('"workspace_id"') ||
-                    textChunk.includes('Campaign Name:') ||
-                    textChunk.includes('Strategic Context');
-
-                  const isWelcomeMessage =
-                    textChunk.includes('Path A: Bespoke Creative') ||
-                    textChunk.includes('Path B: Use a Professional Template');
-
-                  if (isJsonChunk && !isWelcomeMessage) {
-                    isInJsonBlock = true;
-                    msgs.push({
-                      sender: 'agent',
-                      text: textChunk,
-                      isHidden: true,
-                      timestamp: new Date(),
-                    });
-                    if (textChunk.includes('}')) {
-                      isInJsonBlock = false;
-                    }
-                  } else if (
-                    agentMessageIndex === -1 ||
-                    msgs[agentMessageIndex].asset
-                  ) {
-                    msgs.push({
-                      sender: 'agent',
-                      text: textChunk
-                        .replace(/\[System Note:[\s\S]*?(?:\]|$)/g, '')
-                        .trim(),
-                      rawText: textChunk,
-                      timestamp: new Date(),
-                    });
-                    agentMessageIndex = msgs.length - 1;
-                    lastInvocationId = currentInvocationId;
-                  } else {
-                    const fullRaw =
-                      (msgs[agentMessageIndex].rawText ||
-                        msgs[agentMessageIndex].text) + textChunk;
-                    msgs[agentMessageIndex].rawText = fullRaw;
-                    msgs[agentMessageIndex].text = fullRaw
-                      .replace(/\[System Note:[\s\S]*?(?:\]|$)/g, '')
-                      .trim();
-                  }
-                }
-                return [...msgs];
-              });
-              this.shouldScrollToBottom = true;
-            }
-            if (part.functionResponse?.response?.result) {
-              try {
-                const result = JSON.parse(
-                  part.functionResponse.response.result,
-                );
-                if (result.asset) {
-                  this.isTyping.set(false);
-                  this.chatMessages.update(msgs => {
-                    if (agentMessageIndex === -1) {
-                      msgs.push({
-                        sender: 'agent',
-                        text: '',
-                        asset: result.asset,
-                        timestamp: new Date(),
-                      });
-                      agentMessageIndex = msgs.length - 1;
-                    } else {
-                      msgs[agentMessageIndex].asset = result.asset;
-                    }
-                    // Broadcast newly generated asset to the main Workbench ONLY if it's a video
-                    if (result.asset.type === 'video') {
-                      this.agentChatService.videoGenerated$.next(result.asset);
-                    }
-                    return [...msgs];
-                  });
-                  this.shouldScrollToBottom = true;
-                } else if (result.clips && result.assets) {
-                  this.isTyping.set(false);
-                  this.agentChatService.isGeneratingStoryboard.set(false);
-                  this.agentChatService.videoGenerated$.next(result);
-                } else if (result.storyboard_id) {
-                  this.isTyping.set(false);
-                  this.agentChatService.isGeneratingStoryboard.set(false);
-                  this.storyboardService
-                    .getStoryboard(result.storyboard_id)
-                    .subscribe({
-                      next: storyboard => {
-                        if (storyboard.timeline_id) {
-                          this.timelineState.loadedTimelineId.set(undefined);
-                        }
-                        this.agentChatService.currentStoryboard.set(storyboard);
-                      },
-                      error: err => {
-                        console.error('Failed to fetch storyboard:', err);
-                        handleErrorSnackbar(
-                          this.snackBar,
-                          err,
-                          'Fetch Storyboard',
-                        );
-                      },
-                    });
-                } else {
-                  const extracted = this.extractStoryboardData(result);
-                  if (extracted) {
-                    this.isTyping.set(false);
-                    this.agentChatService.isGeneratingStoryboard.set(false);
-                  }
-                }
-              } catch (e) {
-                // eslint-disable-next-line no-empty
-              }
-            }
-          }
-        }
-      },
-      onError: err => {
-        console.error('SSE Error:', err);
-        if ((err as any)?.status === 503) {
-          console.warn(
-            'Backend returned 503: Agent Engine is likely missing AGENT_ENGINE_RESOURCE_NAME in environment.',
-          );
-          this.agentUnavailable.set(true);
-        } else {
-          handleErrorSnackbar(this.snackBar, err, 'Storyboard Generation');
-        }
-        this.isTyping.set(false);
-        this.agentChatService.isGeneratingStoryboard.set(false);
-      },
-      onClose: () => {
-        this.isTyping.set(false);
-        this.agentChatService.isGeneratingStoryboard.set(false);
-        if (agentMessageIndex !== -1) {
-          const currentMsgs = this.chatMessages();
-          const msg = currentMsgs[agentMessageIndex];
-          if (msg && msg.text) {
-            const extraction = this.parseAndExtractJSONs(msg.text);
-            if (extraction.assets.length > 0) {
-              currentMsgs[agentMessageIndex].asset = extraction.assets[0];
-              currentMsgs[agentMessageIndex].text = extraction.cleanText;
-              // Broadcast newly generated asset to the main Workbench ONLY if it's a video
-              if (extraction.assets[0].type === 'video') {
-                this.agentChatService.videoGenerated$.next(
-                  extraction.assets[0],
-                );
-              }
-            }
-            this.checkForStoryboardId(msg.text);
-            if (extraction.assets.length > 0) {
-              this.chatMessages.set([...currentMsgs]);
-            }
-          }
-        }
-
-        // Always query database on stream completion to get the latest storyboard & scenes
-        const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
-        if (workspaceId && this.currentSessionId) {
-          this.storyboardService
-            .getStoryboardForSession(workspaceId, this.currentSessionId)
-            .subscribe({
-              next: storyboards => {
-                if (storyboards && storyboards.length > 0) {
-                  if (storyboards[0].timeline_id) {
-                    this.timelineState.loadedTimelineId.set(undefined);
-                  }
-                  this.agentChatService.currentStoryboard.set(storyboards[0]);
-                  if (storyboards[0].timeline_id) {
-                    this.agentChatService.videoGenerated$.next(true);
-                  }
-                } else {
-                  this.agentChatService.videoGenerated$.next(true);
-                }
-              },
-              error: err => {
-                console.error(
-                  'Failed to fetch storyboard after stream completion:',
-                  err,
-                );
-                this.agentChatService.videoGenerated$.next(true);
-              },
-            });
-        } else {
-          this.agentChatService.videoGenerated$.next(true);
-        }
-      },
-    };
+    const callbacks = this.setupCallbacks();
     const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
     const partsParams: any[] = [];
     if (text && text.trim()) partsParams.push({text});
@@ -1216,6 +967,246 @@ export class ChatInterfaceComponent
       callbacks,
     );
     this.selectedImages.set([]);
+  }
+
+  handleGateDecision(submission: ApprovalGateSubmission) {
+    const gate = this.visibleApprovalGate() || this.activeApprovalGate();
+    if (!gate || !this.currentSessionId) return;
+
+    const decisionText =
+      submission.decision === 'accept'
+        ? '✅ Approved'
+        : submission.decision === 'modify'
+          ? `✏️ Requested Modifications: "${submission.guidance}"`
+          : `🔄 Requested Regeneration${
+              submission.guidance ? `: "${submission.guidance}"` : ''
+            }`;
+
+    const userMessage = {
+      sender: 'user',
+      text: decisionText,
+      timestamp: new Date(),
+    };
+    this.chatMessages.update(msgs => [...msgs, userMessage]);
+
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const partsParams = [
+      {
+        function_response: {
+          id: gate.callId,
+          name: gate.toolName,
+          response: {
+            decision: submission.decision,
+            guidance: submission.guidance || '',
+          },
+        },
+      },
+    ];
+
+    this.activeApprovalGate.set(null);
+    this.isTyping.set(true);
+    if (this.currentAgent === 'ads_x') {
+      this.agentChatService.isGeneratingStoryboard.set(true);
+    }
+    this.shouldScrollToBottom = true;
+
+    const callbacks = this.setupCallbacks();
+    void this.agentChatService.sendMessage(
+      this.currentSessionId,
+      partsParams,
+      workspaceId,
+      callbacks,
+    );
+  }
+
+  private extractGateFromEvent(event: any): ApprovalGateInfo | null {
+    if (!event) return null;
+    const approvalFunctions = new Set([
+      'await_strategy_approval',
+      'await_storyboard_approval',
+      'await_final_cut_approval',
+    ]);
+
+    const content = event.content || event.raw_event?.content || {};
+    const parts = content.parts || [];
+
+    for (const part of parts) {
+      const fc =
+        part.functionCall ||
+        part.function_call ||
+        part.toolCall ||
+        part.tool_call;
+      if (fc && approvalFunctions.has(fc.name)) {
+        const callId =
+          fc.id ||
+          (event.long_running_tool_ids && event.long_running_tool_ids[0]) ||
+          (event.longRunningToolIds && event.longRunningToolIds[0]) ||
+          '';
+        return {
+          callId,
+          toolName: fc.name,
+          stage: fc.name.includes('strategy')
+            ? 'strategy'
+            : fc.name.includes('storyboard')
+              ? 'storyboard'
+              : 'final_cut',
+          options: ['accept', 'modify', 'regenerate'],
+        };
+      }
+
+      const fr =
+        part.functionResponse ||
+        part.function_response ||
+        part.toolResponse ||
+        part.tool_response;
+      if (fr && approvalFunctions.has(fr.name)) {
+        let result = fr.response?.result || fr.response;
+        if (typeof result === 'string') {
+          try {
+            result = JSON.parse(result);
+          } catch (e) {
+            // ignore
+          }
+        }
+        if (
+          result &&
+          (typeof result === 'object' ||
+            result.status === 'awaiting_human_review' ||
+            result.message)
+        ) {
+          return {
+            callId: fr.id || '',
+            toolName: fr.name,
+            stage:
+              result.stage ||
+              (fr.name.includes('strategy')
+                ? 'strategy'
+                : fr.name.includes('storyboard')
+                  ? 'storyboard'
+                  : 'final_cut'),
+            payload: result,
+            options: result.expected_response?.decision || [
+              'accept',
+              'modify',
+              'regenerate',
+            ],
+          };
+        }
+      }
+    }
+
+    const lrtIds = event.long_running_tool_ids || event.longRunningToolIds;
+    const approvalFn = event.approval_function || event.approvalFunction;
+    if (approvalFn && lrtIds && lrtIds.length > 0) {
+      return {
+        callId: lrtIds[0],
+        toolName: approvalFn,
+        stage: approvalFn.includes('strategy')
+          ? 'strategy'
+          : approvalFn.includes('storyboard')
+            ? 'storyboard'
+            : 'final_cut',
+        options: ['accept', 'modify', 'regenerate'],
+      };
+    }
+
+    return null;
+  }
+
+  private checkUnresolvedGate(
+    events: any[],
+    state?: any,
+  ): ApprovalGateInfo | null {
+    if (!events || events.length === 0) return null;
+
+    let lastGateIndex = -1;
+    let lastGateInfo: ApprovalGateInfo | null = null;
+
+    for (let i = 0; i < events.length; i++) {
+      const gate = this.extractGateFromEvent(events[i]);
+      if (gate) {
+        lastGateIndex = i;
+        if (
+          lastGateInfo !== null &&
+          (gate.toolName === lastGateInfo.toolName || !gate.callId)
+        ) {
+          lastGateInfo = {
+            callId: gate.callId || lastGateInfo.callId,
+            toolName: gate.toolName || lastGateInfo.toolName,
+            stage: gate.stage || lastGateInfo.stage,
+            options: gate.options || lastGateInfo.options,
+            payload: gate.payload || lastGateInfo.payload,
+          };
+        } else {
+          lastGateInfo = gate;
+        }
+      }
+    }
+
+    if (lastGateIndex === -1 || !lastGateInfo) return null;
+
+    // Check if session state shows the stage is already decided
+    if (state) {
+      if (lastGateInfo.stage === 'strategy' && state.strategy_decision)
+        return null;
+      if (lastGateInfo.stage === 'storyboard' && state.storyboard_decision)
+        return null;
+      if (lastGateInfo.stage === 'final_cut' && state.final_cut_decision)
+        return null;
+      if (
+        state.stage_completed === 'generation' ||
+        state.stage_completed === 'complete'
+      )
+        return null;
+    }
+
+    // Check if any event after the gate resolved it
+    const resolvingToolNames = new Set([
+      'record_strategy_decision',
+      'record_storyboard_decision',
+      'record_final_cut_decision',
+      'storyboard_agent_creative',
+      'director_agent',
+      'generate_scene_media',
+      'stitch_video_timeline',
+      'render_clip',
+    ]);
+
+    for (let i = lastGateIndex + 1; i < events.length; i++) {
+      const ev = events[i];
+      const content = ev.content || ev.raw_event?.content || {};
+      const parts = content.parts || [];
+      for (const p of parts) {
+        const fc =
+          p.functionCall || p.function_call || p.toolCall || p.tool_call;
+        const fr =
+          p.functionResponse ||
+          p.function_response ||
+          p.toolResponse ||
+          p.tool_response;
+        if (
+          (ev.author === 'user' &&
+            fr &&
+            (fr.name === lastGateInfo.toolName ||
+              fr.id === lastGateInfo.callId)) ||
+          (fc && resolvingToolNames.has(fc.name)) ||
+          (fr && resolvingToolNames.has(fr.name))
+        ) {
+          return null;
+        }
+      }
+      const delta =
+        ev.actions?.state_delta || ev.raw_event?.actions?.state_delta || {};
+      if (
+        (lastGateInfo.stage === 'strategy' && delta.strategy_decision) ||
+        (lastGateInfo.stage === 'storyboard' && delta.storyboard_decision) ||
+        (lastGateInfo.stage === 'final_cut' && delta.final_cut_decision)
+      ) {
+        return null;
+      }
+    }
+
+    return lastGateInfo;
   }
 
   private resumePolling(sessionId: string) {
@@ -1322,10 +1313,68 @@ export class ChatInterfaceComponent
   private setupCallbacks(): SSECallbacks<any> {
     let agentMessageIndex = -1;
     let lastInvocationId = '';
-    let isInJsonBlock = false;
+    const isInJsonBlock = false;
 
     return {
       onMessage: (data: any) => {
+        const gate = this.extractGateFromEvent(data);
+        if (gate) {
+          this.activeApprovalGate.update(existing => {
+            if (!existing) return gate;
+            return {
+              ...existing,
+              ...gate,
+              callId: gate.callId || existing.callId || '',
+              payload: gate.payload || existing.payload,
+            };
+          });
+          this.isTyping.set(false);
+          this.agentChatService.isGeneratingStoryboard.set(false);
+        } else if (this.activeApprovalGate()) {
+          const resolvingToolNames = new Set([
+            'record_strategy_decision',
+            'record_storyboard_decision',
+            'record_final_cut_decision',
+            'storyboard_agent_creative',
+            'director_agent',
+            'generate_scene_media',
+            'stitch_video_timeline',
+            'render_clip',
+          ]);
+          const parts =
+            data.content?.parts || data.raw_event?.content?.parts || [];
+          let shouldClear = false;
+          for (const p of parts) {
+            const fc =
+              p.functionCall || p.function_call || p.toolCall || p.tool_call;
+            const fr =
+              p.functionResponse ||
+              p.function_response ||
+              p.toolResponse ||
+              p.tool_response;
+            if (
+              (fc && resolvingToolNames.has(fc.name)) ||
+              (fr && resolvingToolNames.has(fr.name))
+            ) {
+              shouldClear = true;
+              break;
+            }
+          }
+          const delta =
+            data.actions?.state_delta ||
+            data.raw_event?.actions?.state_delta ||
+            {};
+          if (
+            delta.strategy_decision ||
+            delta.storyboard_decision ||
+            delta.final_cut_decision
+          ) {
+            shouldClear = true;
+          }
+          if (shouldClear) {
+            this.activeApprovalGate.set(null);
+          }
+        }
         if (data.actions?.storyboard) {
           this.isTyping.set(false);
           this.agentChatService.isGeneratingStoryboard.set(false);
@@ -1339,121 +1388,54 @@ export class ChatInterfaceComponent
             if (part.text) {
               const textChunk = part.text;
               this.isTyping.set(false);
-              const jsonStartIndex = textChunk.indexOf('{\n');
+
+              // Only hide if the chunk is explicitly a raw JSON data block payload
+              const trimmed = textChunk.trim();
+              const isRawJson =
+                (trimmed.startsWith('{') &&
+                  (trimmed.includes('"scenes"') ||
+                    trimmed.includes('"campaign_brief"') ||
+                    trimmed.includes('"template_name"') ||
+                    trimmed.includes('"stage_recipe"'))) ||
+                (trimmed.startsWith('```json') &&
+                  (trimmed.includes('"scenes"') ||
+                    trimmed.includes('"campaign_brief"')));
 
               this.chatMessages.update(msgs => {
-                if (jsonStartIndex !== -1) {
-                  isInJsonBlock = true;
-                  const textPart = textChunk.substring(0, jsonStartIndex);
-                  const jsonPart = textChunk.substring(jsonStartIndex);
-
-                  // Handle text part if not empty
-                  if (textPart.trim()) {
-                    if (
-                      agentMessageIndex === -1 ||
-                      msgs[agentMessageIndex].asset
-                    ) {
-                      msgs.push({
-                        sender: 'agent',
-                        text: textPart,
-                        timestamp: new Date(),
-                      });
-                      agentMessageIndex = msgs.length - 1;
-                      lastInvocationId = currentInvocationId;
-                    } else {
-                      msgs[agentMessageIndex].text += textPart;
-                    }
-                  }
-
-                  // Create a NEW hidden message for JSON data
+                if (isRawJson) {
                   msgs.push({
                     sender: 'agent',
-                    text: jsonPart,
+                    text: textChunk,
                     isHidden: true,
                     timestamp: new Date(),
                   });
-
-                  if (jsonPart.includes('}')) {
-                    isInJsonBlock = false;
-                  }
-
                   return [...msgs];
-                } else if (isInJsonBlock) {
-                  // Append to last hidden message
-                  let lastHiddenIndex = -1;
-                  for (let i = msgs.length - 1; i >= 0; i--) {
-                    if (msgs[i].isHidden) {
-                      lastHiddenIndex = i;
-                      break;
-                    }
-                  }
+                }
 
-                  if (lastHiddenIndex !== -1) {
-                    msgs[lastHiddenIndex].text += textChunk;
-                  } else {
-                    msgs.push({
-                      sender: 'agent',
-                      text: textChunk,
-                      isHidden: true,
-                      timestamp: new Date(),
-                    });
-                  }
-
-                  if (textChunk.includes('}')) {
-                    isInJsonBlock = false;
-                  }
-
-                  return [...msgs];
-                } else {
-                  const isJsonChunk =
-                    textChunk.trim().startsWith('{') ||
-                    textChunk.includes('"scenes"') ||
-                    textChunk.includes('"campaign_brief"') ||
-                    textChunk.includes('"template_name"') ||
-                    textChunk.includes('"campaign_name"') ||
-                    textChunk.includes('"session_id"') ||
-                    textChunk.includes('"workspace_id"') ||
-                    textChunk.includes('Campaign Name:') ||
-                    textChunk.includes('Strategic Context');
-
-                  const isWelcomeMessage =
-                    textChunk.includes('Path A: Bespoke Creative') ||
-                    textChunk.includes('Path B: Use a Professional Template');
-
-                  if (isJsonChunk && !isWelcomeMessage) {
-                    isInJsonBlock = true;
-                    msgs.push({
-                      sender: 'agent',
-                      text: textChunk,
-                      isHidden: true,
-                      timestamp: new Date(),
-                    });
-                    if (textChunk.includes('}')) {
-                      isInJsonBlock = false;
-                    }
-                  } else if (
-                    agentMessageIndex === -1 ||
-                    msgs[agentMessageIndex].asset
-                  ) {
-                    msgs.push({
-                      sender: 'agent',
-                      text: textChunk
-                        .replace(/\[System Note:[\s\S]*?(?:\]|$)/g, '')
-                        .trim(),
-                      rawText: textChunk,
-                      timestamp: new Date(),
-                    });
-                    agentMessageIndex = msgs.length - 1;
-                    lastInvocationId = currentInvocationId;
-                  } else {
-                    const fullRaw =
-                      (msgs[agentMessageIndex].rawText ||
-                        msgs[agentMessageIndex].text) + textChunk;
-                    msgs[agentMessageIndex].rawText = fullRaw;
-                    msgs[agentMessageIndex].text = fullRaw
+                if (
+                  agentMessageIndex === -1 ||
+                  msgs[agentMessageIndex]?.asset ||
+                  msgs[agentMessageIndex]?.sender !== 'agent' ||
+                  msgs[agentMessageIndex]?.isHidden
+                ) {
+                  msgs.push({
+                    sender: 'agent',
+                    text: textChunk
                       .replace(/\[System Note:[\s\S]*?(?:\]|$)/g, '')
-                      .trim();
-                  }
+                      .trim(),
+                    rawText: textChunk,
+                    timestamp: new Date(),
+                  });
+                  agentMessageIndex = msgs.length - 1;
+                  lastInvocationId = currentInvocationId;
+                } else {
+                  const fullRaw =
+                    (msgs[agentMessageIndex].rawText ||
+                      msgs[agentMessageIndex].text) + textChunk;
+                  msgs[agentMessageIndex].rawText = fullRaw;
+                  msgs[agentMessageIndex].text = fullRaw
+                    .replace(/\[System Note:[\s\S]*?(?:\]|$)/g, '')
+                    .trim();
                 }
                 return [...msgs];
               });

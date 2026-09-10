@@ -53,7 +53,7 @@ describe('VideoStateService', () => {
     const state = service.getState();
     expect(state.prompt).toBe('');
     expect(state.aspectRatio).toBe('16:9');
-    expect(state.model).toBe('gemini-omni-flash-preview');
+    expect(state.model).toBe('gemini-omni-1.1-flash-preview');
     expect(state.numberOfMedia).toBe(1);
   });
 

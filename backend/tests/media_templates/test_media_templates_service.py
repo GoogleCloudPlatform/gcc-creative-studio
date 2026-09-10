@@ -74,7 +74,7 @@ def fixture_service():
 @pytest.mark.anyio
 async def test_enrich_source_asset_link(service):
     link = SourceAssetLink(asset_id=123, role="input")
-    asset_doc = MagicMock(gcs_uri="gs://b/a.jpg")
+    asset_doc = MagicMock(gcs_uri="gs://b/a.jpg", mime_type="image/jpeg")
     service.mock_source_asset_repo.get_by_id.return_value = asset_doc
     service.mock_iam_signer.generate_presigned_url.return_value = (
         "https://signed.url"

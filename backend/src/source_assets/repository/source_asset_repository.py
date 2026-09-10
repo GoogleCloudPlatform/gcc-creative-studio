@@ -54,6 +54,23 @@ class SourceAssetRepository(BaseRepository[SourceAsset, SourceAssetModel]):
             return None
         return self.schema.model_validate(asset)
 
+    async def find_by_external_url(
+        self,
+        user_id: int,
+        external_url: str,
+    ) -> SourceAssetModel | None:
+        """Finds a user asset by its external URL to prevent duplicates."""
+        result = await self.db.execute(
+            select(self.model)
+            .where(self.model.user_id == user_id)
+            .where(self.model.external_url == external_url)
+            .limit(1),
+        )
+        asset = result.scalar_one_or_none()
+        if not asset:
+            return None
+        return self.schema.model_validate(asset)
+
     async def query(
         self,
         search_dto: SourceAssetSearchDto,

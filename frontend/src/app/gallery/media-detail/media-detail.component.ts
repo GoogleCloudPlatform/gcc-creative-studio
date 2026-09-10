@@ -146,6 +146,10 @@ export class MediaDetailComponent implements OnDestroy {
     );
   }
 
+  get isYoutubeVideo(): boolean {
+    return (this.mediaItem as any)?.metadata?.assetType === 'youtube_video';
+  }
+
   constructor(
     private route: ActivatedRoute,
     private router: Router,

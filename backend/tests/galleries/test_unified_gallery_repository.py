@@ -144,3 +144,41 @@ async def test_query_tags_and_deleted(mock_db):
     assert res.count == 1
     assert len(res.data) == 1
     assert mock_db.execute.call_count == 2
+
+
+@pytest.mark.anyio
+async def test_query_include_external(mock_db):
+    repo = UnifiedGalleryRepository(db=mock_db)
+
+    mock_count_result = MagicMock()
+    mock_count_result.scalar_one.return_value = 1
+    mock_data_result = MagicMock()
+    mock_item = MockItem(
+        id=3,
+        workspace_id=10,
+        user_id=1,
+        created_at=datetime.datetime.now(),
+        item_type="source_asset",
+        status="completed",
+        gcs_uris=[],
+        thumbnail_uris=[],
+        deleted_at=None,
+        metadata_={
+            "mime_type": "video/mp4",
+            "external_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        },
+    )
+    mock_data_result.scalars.return_value.all.return_value = [mock_item]
+    mock_db.execute.side_effect = [mock_count_result, mock_data_result]
+
+    search_dto = GallerySearchDto(
+        workspace_id=10,
+        include_external=True,
+        limit=10,
+        offset=0,
+    )
+
+    res = await repo.query(search_dto)
+    assert res.count == 1
+    assert len(res.data) == 1
+    assert mock_db.execute.call_count == 2

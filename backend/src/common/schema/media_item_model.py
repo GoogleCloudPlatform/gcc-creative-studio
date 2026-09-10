@@ -83,6 +83,9 @@ class AssetRoleEnum(str, Enum):
     )
     VIDEO_REFERENCE = "video_reference"  # Video used as omni input reference
     AUDIO_REFERENCE = "audio_reference"  # Audio used as omni input reference
+    YOUTUBE_VIDEO_REFERENCE = (
+        "youtube_video_reference"  # YouTube video used as input reference
+    )
 
 
 class SourceAssetLink(BaseModel):

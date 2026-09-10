@@ -129,6 +129,14 @@ export class GalleryCardComponent implements OnDestroy {
     }
   }
 
+  get isYoutubeVideo(): boolean {
+    const meta = this.item?.metadata as any;
+    return (
+      meta?.assetType === 'youtube_video' ||
+      meta?.asset_type === 'youtube_video'
+    );
+  }
+
   openAssignTagsDialog(event: Event): void {
     event.stopPropagation();
     event.preventDefault();
