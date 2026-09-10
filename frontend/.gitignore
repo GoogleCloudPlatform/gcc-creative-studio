@@ -5,6 +5,8 @@
 !environment.ts
 !environment.prod.ts
 proxy.conf.json
+public/assets/config.json
+
 
 # Compiled output
 /dist

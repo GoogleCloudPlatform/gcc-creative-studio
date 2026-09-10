@@ -103,7 +103,7 @@ services:
   pre-commit:
     build:
       context: .
-      dockerfile: infra/pre-commit/Dockerfile.pre-commit
+      dockerfile: infrastructure/pre-commit/Dockerfile.pre-commit
     container_name: creative-studio-pre-commit
     volumes:
       - .:/app
