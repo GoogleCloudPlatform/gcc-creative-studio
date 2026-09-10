@@ -1006,11 +1006,11 @@ steps:
       - |
         pip install .
         python scripts/deploy_to_agent_platform.py --project=\$PROJECT_ID --service-account=\${_AGENT_SA_EMAIL}
-    secretEnv: ['AGENT_ENGINE_USER_AUTH_TOKEN_KEY']
+    secretEnv: ['CREATIVE_STUDIO_USER_AUTH_TOKEN_KEY']
 availableSecrets:
   secretManager:
   - versionName: projects/\$PROJECT_ID/secrets/agent_engine_user_auth_token_key/versions/latest
-    env: 'AGENT_ENGINE_USER_AUTH_TOKEN_KEY'
+    env: 'CREATIVE_STUDIO_USER_AUTH_TOKEN_KEY'
 serviceAccount: 'projects/\$PROJECT_ID/serviceAccounts/\${_TRIG_SA_EMAIL}'
 options:
   logging: CLOUD_LOGGING_ONLY
