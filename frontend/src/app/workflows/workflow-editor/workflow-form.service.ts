@@ -59,7 +59,10 @@ export class WorkflowFormService {
   initForm(data?: WorkflowModel | WorkflowBase): FormGroup {
     this.workflowForm = this.fb.group({
       id: [data && 'id' in data ? data.id : ''],
-      name: [data?.name || 'Untitled Workflow', Validators.required],
+      name: [
+        data?.name ?? 'Untitled Workflow',
+        [Validators.required, Validators.pattern(/.*\S.*/)],
+      ],
       description: [data?.description || ''],
       userId: [data && 'userId' in data ? data.userId : ''],
       // User Input Step is special, so we initialize it specifically
