@@ -26,6 +26,12 @@ from src.workflows.schema.workflow_model import (
     WorkflowCreateDto,
     WorkflowExecuteDto,
     WorkflowModel,
+    WorkflowValidateDto,
+    WorkflowValidationResponseDto,
+)
+from src.workflows.schema.workflow_template_model import (
+    WorkflowTemplateCreateDto,
+    WorkflowTemplateModel,
 )
 from src.workflows.workflow_service import WorkflowService
 
@@ -43,6 +49,88 @@ router = APIRouter(
         )
     ],
 )
+
+
+@router.get("/templates", response_model=list[WorkflowTemplateModel])
+async def list_templates(
+    current_user: UserModel = Depends(get_current_user),
+    workflow_service: WorkflowService = Depends(),
+):
+    """Lists all workflow templates created by the current user."""
+    return await workflow_service.list_templates(user_id=current_user.id)
+
+
+@router.post(
+    "/templates",
+    response_model=WorkflowTemplateModel,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_template(
+    template_data: WorkflowTemplateCreateDto,
+    current_user: UserModel = Depends(get_current_user),
+    workflow_service: WorkflowService = Depends(),
+):
+    """Creates a new workflow template."""
+    try:
+        return await workflow_service.create_template(
+            template_data,
+            current_user,
+        )
+    except ValueError as e:
+        status_code = (
+            status.HTTP_409_CONFLICT
+            if "already exists" in str(e).lower()
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(
+            status_code=status_code,
+            detail=str(e),
+        )
+
+
+@router.delete(
+    "/templates/{template_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_template(
+    template_id: str,
+    current_user: UserModel = Depends(get_current_user),
+    workflow_service: WorkflowService = Depends(),
+):
+    """Deletes a workflow template created by the current user."""
+    deleted = await workflow_service.delete_template(
+        user_id=current_user.id,
+        template_id=template_id,
+    )
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Template with ID '{template_id}' not found.",
+        )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/validate",
+    response_model=WorkflowValidationResponseDto,
+    status_code=status.HTTP_200_OK,
+)
+async def validate_workflow(
+    workflow_data: WorkflowValidateDto,
+    current_user: UserModel = Depends(get_current_user),
+    workflow_service: WorkflowService = Depends(),
+):
+    """Validates a workflow structure without saving or deploying it."""
+    try:
+        return workflow_service.validate_workflow(
+            workflow_data,
+            current_user,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
 
 
 @router.post("/search", response_model=PaginationResponseDto[WorkflowModel])

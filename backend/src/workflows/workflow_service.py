@@ -43,15 +43,23 @@ from src.workflows.repository.workflow_repository import WorkflowRepository
 from src.workflows.repository.workflow_run_repository import (
     WorkflowRunRepository,
 )
+from src.workflows.repository.workflow_template_repository import (
+    WorkflowTemplateRepository,
+)
 from src.workflows.schema.workflow_model import (
     NodeTypes,
     StepOutputReference,
+    WorkflowBase,
     WorkflowCreateDto,
     WorkflowModel,
 )
 from src.workflows.schema.workflow_run_model import (
     WorkflowRunModel,
     WorkflowRunStatusEnum,
+)
+from src.workflows.schema.workflow_template_model import (
+    WorkflowTemplateCreateDto,
+    WorkflowTemplateModel,
 )
 from src.workflows.workflow_constants import IMAGE_MODE_ALLOWED_INPUTS
 from src.workflows.workflow_utils import interpolate_prompt_variables
@@ -70,11 +78,13 @@ class WorkflowService:
         workflow_repository: WorkflowRepository = Depends(),
         workflow_run_repository: WorkflowRunRepository = Depends(),
         source_asset_service: SourceAssetService = Depends(),
+        workflow_template_repository: WorkflowTemplateRepository = Depends(),
     ):
         self.imagen_service = ImagenService()
         self.workflow_repository = workflow_repository
         self.workflow_run_repository = workflow_run_repository
         self.source_asset_service = source_asset_service
+        self.workflow_template_repository = workflow_template_repository
 
     def _generate_workflow_yaml(
         self,
@@ -200,6 +210,26 @@ class WorkflowService:
         yaml_output = yaml.dump(gcp_workflow, indent=2)
 
         return yaml_output
+
+    def validate_workflow(
+        self,
+        workflow_dto: WorkflowBase,
+        user: UserModel,
+    ) -> dict[str, Any]:
+        """Validates workflow definition and steps structure without persisting to database or GCP."""
+        transient_workflow = WorkflowModel(
+            id="validation-temp",
+            user_id=user.id,
+            name=workflow_dto.name,
+            description=workflow_dto.description,
+            steps=workflow_dto.steps,
+        )
+        try:
+            self._generate_workflow_yaml(transient_workflow)
+        except Exception as e:
+            logger.error("Workflow validation failed: %s", e)
+            raise ValueError(f"Invalid workflow structure: {str(e)}")
+        return {"valid": True, "message": "Workflow structure is valid."}
 
     def _create_gcp_workflow(self, source_contents: str, workflow_id: str):
         client = workflows_v1.WorkflowsClient()
@@ -971,3 +1001,62 @@ class WorkflowService:
             "executions": executions,
             "next_page_token": current_page.next_page_token,
         }
+
+    async def create_template(
+        self,
+        template_dto: WorkflowTemplateCreateDto,
+        user: UserModel,
+    ) -> WorkflowTemplateModel:
+        """Creates a new workflow template, ensuring the name is unique per user."""
+        existing = await self.workflow_template_repository.get_by_user_and_name(
+            user.id, template_dto.name
+        )
+        if existing:
+            raise ValueError(
+                f"A template named '{template_dto.name}' already exists. Please choose a unique name."
+            )
+
+        template_id = f"tmpl-{uuid.uuid4()}"
+        template_model = WorkflowTemplateModel(
+            id=template_id,
+            user_id=user.id,
+            name=template_dto.name.strip(),
+            description=template_dto.description,
+            steps=template_dto.steps,
+        )
+
+        # Validate workflow steps structure by generating GCP workflow YAML representation.
+        # This guarantees that the template is a correct working version before saving.
+        self.validate_workflow(template_dto, user)
+
+        return await self.workflow_template_repository.create(template_model)
+
+    async def list_templates(
+        self,
+        user_id: int,
+    ) -> list[WorkflowTemplateModel]:
+        """Retrieves all templates created by the user."""
+        return await self.workflow_template_repository.list_by_user(user_id)
+
+    async def get_template(
+        self,
+        template_id: str,
+        user_id: int,
+    ) -> WorkflowTemplateModel | None:
+        """Retrieves a single template if owned by the user."""
+        template = await self.workflow_template_repository.get_by_id(
+            template_id
+        )
+        if template and template.user_id == user_id:
+            return template
+        return None
+
+    async def delete_template(
+        self,
+        template_id: str,
+        user_id: int,
+    ) -> bool:
+        """Deletes a template if owned by the user."""
+        return await self.workflow_template_repository.delete_by_id_and_user(
+            template_id, user_id
+        )

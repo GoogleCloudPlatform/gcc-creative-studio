@@ -1192,3 +1192,71 @@ class TestUpdateAndUpdateMethods:
         assert result is True
         mock_workflow_repo.delete.assert_called_once()
         mock_client.delete_workflow.assert_called_once()
+
+
+class TestWorkflowValidation:
+    """Tests for validate_workflow method."""
+
+    def test_validate_workflow_success(
+        self,
+        workflow_service,
+        sample_workflow_create_dto,
+        sample_user,
+    ):
+        result = workflow_service.validate_workflow(
+            sample_workflow_create_dto,
+            sample_user,
+        )
+        assert result["valid"] is True
+        assert "valid" in result["message"].lower()
+
+    def test_validate_workflow_cycle_raises_value_error(
+        self,
+        workflow_service,
+        sample_user,
+    ):
+        cycle_dto = WorkflowCreateDto(
+            name="Cyclic",
+            steps=[
+                GenerateTextStep(
+                    step_id="step_a",
+                    type=NodeTypes.GENERATE_TEXT,
+                    inputs=GenerateTextInputs(
+                        prompt=StepOutputReference(
+                            step="step_b", output="generated_text"
+                        )
+                    ),
+                    settings=GenerateTextSettings(
+                        model="gemini-1.5", temperature=0.7
+                    ),
+                ),
+                GenerateTextStep(
+                    step_id="step_b",
+                    type=NodeTypes.GENERATE_TEXT,
+                    inputs=GenerateTextInputs(
+                        prompt=StepOutputReference(
+                            step="step_a", output="generated_text"
+                        )
+                    ),
+                    settings=GenerateTextSettings(
+                        model="gemini-1.5", temperature=0.7
+                    ),
+                ),
+            ],
+        )
+        with pytest.raises(ValueError, match="Cycle detected"):
+            workflow_service.validate_workflow(cycle_dto, sample_user)
+
+    def test_validate_workflow_does_not_persist_or_call_gcp(
+        self,
+        workflow_service,
+        sample_workflow_create_dto,
+        sample_user,
+        mock_workflow_repo,
+    ):
+        workflow_service.validate_workflow(
+            sample_workflow_create_dto,
+            sample_user,
+        )
+        mock_workflow_repo.create.assert_not_called()
+        mock_workflow_repo.update.assert_not_called()

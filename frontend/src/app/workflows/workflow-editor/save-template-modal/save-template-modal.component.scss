@@ -1,0 +1,145 @@
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+.save-template-modal-container {
+  background: #202124;
+  color: #E3E3E3;
+  font-family: 'Google Sans', sans-serif;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-width: 440px;
+  max-width: 520px;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+
+  .title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+
+    .title-icon {
+      color: #8ab4f8;
+      font-size: 1.4rem;
+      width: 1.4rem;
+      height: 1.4rem;
+    }
+
+    .dialog-title {
+      font-size: 1.2rem;
+      font-weight: 500;
+      margin: 0;
+      color: #F8F9FA;
+      font-family: 'Google Sans', sans-serif;
+    }
+  }
+
+  .close-btn {
+    color: #8E918F;
+    &:hover {
+      color: #FFFFFF;
+    }
+  }
+}
+
+.modal-content {
+  padding: 1.5rem !important;
+
+  .modal-subtitle {
+    font-size: 0.88rem;
+    line-height: 1.5;
+    color: #C4C7C5;
+    font-family: 'Google Sans Text', sans-serif;
+    margin: 0 0 1.25rem;
+  }
+}
+
+.error-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.65rem 1rem;
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #fca5a5;
+  font-size: 0.85rem;
+  font-family: 'Google Sans Text', sans-serif;
+  margin-bottom: 1.25rem;
+
+  mat-icon {
+    font-size: 1.2rem;
+    color: #f87171;
+  }
+}
+
+.template-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+
+  .form-field {
+    width: 100%;
+  }
+}
+
+.modal-actions {
+  padding: 1rem 1.5rem 1.25rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  gap: 0.75rem;
+
+  .cancel-btn {
+    color: #C4C7C5;
+    font-family: 'Google Sans Text', sans-serif;
+    &:hover {
+      color: #FFFFFF;
+    }
+  }
+
+  .save-btn {
+    background: linear-gradient(180deg, rgba(11, 87, 208, 0.85) 0%, rgba(79, 160, 255, 0.6) 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 9999px;
+    font-weight: 500;
+    font-family: 'Google Sans Text', sans-serif;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: #FFFFFF !important;
+    box-shadow: 0 4px 12px rgba(26, 115, 232, 0.25);
+    transition: all 0.2s ease-in-out;
+
+    &:hover:not([disabled]) {
+      background: linear-gradient(180deg, rgba(11, 87, 208, 0.95) 0%, rgba(79, 160, 255, 0.75) 100%) !important;
+      box-shadow: 0 6px 18px rgba(26, 115, 232, 0.45);
+    }
+
+    &[disabled] {
+      opacity: 0.4;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+  }
+}

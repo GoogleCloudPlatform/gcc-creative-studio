@@ -16,13 +16,14 @@
 
 import {
   AfterViewInit,
+  ChangeDetectorRef,
   Component,
   OnDestroy,
   OnInit,
   ViewChild,
 } from '@angular/core';
 import {MatDialog} from '@angular/material/dialog';
-import {MatPaginator, PageEvent} from '@angular/material/paginator';
+import {MatPaginator} from '@angular/material/paginator';
 import {MatSort} from '@angular/material/sort';
 import {MatTableDataSource} from '@angular/material/table';
 import {Router} from '@angular/router';
@@ -79,6 +80,7 @@ export class WorkflowListComponent implements OnInit, OnDestroy, AfterViewInit {
     private router: Router,
     public dialog: MatDialog,
     public authService: AuthService,
+    private cdr: ChangeDetectorRef,
   ) {}
 
   ngOnInit(): void {
@@ -105,12 +107,13 @@ export class WorkflowListComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   ngAfterViewInit() {
-    this.dataSource.sort = this.sort;
-    this.dataSource.paginator = this.paginator;
-  }
-
-  handlePageEvent(event: PageEvent) {
-    // This will be implemented once pagination is handled in the component
+    if (this.sort) {
+      this.dataSource.sort = this.sort;
+    }
+    if (this.paginator) {
+      this.dataSource.paginator = this.paginator;
+    }
+    this.cdr.detectChanges();
   }
 
   onFilterValueChange(value: string): void {
@@ -149,6 +152,7 @@ export class WorkflowListComponent implements OnInit, OnDestroy, AfterViewInit {
     this.destroy$.next();
     this.destroy$.complete();
     this.subscriptions.unsubscribe();
+    this.dataSource.disconnect();
   }
 
   public getWorkflowRunStatusChipClass(status: WorkflowRunStatusEnum): string {
