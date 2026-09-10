@@ -14,29 +14,15 @@
  * limitations under the License.
  */
 
-/* Glassmorphism Card Style */
-@mixin glass-card {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  backdrop-filter: blur(12px);
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-}
-
-:host {
-  display: block;
-  position: absolute;
-}
-
 .step-card {
-  @include glass-card;
-  background-color: var(--card-bg, #1e1e1e);
+  background-color: var(--card-bg);
   border-radius: 0.5rem;
-  border: 1px solid var(--border-color, #333);
+  border: 1px solid var(--border-color);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-  overflow: visible;
-  width: 400px;
-  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  overflow: hidden;
+  transition:
+    border-color 0.3s ease,
+    box-shadow 0.3s ease;
 
   &:hover {
     border-color: #555;
@@ -49,79 +35,53 @@
   }
 
   /* Red */
-  &.generate-text {
+  &.generate-text,
+  &.generate_text {
     border-top: 4px solid #339af0;
   }
 
-  /* Blue */
-  &.generate-image {
+  &.generate-image,
+  &.generate_image {
     border-top: 4px solid #51cf66;
   }
 
-  /* Green */
-  &.edit-image {
+  &.edit-image,
+  &.edit_image {
     border-top: 4px solid #ff922b;
   }
 
-  /* Orange */
-  &.generate-video {
+  &.generate-video,
+  &.generate_video {
     border-top: 4px solid #fcc419;
   }
 
-  /* Purple */
-  &.crop-image {
+  &.crop-image,
+  &.crop_image {
     border-top: 4px solid #22b8cf;
   }
 
-  /* Cyan */
-  &.virtual-try-on {
+  &.virtual-try-on,
+  &.virtual_try_on {
     border-top: 4px solid #8b5cf6;
+  }
+
+  &.generate-audio,
+  &.generate_audio {
+    border-top: 4px solid #e040fb;
   }
 
   /* Purple */
 
   &.invalid-step {
     border-color: #f44336 !important;
-    box-shadow: 0 0 0 1px #f44336, 0 10px 30px rgba(244, 67, 54, 0.2) !important;
+    box-shadow:
+      0 0 0 1px #f44336,
+      0 10px 30px rgba(244, 67, 54, 0.2) !important;
 
     .step-header {
       background: rgba(244, 67, 54, 0.1);
     }
   }
-}
-
-/* Ports */
-.port-row {
-  display: flex;
-  align-items: center;
-}
-
-.port {
-  position: absolute;
-  width: 12px;
-  height: 12px;
-  background-color: #63b3ed;
-  border-radius: 50%;
-  cursor: crosshair;
-  z-index: 10;
-  border: 2px solid #2d3748;
-
-  &:hover {
-    background-color: #bee3f8;
-    transform: scale(1.2);
-  }
-}
-
-.input-port {
-  left: -24px;
-  top: 50%;
-  transform: translate(-50%, -50%);
-}
-
-.output-port {
-  right: -24px;
-  top: 50%;
-  transform: translate(-50%, -50%);
 }
 
 /* 1. Header Section */
@@ -132,8 +92,6 @@
   padding: 16px 24px;
   background: rgba(255, 255, 255, 0.03);
   border-bottom: 1px solid var(--border-color);
-  border-top-left-radius: 0.5rem;
-  border-top-right-radius: 0.5rem;
   cursor: move;
 
   .step-title {
@@ -267,49 +225,4 @@
     flex-wrap: wrap;
     gap: 16px;
   }
-}
-.port-type-chip {
-  position: absolute;
-  top: 50%;
-  font-size: 9px;
-  font-weight: bold;
-  padding: 2px 4px;
-  border-radius: 4px;
-  color: #fff;
-  background-color: #4a5568;
-  pointer-events: none;
-  z-index: 10;
-}
-
-.input-chip {
-  left: -36px;
-  transform: translate(-100%, -50%);
-}
-
-.output-chip {
-  right: -36px;
-  transform: translate(100%, -50%);
-}
-
-.port-type-chip[data-type*="text"], .port-type-chip[data-type*="string"] { background-color: #3182ce; }
-.port-type-chip[data-type*="image"], .port-type-chip[data-type*="Image"] { background-color: #d53f8c; }
-.port-type-chip[data-type*="video"], .port-type-chip[data-type*="Video"] { background-color: #dd6b20; }
-.port-type-chip[data-type*="audio"], .port-type-chip[data-type*="Audio"] { background-color: #805ad5; }
-
-.selected-node {
-  box-shadow: 0 0 15px 2px #63b3ed, 0 10px 30px rgba(0, 0, 0, 0.3) !important;
-  border-color: #63b3ed !important;
-}
-
-
-.running-node {
-  box-shadow: 0 0 15px 2px #4ade80, 0 10px 30px rgba(0, 0, 0, 0.3) !important;
-  border-color: #4ade80 !important;
-  animation: pulse-green 2s infinite;
-}
-
-@keyframes pulse-green {
-  0% { box-shadow: 0 0 10px 2px #4ade80, 0 10px 30px rgba(0, 0, 0, 0.3); }
-  50% { box-shadow: 0 0 20px 6px #4ade80, 0 10px 30px rgba(0, 0, 0, 0.3); }
-  100% { box-shadow: 0 0 10px 2px #4ade80, 0 10px 30px rgba(0, 0, 0, 0.3); }
 }

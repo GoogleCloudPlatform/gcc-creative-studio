@@ -15,6 +15,7 @@
  */
 
 import {MODEL_CONFIGS} from '../../../../common/config/model-config';
+import {NodeTypes} from '../../../workflow.models';
 import {StepConfig} from '../generic-step/step.model';
 
 const model_options = MODEL_CONFIGS.filter(model => model.type === 'TEXT').map(
@@ -25,7 +26,7 @@ const model_options = MODEL_CONFIGS.filter(model => model.type === 'TEXT').map(
 );
 
 export const GENERATE_TEXT_STEP_CONFIG: StepConfig = {
-  type: 'generate-text',
+  type: NodeTypes.GENERATE_TEXT,
   title: 'Generate Text',
   icon: 'edit_note',
   inputs: [
