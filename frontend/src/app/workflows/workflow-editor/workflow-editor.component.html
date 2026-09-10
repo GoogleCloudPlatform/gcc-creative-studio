@@ -15,8 +15,17 @@
 -->
 
 <div class="editor-container h-full flex flex-col text-white">
+  <!-- Welcome View Overlay -->
+  <app-workflow-welcome-view
+    *ngIf="showWelcomeView"
+    [canClose]="true"
+    (close)="closeWelcomeView()"
+    (templateSelected)="onTemplateSelected($event)"
+    class="absolute inset-0 z-50"
+  ></app-workflow-welcome-view>
+
   <!-- A. Global Header -->
-  <header class="header-section">
+  <header class="header-section" *ngIf="!showWelcomeView">
     <div class="in-line-wrapper">
       <!-- Breadcrumbs/Title Area -->
       <div class="title-group flex-grow">
@@ -63,30 +72,73 @@
       <!-- Primary Actions -->
       <div class="flex items-center gap-2">
         <studio-button
-          variant="cta"
-          size="medium"
-          *ngIf="!isReadOnly"
-          mat-raised-button
-          (click)="run()"
-          [disabled]="isLoading || stepsArray.length === 0"
-        >
-          <mat-icon>play_arrow</mat-icon>
-          Run
-        </studio-button>
-        <studio-button
           variant="primary"
           size="medium"
           *ngIf="!isReadOnly"
           mat-raised-button
-          (click)="save()"
-          [disabled]="workflowForm.pristine || isLoading"
-          >Save</studio-button
+          id="workflow-open-templates-btn"
+          (click)="openWelcomeView()"
+          matTooltip="Browse templates and blueprints"
         >
+          <mat-icon class="mr-1">auto_awesome</mat-icon>
+          Templates
+        </studio-button>
+        <studio-button
+          variant="cta"
+          size="medium"
+          *ngIf="!isReadOnly"
+          mat-raised-button
+          id="workflow-run-btn"
+          (click)="run()"
+          [disabled]="isRunDisabled"
+        >
+          <mat-icon>play_arrow</mat-icon>
+          Run
+        </studio-button>
+
+        <!-- Save button with dropdown -->
+        <div class="save-dropdown-group" *ngIf="!isReadOnly">
+          <studio-button
+            variant="primary"
+            size="medium"
+            mat-raised-button
+            class="save-main-btn"
+            id="workflow-save-btn"
+            (click)="save()"
+            [disabled]="workflowForm.pristine || isLoading"
+          >
+            Save
+          </studio-button>
+          <button
+            mat-icon-button
+            class="save-dropdown-trigger-btn"
+            id="workflow-save-menu-trigger"
+            [matMenuTriggerFor]="saveMenu"
+            [disabled]="isLoading"
+            aria-label="More save options"
+            matTooltip="Save options"
+          >
+            <mat-icon>arrow_drop_down</mat-icon>
+          </button>
+          <mat-menu #saveMenu="matMenu" class="workflow-save-menu">
+            <button
+              mat-menu-item
+              id="workflow-save-as-template-btn"
+              (click)="saveAsNewTemplate()"
+              [disabled]="isLoading"
+            >
+              <mat-icon>bookmark_border</mat-icon>
+              <span>Save as a template</span>
+            </button>
+          </mat-menu>
+        </div>
+
         <button
           mat-icon-button
           (click)="goBack()"
           matTooltip="Back"
           class="ml-2"
+          id="workflow-close-editor-btn"
         >
           <mat-icon>close</mat-icon>
         </button>
@@ -288,7 +340,7 @@
       </div>
     </div>
     <!-- Floating Add Node Button -->
-    <div class="add-btn-wrapper" *ngIf="!isReadOnly">
+    <div class="add-btn-wrapper" *ngIf="!isReadOnly && !showWelcomeView">
       <div
         class="history-btns"
         *ngIf="historyIndex > 0 || historyIndex < historyStack.length - 1"
