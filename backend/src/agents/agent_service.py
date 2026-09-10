@@ -671,6 +671,11 @@ class AgentService:
                             sanitized_parts.append({"text": injection_str})
                     new_msg["parts"] = sanitized_parts
 
+        # IMPORTANT: Extract the Authorization header synchronously before the background task starts.
+        # FastAPI/Starlette may close the request scope when returning the response, which causes
+        # request.headers to evaluate to empty if accessed inside the async process_stream() task.
+        auth_header = request.headers.get("Authorization", "")
+
         # Internal background task function
         async def process_stream():
             try:
@@ -683,7 +688,6 @@ class AgentService:
                 )
                 remote_agent = self._get_remote_agent(app_name)
                 agent_config = self._get_agent_config(app_name)
-                auth_header = request.headers.get("Authorization", "")
                 auth_key = agent_config.get("token_key", "user_auth_token")
 
                 if session_id and auth_header:
