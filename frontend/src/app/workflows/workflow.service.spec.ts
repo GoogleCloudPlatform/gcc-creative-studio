@@ -103,9 +103,13 @@ describe('WorkflowService', () => {
   it('should return predefined templates from constant', () => {
     const predefined = service.getPredefinedTemplates();
     expect(predefined).toBeDefined();
-    expect(predefined.length).toBeGreaterThan(0);
-    expect(predefined[0].name).toBe('Human Model Outfit Color Editor');
+    expect(predefined.length).toBe(3);
+    expect(predefined[0].name).toBe('Fashion Stylist');
     expect(predefined[0].isPredefined).toBeTrue();
+    expect(predefined[1].name).toBe('Social Media Post');
+    expect(predefined[1].isPredefined).toBeTrue();
+    expect(predefined[2].name).toBe('Product Video Ad');
+    expect(predefined[2].isPredefined).toBeTrue();
   });
 
   it('should validate workflow structure via POST /api/workflows/validate', () => {

@@ -219,7 +219,29 @@ describe('WorkflowWelcomeViewComponent', () => {
       '.template-preview-wrapper img.template-preview-img',
     );
     expect(predefinedImg).not.toBeNull();
-    expect(predefinedImg?.getAttribute('src')).toContain('empty_workflow.png');
+    expect(predefinedImg?.getAttribute('src')).toContain(
+      'workflow_template1.png',
+    );
+
+    const predefinedCard2 = element.querySelector('#card-predefined-1');
+    const predefinedImg2 = predefinedCard2?.querySelector(
+      '.template-preview-wrapper img.template-preview-img',
+    );
+    if (predefinedImg2) {
+      expect(predefinedImg2.getAttribute('src')).toContain(
+        'workflow_template2.png',
+      );
+    }
+
+    const predefinedCard3 = element.querySelector('#card-predefined-2');
+    const predefinedImg3 = predefinedCard3?.querySelector(
+      '.template-preview-wrapper img.template-preview-img',
+    );
+    if (predefinedImg3) {
+      expect(predefinedImg3.getAttribute('src')).toContain(
+        'workflow_template3.png',
+      );
+    }
   });
 
   it('should not render Your Templates section when user has no templates', () => {

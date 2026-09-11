@@ -1566,6 +1566,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       ...template,
       id: '', // Starts as an unsaved new workflow
       name: '',
+      description: '',
     };
     this.formService.patchData(templateData);
     this.workflowForm.markAsDirty();

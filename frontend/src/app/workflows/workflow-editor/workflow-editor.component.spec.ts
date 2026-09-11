@@ -809,9 +809,7 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
       expect(component.showWelcomeView).toBeFalse();
       expect(component.workflowForm.get('name')?.value).toBe('');
       expect(component.hasWorkflowName).toBeFalse();
-      expect(component.workflowForm.get('description')?.value).toBe(
-        'Edits suit or dress color',
-      );
+      expect(component.workflowForm.get('description')?.value).toBe('');
       expect(component.nodePositions['gen_text']).toEqual({x: 450, y: 150});
       expect(component.workflowForm.dirty).toBeTrue();
     });
