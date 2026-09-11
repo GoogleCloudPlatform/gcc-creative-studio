@@ -42,10 +42,6 @@ export class FolderCardComponent {
   @Output() deleteRequested = new EventEmitter<Folder>();
   @Output() moveRequested = new EventEmitter<Folder>();
   @Output() copyRequested = new EventEmitter<Folder>();
-  @Output() selectionToggled = new EventEmitter<{
-    folder: Folder;
-    event: MouseEvent;
-  }>();
   @Output() itemDropped = new EventEmitter<{
     folder: Folder;
     payload: GalleryDragPayload;
