@@ -1,0 +1,79 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<div class="conflict-dialog-container glass-morphism">
+  <div class="dialog-header">
+    <div class="header-icon-badge">
+      <mat-icon>folder_copy</mat-icon>
+    </div>
+    <div class="header-text">
+      <h2 class="dialog-title">{{ title }}</h2>
+      <p class="dialog-subtitle">{{ subtitle }}</p>
+    </div>
+  </div>
+
+  <div class="dialog-content">
+    <div class="conflict-items-box">
+      <div class="conflict-item" *ngFor="let name of data.folderNames">
+        <mat-icon class="folder-icon">folder</mat-icon>
+        <span class="folder-name">{{ name }}</span>
+      </div>
+    </div>
+
+    <div class="options-summary">
+      <div class="option-item">
+        <span class="option-title">Merge:</span>
+        <span class="option-desc">Combines folder contents into the existing folder, merging subfolders recursively.</span>
+      </div>
+      <div class="option-item">
+        <span class="option-title">Keep both:</span>
+        <span class="option-desc">Keeps both folders by adding a number suffix like &ldquo;{{ data.folderNames[0] || 'Folder' }} (1)&rdquo;.</span>
+      </div>
+      <div class="option-item">
+        <span class="option-title">Stop:</span>
+        <span class="option-desc">Aborts the operation, leaving all items unchanged.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="dialog-footer">
+    <div class="left-actions">
+      <studio-button
+        variant="primary"
+        size="medium"
+        (click)="onStop()"
+      >
+        Stop
+      </studio-button>
+    </div>
+    <div class="right-actions">
+      <studio-button
+        variant="primary"
+        size="medium"
+        (click)="onKeepBoth()"
+      >
+        Keep both
+      </studio-button>
+      <studio-button
+        variant="cta"
+        size="medium"
+        (click)="onMerge()"
+      >
+        Merge
+      </studio-button>
+    </div>
+  </div>
+</div>

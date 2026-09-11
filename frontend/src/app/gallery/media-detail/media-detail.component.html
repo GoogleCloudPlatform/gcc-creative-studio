@@ -49,6 +49,7 @@
         (editWithOmniClicked)="handleEditWithOmni($event)"
         (deleteClicked)="deleteCurrentMedia()"
         (tagsChanged)="onTagsChanged($event)"
+        [showMoveButton]="true"
         style="max-height: 80vh"
       ></app-media-lightbox>
     </div>
@@ -128,11 +129,11 @@
                     {{ mediaItem.aspectRatio }}
                   </p>
                 </div>
-                <div *ngIf="mediaItem?.resolution" class="contents">
+                <div *ngIf="mediaItem.resolution" class="contents">
                   <strong class="font-semibold text-gray-400">Resolution:</strong>
                   <p class="text-right">{{ mediaItem.resolution }}</p>
                 </div>
-                <div *ngIf="mediaItem?.googleSearch !== undefined" class="contents">
+                <div *ngIf="mediaItem.googleSearch !== undefined" class="contents">
                   <strong class="font-semibold text-gray-400">Google Search:</strong>
                   <p class="text-right">
                     {{ mediaItem.googleSearch ? 'Enabled' : 'Disabled' }}
