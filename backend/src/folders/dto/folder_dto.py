@@ -17,8 +17,16 @@
 from __future__ import annotations
 
 import datetime
+from enum import Enum
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
+
+
+class ConflictStrategyEnum(str, Enum):
+    """Strategy to handle folder name conflicts when moving or copying."""
+
+    KEEP_BOTH = "keep_both"
+    MERGE = "merge"
 
 
 class FolderCreateDto(BaseModel):
@@ -127,6 +135,10 @@ class MoveItemsDto(BaseModel):
     destination_folder_id: int | None = Field(
         default=None,
         description="Target folder ID (None to move to root level).",
+    )
+    conflict_strategy: ConflictStrategyEnum | None = Field(
+        default=None,
+        description="Strategy for folder name conflicts: 'keep_both' or 'merge'.",
     )
 
     model_config = ConfigDict(

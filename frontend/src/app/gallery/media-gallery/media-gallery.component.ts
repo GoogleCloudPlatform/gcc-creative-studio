@@ -58,6 +58,7 @@ import {MediaUploadService} from '../../common/services/media-upload/media-uploa
 import {ACCEPTED_MEDIA_UPLOAD_FORMATS} from '../../common/services/media-upload/media-upload.constants';
 import {GoogleDriveService} from '../../common/services/google-drive/google-drive.service';
 import {
+  ConflictStrategy,
   Folder,
   FolderBreadcrumb,
   GalleryDragPayload,
@@ -68,6 +69,10 @@ import {
   MoveToFolderDialogComponent,
   MoveToFolderDialogResult,
 } from '../../common/components/move-to-folder-dialog/move-to-folder-dialog.component';
+import {
+  FolderConflictChoice,
+  FolderConflictDialogComponent,
+} from '../../common/components/folder-conflict-dialog/folder-conflict-dialog.component';
 
 @Component({
   selector: 'app-media-gallery',
@@ -657,29 +662,60 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     });
   }
 
-  private performCopy(targetWorkspaceId: number): void {
+  private performCopy(
+    targetWorkspaceId: number,
+    conflictStrategy?: ConflictStrategy | null,
+  ): void {
     const itemsToCopy = Array.from(this.selectedItems).map(id => {
       const [type, itemId] = id.split(':');
       return {id: parseInt(itemId), type};
     });
 
     this.isCopying = true;
-    this.galleryService.bulkCopy(itemsToCopy, targetWorkspaceId).subscribe({
-      next: result => {
-        this.snackBar.open(
-          `${result.copied_count} items copied successfully`,
-          'Close',
-          {duration: 3000},
-        );
-        this.selectedItems.clear();
-        this.isCopying = false;
-      },
-      error: err => {
-        console.error('Error copying items:', err);
-        this.snackBar.open('Failed to copy items', 'Close', {duration: 3000});
-        this.isCopying = false;
-      },
-    });
+    this.galleryService
+      .bulkCopy(itemsToCopy, targetWorkspaceId, conflictStrategy)
+      .subscribe({
+        next: result => {
+          this.snackBar.open(
+            `${result.copied_count} items copied successfully`,
+            'Close',
+            {duration: 3000},
+          );
+          this.selectedItems.clear();
+          this.isCopying = false;
+        },
+        error: err => {
+          console.error('Error copying items:', err);
+          this.isCopying = false;
+          const detail = err.error?.detail;
+          if (err.status === 409 && detail?.code === 'FOLDER_COLLISION') {
+            const conflicts: Array<{folder_name?: string; name?: string}> =
+              detail.conflicts || [];
+            const folderNames = conflicts.map(
+              c => c.folder_name || c.name || 'Folder',
+            );
+
+            const dialogRef = this.dialog.open(FolderConflictDialogComponent, {
+              data: {
+                folderNames,
+                destinationName: 'target workspace',
+                isMove: false,
+              },
+            });
+
+            dialogRef
+              .afterClosed()
+              .subscribe((choice: FolderConflictChoice | null | undefined) => {
+                if (choice === 'keep_both' || choice === 'merge') {
+                  this.performCopy(targetWorkspaceId, choice);
+                }
+              });
+            return;
+          }
+
+          this.snackBar.open('Failed to copy items', 'Close', {duration: 3000});
+        },
+      });
   }
 
   downloadSelected(): void {
@@ -1287,24 +1323,60 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   private executeCopyFolderToWorkspace(
     folder: Folder,
     targetWorkspaceId: number,
+    conflictStrategy?: ConflictStrategy | null,
   ): void {
     this.isCopying = true;
     const itemsToCopy = [{id: folder.id, type: 'folder'}];
-    this.galleryService.bulkCopy(itemsToCopy, targetWorkspaceId).subscribe({
-      next: () => {
-        this.snackBar.open(
-          `Folder "${folder.name}" copied successfully`,
-          'Close',
-          {duration: 3000},
-        );
-        this.isCopying = false;
-      },
-      error: err => {
-        console.error('Error copying folder to workspace:', err);
-        this.snackBar.open('Failed to copy folder', 'Close', {duration: 3000});
-        this.isCopying = false;
-      },
-    });
+    this.galleryService
+      .bulkCopy(itemsToCopy, targetWorkspaceId, conflictStrategy)
+      .subscribe({
+        next: () => {
+          this.snackBar.open(
+            `Folder "${folder.name}" copied successfully`,
+            'Close',
+            {duration: 3000},
+          );
+          this.isCopying = false;
+        },
+        error: err => {
+          console.error('Error copying folder to workspace:', err);
+          this.isCopying = false;
+          const detail = err.error?.detail;
+          if (err.status === 409 && detail?.code === 'FOLDER_COLLISION') {
+            const conflicts: Array<{folder_name?: string; name?: string}> =
+              detail.conflicts || [];
+            const folderNames =
+              conflicts.length > 0
+                ? conflicts.map(c => c.folder_name || c.name || folder.name)
+                : [folder.name];
+
+            const dialogRef = this.dialog.open(FolderConflictDialogComponent, {
+              data: {
+                folderNames,
+                destinationName: 'target workspace',
+                isMove: false,
+              },
+            });
+
+            dialogRef
+              .afterClosed()
+              .subscribe((choice: FolderConflictChoice | null | undefined) => {
+                if (choice === 'keep_both' || choice === 'merge') {
+                  this.executeCopyFolderToWorkspace(
+                    folder,
+                    targetWorkspaceId,
+                    choice,
+                  );
+                }
+              });
+            return;
+          }
+
+          this.snackBar.open('Failed to copy folder', 'Close', {
+            duration: 3000,
+          });
+        },
+      });
   }
 
   openMoveFolderDialog(folder: Folder): void {
@@ -1328,27 +1400,17 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
         }
 
         if (result.destinationFolderId !== undefined) {
-          this.folderService
-            .updateFolder(folder.id, {
-              parentId: result.destinationFolderId,
-            })
-            .subscribe({
-              next: () => {
-                this.snackBar.open('Folder moved successfully', 'Close', {
-                  duration: 3000,
-                });
-                this.loadFolders();
-              },
-              error: err => {
-                console.error('Error moving folder:', err);
-                const detail = err.error?.detail;
-                const message =
-                  typeof detail === 'string' ? detail : 'Failed to move folder';
-                this.snackBar.open(message, 'Close', {
-                  duration: 3000,
-                });
-              },
-            });
+          const destName =
+            result.destinationFolderId === null
+              ? 'All Media'
+              : result.destinationName || 'Folder';
+          this.executeMove(
+            [],
+            [],
+            [folder.id],
+            result.destinationFolderId,
+            destName,
+          );
         } else if (result.destinationWorkspaceId !== undefined) {
           const destName = result.destinationName || 'Workspace';
           this.executeMoveToWorkspace(
@@ -1487,6 +1549,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     folderIds: number[],
     destinationFolderId: number | null,
     destinationName: string,
+    conflictStrategy?: ConflictStrategy | null,
   ): void {
     const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
     if (!workspaceId) return;
@@ -1533,6 +1596,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
         sourceAssetIds,
         folderIds,
         destinationFolderId,
+        conflictStrategy,
       })
       .subscribe({
         next: res => {
@@ -1551,7 +1615,40 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
           this.folders = prevFolders;
           this.updateGroups();
           this.isMoving = false;
+
           const detail = err.error?.detail;
+          if (err.status === 409 && detail?.code === 'FOLDER_COLLISION') {
+            const conflicts: Array<{folder_name?: string; name?: string}> =
+              detail.conflicts || [];
+            const folderNames = conflicts.map(
+              c => c.folder_name || c.name || 'Folder',
+            );
+
+            const dialogRef = this.dialog.open(FolderConflictDialogComponent, {
+              data: {
+                folderNames,
+                destinationName,
+                isMove: true,
+              },
+            });
+
+            dialogRef
+              .afterClosed()
+              .subscribe((choice: FolderConflictChoice | null | undefined) => {
+                if (choice === 'keep_both' || choice === 'merge') {
+                  this.executeMove(
+                    mediaItemIds,
+                    sourceAssetIds,
+                    folderIds,
+                    destinationFolderId,
+                    destinationName,
+                    choice,
+                  );
+                }
+              });
+            return;
+          }
+
           const message =
             typeof detail === 'string' ? detail : 'Failed to move items';
           this.snackBar.open(message, 'Close', {
@@ -1567,6 +1664,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     folderIds: number[] = [],
     destinationWorkspaceId: number,
     destinationName: string,
+    conflictStrategy?: ConflictStrategy | null,
   ): void {
     const totalCount =
       mediaItemIds.length + sourceAssetIds.length + folderIds.length;
@@ -1610,7 +1708,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     this.isMoving = true;
 
     this.galleryService
-      .bulkMove(itemsToMove, destinationWorkspaceId)
+      .bulkMove(itemsToMove, destinationWorkspaceId, conflictStrategy)
       .subscribe({
         next: res => {
           this.snackBar.open(
@@ -1629,7 +1727,40 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
           this.folders = prevFolders;
           this.updateGroups();
           this.isMoving = false;
+
           const detail = err.error?.detail;
+          if (err.status === 409 && detail?.code === 'FOLDER_COLLISION') {
+            const conflicts: Array<{folder_name?: string; name?: string}> =
+              detail.conflicts || [];
+            const folderNames = conflicts.map(
+              c => c.folder_name || c.name || 'Folder',
+            );
+
+            const dialogRef = this.dialog.open(FolderConflictDialogComponent, {
+              data: {
+                folderNames,
+                destinationName,
+                isMove: true,
+              },
+            });
+
+            dialogRef
+              .afterClosed()
+              .subscribe((choice: FolderConflictChoice | null | undefined) => {
+                if (choice === 'keep_both' || choice === 'merge') {
+                  this.executeMoveToWorkspace(
+                    mediaItemIds,
+                    sourceAssetIds,
+                    folderIds,
+                    destinationWorkspaceId,
+                    destinationName,
+                    choice,
+                  );
+                }
+              });
+            return;
+          }
+
           const message =
             typeof detail === 'string' ? detail : 'Failed to move items';
           this.snackBar.open(message, 'Close', {

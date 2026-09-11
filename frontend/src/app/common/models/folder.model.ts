@@ -55,12 +55,21 @@ export interface UpdateFolderDto {
   color?: string | null;
 }
 
+export type ConflictStrategy = 'keep_both' | 'merge';
+
+export interface FolderConflict {
+  folder_id: number;
+  folder_name: string;
+  target_folder_id?: number;
+}
+
 export interface MoveItemsDto {
   workspaceId: number;
   mediaItemIds?: number[];
   sourceAssetIds?: number[];
   folderIds?: number[];
   destinationFolderId?: number | null;
+  conflictStrategy?: ConflictStrategy | null;
 }
 
 export interface GalleryDragPayload {

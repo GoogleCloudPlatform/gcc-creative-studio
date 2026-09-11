@@ -37,6 +37,7 @@ import {MediaUploadService} from '../../common/services/media-upload/media-uploa
 import {GoogleDriveService} from '../../common/services/google-drive/google-drive.service';
 import {FolderService} from '../../common/services/folder.service';
 import {Folder} from '../../common/models/folder.model';
+import {FolderConflictDialogComponent} from '../../common/components/folder-conflict-dialog/folder-conflict-dialog.component';
 import {MatSnackBar} from '@angular/material/snack-bar';
 
 describe('MediaGalleryComponent', () => {
@@ -297,13 +298,15 @@ describe('MediaGalleryComponent', () => {
 
       component.onItemDroppedOnFolder(targetFolder, payload);
 
-      expect(folderService.moveItems).toHaveBeenCalledWith({
-        workspaceId: 1,
-        mediaItemIds: [101, 102],
-        sourceAssetIds: [201],
-        folderIds: [],
-        destinationFolderId: 5,
-      });
+      expect(folderService.moveItems).toHaveBeenCalledWith(
+        jasmine.objectContaining({
+          workspaceId: 1,
+          mediaItemIds: [101, 102],
+          sourceAssetIds: [201],
+          folderIds: [],
+          destinationFolderId: 5,
+        }),
+      );
       expect(component.images.length).toBe(1);
       expect(component.images[0].id).toBe(999);
     });
@@ -326,13 +329,15 @@ describe('MediaGalleryComponent', () => {
 
       component.onBreadcrumbDrop(mockEvent, null);
 
-      expect(folderService.moveItems).toHaveBeenCalledWith({
-        workspaceId: 1,
-        mediaItemIds: [101],
-        sourceAssetIds: [],
-        folderIds: [],
-        destinationFolderId: null,
-      });
+      expect(folderService.moveItems).toHaveBeenCalledWith(
+        jasmine.objectContaining({
+          workspaceId: 1,
+          mediaItemIds: [101],
+          sourceAssetIds: [],
+          folderIds: [],
+          destinationFolderId: null,
+        }),
+      );
     });
 
     it('should update dragOverBreadcrumbId on onBreadcrumbDragOver', () => {
@@ -377,6 +382,7 @@ describe('MediaGalleryComponent', () => {
           {id: 2, type: 'source_asset'},
         ],
         88,
+        undefined,
       );
       expect(component.images.length).toBe(1);
       expect(component.images[0].id).toBe(3);
@@ -402,6 +408,7 @@ describe('MediaGalleryComponent', () => {
       expect(galleryService.bulkMove).toHaveBeenCalledWith(
         [{id: 10, type: 'folder'}],
         88,
+        undefined,
       );
       expect(component.folders.length).toBe(1);
       expect(component.folders[0].id).toBe(20);
@@ -460,7 +467,201 @@ describe('MediaGalleryComponent', () => {
       expect(galleryService.bulkCopy).toHaveBeenCalledWith(
         [{id: 10, type: 'folder'}],
         88,
+        undefined,
       );
+    });
+
+    describe('Folder Conflict Handling', () => {
+      it('should open conflict dialog and retry move with keep_both when 409 FOLDER_COLLISION occurs', () => {
+        const conflictErr = {
+          status: 409,
+          error: {
+            detail: {
+              code: 'FOLDER_COLLISION',
+              conflicts: [{folder_id: 10, folder_name: 'Campaigns'}],
+            },
+          },
+        };
+
+        folderService.moveItems.and.returnValues(
+          throwError(() => conflictErr),
+          of({total_moved: 1}),
+        );
+
+        const mockDialogRef = {
+          afterClosed: () => of('keep_both'),
+        };
+        spyOn(component.dialog, 'open').and.returnValue(mockDialogRef as any);
+
+        component.folders = [{id: 10, name: 'Campaigns'} as any];
+        (component as any).executeMove([], [], [10], 5, 'Destination');
+
+        expect(component.dialog.open).toHaveBeenCalledWith(
+          FolderConflictDialogComponent,
+          jasmine.objectContaining({
+            data: jasmine.objectContaining({
+              folderNames: ['Campaigns'],
+              destinationName: 'Destination',
+              isMove: true,
+            }),
+          }),
+        );
+        expect(folderService.moveItems).toHaveBeenCalledTimes(2);
+        expect(folderService.moveItems).toHaveBeenCalledWith(
+          jasmine.objectContaining({
+            folderIds: [10],
+            destinationFolderId: 5,
+            conflictStrategy: 'keep_both',
+          }),
+        );
+      });
+
+      it('should open conflict dialog and retry move with merge when 409 FOLDER_COLLISION occurs', () => {
+        const conflictErr = {
+          status: 409,
+          error: {
+            detail: {
+              code: 'FOLDER_COLLISION',
+              conflicts: [{folder_id: 10, folder_name: 'Campaigns'}],
+            },
+          },
+        };
+
+        folderService.moveItems.and.returnValues(
+          throwError(() => conflictErr),
+          of({total_moved: 1}),
+        );
+
+        const mockDialogRef = {
+          afterClosed: () => of('merge'),
+        };
+        spyOn(component.dialog, 'open').and.returnValue(mockDialogRef as any);
+
+        (component as any).executeMove([], [], [10], 5, 'Destination');
+
+        expect(folderService.moveItems).toHaveBeenCalledTimes(2);
+        expect(folderService.moveItems).toHaveBeenCalledWith(
+          jasmine.objectContaining({
+            folderIds: [10],
+            destinationFolderId: 5,
+            conflictStrategy: 'merge',
+          }),
+        );
+      });
+
+      it('should restore items and not retry when user cancels conflict dialog with stop', () => {
+        const conflictErr = {
+          status: 409,
+          error: {
+            detail: {
+              code: 'FOLDER_COLLISION',
+              conflicts: [{folder_id: 10, folder_name: 'Campaigns'}],
+            },
+          },
+        };
+
+        folderService.moveItems.and.returnValue(throwError(() => conflictErr));
+
+        const mockDialogRef = {
+          afterClosed: () => of('stop'),
+        };
+        spyOn(component.dialog, 'open').and.returnValue(mockDialogRef as any);
+
+        component.folders = [{id: 10, name: 'Campaigns'} as any];
+        (component as any).executeMove([], [], [10], 5, 'Destination');
+
+        expect(folderService.moveItems).toHaveBeenCalledTimes(1);
+        expect(component.folders.length).toBe(1);
+      });
+
+      it('should open conflict dialog and retry bulkMove with merge on 409 FOLDER_COLLISION', () => {
+        const conflictErr = {
+          status: 409,
+          error: {
+            detail: {
+              code: 'FOLDER_COLLISION',
+              conflicts: [{folder_id: 10, folder_name: 'Campaigns'}],
+            },
+          },
+        };
+
+        spyOn(galleryService, 'bulkMove').and.returnValues(
+          throwError(() => conflictErr),
+          of({moved_count: 1}),
+        );
+
+        const mockDialogRef = {
+          afterClosed: () => of('merge'),
+        };
+        spyOn(component.dialog, 'open').and.returnValue(mockDialogRef as any);
+
+        (component as any).executeMoveToWorkspace(
+          [],
+          [],
+          [10],
+          88,
+          'Workspace',
+        );
+
+        expect(component.dialog.open).toHaveBeenCalledWith(
+          FolderConflictDialogComponent,
+          jasmine.objectContaining({
+            data: jasmine.objectContaining({
+              folderNames: ['Campaigns'],
+              destinationName: 'Workspace',
+              isMove: true,
+            }),
+          }),
+        );
+        expect(galleryService.bulkMove).toHaveBeenCalledTimes(2);
+        expect(galleryService.bulkMove).toHaveBeenCalledWith(
+          [{id: 10, type: 'folder'}],
+          88,
+          'merge',
+        );
+      });
+
+      it('should open conflict dialog and retry bulkCopy with merge on 409 FOLDER_COLLISION', () => {
+        const conflictErr = {
+          status: 409,
+          error: {
+            detail: {
+              code: 'FOLDER_COLLISION',
+              conflicts: [{folder_id: 10, folder_name: 'Campaigns'}],
+            },
+          },
+        };
+
+        spyOn(galleryService, 'bulkCopy').and.returnValues(
+          throwError(() => conflictErr),
+          of({copied_count: 1}),
+        );
+
+        const mockDialogRef = {
+          afterClosed: () => of('merge'),
+        };
+        spyOn(component.dialog, 'open').and.returnValue(mockDialogRef as any);
+
+        const folder = {id: 10, name: 'Campaigns'} as any;
+        (component as any).executeCopyFolderToWorkspace(folder, 88);
+
+        expect(component.dialog.open).toHaveBeenCalledWith(
+          FolderConflictDialogComponent,
+          jasmine.objectContaining({
+            data: jasmine.objectContaining({
+              folderNames: ['Campaigns'],
+              destinationName: 'target workspace',
+              isMove: false,
+            }),
+          }),
+        );
+        expect(galleryService.bulkCopy).toHaveBeenCalledTimes(2);
+        expect(galleryService.bulkCopy).toHaveBeenCalledWith(
+          [{id: 10, type: 'folder'}],
+          88,
+          'merge',
+        );
+      });
     });
   });
 

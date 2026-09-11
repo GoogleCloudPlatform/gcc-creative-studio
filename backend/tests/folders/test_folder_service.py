@@ -19,6 +19,7 @@ import pytest
 from fastapi import HTTPException, status
 
 from src.folders.dto.folder_dto import (
+    ConflictStrategyEnum,
     FolderBreadcrumbDto,
     FolderCreateDto,
     FolderResponseDto,
@@ -40,6 +41,7 @@ def fixture_mock_folder_repo():
     mock.get_folder_depth.return_value = 1
     mock.get_subtree_depth.return_value = 1
     mock.get_folders_by_ids.return_value = []
+    mock.get_existing_folders_map.return_value = {}
     return mock
 
 
@@ -610,7 +612,12 @@ class TestMoveItems:
         mock_folder_repo.get_descendant_ids.assert_not_called()
         mock_folder_repo.get_subtree_depth.assert_not_called()
         mock_folder_repo.move_folders.assert_awaited_once_with(
-            folder_ids=[], workspace_id=1, destination_folder_id=5
+            folder_ids=[],
+            workspace_id=1,
+            destination_folder_id=5,
+            conflict_strategy=ConflictStrategyEnum.KEEP_BOTH,
+            user_id=10,
+            user_email="test@example.com",
         )
         assert result["folders_moved"] == 0
         assert result["total_moved"] == 0
@@ -645,7 +652,12 @@ class TestMoveItems:
         mock_folder_repo.get_descendant_ids.assert_called_once_with(2)
         mock_folder_repo.get_subtree_depth.assert_called_once_with(2)
         mock_folder_repo.move_folders.assert_awaited_once_with(
-            folder_ids=[2], workspace_id=1, destination_folder_id=5
+            folder_ids=[2],
+            workspace_id=1,
+            destination_folder_id=5,
+            conflict_strategy=ConflictStrategyEnum.KEEP_BOTH,
+            user_id=10,
+            user_email="test@example.com",
         )
         assert result["folders_moved"] == 1
         assert result["total_moved"] == 1
@@ -674,7 +686,91 @@ class TestMoveItems:
         mock_folder_repo.get_descendant_ids.assert_not_called()
         mock_folder_repo.get_subtree_depth.assert_not_called()
         mock_folder_repo.move_folders.assert_awaited_once_with(
-            folder_ids=[2], workspace_id=1, destination_folder_id=None
+            folder_ids=[2],
+            workspace_id=1,
+            destination_folder_id=None,
+            conflict_strategy=ConflictStrategyEnum.KEEP_BOTH,
+            user_id=10,
+            user_email="test@example.com",
         )
         assert result["folders_moved"] == 1
         assert result["total_moved"] == 1
+
+    @pytest.mark.anyio
+    async def test_move_items_conflict_detection_409(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.get_folder_by_id.return_value = Folder(
+            id=5, workspace_id=1, user_email="a@b.com", name="Target"
+        )
+        colliding_folder = Folder(
+            id=2,
+            workspace_id=1,
+            user_email="a@b.com",
+            name="ExistingSub",
+            parent_id=1,
+        )
+        target_folder = Folder(
+            id=50,
+            workspace_id=1,
+            user_email="a@b.com",
+            name="ExistingSub",
+            parent_id=5,
+        )
+        mock_folder_repo.get_folders_by_ids.return_value = [colliding_folder]
+        mock_folder_repo.get_descendant_ids.return_value = [2]
+        mock_folder_repo.get_existing_folders_map.return_value = {
+            "existingsub": target_folder
+        }
+
+        dto = MoveItemsDto(
+            workspace_id=1,
+            folder_ids=[2],
+            destination_folder_id=5,
+            conflict_strategy=None,
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.move_items(dto, sample_user)
+        assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+        assert exc_info.value.detail["code"] == "FOLDER_COLLISION"
+        assert len(exc_info.value.detail["conflicts"]) == 1
+        assert exc_info.value.detail["conflicts"][0]["folder_id"] == 2
+
+    @pytest.mark.anyio
+    async def test_move_items_with_merge_strategy(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.get_folder_by_id.return_value = Folder(
+            id=5, workspace_id=1, user_email="a@b.com", name="Target"
+        )
+        colliding_folder = Folder(
+            id=2,
+            workspace_id=1,
+            user_email="a@b.com",
+            name="ExistingSub",
+            parent_id=1,
+        )
+        mock_folder_repo.get_folders_by_ids.return_value = [colliding_folder]
+        mock_folder_repo.get_descendant_ids.return_value = [2]
+        mock_folder_repo.move_media_items.return_value = 0
+        mock_folder_repo.move_source_assets.return_value = 0
+        mock_folder_repo.move_folders.return_value = 1
+
+        dto = MoveItemsDto(
+            workspace_id=1,
+            folder_ids=[2],
+            destination_folder_id=5,
+            conflict_strategy=ConflictStrategyEnum.MERGE,
+        )
+
+        result = await folder_service.move_items(dto, sample_user)
+        assert result["folders_moved"] == 1
+        mock_folder_repo.move_folders.assert_awaited_once_with(
+            folder_ids=[2],
+            workspace_id=1,
+            destination_folder_id=5,
+            conflict_strategy=ConflictStrategyEnum.MERGE,
+            user_id=10,
+            user_email="test@example.com",
+        )

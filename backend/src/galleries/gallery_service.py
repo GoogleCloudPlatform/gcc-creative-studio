@@ -58,6 +58,7 @@ from src.users.user_model import UserModel, UserRoleEnum
 from src.workspaces.repository.workspace_repository import WorkspaceRepository
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
 from src.tags.repository.tags_repository import TagsRepository
+from src.folders.dto.folder_dto import ConflictStrategyEnum
 from src.folders.repository.folder_repository import FolderRepository
 
 logger = logging.getLogger(__name__)
@@ -703,6 +704,34 @@ class GalleryService:
             user=current_user,
         )
 
+        folder_items = [it for it in bulk_copy_dto.items if it.type == "folder"]
+        if folder_items and bulk_copy_dto.conflict_strategy is None:
+            existing_map = await self.folder_repo.get_existing_folders_map(
+                workspace_id=bulk_copy_dto.target_workspace_id,
+                parent_id=None,
+            )
+            conflicts = []
+            for item in folder_items:
+                f = await self.folder_repo.get_folder_by_id(item.id)
+                if f:
+                    key = f.name.strip().lower()
+                    if key in existing_map:
+                        conflicts.append(
+                            {
+                                "folder_id": f.id,
+                                "folder_name": f.name,
+                                "target_folder_id": existing_map[key].id,
+                            }
+                        )
+            if conflicts:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "FOLDER_COLLISION",
+                        "conflicts": conflicts,
+                    },
+                )
+
         copied_count = 0
         for item in bulk_copy_dto.items:
             try:
@@ -790,6 +819,8 @@ class GalleryService:
                         target_workspace_id=bulk_copy_dto.target_workspace_id,
                         user_id=current_user.id,
                         user_email=current_user.email,
+                        conflict_strategy=bulk_copy_dto.conflict_strategy
+                        or ConflictStrategyEnum.KEEP_BOTH,
                     )
                     copied_count += (
                         copy_results.get("folders_copied", 0)
@@ -813,6 +844,34 @@ class GalleryService:
             workspace_id=bulk_move_dto.target_workspace_id,
             user=current_user,
         )
+
+        folder_items = [it for it in bulk_move_dto.items if it.type == "folder"]
+        if folder_items and bulk_move_dto.conflict_strategy is None:
+            existing_map = await self.folder_repo.get_existing_folders_map(
+                workspace_id=bulk_move_dto.target_workspace_id,
+                parent_id=None,
+            )
+            conflicts = []
+            for item in folder_items:
+                f = await self.folder_repo.get_folder_by_id(item.id)
+                if f and f.workspace_id != bulk_move_dto.target_workspace_id:
+                    key = f.name.strip().lower()
+                    if key in existing_map:
+                        conflicts.append(
+                            {
+                                "folder_id": f.id,
+                                "folder_name": f.name,
+                                "target_folder_id": existing_map[key].id,
+                            }
+                        )
+            if conflicts:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "FOLDER_COLLISION",
+                        "conflicts": conflicts,
+                    },
+                )
 
         moved_count = 0
         for item in bulk_move_dto.items:
@@ -885,6 +944,9 @@ class GalleryService:
                     move_results = await self.folder_repo.move_folder_to_workspace(
                         folder_id=folder.id,
                         target_workspace_id=bulk_move_dto.target_workspace_id,
+                        user_id=current_user.id,
+                        conflict_strategy=bulk_move_dto.conflict_strategy
+                        or ConflictStrategyEnum.KEEP_BOTH,
                     )
                     moved_count += (
                         move_results.get("folders_moved", 0)

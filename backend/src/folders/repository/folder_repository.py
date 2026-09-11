@@ -23,6 +23,7 @@ from src.common.base_repository import BaseRepository
 from src.common.schema.media_item_model import MediaItem
 from src.database import get_db
 from src.folders.dto.folder_dto import (
+    ConflictStrategyEnum,
     FolderBreadcrumbDto,
     FolderResponseDto,
     FolderTreeNodeDto,
@@ -108,6 +109,56 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
 
         result = await self.db.execute(query)
         return {row[0] for row in result.fetchall()}
+
+    async def get_folder_by_name(
+        self,
+        workspace_id: int,
+        parent_id: int | None,
+        name: str,
+        exclude_folder_id: int | None = None,
+    ) -> Folder | None:
+        """Fetch active folder by case-insensitive trimmed name under the specified parent."""
+        clean_name = name.strip().lower()
+        query = select(self.model).where(
+            self.model.workspace_id == workspace_id,
+            func.lower(func.trim(self.model.name)) == clean_name,
+            self.model.deleted_at.is_(None),
+        )
+        if parent_id is None:
+            query = query.where(self.model.parent_id.is_(None))
+        else:
+            query = query.where(self.model.parent_id == parent_id)
+
+        if exclude_folder_id is not None:
+            query = query.where(self.model.id != exclude_folder_id)
+
+        result = await self.db.execute(query)
+        return result.scalars().first()
+
+    async def get_existing_folders_map(
+        self,
+        workspace_id: int,
+        parent_id: int | None,
+        exclude_folder_ids: list[int] | None = None,
+    ) -> dict[str, Folder]:
+        """Fetch dictionary mapping lowercase trimmed name to active Folder instance."""
+        query = select(self.model).where(
+            self.model.workspace_id == workspace_id,
+            self.model.deleted_at.is_(None),
+        )
+        if parent_id is None:
+            query = query.where(self.model.parent_id.is_(None))
+        else:
+            query = query.where(self.model.parent_id == parent_id)
+
+        if exclude_folder_ids:
+            query = query.where(~self.model.id.in_(exclude_folder_ids))
+
+        result = await self.db.execute(query)
+        return {
+            folder.name.strip().lower(): folder
+            for folder in result.scalars().all()
+        }
 
     async def get_unique_folder_name(
         self,
@@ -453,8 +504,11 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         folder_ids: list[int],
         workspace_id: int,
         destination_folder_id: int | None,
+        conflict_strategy: ConflictStrategyEnum = ConflictStrategyEnum.KEEP_BOTH,
+        user_id: int | None = None,
+        user_email: str | None = None,
     ) -> int:
-        """Move multiple folders to a destination parent folder with automatic name disambiguation."""
+        """Move multiple folders to a destination parent folder with automatic name disambiguation or merge."""
         if not folder_ids:
             return 0
 
@@ -469,7 +523,37 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         if not folders:
             return 0
 
-        # Fetch existing sibling names in destination
+        if conflict_strategy == ConflictStrategyEnum.MERGE:
+            existing_map = await self.get_existing_folders_map(
+                workspace_id=workspace_id,
+                parent_id=destination_folder_id,
+                exclude_folder_ids=folder_ids,
+            )
+            moved_count = 0
+            for f in folders:
+                if f.parent_id == destination_folder_id:
+                    continue
+                name_key = f.name.strip().lower()
+                if name_key in existing_map:
+                    target_folder = existing_map[name_key]
+                    await self.merge_folders(
+                        source_folder_id=f.id,
+                        target_folder_id=target_folder.id,
+                        target_workspace_id=workspace_id,
+                        user_id=user_id or f.user_id,
+                        user_email=user_email or f.user_email,
+                        is_copy=False,
+                        clear_tags=False,
+                    )
+                    moved_count += 1
+                else:
+                    f.parent_id = destination_folder_id
+                    existing_map[name_key] = f
+                    moved_count += 1
+            await self.db.commit()
+            return moved_count
+
+        # Existing KEEP_BOTH:
         existing_names = await self.get_existing_folder_names(
             workspace_id=workspace_id,
             parent_id=destination_folder_id,
@@ -491,9 +575,13 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         return moved_count
 
     async def move_folder_to_workspace(
-        self, folder_id: int, target_workspace_id: int
+        self,
+        folder_id: int,
+        target_workspace_id: int,
+        user_id: int | None = None,
+        conflict_strategy: ConflictStrategyEnum = ConflictStrategyEnum.KEEP_BOTH,
     ) -> dict[str, int]:
-        """Moves a folder hierarchy and all contained media items and source assets to a target workspace with root name disambiguation."""
+        """Moves a folder hierarchy and all contained media items and source assets to a target workspace with conflict handling."""
         root_folder = await self.get_folder_by_id(folder_id)
         if not root_folder:
             return {"folders_moved": 0, "media_moved": 0, "assets_moved": 0}
@@ -501,6 +589,30 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         descendant_ids = await self.get_descendant_ids(folder_id)
         if not descendant_ids:
             return {"folders_moved": 0, "media_moved": 0, "assets_moved": 0}
+
+        if conflict_strategy == ConflictStrategyEnum.MERGE:
+            existing_target = await self.get_folder_by_name(
+                workspace_id=target_workspace_id,
+                parent_id=None,
+                name=root_folder.name,
+                exclude_folder_id=(
+                    folder_id
+                    if root_folder.workspace_id == target_workspace_id
+                    else None
+                ),
+            )
+            if existing_target:
+                return await self.merge_folders(
+                    source_folder_id=root_folder.id,
+                    target_folder_id=existing_target.id,
+                    target_workspace_id=target_workspace_id,
+                    user_id=user_id or root_folder.user_id,
+                    user_email=root_folder.user_email,
+                    is_copy=False,
+                    clear_tags=(
+                        root_folder.workspace_id != target_workspace_id
+                    ),
+                )
 
         # Check for name collision at root level of target workspace
         existing_root_names = await self.get_existing_folder_names(
@@ -573,55 +685,285 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
             "assets_moved": asset_res.rowcount,
         }
 
-    async def copy_folder_to_workspace(
+    async def merge_folders(
         self,
-        folder_id: int,
+        source_folder_id: int,
+        target_folder_id: int,
+        target_workspace_id: int,
+        user_id: int | None = None,
+        user_email: str | None = None,
+        is_copy: bool = False,
+        clear_tags: bool = False,
+    ) -> dict[str, int]:
+        """Recursively merges source folder into target folder."""
+        source_folder = await self.get_folder_by_id(source_folder_id)
+        target_folder = await self.get_folder_by_id(target_folder_id)
+        if not source_folder or not target_folder:
+            key_f = "folders_copied" if is_copy else "folders_moved"
+            key_m = "media_copied" if is_copy else "media_moved"
+            key_a = "assets_copied" if is_copy else "assets_moved"
+            return {key_f: 0, key_m: 0, key_a: 0}
+
+        # 1. Media items directly in source_folder
+        media_stmt = select(MediaItem).where(
+            MediaItem.folder_id == source_folder_id,
+            MediaItem.deleted_at.is_(None),
+        )
+        media_res = await self.db.execute(media_stmt)
+        source_media_items = media_res.scalars().all()
+        media_count = 0
+
+        media_exclude = {
+            "id",
+            "created_at",
+            "updated_at",
+            "deleted_at",
+            "deleted_by",
+            "workspace_id",
+            "folder_id",
+            "user_id",
+            "user_email",
+        }
+        media_columns = [
+            c.key
+            for c in MediaItem.__table__.columns
+            if c.key not in media_exclude
+        ]
+
+        if is_copy:
+            for item in source_media_items:
+                kwargs = {
+                    col: (
+                        copy.deepcopy(getattr(item, col))
+                        if isinstance(getattr(item, col), (list, dict))
+                        else getattr(item, col)
+                    )
+                    for col in media_columns
+                }
+                new_media = MediaItem(
+                    workspace_id=target_workspace_id,
+                    folder_id=target_folder_id,
+                    user_id=user_id or source_folder.user_id,
+                    user_email=user_email or item.user_email,
+                    **kwargs,
+                )
+                self.db.add(new_media)
+                media_count += 1
+        else:
+            if source_media_items:
+                media_ids = [m.id for m in source_media_items]
+                if clear_tags:
+                    await self.db.execute(
+                        delete(media_item_tags).where(
+                            media_item_tags.c.media_item_id.in_(media_ids)
+                        )
+                    )
+                await self.db.execute(
+                    update(MediaItem)
+                    .where(MediaItem.folder_id == source_folder_id)
+                    .values(
+                        folder_id=target_folder_id,
+                        workspace_id=target_workspace_id,
+                    )
+                )
+                media_count += len(source_media_items)
+
+        # 2. Source Assets directly in source_folder
+        asset_stmt = select(SourceAsset).where(
+            SourceAsset.folder_id == source_folder_id,
+            SourceAsset.deleted_at.is_(None),
+        )
+        asset_res = await self.db.execute(asset_stmt)
+        source_assets = asset_res.scalars().all()
+        assets_count = 0
+
+        asset_exclude = {
+            "id",
+            "created_at",
+            "updated_at",
+            "deleted_at",
+            "deleted_by",
+            "workspace_id",
+            "folder_id",
+            "user_id",
+        }
+        asset_columns = [
+            c.key
+            for c in SourceAsset.__table__.columns
+            if c.key not in asset_exclude
+        ]
+
+        if is_copy:
+            for asset in source_assets:
+                kwargs = {
+                    col: (
+                        copy.deepcopy(getattr(asset, col))
+                        if isinstance(getattr(asset, col), (list, dict))
+                        else getattr(asset, col)
+                    )
+                    for col in asset_columns
+                }
+                new_asset = SourceAsset(
+                    workspace_id=target_workspace_id,
+                    folder_id=target_folder_id,
+                    user_id=user_id or source_folder.user_id,
+                    **kwargs,
+                )
+                self.db.add(new_asset)
+                assets_count += 1
+        else:
+            if source_assets:
+                asset_ids = [a.id for a in source_assets]
+                if clear_tags:
+                    await self.db.execute(
+                        delete(source_asset_tags).where(
+                            source_asset_tags.c.source_asset_id.in_(asset_ids)
+                        )
+                    )
+                await self.db.execute(
+                    update(SourceAsset)
+                    .where(SourceAsset.folder_id == source_folder_id)
+                    .values(
+                        folder_id=target_folder_id,
+                        workspace_id=target_workspace_id,
+                    )
+                )
+                assets_count += len(source_assets)
+
+        # 3. Direct child subfolders of source_folder
+        source_children_stmt = select(Folder).where(
+            Folder.parent_id == source_folder_id,
+            Folder.deleted_at.is_(None),
+        )
+        source_children_res = await self.db.execute(source_children_stmt)
+        source_children = source_children_res.scalars().all()
+
+        target_children_stmt = select(Folder).where(
+            Folder.parent_id == target_folder_id,
+            Folder.deleted_at.is_(None),
+        )
+        target_children_res = await self.db.execute(target_children_stmt)
+        target_children = target_children_res.scalars().all()
+        target_children_map = {
+            c.name.strip().lower(): c for c in target_children
+        }
+
+        folders_count = 1
+        for child in source_children:
+            child_name_key = child.name.strip().lower()
+            if child_name_key in target_children_map:
+                # Collision in subfolder -> recursive merge!
+                target_child = target_children_map[child_name_key]
+                sub_res = await self.merge_folders(
+                    source_folder_id=child.id,
+                    target_folder_id=target_child.id,
+                    target_workspace_id=target_workspace_id,
+                    user_id=user_id,
+                    user_email=user_email,
+                    is_copy=is_copy,
+                    clear_tags=clear_tags,
+                )
+                folders_count += sub_res.get(
+                    "folders_copied", sub_res.get("folders_moved", 1)
+                )
+                media_count += sub_res.get(
+                    "media_copied", sub_res.get("media_moved", 0)
+                )
+                assets_count += sub_res.get(
+                    "assets_copied", sub_res.get("assets_moved", 0)
+                )
+            else:
+                if is_copy:
+                    sub_copy_res = await self._copy_subtree_under(
+                        subtree_root_id=child.id,
+                        new_parent_id=target_folder_id,
+                        target_workspace_id=target_workspace_id,
+                        user_id=user_id or source_folder.user_id,
+                        user_email=user_email or child.user_email,
+                    )
+                    folders_count += sub_copy_res.get("folders_copied", 0)
+                    media_count += sub_copy_res.get("media_copied", 0)
+                    assets_count += sub_copy_res.get("assets_copied", 0)
+                else:
+                    child.parent_id = target_folder_id
+                    child_descendants = await self.get_descendant_ids(child.id)
+                    folders_count += len(child_descendants)
+                    if child.workspace_id != target_workspace_id:
+                        if clear_tags:
+                            await self.db.execute(
+                                delete(media_item_tags).where(
+                                    media_item_tags.c.media_item_id.in_(
+                                        select(MediaItem.id).where(
+                                            MediaItem.folder_id.in_(
+                                                child_descendants
+                                            )
+                                        )
+                                    )
+                                )
+                            )
+                            await self.db.execute(
+                                delete(source_asset_tags).where(
+                                    source_asset_tags.c.source_asset_id.in_(
+                                        select(SourceAsset.id).where(
+                                            SourceAsset.folder_id.in_(
+                                                child_descendants
+                                            )
+                                        )
+                                    )
+                                )
+                            )
+                        await self.db.execute(
+                            update(Folder)
+                            .where(
+                                Folder.id.in_(child_descendants),
+                                Folder.deleted_at.is_(None),
+                            )
+                            .values(workspace_id=target_workspace_id)
+                        )
+                        await self.db.execute(
+                            update(MediaItem)
+                            .where(MediaItem.folder_id.in_(child_descendants))
+                            .values(workspace_id=target_workspace_id)
+                        )
+                        await self.db.execute(
+                            update(SourceAsset)
+                            .where(SourceAsset.folder_id.in_(child_descendants))
+                            .values(workspace_id=target_workspace_id)
+                        )
+
+        # 4. On move, soft-delete the emptied source folder
+        if not is_copy:
+            source_folder.deleted_at = datetime.now(timezone.utc)
+            source_folder.deleted_by = user_id
+
+        await self.db.commit()
+
+        key_f = "folders_copied" if is_copy else "folders_moved"
+        key_m = "media_copied" if is_copy else "media_moved"
+        key_a = "assets_copied" if is_copy else "assets_moved"
+        return {
+            key_f: folders_count,
+            key_m: media_count,
+            key_a: assets_count,
+        }
+
+    async def _insert_copied_hierarchy(
+        self,
+        folder_rows: list,
+        subtree_root_id: int,
+        new_parent_id: int | None,
         target_workspace_id: int,
         user_id: int,
         user_email: str | None = None,
+        root_name_override: str | None = None,
     ) -> dict[str, int]:
-        """Copies a folder hierarchy and all contained media items and source assets to a target workspace with root name disambiguation."""
-        root_folder = await self.get_folder_by_id(folder_id)
-        if not root_folder:
-            return {"folders_copied": 0, "media_copied": 0, "assets_copied": 0}
-
-        cte_query = text(
-            """
-            WITH RECURSIVE descendants AS (
-                SELECT id, name, color, parent_id, 0 AS depth
-                FROM folders
-                WHERE id = :folder_id AND deleted_at IS NULL
-                UNION ALL
-                SELECT f.id, f.name, f.color, f.parent_id, d.depth + 1 AS depth
-                FROM folders f
-                JOIN descendants d ON f.parent_id = d.id
-                WHERE f.deleted_at IS NULL
-            )
-            SELECT id, name, color, parent_id, depth FROM descendants ORDER BY depth ASC, id ASC;
-            """
-        )
-        res = await self.db.execute(cte_query, {"folder_id": folder_id})
-        folder_rows = res.fetchall()
-        if not folder_rows:
-            return {"folders_copied": 0, "media_copied": 0, "assets_copied": 0}
-
-        # Check for name collision at root level of target workspace
-        existing_root_names = await self.get_existing_folder_names(
-            workspace_id=target_workspace_id,
-            parent_id=None,
-        )
-        disambiguated_root_name = generate_disambiguated_name(
-            root_folder.name, existing_root_names
-        )
-
-        # Group folder rows by hierarchy depth to batch insert and flush once per level.
-        # This reduces roundtrips from N (total folders) to D (tree depth, typically < 5).
+        """Inserts copied folders, media items, and assets for given folder_rows."""
         depth_map: dict[int, list] = {}
         row_depth_map: dict[int, int] = {}
         for row in folder_rows:
             if isinstance(getattr(row, "depth", None), int):
                 depth = row.depth
-            elif row.id == folder_id or row.parent_id is None:
+            elif row.id == subtree_root_id or row.parent_id is None:
                 depth = 0
             else:
                 depth = row_depth_map.get(row.parent_id, 0) + 1
@@ -632,23 +974,23 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         for depth in sorted(depth_map.keys()):
             folders_at_depth: list[tuple[int, Folder]] = []
             for row in depth_map[depth]:
-                if row.id == folder_id:
+                if row.id == subtree_root_id:
                     new_folder = Folder(
                         workspace_id=target_workspace_id,
                         user_id=user_id,
-                        user_email=user_email or root_folder.user_email,
-                        name=disambiguated_root_name,
-                        parent_id=None,
+                        user_email=user_email or "",
+                        name=root_name_override or row.name,
+                        parent_id=new_parent_id,
                         color=row.color,
                     )
                 else:
-                    new_parent_id = id_map.get(row.parent_id)
+                    new_parent = id_map.get(row.parent_id)
                     new_folder = Folder(
                         workspace_id=target_workspace_id,
                         user_id=user_id,
-                        user_email=user_email or root_folder.user_email,
+                        user_email=user_email or "",
                         name=row.name,
-                        parent_id=new_parent_id,
+                        parent_id=new_parent,
                         color=row.color,
                     )
                 self.db.add(new_folder)
@@ -753,3 +1095,116 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
             "media_copied": media_copied_count,
             "assets_copied": assets_copied_count,
         }
+
+    async def _copy_subtree_under(
+        self,
+        subtree_root_id: int,
+        new_parent_id: int | None,
+        target_workspace_id: int,
+        user_id: int,
+        user_email: str | None = None,
+        root_name_override: str | None = None,
+    ) -> dict[str, int]:
+        """Copies a folder subtree under new_parent_id with batch level insertions."""
+        root_folder = await self.get_folder_by_id(subtree_root_id)
+        if not root_folder:
+            return {"folders_copied": 0, "media_copied": 0, "assets_copied": 0}
+
+        cte_query = text(
+            """
+            WITH RECURSIVE descendants AS (
+                SELECT id, name, color, parent_id, 0 AS depth
+                FROM folders
+                WHERE id = :folder_id AND deleted_at IS NULL
+                UNION ALL
+                SELECT f.id, f.name, f.color, f.parent_id, d.depth + 1 AS depth
+                FROM folders f
+                JOIN descendants d ON f.parent_id = d.id
+                WHERE f.deleted_at IS NULL
+            )
+            SELECT id, name, color, parent_id, depth FROM descendants ORDER BY depth ASC, id ASC;
+            """
+        )
+        res = await self.db.execute(cte_query, {"folder_id": subtree_root_id})
+        folder_rows = res.fetchall()
+        if not folder_rows:
+            return {"folders_copied": 0, "media_copied": 0, "assets_copied": 0}
+
+        return await self._insert_copied_hierarchy(
+            folder_rows=folder_rows,
+            subtree_root_id=subtree_root_id,
+            new_parent_id=new_parent_id,
+            target_workspace_id=target_workspace_id,
+            user_id=user_id,
+            user_email=user_email or root_folder.user_email,
+            root_name_override=root_name_override,
+        )
+
+    async def copy_folder_to_workspace(
+        self,
+        folder_id: int,
+        target_workspace_id: int,
+        user_id: int,
+        user_email: str | None = None,
+        conflict_strategy: ConflictStrategyEnum = ConflictStrategyEnum.KEEP_BOTH,
+    ) -> dict[str, int]:
+        """Copies a folder hierarchy and all contained media items and source assets to a target workspace with conflict handling."""
+        root_folder = await self.get_folder_by_id(folder_id)
+        if not root_folder:
+            return {"folders_copied": 0, "media_copied": 0, "assets_copied": 0}
+
+        if conflict_strategy == ConflictStrategyEnum.MERGE:
+            existing_target = await self.get_folder_by_name(
+                workspace_id=target_workspace_id,
+                parent_id=None,
+                name=root_folder.name,
+            )
+            if existing_target:
+                return await self.merge_folders(
+                    source_folder_id=root_folder.id,
+                    target_folder_id=existing_target.id,
+                    target_workspace_id=target_workspace_id,
+                    user_id=user_id,
+                    user_email=user_email or root_folder.user_email,
+                    is_copy=True,
+                    clear_tags=False,
+                )
+
+        cte_query = text(
+            """
+            WITH RECURSIVE descendants AS (
+                SELECT id, name, color, parent_id, 0 AS depth
+                FROM folders
+                WHERE id = :folder_id AND deleted_at IS NULL
+                UNION ALL
+                SELECT f.id, f.name, f.color, f.parent_id, d.depth + 1 AS depth
+                FROM folders f
+                JOIN descendants d ON f.parent_id = d.id
+                WHERE f.deleted_at IS NULL
+            )
+            SELECT id, name, color, parent_id, depth FROM descendants ORDER BY depth ASC, id ASC;
+            """
+        )
+        res = await self.db.execute(cte_query, {"folder_id": folder_id})
+        folder_rows = res.fetchall()
+        if not folder_rows:
+            return {"folders_copied": 0, "media_copied": 0, "assets_copied": 0}
+
+        # Check for name collision at root level of target workspace
+        existing_root_names = await self.get_existing_folder_names(
+            workspace_id=target_workspace_id,
+            parent_id=None,
+        )
+        disambiguated_root_name = generate_disambiguated_name(
+            root_folder.name, existing_root_names
+        )
+
+        return await self._insert_copied_hierarchy(
+            folder_rows=folder_rows,
+            subtree_root_id=folder_id,
+            new_parent_id=None,
+            target_workspace_id=target_workspace_id,
+            user_id=user_id,
+            user_email=user_email or root_folder.user_email,
+            root_name_override=disambiguated_root_name,
+        )

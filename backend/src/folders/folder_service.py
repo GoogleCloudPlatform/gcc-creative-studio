@@ -19,6 +19,7 @@ from fastapi import Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 
 from src.folders.dto.folder_dto import (
+    ConflictStrategyEnum,
     FolderBreadcrumbDto,
     FolderCreateDto,
     FolderResponseDto,
@@ -354,6 +355,34 @@ class FolderService:
                         )
                 valid_folder_ids.append(f_id)
 
+            if dto.conflict_strategy is None and valid_folder_ids:
+                existing_map = await self.folder_repo.get_existing_folders_map(
+                    workspace_id=dto.workspace_id,
+                    parent_id=dest_folder_id,
+                    exclude_folder_ids=valid_folder_ids,
+                )
+                conflicts = []
+                for f_id in valid_folder_ids:
+                    f_obj = next((f for f in folders if f.id == f_id), None)
+                    if f_obj and f_obj.parent_id != dest_folder_id:
+                        key = f_obj.name.strip().lower()
+                        if key in existing_map:
+                            conflicts.append(
+                                {
+                                    "folder_id": f_obj.id,
+                                    "folder_name": f_obj.name,
+                                    "target_folder_id": existing_map[key].id,
+                                }
+                            )
+                if conflicts:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "code": "FOLDER_COLLISION",
+                            "conflicts": conflicts,
+                        },
+                    )
+
         media_moved = await self.folder_repo.move_media_items(
             media_item_ids=dto.media_item_ids,
             workspace_id=dto.workspace_id,
@@ -368,6 +397,10 @@ class FolderService:
             folder_ids=valid_folder_ids,
             workspace_id=dto.workspace_id,
             destination_folder_id=dest_folder_id,
+            conflict_strategy=dto.conflict_strategy
+            or ConflictStrategyEnum.KEEP_BOTH,
+            user_id=user.id,
+            user_email=user.email,
         )
 
         return {

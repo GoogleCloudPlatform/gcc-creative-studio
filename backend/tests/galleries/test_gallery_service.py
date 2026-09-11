@@ -31,6 +31,7 @@ from src.common.schema.media_item_model import (
     MediaItemModel,
     SourceAssetLink,
 )
+from src.folders.dto.folder_dto import ConflictStrategyEnum
 from src.galleries.dto.gallery_search_dto import GallerySearchDto
 from src.galleries.dto.unified_gallery_response import (
     UnifiedGalleryItemResponse,
@@ -919,6 +920,7 @@ async def test_bulk_move_folder_success(service):
 
     folder = DummyFolder(id=10, workspace_id=99, name="Campaigns")
     service.mock_folder_repo.get_folder_by_id.return_value = folder
+    service.mock_folder_repo.get_existing_folders_map.return_value = {}
     service.mock_folder_repo.move_folder_to_workspace.return_value = {
         "folders_moved": 2,
         "media_moved": 3,
@@ -934,7 +936,10 @@ async def test_bulk_move_folder_success(service):
         workspace_id=99, user=current_user
     )
     service.mock_folder_repo.move_folder_to_workspace.assert_called_once_with(
-        folder_id=10, target_workspace_id=88
+        folder_id=10,
+        target_workspace_id=88,
+        user_id=1,
+        conflict_strategy=ConflictStrategyEnum.KEEP_BOTH,
     )
 
 
@@ -968,6 +973,84 @@ async def test_bulk_move_folder_same_workspace(service):
 
 
 @pytest.mark.anyio
+async def test_bulk_move_folder_conflict_detection_409(service):
+    from pydantic import BaseModel
+    from src.galleries.dto.bulk_move_dto import BulkMoveDto, BulkMoveItemDto
+
+    class DummyFolder(BaseModel):
+        id: int
+        workspace_id: int
+        name: str
+
+    bulk_dto = BulkMoveDto(
+        target_workspace_id=88,
+        items=[BulkMoveItemDto(id=10, type="folder")],
+    )
+    current_user = UserModel(
+        id=1,
+        email="user@test.com",
+        name="User",
+        roles=[UserRoleEnum.USER],
+    )
+
+    folder = DummyFolder(id=10, workspace_id=99, name="Campaigns")
+    service.mock_folder_repo.get_folder_by_id.return_value = folder
+    service.mock_folder_repo.get_existing_folders_map.return_value = {
+        "campaigns": DummyFolder(id=999, workspace_id=88, name="Campaigns")
+    }
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.bulk_move(bulk_dto, current_user)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "FOLDER_COLLISION"
+    assert len(exc_info.value.detail["conflicts"]) == 1
+    assert exc_info.value.detail["conflicts"][0]["folder_name"] == "Campaigns"
+    service.mock_folder_repo.move_folder_to_workspace.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_bulk_move_folder_merge_strategy(service):
+    from pydantic import BaseModel
+    from src.folders.dto.folder_dto import ConflictStrategyEnum
+    from src.galleries.dto.bulk_move_dto import BulkMoveDto, BulkMoveItemDto
+
+    class DummyFolder(BaseModel):
+        id: int
+        workspace_id: int
+        name: str
+
+    bulk_dto = BulkMoveDto(
+        target_workspace_id=88,
+        items=[BulkMoveItemDto(id=10, type="folder")],
+        conflict_strategy=ConflictStrategyEnum.MERGE,
+    )
+    current_user = UserModel(
+        id=1,
+        email="user@test.com",
+        name="User",
+        roles=[UserRoleEnum.USER],
+    )
+
+    folder = DummyFolder(id=10, workspace_id=99, name="Campaigns")
+    service.mock_folder_repo.get_folder_by_id.return_value = folder
+    service.mock_folder_repo.move_folder_to_workspace.return_value = {
+        "folders_moved": 1,
+        "media_moved": 2,
+        "assets_moved": 0,
+    }
+
+    result = await service.bulk_move(bulk_dto, current_user)
+    assert result["moved_count"] == 3
+    service.mock_folder_repo.move_folder_to_workspace.assert_called_once_with(
+        folder_id=10,
+        target_workspace_id=88,
+        user_id=1,
+        conflict_strategy=ConflictStrategyEnum.MERGE,
+    )
+
+
+@pytest.mark.anyio
 async def test_bulk_copy_folder_success(service):
     from pydantic import BaseModel
     from src.galleries.dto.bulk_copy_dto import BulkCopyDto, BulkCopyItemDto
@@ -990,6 +1073,7 @@ async def test_bulk_copy_folder_success(service):
 
     folder = DummyFolder(id=10, workspace_id=99, name="Campaigns")
     service.mock_folder_repo.get_folder_by_id.return_value = folder
+    service.mock_folder_repo.get_existing_folders_map.return_value = {}
     service.mock_folder_repo.copy_folder_to_workspace.return_value = {
         "folders_copied": 2,
         "media_copied": 3,
@@ -1009,4 +1093,84 @@ async def test_bulk_copy_folder_success(service):
         target_workspace_id=88,
         user_id=1,
         user_email="user@test.com",
+        conflict_strategy=ConflictStrategyEnum.KEEP_BOTH,
+    )
+
+
+@pytest.mark.anyio
+async def test_bulk_copy_folder_conflict_detection_409(service):
+    from pydantic import BaseModel
+    from src.galleries.dto.bulk_copy_dto import BulkCopyDto, BulkCopyItemDto
+
+    class DummyFolder(BaseModel):
+        id: int
+        workspace_id: int
+        name: str
+
+    bulk_dto = BulkCopyDto(
+        target_workspace_id=88,
+        items=[BulkCopyItemDto(id=10, type="folder")],
+    )
+    current_user = UserModel(
+        id=1,
+        email="user@test.com",
+        name="User",
+        roles=[UserRoleEnum.USER],
+    )
+
+    folder = DummyFolder(id=10, workspace_id=99, name="Campaigns")
+    service.mock_folder_repo.get_folder_by_id.return_value = folder
+    service.mock_folder_repo.get_existing_folders_map.return_value = {
+        "campaigns": DummyFolder(id=999, workspace_id=88, name="Campaigns")
+    }
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.bulk_copy(bulk_dto, current_user)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "FOLDER_COLLISION"
+    assert len(exc_info.value.detail["conflicts"]) == 1
+    assert exc_info.value.detail["conflicts"][0]["folder_name"] == "Campaigns"
+    service.mock_folder_repo.copy_folder_to_workspace.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_bulk_copy_folder_merge_strategy(service):
+    from pydantic import BaseModel
+    from src.folders.dto.folder_dto import ConflictStrategyEnum
+    from src.galleries.dto.bulk_copy_dto import BulkCopyDto, BulkCopyItemDto
+
+    class DummyFolder(BaseModel):
+        id: int
+        workspace_id: int
+        name: str
+
+    bulk_dto = BulkCopyDto(
+        target_workspace_id=88,
+        items=[BulkCopyItemDto(id=10, type="folder")],
+        conflict_strategy=ConflictStrategyEnum.MERGE,
+    )
+    current_user = UserModel(
+        id=1,
+        email="user@test.com",
+        name="User",
+        roles=[UserRoleEnum.USER],
+    )
+
+    folder = DummyFolder(id=10, workspace_id=99, name="Campaigns")
+    service.mock_folder_repo.get_folder_by_id.return_value = folder
+    service.mock_folder_repo.copy_folder_to_workspace.return_value = {
+        "folders_copied": 1,
+        "media_copied": 2,
+        "assets_copied": 0,
+    }
+
+    result = await service.bulk_copy(bulk_dto, current_user)
+    assert result["copied_count"] == 3
+    service.mock_folder_repo.copy_folder_to_workspace.assert_called_once_with(
+        folder_id=10,
+        target_workspace_id=88,
+        user_id=1,
+        user_email="user@test.com",
+        conflict_strategy=ConflictStrategyEnum.MERGE,
     )

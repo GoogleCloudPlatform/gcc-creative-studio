@@ -58,6 +58,7 @@ import {TruncatePipe} from './pipes/truncate.pipe';
 import {FolderCardComponent} from './components/folder-card/folder-card.component';
 import {CreateFolderDialogComponent} from './components/create-folder-dialog/create-folder-dialog.component';
 import {MoveToFolderDialogComponent} from './components/move-to-folder-dialog/move-to-folder-dialog.component';
+import {FolderConflictDialogComponent} from './components/folder-conflict-dialog/folder-conflict-dialog.component';
 import {MatTabsModule} from '@angular/material/tabs';
 
 const DECLARATIONS = [
@@ -82,6 +83,7 @@ const DECLARATIONS = [
   FolderCardComponent,
   CreateFolderDialogComponent,
   MoveToFolderDialogComponent,
+  FolderConflictDialogComponent,
 ];
 
 const MODULES = [
