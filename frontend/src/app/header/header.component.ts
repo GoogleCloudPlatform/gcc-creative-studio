@@ -17,15 +17,15 @@
 import {Component, OnDestroy, Inject, PLATFORM_ID} from '@angular/core';
 import {DomSanitizer, SafeResourceUrl} from '@angular/platform-browser';
 import {MatIconRegistry} from '@angular/material/icon';
-import {Router} from '@angular/router';
+import {NavigationEnd, Router} from '@angular/router';
 import {UserService} from '../common/services/user.service';
 import {AuthService} from '../common/services/auth.service';
 import {environment} from '../../environments/environment';
 import {UserModel} from '../common/models/user.model';
 import {animate, style, transition, trigger} from '@angular/animations';
 import {BreakpointObserver, Breakpoints} from '@angular/cdk/layout';
-import {Subject} from 'rxjs';
-import {takeUntil} from 'rxjs/operators';
+import {Subject, Subscription} from 'rxjs';
+import {filter, takeUntil} from 'rxjs/operators';
 import {isPlatformBrowser} from '@angular/common';
 
 @Component({
@@ -62,6 +62,8 @@ export class HeaderComponent implements OnDestroy {
   private menuTimeout: any;
   private genMenuTimeout: any;
   isBrowser: boolean;
+  private routerSubscription: Subscription;
+  isGalleryActive = false;
 
   constructor(
     public router: Router,
@@ -85,11 +87,26 @@ export class HeaderComponent implements OnDestroy {
       .subscribe(result => {
         this.isDesktop = result.matches;
       });
+
+    this.routerSubscription = this.router.events
+      .pipe(
+        filter(
+          (event): event is NavigationEnd =>
+            event instanceof NavigationEnd || 'urlAfterRedirects' in event,
+        ),
+        takeUntil(this.destroy$),
+      )
+      .subscribe(() => {
+        this.isGalleryActive =
+          this.router.isActive('/gallery', false) ||
+          this.router.url.startsWith('/folders');
+      });
   }
 
   ngOnDestroy(): void {
     this.destroy$.next();
     this.destroy$.complete();
+    this.routerSubscription.unsubscribe();
   }
 
   logout() {

@@ -44,6 +44,10 @@ class UnifiedGalleryView(Base):
         nullable=False,
     )
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    folder_id: Mapped[int | None] = mapped_column(
+        ForeignKey("folders.id"),
+        nullable=True,
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True)
     )

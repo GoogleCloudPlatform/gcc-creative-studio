@@ -58,6 +58,13 @@ const routes: Routes = [
   {
     path: 'gallery',
     component: MediaGalleryComponent,
+    canActivate: [AuthGuardService],
+  },
+  // When a user navigates to a folder in the gallery.
+  {
+    path: 'folders/:folderId',
+    component: MediaGalleryComponent,
+    canActivate: [AuthGuardService],
   },
   // When a user goes to '/gallery/some-unique-id', show the detail page.
   // The ':id' is a placeholder for the media item's ID.
