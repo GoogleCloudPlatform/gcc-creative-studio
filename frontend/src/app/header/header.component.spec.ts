@@ -20,7 +20,7 @@ import {
   TestBed,
   tick,
 } from '@angular/core/testing';
-import {Event, NavigationEnd, Router} from '@angular/router';
+import {Event, NavigationEnd, NavigationStart, Router} from '@angular/router';
 import {NO_ERRORS_SCHEMA} from '@angular/core';
 import {of, Subject} from 'rxjs';
 import {BreakpointObserver} from '@angular/cdk/layout';
@@ -112,6 +112,18 @@ describe('HeaderComponent', () => {
       ).and.returnValue('/video');
       routerEventsSubject.next(new NavigationEnd(1, '/video', '/video'));
       expect(component.isGalleryActive).toBeFalse();
+    });
+
+    it('should ignore non-NavigationEnd router events', () => {
+      routerSpy.isActive.and.returnValue(true);
+      (
+        Object.getOwnPropertyDescriptor(routerSpy, 'url')?.get as jasmine.Spy
+      ).and.returnValue('/gallery');
+      routerEventsSubject.next(new NavigationStart(1, '/gallery'));
+      expect(component.isGalleryActive).toBeFalse();
+
+      routerEventsSubject.next(new NavigationEnd(1, '/gallery', '/gallery'));
+      expect(component.isGalleryActive).toBeTrue();
     });
   });
 
