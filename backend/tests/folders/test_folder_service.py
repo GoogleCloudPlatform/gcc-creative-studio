@@ -26,6 +26,7 @@ from src.folders.dto.folder_dto import (
     FolderTreeNodeDto,
     FolderUpdateDto,
     MoveItemsDto,
+    CopyItemsDto,
 )
 from src.folders.folder_service import FolderService
 from src.folders.schema.folder_model import Folder
@@ -769,6 +770,231 @@ class TestMoveItems:
         mock_folder_repo.move_folders.assert_awaited_once_with(
             folder_ids=[2],
             workspace_id=1,
+            destination_folder_id=5,
+            conflict_strategy=ConflictStrategyEnum.MERGE,
+            user_id=10,
+            user_email="test@example.com",
+        )
+
+
+class TestCopyItems:
+    """Tests for batch copying items within workspace."""
+
+    @pytest.mark.anyio
+    async def test_copy_items_success(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.get_folder_by_id.return_value = Folder(
+            id=5, workspace_id=1, user_email="a@b.com", name="Target"
+        )
+        mock_folder_repo.get_folder_depth.return_value = 1
+        mock_folder_repo.get_folders_by_ids.return_value = [
+            Folder(id=2, workspace_id=1, user_email="a@b.com", name="Folder 2")
+        ]
+        mock_folder_repo.get_subtree_depth.return_value = 1
+        mock_folder_repo.get_existing_folders_map.return_value = {}
+        mock_folder_repo.copy_items.return_value = {
+            "media_items_copied": 2,
+            "source_assets_copied": 1,
+            "folders_copied": 1,
+            "total_copied": 4,
+        }
+
+        dto = CopyItemsDto(
+            workspace_id=1,
+            media_item_ids=[10, 11],
+            source_asset_ids=[20],
+            folder_ids=[2],
+            destination_folder_id=5,
+        )
+
+        result = await folder_service.copy_items(dto, sample_user)
+        assert result["total_copied"] == 4
+        assert result["media_items_copied"] == 2
+        assert result["source_assets_copied"] == 1
+        assert result["folders_copied"] == 1
+        mock_folder_repo.copy_items.assert_awaited_once_with(
+            workspace_id=1,
+            media_item_ids=[10, 11],
+            source_asset_ids=[20],
+            folder_ids=[2],
+            destination_folder_id=5,
+            conflict_strategy=ConflictStrategyEnum.KEEP_BOTH,
+            user_id=10,
+            user_email="test@example.com",
+        )
+
+    @pytest.mark.anyio
+    async def test_copy_items_dest_not_found(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.get_folder_by_id.return_value = None
+
+        dto = CopyItemsDto(
+            workspace_id=1,
+            folder_ids=[2],
+            destination_folder_id=999,
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.copy_items(dto, sample_user)
+        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+        assert "Destination folder not found" in exc_info.value.detail
+
+    @pytest.mark.anyio
+    async def test_copy_items_dest_workspace_mismatch(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.get_folder_by_id.return_value = Folder(
+            id=5, workspace_id=2, user_email="a@b.com", name="Foreign"
+        )
+
+        dto = CopyItemsDto(
+            workspace_id=1,
+            folder_ids=[2],
+            destination_folder_id=5,
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.copy_items(dto, sample_user)
+        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+
+    @pytest.mark.anyio
+    async def test_copy_items_folder_max_depth_exceeded(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.get_folder_by_id.return_value = Folder(
+            id=5, workspace_id=1, user_email="a@b.com", name="Target"
+        )
+        mock_folder_repo.get_folders_by_ids.return_value = [
+            Folder(id=2, workspace_id=1, user_email="a@b.com", name="Folder 2")
+        ]
+        mock_folder_repo.get_folder_depth.return_value = 19
+        mock_folder_repo.get_subtree_depth.return_value = 2
+
+        dto = CopyItemsDto(
+            workspace_id=1,
+            folder_ids=[2],
+            destination_folder_id=5,
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.copy_items(dto, sample_user)
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert (
+            "would exceed maximum folder tree depth of 20 levels"
+            in exc_info.value.detail
+        )
+
+    @pytest.mark.anyio
+    async def test_copy_items_to_root_success(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.get_folders_by_ids.return_value = [
+            Folder(id=2, workspace_id=1, user_email="a@b.com", name="Folder 2")
+        ]
+        mock_folder_repo.get_existing_folders_map.return_value = {}
+        mock_folder_repo.copy_items.return_value = {
+            "media_items_copied": 0,
+            "source_assets_copied": 0,
+            "folders_copied": 1,
+            "total_copied": 1,
+        }
+
+        dto = CopyItemsDto(
+            workspace_id=1,
+            folder_ids=[2],
+            destination_folder_id=None,
+        )
+
+        result = await folder_service.copy_items(dto, sample_user)
+        assert result["total_copied"] == 1
+        mock_folder_repo.copy_items.assert_awaited_once_with(
+            workspace_id=1,
+            media_item_ids=[],
+            source_asset_ids=[],
+            folder_ids=[2],
+            destination_folder_id=None,
+            conflict_strategy=ConflictStrategyEnum.KEEP_BOTH,
+            user_id=10,
+            user_email="test@example.com",
+        )
+
+    @pytest.mark.anyio
+    async def test_copy_items_conflict_detection_409(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.get_folder_by_id.return_value = Folder(
+            id=5, workspace_id=1, user_email="a@b.com", name="Target"
+        )
+        colliding_folder = Folder(
+            id=2,
+            workspace_id=1,
+            user_email="a@b.com",
+            name="ExistingSub",
+            parent_id=1,
+        )
+        target_folder = Folder(
+            id=50,
+            workspace_id=1,
+            user_email="a@b.com",
+            name="ExistingSub",
+            parent_id=5,
+        )
+        mock_folder_repo.get_folders_by_ids.return_value = [colliding_folder]
+        mock_folder_repo.get_subtree_depth.return_value = 1
+        mock_folder_repo.get_folder_depth.return_value = 1
+        mock_folder_repo.get_existing_folders_map.return_value = {
+            "existingsub": target_folder
+        }
+
+        dto = CopyItemsDto(
+            workspace_id=1,
+            folder_ids=[2],
+            destination_folder_id=5,
+            conflict_strategy=None,
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.copy_items(dto, sample_user)
+        assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+        assert exc_info.value.detail["code"] == "FOLDER_COLLISION"
+        assert len(exc_info.value.detail["conflicts"]) == 1
+        assert exc_info.value.detail["conflicts"][0]["folder_id"] == 2
+
+    @pytest.mark.anyio
+    async def test_copy_items_with_merge_strategy(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.get_folder_by_id.return_value = Folder(
+            id=5, workspace_id=1, user_email="a@b.com", name="Target"
+        )
+        mock_folder_repo.get_folders_by_ids.return_value = [
+            Folder(id=2, workspace_id=1, user_email="a@b.com", name="Folder 2")
+        ]
+        mock_folder_repo.get_subtree_depth.return_value = 1
+        mock_folder_repo.get_folder_depth.return_value = 1
+        mock_folder_repo.copy_items.return_value = {
+            "media_items_copied": 0,
+            "source_assets_copied": 0,
+            "folders_copied": 1,
+            "total_copied": 1,
+        }
+
+        dto = CopyItemsDto(
+            workspace_id=1,
+            folder_ids=[2],
+            destination_folder_id=5,
+            conflict_strategy=ConflictStrategyEnum.MERGE,
+        )
+
+        result = await folder_service.copy_items(dto, sample_user)
+        assert result["total_copied"] == 1
+        mock_folder_repo.copy_items.assert_awaited_once_with(
+            workspace_id=1,
+            media_item_ids=[],
+            source_asset_ids=[],
+            folder_ids=[2],
             destination_folder_id=5,
             conflict_strategy=ConflictStrategyEnum.MERGE,
             user_id=10,

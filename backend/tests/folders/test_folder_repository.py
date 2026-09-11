@@ -638,3 +638,166 @@ class TestFolderRepository:
         assert result["folders_copied"] == 0
         assert result["media_copied"] == 0
         assert result["assets_copied"] == 0
+
+    @pytest.mark.anyio
+    async def test_copy_media_items_within_workspace(
+        self, folder_repo, mock_db
+    ):
+        mock_item = MagicMock(
+            id=10,
+            titles=["test"],
+            descriptions=["desc"],
+            original_file_name="test.png",
+            mime_type="image/png",
+            thumbnail_uris=[],
+            gcs_uris=[],
+            original_gcs_uris=[],
+            user_id=1,
+            user_email="a@b.com",
+            aspect_ratio="1:1",
+            generation_time=1.0,
+            error_message=None,
+            style=None,
+            lighting=None,
+            color_and_tone=None,
+            composition=None,
+            negative_prompt=None,
+            add_watermark=False,
+            status="completed",
+            source_assets=None,
+            source_media_items=None,
+            duration_seconds=None,
+            comment=None,
+            seed=None,
+            critique=None,
+            google_search=None,
+            resolution=None,
+            grounding_metadata=None,
+            audio_analysis=None,
+            voice_name=None,
+            language_code=None,
+            raw_data=None,
+            created_from_template_id=None,
+        )
+        mock_res = MagicMock()
+        mock_res.scalars.return_value.all.return_value = [mock_item]
+
+        mock_tag_row = MagicMock(media_item_id=10, tag_id=42)
+        mock_tag_res = MagicMock()
+        mock_tag_res.fetchall.return_value = [mock_tag_row]
+
+        mock_db.execute.side_effect = [mock_res, mock_tag_res, MagicMock()]
+
+        # Assign ID on flush
+        def fake_flush():
+            for call in mock_db.add.call_args_list:
+                added = call.args[0]
+                if (
+                    isinstance(added, MediaItem)
+                    and getattr(added, "id", None) is None
+                ):
+                    added.id = 100
+
+        mock_db.flush.side_effect = fake_flush
+
+        copied = await folder_repo.copy_media_items(
+            media_item_ids=[10],
+            workspace_id=1,
+            destination_folder_id=5,
+            user_id=2,
+            user_email="b@b.com",
+        )
+        assert copied == 1
+        assert mock_db.add.called
+        added_media = [
+            call.args[0]
+            for call in mock_db.add.call_args_list
+            if isinstance(call.args[0], MediaItem)
+        ]
+        assert len(added_media) == 1
+        assert added_media[0].workspace_id == 1
+        assert added_media[0].folder_id == 5
+        assert added_media[0].user_id == 2
+        mock_db.commit.assert_called()
+
+    @pytest.mark.anyio
+    async def test_copy_source_assets_within_workspace(
+        self, folder_repo, mock_db
+    ):
+        mock_asset = MagicMock(
+            id=20,
+            gcs_uri="gs://b/a.png",
+            original_filename="a.png",
+            titles=["asset"],
+            descriptions=[],
+            mime_type="image/png",
+            aspect_ratio="1:1",
+            file_hash="h",
+            scope="private",
+            asset_type="generic_image",
+            thumbnail_gcs_uri=None,
+            original_gcs_uri=None,
+            external_url=None,
+            user_id=1,
+        )
+        mock_res = MagicMock()
+        mock_res.scalars.return_value.all.return_value = [mock_asset]
+
+        mock_tag_row = MagicMock(source_asset_id=20, tag_id=99)
+        mock_tag_res = MagicMock()
+        mock_tag_res.fetchall.return_value = [mock_tag_row]
+
+        mock_db.execute.side_effect = [mock_res, mock_tag_res, MagicMock()]
+
+        def fake_flush():
+            for call in mock_db.add.call_args_list:
+                added = call.args[0]
+                if (
+                    isinstance(added, SourceAsset)
+                    and getattr(added, "id", None) is None
+                ):
+                    added.id = 200
+
+        mock_db.flush.side_effect = fake_flush
+
+        copied = await folder_repo.copy_source_assets(
+            source_asset_ids=[20],
+            workspace_id=1,
+            destination_folder_id=5,
+            user_id=2,
+        )
+        assert copied == 1
+        added_assets = [
+            call.args[0]
+            for call in mock_db.add.call_args_list
+            if isinstance(call.args[0], SourceAsset)
+        ]
+        assert len(added_assets) == 1
+        assert added_assets[0].workspace_id == 1
+        assert added_assets[0].folder_id == 5
+        assert added_assets[0].user_id == 2
+        mock_db.commit.assert_called()
+
+    @pytest.mark.anyio
+    async def test_copy_items_aggregates_counts(self, folder_repo):
+        folder_repo.copy_media_items = AsyncMock(return_value=2)
+        folder_repo.copy_source_assets = AsyncMock(return_value=1)
+        folder_repo.copy_folders = AsyncMock(
+            return_value={
+                "folders_copied": 3,
+                "media_copied": 4,
+                "assets_copied": 5,
+            }
+        )
+
+        result = await folder_repo.copy_items(
+            workspace_id=1,
+            media_item_ids=[1, 2],
+            source_asset_ids=[10],
+            folder_ids=[5],
+            destination_folder_id=8,
+        )
+        assert result["media_items_copied"] == 6
+        assert result["source_assets_copied"] == 6
+        assert result["folders_copied"] == 3
+        assert result["total_copied"] == 15

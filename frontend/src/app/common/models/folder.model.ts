@@ -78,3 +78,19 @@ export interface GalleryDragPayload {
   folderIds?: number[];
   itemCount: number;
 }
+
+export interface CopyItemsDto {
+  workspaceId: number;
+  mediaItemIds?: number[];
+  sourceAssetIds?: number[];
+  folderIds?: number[];
+  destinationFolderId?: number | null;
+  conflictStrategy?: ConflictStrategy | null;
+}
+
+export interface CopyItemsResponse {
+  media_items_copied: number;
+  source_assets_copied: number;
+  folders_copied: number;
+  total_copied: number;
+}

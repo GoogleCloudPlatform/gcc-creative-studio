@@ -15,7 +15,11 @@
  */
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
-import {MatDialogModule, MatDialogRef, MAT_DIALOG_DATA} from '@angular/material/dialog';
+import {
+  MatDialogModule,
+  MatDialogRef,
+  MAT_DIALOG_DATA,
+} from '@angular/material/dialog';
 import {MatIconModule} from '@angular/material/icon';
 import {Component, Input} from '@angular/core';
 import {
@@ -28,15 +32,17 @@ import {
   template: '<button [disabled]="disabled"><ng-content></ng-content></button>',
 })
 class MockStudioButtonComponent {
-  @Input() variant: string = 'primary';
-  @Input() size: string = 'medium';
+  @Input() variant = 'primary';
+  @Input() size = 'medium';
   @Input() disabled = false;
 }
 
 describe('FolderConflictDialogComponent', () => {
   let component: FolderConflictDialogComponent;
   let fixture: ComponentFixture<FolderConflictDialogComponent>;
-  let mockDialogRef: jasmine.SpyObj<MatDialogRef<FolderConflictDialogComponent>>;
+  let mockDialogRef: jasmine.SpyObj<
+    MatDialogRef<FolderConflictDialogComponent>
+  >;
 
   const mockData: FolderConflictDialogData = {
     folderNames: ['Campaigns'],

@@ -24,6 +24,8 @@ import {
   FolderBreadcrumb,
   FolderTreeNode,
   MoveItemsDto,
+  CopyItemsDto,
+  CopyItemsResponse,
   UpdateFolderDto,
 } from '../models/folder.model';
 
@@ -91,5 +93,9 @@ export class FolderService {
       `${this.apiUrl}/move-items`,
       dto,
     );
+  }
+
+  copyItems(dto: CopyItemsDto): Observable<CopyItemsResponse> {
+    return this.http.post<CopyItemsResponse>(`${this.apiUrl}/copy-items`, dto);
   }
 }

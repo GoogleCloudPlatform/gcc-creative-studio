@@ -767,7 +767,22 @@ class GalleryService:
                     new_item_data["user_id"] = current_user.id
                     new_item_data["user_email"] = current_user.email
 
-                    await self.media_repo.create(new_item_data)
+                    new_item = await self.media_repo.create(new_item_data)
+                    if (
+                        media_item.workspace_id
+                        == bulk_copy_dto.target_workspace_id
+                        and new_item
+                        and getattr(new_item, "id", None)
+                    ):
+                        existing_tags = (
+                            await self.tags_repo.get_tags_for_media_item(
+                                item.id
+                            )
+                        )
+                        for t in existing_tags:
+                            await self.tags_repo.assign_tag_to_media_item(
+                                new_item.id, t.id
+                            )
                     copied_count += 1
 
                 elif item.type == "source_asset":
@@ -800,7 +815,23 @@ class GalleryService:
                     # Ensure user_id is set to the current user copying
                     new_asset_data["user_id"] = current_user.id
 
-                    await self.source_asset_repo.create(new_asset_data)
+                    new_asset = await self.source_asset_repo.create(
+                        new_asset_data
+                    )
+                    if (
+                        asset.workspace_id == bulk_copy_dto.target_workspace_id
+                        and new_asset
+                        and getattr(new_asset, "id", None)
+                    ):
+                        existing_tags = (
+                            await self.tags_repo.get_tags_for_source_asset(
+                                item.id
+                            )
+                        )
+                        for t in existing_tags:
+                            await self.tags_repo.assign_tag_to_source_asset(
+                                new_asset.id, t.id
+                            )
                     copied_count += 1
 
                 elif item.type == "folder":

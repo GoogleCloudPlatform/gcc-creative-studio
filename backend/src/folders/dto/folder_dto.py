@@ -145,3 +145,27 @@ class MoveItemsDto(BaseModel):
         populate_by_name=True,
         alias_generator=to_camel,
     )
+
+
+class CopyItemsDto(BaseModel):
+    """Payload for batch copying media items, source assets, and subfolders."""
+
+    workspace_id: int = Field(
+        ..., description="Workspace ID for security check."
+    )
+    media_item_ids: list[int] = Field(default_factory=list)
+    source_asset_ids: list[int] = Field(default_factory=list)
+    folder_ids: list[int] = Field(default_factory=list)
+    destination_folder_id: int | None = Field(
+        default=None,
+        description="Target folder ID (None to copy to root level).",
+    )
+    conflict_strategy: ConflictStrategyEnum | None = Field(
+        default=None,
+        description="Strategy for folder name conflicts: 'keep_both' or 'merge'.",
+    )
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        alias_generator=to_camel,
+    )

@@ -16,7 +16,7 @@ import copy
 import re
 from datetime import datetime, timezone
 from fastapi import Depends
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import delete, func, insert, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.base_repository import BaseRepository
@@ -574,6 +574,301 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         await self.db.commit()
         return moved_count
 
+    async def copy_media_items(
+        self,
+        media_item_ids: list[int],
+        workspace_id: int,
+        destination_folder_id: int | None,
+        user_id: int | None = None,
+        user_email: str | None = None,
+    ) -> int:
+        """Copy multiple media items to a destination folder within the same workspace."""
+        if not media_item_ids:
+            return 0
+        stmt = select(MediaItem).where(
+            MediaItem.id.in_(media_item_ids),
+            MediaItem.workspace_id == workspace_id,
+            MediaItem.deleted_at.is_(None),
+        )
+        res = await self.db.execute(stmt)
+        items = res.scalars().all()
+        if not items:
+            return 0
+
+        media_exclude = {
+            "id",
+            "created_at",
+            "updated_at",
+            "deleted_at",
+            "deleted_by",
+            "workspace_id",
+            "folder_id",
+            "user_id",
+            "user_email",
+        }
+        media_columns = [
+            c.key
+            for c in MediaItem.__table__.columns
+            if c.key not in media_exclude
+        ]
+
+        pairs: list[tuple[int, MediaItem]] = []
+        for item in items:
+            kwargs = {}
+            for col in media_columns:
+                val = getattr(item, col)
+                if isinstance(val, (list, dict)):
+                    val = copy.deepcopy(val)
+                kwargs[col] = val
+
+            new_media = MediaItem(
+                workspace_id=workspace_id,
+                folder_id=destination_folder_id,
+                user_id=user_id or item.user_id,
+                user_email=user_email or item.user_email,
+                **kwargs,
+            )
+            self.db.add(new_media)
+            pairs.append((item.id, new_media))
+
+        await self.db.flush()
+
+        old_media_ids = [p[0] for p in pairs]
+        media_tags_stmt = select(media_item_tags).where(
+            media_item_tags.c.media_item_id.in_(old_media_ids)
+        )
+        media_tags_res = await self.db.execute(media_tags_stmt)
+        media_tag_rows = media_tags_res.fetchall()
+
+        old_to_new = {
+            p[0]: p[1].id
+            for p in pairs
+            if getattr(p[1], "id", None) is not None
+        }
+        new_tag_inserts = [
+            {
+                "media_item_id": old_to_new[row.media_item_id],
+                "tag_id": row.tag_id,
+            }
+            for row in media_tag_rows
+            if row.media_item_id in old_to_new
+        ]
+        if new_tag_inserts:
+            await self.db.execute(insert(media_item_tags), new_tag_inserts)
+
+        await self.db.commit()
+        return len(pairs)
+
+    async def copy_source_assets(
+        self,
+        source_asset_ids: list[int],
+        workspace_id: int,
+        destination_folder_id: int | None,
+        user_id: int | None = None,
+    ) -> int:
+        """Copy multiple source assets to a destination folder within the same workspace."""
+        if not source_asset_ids:
+            return 0
+        stmt = select(SourceAsset).where(
+            SourceAsset.id.in_(source_asset_ids),
+            SourceAsset.workspace_id == workspace_id,
+            SourceAsset.deleted_at.is_(None),
+        )
+        res = await self.db.execute(stmt)
+        assets = res.scalars().all()
+        if not assets:
+            return 0
+
+        asset_exclude = {
+            "id",
+            "created_at",
+            "updated_at",
+            "deleted_at",
+            "deleted_by",
+            "workspace_id",
+            "folder_id",
+            "user_id",
+        }
+        asset_columns = [
+            c.key
+            for c in SourceAsset.__table__.columns
+            if c.key not in asset_exclude
+        ]
+
+        pairs: list[tuple[int, SourceAsset]] = []
+        for asset in assets:
+            kwargs = {}
+            for col in asset_columns:
+                val = getattr(asset, col)
+                if isinstance(val, (list, dict)):
+                    val = copy.deepcopy(val)
+                kwargs[col] = val
+
+            new_asset = SourceAsset(
+                workspace_id=workspace_id,
+                folder_id=destination_folder_id,
+                user_id=user_id or asset.user_id,
+                **kwargs,
+            )
+            self.db.add(new_asset)
+            pairs.append((asset.id, new_asset))
+
+        await self.db.flush()
+
+        old_asset_ids = [p[0] for p in pairs]
+        asset_tags_stmt = select(source_asset_tags).where(
+            source_asset_tags.c.source_asset_id.in_(old_asset_ids)
+        )
+        asset_tags_res = await self.db.execute(asset_tags_stmt)
+        asset_tag_rows = asset_tags_res.fetchall()
+
+        old_to_new = {
+            p[0]: p[1].id
+            for p in pairs
+            if getattr(p[1], "id", None) is not None
+        }
+        new_tag_inserts = [
+            {
+                "source_asset_id": old_to_new[row.source_asset_id],
+                "tag_id": row.tag_id,
+            }
+            for row in asset_tag_rows
+            if row.source_asset_id in old_to_new
+        ]
+        if new_tag_inserts:
+            await self.db.execute(insert(source_asset_tags), new_tag_inserts)
+
+        await self.db.commit()
+        return len(pairs)
+
+    async def copy_folders(
+        self,
+        folder_ids: list[int],
+        workspace_id: int,
+        destination_folder_id: int | None,
+        conflict_strategy: ConflictStrategyEnum = ConflictStrategyEnum.KEEP_BOTH,
+        user_id: int | None = None,
+        user_email: str | None = None,
+    ) -> dict[str, int]:
+        """Copies multiple folders to a destination parent folder within the same workspace with conflict handling."""
+        if not folder_ids:
+            return {
+                "folders_copied": 0,
+                "media_copied": 0,
+                "assets_copied": 0,
+            }
+
+        query = select(self.model).where(
+            self.model.id.in_(folder_ids),
+            self.model.workspace_id == workspace_id,
+            self.model.deleted_at.is_(None),
+        )
+        res = await self.db.execute(query)
+        folders = res.scalars().all()
+        if not folders:
+            return {
+                "folders_copied": 0,
+                "media_copied": 0,
+                "assets_copied": 0,
+            }
+
+        total_folders = 0
+        total_media = 0
+        total_assets = 0
+
+        existing_names = await self.get_existing_folder_names(
+            workspace_id=workspace_id,
+            parent_id=destination_folder_id,
+        )
+
+        for f in folders:
+            if conflict_strategy == ConflictStrategyEnum.MERGE:
+                existing_target = await self.get_folder_by_name(
+                    workspace_id=workspace_id,
+                    parent_id=destination_folder_id,
+                    name=f.name,
+                )
+                if existing_target and existing_target.id != f.id:
+                    merge_res = await self.merge_folders(
+                        source_folder_id=f.id,
+                        target_folder_id=existing_target.id,
+                        target_workspace_id=workspace_id,
+                        user_id=user_id or f.user_id,
+                        user_email=user_email or f.user_email,
+                        is_copy=True,
+                        clear_tags=False,
+                    )
+                    total_folders += merge_res.get("folders_copied", 1)
+                    total_media += merge_res.get("media_copied", 0)
+                    total_assets += merge_res.get("assets_copied", 0)
+                    continue
+
+            disambiguated_name = generate_disambiguated_name(
+                f.name, existing_names
+            )
+            existing_names.add(disambiguated_name.strip().lower())
+            sub_res = await self._copy_subtree_under(
+                subtree_root_id=f.id,
+                new_parent_id=destination_folder_id,
+                target_workspace_id=workspace_id,
+                user_id=user_id or f.user_id,
+                user_email=user_email or f.user_email,
+                root_name_override=disambiguated_name,
+            )
+            total_folders += sub_res.get("folders_copied", 0)
+            total_media += sub_res.get("media_copied", 0)
+            total_assets += sub_res.get("assets_copied", 0)
+
+        return {
+            "folders_copied": total_folders,
+            "media_copied": total_media,
+            "assets_copied": total_assets,
+        }
+
+    async def copy_items(
+        self,
+        workspace_id: int,
+        media_item_ids: list[int],
+        source_asset_ids: list[int],
+        folder_ids: list[int],
+        destination_folder_id: int | None,
+        conflict_strategy: ConflictStrategyEnum = ConflictStrategyEnum.KEEP_BOTH,
+        user_id: int | None = None,
+        user_email: str | None = None,
+    ) -> dict[str, int]:
+        """Batch copy media items, source assets, and folders within a workspace."""
+        media_copied = await self.copy_media_items(
+            media_item_ids=media_item_ids,
+            workspace_id=workspace_id,
+            destination_folder_id=destination_folder_id,
+            user_id=user_id,
+            user_email=user_email,
+        )
+        assets_copied = await self.copy_source_assets(
+            source_asset_ids=source_asset_ids,
+            workspace_id=workspace_id,
+            destination_folder_id=destination_folder_id,
+            user_id=user_id,
+        )
+        folders_res = await self.copy_folders(
+            folder_ids=folder_ids,
+            workspace_id=workspace_id,
+            destination_folder_id=destination_folder_id,
+            conflict_strategy=conflict_strategy,
+            user_id=user_id,
+            user_email=user_email,
+        )
+        folders_copied = folders_res.get("folders_copied", 0)
+        media_copied += folders_res.get("media_copied", 0)
+        assets_copied += folders_res.get("assets_copied", 0)
+
+        return {
+            "media_items_copied": media_copied,
+            "source_assets_copied": assets_copied,
+            "folders_copied": folders_copied,
+            "total_copied": media_copied + assets_copied + folders_copied,
+        }
+
     async def move_folder_to_workspace(
         self,
         folder_id: int,
@@ -956,6 +1251,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         user_id: int,
         user_email: str | None = None,
         root_name_override: str | None = None,
+        source_workspace_id: int | None = None,
     ) -> dict[str, int]:
         """Inserts copied folders, media items, and assets for given folder_rows."""
         depth_map: dict[int, list] = {}
@@ -1028,6 +1324,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         ]
 
         media_copied_count = 0
+        media_pairs: list[tuple[int, MediaItem]] = []
         for item in media_items:
             kwargs = {}
             for col in media_columns:
@@ -1044,6 +1341,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                 **kwargs,
             )
             self.db.add(new_media)
+            media_pairs.append((item.id, new_media))
             media_copied_count += 1
 
         # Copy source assets in any of the copied folders
@@ -1071,6 +1369,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         ]
 
         assets_copied_count = 0
+        asset_pairs: list[tuple[int, SourceAsset]] = []
         for asset in assets:
             kwargs = {}
             for col in asset_columns:
@@ -1086,7 +1385,66 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                 **kwargs,
             )
             self.db.add(new_asset)
+            asset_pairs.append((asset.id, new_asset))
             assets_copied_count += 1
+
+        if (
+            source_workspace_id is not None
+            and source_workspace_id == target_workspace_id
+            and (media_pairs or asset_pairs)
+        ):
+            await self.db.flush()
+            if media_pairs:
+                old_media_ids = [p[0] for p in media_pairs]
+                media_tags_stmt = select(media_item_tags).where(
+                    media_item_tags.c.media_item_id.in_(old_media_ids)
+                )
+                media_tags_res = await self.db.execute(media_tags_stmt)
+                media_tag_rows = media_tags_res.fetchall()
+                old_to_new_media = {
+                    p[0]: p[1].id
+                    for p in media_pairs
+                    if getattr(p[1], "id", None) is not None
+                }
+                new_media_tag_inserts = [
+                    {
+                        "media_item_id": old_to_new_media[row.media_item_id],
+                        "tag_id": row.tag_id,
+                    }
+                    for row in media_tag_rows
+                    if row.media_item_id in old_to_new_media
+                ]
+                if new_media_tag_inserts:
+                    await self.db.execute(
+                        insert(media_item_tags), new_media_tag_inserts
+                    )
+
+            if asset_pairs:
+                old_asset_ids = [p[0] for p in asset_pairs]
+                asset_tags_stmt = select(source_asset_tags).where(
+                    source_asset_tags.c.source_asset_id.in_(old_asset_ids)
+                )
+                asset_tags_res = await self.db.execute(asset_tags_stmt)
+                asset_tag_rows = asset_tags_res.fetchall()
+                old_to_new_asset = {
+                    p[0]: p[1].id
+                    for p in asset_pairs
+                    if getattr(p[1], "id", None) is not None
+                }
+                new_asset_tag_inserts = [
+                    {
+                        "source_asset_id": old_to_new_asset[
+                            row.source_asset_id
+                        ],
+                        "tag_id": row.tag_id,
+                    }
+                    for row in asset_tag_rows
+                    if row.source_asset_id in old_to_new_asset
+                ]
+                if new_asset_tag_inserts:
+                    await self.db.execute(
+                        insert(source_asset_tags), new_asset_tag_inserts
+                    )
 
         await self.db.commit()
 
@@ -1138,6 +1496,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
             user_id=user_id,
             user_email=user_email or root_folder.user_email,
             root_name_override=root_name_override,
+            source_workspace_id=root_folder.workspace_id,
         )
 
     async def copy_folder_to_workspace(
@@ -1158,6 +1517,11 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                 workspace_id=target_workspace_id,
                 parent_id=None,
                 name=root_folder.name,
+                exclude_folder_id=(
+                    folder_id
+                    if root_folder.workspace_id == target_workspace_id
+                    else None
+                ),
             )
             if existing_target:
                 return await self.merge_folders(
@@ -1167,7 +1531,9 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                     user_id=user_id,
                     user_email=user_email or root_folder.user_email,
                     is_copy=True,
-                    clear_tags=False,
+                    clear_tags=(
+                        root_folder.workspace_id != target_workspace_id
+                    ),
                 )
 
         cte_query = text(
@@ -1207,4 +1573,5 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
             user_id=user_id,
             user_email=user_email or root_folder.user_email,
             root_name_override=disambiguated_root_name,
+            source_workspace_id=root_folder.workspace_id,
         )

@@ -61,6 +61,7 @@ describe('MediaGalleryComponent', () => {
       'getBreadcrumbs',
       'getFolderById',
       'moveItems',
+      'copyItems',
       'createFolder',
       'updateFolder',
       'deleteFolder',
@@ -69,6 +70,14 @@ describe('MediaGalleryComponent', () => {
     folderServiceSpy.getBreadcrumbs.and.returnValue(of([]));
     folderServiceSpy.getFolderById.and.returnValue(of({} as Folder));
     folderServiceSpy.moveItems.and.returnValue(of({total_moved: 1}));
+    folderServiceSpy.copyItems.and.returnValue(
+      of({
+        total_copied: 1,
+        media_items_copied: 1,
+        source_assets_copied: 0,
+        folders_copied: 0,
+      }),
+    );
 
     await TestBed.configureTestingModule({
       declarations: [MediaGalleryComponent],
@@ -446,7 +455,8 @@ describe('MediaGalleryComponent', () => {
 
     it('should handle openCopyFolderDialog when destination workspace is chosen', () => {
       const mockDialogRef = {
-        afterClosed: () => of(88),
+        afterClosed: () =>
+          of({destinationWorkspaceId: 88, destinationName: 'Target Workspace'}),
       };
       spyOn(component.dialog, 'open').and.returnValue(mockDialogRef as any);
       const executeSpy = spyOn(
@@ -463,12 +473,146 @@ describe('MediaGalleryComponent', () => {
       } as any;
       component.openCopyFolderDialog(folder);
 
-      expect(executeSpy).toHaveBeenCalledWith(folder, 88);
+      expect(executeSpy).toHaveBeenCalledWith(
+        folder,
+        88,
+        null,
+        'Target Workspace',
+      );
       expect(galleryService.bulkCopy).toHaveBeenCalledWith(
         [{id: 10, type: 'folder'}],
         88,
-        undefined,
+        null,
       );
+    });
+
+    it('should handle openCopyFolderDialog when destination folder is chosen', () => {
+      const mockDialogRef = {
+        afterClosed: () =>
+          of({destinationFolderId: 25, destinationName: 'Subfolder'}),
+      };
+      spyOn(component.dialog, 'open').and.returnValue(mockDialogRef as any);
+      const executeSpy = spyOn(
+        component as any,
+        'executeCopy',
+      ).and.callThrough();
+
+      const folder = {
+        id: 10,
+        name: 'Folder 1',
+        workspace_id: 1,
+        parent_id: null,
+      } as any;
+      component.openCopyFolderDialog(folder);
+
+      expect(executeSpy).toHaveBeenCalledWith([], [], [10], 25, 'Subfolder');
+      expect(folderService.copyItems).toHaveBeenCalledWith({
+        workspaceId: 1,
+        mediaItemIds: [],
+        sourceAssetIds: [],
+        folderIds: [10],
+        destinationFolderId: 25,
+        conflictStrategy: undefined,
+      });
+    });
+
+    it('should handle copySelected when destination folder is chosen', () => {
+      component.selectedItems.add('media_item:101');
+      component.selectedItems.add('source_asset:202');
+      const mockDialogRef = {
+        afterClosed: () =>
+          of({destinationFolderId: 5, destinationName: 'Destination'}),
+      };
+      spyOn(component.dialog, 'open').and.returnValue(mockDialogRef as any);
+      const executeSpy = spyOn(
+        component as any,
+        'executeCopy',
+      ).and.callThrough();
+
+      component.copySelected();
+
+      expect(executeSpy).toHaveBeenCalledWith(
+        [101],
+        [202],
+        [],
+        5,
+        'Destination',
+      );
+      expect(folderService.copyItems).toHaveBeenCalledWith({
+        workspaceId: 1,
+        mediaItemIds: [101],
+        sourceAssetIds: [202],
+        folderIds: [],
+        destinationFolderId: 5,
+        conflictStrategy: undefined,
+      });
+    });
+
+    it('should handle copySelected when destination workspace is chosen', () => {
+      component.selectedItems.add('media_item:101');
+      const mockDialogRef = {
+        afterClosed: () =>
+          of({destinationWorkspaceId: 99, destinationName: 'Other Workspace'}),
+      };
+      spyOn(component.dialog, 'open').and.returnValue(mockDialogRef as any);
+      spyOn(galleryService, 'bulkCopy').and.returnValue(of({copied_count: 1}));
+
+      component.copySelected();
+
+      expect(galleryService.bulkCopy).toHaveBeenCalledWith(
+        [{id: 101, type: 'media_item'}],
+        99,
+        null,
+      );
+    });
+
+    it('should open conflict dialog and retry copy with merge when 409 occurs during copyItems', () => {
+      const conflictErr = {
+        status: 409,
+        error: {
+          detail: {
+            code: 'FOLDER_COLLISION',
+            conflicts: [{folder_id: 10, folder_name: 'Folder A'}],
+          },
+        },
+      };
+
+      folderService.copyItems.and.returnValues(
+        throwError(() => conflictErr),
+        of({
+          total_copied: 1,
+          media_items_copied: 0,
+          source_assets_copied: 0,
+          folders_copied: 1,
+        }),
+      );
+
+      const mockDialogRef = {
+        afterClosed: () => of('merge'),
+      };
+      spyOn(component.dialog, 'open').and.returnValue(mockDialogRef as any);
+
+      (component as any).executeCopy([], [], [10], 5, 'Destination');
+
+      expect(component.dialog.open).toHaveBeenCalledWith(
+        FolderConflictDialogComponent,
+        jasmine.objectContaining({
+          data: jasmine.objectContaining({
+            folderNames: ['Folder A'],
+            destinationName: 'Destination',
+            isMove: false,
+          }),
+        }),
+      );
+      expect(folderService.copyItems).toHaveBeenCalledTimes(2);
+      expect(folderService.copyItems).toHaveBeenCalledWith({
+        workspaceId: 1,
+        mediaItemIds: [],
+        sourceAssetIds: [],
+        folderIds: [10],
+        destinationFolderId: 5,
+        conflictStrategy: 'merge',
+      });
     });
 
     describe('Folder Conflict Handling', () => {

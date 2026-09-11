@@ -24,6 +24,7 @@ from src.folders.dto.folder_dto import (
     FolderTreeNodeDto,
     FolderUpdateDto,
     MoveItemsDto,
+    CopyItemsDto,
 )
 from src.folders.folder_service import FolderService
 from src.users.user_model import UserModel, UserRoleEnum
@@ -230,3 +231,20 @@ async def move_items(
         user=current_user,
     )
     return await service.move_items(dto=dto, user=current_user)
+
+
+@router.post(
+    "/copy-items",
+)
+async def copy_items(
+    dto: CopyItemsDto,
+    current_user: UserModel = Depends(get_current_user),
+    service: FolderService = Depends(),
+    workspace_auth: WorkspaceAuth = Depends(),
+) -> dict[str, int]:
+    """Batch copy media items, source assets, and folders to a destination folder."""
+    await workspace_auth.authorize(
+        workspace_id=dto.workspace_id,
+        user=current_user,
+    )
+    return await service.copy_items(dto=dto, user=current_user)

@@ -37,7 +37,10 @@ import {DomSanitizer} from '@angular/platform-browser';
 import {ActivatedRoute, Router} from '@angular/router';
 import {Subscription, forkJoin} from 'rxjs';
 import {MediaItemSelection} from '../../common/components/image-selector/image-selector.component';
-import {CopyToWorkspaceDialogComponent} from '../../common/components/copy-to-workspace-dialog/copy-to-workspace-dialog.component';
+import {
+  CopyToFolderDialogComponent,
+  CopyToFolderDialogResult,
+} from '../../common/components/copy-to-folder-dialog/copy-to-folder-dialog.component';
 import {DropdownOption} from '../../common/components/studio-dropdown/studio-dropdown.component';
 import {MODEL_CONFIGS} from '../../common/config/model-config';
 import {JobStatus, MediaItem} from '../../common/models/media-item.model';
@@ -648,23 +651,56 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   copySelected(): void {
-    if (this.selectedItems.size === 0) return;
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    if (!workspaceId || this.selectedItems.size === 0) return;
 
-    const dialogRef = this.dialog.open(CopyToWorkspaceDialogComponent, {
-      width: '450px',
-      data: {itemCount: this.selectedItems.size},
+    const selected = Array.from(this.selectedItems);
+    const mediaItemIds = selected
+      .filter(id => id.startsWith('media_item:'))
+      .map(id => parseInt(id.split(':')[1]));
+    const sourceAssetIds = selected
+      .filter(id => id.startsWith('source_asset:'))
+      .map(id => parseInt(id.split(':')[1]));
+
+    const dialogRef = this.dialog.open(CopyToFolderDialogComponent, {
+      width: '480px',
+      data: {
+        workspaceId,
+        itemCount: this.selectedItems.size,
+        currentFolderId: this.currentFolderId,
+        title: 'Copy Items',
+        subtitle: `Select a destination for ${this.selectedItems.size} selected item${this.selectedItems.size === 1 ? '' : 's'}`,
+      },
     });
 
-    dialogRef.afterClosed().subscribe((targetWorkspaceId: number | null) => {
-      if (targetWorkspaceId) {
-        this.performCopy(targetWorkspaceId);
-      }
-    });
+    dialogRef
+      .afterClosed()
+      .subscribe((result: CopyToFolderDialogResult | null | undefined) => {
+        if (!result) return;
+
+        if (result.destinationFolderId !== undefined) {
+          const destName =
+            result.destinationFolderId === null
+              ? 'All Media'
+              : result.destinationName || 'Folder';
+          this.executeCopy(
+            mediaItemIds,
+            sourceAssetIds,
+            [],
+            result.destinationFolderId,
+            destName,
+          );
+        } else if (result.destinationWorkspaceId !== undefined) {
+          const destName = result.destinationName || 'target workspace';
+          this.performCopy(result.destinationWorkspaceId, null, destName);
+        }
+      });
   }
 
   private performCopy(
     targetWorkspaceId: number,
     conflictStrategy?: ConflictStrategy | null,
+    destinationName = 'target workspace',
   ): void {
     const itemsToCopy = Array.from(this.selectedItems).map(id => {
       const [type, itemId] = id.split(':');
@@ -677,7 +713,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
       .subscribe({
         next: result => {
           this.snackBar.open(
-            `${result.copied_count} items copied successfully`,
+            `${result.copied_count} item${result.copied_count === 1 ? '' : 's'} copied to "${destinationName}"`,
             'Close',
             {duration: 3000},
           );
@@ -698,7 +734,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
             const dialogRef = this.dialog.open(FolderConflictDialogComponent, {
               data: {
                 folderNames,
-                destinationName: 'target workspace',
+                destinationName,
                 isMove: false,
               },
             });
@@ -707,13 +743,97 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
               .afterClosed()
               .subscribe((choice: FolderConflictChoice | null | undefined) => {
                 if (choice === 'keep_both' || choice === 'merge') {
-                  this.performCopy(targetWorkspaceId, choice);
+                  this.performCopy(targetWorkspaceId, choice, destinationName);
                 }
               });
             return;
           }
 
           this.snackBar.open('Failed to copy items', 'Close', {duration: 3000});
+        },
+      });
+  }
+
+  private executeCopy(
+    mediaItemIds: number[],
+    sourceAssetIds: number[],
+    folderIds: number[],
+    destinationFolderId: number | null,
+    destinationName: string,
+    conflictStrategy?: ConflictStrategy | null,
+  ): void {
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    if (!workspaceId) return;
+
+    const totalCount =
+      mediaItemIds.length + sourceAssetIds.length + folderIds.length;
+    if (totalCount === 0) return;
+
+    this.isCopying = true;
+
+    this.folderService
+      .copyItems({
+        workspaceId,
+        mediaItemIds,
+        sourceAssetIds,
+        folderIds,
+        destinationFolderId,
+        conflictStrategy,
+      })
+      .subscribe({
+        next: res => {
+          this.snackBar.open(
+            `${res.total_copied} item${res.total_copied === 1 ? '' : 's'} copied to "${destinationName}"`,
+            'Close',
+            {duration: 3000},
+          );
+          this.isCopying = false;
+          this.selectedItems.clear();
+          this.loadFolders();
+          this.searchTerm();
+        },
+        error: err => {
+          console.error('Error copying items:', err);
+          this.isCopying = false;
+
+          const detail = err.error?.detail;
+          if (err.status === 409 && detail?.code === 'FOLDER_COLLISION') {
+            const conflicts: Array<{folder_name?: string; name?: string}> =
+              detail.conflicts || [];
+            const folderNames = conflicts.map(
+              c => c.folder_name || c.name || 'Folder',
+            );
+
+            const dialogRef = this.dialog.open(FolderConflictDialogComponent, {
+              data: {
+                folderNames,
+                destinationName,
+                isMove: false,
+              },
+            });
+
+            dialogRef
+              .afterClosed()
+              .subscribe((choice: FolderConflictChoice | null | undefined) => {
+                if (choice === 'keep_both' || choice === 'merge') {
+                  this.executeCopy(
+                    mediaItemIds,
+                    sourceAssetIds,
+                    folderIds,
+                    destinationFolderId,
+                    destinationName,
+                    choice,
+                  );
+                }
+              });
+            return;
+          }
+
+          const message =
+            typeof detail === 'string' ? detail : 'Failed to copy items';
+          this.snackBar.open(message, 'Close', {
+            duration: 3000,
+          });
         },
       });
   }
@@ -1304,26 +1424,52 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
     if (!workspaceId) return;
 
-    const dialogRef = this.dialog.open(CopyToWorkspaceDialogComponent, {
-      width: '450px',
+    const dialogRef = this.dialog.open(CopyToFolderDialogComponent, {
+      width: '480px',
       data: {
+        workspaceId,
         itemCount: 1,
+        copyingFolderIds: [folder.id],
+        currentFolderId: folder.parentId ?? null,
         title: 'Copy Folder',
-        subtitle: `Select the target workspace for folder "${folder.name}" and its contents`,
+        subtitle: `Select a destination for "${folder.name}" and its contents`,
       },
     });
 
-    dialogRef.afterClosed().subscribe((targetWorkspaceId: number | null) => {
-      if (targetWorkspaceId) {
-        this.executeCopyFolderToWorkspace(folder, targetWorkspaceId);
-      }
-    });
+    dialogRef
+      .afterClosed()
+      .subscribe((result: CopyToFolderDialogResult | null | undefined) => {
+        if (!result) return;
+
+        if (result.destinationFolderId !== undefined) {
+          const destName =
+            result.destinationFolderId === null
+              ? 'All Media'
+              : result.destinationName || 'Folder';
+          this.executeCopy(
+            [],
+            [],
+            [folder.id],
+            result.destinationFolderId,
+            destName,
+          );
+        } else if (result.destinationWorkspaceId !== undefined) {
+          const destName = result.destinationName || 'target workspace';
+          this.executeCopyFolderToWorkspace(
+            folder,
+            result.destinationWorkspaceId,
+            null,
+            destName,
+          );
+        }
+      });
   }
 
   private executeCopyFolderToWorkspace(
     folder: Folder,
     targetWorkspaceId: number,
     conflictStrategy?: ConflictStrategy | null,
+    destinationName = 'target workspace',
   ): void {
     this.isCopying = true;
     const itemsToCopy = [{id: folder.id, type: 'folder'}];
@@ -1332,7 +1478,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
       .subscribe({
         next: () => {
           this.snackBar.open(
-            `Folder "${folder.name}" copied successfully`,
+            `Folder "${folder.name}" copied to "${destinationName}"`,
             'Close',
             {duration: 3000},
           );
@@ -1353,7 +1499,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
             const dialogRef = this.dialog.open(FolderConflictDialogComponent, {
               data: {
                 folderNames,
-                destinationName: 'target workspace',
+                destinationName,
                 isMove: false,
               },
             });
@@ -1366,6 +1512,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
                     folder,
                     targetWorkspaceId,
                     choice,
+                    destinationName,
                   );
                 }
               });

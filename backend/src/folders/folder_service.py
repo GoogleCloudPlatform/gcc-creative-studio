@@ -26,6 +26,7 @@ from src.folders.dto.folder_dto import (
     FolderTreeNodeDto,
     FolderUpdateDto,
     MoveItemsDto,
+    CopyItemsDto,
 )
 from src.folders.repository.folder_repository import FolderRepository
 from src.folders.schema.folder_model import Folder
@@ -409,3 +410,79 @@ class FolderService:
             "folders_moved": folders_moved,
             "total_moved": media_moved + assets_moved + folders_moved,
         }
+
+    async def copy_items(
+        self, dto: CopyItemsDto, user: UserModel
+    ) -> dict[str, int]:
+        """Batch copies media items, source assets, and folders to a destination folder."""
+        dest_folder_id = dto.destination_folder_id
+        dest_depth = 0
+        if dest_folder_id is not None:
+            dest_folder = await self.folder_repo.get_folder_by_id(
+                dest_folder_id
+            )
+            if not dest_folder or dest_folder.workspace_id != dto.workspace_id:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Destination folder not found in this workspace.",
+                )
+            dest_depth = await self.folder_repo.get_folder_depth(dest_folder_id)
+
+        valid_folder_ids: list[int] = []
+        if dto.folder_ids:
+            folders = await self.folder_repo.get_folders_by_ids(
+                folder_ids=dto.folder_ids,
+                workspace_id=dto.workspace_id,
+            )
+
+            for folder in folders:
+                f_id = folder.id
+                if dest_folder_id is not None:
+                    subtree_depth = await self.folder_repo.get_subtree_depth(
+                        f_id
+                    )
+                    if dest_depth + subtree_depth > MAX_FOLDER_DEPTH:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Cannot copy folder: would exceed maximum folder tree depth of {MAX_FOLDER_DEPTH} levels.",
+                        )
+                valid_folder_ids.append(f_id)
+
+            if dto.conflict_strategy is None and valid_folder_ids:
+                existing_map = await self.folder_repo.get_existing_folders_map(
+                    workspace_id=dto.workspace_id,
+                    parent_id=dest_folder_id,
+                )
+                conflicts = []
+                for f_id in valid_folder_ids:
+                    f_obj = next((f for f in folders if f.id == f_id), None)
+                    if f_obj:
+                        key = f_obj.name.strip().lower()
+                        if key in existing_map:
+                            conflicts.append(
+                                {
+                                    "folder_id": f_obj.id,
+                                    "folder_name": f_obj.name,
+                                    "target_folder_id": existing_map[key].id,
+                                }
+                            )
+                if conflicts:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "code": "FOLDER_COLLISION",
+                            "conflicts": conflicts,
+                        },
+                    )
+
+        return await self.folder_repo.copy_items(
+            workspace_id=dto.workspace_id,
+            media_item_ids=dto.media_item_ids,
+            source_asset_ids=dto.source_asset_ids,
+            folder_ids=valid_folder_ids,
+            destination_folder_id=dest_folder_id,
+            conflict_strategy=dto.conflict_strategy
+            or ConflictStrategyEnum.KEEP_BOTH,
+            user_id=user.id,
+            user_email=user.email,
+        )

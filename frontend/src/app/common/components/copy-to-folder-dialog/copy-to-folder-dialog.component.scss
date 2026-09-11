@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-.copy-dialog-container {
+.move-dialog-container {
   padding: 24px;
   min-width: 440px;
   max-width: 520px;
@@ -160,8 +160,27 @@
 }
 
 .dialog-footer {
-  margin-top: 24px;
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+  margin-top: 24px;
+}
+
+::ng-deep .move-dialog-container {
+  .mat-mdc-tab-header {
+    margin-bottom: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .mdc-tab__text-label {
+    color: #9aa0a6 !important;
+  }
+
+  .mdc-tab--active .mdc-tab__text-label {
+    color: #8ab4f8 !important;
+  }
+
+  .mat-mdc-tab-header .mdc-tab-indicator .mdc-tab-indicator__content--underline {
+    border-color: #8ab4f8 !important;
+  }
 }

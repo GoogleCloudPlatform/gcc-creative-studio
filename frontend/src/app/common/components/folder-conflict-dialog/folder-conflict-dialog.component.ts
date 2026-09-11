@@ -33,7 +33,10 @@ export interface FolderConflictDialogData {
 })
 export class FolderConflictDialogComponent {
   constructor(
-    public dialogRef: MatDialogRef<FolderConflictDialogComponent, FolderConflictChoice>,
+    public dialogRef: MatDialogRef<
+      FolderConflictDialogComponent,
+      FolderConflictChoice
+    >,
     @Inject(MAT_DIALOG_DATA) public data: FolderConflictDialogData,
   ) {}
 
