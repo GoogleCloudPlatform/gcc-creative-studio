@@ -162,6 +162,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   private loadingSubscription: Subscription | undefined;
   private resizeSubscription: Subscription | undefined;
   private uploadBatchSubscription: Subscription | undefined;
+  private foldersSub?: Subscription;
   private _hostVisibilityObserver!: IntersectionObserver;
   private _scrollObserver!: IntersectionObserver;
   public userEmailFilter = '';
@@ -487,6 +488,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     this.allImagesLoadedSubscription?.unsubscribe();
     this.resizeSubscription?.unsubscribe();
     this.uploadBatchSubscription?.unsubscribe();
+    this.foldersSub?.unsubscribe();
     this._hostVisibilityObserver?.disconnect();
     this._scrollObserver?.disconnect();
   }
@@ -1177,16 +1179,19 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
       return;
     }
     this.isLoadingFolders = true;
-    this.folderService.getFolders(workspaceId, this.currentFolderId).subscribe({
-      next: folders => {
-        this.folders = folders;
-        this.isLoadingFolders = false;
-      },
-      error: err => {
-        console.error('Error loading folders:', err);
-        this.isLoadingFolders = false;
-      },
-    });
+    this.foldersSub?.unsubscribe();
+    this.foldersSub = this.folderService
+      .getFolders(workspaceId, this.currentFolderId)
+      .subscribe({
+        next: folders => {
+          this.folders = folders;
+          this.isLoadingFolders = false;
+        },
+        error: err => {
+          console.error('Error loading folders:', err);
+          this.isLoadingFolders = false;
+        },
+      });
   }
 
   loadBreadcrumbs(): void {
