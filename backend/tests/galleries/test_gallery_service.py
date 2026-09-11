@@ -919,7 +919,7 @@ async def test_bulk_move_folder_success(service):
     )
 
     folder = DummyFolder(id=10, workspace_id=99, name="Campaigns")
-    service.mock_folder_repo.get_folder_by_id.return_value = folder
+    service.mock_folder_repo.get_folders_by_ids.return_value = [folder]
     service.mock_folder_repo.get_existing_folders_map.return_value = {}
     service.mock_folder_repo.move_folder_to_workspace.return_value = {
         "folders_moved": 2,
@@ -965,7 +965,7 @@ async def test_bulk_move_folder_same_workspace(service):
     )
 
     folder = DummyFolder(id=10, workspace_id=88, name="Campaigns")
-    service.mock_folder_repo.get_folder_by_id.return_value = folder
+    service.mock_folder_repo.get_folders_by_ids.return_value = [folder]
 
     result = await service.bulk_move(bulk_dto, current_user)
     assert result["moved_count"] == 0
@@ -994,7 +994,7 @@ async def test_bulk_move_folder_conflict_detection_409(service):
     )
 
     folder = DummyFolder(id=10, workspace_id=99, name="Campaigns")
-    service.mock_folder_repo.get_folder_by_id.return_value = folder
+    service.mock_folder_repo.get_folders_by_ids.return_value = [folder]
     service.mock_folder_repo.get_existing_folders_map.return_value = {
         "campaigns": DummyFolder(id=999, workspace_id=88, name="Campaigns")
     }
@@ -1033,7 +1033,7 @@ async def test_bulk_move_folder_merge_strategy(service):
     )
 
     folder = DummyFolder(id=10, workspace_id=99, name="Campaigns")
-    service.mock_folder_repo.get_folder_by_id.return_value = folder
+    service.mock_folder_repo.get_folders_by_ids.return_value = [folder]
     service.mock_folder_repo.move_folder_to_workspace.return_value = {
         "folders_moved": 1,
         "media_moved": 2,
@@ -1072,7 +1072,7 @@ async def test_bulk_copy_folder_success(service):
     )
 
     folder = DummyFolder(id=10, workspace_id=99, name="Campaigns")
-    service.mock_folder_repo.get_folder_by_id.return_value = folder
+    service.mock_folder_repo.get_folders_by_ids.return_value = [folder]
     service.mock_folder_repo.get_existing_folders_map.return_value = {}
     service.mock_folder_repo.copy_folder_to_workspace.return_value = {
         "folders_copied": 2,
@@ -1119,7 +1119,7 @@ async def test_bulk_copy_folder_conflict_detection_409(service):
     )
 
     folder = DummyFolder(id=10, workspace_id=99, name="Campaigns")
-    service.mock_folder_repo.get_folder_by_id.return_value = folder
+    service.mock_folder_repo.get_folders_by_ids.return_value = [folder]
     service.mock_folder_repo.get_existing_folders_map.return_value = {
         "campaigns": DummyFolder(id=999, workspace_id=88, name="Campaigns")
     }
@@ -1158,7 +1158,7 @@ async def test_bulk_copy_folder_merge_strategy(service):
     )
 
     folder = DummyFolder(id=10, workspace_id=99, name="Campaigns")
-    service.mock_folder_repo.get_folder_by_id.return_value = folder
+    service.mock_folder_repo.get_folders_by_ids.return_value = [folder]
     service.mock_folder_repo.copy_folder_to_workspace.return_value = {
         "folders_copied": 1,
         "media_copied": 2,

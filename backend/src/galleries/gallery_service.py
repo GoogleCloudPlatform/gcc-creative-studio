@@ -704,15 +704,22 @@ class GalleryService:
             user=current_user,
         )
 
-        folder_items = [it for it in bulk_copy_dto.items if it.type == "folder"]
-        if folder_items and bulk_copy_dto.conflict_strategy is None:
+        folder_ids = [
+            it.id for it in bulk_copy_dto.items if it.type == "folder"
+        ]
+        folder_map = {}
+        if folder_ids:
+            folders = await self.folder_repo.get_folders_by_ids(folder_ids)
+            folder_map = {f.id: f for f in folders}
+
+        if folder_ids and bulk_copy_dto.conflict_strategy is None:
             existing_map = await self.folder_repo.get_existing_folders_map(
                 workspace_id=bulk_copy_dto.target_workspace_id,
                 parent_id=None,
             )
             conflicts = []
-            for item in folder_items:
-                f = await self.folder_repo.get_folder_by_id(item.id)
+            for f_id in folder_ids:
+                f = folder_map.get(f_id)
                 if f:
                     key = f.name.strip().lower()
                     if key in existing_map:
@@ -835,7 +842,7 @@ class GalleryService:
                     copied_count += 1
 
                 elif item.type == "folder":
-                    folder = await self.folder_repo.get_folder_by_id(item.id)
+                    folder = folder_map.get(item.id)
                     if not folder:
                         continue
 
@@ -876,15 +883,22 @@ class GalleryService:
             user=current_user,
         )
 
-        folder_items = [it for it in bulk_move_dto.items if it.type == "folder"]
-        if folder_items and bulk_move_dto.conflict_strategy is None:
+        folder_ids = [
+            it.id for it in bulk_move_dto.items if it.type == "folder"
+        ]
+        folder_map = {}
+        if folder_ids:
+            folders = await self.folder_repo.get_folders_by_ids(folder_ids)
+            folder_map = {f.id: f for f in folders}
+
+        if folder_ids and bulk_move_dto.conflict_strategy is None:
             existing_map = await self.folder_repo.get_existing_folders_map(
                 workspace_id=bulk_move_dto.target_workspace_id,
                 parent_id=None,
             )
             conflicts = []
-            for item in folder_items:
-                f = await self.folder_repo.get_folder_by_id(item.id)
+            for f_id in folder_ids:
+                f = folder_map.get(f_id)
                 if f and f.workspace_id != bulk_move_dto.target_workspace_id:
                     key = f.name.strip().lower()
                     if key in existing_map:
@@ -959,7 +973,7 @@ class GalleryService:
                     moved_count += 1
 
                 elif item.type == "folder":
-                    folder = await self.folder_repo.get_folder_by_id(item.id)
+                    folder = folder_map.get(item.id)
                     if not folder:
                         continue
 
