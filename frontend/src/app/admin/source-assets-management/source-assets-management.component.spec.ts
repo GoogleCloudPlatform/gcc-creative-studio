@@ -15,8 +15,25 @@
  */
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {MatTableModule} from '@angular/material/table';
+import {MatPaginatorModule} from '@angular/material/paginator';
+import {MatSortModule} from '@angular/material/sort';
+import {MatDialogModule} from '@angular/material/dialog';
+import {MatSnackBarModule} from '@angular/material/snack-bar';
+import {MatFormFieldModule} from '@angular/material/form-field';
+import {MatInputModule} from '@angular/material/input';
+import {MatSelectModule} from '@angular/material/select';
+import {MatIconModule} from '@angular/material/icon';
+import {MatButtonModule} from '@angular/material/button';
+import {NoopAnimationsModule} from '@angular/platform-browser/animations';
+import {FormsModule, ReactiveFormsModule} from '@angular/forms';
+import {provideHttpClient} from '@angular/common/http';
+import {provideHttpClientTesting} from '@angular/common/http/testing';
+import {CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
+import {of} from 'rxjs';
 
 import {SourceAssetsManagementComponent} from './source-assets-management.component';
+import {SourceAssetsService} from './source-assets.service';
 
 describe('SourceAssetsManagementComponent', () => {
   let component: SourceAssetsManagementComponent;
@@ -25,6 +42,34 @@ describe('SourceAssetsManagementComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [SourceAssetsManagementComponent],
+      imports: [
+        MatTableModule,
+        MatPaginatorModule,
+        MatSortModule,
+        MatDialogModule,
+        MatSnackBarModule,
+        MatFormFieldModule,
+        MatInputModule,
+        MatSelectModule,
+        MatIconModule,
+        MatButtonModule,
+        FormsModule,
+        ReactiveFormsModule,
+        NoopAnimationsModule,
+      ],
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        {
+          provide: SourceAssetsService,
+          useValue: {
+            searchSourceAssets: jasmine
+              .createSpy('searchSourceAssets')
+              .and.returnValue(of({data: [], count: 0})),
+          },
+        },
+      ],
+      schemas: [CUSTOM_ELEMENTS_SCHEMA],
     }).compileComponents();
 
     fixture = TestBed.createComponent(SourceAssetsManagementComponent);

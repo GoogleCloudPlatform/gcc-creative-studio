@@ -54,7 +54,7 @@ describe('ApprovalGateComponent', () => {
 
   it('should create the component with correct stepLabel and stageTitle', () => {
     expect(component).toBeTruthy();
-    expect(component.stepLabel()).toBe('Checkpoint 1 of 3');
+    expect(component.stepLabel()).toBe('Checkpoint 1 of 4');
     expect(component.stageTitle()).toBe('Campaign Strategy Review');
   });
 
@@ -89,16 +89,30 @@ describe('ApprovalGateComponent', () => {
       stage: 'storyboard',
       toolName: 'await_storyboard_approval',
     };
-    expect(component.stepLabel()).toBe('Checkpoint 2 of 3');
+    expect(component.stepLabel()).toBe('Checkpoint 2 of 4');
     expect(component.stageTitle()).toBe('Storyboard Review');
+    expect(component.stageIcon()).toBe('movie_filter');
+
+    component.gate = {
+      ...mockGate,
+      stage: 'frames',
+      toolName: 'await_frame_approval',
+    };
+    expect(component.stepLabel()).toBe('Checkpoint 3 of 4');
+    expect(component.stageTitle()).toBe('First Frame Review');
+    expect(component.stageIcon()).toBe('image');
+    expect(component.stageDescription()).toBe(
+      'Review rendered first frames for each scene before video generation.',
+    );
 
     component.gate = {
       ...mockGate,
       stage: 'final_cut',
       toolName: 'await_final_cut_approval',
     };
-    expect(component.stepLabel()).toBe('Checkpoint 3 of 3');
+    expect(component.stepLabel()).toBe('Checkpoint 4 of 4');
     expect(component.stageTitle()).toBe('Final Cut Review');
+    expect(component.stageIcon()).toBe('video_camera_front');
   });
 
   it('should emit direct decision when accept is clicked', () => {
@@ -151,5 +165,53 @@ describe('ApprovalGateComponent', () => {
       decision: 'regenerate',
       guidance: 'Completely redo the theme',
     });
+  });
+
+  it('should not emit decision when isSubmitting is true (isBusy)', () => {
+    spyOn(component.decisionSubmitted, 'emit');
+    component.isSubmitting = true;
+    fixture.detectChanges();
+    expect(component.isBusy()).toBeTrue();
+
+    component.submitDirectDecision('accept');
+    expect(component.decisionSubmitted.emit).not.toHaveBeenCalled();
+
+    component.setMode('modify');
+    component.guidanceText.set('Change tone');
+    component.submitModify();
+    expect(component.decisionSubmitted.emit).not.toHaveBeenCalled();
+
+    component.setMode('regenerate');
+    component.submitRegenerate();
+    expect(component.decisionSubmitted.emit).not.toHaveBeenCalled();
+  });
+
+  it('should set isLocalSubmitting and block concurrent clicks', () => {
+    spyOn(component.decisionSubmitted, 'emit');
+    expect(component.isLocalSubmitting()).toBeFalse();
+
+    component.submitDirectDecision('accept');
+    expect(component.isLocalSubmitting()).toBeTrue();
+    expect(component.decisionSubmitted.emit).toHaveBeenCalledTimes(1);
+
+    // Second click while isLocalSubmitting is true should be ignored
+    component.submitDirectDecision('accept');
+    expect(component.decisionSubmitted.emit).toHaveBeenCalledTimes(1);
+  });
+
+  it('should reset isLocalSubmitting when isSubmitting is set to false to allow retry', () => {
+    spyOn(component.decisionSubmitted, 'emit');
+    component.submitDirectDecision('accept');
+    expect(component.isLocalSubmitting()).toBeTrue();
+    expect(component.isBusy()).toBeTrue();
+
+    // Simulating parent completing or failing and clearing isSubmitting
+    component.isSubmitting = false;
+    expect(component.isLocalSubmitting()).toBeFalse();
+    expect(component.isBusy()).toBeFalse();
+
+    // Should now allow retry
+    component.submitDirectDecision('accept');
+    expect(component.decisionSubmitted.emit).toHaveBeenCalledTimes(2);
   });
 });

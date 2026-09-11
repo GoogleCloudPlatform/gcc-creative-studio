@@ -308,8 +308,9 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
       oldMode !== '' && oldMode !== mode,
     );
 
-    if (!this.isTextToVideo()) {
-      const longest = this.getSelectedModelDurations().at(-1);
+    const supportedDurations = this.getSelectedModelDurations();
+    if (!supportedDurations.includes(this.selectedDuration())) {
+      const longest = supportedDurations.at(-1);
       if (longest) this.selectDuration(longest);
     }
   }
@@ -363,14 +364,22 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
 
   // Triggered from internal dropdown
   selectInternalModel(model: any) {
-    if (this.isVideoToImage() && !model.capabilities?.supportsVideoReference) {
+    if (this.isVideoToImage() && !model?.capabilities?.supportsVideoReference) {
       return;
     }
-
     this.isSettingsDropdownOpen.set(null);
     this.modelSelected.emit(model);
 
     this.updateSupportedResolutions(model);
+
+    const supportedDurations = this.getSelectedModelDurations(model);
+    if (
+      supportedDurations.length > 0 &&
+      !supportedDurations.includes(this.selectedDuration())
+    ) {
+      const longest = supportedDurations.at(-1);
+      if (longest) this.selectDuration(longest);
+    }
   }
 
   selectPreset(preset: string) {
@@ -404,9 +413,13 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
 
   getSelectedModelDurations(model?: any): number[] {
     const activeModel = model || this.getSelectedModelObject();
-    // only 'text to video' mode supports shorter durations
-    // resolutions above 1K support only longest duration
-    if (!this.isTextToVideo() || this.selectedResolution() !== '1K') {
+    // Non-Omni models only support shorter durations in 'Text to Video' mode.
+    // Resolutions above 1K support only the longest duration.
+    const isOmni = this.isOmniModel(activeModel);
+    if (
+      (!isOmni && !this.isTextToVideo()) ||
+      this.selectedResolution() !== '1K'
+    ) {
       const longest = activeModel?.capabilities?.supportedDurations?.at(-1);
       return longest ? [longest] : [];
     }

@@ -15,6 +15,7 @@
  */
 
 import {MODEL_CONFIGS} from '../../../../common/config/model-config';
+import {NodeTypes} from '../../../workflow.models';
 import {StepConfig} from '../generic-step/step.model';
 
 const model_options = MODEL_CONFIGS.filter(model => model.type === 'VIDEO').map(
@@ -25,7 +26,7 @@ const model_options = MODEL_CONFIGS.filter(model => model.type === 'VIDEO').map(
 );
 
 export const GENERATE_VIDEO_STEP_CONFIG: StepConfig = {
-  type: 'generate-video',
+  type: NodeTypes.GENERATE_VIDEO,
   title: 'Generate Video',
   icon: 'movie',
   inputs: [
@@ -62,7 +63,7 @@ export const GENERATE_VIDEO_STEP_CONFIG: StepConfig = {
       label: 'Model',
       type: 'select',
       options: model_options,
-      defaultValue: 'veo-3.0-generate-001',
+      defaultValue: 'veo-3.1-generate-001',
     },
     {
       name: 'input_mode',

@@ -233,13 +233,11 @@ export class WorkflowFormService {
 
     const steps = this.stepsArray.controls;
     const availableOutputsPerStep = steps.map((_, currentStepIndex) => {
-      // Allow connecting to any node except itself to avoid immediate self-loops
-      const otherSteps = steps.filter((_, idx) => idx !== currentStepIndex);
+      const previousSteps = steps.slice(0, currentStepIndex);
       const availableOutputs: any[] = [...userInputOutputs];
 
-      otherSteps.forEach(stepControl => {
+      previousSteps.forEach((stepControl, stepIndex) => {
         const step = stepControl.value;
-        const stepIndex = steps.indexOf(stepControl);
 
         // Access static config
         const stepConfig = (STEP_CONFIGS_MAP as any)[step.type];
@@ -355,10 +353,21 @@ export class WorkflowFormService {
       settings: {},
     };
 
-    // Default settings logic
-    if (type === NodeTypes.EDIT_IMAGE) {
-      base.settings = {aspectRatio: '1:1', saveOutputToGallery: true};
+    const config = (STEP_CONFIGS_MAP as any)[type];
+    if (config?.settings) {
+      config.settings.forEach((s: any) => {
+        if (s.defaultValue !== undefined) {
+          base.settings[s.name] = s.defaultValue;
+        }
+      });
     }
+
+    if (config?.inputs) {
+      config.inputs.forEach((input: any) => {
+        base.inputs[input.name] = null;
+      });
+    }
+
     return base;
   }
 

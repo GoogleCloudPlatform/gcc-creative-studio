@@ -174,7 +174,7 @@
   <div class="mt-2" *ngIf="visibleApprovalGate() as gate">
     <app-approval-gate
       [gate]="gate"
-      [isSubmitting]="isTyping()"
+      [isSubmitting]="isBusy()"
       (decisionSubmitted)="handleGateDecision($event)"
     ></app-approval-gate>
   </div>
@@ -186,10 +186,12 @@
   >
     <div
       class="flex gap-2 bg-gray-800 border border-gray-700 rounded-2xl px-3 py-2 focus-within:border-blue-500 flex items-center"
+      [class.opacity-60]="isBusy()"
     >
       <button
         (click)="openImageSelector()"
-        class="p-1.5 hover:bg-neutral-700 rounded-lg text-gray-400 hover:text-white flex items-center justify-center flex-shrink-0 h-8 w-8 transition-colors"
+        [disabled]="isBusy()"
+        class="p-1.5 hover:bg-neutral-700 rounded-lg text-gray-400 hover:text-white flex items-center justify-center flex-shrink-0 h-8 w-8 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         matTooltip="Attach Reference Images"
       >
         <mat-icon
@@ -201,7 +203,8 @@
       <textarea
         #chatInput
         placeholder="Ask Izumi..."
-        class="flex-1 bg-transparent text-sm text-white focus:outline-none resize-none max-h-48 overflow-y-auto py-1 px-1 leading-relaxed"
+        [disabled]="isBusy()"
+        class="flex-1 bg-transparent text-sm text-white focus:outline-none resize-none max-h-48 overflow-y-auto py-1 px-1 leading-relaxed disabled:opacity-50 disabled:cursor-not-allowed"
         rows="1"
         [ngModel]="chatInputValue()"
         (input)="onInputResize($event)"
@@ -210,7 +213,8 @@
 
       <button
         (click)="toggleInputExpand()"
-        class="p-1.5 hover:bg-neutral-700 rounded-lg text-gray-400 hover:text-white flex items-center justify-center flex-shrink-0 h-8 w-8 transition-colors"
+        [disabled]="isBusy()"
+        class="p-1.5 hover:bg-neutral-700 rounded-lg text-gray-400 hover:text-white flex items-center justify-center flex-shrink-0 h-8 w-8 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         matTooltip="Expand input"
       >
         <mat-icon
@@ -224,6 +228,11 @@
         size="medium"
         shape="circle"
         class="flex-shrink-0 flex items-center justify-center"
+        [disabled]="
+          isBusy() ||
+          ((!chatInputValue() || !chatInputValue().trim()) &&
+            selectedImages().length === 0)
+        "
         (click)="submitChat()"
       >
         <mat-icon class="!w-5 !h-5 flex items-center justify-center"

@@ -30,7 +30,7 @@ import {
   MODEL_CONFIGS,
 } from '../../../../common/config/model-config';
 import {StepConfig} from './step.model';
-import {StepStatusEnum} from '../../../workflow.models';
+import {NodeTypes, StepStatusEnum} from '../../../workflow.models';
 
 @Component({
   selector: 'app-generic-step',
@@ -44,18 +44,9 @@ export class GenericStepComponent implements OnInit, OnChanges {
   @Input() mode: 'create' | 'edit' | 'run' = 'create';
   @Input() config!: StepConfig;
   @Input() showValidationErrors = false;
-  @Input() stepExecution: any = null;
-  @Input() mediaUrlMap!: Map<string, string>;
-  @Input() isSelected = false;
 
   @Output() delete = new EventEmitter<void>();
   @Output() clone = new EventEmitter<void>();
-  @Output() portDragStart = new EventEmitter<{
-    stepId: string;
-    outputName: string;
-    mouseEvent: MouseEvent;
-  }>();
-  @Output() portDrop = new EventEmitter<{stepId: string; inputName: string}>();
 
   StepStatusEnum = StepStatusEnum;
 
@@ -70,26 +61,6 @@ export class GenericStepComponent implements OnInit, OnChanges {
   compatibleOutputs: {[key: string]: any[]} = {};
 
   constructor(private fb: FormBuilder) {}
-
-  getShortType(type: string): string {
-    if (!type) return 'ANY';
-    const t = type.toLowerCase();
-    if (t.includes('image')) return 'IMG';
-    if (t.includes('text') || t.includes('string')) return 'TXT';
-    if (t.includes('video')) return 'VID';
-    if (t.includes('audio')) return 'AUD';
-    return type.substring(0, 3).toUpperCase();
-  }
-
-  getTypeColor(type: string): string {
-    if (!type) return '#63b3ed'; // Default blue
-    const t = type.toLowerCase();
-    if (t.includes('image')) return '#d53f8c'; // Pink
-    if (t.includes('text') || t.includes('string')) return '#3182ce'; // Blue
-    if (t.includes('video')) return '#dd6b20'; // Orange
-    if (t.includes('audio')) return '#805ad5'; // Purple
-    return '#63b3ed'; // Default
-  }
 
   ngOnInit(): void {
     this.initializeStepState();
@@ -323,7 +294,7 @@ export class GenericStepComponent implements OnInit, OnChanges {
     this.localConfig.inputs.forEach(input => {
       // Logic for specific inputs
       if (
-        this.localConfig.type === 'generate-video' &&
+        this.localConfig.type === NodeTypes.GENERATE_VIDEO &&
         (input.name === 'input_images' || input.name === 'reference_images')
       ) {
         const showIngredients = currentMode === 'Ingredients to Video';
