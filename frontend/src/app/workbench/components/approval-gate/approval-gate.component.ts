@@ -87,8 +87,24 @@ export function asText(value: unknown): string {
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ApprovalGateComponent {
-  @Input({required: true}) gate!: ApprovalGateInfo;
-  @Input() isSubmitting = false;
+  gateSignal = signal<ApprovalGateInfo | undefined>(undefined);
+  @Input({required: true}) set gate(val: ApprovalGateInfo) {
+    this.gateSignal.set(val);
+  }
+  get gate(): ApprovalGateInfo {
+    return this.gateSignal()!;
+  }
+
+  private _isSubmitting = signal<boolean>(false);
+  @Input() set isSubmitting(val: boolean) {
+    this._isSubmitting.set(val);
+    if (!val) {
+      this.isLocalSubmitting.set(false);
+    }
+  }
+  get isSubmitting(): boolean {
+    return this._isSubmitting();
+  }
   @Output() decisionSubmitted = new EventEmitter<ApprovalGateSubmission>();
 
   isModifyOpen = signal<boolean>(false);
@@ -96,7 +112,7 @@ export class ApprovalGateComponent {
   isLocalSubmitting = signal<boolean>(false);
 
   isBusy = computed<boolean>(() => {
-    return this.isSubmitting || this.isLocalSubmitting();
+    return this._isSubmitting() || this.isLocalSubmitting();
   });
 
   activeMode = computed<'select' | 'modify' | 'regenerate'>(() => {
@@ -104,8 +120,9 @@ export class ApprovalGateComponent {
   });
 
   stage = computed(() => {
-    if (this.gate?.stage) return this.gate.stage;
-    const name = this.gate?.toolName || '';
+    const g = this.gateSignal();
+    if (g?.stage) return g.stage;
+    const name = g?.toolName || '';
     if (name.includes('strategy')) return 'strategy';
     if (name.includes('storyboard')) return 'storyboard';
     if (name.includes('frame')) return 'frames';
@@ -159,7 +176,7 @@ export class ApprovalGateComponent {
   });
 
   displayMessage = computed(() => {
-    const rawMsg = this.gate?.payload?.message;
+    const rawMsg = this.gateSignal()?.payload?.message;
     if (rawMsg) {
       const parsed = asText(rawMsg).trim();
       if (parsed) return parsed;

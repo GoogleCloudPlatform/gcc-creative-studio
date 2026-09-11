@@ -1525,5 +1525,33 @@ describe('ChatInterfaceComponent', () => {
       component.submitChat();
       expect(agentChatService.sendMessage).not.toHaveBeenCalled();
     });
+
+    it('should reset isSubmittingGate on SSE onError and onClose', () => {
+      const callbacks = component['setupCallbacks']();
+
+      component.isSubmittingGate.set(true);
+      expect(component.isSubmittingGate()).toBeTrue();
+
+      callbacks.onError!({status: 500, message: 'Server error'});
+      expect(component.isSubmittingGate()).toBeFalse();
+
+      component.isSubmittingGate.set(true);
+      expect(component.isSubmittingGate()).toBeTrue();
+
+      callbacks.onClose!();
+      expect(component.isSubmittingGate()).toBeFalse();
+    });
+
+    it('should clear submittedGateCallIds when session changes', () => {
+      component['submittedGateCallIds'].add('call_123');
+      expect(component['submittedGateCallIds'].has('call_123')).toBeTrue();
+
+      // Trigger session change
+      component.currentSessionId = 'old_session';
+      agentChatService.selectedSessionId.set('new_session');
+      TestBed.flushEffects();
+
+      expect(component['submittedGateCallIds'].size).toBe(0);
+    });
   });
 });

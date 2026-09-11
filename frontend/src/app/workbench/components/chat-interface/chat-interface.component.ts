@@ -116,6 +116,7 @@ export class ChatInterfaceComponent
     const sessionId = this.agentChatService.selectedSessionId();
     if (sessionId && sessionId !== this.currentSessionId) {
       this.currentSessionId = sessionId;
+      this.submittedGateCallIds.clear();
       this.loadChatMessages(sessionId);
     }
   });
@@ -1613,10 +1614,12 @@ export class ChatInterfaceComponent
           handleErrorSnackbar(this.snackBar, err, 'Storyboard Generation');
         }
         this.isTyping.set(false);
+        this.isSubmittingGate.set(false);
         this.agentChatService.isGeneratingStoryboard.set(false);
       },
       onClose: () => {
         this.isTyping.set(false);
+        this.isSubmittingGate.set(false);
         this.agentChatService.isGeneratingStoryboard.set(false);
         if (agentMessageIndex !== -1) {
           const currentMsgs = this.chatMessages();

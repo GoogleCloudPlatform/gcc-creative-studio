@@ -198,4 +198,20 @@ describe('ApprovalGateComponent', () => {
     component.submitDirectDecision('accept');
     expect(component.decisionSubmitted.emit).toHaveBeenCalledTimes(1);
   });
+
+  it('should reset isLocalSubmitting when isSubmitting is set to false to allow retry', () => {
+    spyOn(component.decisionSubmitted, 'emit');
+    component.submitDirectDecision('accept');
+    expect(component.isLocalSubmitting()).toBeTrue();
+    expect(component.isBusy()).toBeTrue();
+
+    // Simulating parent completing or failing and clearing isSubmitting
+    component.isSubmitting = false;
+    expect(component.isLocalSubmitting()).toBeFalse();
+    expect(component.isBusy()).toBeFalse();
+
+    // Should now allow retry
+    component.submitDirectDecision('accept');
+    expect(component.decisionSubmitted.emit).toHaveBeenCalledTimes(2);
+  });
 });
