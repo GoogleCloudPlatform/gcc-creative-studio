@@ -347,7 +347,22 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     if (!this.isSelectionMode && !this.isSelectorMode) {
       this.routeSub = this.route.paramMap.subscribe(params => {
         const folderIdParam = params.get('folderId');
-        this.currentFolderId = folderIdParam ? Number(folderIdParam) : null;
+        if (folderIdParam !== null) {
+          const parsedFolderId = Number(folderIdParam);
+          if (
+            !Number.isNaN(parsedFolderId) &&
+            Number.isInteger(parsedFolderId) &&
+            parsedFolderId > 0
+          ) {
+            this.currentFolderId = parsedFolderId;
+          } else {
+            this.currentFolderId = null;
+            void this.router.navigate(['/gallery']);
+            return;
+          }
+        } else {
+          this.currentFolderId = null;
+        }
 
         if (!this.isInitialized) {
           return;

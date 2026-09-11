@@ -829,6 +829,37 @@ describe('MediaGalleryComponent', () => {
       expect(component.searchTerm).toHaveBeenCalled();
     });
 
+    it('should default currentFolderId to null and redirect to /gallery when folderId is non-numeric', () => {
+      routerSpy.navigate.calls.reset();
+      spyOn(component, 'loadFolders').and.callThrough();
+      spyOn(component, 'loadBreadcrumbs').and.callThrough();
+
+      paramMapSubject.next(convertToParamMap({folderId: 'abc'}));
+
+      expect(component.currentFolderId).toBeNull();
+      expect(routerSpy.navigate).toHaveBeenCalledWith(['/gallery']);
+      expect(component.loadFolders).not.toHaveBeenCalled();
+      expect(component.loadBreadcrumbs).not.toHaveBeenCalled();
+    });
+
+    it('should default currentFolderId to null and redirect to /gallery when folderId is not a positive integer', () => {
+      routerSpy.navigate.calls.reset();
+
+      paramMapSubject.next(convertToParamMap({folderId: '-5'}));
+      expect(component.currentFolderId).toBeNull();
+      expect(routerSpy.navigate).toHaveBeenCalledWith(['/gallery']);
+
+      routerSpy.navigate.calls.reset();
+      paramMapSubject.next(convertToParamMap({folderId: '0'}));
+      expect(component.currentFolderId).toBeNull();
+      expect(routerSpy.navigate).toHaveBeenCalledWith(['/gallery']);
+
+      routerSpy.navigate.calls.reset();
+      paramMapSubject.next(convertToParamMap({folderId: '1.5'}));
+      expect(component.currentFolderId).toBeNull();
+      expect(routerSpy.navigate).toHaveBeenCalledWith(['/gallery']);
+    });
+
     it('should navigate via router when navigateToFolder is called in standalone mode', () => {
       component.isSelectorMode = false;
       component.isSelectionMode = false;
