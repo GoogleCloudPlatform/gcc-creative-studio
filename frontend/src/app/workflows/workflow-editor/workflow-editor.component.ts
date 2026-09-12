@@ -34,7 +34,7 @@ import {MatDialog} from '@angular/material/dialog';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {ActivatedRoute, Router} from '@angular/router';
 import {Observable, Subscription, of} from 'rxjs';
-import {switchMap, tap, debounceTime} from 'rxjs/operators';
+import {switchMap, tap, debounceTime, catchError, map} from 'rxjs/operators';
 import {
   handleErrorSnackbar,
   handleSuccessSnackbar,
@@ -42,35 +42,58 @@ import {
 import {MediaResolutionService} from '../shared/media-resolution.service';
 import {
   NodeTypes,
+  StepInputValue,
+  StepOutputReference,
   StepStatusEnum,
   WorkflowBase,
   WorkflowCreateDto,
   WorkflowModel,
   WorkflowRunModel,
+  WorkflowStep,
+  WorkflowTemplate,
+  WorkflowTemplateCreateDto,
   WorkflowUpdateDto,
 } from '../workflow.models';
 // import { STEP_CONFIGS_MAP } from '../shared/step-configs.map'; // Removed as only used by getStepConfig which is now in service (mostly)
 // But wait, template calls getStepConfig.
 import {STEP_CONFIGS_MAP} from '../shared/step-configs.map'; // Kept for template
+import {GENERATE_TEXT_STEP_CONFIG} from './step-components/step-configs/generate-text-step.config';
+import {isStepOutputReference, labelToName} from '../utils/workflow-step.util';
+import {
+  DragSourcePort,
+  findClosestMagneticPort,
+  getMaxAllowedInputs,
+  getPortTypeColor,
+  getShortType,
+  isInputAlreadyLinked,
+  isInputPortFull,
+  isPortTypeCompatible,
+  MagneticPortCandidate,
+  PortShortType,
+} from '../utils/workflow-magnetic.util';
 import {WorkflowService} from '../workflow.service';
 import {AddStepModalComponent} from './add-step-modal/add-step-modal.component';
 import {RunWorkflowModalComponent} from './run-workflow-modal/run-workflow-modal.component';
+import {
+  SaveTemplateDialogResult,
+  SaveTemplateModalComponent,
+} from './save-template-modal/save-template-modal.component';
 
 import {WorkflowFormService} from './workflow-form.service';
 import * as d3 from 'd3';
 
-export interface Point {
+export type Point = {
   x: number;
   y: number;
-}
+};
 
-export interface Edge {
+export type Edge = {
   path: string;
   sourceId: string;
   targetId: string;
   color?: string;
   isTargetRunning?: boolean;
-}
+};
 
 @Component({
   selector: 'app-workflow-editor',
@@ -97,10 +120,23 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   get workflowForm() {
     return this.formService.workflowForm;
   }
+  get hasWorkflowName(): boolean {
+    const name = this.workflowForm?.get('name')?.value;
+    return typeof name === 'string' && name.trim().length > 0;
+  }
+  get isRunDisabled(): boolean {
+    return (
+      this.isLoading ||
+      !this.stepsArray ||
+      this.stepsArray.length === 0 ||
+      !this.hasWorkflowName
+    );
+  }
   isLoading = false;
   submitted = false;
   errorMessage: string | null = null;
   selectedStepIndex: number | null = null;
+  showWelcomeView = false;
   get selectedStep(): any | null {
     if (this.selectedStepIndex === null) return null;
     // stepsArray is accessed via getter now
@@ -147,7 +183,14 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   nodePositions: {[stepId: string]: Point} = {};
   edges: Edge[] = [];
   activeDragWire: {path: string} | null = null;
-  dragSourcePort: {stepId: string; outputName: string} | null = null;
+  dragSourcePort: DragSourcePort | null = null;
+  magneticTargetPort: {
+    stepId: string;
+    inputName: string;
+    position: Point;
+    type?: string;
+  } | null = null;
+  candidateMagneticPorts: MagneticPortCandidate[] = [];
 
   get activeDragWireColor(): string {
     if (this.dragSourcePort) {
@@ -169,6 +212,16 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   @HostListener('document:keydown', ['$event'])
   onDocumentKeydown(event: KeyboardEvent): void {
     if (this.isReadOnly) return;
+
+    if (event.key === 'Escape') {
+      if (this.dragSourcePort) {
+        this.dragSourcePort = null;
+        this.activeDragWire = null;
+        this.magneticTargetPort = null;
+        this.candidateMagneticPorts = [];
+        return;
+      }
+    }
 
     const target = event.target as HTMLElement;
     if (
@@ -278,24 +331,12 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     return control as FormGroup;
   }
 
-  getShortType(type: string): string {
-    if (!type) return 'ANY';
-    const t = type.toLowerCase();
-    if (t.includes('image')) return 'IMG';
-    if (t.includes('text') || t.includes('string')) return 'TXT';
-    if (t.includes('video')) return 'VID';
-    if (t.includes('audio')) return 'AUD';
-    return type.substring(0, 3).toUpperCase();
+  getShortType(type: string): PortShortType {
+    return getShortType(type);
   }
 
   getTypeColor(type: string): string {
-    if (!type) return '#63b3ed'; // Default blue
-    const t = type.toLowerCase();
-    if (t.includes('image')) return '#d53f8c'; // Pink
-    if (t.includes('text') || t.includes('string')) return '#3182ce'; // Blue
-    if (t.includes('video')) return '#dd6b20'; // Orange
-    if (t.includes('audio')) return '#805ad5'; // Purple
-    return '#63b3ed'; // Default
+    return getPortTypeColor(type);
   }
 
   ngOnInit(): void {
@@ -372,22 +413,21 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             this.displayedWorkflow = this.workflowRun?.workflowSnapshot ?? null;
             this.workflowId = this.workflowRun?.id ?? null;
             if (this.displayedWorkflow) {
-              this.loadNodePositions();
-              this.formService.patchData(this.displayedWorkflow);
+              this.loadAndSetData();
             }
             this.workflowForm.disable(); // Read-only mode
           } else if (this.mode === EditorMode.Edit) {
             this.workflow = data as WorkflowModel;
             this.displayedWorkflow = this.workflow;
             if (this.displayedWorkflow) {
-              this.loadNodePositions();
-              this.formService.patchData(this.displayedWorkflow);
+              this.loadAndSetData();
               if (this.initialExecutionId) {
                 this.onExecutionSelected(this.initialExecutionId);
               }
             }
           } else {
-            // Already initialized in initForm() defaults
+            // Create mode: open the welcome view to select a starting template or blank canvas
+            this.openWelcomeView();
           }
           this.isLoading = false;
         },
@@ -408,6 +448,12 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         this.previousOutputDefinitions = currentValues;
       });
     }
+  }
+
+  private loadAndSetData() {
+    this.loadNodePositions();
+    this.formService.patchData(this.displayedWorkflow);
+    setTimeout(() => this.updateEdges(), 100);
   }
 
   private domObserver?: MutationObserver;
@@ -553,6 +599,15 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     event.stopPropagation();
   }
 
+  getCurrentLocked(): {stepId: string; inputName: string} | null {
+    return this.magneticTargetPort
+      ? {
+          stepId: this.magneticTargetPort.stepId,
+          inputName: this.magneticTargetPort.inputName,
+        }
+      : null;
+  }
+
   @HostListener('window:mousemove', ['$event'])
   onMouseMove(event: MouseEvent): void {
     if (this.draggingNodeId) {
@@ -585,6 +640,8 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         (event.clientY - containerRect.top - this.currentTransform.y) /
         this.currentTransform.k;
 
+      const pointerPos: Point = {x: targetX, y: targetY};
+
       // Source position is the port position
       const sourcePos = this.getPortPosition(
         this.dragSourcePort.stepId,
@@ -593,9 +650,32 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       );
 
       if (sourcePos) {
-        this.activeDragWire = {
-          path: this.createBezierPath(sourcePos, {x: targetX, y: targetY}),
-        };
+        const sourceType = this.dragSourcePort.type;
+        const currentLocked = this.getCurrentLocked();
+
+        const closestCandidate = findClosestMagneticPort(
+          pointerPos,
+          this.candidateMagneticPorts,
+          sourceType,
+          currentLocked,
+        );
+
+        if (closestCandidate) {
+          this.magneticTargetPort = {
+            stepId: closestCandidate.stepId,
+            inputName: closestCandidate.portName,
+            position: closestCandidate.position,
+            type: closestCandidate.type,
+          };
+          this.activeDragWire = {
+            path: this.createBezierPath(sourcePos, closestCandidate.position),
+          };
+        } else {
+          this.magneticTargetPort = null;
+          this.activeDragWire = {
+            path: this.createBezierPath(sourcePos, pointerPos),
+          };
+        }
       }
     }
   }
@@ -608,8 +688,14 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       this.draggingNodeId = null;
     }
     if (this.dragSourcePort) {
+      const currentLocked = this.getCurrentLocked();
+      if (currentLocked) {
+        this.onPortDrop(currentLocked, currentLocked.stepId);
+      }
       this.dragSourcePort = null;
       this.activeDragWire = null;
+      this.magneticTargetPort = null;
+      this.candidateMagneticPorts = [];
     }
   }
 
@@ -618,10 +704,132 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     outputName: string;
     mouseEvent: MouseEvent;
   }): void {
-    this.dragSourcePort = {stepId: event.stepId, outputName: event.outputName};
+    const sourceType = this.getOutputType(event.stepId, event.outputName);
+    this.dragSourcePort = {
+      stepId: event.stepId,
+      outputName: event.outputName,
+      type: sourceType,
+    };
+    this.magneticTargetPort = null;
+    this.candidateMagneticPorts = this.collectMagneticCandidatePorts(
+      event.stepId,
+      event.outputName,
+    );
     event.mouseEvent.stopPropagation();
     // Prevent default to avoid text selection while dragging
     event.mouseEvent.preventDefault();
+  }
+
+  getDynamicInputs(
+    config: any,
+    inputsGroup?: FormGroup | null,
+  ): Array<{name: string; label: string; type: string}> {
+    const dynamicInputs: Array<{
+      name: string;
+      label: string;
+      type: string;
+    }> = [];
+    if (!inputsGroup || !config?.inputs) {
+      return dynamicInputs;
+    }
+
+    const configuredNames = new Set(config.inputs.map((i: any) => i.name));
+    const promptVal = inputsGroup.get('prompt')?.value;
+    const isPromptLinked =
+      config.type === NodeTypes.GENERATE_TEXT &&
+      isStepOutputReference(promptVal);
+
+    Object.keys(inputsGroup.controls).forEach(controlName => {
+      if (!configuredNames.has(controlName)) {
+        if (isPromptLinked) {
+          return;
+        }
+        dynamicInputs.push({
+          name: controlName,
+          label: controlName,
+          type: 'text',
+        });
+      }
+    });
+
+    return dynamicInputs;
+  }
+
+  collectMagneticCandidatePorts(
+    sourceStepId: string,
+    sourceOutputName?: string,
+  ): MagneticPortCandidate[] {
+    const candidates: MagneticPortCandidate[] = [];
+    if (!isPlatformBrowser(this.platformId)) return candidates;
+
+    const sourceType = sourceOutputName
+      ? this.getOutputType(sourceStepId, sourceOutputName)
+      : null;
+
+    this.stepsArray.controls.forEach(stepControl => {
+      const stepId = stepControl.get('stepId')?.value;
+      if (!stepId || stepId === sourceStepId) return;
+
+      const stepType = stepControl.get('type')?.value;
+      const config = this.getStepConfig(stepType);
+      if (!config?.inputs) return;
+
+      const inputsGroup = stepControl.get('inputs') as FormGroup;
+      const settingsGroup = stepControl.get('settings') as FormGroup;
+      const modelValue = settingsGroup?.get('model')?.value;
+
+      const allInputs = [
+        ...config.inputs,
+        ...this.getDynamicInputs(config, inputsGroup),
+      ];
+
+      allInputs.forEach((input: any) => {
+        // Skip candidate if input control is disabled in the form
+        if (inputsGroup) {
+          const control = inputsGroup.get(input.name);
+          if (control?.disabled) {
+            return;
+          }
+        }
+
+        // Skip candidate if type is incompatible
+        if (sourceType && !isPortTypeCompatible(sourceType, input.type)) {
+          return;
+        }
+
+        // Block if this input is already linked to the same source output or full
+        if (inputsGroup) {
+          const currentVal = inputsGroup.get(input.name)?.value;
+          if (
+            sourceOutputName &&
+            isInputAlreadyLinked(currentVal, sourceStepId, sourceOutputName)
+          ) {
+            return;
+          }
+
+          if (isInputPortFull(currentVal, input.name, modelValue, input.type)) {
+            return;
+          }
+        }
+
+        const portEl = document.querySelector(
+          `[data-node-id="${stepId}"][data-port-name="${input.name}"][data-port-type="input"]`,
+        );
+        if (portEl) {
+          const pos = this.getPortPosition(stepId, input.name, 'input');
+          if (pos) {
+            candidates.push({
+              stepId,
+              portName: input.name,
+              type: input.type,
+              position: pos,
+            });
+          }
+        }
+      });
+    });
+
+    return candidates;
   }
 
   onPortDrop(
@@ -629,6 +837,15 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     targetStepId: string,
   ): void {
     if (this.dragSourcePort) {
+      // Prevent linking to the same node (self-connection)
+      if (this.dragSourcePort.stepId === targetStepId) {
+        this.dragSourcePort = null;
+        this.activeDragWire = null;
+        this.magneticTargetPort = null;
+        this.candidateMagneticPorts = [];
+        return;
+      }
+
       // Connect dragSourcePort to event target
       const stepForm = this.stepsArray.controls.find(
         c => c.get('stepId')?.value === targetStepId,
@@ -637,18 +854,78 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         const inputs = stepForm.get('inputs') as FormGroup;
         if (inputs && inputs.contains(event.inputName)) {
           const control = inputs.get(event.inputName);
-          const currentVal = control?.value;
-          const newValue = {
+          const currentVal: StepInputValue = control?.value;
+          const newValue: StepOutputReference = {
             step: this.dragSourcePort.stepId,
             output: this.dragSourcePort.outputName,
           };
 
           const stepType = stepForm.get('type')?.value;
           const config = this.getStepConfig(stepType);
-          const inputConfig = config?.inputs?.find(
+          let inputConfig = config?.inputs?.find(
             (i: any) => i.name === event.inputName,
           );
-          if (inputConfig?.type === 'image' || inputConfig?.type === 'video') {
+          if (!inputConfig && inputs.contains(event.inputName)) {
+            inputConfig = {
+              name: event.inputName,
+              label: event.inputName,
+              type: 'text',
+            };
+          }
+
+          // Type Compatibility Check: Reject incompatible connections (e.g. TXT source to IMG target)
+          const sourceType =
+            this.dragSourcePort.type ||
+            this.getOutputType(
+              this.dragSourcePort.stepId,
+              this.dragSourcePort.outputName,
+            );
+          if (!isPortTypeCompatible(sourceType, inputConfig?.type)) {
+            this.dragSourcePort = null;
+            this.activeDragWire = null;
+            this.magneticTargetPort = null;
+            this.candidateMagneticPorts = [];
+            return;
+          }
+
+          // Block duplicate same portOut-portIN link
+          if (
+            isInputAlreadyLinked(
+              currentVal,
+              this.dragSourcePort.stepId,
+              this.dragSourcePort.outputName,
+            )
+          ) {
+            this.dragSourcePort = null;
+            this.activeDragWire = null;
+            this.magneticTargetPort = null;
+            this.candidateMagneticPorts = [];
+            return;
+          }
+
+          const modelValue = stepForm.get('settings.model')?.value;
+          // Block connection if target input port is already full
+          if (
+            isInputPortFull(
+              currentVal,
+              event.inputName,
+              modelValue,
+              inputConfig?.type,
+            )
+          ) {
+            this.dragSourcePort = null;
+            this.activeDragWire = null;
+            this.magneticTargetPort = null;
+            this.candidateMagneticPorts = [];
+            return;
+          }
+
+          const maxAllowed = getMaxAllowedInputs(
+            event.inputName,
+            modelValue,
+            inputConfig?.type,
+          );
+          if (maxAllowed > 1) {
             if (Array.isArray(currentVal)) {
               control?.setValue([...currentVal, newValue]);
             } else if (
@@ -669,6 +946,8 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       }
       this.dragSourcePort = null;
       this.activeDragWire = null;
+      this.magneticTargetPort = null;
+      this.candidateMagneticPorts = [];
     }
   }
 
@@ -736,10 +1015,10 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       if (type) {
         const config = this.getStepConfig(type);
         const output = config?.outputs?.find((o: any) => o.name === outputName);
-        return output?.type || 'any';
+        return output?.type || '';
       }
     }
-    return 'any';
+    return '';
   }
 
   private getPortPosition(
@@ -822,12 +1101,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
 
   isImageOutput(stepId: string): boolean {
     const type = this.getStepType(stepId);
-    return (
-      type === NodeTypes.GENERATE_IMAGE ||
-      type === NodeTypes.EDIT_IMAGE ||
-      type === NodeTypes.CROP_IMAGE ||
-      type === NodeTypes.VIRTUAL_TRY_ON
-    );
+    return type === NodeTypes.IMAGE || type === NodeTypes.CROP_IMAGE;
   }
 
   getStepType(stepId: string): NodeTypes | string | undefined {
@@ -844,6 +1118,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   // ... (rest of the component logic will be updated in subsequent steps)
 
   getStepConfig(type: string) {
+    if (!type) return undefined;
     return (STEP_CONFIGS_MAP as any)[type];
   }
 
@@ -871,28 +1146,12 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     currentDefinitions.forEach(newDef => {
       const oldDef = prevMap.get(newDef.id);
       if (oldDef && oldDef.name !== newDef.name) {
-        this.updateStepReferences(newDef.id, newDef.name);
+        this.formService.updateStepReferences(
+          this.stepsArray.controls,
+          newDef.id,
+          newDef.name,
+        );
       }
-    });
-  }
-
-  private updateStepReferences(definitionId: string, newName: string) {
-    this.stepsArray.controls.forEach(stepControl => {
-      const inputs = stepControl.get('inputs') as FormGroup;
-      if (!inputs) return;
-
-      Object.keys(inputs.controls).forEach(inputKey => {
-        const control = inputs.get(inputKey);
-        const value = control?.value;
-        if (
-          value &&
-          typeof value === 'object' &&
-          value.step === NodeTypes.USER_INPUT &&
-          value._definitionId === definitionId
-        ) {
-          control?.setValue({...value, output: newName});
-        }
-      });
     });
   }
 
@@ -1026,15 +1285,25 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     }
   }
 
-  save() {
+  /**
+   * Executes the unified workflow validation and persistence pipeline.
+   * Reused across save(), run(), and saveAsNewTemplate() to guarantee that
+   * any persisted workflow or saved template is a verified, correct working version.
+   *
+   * @param force - When true, forces a save even if the workflow is pristine.
+   * @returns An Observable emitting the validated and saved WorkflowModel, or null if validation/saving failed.
+   */
+  saveWorkflow(force = false): Observable<WorkflowModel | null> {
     this.submitted = true;
     if (this.workflowForm.invalid) {
-      return;
+      this.workflowForm.markAllAsTouched();
+      handleErrorSnackbar(
+        this.snackBar,
+        new Error('Please fill in all required workflow fields before saving.'),
+        'Save workflow',
+      );
+      return of(null);
     }
-    if (this.workflowForm.pristine) return;
-
-    this.isLoading = true;
-    this.errorMessage = null;
 
     const formValue = this.workflowForm.getRawValue();
     const steps = this.prepareSteps(formValue);
@@ -1047,13 +1316,33 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         ),
         'Save workflow',
       );
-      this.isLoading = false;
-      return;
+      return of(null);
     }
+
+    // If form is pristine, not forced, and already has an existing ID, return current state directly
+    if (this.workflowForm.pristine && this.workflowId && !force) {
+      const currentWorkflow: WorkflowModel = {
+        id: this.workflowId,
+        name: formValue.name,
+        description: formValue.description || '',
+        steps: steps,
+        userId: formValue.userId || '',
+        createdAt:
+          (this.workflow as WorkflowModel)?.createdAt ||
+          new Date().toISOString(),
+        updatedAt:
+          (this.workflow as WorkflowModel)?.updatedAt ||
+          new Date().toISOString(),
+      };
+      return of(currentWorkflow);
+    }
+
+    this.isLoading = true;
+    this.errorMessage = null;
 
     let request$: Observable<any>;
 
-    if (this.mode === EditorMode.Edit) {
+    if (this.mode === EditorMode.Edit && formValue.id) {
       const updateDto: WorkflowUpdateDto = {
         name: formValue.name,
         description: formValue.description || '',
@@ -1069,127 +1358,231 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       request$ = this.workflowService.createWorkflow(createDto);
     }
 
-    request$.subscribe({
-      next: response => {
-        this.isLoading = false;
-        this.workflowForm.markAsPristine();
+    return request$.pipe(
+      tap({
+        next: response => {
+          this.isLoading = false;
+          this.workflowForm.markAsPristine();
 
-        // If we were in Create mode, switch to Edit mode with the new ID
-        if (this.mode === EditorMode.Create && response && response.id) {
-          this.mode = EditorMode.Edit;
-          this.workflowId = response.id;
-          this.workflowForm.patchValue({id: response.id});
-          this.saveNodePositions();
-          // Update URL without reloading
-          void this.router.navigate(['/workflows', 'edit', response.id], {
-            replaceUrl: true,
-          });
-        }
-      },
-      error: err => {
-        console.error('Failed to save workflow', err);
-        const errorMsg =
-          err.error?.detail || err.error?.message || 'Failed to save workflow.';
-        this.errorMessage = errorMsg;
-        handleErrorSnackbar(
-          this.snackBar,
-          {message: errorMsg},
-          'Save workflow',
-        );
-        this.isLoading = false;
-      },
-    });
+          // If we were in Create mode, switch to Edit mode with the new ID
+          if (this.mode === EditorMode.Create && response && response.id) {
+            this.mode = EditorMode.Edit;
+            this.workflowId = response.id;
+            this.workflowForm.patchValue({id: response.id});
+            this.saveNodePositions();
+            // Update URL without reloading
+            void this.router.navigate(['/workflows', 'edit', response.id], {
+              replaceUrl: true,
+            });
+          }
+        },
+        error: err => {
+          this.isLoading = false;
+          console.error('Failed to save workflow', err);
+          const errorMsg =
+            err.error?.detail ||
+            err.error?.message ||
+            'Failed to save workflow.';
+          this.errorMessage = errorMsg;
+          handleErrorSnackbar(
+            this.snackBar,
+            {message: errorMsg},
+            'Save workflow',
+          );
+        },
+      }),
+      map(response => {
+        const resultWorkflow: WorkflowModel = {
+          id: response?.id || this.workflowId || formValue.id || 'wf-id',
+          name: response?.name || formValue.name,
+          description: response?.description ?? formValue.description ?? '',
+          steps: response?.steps || steps,
+          userId: response?.userId ?? formValue.userId ?? '',
+          createdAt: response?.createdAt || new Date().toISOString(),
+          updatedAt: response?.updatedAt || new Date().toISOString(),
+        };
+        return resultWorkflow;
+      }),
+      catchError(() => of(null)),
+    );
   }
 
-  run() {
-    this.submitted = true;
-    if (this.workflowForm.invalid) {
-      return;
-    }
-
+  saveAsNewTemplate(): void {
     const formValue = this.workflowForm.getRawValue();
     const steps = this.prepareSteps(formValue);
+
+    if (steps.length === 0) {
+      handleErrorSnackbar(
+        this.snackBar,
+        new Error('Cannot save an empty workflow as a template.'),
+        'Save template',
+      );
+      return;
+    }
 
     if (this.hasCycle(steps)) {
       handleErrorSnackbar(
         this.snackBar,
         new Error(
-          'Cycle detected in workflow steps. Please fix before running.',
+          'Cycle detected in workflow steps. Please fix before saving as template.',
         ),
-        'Run workflow',
+        'Save template',
       );
       return;
     }
 
-    const userInputStep = steps.find(s => s.type === NodeTypes.USER_INPUT);
-
-    // If form is pristine and we have an ID, just run it
-    if (this.workflowForm.pristine && this.workflowId) {
-      this.openRunModal(this.workflowId, userInputStep);
-      return;
-    }
-
-    // Otherwise save first (or create if new)
     this.isLoading = true;
-    this.errorMessage = null;
+    const validationPayload: WorkflowBase = {
+      name: formValue.name || 'Template',
+      description: formValue.description || '',
+      steps: steps,
+    };
 
-    let saveRequest$: Observable<any>;
-
-    if (this.mode === EditorMode.Edit) {
-      const updateDto: WorkflowUpdateDto = {
-        name: formValue.name,
-        description: formValue.description || '',
-        steps: steps,
-      };
-      saveRequest$ = this.workflowService.updateWorkflow(
-        formValue.id,
-        updateDto,
-      );
-    } else {
-      const createDto: WorkflowCreateDto = {
-        name: formValue.name,
-        description: formValue.description || '',
-        steps: steps,
-      };
-      saveRequest$ = this.workflowService.createWorkflow(createDto);
-    }
-
-    saveRequest$.subscribe({
-      next: response => {
+    this.workflowService.validateWorkflow(validationPayload).subscribe({
+      next: () => {
         this.isLoading = false;
-        this.workflowForm.markAsPristine();
-
-        let workflowId = this.workflowId;
-        if (this.mode === EditorMode.Create && response && response.id) {
-          this.mode = EditorMode.Edit;
-          this.workflowId = response.id;
-          workflowId = response.id;
-          this.workflowForm.patchValue({id: response.id});
-          this.saveNodePositions();
-          void this.router.navigate(['/workflows', 'edit', response.id], {
-            replaceUrl: true,
-          });
-        }
-
-        if (workflowId) {
-          this.openRunModal(workflowId, userInputStep);
-        }
+        this.openSaveTemplateDialog(validationPayload);
       },
       error: err => {
-        console.error('Failed to save before run', err);
+        this.isLoading = false;
+        console.error('Workflow validation failed', err);
         const errorMsg =
           err.error?.detail ||
           err.error?.message ||
-          'Failed to save workflow before running.';
-        this.errorMessage = errorMsg;
+          'Workflow validation failed. Please check your workflow structure.';
         handleErrorSnackbar(
           this.snackBar,
           {message: errorMsg},
-          'Save workflow',
+          'Validate workflow',
         );
-        this.isLoading = false;
       },
     });
+  }
+
+  private openSaveTemplateDialog(workflow: WorkflowBase): void {
+    const dialogRef = this.dialog.open(SaveTemplateModalComponent, {
+      width: '520px',
+      data: {
+        defaultName: workflow.name || 'Workflow',
+        defaultDescription: workflow.description || '',
+      },
+    });
+
+    dialogRef
+      .afterClosed()
+      .subscribe((result: SaveTemplateDialogResult | null | undefined) => {
+        if (!result) {
+          return;
+        }
+
+        this.isLoading = true;
+        const templateDto: WorkflowTemplateCreateDto = {
+          name: result.name,
+          description: result.description,
+          steps: workflow.steps,
+        };
+
+        this.workflowService.createTemplate(templateDto).subscribe({
+          next: createdTemplate => {
+            this.isLoading = false;
+            handleSuccessSnackbar(
+              this.snackBar,
+              `Template "${createdTemplate.name}" saved successfully.`,
+            );
+          },
+          error: err => {
+            this.isLoading = false;
+            console.error('Failed to save template', err);
+            const errorMsg =
+              err.error?.detail ||
+              err.error?.message ||
+              'Failed to save workflow template.';
+            handleErrorSnackbar(
+              this.snackBar,
+              {message: errorMsg},
+              'Save template',
+            );
+          },
+        });
+      });
+  }
+
+  save(): void {
+    if (this.workflowForm.pristine) return;
+    this.saveWorkflow(true).subscribe();
+  }
+
+  run(): void {
+    if (this.isRunDisabled) {
+      return;
+    }
+    this.saveWorkflow(false).subscribe(savedWorkflow => {
+      if (!savedWorkflow) {
+        return;
+      }
+      const userInputStep = savedWorkflow.steps?.find(
+        s => s.type === NodeTypes.USER_INPUT,
+      );
+      if (savedWorkflow.id) {
+        this.openRunModal(savedWorkflow.id, userInputStep);
+      }
+    });
+  }
+
+  openWelcomeView(): void {
+    this.showWelcomeView = true;
+  }
+
+  closeWelcomeView(): void {
+    if (this.mode === EditorMode.Create && this.stepsArray.length === 0) {
+      this.goBack();
+    } else {
+      this.showWelcomeView = false;
+    }
+  }
+
+  onTemplateSelected(template: WorkflowTemplate | null): void {
+    this.showWelcomeView = false;
+    this.mode = EditorMode.Create;
+    this.workflowId = null;
+    this.displayedWorkflow = null;
+
+    if (!template) {
+      // User selected "Blank workflow"
+      this.formService.initForm();
+      this.nodePositions = {};
+      this.edges = [];
+      this.selectedStepIndex = null;
+      this.selectedNodeId = null;
+      this.loadNodePositions();
+      this.saveNodePositions();
+      this.saveHistoryState();
+      setTimeout(() => this.updateEdges(), 100);
+      return;
+    }
+
+    // User selected a predefined or user template
+    const templateData = {
+      ...template,
+      id: '', // Starts as an unsaved new workflow
+      name: '',
+      description: '',
+    };
+    this.formService.patchData(templateData);
+    this.workflowForm.markAsDirty();
+
+    if (template.positions) {
+      this.nodePositions = JSON.parse(JSON.stringify(template.positions));
+    } else {
+      this.nodePositions = {};
+      this.loadNodePositions();
+    }
+
+    this.selectedStepIndex = null;
+    this.selectedNodeId = null;
+    this.saveNodePositions();
+    this.saveHistoryState();
+    setTimeout(() => this.updateEdges(), 100);
   }
 
   goBack(): void {
@@ -1216,6 +1609,24 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             newInputs[key] = this.cleanInputValue(val);
           }
         });
+
+        // If generate_text step has a linked/non-fixed prompt, do not save dynamic variables
+        if (newStep.type === NodeTypes.GENERATE_TEXT) {
+          const promptVal = newInputs['prompt'];
+          const isPromptFixed = typeof promptVal === 'string';
+
+          if (!isPromptFixed) {
+            const baseNames = new Set(
+              GENERATE_TEXT_STEP_CONFIG.inputs.map(i => i.name.toLowerCase()),
+            );
+            Object.keys(newInputs).forEach(k => {
+              if (!baseNames.has(k.toLowerCase())) {
+                delete newInputs[k];
+              }
+            });
+          }
+        }
+
         newStep.inputs = newInputs;
       }
       return newStep;
@@ -1225,7 +1636,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     const userInputOutputs: any = {};
     if (formValue.userInput && formValue.userInput.outputs) {
       Object.keys(formValue.userInput.outputs).forEach(key => {
-        const cleanKey = this.toIdentifier(key);
+        const cleanKey = labelToName(key);
         userInputOutputs[cleanKey] = formValue.userInput.outputs[key];
       });
     }
@@ -1305,7 +1716,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
 
     // Handle user input name transformation (display -> identifier)
     if (newVal.step === NodeTypes.USER_INPUT && newVal.output) {
-      newVal = {...newVal, output: this.toIdentifier(newVal.output)};
+      newVal = {...newVal, output: labelToName(newVal.output)};
     }
 
     return newVal;
@@ -1476,12 +1887,6 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   // populateFormFromData and resetFormForNew removed, handled by service patchData and initForm
 
   // getStepIcon removed, use StepIconPipe in template
-
-  // toDisplay removed, used in service. kept toIdentifier for prepareSteps
-
-  private toIdentifier(name: string): string {
-    return name ? name.trim().replace(/\s+/g, '_') : name;
-  }
 }
 
 export enum EditorMode {

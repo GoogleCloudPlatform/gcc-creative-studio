@@ -49,6 +49,7 @@ def fixture_mock_service():
     service.batch_execute_workflow = AsyncMock()
     service.get_execution_details = AsyncMock()
     service.list_executions = MagicMock()  # Synchronous method in service
+    service.validate_workflow = MagicMock()
     return service
 
 
@@ -271,3 +272,38 @@ def test_regular_user_can_access_other_endpoints(mock_service):
     assert response.status_code == 200
     assert response.json()["execution_id"] == "exec_id_123"
     mock_service.execute_workflow.assert_called_once()
+
+
+def test_validate_workflow_success(client, mock_service):
+    mock_service.validate_workflow.return_value = {
+        "valid": True,
+        "message": "Workflow structure is valid.",
+    }
+    payload = {
+        "name": "Test Workflow",
+        "description": "Validation test",
+        "steps": [],
+    }
+    response = client.post("/api/workflows/validate", json=payload)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["valid"] is True
+    assert data["message"] == "Workflow structure is valid."
+    mock_service.validate_workflow.assert_called_once()
+
+
+def test_validate_workflow_invalid_raises_400(client, mock_service):
+    mock_service.validate_workflow.side_effect = ValueError(
+        "Cycle detected in workflow graph"
+    )
+    payload = {
+        "name": "Cyclic Workflow",
+        "description": "Validation test with cycle",
+        "steps": [],
+    }
+    response = client.post("/api/workflows/validate", json=payload)
+
+    assert response.status_code == 400
+    assert "Cycle detected in workflow graph" in response.json()["detail"]
+    mock_service.validate_workflow.assert_called_once()

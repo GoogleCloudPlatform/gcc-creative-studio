@@ -14,21 +14,27 @@
  * limitations under the License.
  */
 
+import {ReferenceImage} from '../common/models/search.model';
+
 export enum NodeTypes {
   USER_INPUT = 'user_input',
   GENERATE_TEXT = 'generate_text',
-  GENERATE_IMAGE = 'generate_image',
-  EDIT_IMAGE = 'edit_image',
   GENERATE_VIDEO = 'generate_video',
   CROP_IMAGE = 'crop_image',
-  VIRTUAL_TRY_ON = 'virtual_try_on',
   GENERATE_AUDIO = 'generate_audio',
+  IMAGE = 'image',
 }
 
 export interface StepOutputReference {
   step: string;
   output: string;
+  _definitionId?: string;
 }
+
+export type StepInputValue =
+  | null
+  | StepOutputReference
+  | (StepOutputReference | ReferenceImage)[];
 
 export enum StepStatusEnum {
   IDLE = 'idle',
@@ -65,6 +71,11 @@ export enum WorkflowRunStatusEnum {
   CANCELED = 'canceled',
   SCHEDULED = 'scheduled',
 }
+export interface Point {
+  x: number;
+  y: number;
+}
+
 export interface WorkflowBase {
   name: string;
   description: string;
@@ -79,9 +90,27 @@ export interface WorkflowModel extends WorkflowBase {
   userId: string;
 }
 
+export interface WorkflowTemplate extends WorkflowBase {
+  id: string;
+  isPredefined?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  userId?: string;
+  positions?: {[stepId: string]: Point};
+}
+
+export type WorkflowTemplateCreateDto = WorkflowBase;
+
 export type WorkflowCreateDto = WorkflowBase;
 
 export type WorkflowUpdateDto = WorkflowBase;
+
+export type WorkflowValidateDto = WorkflowBase;
+
+export interface WorkflowValidateResponse {
+  valid: boolean;
+  message?: string;
+}
 
 export interface WorkflowSearchDto {
   limit?: number;

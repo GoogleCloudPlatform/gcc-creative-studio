@@ -15,6 +15,7 @@
  */
 
 import {MODEL_CONFIGS} from '../../../../common/config/model-config';
+import {NodeTypes} from '../../../workflow.models';
 import {StepConfig} from '../generic-step/step.model';
 
 const model_options = MODEL_CONFIGS.filter(model => model.type === 'VIDEO').map(
@@ -25,7 +26,7 @@ const model_options = MODEL_CONFIGS.filter(model => model.type === 'VIDEO').map(
 );
 
 export const GENERATE_VIDEO_STEP_CONFIG: StepConfig = {
-  type: 'generate-video',
+  type: NodeTypes.GENERATE_VIDEO,
   title: 'Generate Video',
   icon: 'movie',
   inputs: [
@@ -40,6 +41,20 @@ export const GENERATE_VIDEO_STEP_CONFIG: StepConfig = {
       label: 'Input Images (Reference)',
       type: 'image',
       required: false,
+    },
+    {
+      name: 'input_video',
+      label: 'Video (Reference)',
+      type: 'video',
+      required: false,
+      hidden: true,
+    },
+    {
+      name: 'input_audio',
+      label: 'Audio (Reference)',
+      type: 'audio',
+      required: false,
+      hidden: true,
     },
     {
       name: 'start_frame',
@@ -62,7 +77,7 @@ export const GENERATE_VIDEO_STEP_CONFIG: StepConfig = {
       label: 'Model',
       type: 'select',
       options: model_options,
-      defaultValue: 'veo-3.0-generate-001',
+      defaultValue: 'veo-3.1-generate-001',
     },
     {
       name: 'input_mode',
@@ -77,6 +92,17 @@ export const GENERATE_VIDEO_STEP_CONFIG: StepConfig = {
       type: 'select',
       options: [],
       defaultValue: '16:9',
+    },
+    {
+      name: 'duration_seconds',
+      label: 'Duration',
+      type: 'select',
+      options: [
+        {value: 4, label: '4s'},
+        {value: 6, label: '6s'},
+        {value: 8, label: '8s'},
+      ],
+      defaultValue: 8,
     },
     {
       name: 'brand_guidelines',
