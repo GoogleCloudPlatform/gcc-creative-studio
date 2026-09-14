@@ -146,15 +146,33 @@ class AgentService:
                 if isinstance(fr, dict):
                     name = fr.get("name")
                     resp = fr.get("response") or {}
-                    if isinstance(resp, dict) and (
-                        resp.get("status") == "awaiting_human_review"
-                        or (
-                            resp.get("message")
-                            and resp.get("expected_response")
-                        )
+                    if isinstance(resp, str):
+                        try:
+                            resp = json.loads(resp)
+                        except Exception:
+                            pass
+                    res_dict = resp
+                    if isinstance(resp, dict):
+                        inner = resp.get("result")
+                        if isinstance(inner, str):
+                            try:
+                                inner = json.loads(inner)
+                            except Exception:
+                                pass
+                        if isinstance(inner, dict):
+                            res_dict = inner
+                    if isinstance(res_dict, dict) and not res_dict.get(
+                        "decision"
                     ):
-                        if name in APPROVAL_FUNCTIONS:
-                            return name
+                        status = res_dict.get("status")
+                        if (
+                            status
+                            in ("awaiting_human_review", "pending_approval")
+                            or res_dict.get("message")
+                            or res_dict.get("expected_response")
+                        ):
+                            if name in APPROVAL_FUNCTIONS:
+                                return name
 
                 for v in obj.values():
                     res = search(v)

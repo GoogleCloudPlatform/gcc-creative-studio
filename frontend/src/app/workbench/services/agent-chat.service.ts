@@ -56,12 +56,21 @@ export interface ChatMessage {
   parts: ChatMessagePart[];
 }
 
+export interface StageMilestone {
+  stage: 'strategy' | 'storyboard' | 'frames' | 'final_cut';
+  title: string;
+  subtitle: string;
+  icon: string;
+  details?: any;
+}
+
 export interface ChatMessageUI {
   sender: 'user' | 'agent';
   text: string;
   timestamp: Date;
   asset?: any;
   storyboard?: any;
+  milestone?: StageMilestone;
   images?: any[];
   isHidden?: boolean;
   rawText?: string;

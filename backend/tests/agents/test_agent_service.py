@@ -517,6 +517,33 @@ def test_detect_approval_function():
         == "await_storyboard_approval"
     )
 
+    # 2b. Assistant function response with nested result, status=pending_approval, and message
+    evt_resp_nested = {
+        "content": {
+            "parts": [
+                {
+                    "functionResponse": {
+                        "name": "await_strategy_approval",
+                        "response": {
+                            "result": {
+                                "campaign": {
+                                    "visual_look": "Outdoor Adventure"
+                                },
+                                "message": "A 12s product-only ad for general audience.",
+                                "stage": "strategy",
+                                "status": "pending_approval",
+                            }
+                        },
+                    }
+                }
+            ]
+        }
+    }
+    assert (
+        AgentService.detect_approval_function(evt_resp_nested)
+        == "await_strategy_approval"
+    )
+
     # 3. User message / user function response answering a gate MUST return None
     user_evt_author = {
         "author": "user",
