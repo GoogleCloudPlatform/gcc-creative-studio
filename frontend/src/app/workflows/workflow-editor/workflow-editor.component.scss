@@ -14,98 +14,84 @@
  * limitations under the License.
  */
 
-:host {
-  display: block;
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  z-index: 10;
-}
 .editor-container {
-  height: 100%;
-    width: 100%;
+  --max-container-width: 1400px;
   background-color: transparent;
-  padding: 0;
-    display: flex;
-    flex-direction: column;
-    position: relative;
-  color: #E3E3E3;
+  padding: 20px 40px;
+  max-width: var(--max-container-width);
+  margin: 0 auto;
+  margin-top: calc(10vh + 0px);
+  margin-left: max(
+    calc(5vw + 4.5rem),
+    calc(50% - var(--max-container-width) / 2)
+  );
+  color: #e3e3e3;
   font-family: 'Google Sans', sans-serif;
   /* Use ::ng-deep to override child component styles within this container only */
-    ::ng-deep {
-  
-      /* Form Fields & Inputs */
-      .mdc-text-field:not(.mdc-text-field--disabled) .mdc-floating-label {
-        color: #A0A0A0;
-        /* Secondary text color */
+  ::ng-deep {
+    /* Form Fields & Inputs */
+    .mdc-text-field:not(.mdc-text-field--disabled) .mdc-floating-label {
+      color: #a0a0a0;
+      /* Secondary text color */
+    }
+
+    .mdc-text-field:not(.mdc-text-field--disabled) .mat-mdc-input-element {
+      color: #e3e3e3;
+      /* Primary text color */
+    }
+
+    .mat-mdc-form-field-hint {
+      color: #a0a0a0;
+    }
+
+    /* Selects */
+    .mat-mdc-select-value {
+      color: #e3e3e3;
+    }
+
+    .mat-mdc-select-arrow {
+      color: #a0a0a0;
+    }
+
+    /* Checkboxes (fix for "Use Brand Guidelines" label) */
+    .mat-mdc-checkbox {
+      label {
+        color: #e3e3e3;
       }
-  
-      .mdc-text-field:not(.mdc-text-field--disabled) .mat-mdc-input-element {
-        color: #E3E3E3;
-        /* Primary text color */
-      }
-  
-      .mat-mdc-form-field-hint {
-        color: #A0A0A0;
-      }
-  
-      /* Selects */
-      .mat-mdc-select-value {
-        color: #E3E3E3;
-      }
-  
-      .mat-mdc-select-arrow {
-        color: #A0A0A0;
-      }
-  
-      /* Checkboxes (fix for "Use Brand Guidelines" label) */
-      .mat-mdc-checkbox {
-        label {
-          color: #E3E3E3;
-        }
-  
-        .mdc-label {
-          color: #E3E3E3;
-        }
-      }
-  
-      /* Radio Buttons */
-      .mat-mdc-radio-button {
-        label {
-          color: #E3E3E3;
-        }
+
+      .mdc-label {
+        color: #e3e3e3;
       }
     }
+
+    /* Radio Buttons */
+    .mat-mdc-radio-button {
+      label {
+        color: #e3e3e3;
+      }
+    }
+  }
 }
 
-/* Glassmorphism Card Style */
-@mixin glass-card {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  backdrop-filter: blur(12px);
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-  /* Subtle shadow for depth */
-}
 /* Header Section */
 .header-section {
-  position: absolute;
-    top: 24px;
-    right: 24px;
-    left: auto;
-    transform: none;
-    width: auto;
-    min-width: 400px;
-    max-width: 60vw;
-    z-index: 100;
-    @include glass-card;
-    background: rgba(30, 30, 30, 0.8);
-    padding: 16px 24px;
-    display: flex;
+  display: inline-flex;
   flex-direction: column;
+  width: 100%;
   gap: 10px;
+  margin-bottom: 16px;
+
+  /* --- ROW 1: Top Actions (LEFT) --- */
+  .top-actions {
+    display: flex; /* Ensure flex is applied */
+    justify-content: flex-start;
+    flex-direction: row;
+    gap: 8px;
+
+    mat-icon {
+      color: #e0e0e0;
+    }
+  }
 
   .in-line-wrapper {
     display: flex;
@@ -117,152 +103,76 @@
   .title-group {
     text-align: left;
     width: 100%;
-    
+
     .page-title {
       font-family: 'Google Sans', sans-serif;
       font-weight: 400;
       font-size: 45px;
       line-height: 52px;
       margin: 0;
-      color: #E3E3E3;
+      color: #e3e3e3;
     }
   }
 }
 
 .canvas-area {
   position: relative;
-  width: 100%;
-    height: 100%;
-  }
-  
-  .canvas-content {
-    background-image: radial-gradient(circle, rgba(255, 255, 255, 0.1) 1px, transparent 1px);
-    background-size: 20px 20px;
-    background-color: #1a202c;
-    /* neutral-900 like */
-    cursor: grab;
-  
-    &:active {
-      cursor: grabbing;
-    }
-  }
-  
-  .nodes-container {
-    /* No special styles needed, it acts as a positioning root */
+  padding: 20px 0;
 }
 
-.user-input-node {
-  @include glass-card;
-  background-color: var(--card-bg, #1e1e1e);
-  border-radius: 0.5rem;
-  border: 1px solid var(--border-color, #333);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-  width: 400px;
-  border-top: 4px solid #f87171;
-  /* Match user input red */
-
-  .step-header {
-    display: flex;
-    justify-content: space-between;
-      align-items: center;
-    padding: 16px 24px;
-      background: rgba(255, 255, 255, 0.03);
-      border-bottom: 1px solid var(--border-color, #333);
-      border-top-left-radius: 0.5rem;
-      border-top-right-radius: 0.5rem;
-      cursor: move;
-    
-      .step-title {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        font-size: 16px;
-        font-weight: 600;
-        color: #E3E3E3;
-    
-        mat-icon {
-          color: #A0A0A0;
-        }
-      }
-    }
-
-    .step-content {
-      padding: 16px;
-    }
-    }
-
-.port.output-port {
-  position: absolute;
-  width: 12px;
-    height: 12px;
-    background-color: #63b3ed;
-    border-radius: 50%;
-    cursor: crosshair;
-    z-index: 10;
-    border: 2px solid #2d3748;
-    right: 0;
-  transform: translate(50%, -50%);
-    top: 50%;
-    
-  
-    &:hover {
-      background-color: #bee3f8;
-      transform: translateY(-50%) scale(1.2);
-  }
-}
-
-.output-port-container {
-  position: relative;
-  height: 40px;
+.steps-list {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: flex-end;
-  padding-right: 16px;
+  gap: 24px;
+  position: relative;
+  padding-bottom: 80px; /* Space for the FAB */
+}
 
-  .port-label {
-    font-size: 12px;
-    color: #A0A0A0;
-    margin-right: 8px;
+.step-wrapper {
+  width: 100%;
+  max-width: 700px;
+  position: relative;
+  z-index: 1;
+
+  /* The vertical connecting line */
+  &:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    bottom: -24px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 2px;
+    height: 24px;
+    background-color: #444;
+    z-index: 0;
   }
 }
 
+/* Glassmorphism Card Style */
+@mixin glass-card {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.08) 0%,
+    rgba(255, 255, 255, 0.02) 100%
+  );
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05); /* Subtle shadow for depth */
+}
 
-.add-btn-wrapper {
+.add-btn-container {
   position: fixed;
   bottom: 40px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 100;
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
+  justify-content: center;
 
-  .history-btns {
-    display: flex;
-    gap: 8px;
-
-    .mini-history-btn {
-      transform: scale(0.85);
-      background-color: var(--background-elevated);
-      color: var(--text-primary);
-      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-      transition: all 0.2s ease;
-
-      &:hover {
-        transform: scale(0.95);
-        background-color: var(--background-hover);
-      }
-    }
-  }
-
-  .add-btn-container {
-    display: flex;
-    justify-content: center;
-
-    button {
-      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
-    }
+  button {
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
   }
 }
 
@@ -277,7 +187,11 @@
     transition: all 0.2s ease;
 
     &:hover {
-      background: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.06) 100%);
+      background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.12) 0%,
+        rgba(255, 255, 255, 0.06) 100%
+      );
       border-color: rgba(255, 255, 255, 0.2);
       box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
     }
@@ -288,7 +202,7 @@
   position: absolute;
   top: 50%;
   left: -40px;
-  
+  transform: translateY(-50%);
   color: #666;
   cursor: move;
   z-index: 10;
@@ -302,9 +216,10 @@
 .cdk-drag-preview {
   box-sizing: border-box;
   border-radius: 12px;
-  box-shadow: 0 5px 5px -3px rgba(0, 0, 0, 0.2),
-              0 8px 10px 1px rgba(0, 0, 0, 0.14),
-              0 3px 14px 2px rgba(0, 0, 0, 0.12);
+  box-shadow:
+    0 5px 5px -3px rgba(0, 0, 0, 0.2),
+    0 8px 10px 1px rgba(0, 0, 0, 0.14),
+    0 3px 14px 2px rgba(0, 0, 0, 0.12);
 }
 
 .cdk-drag-placeholder {
@@ -315,6 +230,19 @@
   transition: transform 250ms cubic-bezier(0, 0, 0.2, 1);
 }
 
+.step-card {
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+
+  &.selected-step {
+    border-color: #63b3ed !important;
+    box-shadow:
+      0 0 12px 2px rgba(99, 179, 237, 0.3),
+      0 10px 30px rgba(0, 0, 0, 0.3) !important;
+  }
+}
 
 .user-input-panel {
   @include glass-card;
@@ -352,9 +280,16 @@
       padding: 0 12px;
     }
 
-    .name-col { grid-column: 1 / 2; }
-    .type-col { grid-column: 2 / 3; }
-    .action-col { grid-column: 3 / 4; justify-self: center; }
+    .name-col {
+      grid-column: 1 / 2;
+    }
+    .type-col {
+      grid-column: 2 / 3;
+    }
+    .action-col {
+      grid-column: 3 / 4;
+      justify-self: center;
+    }
 
     .mat-mdc-form-field {
       font-size: 14px;
@@ -376,94 +311,39 @@
     }
   }
 }
+
 .hourglass-loader {
   // --- RESET & CENTERING ---
-  // Force flex to calculate exact center regardless of font metrics
   display: flex !important;
   align-items: center;
   justify-content: center;
 
-  // Kill potential layout shifters
-  line-height: 1 !important; // Prevents the glyph from sitting "high" or "low"
+  line-height: 1 !important;
   margin: 0 !important;
   padding: 0 !important;
   border: none;
   outline: none;
-  
-  // Ensure the rotation point is exactly the center of the box
+
   transform-origin: center center;
 
   // --- ANIMATION ---
-  // 3s total loop: fast flip, wait for "sand", fast flip, wait.
-  animation: flip-hourglass 3s infinite cubic-bezier(0.4, 0.0, 0.2, 1);
+  animation: flip-hourglass 3s infinite cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 @keyframes flip-hourglass {
   0% {
     transform: rotate(0deg);
   }
-  // Flip quickly (take 30% of time to flip)
   30% {
     transform: rotate(180deg);
   }
-  // Stay still (let the sand fall)
   50% {
     transform: rotate(180deg);
   }
-  // Flip again
   80% {
     transform: rotate(360deg);
   }
-  // Stay still
   100% {
     transform: rotate(360deg);
   }
 }
-
-@keyframes flow-animation {
-  from {
-    stroke-dashoffset: 20;
-  }
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-.animated-wire {
-  stroke-dasharray: 10, 10;
-  animation: flow-animation 0.5s linear infinite;
-}
-
-.selected-node {
-  box-shadow: 0 0 15px 2px #63b3ed, 0 10px 30px rgba(0, 0, 0, 0.3) !important;
-  border-color: #63b3ed !important;
-}
-
-
-.port-type-chip {
-  position: absolute;
-  top: 50%;
-  font-size: 9px;
-  font-weight: bold;
-  padding: 2px 4px;
-  border-radius: 4px;
-  color: #fff;
-  background-color: #4a5568;
-  pointer-events: none;
-  z-index: 10;
-}
-
-.input-chip {
-  left: -36px;
-  transform: translate(-100%, -50%);
-}
-
-.output-chip {
-  right: -36px;
-  transform: translate(100%, -50%);
-}
-
-.port-type-chip[data-type*="text"], .port-type-chip[data-type*="string"] { background-color: #3182ce; }
-.port-type-chip[data-type*="image"], .port-type-chip[data-type*="Image"] { background-color: #d53f8c; }
-.port-type-chip[data-type*="video"], .port-type-chip[data-type*="Video"] { background-color: #dd6b20; }
-.port-type-chip[data-type*="audio"], .port-type-chip[data-type*="Audio"] { background-color: #805ad5; }
-

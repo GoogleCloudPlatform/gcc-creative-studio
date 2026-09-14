@@ -978,7 +978,6 @@ def _process_video_in_background(
 
                         end_time = time.monotonic()
                         generation_time = end_time - start_time
-
                         if request_dto.generation_model not in [
                             GenerationModelEnum.GEMINI_OMNI,
                             GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,

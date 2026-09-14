@@ -21,9 +21,10 @@ import {GENERATE_IMAGE_STEP_CONFIG} from '../workflow-editor/step-components/ste
 import {GENERATE_TEXT_STEP_CONFIG} from '../workflow-editor/step-components/step-configs/generate-text-step.config';
 import {GENERATE_VIDEO_STEP_CONFIG} from '../workflow-editor/step-components/step-configs/generate-video-step.config';
 import {VIRTUAL_TRY_ON_STEP_CONFIG} from '../workflow-editor/step-components/step-configs/virtual-try-on-step.config';
+import {StepConfig} from '../workflow-editor/step-components/generic-step/step.model';
 import {NodeTypes} from '../workflow.models';
 
-export const STEP_CONFIGS_MAP = {
+export const STEP_CONFIGS_MAP: Partial<Record<NodeTypes, StepConfig>> = {
   [NodeTypes.GENERATE_TEXT]: GENERATE_TEXT_STEP_CONFIG,
   [NodeTypes.GENERATE_IMAGE]: GENERATE_IMAGE_STEP_CONFIG,
   [NodeTypes.EDIT_IMAGE]: EDIT_IMAGE_STEP_CONFIG,
