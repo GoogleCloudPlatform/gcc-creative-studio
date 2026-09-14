@@ -15,6 +15,7 @@
 
 from fastapi import status
 import asyncio
+import json
 import logging
 from typing import Any, List
 
@@ -56,6 +57,34 @@ AGENT_REASONING_ENGINES = {
 
 APP_NAME = "ads_x"
 
+APPROVAL_FUNCTIONS = {
+    "await_strategy_approval",
+    "await_storyboard_approval",
+    "await_frame_approval",
+    "await_final_cut_approval",
+}
+
+
+def to_dict_safe(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return obj
+    if isinstance(obj, str):
+        try:
+            return json.loads(obj)
+        except Exception:
+            return obj
+    if hasattr(obj, "model_dump"):
+        try:
+            return obj.model_dump()
+        except Exception:
+            pass
+    if hasattr(obj, "to_dict"):
+        try:
+            return obj.to_dict()
+        except Exception:
+            pass
+    return getattr(obj, "__dict__", obj)
+
 
 def safe_cast(val, to_type, default=None):
     try:
@@ -82,6 +111,68 @@ class AgentService:
             project=config_service.PROJECT_ID,
             location=config_service.WORKFLOWS_LOCATION,
         )
+
+    @staticmethod
+    def detect_approval_function(evt: Any) -> str | None:
+        data = to_dict_safe(evt)
+        if isinstance(data, dict):
+            if data.get("author") == "user" or data.get("role") == "user":
+                return None
+            content = data.get("content")
+            if isinstance(content, dict) and (
+                content.get("role") == "user" or content.get("author") == "user"
+            ):
+                return None
+
+        def search(obj: Any) -> str | None:
+            if isinstance(obj, dict):
+                fc = (
+                    obj.get("function_call")
+                    or obj.get("functionCall")
+                    or obj.get("tool_call")
+                    or obj.get("toolCall")
+                )
+                if isinstance(fc, dict):
+                    name = fc.get("name")
+                    if name in APPROVAL_FUNCTIONS:
+                        return name
+
+                fr = (
+                    obj.get("function_response")
+                    or obj.get("functionResponse")
+                    or obj.get("tool_response")
+                    or obj.get("toolResponse")
+                )
+                if isinstance(fr, dict):
+                    name = fr.get("name")
+                    resp = fr.get("response") or {}
+                    if isinstance(resp, dict) and (
+                        resp.get("status") == "awaiting_human_review"
+                        or (
+                            resp.get("message")
+                            and resp.get("expected_response")
+                        )
+                    ):
+                        if name in APPROVAL_FUNCTIONS:
+                            return name
+
+                for v in obj.values():
+                    res = search(v)
+                    if res:
+                        return res
+            elif isinstance(obj, list):
+                for item in obj:
+                    res = search(item)
+                    if res:
+                        return res
+            return None
+
+        if isinstance(data, (dict, list)):
+            found = search(data)
+            if found:
+                return found
+
+        return None
 
     def _get_agent_config(self, appName: str) -> dict:
         default_config = {
@@ -730,32 +821,6 @@ class AgentService:
                 ):
                     response_stream = await response_stream
 
-                APPROVAL_FUNCTIONS = {
-                    "await_strategy_approval",
-                    "await_storyboard_approval",
-                    "await_final_cut_approval",
-                }
-
-                def to_dict_safe(obj: Any) -> Any:
-                    if isinstance(obj, dict):
-                        return obj
-                    if isinstance(obj, str):
-                        try:
-                            return json.loads(obj)
-                        except Exception:
-                            return obj
-                    if hasattr(obj, "model_dump"):
-                        try:
-                            return obj.model_dump()
-                        except Exception:
-                            pass
-                    if hasattr(obj, "to_dict"):
-                        try:
-                            return obj.to_dict()
-                        except Exception:
-                            pass
-                    return getattr(obj, "__dict__", obj)
-
                 def texts_of(evt: Any) -> list[str]:
                     data = to_dict_safe(evt)
                     if isinstance(data, str):
@@ -780,43 +845,6 @@ class AgentService:
                         if hasattr(evt, "text")
                         else []
                     )
-
-                def detect_approval_function(evt: Any) -> str | None:
-                    data = to_dict_safe(evt)
-
-                    def search(obj: Any) -> str | None:
-                        if isinstance(obj, dict):
-                            for v in obj.values():
-                                if (
-                                    isinstance(v, str)
-                                    and v in APPROVAL_FUNCTIONS
-                                ):
-                                    return v
-                                res = search(v)
-                                if res:
-                                    return res
-                        elif isinstance(obj, list):
-                            for item in obj:
-                                if (
-                                    isinstance(item, str)
-                                    and item in APPROVAL_FUNCTIONS
-                                ):
-                                    return item
-                                res = search(item)
-                                if res:
-                                    return res
-                        return None
-
-                    if isinstance(data, (dict, list)):
-                        found = search(data)
-                        if found:
-                            return found
-
-                    evt_str = str(evt)
-                    for fn in APPROVAL_FUNCTIONS:
-                        if fn in evt_str:
-                            return fn
-                    return None
 
                 def extract_event_meta(evt: Any):
                     data = to_dict_safe(evt)
@@ -846,7 +874,9 @@ class AgentService:
                         if cur_inv_id:
                             invocation_id = cur_inv_id
 
-                        detected_approval = detect_approval_function(chunk)
+                        detected_approval = (
+                            AgentService.detect_approval_function(chunk)
+                        )
 
                         if cur_lrt_ids or detected_approval:
                             paused_signal = True

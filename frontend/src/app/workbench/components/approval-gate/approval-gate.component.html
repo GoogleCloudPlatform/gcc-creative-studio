@@ -63,7 +63,7 @@
     <button
       type="button"
       (click)="submitDirectDecision('accept')"
-      [disabled]="isSubmitting"
+      [disabled]="isBusy()"
       class="flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg bg-emerald-950/40 border border-emerald-500/30 hover:bg-emerald-900/60 hover:border-emerald-400 text-emerald-200 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
       matTooltip="Approve and proceed to the next stage"
     >
@@ -77,7 +77,7 @@
     <button
       type="button"
       (click)="toggleModify()"
-      [disabled]="isSubmitting"
+      [disabled]="isBusy()"
       class="flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg bg-amber-950/40 border border-amber-500/30 hover:bg-amber-900/60 hover:border-amber-400 text-amber-200 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
       matTooltip="Request targeted changes with custom guidance"
     >
@@ -91,7 +91,7 @@
     <button
       type="button"
       (click)="submitDirectDecision('regenerate')"
-      [disabled]="isSubmitting"
+      [disabled]="isBusy()"
       class="flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg bg-rose-950/40 border border-rose-500/30 hover:bg-rose-900/60 hover:border-rose-400 text-rose-200 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
       matTooltip="Reject and redo this stage completely"
     >
@@ -112,7 +112,7 @@
       <button
         type="button"
         (click)="toggleModify()"
-        [disabled]="isSubmitting"
+        [disabled]="isBusy()"
         class="flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-neutral-800 text-neutral-400 hover:text-white text-xs transition-colors cursor-pointer"
         matTooltip="Back to decisions"
       >
@@ -133,8 +133,9 @@
         (ngModelChange)="guidanceText.set($event)"
         (input)="onInputResize($event)"
         [placeholder]="modifyPlaceholder()"
+        [disabled]="isBusy()"
         rows="1"
-        class="flex-1 bg-transparent text-xs text-white focus:outline-none resize-none max-h-32 overflow-y-auto py-1 px-1 leading-relaxed custom-scrollbar"
+        class="flex-1 bg-transparent text-xs text-white focus:outline-none resize-none max-h-32 overflow-y-auto py-1 px-1 leading-relaxed custom-scrollbar disabled:opacity-50"
         (keydown)="onModifyKeydown($event)"
         autofocus
       ></textarea>
@@ -144,7 +145,7 @@
         size="medium"
         shape="circle"
         class="flex-shrink-0 flex items-center justify-center"
-        [disabled]="!guidanceText().trim() || isSubmitting"
+        [disabled]="!guidanceText().trim() || isBusy()"
         (click)="submitModify()"
       >
         <mat-icon class="!w-5 !h-5 flex items-center justify-center"

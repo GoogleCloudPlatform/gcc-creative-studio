@@ -91,7 +91,6 @@ class GenerationModelEnum(str, Enum):
     GEMINI_2_5_FLASH_LITE_PREVIEW_TTS = "gemini-2.5-flash-lite-preview-tts"
     GEMINI_2_5_PRO_TTS = "gemini-2.5-pro-tts"
     GEMINI_3_1_FLASH_TTS_PREVIEW = "gemini-3.1-flash-tts-preview"
-
     # Workbench Models
     WORKBENCH_RENDER = "workbench-render"
 

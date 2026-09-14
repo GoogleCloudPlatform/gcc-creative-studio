@@ -1207,6 +1207,67 @@ describe('ChatInterfaceComponent', () => {
       expect(gate).toBeNull();
     });
 
+    it('should detect unresolved gate for await_frame_approval as frames stage', () => {
+      const events = [
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  id: 'call_frame_1',
+                  name: 'await_frame_approval',
+                },
+              },
+            ],
+          },
+        },
+      ];
+      const gate = component['checkUnresolvedGate'](events);
+      expect(gate).toBeTruthy();
+      expect(gate?.callId).toBe('call_frame_1');
+      expect(gate?.stage).toBe('frames');
+      expect(gate?.toolName).toBe('await_frame_approval');
+    });
+
+    it('should resolve await_frame_approval when record_frame_decision or frame_decision delta is emitted', () => {
+      const events = [
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  id: 'call_frame_1',
+                  name: 'await_frame_approval',
+                },
+              },
+            ],
+          },
+        },
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  id: 'call_rec_1',
+                  name: 'record_frame_decision',
+                },
+              },
+            ],
+          },
+          actions: {
+            state_delta: {
+              frame_decision: {decision: 'accept'},
+            },
+          },
+        },
+      ];
+      const gate = component['checkUnresolvedGate'](events);
+      expect(gate).toBeNull();
+    });
+
     it('should extract payload from functionResponse event', () => {
       const event = {
         content: {
@@ -1273,6 +1334,11 @@ describe('ChatInterfaceComponent', () => {
         guidance: 'Make scene 1 shorter',
       });
 
+      expect(agentChatService.stopPolling).toHaveBeenCalled();
+      expect(
+        (component as any).submittedGateCallIds.has('call_gate_1'),
+      ).toBeTrue();
+      expect(component.isSubmittingGate()).toBeTrue();
       expect(component.activeApprovalGate()).toBeNull();
       expect(agentChatService.sendMessage).toHaveBeenCalledWith(
         'sess-123',
@@ -1291,6 +1357,201 @@ describe('ChatInterfaceComponent', () => {
         1,
         jasmine.any(Object),
       );
+    });
+
+    it('should filter out user authored events in extractGateFromEvent', () => {
+      const userEvent = {
+        author: 'user',
+        content: {
+          parts: [
+            {
+              functionResponse: {
+                id: 'call_1',
+                name: 'await_storyboard_approval',
+                response: {
+                  result: JSON.stringify({
+                    status: 'awaiting_human_review',
+                    stage: 'storyboard',
+                  }),
+                },
+              },
+            },
+          ],
+        },
+      };
+      expect(component['extractGateFromEvent'](userEvent)).toBeNull();
+
+      const userRoleEvent = {
+        content: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'call_1',
+                name: 'await_storyboard_approval',
+                response: {
+                  result: JSON.stringify({
+                    status: 'awaiting_human_review',
+                    stage: 'storyboard',
+                  }),
+                },
+              },
+            },
+          ],
+        },
+      };
+      expect(component['extractGateFromEvent'](userRoleEvent)).toBeNull();
+    });
+
+    it('should ignore already submitted callIds in extractGateFromEvent', () => {
+      (component as any).submittedGateCallIds.add('call_already_submitted');
+      const event = {
+        content: {
+          parts: [
+            {
+              functionCall: {
+                id: 'call_already_submitted',
+                name: 'await_storyboard_approval',
+              },
+            },
+          ],
+        },
+      };
+      expect(component['extractGateFromEvent'](event)).toBeNull();
+    });
+
+    it('should ignore events containing a decision key in extractGateFromEvent', () => {
+      const event = {
+        content: {
+          parts: [
+            {
+              functionResponse: {
+                id: 'call_decided',
+                name: 'await_storyboard_approval',
+                response: {
+                  result: JSON.stringify({
+                    status: 'awaiting_human_review',
+                    decision: 'accept',
+                  }),
+                },
+              },
+            },
+          ],
+        },
+      };
+      expect(component['extractGateFromEvent'](event)).toBeNull();
+    });
+
+    it('should support iterative re-gating after a modify loop in checkUnresolvedGate', () => {
+      const events = [
+        // 1. Initial Gate 2 candidate
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  id: 'call_sb_initial',
+                  name: 'await_storyboard_approval',
+                },
+              },
+            ],
+          },
+        },
+        // 2. User modify response
+        {
+          author: 'user',
+          content: {
+            parts: [
+              {
+                functionResponse: {
+                  name: 'await_storyboard_approval',
+                  response: {decision: 'modify', guidance: 'Change scene 2'},
+                },
+              },
+            ],
+          },
+        },
+        // 3. Agent modifies scenes
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  name: 'generate_scene_frames',
+                  args: {scene_num: 2},
+                },
+              },
+            ],
+          },
+        },
+        // 4. Agent emits NEW Gate 2 candidate
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  id: 'call_sb_revised',
+                  name: 'await_storyboard_approval',
+                },
+              },
+            ],
+          },
+        },
+      ];
+
+      const gate = component['checkUnresolvedGate'](events);
+      expect(gate).toBeTruthy();
+      expect(gate?.callId).toBe('call_sb_revised');
+      expect(gate?.stage).toBe('storyboard');
+    });
+
+    it('should block submitChat when isBusy is true', () => {
+      component.chatInputValue.set('Hello test');
+      agentChatService.sendMessage = jasmine.createSpy('sendMessage');
+
+      // Case 1: isTyping is true
+      component.isTyping.set(true);
+      expect(component.isBusy()).toBeTrue();
+      component.submitChat();
+      expect(agentChatService.sendMessage).not.toHaveBeenCalled();
+
+      // Case 2: isSubmittingGate is true
+      component.isTyping.set(false);
+      component.isSubmittingGate.set(true);
+      expect(component.isBusy()).toBeTrue();
+      component.submitChat();
+      expect(agentChatService.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('should reset isSubmittingGate on SSE onError and onClose', () => {
+      const callbacks = component['setupCallbacks']();
+
+      component.isSubmittingGate.set(true);
+      expect(component.isSubmittingGate()).toBeTrue();
+
+      callbacks.onError!({status: 500, message: 'Server error'});
+      expect(component.isSubmittingGate()).toBeFalse();
+
+      component.isSubmittingGate.set(true);
+      expect(component.isSubmittingGate()).toBeTrue();
+
+      callbacks.onClose!();
+      expect(component.isSubmittingGate()).toBeFalse();
+    });
+
+    it('should clear submittedGateCallIds when session changes', () => {
+      component['submittedGateCallIds'].add('call_123');
+      expect(component['submittedGateCallIds'].has('call_123')).toBeTrue();
+
+      // Trigger session change
+      component.currentSessionId = 'old_session';
+      agentChatService.selectedSessionId.set('new_session');
+      TestBed.flushEffects();
+
+      expect(component['submittedGateCallIds'].size).toBe(0);
     });
   });
 });
