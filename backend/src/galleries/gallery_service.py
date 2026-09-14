@@ -868,6 +868,7 @@ class GalleryService:
                         user_email=current_user.email,
                         conflict_strategy=bulk_copy_dto.conflict_strategy
                         or ConflictStrategyEnum.KEEP_BOTH,
+                        commit=False,
                     )
                     copied_count += (
                         copy_results.get("folders_copied", 0)
@@ -878,6 +879,7 @@ class GalleryService:
             except Exception as e:
                 logger.error(f"Error copying {item.type} {item.id}: {e}")
 
+        await self.db.commit()
         return {"copied_count": copied_count}
 
     async def bulk_move(
@@ -1016,6 +1018,7 @@ class GalleryService:
                             user_id=current_user.id,
                             conflict_strategy=bulk_move_dto.conflict_strategy
                             or ConflictStrategyEnum.KEEP_BOTH,
+                            commit=False,
                         )
                         moved_count += (
                             move_results.get("folders_moved", 0)

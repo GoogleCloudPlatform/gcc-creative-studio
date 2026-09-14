@@ -439,6 +439,46 @@ class TestFolderRepository:
         mock_db.commit.assert_called_once()
 
     @pytest.mark.anyio
+    async def test_move_folder_to_workspace_no_commit(
+        self, folder_repo, mock_db
+    ):
+        root_folder = Folder(
+            id=1,
+            workspace_id=1,
+            user_email="a@b.com",
+            name="ExistingRoot",
+            parent_id=None,
+        )
+        mock_get_root = MagicMock()
+        mock_get_root.scalars.return_value.first.return_value = root_folder
+
+        mock_row1 = MagicMock(id=1)
+        mock_desc_res = MagicMock()
+        mock_desc_res.fetchall.return_value = [mock_row1]
+
+        mock_existing_root_res = MagicMock()
+        mock_existing_root_res.fetchall.return_value = []
+
+        mock_media_res = MagicMock(rowcount=1)
+        mock_asset_res = MagicMock(rowcount=1)
+
+        mock_db.execute.side_effect = [
+            mock_get_root,
+            mock_desc_res,
+            mock_existing_root_res,
+            MagicMock(),  # delete media tags
+            MagicMock(),  # delete asset tags
+            mock_media_res,
+            mock_asset_res,
+        ]
+
+        result = await folder_repo.move_folder_to_workspace(
+            folder_id=1, target_workspace_id=99, commit=False
+        )
+        assert result["folders_moved"] == 1
+        mock_db.commit.assert_not_called()
+
+    @pytest.mark.anyio
     async def test_move_folder_to_workspace_same_workspace(
         self, folder_repo, mock_db
     ):
@@ -606,6 +646,54 @@ class TestFolderRepository:
         assert added_media[0].titles is not mock_media1.titles
         assert added_assets[0].titles == ["copied_asset_title"]
         assert added_assets[0].titles is not mock_asset1.titles
+
+    @pytest.mark.anyio
+    async def test_copy_folder_to_workspace_no_commit(
+        self, folder_repo, mock_db
+    ):
+        root_folder = Folder(
+            id=1,
+            workspace_id=1,
+            user_email="a@b.com",
+            name="ExistingRoot",
+            parent_id=None,
+            color="#fff",
+        )
+        mock_get_root = MagicMock()
+        mock_get_root.scalars.return_value.first.return_value = root_folder
+
+        mock_row1 = SimpleNamespace(
+            id=1, name="ExistingRoot", color="#fff", parent_id=None, depth=0
+        )
+        mock_desc_res = MagicMock()
+        mock_desc_res.fetchall.return_value = [mock_row1]
+
+        mock_existing_root_res = MagicMock()
+        mock_existing_root_res.fetchall.return_value = []
+
+        mock_media_res = MagicMock()
+        mock_media_res.scalars.return_value.all.return_value = []
+
+        mock_asset_res = MagicMock()
+        mock_asset_res.scalars.return_value.all.return_value = []
+
+        mock_db.execute.side_effect = [
+            mock_get_root,
+            mock_desc_res,
+            mock_existing_root_res,
+            mock_media_res,
+            mock_asset_res,
+        ]
+
+        result = await folder_repo.copy_folder_to_workspace(
+            folder_id=1,
+            target_workspace_id=99,
+            user_id=1,
+            user_email="tester@test.com",
+            commit=False,
+        )
+        assert result["folders_copied"] == 1
+        mock_db.commit.assert_not_called()
 
     @pytest.mark.anyio
     async def test_copy_folder_to_workspace_batches_flush_by_depth(
@@ -1088,6 +1176,52 @@ class TestFolderRepository:
         assert result["assets_moved"] == 1
         assert source.deleted_at is not None
         assert source.deleted_by == 5
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_merge_folders_no_commit(self, folder_repo, mock_db):
+        source = Folder(
+            id=1, workspace_id=1, name="Source", parent_id=None, color="#fff"
+        )
+        target = Folder(
+            id=2, workspace_id=2, name="Target", parent_id=None, color="#fff"
+        )
+
+        folder_repo.get_folder_by_id = AsyncMock(
+            side_effect=lambda fid: (
+                source if fid == 1 else target if fid == 2 else None
+            )
+        )
+        mock_media_res = MagicMock()
+        mock_media_res.scalars.return_value.all.return_value = []
+
+        mock_asset_res = MagicMock()
+        mock_asset_res.scalars.return_value.all.return_value = []
+
+        mock_children_res = MagicMock()
+        mock_children_res.scalars.return_value.all.return_value = []
+
+        mock_target_children_res = MagicMock()
+        mock_target_children_res.scalars.return_value.all.return_value = []
+
+        mock_db.execute.side_effect = [
+            mock_media_res,
+            mock_asset_res,
+            mock_children_res,
+            mock_target_children_res,
+        ]
+
+        result = await folder_repo.merge_folders(
+            source_folder_id=1,
+            target_folder_id=2,
+            target_workspace_id=2,
+            user_id=5,
+            is_copy=False,
+            clear_tags=False,
+            commit=False,
+        )
+
+        assert result["folders_moved"] == 1
         mock_db.commit.assert_not_called()
 
     @pytest.mark.anyio
@@ -1206,7 +1340,7 @@ class TestFolderRepository:
         assert result["folders_copied"] == 2  # target folder + child copied
         assert result["media_copied"] == 1
         assert result["assets_copied"] == 1
-        mock_db.commit.assert_not_called()
+        mock_db.commit.assert_called_once()
 
     @pytest.mark.anyio
     async def test_move_folders_merge_strategy(self, folder_repo, mock_db):

@@ -597,6 +597,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                         user_email=user_email or f.user_email,
                         is_copy=False,
                         clear_tags=False,
+                        commit=False,
                     )
                     moved_count += 1
                 else:
@@ -850,6 +851,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                         user_email=user_email or f.user_email,
                         is_copy=True,
                         clear_tags=False,
+                        commit=False,
                     )
                     total_folders += merge_res.get("folders_copied", 1)
                     total_media += merge_res.get("media_copied", 0)
@@ -934,6 +936,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         target_workspace_id: int,
         user_id: int | None = None,
         conflict_strategy: ConflictStrategyEnum = ConflictStrategyEnum.KEEP_BOTH,
+        commit: bool = True,
     ) -> dict[str, int]:
         """Moves a folder hierarchy and all contained media items and source assets to a target workspace with conflict handling."""
         root_folder = await self.get_folder_by_id(folder_id)
@@ -966,8 +969,10 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                     clear_tags=(
                         root_folder.workspace_id != target_workspace_id
                     ),
+                    commit=False,
                 )
-                await self.db.commit()
+                if commit:
+                    await self.db.commit()
                 return res
 
         # Check for name collision at root level of target workspace
@@ -1033,7 +1038,8 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         root_folder.parent_id = None
         root_folder.name = disambiguated_name
 
-        await self.db.commit()
+        if commit:
+            await self.db.commit()
 
         return {
             "folders_moved": len(descendant_ids),
@@ -1050,6 +1056,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         user_email: str | None = None,
         is_copy: bool = False,
         clear_tags: bool = False,
+        commit: bool = True,
     ) -> dict[str, int]:
         """Recursively merges source folder into target folder."""
         source_folder = await self.get_folder_by_id(source_folder_id)
@@ -1280,6 +1287,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                     user_email=user_email,
                     is_copy=is_copy,
                     clear_tags=clear_tags,
+                    commit=False,
                 )
                 folders_count += sub_res.get(
                     "folders_copied", sub_res.get("folders_moved", 1)
@@ -1353,6 +1361,9 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         if not is_copy:
             source_folder.deleted_at = datetime.now(timezone.utc)
             source_folder.deleted_by = user_id
+
+        if commit:
+            await self.db.commit()
 
         key_f = "folders_copied" if is_copy else "folders_moved"
         key_m = "media_copied" if is_copy else "media_moved"
@@ -1625,6 +1636,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         user_id: int,
         user_email: str | None = None,
         conflict_strategy: ConflictStrategyEnum = ConflictStrategyEnum.KEEP_BOTH,
+        commit: bool = True,
     ) -> dict[str, int]:
         """Copies a folder hierarchy and all contained media items and source assets to a target workspace with conflict handling."""
         root_folder = await self.get_folder_by_id(folder_id)
@@ -1653,8 +1665,10 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                     clear_tags=(
                         root_folder.workspace_id != target_workspace_id
                     ),
+                    commit=False,
                 )
-                await self.db.commit()
+                if commit:
+                    await self.db.commit()
                 return res
 
         cte_query = text(
@@ -1696,5 +1710,6 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
             root_name_override=disambiguated_root_name,
             source_workspace_id=root_folder.workspace_id,
         )
-        await self.db.commit()
+        if commit:
+            await self.db.commit()
         return res

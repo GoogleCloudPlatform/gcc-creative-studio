@@ -954,6 +954,7 @@ async def test_bulk_move_folder_success(service):
         target_workspace_id=88,
         user_id=1,
         conflict_strategy=ConflictStrategyEnum.KEEP_BOTH,
+        commit=False,
     )
 
 
@@ -1061,6 +1062,7 @@ async def test_bulk_move_folder_merge_strategy(service):
         target_workspace_id=88,
         user_id=1,
         conflict_strategy=ConflictStrategyEnum.MERGE,
+        commit=False,
     )
 
 
@@ -1167,6 +1169,7 @@ async def test_bulk_copy_folder_success(service):
         user_id=1,
         user_email="user@test.com",
         conflict_strategy=ConflictStrategyEnum.KEEP_BOTH,
+        commit=False,
     )
 
 
@@ -1246,4 +1249,5 @@ async def test_bulk_copy_folder_merge_strategy(service):
         user_id=1,
         user_email="user@test.com",
         conflict_strategy=ConflictStrategyEnum.MERGE,
+        commit=False,
     )
