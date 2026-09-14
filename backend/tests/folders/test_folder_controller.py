@@ -148,19 +148,13 @@ class TestGetFolderBreadcrumbs:
     def test_get_breadcrumbs_success(
         self, api_client, mock_folder_service, mock_workspace_auth
     ):
-        mock_folder_service.get_folder_by_id.return_value = FolderResponseDto(
-            id=2,
-            workspace_id=1,
-            user_id=1,
-            user_email="user@example.com",
-            name="Child",
-            parent_id=1,
-            item_count=0,
-            subfolder_count=0,
-        )
         mock_folder_service.get_breadcrumbs.return_value = [
-            FolderBreadcrumbDto(id=1, name="Root", parent_id=None),
-            FolderBreadcrumbDto(id=2, name="Child", parent_id=1),
+            FolderBreadcrumbDto(
+                id=1, name="Root", parent_id=None, workspace_id=1
+            ),
+            FolderBreadcrumbDto(
+                id=2, name="Child", parent_id=1, workspace_id=1
+            ),
         ]
 
         response = api_client.get("/api/folders/2/breadcrumbs")
@@ -169,13 +163,8 @@ class TestGetFolderBreadcrumbs:
         assert len(data) == 2
         assert data[0]["name"] == "Root"
         assert data[1]["name"] == "Child"
-        mock_folder_service.get_folder_by_id.assert_called_once_with(
-            folder_id=2
-        )
         mock_workspace_auth.authorize.assert_called_once()
-        mock_folder_service.get_breadcrumbs.assert_called_once_with(
-            folder_id=2, workspace_id=1
-        )
+        mock_folder_service.get_breadcrumbs.assert_called_once_with(folder_id=2)
 
     def test_get_breadcrumbs_with_workspace_id(
         self, api_client, mock_folder_service, mock_workspace_auth

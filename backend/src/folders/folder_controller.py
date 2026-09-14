@@ -134,14 +134,12 @@ async def get_folder_breadcrumbs(
             folder_id=folder_id, workspace_id=workspace_id
         )
 
-    folder = await service.get_folder_by_id(folder_id=folder_id)
+    breadcrumbs = await service.get_breadcrumbs(folder_id=folder_id)
     await workspace_auth.authorize(
-        workspace_id=folder.workspace_id,
+        workspace_id=breadcrumbs[-1].workspace_id,
         user=current_user,
     )
-    return await service.get_breadcrumbs(
-        folder_id=folder_id, workspace_id=folder.workspace_id
-    )
+    return breadcrumbs
 
 
 @router.get(
