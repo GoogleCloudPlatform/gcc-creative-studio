@@ -112,6 +112,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportedResolutions: ['1K'],
       supportedDurations: [],
       supportsGoogleSearch: true,
+      supportsVideoReference: true,
     },
   },
   {
@@ -138,6 +139,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportedResolutions: ['1K', '2K', '4K'],
       supportedDurations: [],
       supportsGoogleSearch: true,
+      supportsVideoReference: true,
     },
   },
   {
@@ -163,6 +165,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       ],
       supportedResolutions: ['1K', '2K', '4K'],
       supportedDurations: [],
+      supportsVideoReference: true,
     },
   },
 

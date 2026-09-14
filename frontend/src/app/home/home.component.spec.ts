@@ -19,11 +19,14 @@ import {MatDialog} from '@angular/material/dialog';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {Router} from '@angular/router';
 import {of} from 'rxjs';
+import {Injector, CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
 
 import {HomeComponent} from './home.component';
 import {SearchService} from '../services/search/search.service';
 import {ImageStateService} from '../services/image-state.service';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
+import {NotificationService} from '../common/services/notification.service';
+import {setAppInjector} from '../app-injector';
 import {MatTooltipModule} from '@angular/material/tooltip';
 import {MatSlideToggleModule} from '@angular/material/slide-toggle';
 import {MatChipsModule} from '@angular/material/chips';
@@ -37,7 +40,6 @@ import {
   GenerationModelConfig,
   MODEL_CONFIGS,
 } from '../common/config/model-config';
-import {CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
 
 describe('HomeComponent', () => {
   let component: HomeComponent;
@@ -48,21 +50,23 @@ describe('HomeComponent', () => {
   let mockRouter: jasmine.SpyObj<Router>;
   let mockMatDialog: jasmine.SpyObj<MatDialog>;
   let mockMatSnackBar: jasmine.SpyObj<MatSnackBar>;
+  let mockNotificationService: jasmine.SpyObj<NotificationService>;
 
   const initialState = {
     prompt: '',
     negativePrompt: '',
     aspectRatio: '1:1',
-    model: 'gemini-3-pro-image',
+    model: 'gemini-3.1-flash-lite-image',
     lighting: null,
     watermark: false,
     googleSearch: false,
-    resolution: '4K',
+    resolution: '1K',
     style: null,
     colorAndTone: null,
     numberOfMedia: 1,
     composition: null,
     useBrandGuidelines: false,
+    enhancePrompt: false,
     mode: 'Text to Image',
   };
 
@@ -92,6 +96,9 @@ describe('HomeComponent', () => {
     ]);
     mockMatDialog = jasmine.createSpyObj('MatDialog', ['open']);
     mockMatSnackBar = jasmine.createSpyObj('MatSnackBar', ['open']);
+    mockNotificationService = jasmine.createSpyObj('NotificationService', [
+      'show',
+    ]);
 
     mockRouter.getCurrentNavigation.and.returnValue({
       extras: {state: {}},
@@ -118,9 +125,12 @@ describe('HomeComponent', () => {
         {provide: Router, useValue: mockRouter},
         {provide: MatDialog, useValue: mockMatDialog},
         {provide: MatSnackBar, useValue: mockMatSnackBar},
+        {provide: NotificationService, useValue: mockNotificationService},
       ],
       schemas: [CUSTOM_ELEMENTS_SCHEMA],
     }).compileComponents();
+
+    setAppInjector(TestBed.inject(Injector));
 
     fixture = TestBed.createComponent(HomeComponent);
     component = fixture.componentInstance;
@@ -134,7 +144,7 @@ describe('HomeComponent', () => {
   it('should initialize with default search request values', () => {
     const defaultSearchRequest = {
       prompt: '',
-      generationModel: 'gemini-3-pro-image',
+      generationModel: 'gemini-3.1-flash-lite-image',
       aspectRatio: '1:1',
       numberOfMedia: 1,
       style: null,
@@ -144,8 +154,9 @@ describe('HomeComponent', () => {
       addWatermark: false,
       negativePrompt: '',
       useBrandGuidelines: false,
+      enhancePrompt: false,
       googleSearch: false,
-      resolution: '4K' as const,
+      resolution: '1K' as const,
     };
     expect(component.searchRequest).toEqual(defaultSearchRequest);
   });
@@ -335,10 +346,12 @@ describe('HomeComponent', () => {
   it('should show snackbar if prompt is empty on searchTerm', () => {
     component.searchRequest.prompt = '';
     component.searchTerm();
-    expect(mockMatSnackBar.open).toHaveBeenCalledWith(
+    expect(mockNotificationService.show).toHaveBeenCalledWith(
       'Please enter a prompt to generate an image.',
-      'OK',
-      jasmine.any(Object),
+      'info',
+      undefined,
+      'info',
+      5000,
     );
     expect(mockSearchService.startImagenGeneration).not.toHaveBeenCalled();
   });
