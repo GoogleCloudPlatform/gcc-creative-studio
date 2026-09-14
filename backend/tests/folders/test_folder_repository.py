@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.common.schema.media_item_model import MediaItem
+from src.folders.dto.folder_dto import ConflictStrategyEnum
 from src.folders.repository.folder_repository import (
     FolderRepository,
     generate_disambiguated_name,
@@ -756,7 +757,7 @@ class TestFolderRepository:
         assert added_media[0].workspace_id == 1
         assert added_media[0].folder_id == 5
         assert added_media[0].user_id == 2
-        mock_db.commit.assert_called()
+        mock_db.commit.assert_not_called()
 
     @pytest.mark.anyio
     async def test_copy_source_assets_within_workspace(
@@ -814,10 +815,10 @@ class TestFolderRepository:
         assert added_assets[0].workspace_id == 1
         assert added_assets[0].folder_id == 5
         assert added_assets[0].user_id == 2
-        mock_db.commit.assert_called()
+        mock_db.commit.assert_not_called()
 
     @pytest.mark.anyio
-    async def test_copy_items_aggregates_counts(self, folder_repo):
+    async def test_copy_items_aggregates_counts(self, folder_repo, mock_db):
         folder_repo.copy_media_items = AsyncMock(return_value=2)
         folder_repo.copy_source_assets = AsyncMock(return_value=1)
         folder_repo.copy_folders = AsyncMock(
@@ -839,3 +840,450 @@ class TestFolderRepository:
         assert result["source_assets_copied"] == 6
         assert result["folders_copied"] == 3
         assert result["total_copied"] == 15
+        mock_db.commit.assert_called_once()
+        mock_db.rollback.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_copy_items_rollback_on_failure(self, folder_repo, mock_db):
+        folder_repo.copy_media_items = AsyncMock(return_value=2)
+        folder_repo.copy_source_assets = AsyncMock(return_value=1)
+        folder_repo.copy_folders = AsyncMock(
+            side_effect=RuntimeError("Database constraint error")
+        )
+
+        with pytest.raises(RuntimeError, match="Database constraint error"):
+            await folder_repo.copy_items(
+                workspace_id=1,
+                media_item_ids=[1, 2],
+                source_asset_ids=[10],
+                folder_ids=[5],
+                destination_folder_id=8,
+            )
+
+        mock_db.commit.assert_not_called()
+        mock_db.rollback.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_copy_items_atomic_execution_commits_once(
+        self, folder_repo, mock_db
+    ):
+        mock_media = MagicMock(
+            id=10,
+            titles=["test"],
+            descriptions=[],
+            original_file_name="test.png",
+            mime_type="image/png",
+            thumbnail_uris=[],
+            gcs_uris=[],
+            original_gcs_uris=[],
+            user_id=1,
+            user_email="a@b.com",
+            aspect_ratio="1:1",
+            generation_time=1.0,
+            error_message=None,
+            style=None,
+            lighting=None,
+            color_and_tone=None,
+            composition=None,
+            negative_prompt=None,
+            add_watermark=False,
+            status="completed",
+            source_assets=None,
+            source_media_items=None,
+            duration_seconds=None,
+            comment=None,
+            seed=None,
+            critique=None,
+            google_search=None,
+            resolution=None,
+            grounding_metadata=None,
+            audio_analysis=None,
+            voice_name=None,
+            language_code=None,
+            raw_data=None,
+            created_from_template_id=None,
+        )
+        mock_media_res = MagicMock()
+        mock_media_res.scalars.return_value.all.return_value = [mock_media]
+        mock_media_tags_res = MagicMock()
+        mock_media_tags_res.fetchall.return_value = []
+
+        mock_asset = MagicMock(
+            id=20,
+            gcs_uri="gs://b/a.png",
+            original_filename="a.png",
+            titles=["asset"],
+            descriptions=[],
+            mime_type="image/png",
+            aspect_ratio="1:1",
+            file_hash="h",
+            scope="private",
+            asset_type="generic_image",
+            thumbnail_gcs_uri=None,
+            original_gcs_uri=None,
+            external_url=None,
+            user_id=1,
+        )
+        mock_asset_res = MagicMock()
+        mock_asset_res.scalars.return_value.all.return_value = [mock_asset]
+        mock_asset_tags_res = MagicMock()
+        mock_asset_tags_res.fetchall.return_value = []
+
+        # Folder queries: select folders to copy -> none found for simplicity
+        mock_folders_res = MagicMock()
+        mock_folders_res.scalars.return_value.all.return_value = []
+
+        mock_db.execute.side_effect = [
+            mock_media_res,
+            mock_media_tags_res,
+            mock_asset_res,
+            mock_asset_tags_res,
+            mock_folders_res,
+        ]
+
+        result = await folder_repo.copy_items(
+            workspace_id=1,
+            media_item_ids=[10],
+            source_asset_ids=[20],
+            folder_ids=[999],
+            destination_folder_id=5,
+            user_id=1,
+            user_email="a@b.com",
+        )
+
+        assert result["media_items_copied"] == 1
+        assert result["source_assets_copied"] == 1
+        assert result["folders_copied"] == 0
+        assert result["total_copied"] == 2
+        mock_db.commit.assert_called_once()
+        mock_db.rollback.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_merge_folders_not_found(self, folder_repo, mock_db):
+        mock_res = MagicMock()
+        mock_res.scalars.return_value.first.return_value = None
+        mock_db.execute.return_value = mock_res
+
+        result = await folder_repo.merge_folders(
+            source_folder_id=1,
+            target_folder_id=2,
+            target_workspace_id=1,
+            is_copy=False,
+        )
+        assert result["folders_moved"] == 0
+        assert result["media_moved"] == 0
+        assert result["assets_moved"] == 0
+
+    @pytest.mark.anyio
+    async def test_merge_folders_move(self, folder_repo, mock_db):
+        source = Folder(
+            id=1, workspace_id=1, name="Source", parent_id=None, color="#fff"
+        )
+        target = Folder(
+            id=2, workspace_id=2, name="Target", parent_id=None, color="#fff"
+        )
+
+        folder_repo.get_folder_by_id = AsyncMock(
+            side_effect=lambda fid: (
+                source if fid == 1 else target if fid == 2 else None
+            )
+        )
+        folder_repo.get_descendant_ids = AsyncMock(return_value=[3])
+
+        mock_media = MagicMock(id=10)
+        mock_media_res = MagicMock()
+        mock_media_res.scalars.return_value.all.return_value = [mock_media]
+
+        mock_asset = MagicMock(id=20)
+        mock_asset_res = MagicMock()
+        mock_asset_res.scalars.return_value.all.return_value = [mock_asset]
+
+        mock_child = Folder(
+            id=3, workspace_id=1, name="Child", parent_id=1, color="#fff"
+        )
+        mock_children_res = MagicMock()
+        mock_children_res.scalars.return_value.all.return_value = [mock_child]
+
+        mock_target_children_res = MagicMock()
+        mock_target_children_res.scalars.return_value.all.return_value = []
+
+        mock_db.execute.side_effect = [
+            mock_media_res,
+            MagicMock(),  # delete media tags
+            MagicMock(),  # update media
+            mock_asset_res,
+            MagicMock(),  # delete asset tags
+            MagicMock(),  # update asset
+            mock_children_res,
+            mock_target_children_res,
+            MagicMock(),  # delete child media tags
+            MagicMock(),  # delete child asset tags
+            MagicMock(),  # update child folders
+            MagicMock(),  # update child media items
+            MagicMock(),  # update child assets
+        ]
+
+        result = await folder_repo.merge_folders(
+            source_folder_id=1,
+            target_folder_id=2,
+            target_workspace_id=2,
+            user_id=5,
+            is_copy=False,
+            clear_tags=True,
+        )
+
+        assert result["folders_moved"] == 2  # source folder + child
+        assert result["media_moved"] == 1
+        assert result["assets_moved"] == 1
+        assert source.deleted_at is not None
+        assert source.deleted_by == 5
+        mock_db.commit.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_merge_folders_copy(self, folder_repo, mock_db):
+        source = Folder(
+            id=1, workspace_id=1, name="Source", parent_id=None, color="#fff"
+        )
+        target = Folder(
+            id=2, workspace_id=1, name="Target", parent_id=None, color="#fff"
+        )
+
+        folder_repo.get_folder_by_id = AsyncMock(
+            side_effect=lambda fid: (
+                source if fid == 1 else target if fid == 2 else None
+            )
+        )
+        folder_repo._copy_subtree_under = AsyncMock(
+            return_value={
+                "folders_copied": 1,
+                "media_copied": 0,
+                "assets_copied": 0,
+            }
+        )
+
+        mock_media = MagicMock(
+            id=10,
+            titles=["test"],
+            descriptions=[],
+            original_file_name="test.png",
+            mime_type="image/png",
+            thumbnail_uris=[],
+            gcs_uris=[],
+            original_gcs_uris=[],
+            user_id=1,
+            user_email="a@b.com",
+            aspect_ratio="1:1",
+            generation_time=1.0,
+            error_message=None,
+            style=None,
+            lighting=None,
+            color_and_tone=None,
+            composition=None,
+            negative_prompt=None,
+            add_watermark=False,
+            status="completed",
+            source_assets=None,
+            source_media_items=None,
+            duration_seconds=None,
+            comment=None,
+            seed=None,
+            critique=None,
+            google_search=None,
+            resolution=None,
+            grounding_metadata=None,
+            audio_analysis=None,
+            voice_name=None,
+            language_code=None,
+            raw_data=None,
+            created_from_template_id=None,
+        )
+        mock_media_res = MagicMock()
+        mock_media_res.scalars.return_value.all.return_value = [mock_media]
+
+        mock_media_tags_res = MagicMock()
+        mock_media_tags_res.fetchall.return_value = []
+
+        mock_asset = MagicMock(
+            id=20,
+            gcs_uri="gs://b/a.png",
+            original_filename="a.png",
+            titles=["asset"],
+            descriptions=[],
+            mime_type="image/png",
+            aspect_ratio="1:1",
+            file_hash="h",
+            scope="private",
+            asset_type="generic_image",
+            thumbnail_gcs_uri=None,
+            original_gcs_uri=None,
+            external_url=None,
+            user_id=1,
+        )
+        mock_asset_res = MagicMock()
+        mock_asset_res.scalars.return_value.all.return_value = [mock_asset]
+
+        mock_asset_tags_res = MagicMock()
+        mock_asset_tags_res.fetchall.return_value = []
+
+        mock_child = Folder(
+            id=3, workspace_id=1, name="Child", parent_id=1, color="#fff"
+        )
+        mock_children_res = MagicMock()
+        mock_children_res.scalars.return_value.all.return_value = [mock_child]
+
+        mock_target_children_res = MagicMock()
+        mock_target_children_res.scalars.return_value.all.return_value = []
+
+        mock_db.execute.side_effect = [
+            mock_media_res,
+            mock_media_tags_res,
+            mock_asset_res,
+            mock_asset_tags_res,
+            mock_children_res,
+            mock_target_children_res,
+        ]
+
+        result = await folder_repo.merge_folders(
+            source_folder_id=1,
+            target_folder_id=2,
+            target_workspace_id=1,
+            user_id=5,
+            is_copy=True,
+            clear_tags=False,
+        )
+
+        assert result["folders_copied"] == 2  # target folder + child copied
+        assert result["media_copied"] == 1
+        assert result["assets_copied"] == 1
+        mock_db.commit.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_move_folders_merge_strategy(self, folder_repo, mock_db):
+        f1 = Folder(
+            id=1, workspace_id=1, name="Colliding", parent_id=None, color="#fff"
+        )
+        f2 = Folder(
+            id=2, workspace_id=1, name="Colliding", parent_id=5, color="#fff"
+        )
+
+        mock_folders_res = MagicMock()
+        mock_folders_res.scalars.return_value.all.return_value = [f1]
+        mock_db.execute.side_effect = [mock_folders_res]
+
+        folder_repo.get_existing_folders_map = AsyncMock(
+            return_value={"colliding": f2}
+        )
+        folder_repo.merge_folders = AsyncMock(
+            return_value={
+                "folders_moved": 1,
+                "media_moved": 2,
+                "assets_moved": 0,
+            }
+        )
+
+        moved = await folder_repo.move_folders(
+            folder_ids=[1],
+            workspace_id=1,
+            destination_folder_id=5,
+            conflict_strategy=ConflictStrategyEnum.MERGE,
+        )
+        assert moved == 1
+        folder_repo.merge_folders.assert_awaited_once()
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_copy_folders_merge_strategy(self, folder_repo, mock_db):
+        f1 = Folder(
+            id=1, workspace_id=1, name="Colliding", parent_id=None, color="#fff"
+        )
+        f2 = Folder(
+            id=2, workspace_id=1, name="Colliding", parent_id=5, color="#fff"
+        )
+
+        mock_folders_res = MagicMock()
+        mock_folders_res.scalars.return_value.all.return_value = [f1]
+        mock_db.execute.side_effect = [mock_folders_res]
+
+        folder_repo.get_existing_folder_names = AsyncMock(return_value=set())
+        folder_repo.get_folder_by_name = AsyncMock(return_value=f2)
+        folder_repo.merge_folders = AsyncMock(
+            return_value={
+                "folders_copied": 1,
+                "media_copied": 3,
+                "assets_copied": 1,
+            }
+        )
+
+        res = await folder_repo.copy_folders(
+            folder_ids=[1],
+            workspace_id=1,
+            destination_folder_id=5,
+            conflict_strategy=ConflictStrategyEnum.MERGE,
+        )
+        assert res["folders_copied"] == 1
+        assert res["media_copied"] == 3
+        assert res["assets_copied"] == 1
+        folder_repo.merge_folders.assert_awaited_once()
+        mock_db.commit.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_move_folder_to_workspace_merge_strategy(
+        self, folder_repo, mock_db
+    ):
+        root = Folder(
+            id=1, workspace_id=1, name="Root", parent_id=None, color="#fff"
+        )
+        target = Folder(
+            id=2, workspace_id=2, name="Root", parent_id=None, color="#fff"
+        )
+
+        folder_repo.get_folder_by_id = AsyncMock(return_value=root)
+        folder_repo.get_descendant_ids = AsyncMock(return_value=[1])
+        folder_repo.get_folder_by_name = AsyncMock(return_value=target)
+        folder_repo.merge_folders = AsyncMock(
+            return_value={
+                "folders_moved": 1,
+                "media_moved": 2,
+                "assets_moved": 1,
+            }
+        )
+
+        res = await folder_repo.move_folder_to_workspace(
+            folder_id=1,
+            target_workspace_id=2,
+            conflict_strategy=ConflictStrategyEnum.MERGE,
+        )
+        assert res["folders_moved"] == 1
+        folder_repo.merge_folders.assert_awaited_once()
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_copy_folder_to_workspace_merge_strategy(
+        self, folder_repo, mock_db
+    ):
+        root = Folder(
+            id=1, workspace_id=1, name="Root", parent_id=None, color="#fff"
+        )
+        target = Folder(
+            id=2, workspace_id=2, name="Root", parent_id=None, color="#fff"
+        )
+
+        folder_repo.get_folder_by_id = AsyncMock(return_value=root)
+        folder_repo.get_folder_by_name = AsyncMock(return_value=target)
+        folder_repo.merge_folders = AsyncMock(
+            return_value={
+                "folders_copied": 1,
+                "media_copied": 2,
+                "assets_copied": 1,
+            }
+        )
+
+        res = await folder_repo.copy_folder_to_workspace(
+            folder_id=1,
+            target_workspace_id=2,
+            user_id=1,
+            conflict_strategy=ConflictStrategyEnum.MERGE,
+        )
+        assert res["folders_copied"] == 1
+        folder_repo.merge_folders.assert_awaited_once()
+        mock_db.commit.assert_called_once()

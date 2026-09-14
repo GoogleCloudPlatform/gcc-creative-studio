@@ -704,7 +704,6 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         if new_tag_inserts:
             await self.db.execute(insert(media_item_tags), new_tag_inserts)
 
-        await self.db.commit()
         return len(pairs)
 
     async def copy_source_assets(
@@ -786,7 +785,6 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         if new_tag_inserts:
             await self.db.execute(insert(source_asset_tags), new_tag_inserts)
 
-        await self.db.commit()
         return len(pairs)
 
     async def copy_folders(
@@ -885,37 +883,43 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         user_email: str | None = None,
     ) -> dict[str, int]:
         """Batch copy media items, source assets, and folders within a workspace."""
-        media_copied = await self.copy_media_items(
-            media_item_ids=media_item_ids,
-            workspace_id=workspace_id,
-            destination_folder_id=destination_folder_id,
-            user_id=user_id,
-            user_email=user_email,
-        )
-        assets_copied = await self.copy_source_assets(
-            source_asset_ids=source_asset_ids,
-            workspace_id=workspace_id,
-            destination_folder_id=destination_folder_id,
-            user_id=user_id,
-        )
-        folders_res = await self.copy_folders(
-            folder_ids=folder_ids,
-            workspace_id=workspace_id,
-            destination_folder_id=destination_folder_id,
-            conflict_strategy=conflict_strategy,
-            user_id=user_id,
-            user_email=user_email,
-        )
-        folders_copied = folders_res.get("folders_copied", 0)
-        media_copied += folders_res.get("media_copied", 0)
-        assets_copied += folders_res.get("assets_copied", 0)
+        try:
+            media_copied = await self.copy_media_items(
+                media_item_ids=media_item_ids,
+                workspace_id=workspace_id,
+                destination_folder_id=destination_folder_id,
+                user_id=user_id,
+                user_email=user_email,
+            )
+            assets_copied = await self.copy_source_assets(
+                source_asset_ids=source_asset_ids,
+                workspace_id=workspace_id,
+                destination_folder_id=destination_folder_id,
+                user_id=user_id,
+            )
+            folders_res = await self.copy_folders(
+                folder_ids=folder_ids,
+                workspace_id=workspace_id,
+                destination_folder_id=destination_folder_id,
+                conflict_strategy=conflict_strategy,
+                user_id=user_id,
+                user_email=user_email,
+            )
+            folders_copied = folders_res.get("folders_copied", 0)
+            media_copied += folders_res.get("media_copied", 0)
+            assets_copied += folders_res.get("assets_copied", 0)
 
-        return {
-            "media_items_copied": media_copied,
-            "source_assets_copied": assets_copied,
-            "folders_copied": folders_copied,
-            "total_copied": media_copied + assets_copied + folders_copied,
-        }
+            await self.db.commit()
+
+            return {
+                "media_items_copied": media_copied,
+                "source_assets_copied": assets_copied,
+                "folders_copied": folders_copied,
+                "total_copied": media_copied + assets_copied + folders_copied,
+            }
+        except Exception:
+            await self.db.rollback()
+            raise
 
     async def move_folder_to_workspace(
         self,
@@ -945,7 +949,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                 ),
             )
             if existing_target:
-                return await self.merge_folders(
+                res = await self.merge_folders(
                     source_folder_id=root_folder.id,
                     target_folder_id=existing_target.id,
                     target_workspace_id=target_workspace_id,
@@ -956,6 +960,8 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                         root_folder.workspace_id != target_workspace_id
                     ),
                 )
+                await self.db.commit()
+                return res
 
         # Check for name collision at root level of target workspace
         existing_root_names = await self.get_existing_folder_names(
@@ -1341,8 +1347,6 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
             source_folder.deleted_at = datetime.now(timezone.utc)
             source_folder.deleted_by = user_id
 
-        await self.db.commit()
-
         key_f = "folders_copied" if is_copy else "folders_moved"
         key_m = "media_copied" if is_copy else "media_moved"
         key_a = "assets_copied" if is_copy else "assets_moved"
@@ -1556,8 +1560,6 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                         insert(source_asset_tags), new_asset_tag_inserts
                     )
 
-        await self.db.commit()
-
         return {
             "folders_copied": len(id_map),
             "media_copied": media_copied_count,
@@ -1634,7 +1636,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                 ),
             )
             if existing_target:
-                return await self.merge_folders(
+                res = await self.merge_folders(
                     source_folder_id=root_folder.id,
                     target_folder_id=existing_target.id,
                     target_workspace_id=target_workspace_id,
@@ -1645,6 +1647,8 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                         root_folder.workspace_id != target_workspace_id
                     ),
                 )
+                await self.db.commit()
+                return res
 
         cte_query = text(
             """
@@ -1675,7 +1679,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
             root_folder.name, existing_root_names
         )
 
-        return await self._insert_copied_hierarchy(
+        res = await self._insert_copied_hierarchy(
             folder_rows=folder_rows,
             subtree_root_id=folder_id,
             new_parent_id=None,
@@ -1685,3 +1689,5 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
             root_name_override=disambiguated_root_name,
             source_workspace_id=root_folder.workspace_id,
         )
+        await self.db.commit()
+        return res
