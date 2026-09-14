@@ -20,6 +20,7 @@ import zipfile
 
 from fastapi import Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.iam_signer_credentials_service import IamSignerCredentials
@@ -27,6 +28,7 @@ from src.database import get_db
 from src.common.dto.pagination_response_dto import PaginationResponseDto
 from src.common.schema.media_item_model import (
     JobStatusEnum,
+    MediaItem,
     MediaItemModel,
     SourceAssetLink,
     SourceMediaItemLink,
@@ -54,7 +56,10 @@ from src.source_assets.repository.source_asset_repository import (
     SourceAssetRepository,
 )
 from src.common.media_utils import extract_youtube_video_id
-from src.source_assets.schema.source_asset_model import AssetTypeEnum
+from src.source_assets.schema.source_asset_model import (
+    AssetTypeEnum,
+    SourceAsset,
+)
 from src.users.repository.user_repository import UserRepository
 from src.users.user_model import UserModel, UserRoleEnum
 from src.workspaces.repository.workspace_repository import WorkspaceRepository
@@ -945,13 +950,16 @@ class GalleryService:
                                 item.id
                             )
 
-                        await self.media_repo.update(
-                            item.id,
-                            {
-                                "workspace_id": bulk_move_dto.target_workspace_id,
-                                "folder_id": None,
-                            },
+                        stmt = (
+                            update(MediaItem)
+                            .where(MediaItem.id == item.id)
+                            .values(
+                                workspace_id=bulk_move_dto.target_workspace_id,
+                                folder_id=None,
+                            )
                         )
+                        await self.db.execute(stmt)
+                        await self.db.flush()
                         moved_count += 1
 
                     elif item.type == "source_asset":
@@ -973,13 +981,16 @@ class GalleryService:
                                 item.id
                             )
 
-                        await self.source_asset_repo.update(
-                            item.id,
-                            {
-                                "workspace_id": bulk_move_dto.target_workspace_id,
-                                "folder_id": None,
-                            },
+                        stmt = (
+                            update(SourceAsset)
+                            .where(SourceAsset.id == item.id)
+                            .values(
+                                workspace_id=bulk_move_dto.target_workspace_id,
+                                folder_id=None,
+                            )
                         )
+                        await self.db.execute(stmt)
+                        await self.db.flush()
                         moved_count += 1
 
                     elif item.type == "folder":
@@ -1015,6 +1026,7 @@ class GalleryService:
             except Exception as e:
                 logger.error(f"Error moving {item.type} {item.id}: {e}")
 
+        await self.db.commit()
         return {"moved_count": moved_count}
 
     bulk_move_items = bulk_move

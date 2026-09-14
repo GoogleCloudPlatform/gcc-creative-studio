@@ -773,9 +773,10 @@ async def test_bulk_move_media_item_success(service):
 
     assert result["moved_count"] == 1
     service.mock_tags_repo.clear_tags_for_media_item.assert_called_once_with(1)
-    service.mock_media_repo.update.assert_called_once_with(
-        1, {"workspace_id": 88, "folder_id": None}
-    )
+    service.mock_media_repo.update.assert_not_called()
+    assert service.mock_db.execute.call_count == 1
+    assert service.mock_db.flush.call_count == 1
+    service.mock_db.commit.assert_called_once()
 
 
 @pytest.mark.anyio
@@ -816,9 +817,10 @@ async def test_bulk_move_media_item_same_workspace(service):
 
     assert result["moved_count"] == 1
     service.mock_tags_repo.clear_tags_for_media_item.assert_not_called()
-    service.mock_media_repo.update.assert_called_once_with(
-        1, {"workspace_id": 88, "folder_id": None}
-    )
+    service.mock_media_repo.update.assert_not_called()
+    assert service.mock_db.execute.call_count == 1
+    assert service.mock_db.flush.call_count == 1
+    service.mock_db.commit.assert_called_once()
 
 
 @pytest.mark.anyio
@@ -860,9 +862,10 @@ async def test_bulk_move_source_asset_success(service):
     service.mock_tags_repo.clear_tags_for_source_asset.assert_called_once_with(
         5
     )
-    service.mock_source_asset_repo.update.assert_called_once_with(
-        5, {"workspace_id": 88, "folder_id": None}
-    )
+    service.mock_source_asset_repo.update.assert_not_called()
+    assert service.mock_db.execute.call_count == 1
+    assert service.mock_db.flush.call_count == 1
+    service.mock_db.commit.assert_called_once()
 
 
 @pytest.mark.anyio
@@ -902,9 +905,10 @@ async def test_bulk_move_source_asset_same_workspace(service):
     result = await service.bulk_move(bulk_dto, current_user)
     assert result["moved_count"] == 1
     service.mock_tags_repo.clear_tags_for_source_asset.assert_not_called()
-    service.mock_source_asset_repo.update.assert_called_once_with(
-        5, {"workspace_id": 88, "folder_id": None}
-    )
+    service.mock_source_asset_repo.update.assert_not_called()
+    assert service.mock_db.execute.call_count == 1
+    assert service.mock_db.flush.call_count == 1
+    service.mock_db.commit.assert_called_once()
 
 
 @pytest.mark.anyio
@@ -1104,21 +1108,19 @@ async def test_bulk_move_partial_failure_with_savepoint(service):
         gcs_uris=[],
     )
     service.mock_media_repo.get_by_id.side_effect = [media_1, media_2]
-    service.mock_media_repo.update.side_effect = [
+    service.mock_db.execute.side_effect = [
         Exception("DB IntegrityError"),
-        {"id": 2},
+        MagicMock(),
     ]
 
     result = await service.bulk_move(bulk_dto, current_user)
 
     assert result["moved_count"] == 1
     assert service.mock_db.begin_nested.call_count == 2
-    service.mock_media_repo.update.assert_any_call(
-        1, {"workspace_id": 88, "folder_id": None}
-    )
-    service.mock_media_repo.update.assert_any_call(
-        2, {"workspace_id": 88, "folder_id": None}
-    )
+    assert service.mock_db.execute.call_count == 2
+    assert service.mock_db.flush.call_count == 1
+    service.mock_db.commit.assert_called_once()
+    service.mock_media_repo.update.assert_not_called()
 
 
 @pytest.mark.anyio
