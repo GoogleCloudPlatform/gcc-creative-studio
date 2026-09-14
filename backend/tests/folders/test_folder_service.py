@@ -17,6 +17,7 @@
 from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 
 from src.folders.dto.folder_dto import (
     ConflictStrategyEnum,
@@ -681,6 +682,7 @@ class TestMoveItems:
             conflict_strategy=ConflictStrategyEnum.KEEP_BOTH,
             user_id=10,
             user_email="test@example.com",
+            commit=False,
         )
         assert result["folders_moved"] == 1
 
@@ -714,6 +716,7 @@ class TestMoveItems:
             conflict_strategy=ConflictStrategyEnum.KEEP_BOTH,
             user_id=10,
             user_email="test@example.com",
+            commit=False,
         )
         assert result["folders_moved"] == 1
         assert result["total_moved"] == 1
@@ -795,7 +798,110 @@ class TestMoveItems:
             conflict_strategy=ConflictStrategyEnum.MERGE,
             user_id=10,
             user_email="test@example.com",
+            commit=False,
         )
+
+    @pytest.mark.anyio
+    async def test_move_items_transactional_commit(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.move_media_items.return_value = 3
+        mock_folder_repo.move_source_assets.return_value = 2
+        mock_folder_repo.move_folders.return_value = 0
+
+        dto = MoveItemsDto(
+            workspace_id=1,
+            media_item_ids=[1, 2, 3],
+            source_asset_ids=[10, 11],
+            folder_ids=[],
+            destination_folder_id=None,
+        )
+
+        result = await folder_service.move_items(dto, sample_user)
+        assert result["total_moved"] == 5
+        mock_folder_repo.db.commit.assert_called_once()
+        mock_folder_repo.db.rollback.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_move_items_transactional_rollback_on_folder_failure(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.get_folders_by_ids.return_value = [
+            Folder(id=2, workspace_id=1, user_email="a@b.com", name="Folder 2")
+        ]
+        mock_folder_repo.move_media_items.return_value = 1
+        mock_folder_repo.move_source_assets.return_value = 1
+        mock_folder_repo.move_folders.side_effect = RuntimeError(
+            "Folder move failed"
+        )
+
+        dto = MoveItemsDto(
+            workspace_id=1,
+            media_item_ids=[1],
+            source_asset_ids=[10],
+            folder_ids=[2],
+            destination_folder_id=None,
+        )
+
+        with pytest.raises(RuntimeError, match="Folder move failed"):
+            await folder_service.move_items(dto, sample_user)
+
+        mock_folder_repo.db.rollback.assert_called_once()
+        mock_folder_repo.db.commit.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_move_items_transactional_rollback_on_integrity_error(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.get_folders_by_ids.return_value = [
+            Folder(id=2, workspace_id=1, user_email="a@b.com", name="Folder 2")
+        ]
+        mock_folder_repo.move_media_items.return_value = 1
+        mock_folder_repo.move_source_assets.return_value = 1
+        mock_folder_repo.move_folders.side_effect = IntegrityError(
+            "statement", {}, Exception("Unique violation")
+        )
+
+        dto = MoveItemsDto(
+            workspace_id=1,
+            media_item_ids=[1],
+            source_asset_ids=[10],
+            folder_ids=[2],
+            destination_folder_id=None,
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.move_items(dto, sample_user)
+
+        assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+        assert (
+            "A database conflict occurred while moving items."
+            in exc_info.value.detail
+        )
+        mock_folder_repo.db.rollback.assert_called_once()
+        mock_folder_repo.db.commit.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_move_items_transactional_rollback_on_media_failure(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.move_media_items.side_effect = Exception(
+            "Media move error"
+        )
+
+        dto = MoveItemsDto(
+            workspace_id=1,
+            media_item_ids=[1],
+            source_asset_ids=[10],
+            folder_ids=[],
+            destination_folder_id=None,
+        )
+
+        with pytest.raises(Exception, match="Media move error"):
+            await folder_service.move_items(dto, sample_user)
+
+        mock_folder_repo.db.rollback.assert_called_once()
+        mock_folder_repo.db.commit.assert_not_called()
 
 
 class TestCopyItems:

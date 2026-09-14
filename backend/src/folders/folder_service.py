@@ -392,25 +392,39 @@ class FolderService:
                         },
                     )
 
-        media_moved = await self.folder_repo.move_media_items(
-            media_item_ids=dto.media_item_ids,
-            workspace_id=dto.workspace_id,
-            destination_folder_id=dest_folder_id,
-        )
-        assets_moved = await self.folder_repo.move_source_assets(
-            source_asset_ids=dto.source_asset_ids,
-            workspace_id=dto.workspace_id,
-            destination_folder_id=dest_folder_id,
-        )
-        folders_moved = await self.folder_repo.move_folders(
-            folder_ids=valid_folder_ids,
-            workspace_id=dto.workspace_id,
-            destination_folder_id=dest_folder_id,
-            conflict_strategy=dto.conflict_strategy
-            or ConflictStrategyEnum.KEEP_BOTH,
-            user_id=user.id,
-            user_email=user.email,
-        )
+        try:
+            media_moved = await self.folder_repo.move_media_items(
+                media_item_ids=dto.media_item_ids,
+                workspace_id=dto.workspace_id,
+                destination_folder_id=dest_folder_id,
+                commit=False,
+            )
+            assets_moved = await self.folder_repo.move_source_assets(
+                source_asset_ids=dto.source_asset_ids,
+                workspace_id=dto.workspace_id,
+                destination_folder_id=dest_folder_id,
+                commit=False,
+            )
+            folders_moved = await self.folder_repo.move_folders(
+                folder_ids=valid_folder_ids,
+                workspace_id=dto.workspace_id,
+                destination_folder_id=dest_folder_id,
+                conflict_strategy=dto.conflict_strategy
+                or ConflictStrategyEnum.KEEP_BOTH,
+                user_id=user.id,
+                user_email=user.email,
+                commit=False,
+            )
+            await self.folder_repo.db.commit()
+        except IntegrityError as e:
+            await self.folder_repo.db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A database conflict occurred while moving items.",
+            ) from e
+        except Exception:
+            await self.folder_repo.db.rollback()
+            raise
 
         return {
             "media_items_moved": media_moved,

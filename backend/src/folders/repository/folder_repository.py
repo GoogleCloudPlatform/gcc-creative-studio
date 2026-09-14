@@ -510,6 +510,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         media_item_ids: list[int],
         workspace_id: int,
         destination_folder_id: int | None,
+        commit: bool = True,
     ) -> int:
         """Move multiple media items to a destination folder."""
         if not media_item_ids:
@@ -523,7 +524,8 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
             .values(folder_id=destination_folder_id)
         )
         result = await self.db.execute(stmt)
-        await self.db.commit()
+        if commit:
+            await self.db.commit()
         return result.rowcount
 
     async def move_source_assets(
@@ -531,6 +533,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         source_asset_ids: list[int],
         workspace_id: int,
         destination_folder_id: int | None,
+        commit: bool = True,
     ) -> int:
         """Move multiple source assets to a destination folder."""
         if not source_asset_ids:
@@ -544,7 +547,8 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
             .values(folder_id=destination_folder_id)
         )
         result = await self.db.execute(stmt)
-        await self.db.commit()
+        if commit:
+            await self.db.commit()
         return result.rowcount
 
     async def move_folders(
@@ -555,6 +559,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         conflict_strategy: ConflictStrategyEnum = ConflictStrategyEnum.KEEP_BOTH,
         user_id: int | None = None,
         user_email: str | None = None,
+        commit: bool = True,
     ) -> int:
         """Move multiple folders to a destination parent folder with automatic name disambiguation or merge."""
         if not folder_ids:
@@ -598,7 +603,8 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                     f.parent_id = destination_folder_id
                     existing_map[name_key] = f
                     moved_count += 1
-            await self.db.commit()
+            if commit:
+                await self.db.commit()
             return moved_count
 
         # Existing KEEP_BOTH:
@@ -619,7 +625,8 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                 existing_names.add(new_name.strip().lower())
                 moved_count += 1
 
-        await self.db.commit()
+        if commit:
+            await self.db.commit()
         return moved_count
 
     async def copy_media_items(

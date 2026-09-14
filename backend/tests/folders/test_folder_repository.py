@@ -300,6 +300,17 @@ class TestFolderRepository:
         mock_db.commit.assert_called_once()
 
     @pytest.mark.anyio
+    async def test_move_media_items_without_commit(self, folder_repo, mock_db):
+        mock_result = MagicMock(rowcount=2)
+        mock_db.execute.return_value = mock_result
+
+        count = await folder_repo.move_media_items(
+            [1, 2], workspace_id=1, destination_folder_id=3, commit=False
+        )
+        assert count == 2
+        mock_db.commit.assert_not_called()
+
+    @pytest.mark.anyio
     async def test_move_source_assets(self, folder_repo, mock_db):
         mock_result = MagicMock(rowcount=1)
         mock_db.execute.return_value = mock_result
@@ -309,6 +320,19 @@ class TestFolderRepository:
         )
         assert count == 1
         mock_db.commit.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_move_source_assets_without_commit(
+        self, folder_repo, mock_db
+    ):
+        mock_result = MagicMock(rowcount=1)
+        mock_db.execute.return_value = mock_result
+
+        count = await folder_repo.move_source_assets(
+            [10], workspace_id=1, destination_folder_id=3, commit=False
+        )
+        assert count == 1
+        mock_db.commit.assert_not_called()
 
     @pytest.mark.anyio
     async def test_move_folders_disambiguation(self, folder_repo, mock_db):
@@ -337,6 +361,33 @@ class TestFolderRepository:
         assert f5.parent_id == 3
         assert f5.name == "Colliding (1)"
         mock_db.commit.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_move_folders_without_commit(self, folder_repo, mock_db):
+        f5 = Folder(
+            id=5,
+            workspace_id=1,
+            user_email="a@b.com",
+            name="Colliding",
+            parent_id=None,
+        )
+        mock_folders_res = MagicMock()
+        mock_folders_res.scalars.return_value.all.return_value = [f5]
+
+        mock_existing_names_res = MagicMock()
+        mock_existing_names_res.fetchall.return_value = [("colliding",)]
+
+        mock_db.execute.side_effect = [
+            mock_folders_res,
+            mock_existing_names_res,
+        ]
+
+        count = await folder_repo.move_folders(
+            [5], workspace_id=1, destination_folder_id=3, commit=False
+        )
+        assert count == 1
+        assert f5.parent_id == 3
+        mock_db.commit.assert_not_called()
 
     @pytest.mark.anyio
     async def test_move_folder_to_workspace(self, folder_repo, mock_db):
