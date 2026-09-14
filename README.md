@@ -29,7 +29,7 @@ Built for creators, marketers, and developers, this application provides a hands
 
 ## ☁️ Google Cloud Next '26 & Izumi Integration
 
-We are super excited to announce that we will be at **Google Cloud Next '26**! Our team will be attending and showcasing our deep integration with the **Izumi Agent**. 
+We are super excited to announce that we will be at **Google Cloud Next '26**! Our team will be attending and showcasing our deep integration with the **Izumi Agent**.
 
 Learn more about the multi-agent multimedia ecosystem at the [Izumi Agent Repository](https://github.com/GoogleCloudPlatform/genmedia-izumi-agent/tree/main).
 
@@ -70,13 +70,30 @@ Creative Studio goes beyond simple demos, implementing advanced, real-world feat
   <img src="./screenshots/creative-studio-screenshots.gif" alt="Creative Studio Screenshots Walkthrough" width="800">
 </p>
 
-
 ## Deploy in 20min!!
 
 Just run this script which has a step by step approach for you to deploy the infrastructure and start the app, just follow the instructions
 
-```
+```bash
 curl https://raw.githubusercontent.com/GoogleCloudPlatform/gcc-creative-studio/refs/heads/main/bootstrap.sh | bash
+```
+
+### Advanced Automation (CI/CD & Headless)
+
+The `bootstrap.sh` script supports several command-line flags to enable fully automated, non-interactive deployments. This is especially useful for CI/CD pipelines or rapid redeployments.
+
+- **`--profile <profile_name>`** (`-p`): Bypasses the profile selection prompt by automatically loading a saved configuration (e.g., `--profile dev-infra.cstudio_bootstrap.conf`).
+- **`--auto-approve`** (`-a`): Skips the interactive `yes/no` confirmation prompt during `terraform apply`.
+- **`--skip-builds`**: Prevents the script from automatically triggering Cloud Build for the frontend/backend and skips the wait loops. Ideal if you only want to update infrastructure (Terraform).
+- **`--force-builds`**: Forces the Cloud Build triggers to run without asking for interactive confirmation.
+- **`--skip-migrations`**: Performs an automated SQL dump of the database to GCS, but skips executing the Alembic schema migrations. Use this if you want to delay database changes.
+- **`--help`** (`-h`): Prints the usage menu.
+
+
+**Example: Passing flags directly via curl**
+When piping the script from `curl` to `bash`, you must use `bash -s --` so that Bash passes the flags to the script rather than trying to parse them itself:
+```bash
+curl https://raw.githubusercontent.com/GoogleCloudPlatform/gcc-creative-studio/refs/heads/main/bootstrap.sh | bash -s -- --profile default --auto-approve --skip-builds
 ```
 
 For better guidance, [we recorded a video](./screenshots/how_to_deploy_creative_studio.mp4) to showcase how to deploy Creative Studio in a completely new and fresh GCP Account.
@@ -89,9 +106,18 @@ The Cloud Build triggers will automatically detect the new code changes and star
 
 ![](./screenshots/github-sync-with-main.png)
 
-*💡 Tip: If your fork is behind the upstream repository, you will see a **"Sync fork"** or **"Update branch"** button in this section that allows you to pull latest changes automatically with one click.*
+_💡 Tip: If your fork is behind the upstream repository, you will see a **"Sync fork"** or **"Update branch"** button in this section that allows you to pull latest changes automatically with one click._
 
 In case there are infrastructure changes (e.g., new cloud resources or configuration), you may need to redeploy Creative Studio by running Terraform manually. However, that is usually not the case, and if required, a note will be added to the version release documentation.
+
+#### ⚠️ Important: Upgrading from an Older Version (Database Migrations)
+
+If you are upgrading an existing deployment of Creative Studio to a newer version that includes database schema changes (Alembic migrations), please follow these critical steps:
+
+1. **Preventive Backup (Recommended)**: Older versions of Creative Studio (from the `main` branch) did not have Point-In-Time Recovery enabled by default. Before running the deployment script, **manually export a SQL dump** of your database to a GCS bucket using the Google Cloud Console (`Cloud SQL -> Export`). This guarantees your data is safe if a migration fails.
+2. **Automated Migrations**: The `bootstrap.sh` script automatically provisions a temporary Cloud Run Job (`temp-db-bootstrap-job`) to run database migrations and seed new templates. 
+3. **Graceful Failures**: If the migration job fails (e.g., due to conflicting data), the script will **not** abort your deployment. It will print a warning and leave the `temp-db-bootstrap-job` intact. This allows you to inspect the Cloud Run Job logs, resolve the issue, and manually re-execute the job from the GCP Console while the rest of the application finishes deploying.
+4. **Point-In-Time Recovery (PITR)**: Once your infrastructure is updated to this latest version, Point-In-Time Recovery and automated backups will be permanently enabled for your Cloud SQL instance, meaning future manual SQL dumps will no longer be strictly necessary!
 
 <video controls autoplay loop width="100%" style="max-width: 1200px;">
   <source src="./screenshots/how_to_deploy_creative_studio.mp4" type="video/mp4">
@@ -121,11 +147,34 @@ The backend follows a **Modular, Feature-Driven Architecture**, heavily inspired
 | **Deployment**     | Cloud Run (for backend), Firebase Hosting (for frontend) |
 | **AI Models**      | Imagen, Veo, Gemini (via Vertex AI SDK)                  |
 
+### Infrastructure & Secret Management
+
+Creative Studio uses the **"Idempotent Shell"** pattern to securely manage infrastructure and secrets, combining Terraform with bash scripts.
+
+**1. Declared by Terraform (The "Shells")**
+Terraform is the single source of truth for the existence of all secrets and their IAM permissions. It defines the secret manager resources but purposefully ignores their data values (`ignore_changes = [secret_data]`) to prevent secrets from being stored in plaintext in the Terraform state file.
+These are defined in `infrastructure/variables.tf`:
+
+- **Backend Secrets:** `agent_engine_resource_name`, `agent_engine_user_auth_token_key`, `database_url`
+- **Frontend Secrets:** `GOOGLE_CLIENT_ID`, `GOOGLE_TOKEN_AUDIENCE`, `FIREBASE_API_KEY`, `FIREBASE_AUTH_DOMAIN`, etc.
+
+**2. Generated by Terraform**
+Some secure values are generated dynamically by Terraform during provisioning and then passed directly to the Cloud Run services or Secret Manager shells.
+
+- `database_url` (Database Password) is generated randomly by Terraform via the `random_password` provider and injected into the backend.
+
+**3. Idempotent Population via Script**
+The deployment script (`bootstrap.sh`) is responsible for populating the actual _versions_ of the secrets. Since Terraform handles creating the secret "shells", the bash script uses an idempotent `ensure_secret` function. This function checks if a secret needs to be created or if it can simply add a new data version using `gcloud secrets versions add`. This includes:
+
+- Auto-discovering Firebase SDK configuration parameters.
+- Generating random secure tokens for Agent Authentication.
+- Prompting for missing manual inputs (e.g., OAuth Client ID).
+
 ### Dependencies
 
 Regarding the dependencies of the APIs and Services we’ll use (the Google APIs `‘xxxx.googleapis.com’` will be enabled by the script automatically):
 
-- `Github Account` (You must have a Github Account to fork the repository)
+- `GitHub or GitLab Account` (You must have a repository account to fork the repository)
 - `Google Cloud Account` (A GCP Project)
 
 ---
@@ -159,11 +208,13 @@ For the deployment you can use CloudShell which already has all of the necessary
 To ensure the highest level of quality and security, we enforce strict style guidelines and automated checks both locally and in our CI/CD pipeline.
 
 ### 🎨 Code Style Guidelines
+
 - **Python**: We adhere to the [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html), using `pylint` and `black`.
 - **TypeScript**: We follow the [Angular Coding Style Guide](https://angular.dev/style-guide) and [Google's TypeScript Style Guide](https://github.com/google/gts) using `gts`.
 - **Commit Messages**: We suggest following [Angular's Commit Message Guidelines](https://github.com/angular/angular/blob/main/contributing-docs/commit-message-guidelines.md).
 
 ### 🌿 Branching Model
+
 We follow the [Git Flow](https://nvie.com/posts/a-successful-git-branching-model/) branching model. Please create feature branches from `dev` and submit pull requests back to `dev`.
 
 ### ⚙️ Automated Checks (Pre-commit & GitHub Actions)
