@@ -91,8 +91,7 @@ export class HeaderComponent implements OnDestroy {
     this.routerSubscription = this.router.events
       .pipe(
         filter(
-          (event): event is NavigationEnd =>
-            event instanceof NavigationEnd || 'urlAfterRedirects' in event,
+          (event): event is NavigationEnd => event instanceof NavigationEnd,
         ),
         takeUntil(this.destroy$),
       )

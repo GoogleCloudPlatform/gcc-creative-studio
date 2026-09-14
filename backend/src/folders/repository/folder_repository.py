@@ -1029,6 +1029,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         ]
 
         if is_copy:
+            media_pairs = []
             for item in source_media_items:
                 kwargs = {
                     col: (
@@ -1046,7 +1047,36 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                     **kwargs,
                 )
                 self.db.add(new_media)
+                media_pairs.append((item.id, new_media))
                 media_count += 1
+            if (
+                media_pairs
+                and source_folder.workspace_id == target_workspace_id
+            ):
+                await self.db.flush()
+                old_media_ids = [p[0] for p in media_pairs]
+                media_tags_stmt = select(media_item_tags).where(
+                    media_item_tags.c.media_item_id.in_(old_media_ids)
+                )
+                media_tags_res = await self.db.execute(media_tags_stmt)
+                media_tag_rows = media_tags_res.fetchall()
+                old_to_new_media = {
+                    p[0]: p[1].id
+                    for p in media_pairs
+                    if getattr(p[1], "id", None) is not None
+                }
+                new_media_tag_inserts = [
+                    {
+                        "media_item_id": old_to_new_media[row.media_item_id],
+                        "tag_id": row.tag_id,
+                    }
+                    for row in media_tag_rows
+                    if row.media_item_id in old_to_new_media
+                ]
+                if new_media_tag_inserts:
+                    await self.db.execute(
+                        insert(media_item_tags), new_media_tag_inserts
+                    )
         else:
             if source_media_items:
                 media_ids = [m.id for m in source_media_items]
@@ -1092,6 +1122,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         ]
 
         if is_copy:
+            asset_pairs = []
             for asset in source_assets:
                 kwargs = {
                     col: (
@@ -1108,7 +1139,38 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
                     **kwargs,
                 )
                 self.db.add(new_asset)
+                asset_pairs.append((asset.id, new_asset))
                 assets_count += 1
+            if (
+                asset_pairs
+                and source_folder.workspace_id == target_workspace_id
+            ):
+                await self.db.flush()
+                old_asset_ids = [p[0] for p in asset_pairs]
+                asset_tags_stmt = select(source_asset_tags).where(
+                    source_asset_tags.c.source_asset_id.in_(old_asset_ids)
+                )
+                asset_tags_res = await self.db.execute(asset_tags_stmt)
+                asset_tag_rows = asset_tags_res.fetchall()
+                old_to_new_asset = {
+                    p[0]: p[1].id
+                    for p in asset_pairs
+                    if getattr(p[1], "id", None) is not None
+                }
+                new_asset_tag_inserts = [
+                    {
+                        "source_asset_id": old_to_new_asset[
+                            row.source_asset_id
+                        ],
+                        "tag_id": row.tag_id,
+                    }
+                    for row in asset_tag_rows
+                    if row.source_asset_id in old_to_new_asset
+                ]
+                if new_asset_tag_inserts:
+                    await self.db.execute(
+                        insert(source_asset_tags), new_asset_tag_inserts
+                    )
         else:
             if source_assets:
                 asset_ids = [a.id for a in source_assets]
