@@ -15,16 +15,13 @@
  */
 
 import {Component, OnDestroy, Inject, PLATFORM_ID} from '@angular/core';
-import {DomSanitizer, SafeResourceUrl} from '@angular/platform-browser';
-import {MatIconRegistry} from '@angular/material/icon';
 import {NavigationEnd, Router} from '@angular/router';
 import {UserService} from '../common/services/user.service';
 import {AuthService} from '../common/services/auth.service';
-import {environment} from '../../environments/environment';
 import {UserModel} from '../common/models/user.model';
 import {animate, style, transition, trigger} from '@angular/animations';
 import {BreakpointObserver, Breakpoints} from '@angular/cdk/layout';
-import {Subject, Subscription} from 'rxjs';
+import {Subject} from 'rxjs';
 import {filter, takeUntil} from 'rxjs/operators';
 import {isPlatformBrowser} from '@angular/common';
 
@@ -62,7 +59,6 @@ export class HeaderComponent implements OnDestroy {
   private menuTimeout: any;
   private genMenuTimeout: any;
   isBrowser: boolean;
-  private routerSubscription: Subscription;
   isGalleryActive = false;
 
   constructor(
@@ -90,7 +86,7 @@ export class HeaderComponent implements OnDestroy {
 
     this.isGalleryActive = this.checkIsGalleryActive();
 
-    this.routerSubscription = this.router.events
+    this.router.events
       .pipe(
         filter(
           (event): event is NavigationEnd => event instanceof NavigationEnd,
@@ -105,7 +101,6 @@ export class HeaderComponent implements OnDestroy {
   ngOnDestroy(): void {
     this.destroy$.next();
     this.destroy$.complete();
-    this.routerSubscription.unsubscribe();
   }
 
   logout() {
