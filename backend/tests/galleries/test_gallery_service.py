@@ -14,6 +14,7 @@
 """Tests for Gallery Service."""
 
 
+from contextlib import asynccontextmanager
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -53,6 +54,13 @@ def fixture_service():
     mock_gcs_service = MagicMock()
     mock_tags_repo = AsyncMock()
     mock_folder_repo = AsyncMock()
+    mock_db = AsyncMock()
+
+    @asynccontextmanager
+    async def fake_begin_nested():
+        yield
+
+    mock_db.begin_nested = MagicMock(side_effect=fake_begin_nested)
 
     service = GalleryService(
         media_repo=mock_media_repo,
@@ -66,6 +74,7 @@ def fixture_service():
         gcs_service=mock_gcs_service,
         tags_repo=mock_tags_repo,
         folder_repo=mock_folder_repo,
+        db=mock_db,
     )
 
     # Attach mocks for ease of use in tests
@@ -79,6 +88,7 @@ def fixture_service():
     service.mock_gcs_service = mock_gcs_service
     service.mock_tags_repo = mock_tags_repo
     service.mock_folder_repo = mock_folder_repo
+    service.mock_db = mock_db
 
     return service
 
@@ -1047,6 +1057,67 @@ async def test_bulk_move_folder_merge_strategy(service):
         target_workspace_id=88,
         user_id=1,
         conflict_strategy=ConflictStrategyEnum.MERGE,
+    )
+
+
+@pytest.mark.anyio
+async def test_bulk_move_partial_failure_with_savepoint(service):
+    from pydantic import BaseModel
+    from src.galleries.dto.bulk_move_dto import BulkMoveDto, BulkMoveItemDto
+
+    class DummyMedia(BaseModel):
+        id: int
+        workspace_id: int
+        folder_id: int | None = None
+        user_id: int
+        user_email: str
+        gcs_uris: list
+
+    bulk_dto = BulkMoveDto(
+        target_workspace_id=88,
+        items=[
+            BulkMoveItemDto(id=1, type="media_item"),
+            BulkMoveItemDto(id=2, type="media_item"),
+        ],
+    )
+    current_user = UserModel(
+        id=1,
+        email="user@test.com",
+        name="User",
+        roles=[UserRoleEnum.USER],
+    )
+
+    media_1 = DummyMedia(
+        id=1,
+        workspace_id=99,
+        folder_id=12,
+        user_id=1,
+        user_email="user@test.com",
+        gcs_uris=[],
+    )
+    media_2 = DummyMedia(
+        id=2,
+        workspace_id=99,
+        folder_id=12,
+        user_id=1,
+        user_email="user@test.com",
+        gcs_uris=[],
+    )
+    service.mock_media_repo.get_by_id.side_effect = [media_1, media_2]
+    service.mock_media_repo.update.side_effect = [
+        Exception("DB IntegrityError"),
+        {"id": 2},
+    ]
+
+    result = await service.bulk_move(bulk_dto, current_user)
+
+    assert result["moved_count"] == 1
+    assert service.mock_db.begin_nested.call_count == 2
+    service.mock_media_repo.update.assert_any_call(
+        1, {"workspace_id": 88, "folder_id": None}
+    )
+    service.mock_media_repo.update.assert_any_call(
+        2, {"workspace_id": 88, "folder_id": None}
     )
 
 

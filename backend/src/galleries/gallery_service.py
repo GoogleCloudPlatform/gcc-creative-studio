@@ -20,8 +20,10 @@ import zipfile
 
 from fastapi import Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.iam_signer_credentials_service import IamSignerCredentials
+from src.database import get_db
 from src.common.dto.pagination_response_dto import PaginationResponseDto
 from src.common.schema.media_item_model import (
     JobStatusEnum,
@@ -80,6 +82,7 @@ class GalleryService:
         gcs_service: GcsService = Depends(),
         tags_repo: TagsRepository = Depends(),
         folder_repo: FolderRepository = Depends(),
+        db: AsyncSession = Depends(get_db),
     ):
         """Initializes the service with its dependencies."""
         self.media_repo = media_repo
@@ -93,6 +96,7 @@ class GalleryService:
         self.gcs_service = gcs_service
         self.tags_repo = tags_repo
         self.folder_repo = folder_repo
+        self.db = db
 
     async def _enrich_source_asset_link(
         self,
@@ -921,83 +925,92 @@ class GalleryService:
         moved_count = 0
         for item in bulk_move_dto.items:
             try:
-                if item.type == "media_item":
-                    media_item = await self.media_repo.get_by_id(item.id)
-                    if not media_item:
-                        continue
+                async with self.db.begin_nested():
+                    if item.type == "media_item":
+                        media_item = await self.media_repo.get_by_id(item.id)
+                        if not media_item:
+                            continue
 
-                    # Authorize source workspace access (where the item is currently)
-                    await self.workspace_auth.authorize(
-                        workspace_id=media_item.workspace_id,
-                        user=current_user,
-                    )
-
-                    if (
-                        media_item.workspace_id
-                        != bulk_move_dto.target_workspace_id
-                    ):
-                        await self.tags_repo.clear_tags_for_media_item(item.id)
-
-                    await self.media_repo.update(
-                        item.id,
-                        {
-                            "workspace_id": bulk_move_dto.target_workspace_id,
-                            "folder_id": None,
-                        },
-                    )
-                    moved_count += 1
-
-                elif item.type == "source_asset":
-                    asset = await self.source_asset_repo.get_by_id(item.id)
-                    if not asset:
-                        continue
-
-                    # Authorize source workspace access
-                    await self.workspace_auth.authorize(
-                        workspace_id=asset.workspace_id,
-                        user=current_user,
-                    )
-
-                    if asset.workspace_id != bulk_move_dto.target_workspace_id:
-                        await self.tags_repo.clear_tags_for_source_asset(
-                            item.id
+                        # Authorize source workspace access (where the item is currently)
+                        await self.workspace_auth.authorize(
+                            workspace_id=media_item.workspace_id,
+                            user=current_user,
                         )
 
-                    await self.source_asset_repo.update(
-                        item.id,
-                        {
-                            "workspace_id": bulk_move_dto.target_workspace_id,
-                            "folder_id": None,
-                        },
-                    )
-                    moved_count += 1
+                        if (
+                            media_item.workspace_id
+                            != bulk_move_dto.target_workspace_id
+                        ):
+                            await self.tags_repo.clear_tags_for_media_item(
+                                item.id
+                            )
 
-                elif item.type == "folder":
-                    folder = folder_map.get(item.id)
-                    if not folder:
-                        continue
+                        await self.media_repo.update(
+                            item.id,
+                            {
+                                "workspace_id": bulk_move_dto.target_workspace_id,
+                                "folder_id": None,
+                            },
+                        )
+                        moved_count += 1
 
-                    # Authorize source workspace access
-                    await self.workspace_auth.authorize(
-                        workspace_id=folder.workspace_id,
-                        user=current_user,
-                    )
+                    elif item.type == "source_asset":
+                        asset = await self.source_asset_repo.get_by_id(item.id)
+                        if not asset:
+                            continue
 
-                    if folder.workspace_id == bulk_move_dto.target_workspace_id:
-                        continue
+                        # Authorize source workspace access
+                        await self.workspace_auth.authorize(
+                            workspace_id=asset.workspace_id,
+                            user=current_user,
+                        )
 
-                    move_results = await self.folder_repo.move_folder_to_workspace(
-                        folder_id=folder.id,
-                        target_workspace_id=bulk_move_dto.target_workspace_id,
-                        user_id=current_user.id,
-                        conflict_strategy=bulk_move_dto.conflict_strategy
-                        or ConflictStrategyEnum.KEEP_BOTH,
-                    )
-                    moved_count += (
-                        move_results.get("folders_moved", 0)
-                        + move_results.get("media_moved", 0)
-                        + move_results.get("assets_moved", 0)
-                    )
+                        if (
+                            asset.workspace_id
+                            != bulk_move_dto.target_workspace_id
+                        ):
+                            await self.tags_repo.clear_tags_for_source_asset(
+                                item.id
+                            )
+
+                        await self.source_asset_repo.update(
+                            item.id,
+                            {
+                                "workspace_id": bulk_move_dto.target_workspace_id,
+                                "folder_id": None,
+                            },
+                        )
+                        moved_count += 1
+
+                    elif item.type == "folder":
+                        folder = folder_map.get(item.id)
+                        if not folder:
+                            continue
+
+                        # Authorize source workspace access
+                        await self.workspace_auth.authorize(
+                            workspace_id=folder.workspace_id,
+                            user=current_user,
+                        )
+
+                        if (
+                            folder.workspace_id
+                            == bulk_move_dto.target_workspace_id
+                        ):
+                            continue
+
+                        move_results = await self.folder_repo.move_folder_to_workspace(
+                            folder_id=folder.id,
+                            target_workspace_id=bulk_move_dto.target_workspace_id,
+                            user_id=current_user.id,
+                            conflict_strategy=bulk_move_dto.conflict_strategy
+                            or ConflictStrategyEnum.KEEP_BOTH,
+                        )
+                        moved_count += (
+                            move_results.get("folders_moved", 0)
+                            + move_results.get("media_moved", 0)
+                            + move_results.get("assets_moved", 0)
+                        )
 
             except Exception as e:
                 logger.error(f"Error moving {item.type} {item.id}: {e}")
