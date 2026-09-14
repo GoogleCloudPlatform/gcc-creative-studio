@@ -43,6 +43,7 @@ describe('WorkflowWelcomeViewComponent', () => {
         stepId: 'user_input',
         type: NodeTypes.USER_INPUT,
         status: StepStatusEnum.IDLE,
+        position: {x: 100, y: 100},
         inputs: {},
         outputs: {},
         settings: {},

@@ -45,10 +45,16 @@ export enum StepStatusEnum {
   SKIPPED = 'skipped',
 }
 
+export interface Point {
+  x: number;
+  y: number;
+}
+
 // Base Step
 interface BaseStep<T = Record<string, any>, S = Record<string, any>> {
   stepId: string;
   type: NodeTypes | string;
+  position: Point;
 
   // --- Execution State ---
   status: StepStatusEnum;
@@ -71,10 +77,6 @@ export enum WorkflowRunStatusEnum {
   CANCELED = 'canceled',
   SCHEDULED = 'scheduled',
 }
-export interface Point {
-  x: number;
-  y: number;
-}
 
 export interface WorkflowBase {
   name: string;
@@ -96,7 +98,6 @@ export interface WorkflowTemplate extends WorkflowBase {
   createdAt?: string;
   updatedAt?: string;
   userId?: string;
-  positions?: {[stepId: string]: Point};
 }
 
 export type WorkflowTemplateCreateDto = WorkflowBase;

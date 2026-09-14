@@ -90,6 +90,13 @@ class StepStatusEnum(str, Enum):
     SKIPPED = "skipped"  # Useful for conditional workflows later on
 
 
+class Point(BaseDto):
+    """Represents 2D coordinates for a step node on the workflow canvas."""
+
+    x: float
+    y: float
+
+
 class BaseStep(BaseDto, Generic[InputT, SettingsT]):
     """Abstract-like base step.
     It defines that every step MUST have 'inputs' and 'settings',
@@ -97,6 +104,7 @@ class BaseStep(BaseDto, Generic[InputT, SettingsT]):
     """
 
     step_id: str
+    position: Point = Field(default_factory=lambda: Point(x=100.0, y=100.0))
 
     # --- Execution State ---
     # These fields are populated during a Workflow Run.

@@ -787,6 +787,7 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
           {
             stepId: 'user_input',
             type: NodeTypes.USER_INPUT,
+            position: {x: 80, y: 150},
             outputs: {model_image: {type: 'image'}},
             inputs: {},
             settings: {},
@@ -794,15 +795,12 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
           {
             stepId: 'gen_text',
             type: NodeTypes.GENERATE_TEXT,
+            position: {x: 450, y: 150},
             inputs: {prompt: 'Prompt'},
             outputs: {generated_text: {type: 'text'}},
             settings: {model: 'gemini-3.8-flash', temperature: 0.7},
           },
         ],
-        positions: {
-          user_input: {x: 80, y: 150},
-          gen_text: {x: 450, y: 150},
-        },
       };
 
       component.onTemplateSelected(mockTemplate);
@@ -962,6 +960,128 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
 
       expect(workflowService.createWorkflow).not.toHaveBeenCalled();
       expect(workflowService.updateWorkflow).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Node Coordinates Persistence (Workflows & Templates)', () => {
+    it('should include node coordinates from nodePositions in prepareSteps for user_input and all steps', () => {
+      component.addStepToForm(NodeTypes.IMAGE, {
+        stepId: 'step_img_1',
+        type: NodeTypes.IMAGE,
+        inputs: {prompt: 'test'},
+        outputs: {},
+        settings: {},
+      });
+
+      component.nodePositions = {
+        user_input: {x: 120, y: 220},
+        step_img_1: {x: 540, y: 310},
+      };
+
+      const formValue = component.workflowForm.getRawValue();
+      const prepared = (component as any).prepareSteps(formValue);
+
+      const userInputStep = prepared.find(
+        (s: any) => s.stepId === 'user_input',
+      );
+      const imgStep = prepared.find((s: any) => s.stepId === 'step_img_1');
+
+      expect(userInputStep.position).toEqual({x: 120, y: 220});
+      expect(imgStep.position).toEqual({x: 540, y: 310});
+    });
+
+    it('should load node positions from step.position when loading a workflow from database', () => {
+      const savedWorkflow: any = {
+        id: 'wf-db-coords',
+        name: 'Saved Workflow',
+        description: '',
+        userId: '1',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        steps: [
+          {
+            stepId: 'user_input',
+            type: NodeTypes.USER_INPUT,
+            position: {x: 150, y: 250},
+            inputs: {},
+            outputs: {},
+            settings: {definitions: []},
+          },
+          {
+            stepId: 'gen_txt_1',
+            type: NodeTypes.GENERATE_TEXT,
+            position: {x: 600, y: 250},
+            inputs: {prompt: 'hello'},
+            outputs: {},
+            settings: {model: 'gemini-3-flash-preview', temperature: 0.7},
+          },
+        ],
+      };
+
+      component.displayedWorkflow = savedWorkflow;
+      (component as any).loadAndSetData();
+
+      expect(component.nodePositions['user_input']).toEqual({x: 150, y: 250});
+      expect(component.nodePositions['gen_txt_1']).toEqual({x: 600, y: 250});
+    });
+
+    it('should load node positions from step.position when selecting a user template', () => {
+      const userTemplate: any = {
+        id: 'tmpl-user-1',
+        name: 'User Saved Template',
+        description: 'Has step.position on steps',
+        steps: [
+          {
+            stepId: 'user_input',
+            type: NodeTypes.USER_INPUT,
+            position: {x: 90, y: 140},
+            inputs: {},
+            outputs: {},
+            settings: {definitions: []},
+          },
+          {
+            stepId: 'step_video_1',
+            type: NodeTypes.GENERATE_VIDEO,
+            position: {x: 490, y: 140},
+            inputs: {prompt: 'video prompt'},
+            outputs: {},
+            settings: {model: 'veo-3.1-generate-001'},
+          },
+        ],
+      };
+
+      component.onTemplateSelected(userTemplate);
+
+      expect(component.nodePositions['user_input']).toEqual({x: 90, y: 140});
+      expect(component.nodePositions['step_video_1']).toEqual({x: 490, y: 140});
+    });
+
+    it('should mark workflowForm as dirty when node drag ends in onMouseUp so save() persists coordinates', () => {
+      const workflowService = TestBed.inject(WorkflowService);
+      (workflowService.createWorkflow as jasmine.Spy).calls.reset();
+
+      component.workflowForm.patchValue({name: 'Dirty Drag Workflow'});
+      component.workflowForm.markAsPristine();
+      expect(component.workflowForm.pristine).toBeTrue();
+
+      // Simulate dragging a node and releasing mouse
+      (component as any).draggingNodeId = 'user_input';
+      component.nodePositions['user_input'] = {x: 333, y: 444};
+      component.onMouseUp();
+
+      expect(component.workflowForm.dirty).toBeTrue();
+
+      component.save();
+      expect(workflowService.createWorkflow).toHaveBeenCalledWith(
+        jasmine.objectContaining({
+          steps: jasmine.arrayContaining([
+            jasmine.objectContaining({
+              stepId: 'user_input',
+              position: {x: 333, y: 444},
+            }),
+          ]),
+        }),
+      );
     });
   });
 });
