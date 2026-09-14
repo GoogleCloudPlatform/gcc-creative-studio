@@ -26,6 +26,7 @@ from src.folders.dto.folder_dto import (
     FolderTreeNodeDto,
 )
 from src.folders.folder_service import FolderService
+from src.folders.schema.folder_model import Folder
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
 
@@ -236,17 +237,15 @@ class TestUpdateFolder:
     def test_update_folder_success(
         self, api_client, mock_folder_service, mock_workspace_auth
     ):
-        existing_folder = FolderResponseDto(
+        existing_folder = Folder(
             id=1,
             workspace_id=1,
             user_id=1,
             user_email="user@example.com",
             name="Old Folder",
             parent_id=None,
-            item_count=0,
-            subfolder_count=0,
         )
-        mock_folder_service.get_folder_by_id.return_value = existing_folder
+        mock_folder_service.get_raw_folder.return_value = existing_folder
         mock_folder_service.update_folder.return_value = FolderResponseDto(
             id=1,
             workspace_id=1,
@@ -266,7 +265,13 @@ class TestUpdateFolder:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["name"] == "Renamed Folder"
+        mock_folder_service.get_raw_folder.assert_called_once_with(folder_id=1)
         mock_workspace_auth.authorize.assert_called_once()
+        mock_folder_service.update_folder.assert_called_once()
+        assert (
+            mock_folder_service.update_folder.call_args.kwargs["folder"]
+            == existing_folder
+        )
 
 
 class TestDeleteFolder:

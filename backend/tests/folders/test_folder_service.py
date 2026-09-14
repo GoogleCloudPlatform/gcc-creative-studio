@@ -201,6 +201,54 @@ class TestGetFolder:
         assert len(result) == 1
         assert result[0].name == "F1"
 
+
+class TestGetRawFolder:
+    """Tests for FolderService.get_raw_folder."""
+
+    @pytest.mark.anyio
+    async def test_get_raw_folder_found(self, folder_service, mock_folder_repo):
+        folder = Folder(
+            id=1,
+            workspace_id=1,
+            user_id=1,
+            user_email="a@b.com",
+            name="F1",
+            parent_id=None,
+        )
+        mock_folder_repo.get_folder_by_id.return_value = folder
+
+        result = await folder_service.get_raw_folder(folder_id=1)
+        assert result.id == 1
+        assert result.name == "F1"
+        mock_folder_repo.get_folder_counts.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_get_raw_folder_not_found(
+        self, folder_service, mock_folder_repo
+    ):
+        mock_folder_repo.get_folder_by_id.return_value = None
+
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.get_raw_folder(folder_id=999)
+        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+
+    @pytest.mark.anyio
+    async def test_get_raw_folder_workspace_mismatch(
+        self, folder_service, mock_folder_repo
+    ):
+        mock_folder_repo.get_folder_by_id.return_value = Folder(
+            id=1, workspace_id=2, user_email="a@b.com", name="Folder in WS2"
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.get_raw_folder(folder_id=1, workspace_id=1)
+        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+        assert "not found in this workspace" in exc_info.value.detail
+
+
+class TestGetFolderById:
+    """Tests for FolderService.get_folder_by_id."""
+
     @pytest.mark.anyio
     async def test_get_folder_by_id_found(
         self, folder_service, mock_folder_repo
@@ -322,6 +370,27 @@ class TestUpdateFolder:
         result = await folder_service.update_folder(1, dto, sample_user)
         assert folder.name == "New Name"
         assert result.name == "New Name"
+
+    @pytest.mark.anyio
+    async def test_update_folder_with_preloaded_folder(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        folder = Folder(
+            id=1, workspace_id=1, user_email="a@b.com", name="Old Name"
+        )
+        mock_folder_repo.is_folder_name_taken.return_value = False
+        mock_folder_repo.get_folder_counts.return_value = (5, 1)
+
+        dto = FolderUpdateDto(name="New Name")
+        result = await folder_service.update_folder(
+            1, dto, sample_user, folder=folder
+        )
+        assert folder.name == "New Name"
+        assert result.name == "New Name"
+        assert result.item_count == 5
+        assert result.subfolder_count == 1
+        mock_folder_repo.get_folder_by_id.assert_not_called()
+        mock_folder_repo.get_folder_counts.assert_called_once_with(1)
 
     @pytest.mark.anyio
     async def test_update_name_conflict_error(

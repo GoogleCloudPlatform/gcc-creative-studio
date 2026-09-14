@@ -121,6 +121,25 @@ class FolderService:
             workspace_id=workspace_id, parent_id=parent_id
         )
 
+    async def get_raw_folder(
+        self, folder_id: int, workspace_id: int | None = None
+    ) -> Folder:
+        """Fetch raw Folder model by ID without computing count subqueries."""
+        folder = await self.folder_repo.get_folder_by_id(folder_id)
+        if not folder:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Folder with ID {folder_id} not found.",
+            )
+        if workspace_id is not None and folder.workspace_id != workspace_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Folder with ID {folder_id} not found in this workspace.",
+            )
+        return folder
+
+    get_folder_model = get_raw_folder
+
     async def get_folder_by_id(
         self, folder_id: int, workspace_id: int | None = None
     ) -> FolderResponseDto:
@@ -185,15 +204,20 @@ class FolderService:
         return await self.folder_repo.get_tree(workspace_id)
 
     async def update_folder(
-        self, folder_id: int, dto: FolderUpdateDto, user: UserModel
+        self,
+        folder_id: int,
+        dto: FolderUpdateDto,
+        user: UserModel,
+        folder: Folder | None = None,
     ) -> FolderResponseDto:
         """Updates a folder name, color, or parent hierarchy with collision checks and auto-disambiguation."""
-        folder = await self.folder_repo.get_folder_by_id(folder_id)
-        if not folder:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Folder with ID {folder_id} not found.",
-            )
+        if folder is None:
+            folder = await self.folder_repo.get_folder_by_id(folder_id)
+            if not folder:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Folder with ID {folder_id} not found.",
+                )
 
         is_moving = False
         new_parent_id = folder.parent_id
@@ -285,7 +309,23 @@ class FolderService:
                 detail=f"A folder named '{folder.name}' already exists in this location.",
             ) from e
 
-        return await self.get_folder_by_id(folder.id)
+        item_count, subfolder_count = await self.folder_repo.get_folder_counts(
+            folder.id
+        )
+
+        return FolderResponseDto(
+            id=folder.id,
+            workspace_id=folder.workspace_id,
+            user_id=folder.user_id,
+            user_email=folder.user_email,
+            name=folder.name,
+            parent_id=folder.parent_id,
+            color=folder.color,
+            item_count=item_count,
+            subfolder_count=subfolder_count,
+            created_at=folder.created_at,
+            updated_at=folder.updated_at,
+        )
 
     async def delete_folder(
         self, folder_id: int, user: UserModel

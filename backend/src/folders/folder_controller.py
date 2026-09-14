@@ -186,13 +186,13 @@ async def update_folder(
     workspace_auth: WorkspaceAuth = Depends(),
 ) -> FolderResponseDto:
     """Update folder properties or move folder to new parent."""
-    folder = await service.get_folder_by_id(folder_id=folder_id)
+    folder = await service.get_raw_folder(folder_id=folder_id)
     await workspace_auth.authorize(
         workspace_id=folder.workspace_id,
         user=current_user,
     )
     return await service.update_folder(
-        folder_id=folder_id, dto=dto, user=current_user
+        folder_id=folder_id, dto=dto, user=current_user, folder=folder
     )
 
 
