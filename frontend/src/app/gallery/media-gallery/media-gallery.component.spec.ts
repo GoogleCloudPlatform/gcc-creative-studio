@@ -398,6 +398,34 @@ describe('MediaGalleryComponent', () => {
       expect(component.selectedItems.size).toBe(0);
     });
 
+    it('should rollback images, folders, and selectedItems if bulkMove across workspaces fails', () => {
+      spyOn(galleryService, 'bulkMove').and.returnValue(
+        throwError(() => new Error('Move failed')),
+      );
+      component.images = [
+        {id: 1, itemType: 'media_item'} as any,
+        {id: 2, itemType: 'source_asset'} as any,
+      ];
+      component.folders = [{id: 10, name: 'Folder 1'} as any];
+      component.selectedItems.add('media_item:1');
+      component.selectedItems.add('source_asset:2');
+
+      (component as any).executeMoveToWorkspace(
+        [1],
+        [2],
+        [10],
+        88,
+        'Target Workspace',
+      );
+
+      expect(component.images.length).toBe(2);
+      expect(component.folders.length).toBe(1);
+      expect(component.selectedItems.size).toBe(2);
+      expect(component.selectedItems.has('media_item:1')).toBeTrue();
+      expect(component.selectedItems.has('source_asset:2')).toBeTrue();
+      expect(component.isMoving).toBeFalse();
+    });
+
     it('should call galleryService.bulkMove when moving folder across workspaces', () => {
       spyOn(galleryService, 'bulkMove').and.returnValue(of({moved_count: 1}));
       spyOn(component, 'loadFolders');
@@ -716,6 +744,28 @@ describe('MediaGalleryComponent', () => {
 
         expect(folderService.moveItems).toHaveBeenCalledTimes(1);
         expect(component.folders.length).toBe(1);
+      });
+
+      it('should rollback images, folders, and selectedItems if moveItems fails', () => {
+        folderService.moveItems.and.returnValue(
+          throwError(() => new Error('Move failed')),
+        );
+        component.images = [
+          {id: 1, itemType: 'media_item'} as any,
+          {id: 2, itemType: 'source_asset'} as any,
+        ];
+        component.folders = [{id: 10, name: 'Folder 1'} as any];
+        component.selectedItems.add('media_item:1');
+        component.selectedItems.add('source_asset:2');
+
+        (component as any).executeMove([1], [2], [10], 5, 'Destination');
+
+        expect(component.images.length).toBe(2);
+        expect(component.folders.length).toBe(1);
+        expect(component.selectedItems.size).toBe(2);
+        expect(component.selectedItems.has('media_item:1')).toBeTrue();
+        expect(component.selectedItems.has('source_asset:2')).toBeTrue();
+        expect(component.isMoving).toBeFalse();
       });
 
       it('should open conflict dialog and retry bulkMove with merge on 409 FOLDER_COLLISION', () => {

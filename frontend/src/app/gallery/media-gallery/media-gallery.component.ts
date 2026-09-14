@@ -1734,6 +1734,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
 
     const prevImages = [...this.images];
     const prevFolders = [...this.folders];
+    const prevSelectedItems = new Set(this.selectedItems);
 
     this.images = this.images.filter(
       img =>
@@ -1780,6 +1781,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
           // Rollback optimistic update
           this.images = prevImages;
           this.folders = prevFolders;
+          this.selectedItems = prevSelectedItems;
           this.updateGroups();
           this.isMoving = false;
 
@@ -1846,6 +1848,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
 
     const prevImages = [...this.images];
     const prevFolders = [...this.folders];
+    const prevSelectedItems = new Set(this.selectedItems);
 
     this.images = this.images.filter(
       img =>
@@ -1892,6 +1895,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
           // Rollback optimistic update
           this.images = prevImages;
           this.folders = prevFolders;
+          this.selectedItems = prevSelectedItems;
           this.updateGroups();
           this.isMoving = false;
 
