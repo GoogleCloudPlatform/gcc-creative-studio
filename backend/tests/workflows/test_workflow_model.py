@@ -553,3 +553,64 @@ def test_generate_text_step_discriminated_union_dynamic_variables():
         "step": "step_location_gen",
         "output": "generated_text",
     }
+
+
+def test_step_position_parsing_and_serialization():
+    """Verify step position coordinates are parsed and serialized properly."""
+    from src.workflows.schema.workflow_model import Point
+
+    adapter = TypeAdapter(WorkflowStep)
+    raw_data = {
+        "stepId": "image_node_pos",
+        "type": "image",
+        "position": {"x": 240.5, "y": 180.0},
+        "status": "idle",
+        "inputs": {"prompt": "Test prompt"},
+        "settings": {"mode": "generate_image"},
+        "outputs": {},
+    }
+    parsed = adapter.validate_python(raw_data)
+    assert isinstance(parsed, ImageStep)
+    assert isinstance(parsed.position, Point)
+    assert parsed.position.x == 240.5
+    assert parsed.position.y == 180.0
+
+    dumped = parsed.model_dump(by_alias=True)
+    assert dumped["position"] == {"x": 240.5, "y": 180.0}
+
+    # Verify default fallback when position is omitted
+    raw_without_pos = {
+        "stepId": "image_node_default_pos",
+        "type": "image",
+        "status": "idle",
+        "inputs": {"prompt": "Default pos prompt"},
+        "settings": {"mode": "generate_image"},
+        "outputs": {},
+    }
+    parsed_default = adapter.validate_python(raw_without_pos)
+    assert isinstance(parsed_default.position, Point)
+    assert parsed_default.position.x == 100.0
+    assert parsed_default.position.y == 100.0
+
+
+def test_legacy_step_translation_preserves_position():
+    """Verify legacy step translation preserves node position coordinates."""
+    from src.workflows.schema.workflow_model import WorkflowBase
+
+    legacy_data = {
+        "name": "Legacy Workflow With Coords",
+        "steps": [
+            {
+                "step_id": "legacy_gen_pos",
+                "type": "generate_image",
+                "position": {"x": 320, "y": 400},
+                "inputs": {"prompt": "A sunny day"},
+                "settings": {"model": "imagen-3"},
+                "outputs": {},
+            }
+        ],
+    }
+    wf = WorkflowBase.model_validate(legacy_data)
+    assert wf.steps[0].position is not None
+    assert wf.steps[0].position.x == 320.0
+    assert wf.steps[0].position.y == 400.0

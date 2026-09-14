@@ -29,10 +29,13 @@ import {STEP_CONFIGS_MAP} from '../shared/step-configs.map';
 import {labelToName, nameToLabel} from '../utils/workflow-step.util';
 import {
   NodeTypes,
+  Point,
   StepStatusEnum,
   WorkflowBase,
   WorkflowModel,
 } from '../workflow.models';
+
+const DEFAULT_NODE_POSITION: Point = {x: 100, y: 100};
 
 type NodePort = {
   stepId: string;
@@ -70,6 +73,7 @@ export class WorkflowFormService {
         stepId: [NodeTypes.USER_INPUT],
         type: [NodeTypes.USER_INPUT],
         status: [StepStatusEnum.IDLE],
+        position: [{...DEFAULT_NODE_POSITION}],
         outputs: this.fb.group({}),
         settings: this.fb.group({
           definitions: this.fb.array([]),
@@ -128,6 +132,7 @@ export class WorkflowFormService {
       stepId: [safeStepData.stepId],
       type: [safeStepData.type],
       status: [safeStepData.status || StepStatusEnum.IDLE],
+      position: [safeStepData.position || {...DEFAULT_NODE_POSITION}],
       inputs: this.createFormGroupFromData(safeStepData.inputs),
       outputs: this.createFormGroupFromData(safeStepData.outputs),
       settings: this.createFormGroupFromData(safeStepData.settings),
@@ -414,6 +419,7 @@ export class WorkflowFormService {
       stepId: `${type}_${Date.now()}`,
       type: type,
       status: StepStatusEnum.IDLE,
+      position: {...DEFAULT_NODE_POSITION},
       inputs: {},
       outputs: {},
       settings: {},
