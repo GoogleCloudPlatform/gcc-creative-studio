@@ -88,6 +88,8 @@ export class HeaderComponent implements OnDestroy {
         this.isDesktop = result.matches;
       });
 
+    this.isGalleryActive = this.checkIsGalleryActive();
+
     this.routerSubscription = this.router.events
       .pipe(
         filter(
@@ -96,9 +98,7 @@ export class HeaderComponent implements OnDestroy {
         takeUntil(this.destroy$),
       )
       .subscribe(() => {
-        this.isGalleryActive =
-          this.router.isActive('/gallery', false) ||
-          this.router.url.startsWith('/folders');
+        this.isGalleryActive = this.checkIsGalleryActive();
       });
   }
 
@@ -155,5 +155,13 @@ export class HeaderComponent implements OnDestroy {
     this.menuTimeout = setTimeout(() => {
       this.toolsMenuHovered = false;
     }, 200);
+  }
+
+  private checkIsGalleryActive(): boolean {
+    return (
+      this.router.isActive('/gallery', false) ||
+      this.router.url.startsWith('/folders/') ||
+      this.router.url === '/folders'
+    );
   }
 }
