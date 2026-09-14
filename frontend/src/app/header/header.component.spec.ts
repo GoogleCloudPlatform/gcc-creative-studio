@@ -128,13 +128,11 @@ describe('HeaderComponent', () => {
   });
 
   it('should unsubscribe on destroy', () => {
-    const unsubscribeSpy = spyOn(
-      (component as unknown as {routerSubscription: {unsubscribe: () => void}})
-        .routerSubscription,
-      'unsubscribe',
-    );
+    const nextSpy = spyOn(component['destroy$'], 'next');
+    const completeSpy = spyOn(component['destroy$'], 'complete');
     component.ngOnDestroy();
-    expect(unsubscribeSpy).toHaveBeenCalled();
+    expect(nextSpy).toHaveBeenCalled();
+    expect(completeSpy).toHaveBeenCalled();
   });
 
   it('should call authService.logout on logout', () => {
