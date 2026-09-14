@@ -20,6 +20,7 @@ import {TagModel} from '../services/tags.service';
 export interface BaseGalleryItem {
   id: number;
   workspaceId: number;
+  folderId?: number;
   userId?: number;
   createdAt: string;
   status?: string;
