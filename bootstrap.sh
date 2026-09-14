@@ -1043,8 +1043,8 @@ deploy_izumi_agent() {
     rm -rf /tmp/izumi-agent
     trap 'rm -rf /tmp/izumi-agent; cleanup_spinner' EXIT INT TERM
 
-    IZUMI_BRANCH="${IZUMI_AGENT_BRANCH:-feat/unified-mediagent-interface}"
-    info "Cloning Izumi Agent repository (branch: ${IZUMI_BRANCH})..."
+    IZUMI_BRANCH="${IZUMI_AGENT_BRANCH:-v0.2.1}"
+    info "Cloning Izumi Agent repository (tag/branch: ${IZUMI_BRANCH})..."
     git clone -b "$IZUMI_BRANCH" https://github.com/GoogleCloudPlatform/genmedia-izumi-agent.git /tmp/izumi-agent
 
     pushd /tmp/izumi-agent > /dev/null
