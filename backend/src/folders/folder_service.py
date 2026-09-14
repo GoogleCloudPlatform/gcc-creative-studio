@@ -138,12 +138,9 @@ class FolderService:
             )
 
         # Get counts
-        folders = await self.folder_repo.list_by_parent(
-            workspace_id=folder.workspace_id, parent_id=folder.parent_id
+        item_count, subfolder_count = await self.folder_repo.get_folder_counts(
+            folder.id
         )
-        matched = next((f for f in folders if f.id == folder_id), None)
-        if matched:
-            return matched
 
         return FolderResponseDto(
             id=folder.id,
@@ -153,8 +150,8 @@ class FolderService:
             name=folder.name,
             parent_id=folder.parent_id,
             color=folder.color,
-            item_count=0,
-            subfolder_count=0,
+            item_count=item_count,
+            subfolder_count=subfolder_count,
             created_at=folder.created_at,
             updated_at=folder.updated_at,
         )

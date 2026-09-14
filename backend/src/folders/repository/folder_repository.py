@@ -202,6 +202,51 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         result = await self.db.execute(query)
         return list(result.scalars().all())
 
+    async def get_folder_counts(self, folder_id: int) -> tuple[int, int]:
+        """Fetch total item count (media items + source assets) and subfolder count for a single folder.
+
+        Args:
+            folder_id: ID of the folder to count contents for.
+
+        Returns:
+            A tuple of (item_count, subfolder_count).
+        """
+        media_count_sq = (
+            select(func.count(MediaItem.id))
+            .where(
+                MediaItem.folder_id == folder_id,
+                MediaItem.deleted_at.is_(None),
+            )
+            .scalar_subquery()
+        )
+
+        asset_count_sq = (
+            select(func.count(SourceAsset.id))
+            .where(
+                SourceAsset.folder_id == folder_id,
+                SourceAsset.deleted_at.is_(None),
+            )
+            .scalar_subquery()
+        )
+
+        subfolder_count_sq = (
+            select(func.count(self.model.id))
+            .where(
+                self.model.parent_id == folder_id,
+                self.model.deleted_at.is_(None),
+            )
+            .scalar_subquery()
+        )
+
+        query = select(media_count_sq, asset_count_sq, subfolder_count_sq)
+        result = await self.db.execute(query)
+        row = result.one()
+        media_count = row[0] or 0
+        asset_count = row[1] or 0
+        subfolder_count = row[2] or 0
+
+        return media_count + asset_count, subfolder_count
+
     async def list_by_parent(
         self, workspace_id: int, parent_id: int | None = None
     ) -> list[FolderResponseDto]:

@@ -43,6 +43,7 @@ def fixture_mock_folder_repo():
     mock.get_subtree_depth.return_value = 1
     mock.get_folders_by_ids.return_value = []
     mock.get_existing_folders_map.return_value = {}
+    mock.get_folder_counts.return_value = (0, 0)
     return mock
 
 
@@ -211,20 +212,14 @@ class TestGetFolder:
             name="F1",
             parent_id=None,
         )
-        mock_folder_repo.list_by_parent.return_value = [
-            FolderResponseDto(
-                id=1,
-                workspace_id=1,
-                user_email="a@b.com",
-                name="F1",
-                parent_id=None,
-                item_count=10,
-            )
-        ]
+        mock_folder_repo.get_folder_counts.return_value = (10, 2)
 
         result = await folder_service.get_folder_by_id(folder_id=1)
         assert result.id == 1
         assert result.item_count == 10
+        assert result.subfolder_count == 2
+        mock_folder_repo.get_folder_counts.assert_called_once_with(1)
+        mock_folder_repo.list_by_parent.assert_not_called()
 
     @pytest.mark.anyio
     async def test_get_folder_by_id_not_found(

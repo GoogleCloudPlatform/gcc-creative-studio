@@ -145,6 +145,36 @@ class TestFolderRepository:
         mock_db.execute.assert_called_once()
 
     @pytest.mark.anyio
+    async def test_get_folder_counts(self, folder_repo, mock_db):
+        mock_result = MagicMock()
+        mock_result.one.return_value = (
+            3,
+            2,
+            1,
+        )  # media_count, asset_count, subfolder_count
+        mock_db.execute.return_value = mock_result
+
+        item_count, subfolder_count = await folder_repo.get_folder_counts(
+            folder_id=1
+        )
+        assert item_count == 5
+        assert subfolder_count == 1
+        mock_db.execute.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_get_folder_counts_none(self, folder_repo, mock_db):
+        mock_result = MagicMock()
+        mock_result.one.return_value = (None, None, None)
+        mock_db.execute.return_value = mock_result
+
+        item_count, subfolder_count = await folder_repo.get_folder_counts(
+            folder_id=1
+        )
+        assert item_count == 0
+        assert subfolder_count == 0
+        mock_db.execute.assert_called_once()
+
+    @pytest.mark.anyio
     async def test_list_by_parent(self, folder_repo, mock_db):
         folder = Folder(
             id=1, workspace_id=1, user_email="a@b.com", name="Folder 1"
