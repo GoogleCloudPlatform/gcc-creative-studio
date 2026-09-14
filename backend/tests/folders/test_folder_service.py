@@ -180,6 +180,154 @@ class TestCreateFolder:
             await folder_service.create_folder(dto, sample_user)
         assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
 
+    @pytest.mark.anyio
+    async def test_create_folder_integrity_error_unique_violation(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        dto = FolderCreateDto(
+            name="New Folder",
+            workspace_id=1,
+            parent_id=None,
+        )
+        mock_folder_repo.db.commit.side_effect = IntegrityError(
+            "statement", {}, Exception("Unique violation")
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.create_folder(dto, sample_user)
+        assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+        assert "already exists" in exc_info.value.detail
+        mock_folder_repo.db.rollback.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_create_folder_integrity_error_pgcode_unique(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        dto = FolderCreateDto(
+            name="New Folder",
+            workspace_id=1,
+            parent_id=None,
+        )
+        orig_exc = Exception("duplicate key")
+        orig_exc.pgcode = "23505"
+        mock_folder_repo.db.commit.side_effect = IntegrityError(
+            "statement", {}, orig_exc
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.create_folder(dto, sample_user)
+        assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+        assert "already exists" in exc_info.value.detail
+        mock_folder_repo.db.rollback.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_create_folder_integrity_error_foreign_key_workspace(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        dto = FolderCreateDto(
+            name="New Folder",
+            workspace_id=999,
+            parent_id=None,
+        )
+        mock_folder_repo.db.commit.side_effect = IntegrityError(
+            "statement",
+            {},
+            Exception(
+                'Key (workspace_id)=(999) is not present in table "workspaces".'
+            ),
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.create_folder(dto, sample_user)
+        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+        assert "workspace does not exist" in exc_info.value.detail
+        mock_folder_repo.db.rollback.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_create_folder_integrity_error_foreign_key_user(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        dto = FolderCreateDto(
+            name="New Folder",
+            workspace_id=1,
+            parent_id=None,
+        )
+        mock_folder_repo.db.commit.side_effect = IntegrityError(
+            "statement",
+            {},
+            Exception('Key (user_id)=(999) is not present in table "users".'),
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.create_folder(dto, sample_user)
+        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+        assert "user does not exist" in exc_info.value.detail
+        mock_folder_repo.db.rollback.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_create_folder_integrity_error_foreign_key_parent(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        dto = FolderCreateDto(
+            name="New Folder",
+            workspace_id=1,
+            parent_id=5,
+        )
+        mock_folder_repo.get_folder_by_id.return_value = Folder(
+            id=5, workspace_id=1, user_email="a@b.com", name="Parent"
+        )
+        mock_folder_repo.db.commit.side_effect = IntegrityError(
+            "statement",
+            {},
+            Exception('Key (parent_id)=(5) is not present in table "folders".'),
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.create_folder(dto, sample_user)
+        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+        assert "parent folder does not exist" in exc_info.value.detail
+        mock_folder_repo.db.rollback.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_create_folder_integrity_error_foreign_key_generic(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        dto = FolderCreateDto(
+            name="New Folder",
+            workspace_id=1,
+            parent_id=None,
+        )
+        mock_folder_repo.db.commit.side_effect = IntegrityError(
+            "statement", {}, Exception("foreign key violation")
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.create_folder(dto, sample_user)
+        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+        assert "Referenced entity" in exc_info.value.detail
+        mock_folder_repo.db.rollback.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_create_folder_integrity_error_other(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        dto = FolderCreateDto(
+            name="New Folder",
+            workspace_id=1,
+            parent_id=None,
+        )
+        mock_folder_repo.db.commit.side_effect = IntegrityError(
+            "statement", {}, Exception("CHECK constraint failed")
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.create_folder(dto, sample_user)
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert (
+            "Database integrity constraint violation" in exc_info.value.detail
+        )
+        mock_folder_repo.db.rollback.assert_called_once()
+
 
 class TestGetFolder:
     """Tests for FolderService get operations."""
@@ -529,6 +677,67 @@ class TestUpdateFolder:
             "would exceed maximum folder tree depth of 20 levels"
             in exc_info.value.detail
         )
+
+    @pytest.mark.anyio
+    async def test_update_folder_integrity_error_unique_violation(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        folder = Folder(
+            id=1, workspace_id=1, user_email="a@b.com", name="Old Name"
+        )
+        mock_folder_repo.get_folder_by_id.return_value = folder
+        mock_folder_repo.db.commit.side_effect = IntegrityError(
+            "statement", {}, Exception("Unique violation")
+        )
+
+        dto = FolderUpdateDto(name="New Name")
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.update_folder(1, dto, sample_user)
+        assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+        assert "already exists" in exc_info.value.detail
+        mock_folder_repo.db.rollback.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_update_folder_integrity_error_foreign_key(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        folder = Folder(
+            id=1, workspace_id=1, user_email="a@b.com", name="Old Name"
+        )
+        mock_folder_repo.get_folder_by_id.return_value = folder
+        mock_folder_repo.db.commit.side_effect = IntegrityError(
+            "statement",
+            {},
+            Exception('Key (parent_id)=(5) is not present in table "folders".'),
+        )
+
+        dto = FolderUpdateDto(name="New Name")
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.update_folder(1, dto, sample_user)
+        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+        assert "parent folder does not exist" in exc_info.value.detail
+        mock_folder_repo.db.rollback.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_update_folder_integrity_error_other(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        folder = Folder(
+            id=1, workspace_id=1, user_email="a@b.com", name="Old Name"
+        )
+        mock_folder_repo.get_folder_by_id.return_value = folder
+        mock_folder_repo.db.commit.side_effect = IntegrityError(
+            "statement", {}, Exception("CHECK constraint failed")
+        )
+
+        dto = FolderUpdateDto(name="New Name")
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.update_folder(1, dto, sample_user)
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert (
+            "Database integrity constraint violation" in exc_info.value.detail
+        )
+        mock_folder_repo.db.rollback.assert_called_once()
 
 
 class TestDeleteFolder:

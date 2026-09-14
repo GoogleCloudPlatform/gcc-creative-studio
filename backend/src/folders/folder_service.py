@@ -43,6 +43,84 @@ class FolderService:
     def __init__(self, folder_repo: FolderRepository = Depends()):
         self.folder_repo = folder_repo
 
+    async def _handle_integrity_error(
+        self, e: IntegrityError, folder_name: str
+    ) -> None:
+        """Inspects an IntegrityError and raises an appropriate HTTPException.
+
+        Differentiates between unique constraint violations (e.g. name collisions),
+        foreign key constraint violations (e.g. non-existent workspace, user, parent),
+        and other database integrity errors.
+        """
+        await self.folder_repo.db.rollback()
+        logger.warning(
+            "IntegrityError during folder operation for folder '%s': %s",
+            folder_name,
+            e,
+        )
+
+        orig = getattr(e, "orig", None)
+        pgcode = (
+            getattr(orig, "pgcode", None)
+            or getattr(orig, "sqlstate", None)
+            or getattr(e, "pgcode", None)
+        )
+
+        error_parts = [
+            str(e),
+            str(orig) if orig is not None else "",
+            str(getattr(orig, "detail", "") or ""),
+            str(getattr(orig, "constraint_name", "") or ""),
+        ]
+        diag = getattr(orig, "diag", None)
+        if diag is not None:
+            error_parts.append(str(getattr(diag, "constraint_name", "") or ""))
+            error_parts.append(str(getattr(diag, "message_detail", "") or ""))
+
+        combined_msg = " ".join(error_parts).lower()
+
+        is_fk = (
+            pgcode == "23503"
+            or "foreign key" in combined_msg
+            or "foreignkey" in combined_msg
+            or "is not present in table" in combined_msg
+            or "violates foreign key constraint" in combined_msg
+        )
+        is_unique = (
+            pgcode == "23505"
+            or "unique" in combined_msg
+            or "duplicate key" in combined_msg
+            or "uq_" in combined_msg
+        )
+
+        # 1. Foreign Key Constraint Violation
+        if pgcode == "23503" or (is_fk and not is_unique):
+            if "workspace" in combined_msg:
+                detail = "The specified workspace does not exist."
+            elif "user" in combined_msg:
+                detail = "The specified user does not exist."
+            elif "parent" in combined_msg:
+                detail = "The specified parent folder does not exist."
+            else:
+                detail = "Referenced entity (workspace, user, or parent folder) does not exist."
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=detail,
+            ) from e
+
+        # 2. Unique Constraint Violation
+        if pgcode == "23505" or is_unique:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"A folder named '{folder_name}' already exists in this location.",
+            ) from e
+
+        # 3. Other Database Integrity Errors (e.g. check constraints, not-null constraints)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Database integrity constraint violation.",
+        ) from e
+
     async def create_folder(
         self, dto: FolderCreateDto, user: UserModel
     ) -> FolderResponseDto:
@@ -93,11 +171,7 @@ class FolderService:
             await self.folder_repo.db.commit()
             await self.folder_repo.db.refresh(folder)
         except IntegrityError as e:
-            await self.folder_repo.db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"A folder named '{name}' already exists in this location.",
-            ) from e
+            await self._handle_integrity_error(e, name)
 
         return FolderResponseDto(
             id=folder.id,
@@ -303,11 +377,7 @@ class FolderService:
             await self.folder_repo.db.commit()
             await self.folder_repo.db.refresh(folder)
         except IntegrityError as e:
-            await self.folder_repo.db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"A folder named '{folder.name}' already exists in this location.",
-            ) from e
+            await self._handle_integrity_error(e, folder.name)
 
         item_count, subfolder_count = await self.folder_repo.get_folder_counts(
             folder.id
