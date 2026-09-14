@@ -251,12 +251,11 @@ class TestGetFolder:
 
     @pytest.mark.anyio
     async def test_get_breadcrumbs(self, folder_service, mock_folder_repo):
-        mock_folder_repo.get_folder_by_id.return_value = Folder(
-            id=2, workspace_id=1, user_email="a@b.com", name="Sub"
-        )
         mock_folder_repo.get_breadcrumbs.return_value = [
-            FolderBreadcrumbDto(id=1, name="Root", parent_id=None),
-            FolderBreadcrumbDto(id=2, name="Sub", parent_id=1),
+            FolderBreadcrumbDto(
+                id=1, name="Root", parent_id=None, workspace_id=1
+            ),
+            FolderBreadcrumbDto(id=2, name="Sub", parent_id=1, workspace_id=1),
         ]
 
         result = await folder_service.get_breadcrumbs(
@@ -269,7 +268,7 @@ class TestGetFolder:
     async def test_get_breadcrumbs_not_found(
         self, folder_service, mock_folder_repo
     ):
-        mock_folder_repo.get_folder_by_id.return_value = None
+        mock_folder_repo.get_breadcrumbs.return_value = []
 
         with pytest.raises(HTTPException) as exc_info:
             await folder_service.get_breadcrumbs(folder_id=999)
@@ -279,9 +278,12 @@ class TestGetFolder:
     async def test_get_breadcrumbs_workspace_mismatch(
         self, folder_service, mock_folder_repo
     ):
-        mock_folder_repo.get_folder_by_id.return_value = Folder(
-            id=2, workspace_id=2, user_email="a@b.com", name="Sub"
-        )
+        mock_folder_repo.get_breadcrumbs.return_value = [
+            FolderBreadcrumbDto(
+                id=1, name="Root", parent_id=None, workspace_id=2
+            ),
+            FolderBreadcrumbDto(id=2, name="Sub", parent_id=1, workspace_id=2),
+        ]
 
         with pytest.raises(HTTPException) as exc_info:
             await folder_service.get_breadcrumbs(folder_id=2, workspace_id=1)

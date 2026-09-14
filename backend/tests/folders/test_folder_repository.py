@@ -168,8 +168,12 @@ class TestFolderRepository:
 
     @pytest.mark.anyio
     async def test_get_breadcrumbs(self, folder_repo, mock_db):
-        mock_row1 = SimpleNamespace(id=1, name="Root", parent_id=None)
-        mock_row2 = SimpleNamespace(id=2, name="Child", parent_id=1)
+        mock_row1 = SimpleNamespace(
+            id=1, name="Root", parent_id=None, workspace_id=1
+        )
+        mock_row2 = SimpleNamespace(
+            id=2, name="Child", parent_id=1, workspace_id=1
+        )
         mock_result = MagicMock()
         mock_result.fetchall.return_value = [mock_row1, mock_row2]
         mock_db.execute.return_value = mock_result
@@ -192,8 +196,12 @@ class TestFolderRepository:
 
     @pytest.mark.anyio
     async def test_get_folder_depth(self, folder_repo, mock_db):
-        mock_row1 = SimpleNamespace(id=1, name="Root", parent_id=None)
-        mock_row2 = SimpleNamespace(id=2, name="Child", parent_id=1)
+        mock_row1 = SimpleNamespace(
+            id=1, name="Root", parent_id=None, workspace_id=1
+        )
+        mock_row2 = SimpleNamespace(
+            id=2, name="Child", parent_id=1, workspace_id=1
+        )
         mock_result = MagicMock()
         mock_result.fetchall.return_value = [mock_row1, mock_row2]
         mock_db.execute.return_value = mock_result

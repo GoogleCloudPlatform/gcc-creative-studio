@@ -77,6 +77,7 @@ class FolderBreadcrumbDto(BaseModel):
     id: int
     name: str
     parent_id: int | None = None
+    workspace_id: int | None = None
 
     model_config = ConfigDict(
         from_attributes=True,

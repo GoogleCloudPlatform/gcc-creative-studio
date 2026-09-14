@@ -163,18 +163,23 @@ class FolderService:
         self, folder_id: int, workspace_id: int | None = None
     ) -> list[FolderBreadcrumbDto]:
         """Fetch ancestor breadcrumb trail from root to the given folder."""
-        folder = await self.folder_repo.get_folder_by_id(folder_id)
-        if not folder:
+        breadcrumbs = await self.folder_repo.get_breadcrumbs(folder_id)
+        if not breadcrumbs:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Folder with ID {folder_id} not found.",
             )
-        if workspace_id is not None and folder.workspace_id != workspace_id:
+
+        # Verify the workspace on the target folder (which will be the last item in breadcrumbs)
+        if (
+            workspace_id is not None
+            and breadcrumbs[-1].workspace_id != workspace_id
+        ):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Folder with ID {folder_id} not found in this workspace.",
             )
-        return await self.folder_repo.get_breadcrumbs(folder_id)
+        return breadcrumbs
 
     async def get_folder_tree(
         self, workspace_id: int

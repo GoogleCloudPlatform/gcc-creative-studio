@@ -319,23 +319,26 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         cte_query = text(
             """
             WITH RECURSIVE breadcrumbs AS (
-                SELECT id, name, parent_id, 1 AS depth
+                SELECT id, name, parent_id, workspace_id, 1 AS depth
                 FROM folders
                 WHERE id = :folder_id AND deleted_at IS NULL
                 UNION ALL
-                SELECT f.id, f.name, f.parent_id, b.depth + 1
+                SELECT f.id, f.name, f.parent_id, f.workspace_id, b.depth + 1
                 FROM folders f
                 JOIN breadcrumbs b ON f.id = b.parent_id
                 WHERE f.deleted_at IS NULL
             )
-            SELECT id, name, parent_id FROM breadcrumbs ORDER BY depth DESC;
+            SELECT id, name, parent_id, workspace_id FROM breadcrumbs ORDER BY depth DESC;
             """
         )
         result = await self.db.execute(cte_query, {"folder_id": folder_id})
         rows = result.fetchall()
         return [
             FolderBreadcrumbDto(
-                id=row.id, name=row.name, parent_id=row.parent_id
+                id=row.id,
+                name=row.name,
+                parent_id=row.parent_id,
+                workspace_id=getattr(row, "workspace_id", None),
             )
             for row in rows
         ]
