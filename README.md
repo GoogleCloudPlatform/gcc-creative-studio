@@ -86,6 +86,7 @@ The `bootstrap.sh` script supports several command-line flags to enable fully au
 - **`--auto-approve`** (`-a`): Skips the interactive `yes/no` confirmation prompt during `terraform apply`.
 - **`--skip-builds`**: Prevents the script from automatically triggering Cloud Build for the frontend/backend and skips the wait loops. Ideal if you only want to update infrastructure (Terraform).
 - **`--force-builds`**: Forces the Cloud Build triggers to run without asking for interactive confirmation.
+- **`--skip-migrations`**: Performs an automated SQL dump of the database to GCS, but skips executing the Alembic schema migrations. Use this if you want to delay database changes.
 - **`--help`** (`-h`): Prints the usage menu.
 
 
@@ -108,6 +109,15 @@ The Cloud Build triggers will automatically detect the new code changes and star
 _💡 Tip: If your fork is behind the upstream repository, you will see a **"Sync fork"** or **"Update branch"** button in this section that allows you to pull latest changes automatically with one click._
 
 In case there are infrastructure changes (e.g., new cloud resources or configuration), you may need to redeploy Creative Studio by running Terraform manually. However, that is usually not the case, and if required, a note will be added to the version release documentation.
+
+#### ⚠️ Important: Upgrading from an Older Version (Database Migrations)
+
+If you are upgrading an existing deployment of Creative Studio to a newer version that includes database schema changes (Alembic migrations), please follow these critical steps:
+
+1. **Preventive Backup (Recommended)**: Older versions of Creative Studio (from the `main` branch) did not have Point-In-Time Recovery enabled by default. Before running the deployment script, **manually export a SQL dump** of your database to a GCS bucket using the Google Cloud Console (`Cloud SQL -> Export`). This guarantees your data is safe if a migration fails.
+2. **Automated Migrations**: The `bootstrap.sh` script automatically provisions a temporary Cloud Run Job (`temp-db-bootstrap-job`) to run database migrations and seed new templates. 
+3. **Graceful Failures**: If the migration job fails (e.g., due to conflicting data), the script will **not** abort your deployment. It will print a warning and leave the `temp-db-bootstrap-job` intact. This allows you to inspect the Cloud Run Job logs, resolve the issue, and manually re-execute the job from the GCP Console while the rest of the application finishes deploying.
+4. **Point-In-Time Recovery (PITR)**: Once your infrastructure is updated to this latest version, Point-In-Time Recovery and automated backups will be permanently enabled for your Cloud SQL instance, meaning future manual SQL dumps will no longer be strictly necessary!
 
 <video controls autoplay loop width="100%" style="max-width: 1200px;">
   <source src="./screenshots/how_to_deploy_creative_studio.mp4" type="video/mp4">

@@ -636,39 +636,82 @@ run_terraform() {
     rm -f tfplan
 }
 
-auto_migrate_database() {
-    step 11 "Checking Database Migration Requirements"
-    info "Checking if an existing database migration is required..."
-
-    local ENV_TF_DIR="$REPO_ROOT/infrastructure"
-
-    pushd "$ENV_TF_DIR" > /dev/null
-    local TARGET_INSTANCE=$(terraform output -raw cloud_sql_connection_name 2>/dev/null | cut -d':' -f3 || echo "")
-    popd > /dev/null
-
-    if [ -z "$TARGET_INSTANCE" ]; then
-        info "No active Cloud SQL instance found in Terraform outputs. Skipping migration."
-        return 0
-    fi
-
-    local SOURCE_INSTANCE=$(gcloud sql instances list --project="$GCP_PROJECT_ID" --format="value(name)" | grep -v "$TARGET_INSTANCE" | head -n 1 || echo "")
-
+export_legacy_database() {
+    step 8 "Exporting Legacy Database (if exists)"
+    
+    # Check for legacy instance named "creative-studio-db"
+    local SOURCE_INSTANCE=$(gcloud sql instances list --project="$GCP_PROJECT_ID" --format="value(name)" | grep "creative-studio-db" | head -n 1 || echo "")
+    
     if [ -n "$SOURCE_INSTANCE" ]; then
-        warn "Detected existing database instance: ${C_YELLOW}${SOURCE_INSTANCE}${C_RESET}"
-        info "Checking if automatic data migration to target instance '${TARGET_INSTANCE}' is needed..."
-
+        warn "Detected legacy public database instance: ${C_YELLOW}${SOURCE_INSTANCE}${C_RESET}"
+        info "Exporting data before Terraform replaces it..."
+        
         local ASSET_BUCKET="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
-        local MIGRATE_SCRIPT="$REPO_ROOT/infrastructure/migration/migrate_to_private_db.sh"
-        if [ -f "$MIGRATE_SCRIPT" ]; then
-            info "Starting automatic data migration from ${SOURCE_INSTANCE} to ${TARGET_INSTANCE}..."
-            SOURCE_INSTANCE="$SOURCE_INSTANCE" \
-            TARGET_INSTANCE="$TARGET_INSTANCE" \
-            DATABASE_NAME="creative_studio" \
-            BUCKET_NAME="$ASSET_BUCKET" \
-            bash "$MIGRATE_SCRIPT" || warn "Automatic database migration produced warnings or skipped (target database may already contain data)."
+        
+        local SOURCE_SA
+        SOURCE_SA=$(gcloud sql instances describe "$SOURCE_INSTANCE" --project="$GCP_PROJECT_ID" --format="value(serviceAccountEmailAddress)")
+        
+        info "Granting write access to source instance ($SOURCE_SA)..."
+        gcloud storage buckets add-iam-policy-binding "gs://$ASSET_BUCKET" \
+            --member="serviceAccount:$SOURCE_SA" \
+            --role="roles/storage.objectAdmin" --project="$GCP_PROJECT_ID" >/dev/null 2>&1 || true
+
+        # Stable export file name
+        export LEGACY_EXPORT_FILE="migration_backup.sql.gz"
+        
+        start_spinner "Exporting data to gs://$ASSET_BUCKET/$LEGACY_EXPORT_FILE"
+        if gcloud sql export sql "$SOURCE_INSTANCE" "gs://$ASSET_BUCKET/$LEGACY_EXPORT_FILE" --database="creative_studio" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1; then
+            stop_spinner
+            success "Legacy database successfully exported! Safe for Terraform to proceed."
+            export DID_EXPORT_LEGACY_DB="true"
+        else
+            stop_spinner
+            fail "Failed to export legacy database. Aborting to prevent data loss."
         fi
     else
-        info "No legacy database instance found. Proceeding with fresh deployment."
+        info "No legacy database instance found. Proceeding normally."
+    fi
+}
+
+import_legacy_database() {
+    step 10 "Importing Legacy Database (if applicable)"
+    
+    if [ "$DID_EXPORT_LEGACY_DB" == "true" ] && [ -n "$LEGACY_EXPORT_FILE" ]; then
+        info "An exported legacy database was found in GCS. Restoring to the new Private VPC instance..."
+        
+        local ENV_TF_DIR="$REPO_ROOT/infrastructure"
+        pushd "$ENV_TF_DIR" > /dev/null
+        local TARGET_INSTANCE=$(terraform output -raw cloud_sql_connection_name 2>/dev/null | cut -d':' -f3 || echo "")
+        popd > /dev/null
+
+        if [ -z "$TARGET_INSTANCE" ]; then
+            fail "Could not find the new target Cloud SQL instance in Terraform outputs."
+        fi
+
+        local ASSET_BUCKET="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
+        local TARGET_SA
+        TARGET_SA=$(gcloud sql instances describe "$TARGET_INSTANCE" --project="$GCP_PROJECT_ID" --format="value(serviceAccountEmailAddress)")
+        
+        info "Granting read access to target instance ($TARGET_SA)..."
+        gcloud storage buckets add-iam-policy-binding "gs://$ASSET_BUCKET" \
+            --member="serviceAccount:$TARGET_SA" \
+            --role="roles/storage.objectViewer" --project="$GCP_PROJECT_ID" >/dev/null 2>&1 || true
+            
+        start_spinner "Importing data into $TARGET_INSTANCE from gs://$ASSET_BUCKET/$LEGACY_EXPORT_FILE"
+        if gcloud sql import sql "$TARGET_INSTANCE" "gs://$ASSET_BUCKET/$LEGACY_EXPORT_FILE" --database="creative_studio" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1; then
+            stop_spinner
+            success "Legacy database successfully restored into new private instance!"
+            export DID_MIGRATE_DB="true"  # Triggers the secondary backup in seed_database
+            
+            info "Leaving the old migration backup in GCS as a permanent safeguard: gs://$ASSET_BUCKET/$LEGACY_EXPORT_FILE"
+        else
+            stop_spinner
+            warn "Failed to import legacy database into the new instance. Please check Cloud SQL logs."
+            warn "Your data is still safe in gs://$ASSET_BUCKET/$LEGACY_EXPORT_FILE!"
+            fail "Aborting deployment due to database import failure."
+        fi
+    else
+        info "No legacy migration needed. Skipping import."
     fi
 }
 
@@ -774,6 +817,38 @@ seed_database() {
 
     info "Database: ${DB_CONN_NAME}"
     info "Subnetwork Egress: ${SUBNET_NAME}"
+
+    local INSTANCE_NAME=$(echo "$DB_CONN_NAME" | awk -F: '{print $3}')
+    local ASSET_BUCKET="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
+
+    if [ "$DID_MIGRATE_DB" == "true" ] || [ "$CLI_SKIP_MIGRATIONS" == "true" ]; then
+        info "Starting automated SQL Dump (Preventive Backup) to gs://$ASSET_BUCKET..."
+        local SQL_SA
+        SQL_SA=$(gcloud sql instances describe "$INSTANCE_NAME" --project="$GCP_PROJECT_ID" --format="value(serviceAccountEmailAddress)")
+        if [ -n "$SQL_SA" ]; then
+            info "Granting Cloud SQL Service Account ($SQL_SA) write access to bucket..."
+            gcloud storage buckets add-iam-policy-binding gs://$ASSET_BUCKET --member="serviceAccount:$SQL_SA" --role="roles/storage.objectAdmin" --project="$GCP_PROJECT_ID" >/dev/null 2>&1 || true
+            
+            local BACKUP_FILE="db_backup_$(date +%Y%m%d_%H%M%S).sql"
+            start_spinner "Exporting database to gs://$ASSET_BUCKET/$BACKUP_FILE (Cloud SQL API)"
+            if gcloud sql export sql "$INSTANCE_NAME" "gs://$ASSET_BUCKET/$BACKUP_FILE" --database="$DB_NAME" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1; then
+                stop_spinner
+                success "Database backup successfully exported to gs://$ASSET_BUCKET/$BACKUP_FILE"
+            else
+                stop_spinner
+                warn "Database backup failed. Please check permissions or manually export it."
+            fi
+        else
+            warn "Could not retrieve Cloud SQL service account. Skipping automated backup."
+        fi
+    else
+        info "PITR is already active for this instance. Skipping manual SQL dump."
+    fi
+
+    if [ "$CLI_SKIP_MIGRATIONS" == "true" ]; then
+        warn "Skipping Alembic database migrations as requested by --skip-migrations flag."
+        return 0
+    fi
 
     local STABLE_IMAGE=""
     if [ -n "$BE_BUILD_ID" ]; then
@@ -889,21 +964,23 @@ seed_database() {
             if [ "$SUCCEEDED" == "1" ]; then
                 stop_spinner
                 success "Database migrations and initial database data seeding executed successfully!"
+                
+                # Clean up administrative Job only on success
+                info "Cleaning up temporary seeding job..."
+                gcloud run jobs delete temp-db-bootstrap-job --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --quiet
+                success "Temporary serverless seeding infrastructure securely dismantled."
                 break
             else
                 stop_spinner
-                warn "Database seeding failed. Check logs inside Cloud Run Job console."
-                gcloud run jobs delete temp-db-bootstrap-job --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || true
-                fail "Database initialization aborted due to seeding job error."
+                warn "Database seeding failed! Please check logs in the Cloud Run Job console for 'temp-db-bootstrap-job'."
+                warn "MANUAL MIGRATION REQUIRED: Once you fix the issue, you can manually execute the job again from the Google Cloud Console."
+                warn "The script will continue deploying the Izumi Agent, but the backend may be unstable until the database is successfully migrated."
+                break
             fi
         fi
         sleep 5
     done
 
-    # 5. Clean up administrative Job
-    info "Cleaning up temporary seeding job..."
-    gcloud run jobs delete temp-db-bootstrap-job --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --quiet
-    success "Temporary serverless seeding infrastructure securely dismantled."
 }
 
 trigger_builds() {
@@ -1191,11 +1268,24 @@ main() {
                 shift
                 ;;
             --help|-h)
-                echo "Usage: $0 [--profile <profile_name>] [--auto-approve] [--skip-builds] [--force-builds]"
-                echo "  --profile, -p        Automatically load the specified profile and skip confirmation."
-                echo "  --auto-approve, -a   Skip Terraform confirmation prompts."
+                echo -e "${C_BLUE}"
+                echo -e " ██████ ██████  ███████  █████  ████████ ██ ██    ██ ███████     ███████ ████████ ██    ██ ██████  ██  ██████  "
+                echo -e "██      ██   ██ ██      ██   ██    ██    ██ ██    ██ ██          ██         ██    ██    ██ ██   ██ ██ ██    ██ "
+                echo -e "██      ██████  █████   ███████    ██    ██ ██    ██ █████       ███████    ██    ██    ██ ██   ██ ██ ██    ██ "
+                echo -e "██      ██   ██ ██      ██   ██    ██    ██  ██  ██  ██               ██    ██    ██    ██ ██   ██ ██ ██    ██ "
+                echo -e " ██████ ██   ██ ███████ ██   ██    ██    ██   ████   ███████     ███████    ██     ██████  ██████  ██  ██████   "
+                echo -e "${C_RESET}"
+                echo -e "${C_GREEN}Creative Studio Infrastructure Setup Script${C_RESET}\n"
+                echo "Usage: $0 [FLAGS]"
+                echo ""
+                echo "Flags:"
+                echo "  --profile, -p <name> Automatically load the specified profile and skip the prompt."
+                echo "  --auto-approve, -a   Skip interactive Terraform 'yes/no' confirmation prompts."
                 echo "  --skip-builds        Skip triggering Cloud Build and skip waiting for the backend deployment."
-                echo "  --force-builds       Force trigger Cloud Build without prompting."
+                echo "  --force-builds       Force trigger Cloud Build without interactive prompting."
+                echo "  --skip-migrations    Perform the automated SQL backup, but skip running Alembic database migrations."
+                echo "  --help, -h           Show this help menu and exit."
+                echo ""
                 exit 0
                 ;;
             --skip-builds)
@@ -1204,6 +1294,10 @@ main() {
                 ;;
             --force-builds)
                 CLI_FORCE_BUILDS="true"
+                shift
+                ;;
+            --skip-migrations)
+                CLI_SKIP_MIGRATIONS="true"
                 shift
                 ;;
             *)
@@ -1254,8 +1348,9 @@ main() {
         "configure_environment"
         "handle_manual_steps"
         "setup_firebase_app"
+        "export_legacy_database"
         "run_terraform"
-        "auto_migrate_database"
+        "import_legacy_database"
         "populate_oauth_secrets"
         "update_oauth_client"
         "update_secrets"
