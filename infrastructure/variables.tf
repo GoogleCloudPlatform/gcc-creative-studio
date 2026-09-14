@@ -124,23 +124,29 @@ variable "agent_engine_user_auth_token_key" {
   default     = ""
 }
 
-# --- GitHub CI/CD Configuration ---
-variable "github_conn_name" {
+# --- Repository CI/CD Configuration ---
+variable "repo_conn_name" {
   type        = string
-  description = "The name of the Cloud Build GitHub connection."
+  description = "The name of the Cloud Build repository connection."
 }
 
-variable "github_repo_owner" {
+variable "repo_host" {
   type        = string
-  description = "The owner of the GitHub repository."
+  description = "The host of the repository (e.g., github.com, gitlab.com)."
+  default     = "github.com"
 }
 
-variable "github_repo_name" {
+variable "repo_owner" {
   type        = string
-  description = "The name of the GitHub repository."
+  description = "The owner of the repository."
 }
 
-variable "github_branch_name" {
+variable "repo_name" {
+  type        = string
+  description = "The name of the repository."
+}
+
+variable "repo_branch_name" {
   type        = string
   description = "The branch name to trigger builds from."
 }

@@ -172,6 +172,11 @@ read_state() {
     if [ -f "$STATE_FILE" ]; then
         info "Found previous state file. Resuming..."
         set -a; source "$STATE_FILE"; set +a
+        
+        # Backwards compatibility: migrate legacy GitHub variables to generic Repo variables
+        if [ -n "$GITHUB_REPO_URL" ] && [ -z "$REPO_URL" ]; then REPO_URL="$GITHUB_REPO_URL"; fi
+        if [ -n "$GITHUB_BRANCH" ] && [ -z "$REPO_BRANCH" ]; then REPO_BRANCH="$GITHUB_BRANCH"; fi
+        if [ -n "$GITHUB_CONN_NAME" ] && [ -z "$REPO_CONN_NAME" ]; then REPO_CONN_NAME="$GITHUB_CONN_NAME"; fi
     fi
 }
 
@@ -313,37 +318,37 @@ setup_project() {
 setup_repo() {
     step 4 "Configuring Git Repository"
 
-    if [ -n "$GITHUB_REPO_URL" ] && [ "$GITHUB_REPO_URL" != "unassigned" ]; then
-        info "Using stored repository URL from profile: ${C_YELLOW}${GITHUB_REPO_URL}${C_RESET}"
+    if [ -n "$REPO_URL" ] && [ "$REPO_URL" != "unassigned" ]; then
+        info "Using stored repository URL from profile: ${C_YELLOW}${REPO_URL}${C_RESET}"
     else
         # Since the script is run via curl, it never starts inside a repo. We must clone it.
         warn "Please fork the main repository first: ${UPSTREAM_REPO_URL}/fork"
         while true; do
             prompt "What is the git URL of YOUR forked repository? (e.g., https://github.com/user/repo.git)"
-            read -p "   Git URL: " GITHUB_REPO_URL < /dev/tty
-            if [ -z "$GITHUB_REPO_URL" ]; then warn "Repository URL cannot be empty."; continue; fi
+            read -p "   Git URL: " REPO_URL < /dev/tty
+            if [ -z "$REPO_URL" ]; then warn "Repository URL cannot be empty."; continue; fi
             info "Validating repository URL..."
-            if git ls-remote --exit-code -h "$GITHUB_REPO_URL" > /dev/null 2>&1; then
+            if git ls-remote --exit-code -h "$REPO_URL" > /dev/null 2>&1; then
                 success "Repository found."; break
             else warn "Repository not found at that URL. Please check for typos and try again."; fi
         done
-        write_state "GITHUB_REPO_URL" "$GITHUB_REPO_URL"
+        write_state "REPO_URL" "$REPO_URL"
     fi
 
     # --- Ask for Branch ---
-    if [ -n "$GITHUB_BRANCH" ] && [ "$GITHUB_BRANCH" != "unassigned" ]; then
-        SELECTED_BRANCH="$GITHUB_BRANCH"
+    if [ -n "$REPO_BRANCH" ] && [ "$REPO_BRANCH" != "unassigned" ]; then
+        SELECTED_BRANCH="$REPO_BRANCH"
         info "Using stored Git branch from profile: ${C_YELLOW}${SELECTED_BRANCH}${C_RESET}"
     else
         prompt "Which git branch would you like to use? (default: main)"
         read -p "   Branch Name: " SELECTED_BRANCH < /dev/tty
         SELECTED_BRANCH=${SELECTED_BRANCH:-main}
-        GITHUB_BRANCH="$SELECTED_BRANCH"
-        write_state "GITHUB_BRANCH" "$GITHUB_BRANCH"
+        REPO_BRANCH="$SELECTED_BRANCH"
+        write_state "REPO_BRANCH" "$REPO_BRANCH"
     fi
     DEFAULT_BRANCH_NAME="$SELECTED_BRANCH"
 
-    local REPO_CLONE_DIR=$(basename "$GITHUB_REPO_URL" .git)
+    local REPO_CLONE_DIR=$(basename "$REPO_URL" .git)
 
     if [[ -d "$REPO_CLONE_DIR" ]]; then
         info "Directory '$REPO_CLONE_DIR' already exists. Updating from remote..."
@@ -354,7 +359,7 @@ setup_repo() {
         info "Performing a sparse checkout of '$REPO_CLONE_DIR' (Branch: $SELECTED_BRANCH)..."
         
         # 1. Clone with -b branch_name
-        git clone --filter=blob:none --no-checkout --depth 1 --sparse -b "$SELECTED_BRANCH" "$GITHUB_REPO_URL" "$REPO_CLONE_DIR"
+        git clone --filter=blob:none --no-checkout --depth 1 --sparse -b "$SELECTED_BRANCH" "$REPO_URL" "$REPO_CLONE_DIR"
         
         cd "$REPO_CLONE_DIR"
         
@@ -386,13 +391,27 @@ setup_repo() {
     write_state "REPO_ROOT" "$REPO_ROOT"
     success "Project root successfully set to: $REPO_ROOT"
 
-    GITHUB_REPO_OWNER=$(git remote get-url origin 2>/dev/null | sed -n 's/.*github.com[:\/]\([^/]*\)\/.*/\1/p' || echo "")
-    GITHUB_REPO_NAME=$REPO_CLONE_DIR
-    write_state "GITHUB_REPO_OWNER" "$GITHUB_REPO_OWNER"
-    write_state "GITHUB_REPO_NAME" "$GITHUB_REPO_NAME"
+    if [[ "$REPO_URL" =~ ^https://([^/]+)/([^/]+)/([^/.]+)(\.git)?$ ]]; then
+        REPO_HOST="${BASH_REMATCH[1]}"
+        REPO_OWNER="${BASH_REMATCH[2]}"
+        REPO_NAME="${BASH_REMATCH[3]}"
+    elif [[ "$REPO_URL" =~ ^git@([^:]+):([^/]+)/([^/.]+)(\.git)?$ ]]; then
+        REPO_HOST="${BASH_REMATCH[1]}"
+        REPO_OWNER="${BASH_REMATCH[2]}"
+        REPO_NAME="${BASH_REMATCH[3]}"
+    else
+        REPO_HOST="github.com"
+        REPO_OWNER=$(git remote get-url origin 2>/dev/null | sed -n 's/.*github.com[:\/]\([^/]*\)\/.*/\1/p' || echo "")
+        REPO_NAME=$REPO_CLONE_DIR
+    fi
 
-    info "Detected GitHub owner: $GITHUB_REPO_OWNER"
-    info "Detected GitHub repo name: $GITHUB_REPO_NAME"
+    write_state "REPO_HOST" "$REPO_HOST"
+    write_state "REPO_OWNER" "$REPO_OWNER"
+    write_state "REPO_NAME" "$REPO_NAME"
+
+    info "Detected repository host: $REPO_HOST"
+    info "Detected repository owner: $REPO_OWNER"
+    info "Detected repository name: $REPO_NAME"
 }
 
 configure_environment() {
@@ -430,11 +449,18 @@ configure_environment() {
     BUCKET_PREFIX=$(printf "$GCS_BUCKET_PREFIX_FORMAT" "$ENV_NAME")
     info "Creating backend config file ${ENV_NAME}.backend.tfvars..."; echo -e "bucket = \"$BUCKET_NAME\"\nprefix = \"$BUCKET_PREFIX\"" > "$ENV_DIR/${ENV_NAME}.backend.tfvars"
     
-    if [ -z "$GITHUB_REPO_NAME" ]; then
-        GITHUB_REPO_NAME=$(basename "$GITHUB_REPO_URL" .git)
-        GITHUB_REPO_OWNER=$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null | sed -n 's/.*github.com[:\/]\([^/]*\)\/.*/\1/p' || echo "")
-        write_state "GITHUB_REPO_NAME" "$GITHUB_REPO_NAME"
-        write_state "GITHUB_REPO_OWNER" "$GITHUB_REPO_OWNER"
+    if [ -z "$REPO_NAME" ]; then
+        REPO_NAME=$(basename "$REPO_URL" .git)
+        if [[ "$REPO_URL" =~ ^https://([^/]+)/([^/]+)/ ]]; then
+            REPO_HOST="${BASH_REMATCH[1]}"
+            REPO_OWNER="${BASH_REMATCH[2]}"
+        elif [[ "$REPO_URL" =~ ^git@([^:]+):([^/]+)/ ]]; then
+            REPO_HOST="${BASH_REMATCH[1]}"
+            REPO_OWNER="${BASH_REMATCH[2]}"
+        fi
+        write_state "REPO_NAME" "$REPO_NAME"
+        write_state "REPO_HOST" "$REPO_HOST"
+        write_state "REPO_OWNER" "$REPO_OWNER"
     fi
 
     info "Creating or repairing $TFVARS_FILE_PATH with required root parameters..."
@@ -444,33 +470,37 @@ region             = "us-central1"
 environment        = "$ENV_NAME"
 resource_prefix    = "cs"
 firebase_site_id   = "YOUR_FIREBASE_SITE_ID"
-github_repo_owner  = "$GITHUB_REPO_OWNER"
-github_repo_name   = "$GITHUB_REPO_NAME"
-github_branch_name = "$GITHUB_BRANCH"
-github_conn_name   = "${GITHUB_CONN_NAME:-}"
+repo_host          = "$REPO_HOST"
+repo_owner         = "$REPO_OWNER"
+repo_name          = "$REPO_NAME"
+repo_branch_name   = "$REPO_BRANCH"
+repo_conn_name     = "${REPO_CONN_NAME:-}"
 EOF
     info "Default service names will be '$BE_SERVICE_NAME' and '$FE_SERVICE_NAME'."
-    write_state "ENV_NAME" "$ENV_NAME"; write_state "BE_SERVICE_NAME" "$BE_SERVICE_NAME"; write_state "FE_SERVICE_NAME" "$FE_SERVICE_NAME"; write_state "GITHUB_BRANCH" "$GITHUB_BRANCH"; write_state "TF_BUCKET_NAME" "$BUCKET_NAME"
+    write_state "ENV_NAME" "$ENV_NAME"; write_state "BE_SERVICE_NAME" "$BE_SERVICE_NAME"; write_state "FE_SERVICE_NAME" "$FE_SERVICE_NAME"; write_state "REPO_BRANCH" "$REPO_BRANCH"; write_state "TF_BUCKET_NAME" "$BUCKET_NAME"
     success "Configuration files for '$ENV_NAME' environment are ready."
 }
 
 handle_manual_steps() {
     step 6 "Manual Steps Required"; cd "$REPO_ROOT/infrastructure"; TFVARS_FILE_PATH="$ENV_DIR/$ENV_NAME.tfvars"
     info "Enabling required Google Cloud APIs..."; gcloud services enable cloudbuild.googleapis.com secretmanager.googleapis.com firebase.googleapis.com iap.googleapis.com identitytoolkit.googleapis.com texttospeech.googleapis.com workflows.googleapis.com sqladmin.googleapis.com --project="$GCP_PROJECT_ID"
-    if [ -z "$GITHUB_CONN_NAME" ]; then
-        prompt "\nDo you already have a Cloud Build Host Connection for GitHub in this project? (y/n)"; read -r REPLY < /dev/tty
-        if [[ $REPLY =~ ^[Yy]$ ]]; then prompt "Please enter the existing connection name:"; read -p "   Connection Name: " GITHUB_CONN_NAME < /dev/tty
+    if [ -z "$REPO_CONN_NAME" ]; then
+        local PROVIDER_NAME="GitHub"
+        if [[ "$REPO_HOST" == *"gitlab"* ]]; then PROVIDER_NAME="GitLab"; fi
+        
+        prompt "\nDo you already have a Cloud Build Host Connection for $PROVIDER_NAME in this project? (y/n)"; read -r REPLY < /dev/tty
+        if [[ $REPLY =~ ^[Yy]$ ]]; then prompt "Please enter the existing connection name:"; read -p "   Connection Name: " REPO_CONN_NAME < /dev/tty
         else
-            warn "You will now be guided to create a new GitHub connection."; info "Please perform the following manual steps:"
+            warn "You will now be guided to create a new $PROVIDER_NAME connection."; info "Please perform the following manual steps:"
             echo "1. Open this URL in your browser:"; echo -e "   ${C_YELLOW}https://console.cloud.google.com/cloud-build/connections/create?project=${GCP_PROJECT_ID}${C_RESET}"
-            echo "2. Select 'GitHub (Cloud Build GitHub App)' and click 'CONTINUE'."
-            echo "3. Follow the prompts to authorize the app on your GitHub account."; 
-            echo "4. Grant access to your forked repository: '${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}'."
-            echo "5. After creating the connection, copy its name (e.g., 'gh-yourname-con')."
-            prompt "Paste the new Cloud Build Connection Name here:"; read -p "   Connection Name: " GITHUB_CONN_NAME < /dev/tty
+            echo "2. Select your provider ('GitHub' or 'GitLab') and click 'CONTINUE'."
+            echo "3. Follow the prompts to authorize the app on your $PROVIDER_NAME account."; 
+            echo "4. Grant access to your forked repository: '${REPO_OWNER}/${REPO_NAME}'."
+            echo "5. After creating the connection, copy its name (e.g., 'gh-yourname-con' or 'gl-yourname-con')."
+            prompt "Paste the new Cloud Build Connection Name here:"; read -p "   Connection Name: " REPO_CONN_NAME < /dev/tty
         fi
-        sed -i.bak "s|^[#[:space:]]*github_conn_name[[:space:]]*=.*|github_conn_name = \"$GITHUB_CONN_NAME\"|g" "$TFVARS_FILE_PATH"
-        write_state "GITHUB_CONN_NAME" "$GITHUB_CONN_NAME"
+        sed -i.bak "s|^[#[:space:]]*repo_conn_name[[:space:]]*=.*|repo_conn_name = \"$REPO_CONN_NAME\"|g" "$TFVARS_FILE_PATH"
+        write_state "REPO_CONN_NAME" "$REPO_CONN_NAME"
     fi
     if [ -z "$FIREBASE_TERMS_ACCEPTED" ]; then
         warn "\nTerraform cannot accept legal terms on your behalf."; info "Please perform this one-time manual step for Firebase:"
@@ -993,8 +1023,8 @@ trigger_builds() {
     fi
 
     if [ -z "$BRANCH_TO_USE" ] || [ "$BRANCH_TO_USE" = "HEAD" ]; then
-        if [ -n "$GITHUB_BRANCH" ] && [ "$GITHUB_BRANCH" != "HEAD" ]; then
-            BRANCH_TO_USE="$GITHUB_BRANCH"
+        if [ -n "$REPO_BRANCH" ] && [ "$REPO_BRANCH" != "HEAD" ]; then
+            BRANCH_TO_USE="$REPO_BRANCH"
         elif git show-ref --verify --quiet refs/heads/develop || git show-ref --verify --quiet refs/remotes/origin/develop; then
             BRANCH_TO_USE="develop"
         else
@@ -1166,7 +1196,7 @@ select_deployment_profile() {
             local p_file="${profiles[$i]}"
             local p_name=$(basename "$p_file")
             local p_proj=$(grep "^GCP_PROJECT_ID=" "$p_file" | cut -d'=' -f2 || echo "unassigned")
-            local p_branch=$(grep "^GITHUB_BRANCH=" "$p_file" | cut -d'=' -f2 || echo "main")
+            local p_branch=$(grep "^REPO_BRANCH=" "$p_file" | cut -d'=' -f2 || echo "main")
             echo -e "    [$((i + 1))] ${C_YELLOW}${p_name}${C_RESET} (Project: ${p_proj} | Branch: ${p_branch})"
         done
         echo "    [N] + Create a brand new deployment profile"
@@ -1219,18 +1249,18 @@ select_deployment_profile() {
         fi
     done
         
-        if [ -z "$GCP_PROJECT_ID" ] && [ -z "$GITHUB_REPO_URL" ]; then
+        if [ -z "$GCP_PROJECT_ID" ] && [ -z "$REPO_URL" ]; then
             info "Profile '${C_YELLOW}$(basename "$STATE_FILE" .cstudio_bootstrap.conf)${C_RESET}' is fresh or unassigned. Interactive prompts will now guide you to complete missing settings and automatically save them to this profile!"
             return 0
         fi
 
         echo -e "${C_CYAN}➡️  Loaded Profile Parameters:${C_RESET}"
         echo "    • GCP Project ID:         ${GCP_PROJECT_ID:-unassigned}"
-        echo "    • Fork Repository URL:    ${GITHUB_REPO_URL:-unassigned}"
-        echo "    • Deployment Branch:      ${GITHUB_BRANCH:-main}"
+        echo "    • Fork Repository URL:    ${REPO_URL:-unassigned}"
+        echo "    • Deployment Branch:      ${REPO_BRANCH:-main}"
         echo "    • Environment Name:       ${ENV_NAME:-unassigned}"
         echo "    • Terraform State Bucket: ${TF_BUCKET_NAME:-unassigned}"
-        echo "    • Cloud Build Conn Name:  ${GITHUB_CONN_NAME:-unassigned}"
+        echo "    • Cloud Build Conn Name:  ${REPO_CONN_NAME:-unassigned}"
         echo "    • OAuth Web Client ID:    ${AUTO_OAUTH_CLIENT_ID:-unassigned}"
         echo "    • Firebase Site ID:       ${AUTO_FIREBASE_SITE_ID:-unassigned}"
         
@@ -1242,8 +1272,8 @@ select_deployment_profile() {
                 prompt "Would you like to reset OAuth Client ID, Firebase Site ID, and Cloud Build connection to be prompted again? (y/N)"
                 read -p "   Reset OAuth/Conn [y/N]: " RESET_AUTH < /dev/tty
                 if [[ "$RESET_AUTH" =~ ^[Yy]$ ]]; then
-                    unset AUTO_OAUTH_CLIENT_ID GITHUB_CONN_NAME AUTO_FIREBASE_SITE_ID
-                    sed -i.bak '/^AUTO_OAUTH_CLIENT_ID=/d;/^GITHUB_CONN_NAME=/d;/^AUTO_FIREBASE_SITE_ID=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"
+                    unset AUTO_OAUTH_CLIENT_ID REPO_CONN_NAME AUTO_FIREBASE_SITE_ID
+                    sed -i.bak '/^AUTO_OAUTH_CLIENT_ID=/d;/^REPO_CONN_NAME=/d;/^AUTO_FIREBASE_SITE_ID=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"
                 fi
             fi
         else

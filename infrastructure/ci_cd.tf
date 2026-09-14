@@ -1,10 +1,10 @@
-# --- GitHub Repository Connection ---
+# --- Source Repository Connection ---
 resource "google_cloudbuildv2_repository" "source_repo" {
   provider          = google-beta
-  name              = var.github_repo_name
+  name              = var.repo_name
   location          = var.region
-  parent_connection = "projects/${var.project_id}/locations/${var.region}/connections/${var.github_conn_name}"
-  remote_uri        = "https://github.com/${var.github_repo_owner}/${var.github_repo_name}.git"
+  parent_connection = "projects/${var.project_id}/locations/${var.region}/connections/${var.repo_conn_name}"
+  remote_uri        = "https://${var.repo_host}/${var.repo_owner}/${var.repo_name}.git"
 }
 
 # --- Cloud Build Trigger Service Account ---
@@ -93,7 +93,7 @@ resource "google_cloudbuild_trigger" "frontend_trigger" {
   repository_event_config {
     repository = google_cloudbuildv2_repository.source_repo.id
     push {
-      branch = "^${var.github_branch_name}$"
+      branch = "^${var.repo_branch_name}$"
     }
   }
 
@@ -117,7 +117,7 @@ resource "google_cloudbuild_trigger" "backend_trigger" {
   repository_event_config {
     repository = google_cloudbuildv2_repository.source_repo.id
     push {
-      branch = "^${var.github_branch_name}$"
+      branch = "^${var.repo_branch_name}$"
     }
   }
 

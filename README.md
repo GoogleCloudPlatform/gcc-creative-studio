@@ -174,7 +174,7 @@ The deployment script (`bootstrap.sh`) is responsible for populating the actual 
 
 Regarding the dependencies of the APIs and Services we’ll use (the Google APIs `‘xxxx.googleapis.com’` will be enabled by the script automatically):
 
-- `Github Account` (You must have a Github Account to fork the repository)
+- `GitHub or GitLab Account` (You must have a repository account to fork the repository)
 - `Google Cloud Account` (A GCP Project)
 
 ---
