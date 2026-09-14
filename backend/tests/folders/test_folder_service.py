@@ -585,7 +585,7 @@ class TestMoveItems:
         )
 
     @pytest.mark.anyio
-    async def test_move_items_foreign_folder_skipped_no_recursive_queries(
+    async def test_move_items_foreign_folder_raises_404(
         self, folder_service, mock_folder_repo, sample_user
     ):
         mock_folder_repo.get_folder_by_id.return_value = Folder(
@@ -593,9 +593,6 @@ class TestMoveItems:
         )
         # Folder 999 belongs to another workspace, so get_folders_by_ids returns empty
         mock_folder_repo.get_folders_by_ids.return_value = []
-        mock_folder_repo.move_media_items.return_value = 0
-        mock_folder_repo.move_source_assets.return_value = 0
-        mock_folder_repo.move_folders.return_value = 0
 
         dto = MoveItemsDto(
             workspace_id=1,
@@ -603,25 +600,22 @@ class TestMoveItems:
             destination_folder_id=5,
         )
 
-        result = await folder_service.move_items(dto, sample_user)
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.move_items(dto, sample_user)
+        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+        assert (
+            "One or more specified folders were not found in this workspace."
+            in exc_info.value.detail
+        )
         mock_folder_repo.get_folders_by_ids.assert_awaited_once_with(
             folder_ids=[999], workspace_id=1
         )
         mock_folder_repo.get_descendant_ids.assert_not_called()
         mock_folder_repo.get_subtree_depth.assert_not_called()
-        mock_folder_repo.move_folders.assert_awaited_once_with(
-            folder_ids=[],
-            workspace_id=1,
-            destination_folder_id=5,
-            conflict_strategy=ConflictStrategyEnum.KEEP_BOTH,
-            user_id=10,
-            user_email="test@example.com",
-        )
-        assert result["folders_moved"] == 0
-        assert result["total_moved"] == 0
+        mock_folder_repo.move_folders.assert_not_called()
 
     @pytest.mark.anyio
-    async def test_move_items_mixed_valid_and_foreign_folders(
+    async def test_move_items_mixed_valid_and_foreign_folders_raises_404(
         self, folder_service, mock_folder_repo, sample_user
     ):
         mock_folder_repo.get_folder_by_id.return_value = Folder(
@@ -631,10 +625,6 @@ class TestMoveItems:
         mock_folder_repo.get_folders_by_ids.return_value = [
             Folder(id=2, workspace_id=1, user_email="a@b.com", name="Folder 2")
         ]
-        mock_folder_repo.get_descendant_ids.return_value = [2]
-        mock_folder_repo.move_media_items.return_value = 0
-        mock_folder_repo.move_source_assets.return_value = 0
-        mock_folder_repo.move_folders.return_value = 1
 
         dto = MoveItemsDto(
             workspace_id=1,
@@ -642,13 +632,48 @@ class TestMoveItems:
             destination_folder_id=5,
         )
 
-        result = await folder_service.move_items(dto, sample_user)
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.move_items(dto, sample_user)
+        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+        assert (
+            "One or more specified folders were not found in this workspace."
+            in exc_info.value.detail
+        )
         mock_folder_repo.get_folders_by_ids.assert_awaited_once_with(
             folder_ids=[2, 999], workspace_id=1
         )
-        # Recursive queries only called for folder 2, never for folder 999
-        mock_folder_repo.get_descendant_ids.assert_called_once_with(2)
-        mock_folder_repo.get_subtree_depth.assert_called_once_with(2)
+        mock_folder_repo.get_descendant_ids.assert_not_called()
+        mock_folder_repo.get_subtree_depth.assert_not_called()
+        mock_folder_repo.move_folders.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_move_items_duplicate_folder_ids_success(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.get_folder_by_id.return_value = Folder(
+            id=5, workspace_id=1, user_email="a@b.com", name="Target"
+        )
+        mock_folder_repo.get_folder_depth.return_value = 1
+        mock_folder_repo.get_folders_by_ids.return_value = [
+            Folder(id=2, workspace_id=1, user_email="a@b.com", name="Folder 2")
+        ]
+        mock_folder_repo.get_descendant_ids.return_value = [2]
+        mock_folder_repo.get_subtree_depth.return_value = 1
+        mock_folder_repo.get_existing_folders_map.return_value = {}
+        mock_folder_repo.move_media_items.return_value = 0
+        mock_folder_repo.move_source_assets.return_value = 0
+        mock_folder_repo.move_folders.return_value = 1
+
+        dto = MoveItemsDto(
+            workspace_id=1,
+            folder_ids=[2, 2],
+            destination_folder_id=5,
+        )
+
+        result = await folder_service.move_items(dto, sample_user)
+        mock_folder_repo.get_folders_by_ids.assert_awaited_once_with(
+            folder_ids=[2], workspace_id=1
+        )
         mock_folder_repo.move_folders.assert_awaited_once_with(
             folder_ids=[2],
             workspace_id=1,
@@ -658,7 +683,6 @@ class TestMoveItems:
             user_email="test@example.com",
         )
         assert result["folders_moved"] == 1
-        assert result["total_moved"] == 1
 
     @pytest.mark.anyio
     async def test_move_items_to_root_success(
@@ -855,6 +879,75 @@ class TestCopyItems:
         with pytest.raises(HTTPException) as exc_info:
             await folder_service.copy_items(dto, sample_user)
         assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+
+    @pytest.mark.anyio
+    async def test_copy_items_source_folder_not_found_raises_404(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.get_folder_by_id.return_value = Folder(
+            id=5, workspace_id=1, user_email="a@b.com", name="Target"
+        )
+        mock_folder_repo.get_folder_depth.return_value = 1
+        mock_folder_repo.get_folders_by_ids.return_value = []
+
+        dto = CopyItemsDto(
+            workspace_id=1,
+            folder_ids=[999],
+            destination_folder_id=5,
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.copy_items(dto, sample_user)
+        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+        assert (
+            "One or more specified folders were not found in this workspace."
+            in exc_info.value.detail
+        )
+        mock_folder_repo.get_folders_by_ids.assert_awaited_once_with(
+            folder_ids=[999], workspace_id=1
+        )
+        mock_folder_repo.copy_items.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_copy_items_duplicate_folder_ids_success(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.get_folder_by_id.return_value = Folder(
+            id=5, workspace_id=1, user_email="a@b.com", name="Target"
+        )
+        mock_folder_repo.get_folder_depth.return_value = 1
+        mock_folder_repo.get_folders_by_ids.return_value = [
+            Folder(id=2, workspace_id=1, user_email="a@b.com", name="Folder 2")
+        ]
+        mock_folder_repo.get_subtree_depth.return_value = 1
+        mock_folder_repo.copy_items.return_value = {
+            "media_items_copied": 0,
+            "source_assets_copied": 0,
+            "folders_copied": 1,
+            "total_copied": 1,
+        }
+
+        dto = CopyItemsDto(
+            workspace_id=1,
+            folder_ids=[2, 2],
+            destination_folder_id=5,
+        )
+
+        result = await folder_service.copy_items(dto, sample_user)
+        mock_folder_repo.get_folders_by_ids.assert_awaited_once_with(
+            folder_ids=[2], workspace_id=1
+        )
+        mock_folder_repo.copy_items.assert_awaited_once_with(
+            workspace_id=1,
+            media_item_ids=[],
+            source_asset_ids=[],
+            folder_ids=[2],
+            destination_folder_id=5,
+            conflict_strategy=ConflictStrategyEnum.KEEP_BOTH,
+            user_id=10,
+            user_email="test@example.com",
+        )
+        assert result["folders_copied"] == 1
 
     @pytest.mark.anyio
     async def test_copy_items_folder_max_depth_exceeded(

@@ -323,7 +323,8 @@ class FolderService:
         # Validate folder moves against cycle creation and tree depth limit
         valid_folder_ids: list[int] = []
         if dto.folder_ids:
-            for f_id in dto.folder_ids:
+            unique_folder_ids = list(dict.fromkeys(dto.folder_ids))
+            for f_id in unique_folder_ids:
                 if dest_folder_id == f_id:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
@@ -333,9 +334,14 @@ class FolderService:
             # Validate workspace ownership in a single batch query beforehand to prevent
             # executing expensive recursive queries on foreign/invalid folders.
             folders = await self.folder_repo.get_folders_by_ids(
-                folder_ids=dto.folder_ids,
+                folder_ids=unique_folder_ids,
                 workspace_id=dto.workspace_id,
             )
+            if len(folders) != len(unique_folder_ids):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="One or more specified folders were not found in this workspace.",
+                )
 
             for folder in folders:
                 f_id = folder.id
@@ -432,10 +438,16 @@ class FolderService:
 
         valid_folder_ids: list[int] = []
         if dto.folder_ids:
+            unique_folder_ids = list(dict.fromkeys(dto.folder_ids))
             folders = await self.folder_repo.get_folders_by_ids(
-                folder_ids=dto.folder_ids,
+                folder_ids=unique_folder_ids,
                 workspace_id=dto.workspace_id,
             )
+            if len(folders) != len(unique_folder_ids):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="One or more specified folders were not found in this workspace.",
+                )
 
             for folder in folders:
                 f_id = folder.id

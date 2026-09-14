@@ -103,7 +103,9 @@ export class FolderCardComponent {
         ghost.style.gap = '6px';
         ghost.style.boxShadow = '0 6px 20px rgba(0, 0, 0, 0.4)';
         ghost.style.zIndex = '99999';
-        ghost.innerHTML = `<span>📁 Moving folder "${this.folder.name}"</span>`;
+        const label = document.createElement('span');
+        label.textContent = `📁 Moving folder "${this.folderName}"`;
+        ghost.appendChild(label);
         document.body.appendChild(ghost);
         event.dataTransfer.setDragImage(ghost, 20, 20);
         setTimeout(() => {
