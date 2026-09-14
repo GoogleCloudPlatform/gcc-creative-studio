@@ -42,6 +42,7 @@ import {
 import {MediaResolutionService} from '../shared/media-resolution.service';
 import {
   NodeTypes,
+  Point,
   StepInputValue,
   StepOutputReference,
   StepStatusEnum,
@@ -78,10 +79,7 @@ import {SaveTemplateModalComponent} from './save-template-modal/save-template-mo
 import {WorkflowFormService} from './workflow-form.service';
 import * as d3 from 'd3';
 
-export type Point = {
-  x: number;
-  y: number;
-};
+export {Point} from '../workflow.models';
 
 export type Edge = {
   path: string;
@@ -271,21 +269,23 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   undo() {
     if (this.historyIndex > 0) {
       this.historyIndex--;
-      const state = this.historyStack[this.historyIndex];
-      this.formService.patchData(state.form);
-      this.nodePositions = JSON.parse(JSON.stringify(state.positions));
-      setTimeout(() => this.updateEdges(), 0);
+      this.applyHistoryState();
     }
   }
 
   redo() {
     if (this.historyIndex < this.historyStack.length - 1) {
       this.historyIndex++;
-      const state = this.historyStack[this.historyIndex];
-      this.formService.patchData(state.form);
-      this.nodePositions = JSON.parse(JSON.stringify(state.positions));
-      setTimeout(() => this.updateEdges(), 0);
+      this.applyHistoryState();
     }
+  }
+
+  private applyHistoryState(): void {
+    const state = this.historyStack[this.historyIndex];
+    this.formService.patchData(state.form);
+    this.nodePositions = JSON.parse(JSON.stringify(state.positions));
+    this.workflowForm.markAsDirty();
+    setTimeout(() => this.updateEdges(), 0);
   }
 
   onCanvasMouseDown(event: MouseEvent): void {
@@ -376,8 +376,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
           this.stopPollingExecution();
 
           if (this.displayedWorkflow) {
-            this.formService.patchData(this.displayedWorkflow);
-            setTimeout(() => this.updateEdges(), 0);
+            this.loadAndSetData();
           }
         }
       });
@@ -447,8 +446,8 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   }
 
   private loadAndSetData() {
-    this.loadNodePositions();
     this.formService.patchData(this.displayedWorkflow);
+    this.loadNodePositions(this.displayedWorkflow);
     setTimeout(() => this.updateEdges(), 100);
   }
 
@@ -514,19 +513,30 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
 
   // --- Canvas Logic ---
 
-  loadNodePositions(): void {
-    if (isPlatformBrowser(this.platformId)) {
-      const saved = localStorage.getItem(
-        `workflow_positions_${this.workflowId || 'new'}`,
-      );
-      if (saved) {
-        try {
-          this.nodePositions = JSON.parse(saved);
-        } catch (e) {
-          console.error('Failed to parse saved node positions', e);
+  loadNodePositions(
+    sourceWorkflow?: WorkflowModel | WorkflowBase | WorkflowTemplate | null,
+  ): void {
+    const dbPositions: {[stepId: string]: Point} = {};
+    if (sourceWorkflow && Array.isArray(sourceWorkflow.steps)) {
+      sourceWorkflow.steps.forEach((step: WorkflowStep) => {
+        if (
+          step.stepId &&
+          step.position &&
+          typeof step.position.x === 'number' &&
+          typeof step.position.y === 'number'
+        ) {
+          dbPositions[step.stepId] = {
+            x: step.position.x,
+            y: step.position.y,
+          };
         }
-      }
+      });
     }
+
+    this.nodePositions = {
+      ...dbPositions,
+    };
+
     // Assign defaults for missing nodes
     if (!this.nodePositions['user_input']) {
       let centerX = 100;
@@ -546,15 +556,6 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         this.nodePositions[stepId] = {x: 100 + index * 300, y: 100};
       }
     });
-  }
-
-  saveNodePositions(): void {
-    if (isPlatformBrowser(this.platformId)) {
-      localStorage.setItem(
-        `workflow_positions_${this.workflowId || 'new'}`,
-        JSON.stringify(this.nodePositions),
-      );
-    }
   }
 
   getNodePosition(stepId: string): Point {
@@ -679,8 +680,8 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   @HostListener('window:mouseup')
   onMouseUp(): void {
     if (this.draggingNodeId) {
-      this.saveNodePositions();
       this.saveHistoryState();
+      this.workflowForm.markAsDirty();
       this.draggingNodeId = null;
     }
     if (this.dragSourcePort) {
@@ -1164,18 +1165,25 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
 
   addStepToForm(type: string, existingData?: any) {
     this.formService.addStep(type, existingData);
+    this.workflowForm.markAsDirty();
     // Give it a default position near the center of the current view
     setTimeout(() => {
       const stepIndex = this.stepsArray.length - 1;
       const stepId = this.stepsArray.at(stepIndex).get('stepId')?.value;
       if (stepId) {
-        // Find view center
-        const viewCenterX =
-          -this.currentTransform.x / this.currentTransform.k + 200;
-        const viewCenterY =
-          -this.currentTransform.y / this.currentTransform.k + 200;
-        this.nodePositions[stepId] = {x: viewCenterX, y: viewCenterY};
-        this.saveNodePositions();
+        if (existingData?.position) {
+          this.nodePositions[stepId] = {
+            x: existingData.position.x,
+            y: existingData.position.y,
+          };
+        } else {
+          // Find view center
+          const viewCenterX =
+            -this.currentTransform.x / this.currentTransform.k + 200;
+          const viewCenterY =
+            -this.currentTransform.y / this.currentTransform.k + 200;
+          this.nodePositions[stepId] = {x: viewCenterX, y: viewCenterY};
+        }
       }
     });
   }
@@ -1200,16 +1208,19 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     const oldPos = this.nodePositions[oldStepId] || {x: 0, y: 0};
 
     // Offset the cloned node slightly
-    this.nodePositions[stepData.stepId] = {x: oldPos.x + 40, y: oldPos.y + 40};
+    const newPos = {x: oldPos.x + 40, y: oldPos.y + 40};
+    this.nodePositions[stepData.stepId] = newPos;
+    stepData.position = newPos;
 
     this.formService.addStep(stepData.type, stepData);
-    this.saveNodePositions();
+    this.workflowForm.markAsDirty();
     this.saveHistoryState();
   }
 
   deleteStep(index: number) {
     const deletedStepId = this.formService.deleteStep(index);
     this.formService.updateAfterDelete(); // Trigger update in service
+    this.workflowForm.markAsDirty();
 
     // Update selectedStepIndex
     if (this.selectedStepIndex === index) {
@@ -1221,10 +1232,12 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       this.selectedStepIndex--;
     }
 
-    // Clear dependents
+    // Clear dependents and node position
     if (deletedStepId) {
+      delete this.nodePositions[deletedStepId];
       this.clearDependents(deletedStepId);
     }
+    this.saveHistoryState();
     this.updateEdges();
   }
 
@@ -1262,6 +1275,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
 
   dropStep(event: CdkDragDrop<string[]>) {
     this.formService.moveStep(event.previousIndex, event.currentIndex);
+    this.workflowForm.markAsDirty();
 
     // Update selectedStepIndex if it was affected
     if (this.selectedStepIndex !== null) {
@@ -1365,7 +1379,6 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             this.mode = EditorMode.Edit;
             this.workflowId = response.id;
             this.workflowForm.patchValue({id: response.id});
-            this.saveNodePositions();
             // Update URL without reloading
             void this.router.navigate(['/workflows', 'edit', response.id], {
               replaceUrl: true,
@@ -1527,7 +1540,6 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       this.selectedStepIndex = null;
       this.selectedNodeId = null;
       this.loadNodePositions();
-      this.saveNodePositions();
       this.saveHistoryState();
       setTimeout(() => this.updateEdges(), 100);
       return;
@@ -1543,16 +1555,11 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     this.formService.patchData(templateData);
     this.workflowForm.markAsDirty();
 
-    if (template.positions) {
-      this.nodePositions = JSON.parse(JSON.stringify(template.positions));
-    } else {
-      this.nodePositions = {};
-      this.loadNodePositions();
-    }
+    this.nodePositions = {};
+    this.loadNodePositions(template);
 
     this.selectedStepIndex = null;
     this.selectedNodeId = null;
-    this.saveNodePositions();
     this.saveHistoryState();
     setTimeout(() => this.updateEdges(), 100);
   }
@@ -1568,6 +1575,10 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   private prepareSteps(formValue: any): any[] {
     const steps = formValue.steps.map((step: any) => {
       const newStep = {...step};
+      const pos = this.nodePositions[newStep.stepId] || newStep.position;
+      if (pos && typeof pos.x === 'number' && typeof pos.y === 'number') {
+        newStep.position = {x: pos.x, y: pos.y};
+      }
       if (newStep.inputs) {
         const newInputs = {...newStep.inputs};
         Object.keys(newInputs).forEach(key => {
@@ -1613,13 +1624,26 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       });
     }
 
-    const user_input_step = {
+    const userInputPos =
+      this.nodePositions[NodeTypes.USER_INPUT] || formValue.userInput?.position;
+
+    const user_input_step: any = {
       ...formValue.userInput,
       outputs: userInputOutputs,
       stepId: `${NodeTypes.USER_INPUT}`,
       type: NodeTypes.USER_INPUT,
       status: StepStatusEnum.IDLE,
     };
+    if (
+      userInputPos &&
+      typeof userInputPos.x === 'number' &&
+      typeof userInputPos.y === 'number'
+    ) {
+      user_input_step.position = {
+        x: userInputPos.x,
+        y: userInputPos.y,
+      };
+    }
     return [user_input_step, ...steps];
   }
 
