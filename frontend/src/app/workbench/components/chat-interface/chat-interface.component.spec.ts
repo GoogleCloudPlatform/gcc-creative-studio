@@ -1382,6 +1382,7 @@ describe('ChatInterfaceComponent', () => {
       expect(component['extractGateFromEvent'](userEvent)).toBeNull();
 
       const userRoleEvent = {
+        author: 'user',
         content: {
           role: 'user',
           parts: [
@@ -1552,6 +1553,314 @@ describe('ChatInterfaceComponent', () => {
       TestBed.flushEffects();
 
       expect(component['submittedGateCallIds'].size).toBe(0);
+    });
+
+    it('should extract payload and options from functionCall.args in extractGateFromEvent', () => {
+      const eventWithObjArgs = {
+        content: {
+          parts: [
+            {
+              functionCall: {
+                id: 'call_args_1',
+                name: 'await_strategy_approval',
+                args: {
+                  message: 'Custom strategy proposal from args',
+                  options: ['accept', 'modify'],
+                },
+              },
+            },
+          ],
+        },
+      };
+
+      const gate = component['extractGateFromEvent'](eventWithObjArgs);
+      expect(gate).toBeTruthy();
+      expect(gate?.callId).toBe('call_args_1');
+      expect(gate?.toolName).toBe('await_strategy_approval');
+      expect(gate?.stage).toBe('strategy');
+      expect(gate?.payload?.message).toBe('Custom strategy proposal from args');
+      expect(gate?.options).toEqual(['accept', 'modify']);
+
+      const eventWithStringArgs = {
+        content: {
+          parts: [
+            {
+              functionCall: {
+                id: 'call_args_2',
+                name: 'await_storyboard_approval',
+                args: JSON.stringify({
+                  message: 'Stringified storyboard proposal',
+                }),
+              },
+            },
+          ],
+        },
+      };
+
+      const gate2 = component['extractGateFromEvent'](eventWithStringArgs);
+      expect(gate2).toBeTruthy();
+      expect(gate2?.payload?.message).toBe('Stringified storyboard proposal');
+      expect(gate2?.options).toEqual(['accept', 'modify', 'regenerate']);
+    });
+
+    it('should fail explicitly in handleGateDecision if callId is missing', () => {
+      component.currentSessionId = 'sess-123';
+      component.activeApprovalGate.set({
+        callId: '',
+        toolName: 'await_storyboard_approval',
+        stage: 'storyboard',
+      });
+      agentChatService.sendMessage = jasmine.createSpy('sendMessage');
+
+      component.handleGateDecision({
+        decision: 'accept',
+        guidance: '',
+      });
+
+      expect(agentChatService.sendMessage).not.toHaveBeenCalled();
+      expect(component.activeApprovalGate()).toBeNull();
+    });
+
+    it('should not resolve storyboard gate when storyboard_agent_creative or director_agent is called', () => {
+      const events = [
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  id: 'call_sb_subagent',
+                  name: 'await_storyboard_approval',
+                },
+              },
+            ],
+          },
+        },
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  name: 'storyboard_agent_creative',
+                },
+              },
+            ],
+          },
+        },
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  name: 'director_agent',
+                },
+              },
+            ],
+          },
+        },
+      ];
+
+      const gate = component['checkUnresolvedGate'](events);
+      expect(gate).toBeTruthy();
+      expect(gate?.callId).toBe('call_sb_subagent');
+      expect(gate?.stage).toBe('storyboard');
+    });
+
+    it('should ignore candidate gates with missing or empty callId in checkUnresolvedGate', () => {
+      const events = [
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  id: '',
+                  name: 'await_storyboard_approval',
+                },
+              },
+            ],
+          },
+        },
+      ];
+
+      const gate = component['checkUnresolvedGate'](events);
+      expect(gate).toBeNull();
+    });
+
+    it('should sync sessionId to router queryParams when creating session on first message', () => {
+      component.currentSessionId = null;
+      component.chatInputValue.set('Start campaign');
+      spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
+
+      const newSession: any = {
+        id: 'new_session_999',
+        user_id: 'user1',
+        created_at: new Date().toISOString(),
+        title: 'New Session',
+        session_id: 'new_session_999',
+      };
+      (agentChatService.createSession as jasmine.Spy).and.returnValue(
+        of(newSession),
+      );
+      agentChatService.sendMessage = jasmine
+        .createSpy('sendMessage')
+        .and.returnValue(Promise.resolve());
+
+      component.sendChatMessage('Start campaign');
+
+      expect(router.navigate).toHaveBeenCalledWith([], {
+        relativeTo: (component as any).route,
+        queryParams: {
+          sessionId: 'new_session_999',
+        },
+        queryParamsHandling: 'merge',
+      });
+    });
+
+    describe('Error Handling & In-Chat Recovery', () => {
+      it('should translate error codes into friendly user messages in getFriendlyErrorMessage', () => {
+        const err429 = {
+          status: 429,
+          message: 'ResourceExhausted quota exceeded',
+        };
+        const res429 = component.getFriendlyErrorMessage(err429);
+        expect(res429.code).toBe(429);
+        expect(res429.text).toContain('AI Model Quota Exceeded');
+
+        const err503 = {status: 503, message: 'Service UNAVAILABLE'};
+        const res503 = component.getFriendlyErrorMessage(err503);
+        expect(res503.code).toBe(503);
+        expect(res503.text).toContain('Agent Service Unavailable');
+
+        const err504 = {status: 504, message: 'DeadlineExceeded timeout'};
+        const res504 = component.getFriendlyErrorMessage(err504);
+        expect(res504.code).toBe(504);
+        expect(res504.text).toContain('Request Timed Out');
+
+        const err400 = {status: 400, message: 'InvalidArgument'};
+        const res400 = component.getFriendlyErrorMessage(err400);
+        expect(res400.code).toBe(400);
+        expect(res400.text).toContain('Invalid Request');
+
+        const errGeneric = new Error('Something broke');
+        const resGeneric = component.getFriendlyErrorMessage(errGeneric);
+        expect(resGeneric.code).toBe(500);
+        expect(resGeneric.text).toContain('Agent Execution Failed');
+      });
+
+      it('should append an in-chat error message card and reset isTyping when onError fires', () => {
+        component.currentSessionId = 's_err_test';
+        component.isTyping.set(true);
+        component.isSubmittingGate.set(true);
+
+        const callbacks = component['setupCallbacks']();
+        callbacks.onError!({code: 429, message: 'ResourceExhausted'});
+
+        expect(component.isTyping()).toBeFalse();
+        expect(component.isSubmittingGate()).toBeFalse();
+
+        const messages = component.chatMessages();
+        const lastMsg = messages[messages.length - 1];
+        expect(lastMsg).toBeTruthy();
+        expect(lastMsg.isError).toBeTrue();
+        expect(lastMsg.errorCode).toBe(429);
+        expect(lastMsg.sender).toBe('agent');
+        expect(lastMsg.text).toContain('AI Model Quota Exceeded');
+      });
+
+      it('should remove error message and re-send chat payload when retryLastAction is called', () => {
+        component.currentSessionId = 's_retry_test';
+        agentChatService.sendMessage = jasmine
+          .createSpy('sendMessage')
+          .and.returnValue(Promise.resolve());
+
+        // Simulate sending a chat message
+        component['executeSendMessage']('Create a campaign');
+        expect(component['lastExecutedAction']).toEqual({
+          type: 'chat',
+          text: 'Create a campaign',
+          partsParams: [{text: 'Create a campaign'}],
+        });
+
+        // Trigger onError
+        const callbacks = component['setupCallbacks']();
+        callbacks.onError!({code: 429, message: 'ResourceExhausted'});
+        expect(component.chatMessages().some(m => m.isError)).toBeTrue();
+
+        // Retry
+        component.retryLastAction();
+        expect(component.chatMessages().some(m => m.isError)).toBeFalse();
+        expect(component.isTyping()).toBeTrue();
+        expect(agentChatService.sendMessage).toHaveBeenCalledWith(
+          's_retry_test',
+          [{text: 'Create a campaign'}],
+          jasmine.anything(),
+          jasmine.anything(),
+        );
+      });
+
+      it('should remove error message and re-send gate payload when retryLastAction is called for gate decision', () => {
+        component.currentSessionId = 's_retry_gate';
+        agentChatService.sendMessage = jasmine
+          .createSpy('sendMessage')
+          .and.returnValue(Promise.resolve());
+
+        component.activeApprovalGate.set({
+          callId: 'call_gate_retry',
+          toolName: 'await_storyboard_approval',
+          stage: 'storyboard',
+          options: ['accept', 'modify', 'regenerate'],
+        });
+
+        component.handleGateDecision({decision: 'accept', guidance: ''});
+        expect(component['lastExecutedAction']?.type).toBe('gate');
+
+        // Trigger onError
+        const callbacks = component['setupCallbacks']();
+        callbacks.onError!({code: 503, message: 'Unavailable'});
+        expect(component.chatMessages().some(m => m.isError)).toBeTrue();
+
+        // Retry
+        component.retryLastAction();
+        expect(component.chatMessages().some(m => m.isError)).toBeFalse();
+        expect(component.isSubmittingGate()).toBeTrue();
+        expect(agentChatService.sendMessage).toHaveBeenCalled();
+      });
+
+      it('should detect Gate 4 even when content.role is "user" in extractGateFromEvent and checkUnresolvedGate', () => {
+        const gate4Event = {
+          author: 'final_cut_gate_agent',
+          content: {
+            role: 'user',
+            parts: [
+              {
+                functionResponse: {
+                  id: 'call_final_cut_123',
+                  name: 'await_final_cut_approval',
+                  response: {
+                    status: 'awaiting_human_review',
+                    stage: 'final_cut',
+                    options: ['accept', 'modify', 'regenerate'],
+                  },
+                },
+              },
+            ],
+          },
+        };
+
+        const extracted = component['extractGateFromEvent'](gate4Event);
+        expect(extracted).toBeTruthy();
+        expect(extracted?.callId).toBe('call_final_cut_123');
+        expect(extracted?.toolName).toBe('await_final_cut_approval');
+        expect(extracted?.stage).toBe('final_cut');
+
+        const unresolved = component['checkUnresolvedGate']([gate4Event]);
+        expect(unresolved).toBeTruthy();
+        expect(unresolved?.callId).toBe('call_final_cut_123');
+        expect(unresolved?.stage).toBe('final_cut');
+      });
     });
   });
 });

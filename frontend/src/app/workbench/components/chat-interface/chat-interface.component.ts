@@ -29,6 +29,7 @@ import {
 } from '@angular/core';
 import {
   AgentChatService,
+  ChatMessageUI,
   SSECallbacks,
 } from '../../services/agent-chat.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
@@ -111,12 +112,20 @@ export class ChatInterfaceComponent
   private lastWorkspaceId: number | null =
     this.workspaceStateService.getActiveWorkspaceId();
   private isProgrammaticWorkspaceSwitch = false;
+  private lastExecutedAction: {
+    type: 'chat' | 'gate';
+    text?: string;
+    partsParams?: any;
+    submission?: ApprovalGateSubmission;
+    gate?: ApprovalGateInfo;
+  } | null = null;
 
   private sessionSelectorEffect = effect(() => {
     const sessionId = this.agentChatService.selectedSessionId();
     if (sessionId && sessionId !== this.currentSessionId) {
       this.currentSessionId = sessionId;
       this.submittedGateCallIds.clear();
+      this.lastExecutedAction = null;
       this.loadChatMessages(sessionId);
     }
   });
@@ -531,10 +540,8 @@ export class ChatInterfaceComponent
                         this.shouldScrollToBottom = true;
                         this.checkAndResumePolling(res);
 
-                        // Synchronize URL: clear sessionId only if storyboard is present, otherwise keep sessionId
-                        const targetSessionId = res.storyboard?.id
-                          ? null
-                          : res.session.id;
+                        // Synchronize URL: retain both sessionId and storyboardId
+                        const targetSessionId = res.session.id;
                         const targetStoryboardId = res.storyboard?.id || null;
                         void this.router.navigate([], {
                           relativeTo: this.route,
@@ -656,7 +663,7 @@ export class ChatInterfaceComponent
             this.shouldScrollToBottom = true;
 
             // Sync URL query parameters
-            const targetSessionId = res.storyboard?.id ? null : activeSessionId;
+            const targetSessionId = activeSessionId;
             const targetStoryboardId = res.storyboard?.id || null;
             void this.router.navigate([], {
               relativeTo: this.route,
@@ -817,6 +824,7 @@ export class ChatInterfaceComponent
     this.agentChatService.stopPolling();
     this.isLoadingHistory.set(false);
     this.currentSessionId = null;
+    this.lastExecutedAction = null;
     this.agentChatService.selectedSessionId.set(null);
     this.chatMessages.set([]);
     this.activeApprovalGate.set(null);
@@ -838,6 +846,7 @@ export class ChatInterfaceComponent
     if (sessionId && sessionId !== this.currentSessionId) {
       this.activeApprovalGate.set(null);
       this.currentSessionId = sessionId;
+      this.lastExecutedAction = null;
       this.loadChatMessages(sessionId);
     }
   }
@@ -845,6 +854,7 @@ export class ChatInterfaceComponent
     this.agentChatService.stopPolling();
     this.agentChatService.activeAgent.set(agentValue);
     this.currentSessionId = null;
+    this.lastExecutedAction = null;
     this.activeApprovalGate.set(null);
     this.chatMessages.set([]);
     this.sessions.set([]);
@@ -901,6 +911,13 @@ export class ChatInterfaceComponent
           this.sessions.update(s => [session, ...s]);
           this.currentSessionId = session.id;
           this.agentChatService.selectedSessionId.set(session.id);
+          void this.router.navigate([], {
+            relativeTo: this.route,
+            queryParams: {
+              sessionId: session.id,
+            },
+            queryParamsHandling: 'merge',
+          });
           this.executeSendMessage(text);
         },
         error: err => {
@@ -965,9 +982,15 @@ export class ChatInterfaceComponent
         partsParams.push({sourceAssetId: img.id});
       }
     }
+    const messagePayload = partsParams.length > 0 ? partsParams : text;
+    this.lastExecutedAction = {
+      type: 'chat',
+      text,
+      partsParams: messagePayload,
+    };
     void this.agentChatService.sendMessage(
       this.currentSessionId!,
-      partsParams.length > 0 ? partsParams : text,
+      messagePayload,
       workspaceId,
       callbacks,
     );
@@ -978,9 +1001,19 @@ export class ChatInterfaceComponent
     const gate = this.visibleApprovalGate() || this.activeApprovalGate();
     if (!gate || !this.currentSessionId || this.isSubmittingGate()) return;
 
-    if (gate.callId) {
-      this.submittedGateCallIds.add(gate.callId);
+    if (!gate.callId) {
+      handleErrorSnackbar(
+        this.snackBar,
+        new Error(
+          'Cannot submit approval: missing tool call identifier for this checkpoint. Please ask the agent to continue or start a new chat.',
+        ),
+        'Approval Checkpoint',
+      );
+      this.activeApprovalGate.set(null);
+      return;
     }
+
+    this.submittedGateCallIds.add(gate.callId);
 
     const decisionText =
       submission.decision === 'accept'
@@ -1012,6 +1045,13 @@ export class ChatInterfaceComponent
       },
     ];
 
+    this.lastExecutedAction = {
+      type: 'gate',
+      submission,
+      gate,
+      partsParams,
+    };
+
     this.isSubmittingGate.set(true);
     this.activeApprovalGate.set(null);
     this.isTyping.set(true);
@@ -1035,13 +1075,8 @@ export class ChatInterfaceComponent
   private extractGateFromEvent(event: any): ApprovalGateInfo | null {
     if (!event) return null;
 
-    // Filter out user messages completely - user messages are never approval gates!
-    if (
-      event.author === 'user' ||
-      event.role === 'user' ||
-      event.content?.role === 'user' ||
-      event.raw_event?.author === 'user'
-    ) {
+    // Filter out user authored events
+    if (event.author === 'user' || event.raw_event?.author === 'user') {
       return null;
     }
 
@@ -1072,6 +1107,15 @@ export class ChatInterfaceComponent
           return null;
         }
 
+        let payload = fc.args || fc.arguments;
+        if (typeof payload === 'string') {
+          try {
+            payload = JSON.parse(payload);
+          } catch (e) {
+            // ignore
+          }
+        }
+
         return {
           callId,
           toolName: fc.name,
@@ -1082,7 +1126,8 @@ export class ChatInterfaceComponent
               : fc.name.includes('frame')
                 ? 'frames'
                 : 'final_cut',
-          options: ['accept', 'modify', 'regenerate'],
+          payload: payload || undefined,
+          options: payload?.options || ['accept', 'modify', 'regenerate'],
         };
       }
 
@@ -1158,25 +1203,68 @@ export class ChatInterfaceComponent
     return null;
   }
 
-  private checkUnresolvedGate(
-    events: any[],
-    state?: any,
-  ): ApprovalGateInfo | null {
-    if (!events || events.length === 0) return null;
+  private isToolResolvingStage(toolName: string, stage?: string): boolean {
+    if (!toolName) return false;
 
-    const resolvingToolNames = new Set([
-      'record_strategy_decision',
-      'record_storyboard_decision',
-      'record_frame_decision',
-      'record_final_cut_decision',
+    // Director agent is supervisor orchestrator, never a resolving tool
+    if (toolName === 'director_agent') return false;
+
+    // Stage-specific decision records
+    if (
+      toolName === 'record_strategy_decision' ||
+      toolName === 'record_storyboard_decision' ||
+      toolName === 'record_frame_decision' ||
+      toolName === 'record_final_cut_decision'
+    ) {
+      return true;
+    }
+
+    if (stage === 'strategy') {
+      return (
+        toolName === 'record_strategy_decision' ||
+        toolName === 'storyboard_agent_creative' ||
+        toolName === 'storyboard_agent_templated' ||
+        toolName === 'generate_scene_frames' ||
+        toolName === 'frames_agent' ||
+        toolName === 'generate_scene_videos' ||
+        toolName === 'videos_agent' ||
+        toolName === 'stitch_final_video'
+      );
+    }
+
+    if (stage === 'storyboard') {
+      return (
+        toolName === 'record_storyboard_decision' ||
+        toolName === 'generate_scene_frames' ||
+        toolName === 'frames_agent' ||
+        toolName === 'generate_scene_videos' ||
+        toolName === 'videos_agent' ||
+        toolName === 'stitch_final_video'
+      );
+    }
+
+    if (stage === 'frames') {
+      return (
+        toolName === 'record_frame_decision' ||
+        toolName === 'generate_scene_videos' ||
+        toolName === 'videos_agent' ||
+        toolName === 'stitch_final_video'
+      );
+    }
+
+    if (stage === 'final_cut') {
+      return (
+        toolName === 'record_final_cut_decision' ||
+        toolName === 'stitch_final_video'
+      );
+    }
+
+    const downstreamTools = new Set([
       'generate_scene_frames',
       'frames_agent',
       'generate_scene_videos',
       'videos_agent',
       'stitch_final_video',
-      'storyboard_agent_creative',
-      'storyboard_agent_templated',
-      'director_agent',
       'generate_scene_media',
       'stitch_video_timeline',
       'render_clip',
@@ -1189,38 +1277,38 @@ export class ChatInterfaceComponent
       'regenerate_all_media',
       'regenerate_music',
     ]);
+    return downstreamTools.has(toolName);
+  }
+
+  private checkUnresolvedGate(
+    events: any[],
+    state?: any,
+  ): ApprovalGateInfo | null {
+    if (!events || events.length === 0) return null;
 
     let candidateGate: ApprovalGateInfo | null = null;
 
     for (let i = 0; i < events.length; i++) {
       const ev = events[i];
-      const isUser =
-        ev.author === 'user' ||
-        ev.role === 'user' ||
-        ev.content?.role === 'user' ||
-        ev.raw_event?.author === 'user';
-
-      if (!isUser) {
-        const gate = this.extractGateFromEvent(ev);
-        if (gate) {
-          if (!gate.callId || !this.submittedGateCallIds.has(gate.callId)) {
-            if (
-              candidateGate !== null &&
-              candidateGate.stage === gate.stage &&
-              (candidateGate.toolName === gate.toolName || !gate.callId)
-            ) {
-              candidateGate = {
-                callId: gate.callId || candidateGate.callId,
-                toolName: gate.toolName || candidateGate.toolName,
-                stage: gate.stage || candidateGate.stage,
-                options: gate.options || candidateGate.options,
-                payload: gate.payload || candidateGate.payload,
-              };
-            } else {
-              candidateGate = gate;
-            }
-            continue;
+      const gate = this.extractGateFromEvent(ev);
+      if (gate) {
+        if (!gate.callId || !this.submittedGateCallIds.has(gate.callId)) {
+          if (
+            candidateGate !== null &&
+            candidateGate.stage === gate.stage &&
+            (candidateGate.toolName === gate.toolName || !gate.callId)
+          ) {
+            candidateGate = {
+              callId: gate.callId || candidateGate.callId,
+              toolName: gate.toolName || candidateGate.toolName,
+              stage: gate.stage || candidateGate.stage,
+              options: gate.options || candidateGate.options,
+              payload: gate.payload || candidateGate.payload,
+            };
+          } else {
+            candidateGate = gate;
           }
+          continue;
         }
       }
 
@@ -1238,13 +1326,21 @@ export class ChatInterfaceComponent
             p.toolResponse ||
             p.tool_response;
 
+          let frResult = fr?.response?.result || fr?.response;
+          if (typeof frResult === 'string') {
+            try {
+              frResult = JSON.parse(frResult);
+            } catch (e) {
+              // ignore
+            }
+          }
+
           if (
-            (isUser &&
-              fr &&
-              (fr.name === candidateGate.toolName ||
+            (fr &&
+              (frResult?.decision ||
                 (candidateGate.callId && fr.id === candidateGate.callId))) ||
-            (fc && resolvingToolNames.has(fc.name)) ||
-            (fr && resolvingToolNames.has(fr.name))
+            (fc && this.isToolResolvingStage(fc.name, candidateGate.stage)) ||
+            (fr && this.isToolResolvingStage(fr.name, candidateGate.stage))
           ) {
             isResolved = true;
             break;
@@ -1268,7 +1364,7 @@ export class ChatInterfaceComponent
       }
     }
 
-    if (!candidateGate) return null;
+    if (!candidateGate || !candidateGate.callId) return null;
 
     // Check if session state shows the stage is already decided
     if (state) {
@@ -1412,34 +1508,10 @@ export class ChatInterfaceComponent
           this.isSubmittingGate.set(false);
           this.agentChatService.isGeneratingStoryboard.set(false);
         } else {
-          const resolvingToolNames = new Set([
-            'record_strategy_decision',
-            'record_storyboard_decision',
-            'record_frame_decision',
-            'record_final_cut_decision',
-            'generate_scene_frames',
-            'frames_agent',
-            'generate_scene_videos',
-            'videos_agent',
-            'stitch_final_video',
-            'storyboard_agent_creative',
-            'storyboard_agent_templated',
-            'director_agent',
-            'generate_scene_media',
-            'stitch_video_timeline',
-            'render_clip',
-            'edit_scene',
-            'add_scene',
-            'remove_scene',
-            'reorder_scenes',
-            'regenerate_scene',
-            'regenerate_storyboard',
-            'regenerate_all_media',
-            'regenerate_music',
-          ]);
           const parts =
             data.content?.parts || data.raw_event?.content?.parts || [];
           let shouldClear = false;
+          const currentStage = this.activeApprovalGate()?.stage;
           for (const p of parts) {
             const fc =
               p.functionCall || p.function_call || p.toolCall || p.tool_call;
@@ -1449,8 +1521,8 @@ export class ChatInterfaceComponent
               p.toolResponse ||
               p.tool_response;
             if (
-              (fc && resolvingToolNames.has(fc.name)) ||
-              (fr && resolvingToolNames.has(fr.name))
+              (fc && this.isToolResolvingStage(fc.name, currentStage)) ||
+              (fr && this.isToolResolvingStage(fr.name, currentStage))
             ) {
               shouldClear = true;
               break;
@@ -1605,14 +1677,39 @@ export class ChatInterfaceComponent
       },
       onError: err => {
         console.error('SSE Error:', err);
-        if ((err as any)?.status === 503) {
+        const friendly = this.getFriendlyErrorMessage(err);
+        if (friendly.code === 503) {
           console.warn(
             'Backend returned 503: Agent Engine is likely missing AGENT_ENGINE_RESOURCE_NAME in environment.',
           );
           this.agentUnavailable.set(true);
         } else {
-          handleErrorSnackbar(this.snackBar, err, 'Storyboard Generation');
+          handleErrorSnackbar(this.snackBar, err, 'Agent Execution');
         }
+
+        // If an empty partial agent message was created before error, clean it up
+        if (agentMessageIndex !== -1) {
+          const currentMsgs = this.chatMessages();
+          const partialMsg = currentMsgs[agentMessageIndex];
+          if (partialMsg && !partialMsg.text?.trim() && !partialMsg.asset) {
+            this.chatMessages.update(msgs =>
+              msgs.filter((_, idx) => idx !== agentMessageIndex),
+            );
+          }
+        }
+
+        const errorMessage: ChatMessageUI = {
+          sender: 'agent',
+          text: friendly.text,
+          isError: true,
+          errorCode: friendly.code,
+          errorType: friendly.type,
+          timestamp: new Date(),
+        };
+
+        this.chatMessages.update(msgs => [...msgs, errorMessage]);
+        this.shouldScrollToBottom = true;
+
         this.isTyping.set(false);
         this.isSubmittingGate.set(false);
         this.agentChatService.isGeneratingStoryboard.set(false);
@@ -1923,6 +2020,111 @@ export class ChatInterfaceComponent
       if (asset.presignedUrl) return asset.presignedUrl;
       return `${environment.backendURL}/assets/source-assets/${asset.id}/download`;
     }
+  }
+
+  getFriendlyErrorMessage(err: any): {
+    text: string;
+    code?: number;
+    type?: string;
+  } {
+    let code: number | undefined = (err as any)?.code || (err as any)?.status;
+    let type: string | undefined = (err as any)?.type;
+    const rawMsg =
+      ((err as any)?.message || (typeof err === 'string' ? err : '')) + '';
+
+    if (!code) {
+      if (
+        rawMsg.includes('429') ||
+        rawMsg.includes('ResourceExhausted') ||
+        rawMsg.toLowerCase().includes('quota')
+      ) {
+        code = 429;
+        type = 'quota_exceeded';
+      } else if (rawMsg.includes('503') || rawMsg.includes('UNAVAILABLE')) {
+        code = 503;
+        type = 'service_unavailable';
+      } else if (
+        rawMsg.includes('504') ||
+        rawMsg.includes('DeadlineExceeded') ||
+        rawMsg.toLowerCase().includes('timeout')
+      ) {
+        code = 504;
+        type = 'timeout';
+      } else if (rawMsg.includes('400') || rawMsg.includes('InvalidArgument')) {
+        code = 400;
+        type = 'invalid_argument';
+      }
+    }
+
+    if (code === 429 || type === 'quota_exceeded') {
+      return {
+        text: 'AI Model Quota Exceeded: The agent has temporarily reached its rate or quota limit. Please wait a moment and retry.',
+        code: 429,
+        type: 'quota_exceeded',
+      };
+    }
+
+    if (code === 503 || type === 'service_unavailable') {
+      return {
+        text: 'Agent Service Unavailable: The agent reasoning engine or foundation model is temporarily unreachable. Please retry shortly.',
+        code: 503,
+        type: 'service_unavailable',
+      };
+    }
+
+    if (code === 504 || type === 'timeout') {
+      return {
+        text: 'Request Timed Out: The agent took too long generating a response or media. Please retry.',
+        code: 504,
+        type: 'timeout',
+      };
+    }
+
+    if (code === 400 || type === 'invalid_argument') {
+      return {
+        text: 'Invalid Request: The agent received conflicting instructions or parameters. Please try rephrasing your request.',
+        code: 400,
+        type: 'invalid_argument',
+      };
+    }
+
+    return {
+      text: 'Agent Execution Failed: An unexpected error occurred while processing your request. Please try again.',
+      code: code || 500,
+      type: type || 'unknown',
+    };
+  }
+
+  retryLastAction() {
+    if (this.isBusy() || !this.lastExecutedAction || !this.currentSessionId) {
+      return;
+    }
+
+    // Remove the error card from the chat
+    this.chatMessages.update(msgs => msgs.filter(m => !m.isError));
+
+    const action = this.lastExecutedAction;
+    this.isTyping.set(true);
+    if (this.currentAgent === 'ads_x') {
+      this.agentChatService.isGeneratingStoryboard.set(true);
+    }
+    this.shouldScrollToBottom = true;
+
+    if (action.type === 'gate') {
+      this.isSubmittingGate.set(true);
+      this.activeApprovalGate.set(null);
+    }
+
+    this.agentChatService.stopPolling();
+    const callbacks = this.setupCallbacks();
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+
+    void this.agentChatService.sendMessage(
+      this.currentSessionId,
+      action.partsParams,
+      workspaceId,
+      callbacks,
+    );
   }
 
   toggleInputExpand() {

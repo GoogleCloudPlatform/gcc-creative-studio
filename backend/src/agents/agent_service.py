@@ -968,19 +968,54 @@ class AgentService:
                 try:
                     import json
 
+                    error_type = "unknown"
+                    code = 500
+                    err_str = str(e)
+                    if (
+                        "429" in err_str
+                        or "ResourceExhausted" in err_str
+                        or "quota" in err_str.lower()
+                    ):
+                        error_type = "quota_exceeded"
+                        code = 429
+                    elif "503" in err_str or "UNAVAILABLE" in err_str:
+                        error_type = "service_unavailable"
+                        code = 503
+                    elif (
+                        "504" in err_str
+                        or "DeadlineExceeded" in err_str
+                        or "timeout" in err_str.lower()
+                    ):
+                        error_type = "timeout"
+                        code = 504
+                    elif "400" in err_str or "InvalidArgument" in err_str:
+                        error_type = "invalid_argument"
+                        code = 400
+
                     async with async_session_local() as db_session:
                         repo = AgentRepository(db_session)
                         error_msg = (
-                            f"Internal error streaming from agent: {str(e)}"
+                            f"Internal error streaming from agent: {err_str}"
                         )
-                        error_event = json.dumps({"error": error_msg})
+                        error_event = json.dumps(
+                            {
+                                "error": error_msg,
+                                "code": code,
+                                "type": error_type,
+                            }
+                        )
                         await repo.add_chat_event(
                             user_id=user_id,
                             session_id=session_id,
                             payload={"raw": f"data: {error_event}\n\n"},
                         )
+                        await repo.add_chat_event(
+                            user_id=user_id,
+                            session_id=session_id,
+                            payload={"raw": "data: [DONE]\n\n"},
+                        )
                         logger.info(
-                            f"[Agent Stream] Error event saved for session_id={session_id}"
+                            f"[Agent Stream] Error event saved for session_id={session_id}, code={code}, type={error_type}"
                         )
                 except Exception as save_err:
                     logger.error(

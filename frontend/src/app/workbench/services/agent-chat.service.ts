@@ -56,6 +56,20 @@ export interface ChatMessage {
   parts: ChatMessagePart[];
 }
 
+export interface ChatMessageUI {
+  sender: 'user' | 'agent';
+  text: string;
+  timestamp: Date;
+  asset?: any;
+  storyboard?: any;
+  images?: any[];
+  isHidden?: boolean;
+  rawText?: string;
+  isError?: boolean;
+  errorCode?: number;
+  errorType?: string;
+}
+
 export interface ChatRequestDto {
   sessionId: string;
   appName?: string;
@@ -229,8 +243,20 @@ export class AgentChatService {
             // Ignore
           }
         }
+        const errObj = new Error(errorMsg);
+        (errObj as any).status = response.status;
+        (errObj as any).code = response.status;
+        if (response.status === 429) {
+          (errObj as any).type = 'quota_exceeded';
+        } else if (response.status === 503) {
+          (errObj as any).type = 'service_unavailable';
+        } else if (response.status === 504) {
+          (errObj as any).type = 'timeout';
+        } else if (response.status === 400) {
+          (errObj as any).type = 'invalid_argument';
+        }
         if (callbacks.onError) {
-          callbacks.onError(new Error(errorMsg));
+          callbacks.onError(errObj);
         }
         return;
       }
@@ -294,8 +320,10 @@ export class AgentChatService {
               try {
                 const parsed = JSON.parse(data);
                 if (parsed.error) {
-                  if (callbacks.onError)
-                    callbacks.onError(new Error(parsed.error));
+                  const errObj = new Error(parsed.error);
+                  if (parsed.code) (errObj as any).code = parsed.code;
+                  if (parsed.type) (errObj as any).type = parsed.type;
+                  if (callbacks.onError) callbacks.onError(errObj);
                   clearInterval(pollInterval);
                   if (this.activePollInterval === pollInterval) {
                     this.activePollInterval = null;
