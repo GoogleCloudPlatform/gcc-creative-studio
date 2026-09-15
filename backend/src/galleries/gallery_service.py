@@ -751,130 +751,132 @@ class GalleryService:
         copied_count = 0
         for item in bulk_copy_dto.items:
             try:
-                if item.type == "media_item":
-                    media_item = await self.media_repo.get_by_id(item.id)
-                    if not media_item:
-                        continue
+                async with self.db.begin_nested():
+                    if item.type == "media_item":
+                        media_item = await self.media_repo.get_by_id(item.id)
+                        if not media_item:
+                            continue
 
-                    # Authorize source workspace access (where the item is currently)
-                    await self.workspace_auth.authorize(
-                        workspace_id=media_item.workspace_id,
-                        user=current_user,
-                    )
-
-                    # Create a new MediaItem instance with updated workspace_id
-                    # exclude 'id', 'created_at', 'updated_at', 'deleted_at', 'deleted_by', 'folder_id'
-                    new_item_data = media_item.model_dump(
-                        exclude={
-                            "id",
-                            "created_at",
-                            "updated_at",
-                            "deleted_at",
-                            "deleted_by",
-                            "workspace_id",
-                            "folder_id",
-                        },
-                    )
-                    new_item_data["workspace_id"] = (
-                        bulk_copy_dto.target_workspace_id
-                    )
-
-                    # Ensure user_id and user_email are set to the current user copying
-                    new_item_data["user_id"] = current_user.id
-                    new_item_data["user_email"] = current_user.email
-
-                    new_item = await self.media_repo.create(new_item_data)
-                    if (
-                        media_item.workspace_id
-                        == bulk_copy_dto.target_workspace_id
-                        and new_item
-                        and getattr(new_item, "id", None)
-                    ):
-                        existing_tags = (
-                            await self.tags_repo.get_tags_for_media_item(
-                                item.id
-                            )
+                        # Authorize source workspace access (where the item is currently)
+                        await self.workspace_auth.authorize(
+                            workspace_id=media_item.workspace_id,
+                            user=current_user,
                         )
-                        for t in existing_tags:
-                            await self.tags_repo.assign_tag_to_media_item(
-                                new_item.id, t.id
-                            )
-                    copied_count += 1
 
-                elif item.type == "source_asset":
-                    asset = await self.source_asset_repo.get_by_id(item.id)
-                    if not asset:
-                        continue
-
-                    # Authorize source workspace access
-                    await self.workspace_auth.authorize(
-                        workspace_id=asset.workspace_id,
-                        user=current_user,
-                    )
-
-                    # Create a new SourceAsset instance with updated workspace_id
-                    new_asset_data = asset.model_dump(
-                        exclude={
-                            "id",
-                            "created_at",
-                            "updated_at",
-                            "deleted_at",
-                            "deleted_by",
-                            "workspace_id",
-                            "folder_id",
-                        },
-                    )
-                    new_asset_data["workspace_id"] = (
-                        bulk_copy_dto.target_workspace_id
-                    )
-
-                    # Ensure user_id is set to the current user copying
-                    new_asset_data["user_id"] = current_user.id
-
-                    new_asset = await self.source_asset_repo.create(
-                        new_asset_data
-                    )
-                    if (
-                        asset.workspace_id == bulk_copy_dto.target_workspace_id
-                        and new_asset
-                        and getattr(new_asset, "id", None)
-                    ):
-                        existing_tags = (
-                            await self.tags_repo.get_tags_for_source_asset(
-                                item.id
-                            )
+                        # Create a new MediaItem instance with updated workspace_id
+                        # exclude 'id', 'created_at', 'updated_at', 'deleted_at', 'deleted_by', 'folder_id'
+                        new_item_data = media_item.model_dump(
+                            exclude={
+                                "id",
+                                "created_at",
+                                "updated_at",
+                                "deleted_at",
+                                "deleted_by",
+                                "workspace_id",
+                                "folder_id",
+                            },
                         )
-                        for t in existing_tags:
-                            await self.tags_repo.assign_tag_to_source_asset(
-                                new_asset.id, t.id
+                        new_item_data["workspace_id"] = (
+                            bulk_copy_dto.target_workspace_id
+                        )
+
+                        # Ensure user_id and user_email are set to the current user copying
+                        new_item_data["user_id"] = current_user.id
+                        new_item_data["user_email"] = current_user.email
+
+                        new_item = await self.media_repo.create(new_item_data)
+                        if (
+                            media_item.workspace_id
+                            == bulk_copy_dto.target_workspace_id
+                            and new_item
+                            and getattr(new_item, "id", None)
+                        ):
+                            existing_tags = (
+                                await self.tags_repo.get_tags_for_media_item(
+                                    item.id
+                                )
                             )
-                    copied_count += 1
+                            for t in existing_tags:
+                                await self.tags_repo.assign_tag_to_media_item(
+                                    new_item.id, t.id
+                                )
+                        copied_count += 1
 
-                elif item.type == "folder":
-                    folder = folder_map.get(item.id)
-                    if not folder:
-                        continue
+                    elif item.type == "source_asset":
+                        asset = await self.source_asset_repo.get_by_id(item.id)
+                        if not asset:
+                            continue
 
-                    # Authorize source workspace access
-                    await self.workspace_auth.authorize(
-                        workspace_id=folder.workspace_id,
-                        user=current_user,
-                    )
+                        # Authorize source workspace access
+                        await self.workspace_auth.authorize(
+                            workspace_id=asset.workspace_id,
+                            user=current_user,
+                        )
 
-                    copy_results = await self.folder_repo.copy_folder_to_workspace(
-                        folder_id=folder.id,
-                        target_workspace_id=bulk_copy_dto.target_workspace_id,
-                        user_id=current_user.id,
-                        user_email=current_user.email,
-                        conflict_strategy=bulk_copy_dto.conflict_strategy
-                        or ConflictStrategyEnum.KEEP_BOTH,
-                        commit=False,
-                    )
-                    copied_count += (
-                        copy_results.get("folders_copied", 0)
-                        + copy_results.get("media_copied", 0)
-                        + copy_results.get("assets_copied", 0)
-                    )
+                        # Create a new SourceAsset instance with updated workspace_id
+                        new_asset_data = asset.model_dump(
+                            exclude={
+                                "id",
+                                "created_at",
+                                "updated_at",
+                                "deleted_at",
+                                "deleted_by",
+                                "workspace_id",
+                                "folder_id",
+                            },
+                        )
+                        new_asset_data["workspace_id"] = (
+                            bulk_copy_dto.target_workspace_id
+                        )
+
+                        # Ensure user_id is set to the current user copying
+                        new_asset_data["user_id"] = current_user.id
+
+                        new_asset = await self.source_asset_repo.create(
+                            new_asset_data
+                        )
+                        if (
+                            asset.workspace_id
+                            == bulk_copy_dto.target_workspace_id
+                            and new_asset
+                            and getattr(new_asset, "id", None)
+                        ):
+                            existing_tags = (
+                                await self.tags_repo.get_tags_for_source_asset(
+                                    item.id
+                                )
+                            )
+                            for t in existing_tags:
+                                await self.tags_repo.assign_tag_to_source_asset(
+                                    new_asset.id, t.id
+                                )
+                        copied_count += 1
+
+                    elif item.type == "folder":
+                        folder = folder_map.get(item.id)
+                        if not folder:
+                            continue
+
+                        # Authorize source workspace access
+                        await self.workspace_auth.authorize(
+                            workspace_id=folder.workspace_id,
+                            user=current_user,
+                        )
+
+                        copy_results = await self.folder_repo.copy_folder_to_workspace(
+                            folder_id=folder.id,
+                            target_workspace_id=bulk_copy_dto.target_workspace_id,
+                            user_id=current_user.id,
+                            user_email=current_user.email,
+                            conflict_strategy=bulk_copy_dto.conflict_strategy
+                            or ConflictStrategyEnum.KEEP_BOTH,
+                            commit=False,
+                        )
+                        copied_count += (
+                            copy_results.get("folders_copied", 0)
+                            + copy_results.get("media_copied", 0)
+                            + copy_results.get("assets_copied", 0)
+                        )
 
             except Exception as e:
                 logger.error(f"Error copying {item.type} {item.id}: {e}")
