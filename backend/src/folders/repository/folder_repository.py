@@ -405,6 +405,27 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         result = await self.db.execute(cte_query, {"folder_id": folder_id})
         return [row.id for row in result.fetchall()]
 
+    async def get_descendant_ids_batch(
+        self, folder_ids: list[int]
+    ) -> list[int]:
+        """Fetch all descendant folder IDs for multiple folders using recursive CTE."""
+        if not folder_ids:
+            return []
+        cte_query = text(
+            """
+            WITH RECURSIVE descendants AS (
+                SELECT id FROM folders WHERE id = ANY(:folder_ids) AND deleted_at IS NULL
+                UNION ALL
+                SELECT f.id FROM folders f
+                JOIN descendants d ON f.parent_id = d.id
+                WHERE f.deleted_at IS NULL
+            )
+            SELECT id FROM descendants;
+            """
+        )
+        result = await self.db.execute(cte_query, {"folder_ids": folder_ids})
+        return [row.id for row in result.fetchall()]
+
     async def get_folder_depth(self, folder_id: int) -> int:
         """Returns the depth of a folder from the workspace root (root folder = 1)."""
         breadcrumbs = await self.get_breadcrumbs(folder_id)

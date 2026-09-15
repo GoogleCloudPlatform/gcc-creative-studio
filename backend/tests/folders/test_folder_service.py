@@ -46,6 +46,7 @@ def fixture_mock_folder_repo():
     mock.get_folders_by_ids.return_value = []
     mock.get_existing_folders_map.return_value = {}
     mock.get_folder_counts.return_value = (0, 0)
+    mock.get_descendant_ids_batch.return_value = []
     return mock
 
 
@@ -772,7 +773,7 @@ class TestMoveItems:
         mock_folder_repo.get_folders_by_ids.return_value = [
             Folder(id=2, workspace_id=1, user_email="a@b.com", name="Folder 2")
         ]
-        mock_folder_repo.get_descendant_ids.return_value = [2]
+        mock_folder_repo.get_descendant_ids_batch.return_value = [2]
         mock_folder_repo.move_media_items.return_value = 2
         mock_folder_repo.move_source_assets.return_value = 1
         mock_folder_repo.move_folders.return_value = 1
@@ -819,7 +820,7 @@ class TestMoveItems:
         mock_folder_repo.get_folders_by_ids.return_value = [
             Folder(id=2, workspace_id=1, user_email="a@b.com", name="Folder 2")
         ]
-        mock_folder_repo.get_descendant_ids.return_value = [2]
+        mock_folder_repo.get_descendant_ids_batch.return_value = [2]
         mock_folder_repo.get_folder_depth.return_value = 19
         mock_folder_repo.get_subtree_depth.return_value = 2
 
@@ -848,7 +849,7 @@ class TestMoveItems:
             Folder(id=2, workspace_id=1, user_email="a@b.com", name="Folder 2")
         ]
         # Folder 5 is in descendants of folder 2 (cycle)
-        mock_folder_repo.get_descendant_ids.return_value = [2, 5]
+        mock_folder_repo.get_descendant_ids_batch.return_value = [2, 5]
 
         dto = MoveItemsDto(
             workspace_id=1,
@@ -860,7 +861,7 @@ class TestMoveItems:
             await folder_service.move_items(dto, sample_user)
         assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
         assert (
-            "Cannot move folder 2 into its own subfolder."
+            "Cannot move folder into one of its own subfolders."
             in exc_info.value.detail
         )
 
@@ -890,7 +891,7 @@ class TestMoveItems:
         mock_folder_repo.get_folders_by_ids.assert_awaited_once_with(
             folder_ids=[999], workspace_id=1
         )
-        mock_folder_repo.get_descendant_ids.assert_not_called()
+        mock_folder_repo.get_descendant_ids_batch.assert_not_called()
         mock_folder_repo.get_subtree_depth.assert_not_called()
         mock_folder_repo.move_folders.assert_not_called()
 
@@ -922,7 +923,7 @@ class TestMoveItems:
         mock_folder_repo.get_folders_by_ids.assert_awaited_once_with(
             folder_ids=[2, 999], workspace_id=1
         )
-        mock_folder_repo.get_descendant_ids.assert_not_called()
+        mock_folder_repo.get_descendant_ids_batch.assert_not_called()
         mock_folder_repo.get_subtree_depth.assert_not_called()
         mock_folder_repo.move_folders.assert_not_called()
 
@@ -937,7 +938,7 @@ class TestMoveItems:
         mock_folder_repo.get_folders_by_ids.return_value = [
             Folder(id=2, workspace_id=1, user_email="a@b.com", name="Folder 2")
         ]
-        mock_folder_repo.get_descendant_ids.return_value = [2]
+        mock_folder_repo.get_descendant_ids_batch.return_value = [2]
         mock_folder_repo.get_subtree_depth.return_value = 1
         mock_folder_repo.get_existing_folders_map.return_value = {}
         mock_folder_repo.move_media_items.return_value = 0
@@ -986,7 +987,7 @@ class TestMoveItems:
         mock_folder_repo.get_folders_by_ids.assert_awaited_once_with(
             folder_ids=[2], workspace_id=1
         )
-        mock_folder_repo.get_descendant_ids.assert_not_called()
+        mock_folder_repo.get_descendant_ids_batch.assert_not_called()
         mock_folder_repo.get_subtree_depth.assert_not_called()
         mock_folder_repo.move_folders.assert_awaited_once_with(
             folder_ids=[2],
@@ -1022,7 +1023,7 @@ class TestMoveItems:
             parent_id=5,
         )
         mock_folder_repo.get_folders_by_ids.return_value = [colliding_folder]
-        mock_folder_repo.get_descendant_ids.return_value = [2]
+        mock_folder_repo.get_descendant_ids_batch.return_value = [2]
         mock_folder_repo.get_existing_folders_map.return_value = {
             "existingsub": target_folder
         }
@@ -1056,7 +1057,7 @@ class TestMoveItems:
             parent_id=1,
         )
         mock_folder_repo.get_folders_by_ids.return_value = [colliding_folder]
-        mock_folder_repo.get_descendant_ids.return_value = [2]
+        mock_folder_repo.get_descendant_ids_batch.return_value = [2]
         mock_folder_repo.move_media_items.return_value = 0
         mock_folder_repo.move_source_assets.return_value = 0
         mock_folder_repo.move_folders.return_value = 1

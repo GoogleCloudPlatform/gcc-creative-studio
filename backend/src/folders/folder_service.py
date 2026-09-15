@@ -453,17 +453,21 @@ class FolderService:
                     detail="One or more specified folders were not found in this workspace.",
                 )
 
+            if dest_folder_id is not None:
+                consolidated_descendants = (
+                    await self.folder_repo.get_descendant_ids_batch(
+                        unique_folder_ids
+                    )
+                )
+                if dest_folder_id in consolidated_descendants:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Cannot move folder into one of its own subfolders.",
+                    )
+
             for folder in folders:
                 f_id = folder.id
                 if dest_folder_id is not None:
-                    descendant_ids = await self.folder_repo.get_descendant_ids(
-                        f_id
-                    )
-                    if dest_folder_id in descendant_ids:
-                        raise HTTPException(
-                            status_code=status.HTTP_400_BAD_REQUEST,
-                            detail=f"Cannot move folder {f_id} into its own subfolder.",
-                        )
                     subtree_depth = await self.folder_repo.get_subtree_depth(
                         f_id
                     )

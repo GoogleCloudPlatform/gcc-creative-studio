@@ -227,6 +227,23 @@ class TestFolderRepository:
         assert res == [1, 2]
 
     @pytest.mark.anyio
+    async def test_get_descendant_ids_batch(self, folder_repo, mock_db):
+        mock_row1 = MagicMock(id=1)
+        mock_row2 = MagicMock(id=2)
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [mock_row1, mock_row2]
+        mock_db.execute.return_value = mock_result
+
+        res = await folder_repo.get_descendant_ids_batch([1, 2])
+        assert res == [1, 2]
+
+    @pytest.mark.anyio
+    async def test_get_descendant_ids_batch_empty(self, folder_repo, mock_db):
+        res = await folder_repo.get_descendant_ids_batch([])
+        assert res == []
+        mock_db.execute.assert_not_called()
+
+    @pytest.mark.anyio
     async def test_get_folder_depth(self, folder_repo, mock_db):
         mock_row1 = SimpleNamespace(
             id=1, name="Root", parent_id=None, workspace_id=1
