@@ -1018,6 +1018,31 @@ describe('MediaGalleryComponent', () => {
       expect(routerSpy.navigate).toHaveBeenCalledWith(['/gallery']);
     });
 
+    it('should reset currentFolderId and reload without navigating on workspace change if inside a folder in selector mode', () => {
+      component.isSelectorMode = true;
+      component.isSelectionMode = false;
+      component.currentFolderId = 5;
+      const reloadSpy = spyOn<any>(component, 'reload');
+
+      activeWorkspaceIdSubject.next(2);
+
+      expect(component.currentFolderId).toBeNull();
+      expect(routerSpy.navigate).not.toHaveBeenCalled();
+      expect(reloadSpy).toHaveBeenCalled();
+    });
+
+    it('should reload folders and tags on initialization when in selector mode', () => {
+      const selFixture = TestBed.createComponent(MediaGalleryComponent);
+      const selComp = selFixture.componentInstance;
+      selComp.isSelectorMode = true;
+      selComp.isSelectionMode = true;
+      const reloadSpy = spyOn<any>(selComp, 'reload').and.callThrough();
+
+      selFixture.detectChanges();
+
+      expect(reloadSpy).toHaveBeenCalled();
+    });
+
     it('should automatically switch workspace and show toast when folder belongs to another accessible workspace', () => {
       const snackBar = TestBed.inject(MatSnackBar);
       component.isSelectorMode = false;

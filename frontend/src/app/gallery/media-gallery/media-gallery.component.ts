@@ -344,7 +344,9 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
 
     let lastWorkspaceId = this.workspaceStateService.getActiveWorkspaceId();
 
-    if (!this.isSelectionMode && !this.isSelectorMode) {
+    if (this.isSelectionMode || this.isSelectorMode) {
+      this.reload();
+    } else {
       this.routeSub = this.route.paramMap.subscribe(params => {
         const folderIdParam = params.get('folderId');
         if (folderIdParam !== null) {
@@ -378,27 +380,27 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
           return;
         }
 
-        if (
-          lastWorkspaceId !== null &&
-          lastWorkspaceId !== workspaceId &&
-          this.currentFolderId !== null
-        ) {
-          if (this.isProgrammaticWorkspaceSwitch) {
-            this.isProgrammaticWorkspaceSwitch = false;
-            lastWorkspaceId = workspaceId;
-            this.reload();
+        if (lastWorkspaceId !== workspaceId) {
+          if (lastWorkspaceId !== null && this.currentFolderId !== null) {
+            if (this.isProgrammaticWorkspaceSwitch) {
+              this.isProgrammaticWorkspaceSwitch = false;
+              lastWorkspaceId = workspaceId;
+              this.reload();
+            } else if (this.isSelectionMode || this.isSelectorMode) {
+              lastWorkspaceId = workspaceId;
+              this.currentFolderId = null;
+              this.reload();
+            } else {
+              lastWorkspaceId = workspaceId;
+              void this.router.navigate(['/gallery']);
+            }
           } else {
             lastWorkspaceId = workspaceId;
-            void this.router.navigate(['/gallery']);
+            this.reload();
           }
-        } else {
-          lastWorkspaceId = workspaceId;
-          this.reload();
         }
       },
     );
-
-    this.isInitialized = true;
   }
 
   private reload() {
