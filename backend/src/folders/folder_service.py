@@ -480,9 +480,10 @@ class FolderService:
                     parent_id=dest_folder_id,
                     exclude_folder_ids=valid_folder_ids,
                 )
+                folders_dict = {f.id: f for f in folders}
                 conflicts = []
                 for f_id in valid_folder_ids:
-                    f_obj = next((f for f in folders if f.id == f_id), None)
+                    f_obj = folders_dict.get(f_id)
                     if f_obj and f_obj.parent_id != dest_folder_id:
                         key = f_obj.name.strip().lower()
                         if key in existing_map:
@@ -592,9 +593,10 @@ class FolderService:
                     parent_id=dest_folder_id,
                     exclude_folder_ids=valid_folder_ids,
                 )
+                folders_dict = {f.id: f for f in folders}
                 conflicts = []
                 for f_id in valid_folder_ids:
-                    f_obj = next((f for f in folders if f.id == f_id), None)
+                    f_obj = folders_dict.get(f_id)
                     if f_obj:
                         key = f_obj.name.strip().lower()
                         if key in existing_map:
