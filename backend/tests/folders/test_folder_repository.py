@@ -32,6 +32,7 @@ from src.source_assets.schema.source_asset_model import SourceAsset
 def fixture_mock_db():
     """Provides a mocked AsyncSession."""
     session = AsyncMock()
+    session.add = MagicMock()
     return session
 
 

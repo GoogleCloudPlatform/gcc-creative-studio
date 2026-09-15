@@ -39,6 +39,7 @@ def fixture_mock_folder_repo():
     """Provides a mocked FolderRepository."""
     mock = AsyncMock()
     mock.db = AsyncMock()
+    mock.db.add = MagicMock()
     mock.is_folder_name_taken.return_value = False
     mock.get_folder_depth.return_value = 1
     mock.get_subtree_depth.return_value = 1
