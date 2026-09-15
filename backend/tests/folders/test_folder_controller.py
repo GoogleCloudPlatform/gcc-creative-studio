@@ -297,6 +297,11 @@ class TestDeleteFolder:
         assert data["success"] is True
         mock_folder_service.get_raw_folder.assert_called_once_with(folder_id=1)
         mock_workspace_auth.authorize.assert_called_once()
+        mock_folder_service.delete_folder.assert_called_once()
+        assert (
+            mock_folder_service.delete_folder.call_args.kwargs["folder"]
+            == existing_folder
+        )
 
 
 class TestMoveItems:

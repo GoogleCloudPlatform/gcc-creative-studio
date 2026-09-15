@@ -211,7 +211,9 @@ async def delete_folder(
         workspace_id=folder.workspace_id,
         user=current_user,
     )
-    return await service.delete_folder(folder_id=folder_id, user=current_user)
+    return await service.delete_folder(
+        folder_id=folder_id, user=current_user, folder=folder
+    )
 
 
 @router.post(

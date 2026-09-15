@@ -755,9 +755,39 @@ class TestDeleteFolder:
 
         result = await folder_service.delete_folder(1, sample_user)
         assert result["success"] is True
+        mock_folder_repo.get_folder_by_id.assert_called_once_with(1)
         mock_folder_repo.soft_delete.assert_called_once_with(
             folder_id=1, user_id=sample_user.id
         )
+
+    @pytest.mark.anyio
+    async def test_delete_folder_with_prefetched_folder(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        folder = Folder(id=1, workspace_id=1, user_email="a@b.com", name="F")
+        mock_folder_repo.soft_delete.return_value = True
+
+        result = await folder_service.delete_folder(
+            1, sample_user, folder=folder
+        )
+        assert result["success"] is True
+        mock_folder_repo.get_folder_by_id.assert_not_called()
+        mock_folder_repo.soft_delete.assert_called_once_with(
+            folder_id=1, user_id=sample_user.id
+        )
+
+    @pytest.mark.anyio
+    async def test_delete_folder_not_found(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.get_folder_by_id.return_value = None
+
+        with pytest.raises(HTTPException) as exc_info:
+            await folder_service.delete_folder(999, sample_user)
+
+        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+        assert "Folder with ID 999 not found." in exc_info.value.detail
+        mock_folder_repo.soft_delete.assert_not_called()
 
 
 class TestMoveItems:

@@ -398,18 +398,22 @@ class FolderService:
         )
 
     async def delete_folder(
-        self, folder_id: int, user: UserModel
+        self,
+        folder_id: int,
+        user: UserModel,
+        folder: Folder | None = None,
     ) -> dict[str, bool]:
         """Soft deletes a folder and its subfolders."""
-        folder = await self.folder_repo.get_folder_by_id(folder_id)
-        if not folder:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Folder with ID {folder_id} not found.",
-            )
+        if folder is None:
+            folder = await self.folder_repo.get_folder_by_id(folder_id)
+            if not folder:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Folder with ID {folder_id} not found.",
+                )
 
         success = await self.folder_repo.soft_delete(
-            folder_id=folder_id, user_id=user.id
+            folder_id=folder.id, user_id=user.id
         )
         return {"success": success}
 
