@@ -594,3 +594,22 @@
     stroke 0.15s ease,
     stroke-width 0.15s ease;
 }
+
+.definition-row.new-param-highlight {
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 0 16px 2px rgba(56, 189, 248, 0.5);
+  background: rgba(56, 189, 248, 0.08);
+  animation: new-param-highlight-pulse 1.25s ease-in-out infinite alternate;
+}
+
+@keyframes new-param-highlight-pulse {
+  from {
+    box-shadow: 0 0 10px 1px rgba(56, 189, 248, 0.35);
+    background: rgba(56, 189, 248, 0.05);
+  }
+  to {
+    box-shadow: 0 0 20px 4px rgba(56, 189, 248, 0.75);
+    background: rgba(56, 189, 248, 0.14);
+  }
+}

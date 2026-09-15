@@ -29,10 +29,14 @@ import {STEP_CONFIGS_MAP} from '../shared/step-configs.map';
 import {labelToName, nameToLabel} from '../utils/workflow-step.util';
 import {
   NodeTypes,
+  ParameterDefinition,
+  ParameterRemapEntry,
   Point,
   StepStatusEnum,
+  TemplateInsertionResult,
   WorkflowBase,
   WorkflowModel,
+  WorkflowTemplate,
 } from '../workflow.models';
 
 const DEFAULT_NODE_POSITION: Point = {x: 100, y: 100};
@@ -410,6 +414,255 @@ export class WorkflowFormService {
 
     // Final sync
     this.syncOutputs();
+  }
+
+  /**
+   * Merges a WorkflowTemplate into the current active workflow form state.
+   * Deduplicates user input parameter names (e.g., user_param_2) and step IDs (e.g., step_id_2),
+   * remaps internal step references, and appends the newly inserted steps.
+   */
+  insertTemplateData(
+    template: WorkflowTemplate,
+    existingStepIds: Set<string>,
+  ): TemplateInsertionResult {
+    const insertedStepIds: string[] = [];
+    const addedDefinitionIds: string[] = [];
+    const stepPositionMap: Record<string, Point> = {};
+
+    const userInputStep = template.steps?.find(
+      s => s.type === NodeTypes.USER_INPUT,
+    );
+    const templateSteps =
+      template.steps?.filter(s => s.type !== NodeTypes.USER_INPUT) || [];
+
+    // 1. Merge & Deduplicate User Input Definitions
+    const paramRemapTable = new Map<string, ParameterRemapEntry>();
+
+    if (
+      userInputStep?.settings?.['definitions'] &&
+      Array.isArray(userInputStep.settings['definitions']) &&
+      userInputStep.settings['definitions'].length > 0
+    ) {
+      const definitions = userInputStep.settings[
+        'definitions'
+      ] as ParameterDefinition[];
+      definitions.forEach(def => {
+        const rawName = def.name;
+        const displayName = nameToLabel(rawName);
+        const finalName = this.getUniqueParamName(displayName);
+        const newDefId = this.generateId();
+
+        this.addOutputDefinition(finalName, def.type || 'text', newDefId);
+        addedDefinitionIds.push(newDefId);
+
+        const remapEntry: ParameterRemapEntry = {
+          newDefId,
+          finalName,
+        };
+        if (def.id) {
+          paramRemapTable.set(def.id, remapEntry);
+        }
+        paramRemapTable.set(rawName, remapEntry);
+        paramRemapTable.set(displayName, remapEntry);
+        paramRemapTable.set(labelToName(displayName), remapEntry);
+        paramRemapTable.set(rawName.trim().toLowerCase(), remapEntry);
+      });
+    } else if (userInputStep?.outputs) {
+      Object.entries(userInputStep.outputs).forEach(([key, value]) => {
+        const displayName = nameToLabel(key);
+        const finalName = this.getUniqueParamName(displayName);
+        const newDefId = this.generateId();
+        const type =
+          value && typeof value === 'object' && 'type' in value
+            ? String((value as {type: unknown}).type)
+            : 'text';
+
+        this.addOutputDefinition(finalName, type, newDefId);
+        addedDefinitionIds.push(newDefId);
+
+        const remapEntry: ParameterRemapEntry = {
+          newDefId,
+          finalName,
+        };
+        paramRemapTable.set(key, remapEntry);
+        paramRemapTable.set(displayName, remapEntry);
+        paramRemapTable.set(labelToName(displayName), remapEntry);
+        paramRemapTable.set(key.trim().toLowerCase(), remapEntry);
+      });
+    }
+
+    // 2. Deduplicate Step IDs
+    const stepIdRemap = new Map<string, string>();
+    const allKnownStepIds = new Set<string>(existingStepIds);
+
+    templateSteps.forEach((step, idx) => {
+      const originalStepId = step.stepId || `${step.type}_${idx + 1}`;
+      const uniqueStepId = this.getUniqueStepId(
+        originalStepId,
+        allKnownStepIds,
+      );
+      allKnownStepIds.add(uniqueStepId);
+      stepIdRemap.set(originalStepId, uniqueStepId);
+    });
+
+    // 3. Clone, Remap Inputs, and Add Each Step
+    templateSteps.forEach((step, idx) => {
+      const originalStepId = step.stepId || `${step.type}_${idx + 1}`;
+      const newStepId = stepIdRemap.get(originalStepId) || originalStepId;
+      insertedStepIds.push(newStepId);
+
+      const fallbackPos: Point = {x: 100 + idx * 300, y: 100};
+      const originalPos: Point =
+        step.position &&
+        typeof step.position.x === 'number' &&
+        typeof step.position.y === 'number'
+          ? {x: step.position.x, y: step.position.y}
+          : fallbackPos;
+
+      stepPositionMap[newStepId] = originalPos;
+
+      const remappedInputs: Record<string, unknown> = {};
+      if (step.inputs && typeof step.inputs === 'object') {
+        Object.entries(step.inputs).forEach(([inputKey, inputVal]) => {
+          remappedInputs[inputKey] = this.remapStepInputValue(
+            inputVal,
+            paramRemapTable,
+            stepIdRemap,
+          );
+        });
+      }
+
+      const newStepData = {
+        ...step,
+        stepId: newStepId,
+        status: StepStatusEnum.IDLE,
+        position: {...originalPos},
+        inputs: remappedInputs,
+      };
+
+      this.addStep(step.type, newStepData);
+    });
+
+    this.syncOutputs();
+
+    return {
+      insertedStepIds,
+      addedDefinitionIds,
+      stepPositionMap,
+    };
+  }
+
+  getUniqueParamName(baseName: string): string {
+    const existingNames = new Set<string>();
+    if (this.outputDefinitionsArray) {
+      this.outputDefinitionsArray.controls.forEach(control => {
+        const rawName = control.get('name')?.value as string | null;
+        if (rawName) {
+          existingNames.add(rawName.trim().toLowerCase());
+          existingNames.add(labelToName(rawName).toLowerCase());
+          existingNames.add(nameToLabel(rawName).trim().toLowerCase());
+        }
+      });
+    }
+
+    const isCollision = (candidate: string): boolean => {
+      const lower = candidate.trim().toLowerCase();
+      const normalized = labelToName(candidate).toLowerCase();
+      const label = nameToLabel(candidate).trim().toLowerCase();
+      return (
+        existingNames.has(lower) ||
+        existingNames.has(normalized) ||
+        existingNames.has(label)
+      );
+    };
+
+    if (!isCollision(baseName)) {
+      return baseName;
+    }
+
+    const cleanBase = baseName.replace(/_\d+$/, '');
+    let k = 2;
+    let candidate = `${cleanBase}_${k}`;
+    while (isCollision(candidate)) {
+      k++;
+      candidate = `${cleanBase}_${k}`;
+    }
+    return candidate;
+  }
+
+  getUniqueStepId(baseStepId: string, existingStepIds: Set<string>): string {
+    if (!existingStepIds.has(baseStepId)) {
+      return baseStepId;
+    }
+
+    const cleanBase = baseStepId.replace(/_\d+$/, '');
+    let k = 2;
+    let candidate = `${cleanBase}_${k}`;
+    while (existingStepIds.has(candidate)) {
+      k++;
+      candidate = `${cleanBase}_${k}`;
+    }
+    return candidate;
+  }
+
+  private remapStepInputValue(
+    inputVal: unknown,
+    paramRemapTable: Map<string, ParameterRemapEntry>,
+    stepIdRemap: Map<string, string>,
+  ): unknown {
+    if (Array.isArray(inputVal)) {
+      return inputVal.map(item =>
+        this.remapSingleInputItem(item, paramRemapTable, stepIdRemap),
+      );
+    }
+    return this.remapSingleInputItem(inputVal, paramRemapTable, stepIdRemap);
+  }
+
+  private remapSingleInputItem(
+    item: unknown,
+    paramRemapTable: Map<string, ParameterRemapEntry>,
+    stepIdRemap: Map<string, string>,
+  ): unknown {
+    if (!item || typeof item !== 'object') {
+      return item;
+    }
+    const ref = item as Record<string, unknown>;
+    if (ref['step'] === NodeTypes.USER_INPUT) {
+      const defIdKey =
+        typeof ref['_definitionId'] === 'string' ? ref['_definitionId'] : '';
+      const outputKey = typeof ref['output'] === 'string' ? ref['output'] : '';
+
+      const remapped =
+        (defIdKey ? paramRemapTable.get(defIdKey) : null) ||
+        (outputKey ? paramRemapTable.get(outputKey) : null) ||
+        (outputKey ? paramRemapTable.get(nameToLabel(outputKey)) : null) ||
+        (outputKey ? paramRemapTable.get(labelToName(outputKey)) : null) ||
+        (outputKey
+          ? paramRemapTable.get(outputKey.trim().toLowerCase())
+          : null);
+
+      if (remapped) {
+        return {
+          ...ref,
+          step: NodeTypes.USER_INPUT,
+          output: remapped.finalName,
+          _definitionId: remapped.newDefId,
+        };
+      }
+      return {
+        ...ref,
+        output: outputKey ? nameToLabel(outputKey) : ref['output'],
+      };
+    }
+
+    if (typeof ref['step'] === 'string' && stepIdRemap.has(ref['step'])) {
+      return {
+        ...ref,
+        step: stepIdRemap.get(ref['step']),
+      };
+    }
+
+    return item;
   }
 
   // --- Helpers ---

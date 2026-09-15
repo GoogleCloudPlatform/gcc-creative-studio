@@ -31,10 +31,15 @@
   <!-- Header Section -->
   <header class="welcome-header">
     <div class="header-content">
-      <h1 class="welcome-title">Start a New Workflow</h1>
+      <h1 class="welcome-title">
+        {{ showBlankOption ? 'Start a New Workflow' : 'Insert a Template' }}
+      </h1>
       <p class="welcome-subtitle">
-        Jumpstart your creative pipeline with a predefined template, use one of
-        your saved blueprints, or start from a blank canvas.
+        {{
+          showBlankOption
+            ? 'Jumpstart your creative pipeline with a predefined template, use one of your saved blueprints, or start from a blank canvas.'
+            : 'Select a predefined template or one of your saved blueprints to add to your current workflow.'
+        }}
       </p>
     </div>
 
@@ -80,7 +85,7 @@
       <div class="templates-grid">
         <!-- 1. Blank Workflow / Empty Canvas -->
         <div
-          *ngIf="!searchQuery()"
+          *ngIf="showBlankOption && !searchQuery()"
           class="template-card blank-card"
           id="card-blank-workflow"
           (click)="selectBlankWorkflow()"

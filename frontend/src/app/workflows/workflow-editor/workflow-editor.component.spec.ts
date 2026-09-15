@@ -15,7 +15,12 @@
  */
 
 import {NO_ERRORS_SCHEMA, PLATFORM_ID} from '@angular/core';
-import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {
+  ComponentFixture,
+  TestBed,
+  fakeAsync,
+  tick,
+} from '@angular/core/testing';
 import {FormBuilder, ReactiveFormsModule} from '@angular/forms';
 import {MatDialog} from '@angular/material/dialog';
 import {MatFormFieldModule} from '@angular/material/form-field';
@@ -27,7 +32,7 @@ import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {ActivatedRoute, Router} from '@angular/router';
 import {of, throwError} from 'rxjs';
 import {MediaResolutionService} from '../shared/media-resolution.service';
-import {NodeTypes} from '../workflow.models';
+import {NodeTypes, StepStatusEnum, WorkflowTemplate} from '../workflow.models';
 import {WorkflowStatusPipe} from '../workflow-status.pipe';
 import {WorkflowService} from '../workflow.service';
 import {SaveTemplateModalComponent} from './save-template-modal/save-template-modal.component';
@@ -1083,5 +1088,129 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
         }),
       );
     });
+  });
+
+  describe('Template Insertion into Active Canvas', () => {
+    const sampleTemplateToInsert: WorkflowTemplate = {
+      id: 'tmpl-active-insert',
+      name: 'Insertable Template',
+      description: 'Template for active workflow insertion',
+      steps: [
+        {
+          stepId: 'user_input',
+          type: NodeTypes.USER_INPUT,
+          status: StepStatusEnum.IDLE,
+          position: {x: 0, y: 0},
+          inputs: {},
+          outputs: {City: {type: 'text'}},
+          settings: {
+            definitions: [{id: 'def_city', name: 'City', type: 'text'}],
+          },
+        },
+        {
+          stepId: 'inserted_step_1',
+          type: NodeTypes.GENERATE_TEXT,
+          status: StepStatusEnum.IDLE,
+          position: {x: 100, y: 50},
+          inputs: {
+            prompt: 'Weather in <city>',
+            city: {
+              step: 'user_input',
+              output: 'City',
+              _definitionId: 'def_city',
+            },
+          },
+          outputs: {generated_text: {type: 'text'}},
+          settings: {model: 'gemini-2.5-flash'},
+        },
+        {
+          stepId: 'inserted_step_2',
+          type: NodeTypes.IMAGE,
+          status: StepStatusEnum.IDLE,
+          position: {x: 450, y: 120},
+          inputs: {
+            prompt: {step: 'inserted_step_1', output: 'generated_text'},
+          },
+          outputs: {generated_image: {type: 'image'}},
+          settings: {mode: 'generate_image'},
+        },
+      ],
+    };
+
+    it('should set isInitialWelcome to false when openWelcomeView(false) is called from toolbar', () => {
+      component.isInitialWelcome.set(true);
+      component.openWelcomeView(false);
+
+      expect(component.isInitialWelcome()).toBeFalse();
+      expect(component.showWelcomeView).toBeTrue();
+    });
+
+    it('should preserve existing node coordinates and place new template nodes below maxExistingBottomY + 140', fakeAsync(() => {
+      // Set up an active workflow with an existing step
+      component.isInitialWelcome.set(false);
+      component.nodePositions['user_input'] = {x: 100, y: 100};
+      formService.addStep(NodeTypes.GENERATE_TEXT, {
+        stepId: 'existing_step',
+        type: NodeTypes.GENERATE_TEXT,
+        status: StepStatusEnum.IDLE,
+        position: {x: 600, y: 200},
+        inputs: {},
+        outputs: {},
+        settings: {},
+      });
+      component.nodePositions['existing_step'] = {x: 600, y: 200};
+
+      spyOn(component, 'fitView');
+
+      component.onTemplateSelected(sampleTemplateToInsert);
+
+      // Existing node coordinates MUST NOT be modified
+      expect(component.nodePositions['user_input']).toEqual({x: 100, y: 100});
+      expect(component.nodePositions['existing_step']).toEqual({
+        x: 600,
+        y: 200,
+      });
+
+      // Default fallback node height in test env is 440.
+      // existing_step is at y=200 => bottom is 200 + 440 = 640.
+      // With VERTICAL_MARGIN = 140, top-most template node (inserted_step_1, minTemplateY=50)
+      // must be placed at y = 640 + 140 = 780.
+      // inserted_step_2 (orig y=120, dy=+70) must be placed at y = 780 + 70 = 850.
+      expect(component.nodePositions['inserted_step_1'].y).toBe(780);
+      expect(component.nodePositions['inserted_step_2'].y).toBe(850);
+
+      // Relative X difference between inserted_step_1 (x=100) and inserted_step_2 (x=450) preserved (dx = 350)
+      expect(
+        component.nodePositions['inserted_step_2'].x -
+          component.nodePositions['inserted_step_1'].x,
+      ).toBe(350);
+
+      tick(100);
+      expect(component.fitView).toHaveBeenCalled();
+      tick(5000);
+    }));
+
+    it('should highlight newly inserted nodes immediately and clear highlight after 5000ms', fakeAsync(() => {
+      component.isInitialWelcome.set(false);
+      component.nodePositions['user_input'] = {x: 100, y: 100};
+
+      component.onTemplateSelected(sampleTemplateToInsert);
+
+      // Immediately highlighted
+      expect(component.isNodeHighlighted('inserted_step_1')).toBeTrue();
+      expect(component.isNodeHighlighted('inserted_step_2')).toBeTrue();
+      expect(component.highlightedNodeMap()['inserted_step_1']).toBeTrue();
+      expect(component.highlightedNodeMap()['inserted_step_2']).toBeTrue();
+
+      // Still highlighted at 4999ms
+      tick(4999);
+      expect(component.isNodeHighlighted('inserted_step_1')).toBeTrue();
+
+      // Cleared at 5000ms
+      tick(1);
+      expect(component.isNodeHighlighted('inserted_step_1')).toBeFalse();
+      expect(component.isNodeHighlighted('inserted_step_2')).toBeFalse();
+      expect(component.highlightedNodeMap()['inserted_step_1']).toBeUndefined();
+    }));
   });
 });

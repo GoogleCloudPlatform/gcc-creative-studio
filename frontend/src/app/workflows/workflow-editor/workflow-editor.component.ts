@@ -26,6 +26,8 @@ import {
   ElementRef,
   AfterViewInit,
   HostListener,
+  computed,
+  signal,
 } from '@angular/core';
 import {isPlatformBrowser} from '@angular/common';
 import {takeUntilDestroyed} from '@angular/core/rxjs-interop';
@@ -131,6 +133,26 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   errorMessage: string | null = null;
   selectedStepIndex: number | null = null;
   showWelcomeView = false;
+  readonly isInitialWelcome = signal<boolean>(true);
+  readonly highlightedNodeIds = signal<Set<string>>(new Set<string>());
+  readonly highlightedDefinitionIds = signal<Set<string>>(new Set<string>());
+  private highlightTimer: ReturnType<typeof setTimeout> | null = null;
+
+  readonly highlightedNodeMap = computed<Record<string, boolean>>(() => {
+    const map: Record<string, boolean> = {};
+    this.highlightedNodeIds().forEach(id => {
+      map[id] = true;
+    });
+    return map;
+  });
+
+  readonly highlightedDefinitionMap = computed<Record<string, boolean>>(() => {
+    const map: Record<string, boolean> = {};
+    this.highlightedDefinitionIds().forEach(id => {
+      map[id] = true;
+    });
+    return map;
+  });
   get selectedStep(): any | null {
     if (this.selectedStepIndex === null) return null;
     // stepsArray is accessed via getter now
@@ -404,6 +426,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       .subscribe({
         next: (data: WorkflowModel | WorkflowRunModel | null) => {
           if (this.mode === EditorMode.Run) {
+            this.isInitialWelcome.set(false);
             this.workflowRun = data ? (data as WorkflowRunModel) : null;
             this.displayedWorkflow = this.workflowRun?.workflowSnapshot ?? null;
             this.workflowId = this.workflowRun?.id ?? null;
@@ -412,6 +435,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             }
             this.workflowForm.disable(); // Read-only mode
           } else if (this.mode === EditorMode.Edit) {
+            this.isInitialWelcome.set(false);
             this.workflow = data as WorkflowModel;
             this.displayedWorkflow = this.workflow;
             if (this.displayedWorkflow) {
@@ -422,7 +446,8 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             }
           } else {
             // Create mode: open the welcome view to select a starting template or blank canvas
-            this.openWelcomeView();
+            this.isInitialWelcome.set(true);
+            this.openWelcomeView(true);
           }
           this.isLoading = false;
         },
@@ -476,6 +501,10 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     if (this.domObserver) {
       this.domObserver.disconnect();
+    }
+    if (this.highlightTimer !== null) {
+      clearTimeout(this.highlightTimer);
+      this.highlightTimer = null;
     }
     this.mainSubscription?.unsubscribe();
   }
@@ -1514,12 +1543,17 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     });
   }
 
-  openWelcomeView(): void {
+  openWelcomeView(isInitial = false): void {
+    this.isInitialWelcome.set(isInitial);
     this.showWelcomeView = true;
   }
 
   closeWelcomeView(): void {
-    if (this.mode === EditorMode.Create && this.stepsArray.length === 0) {
+    if (
+      this.isInitialWelcome() &&
+      this.mode === EditorMode.Create &&
+      this.stepsArray.length === 0
+    ) {
       this.goBack();
     } else {
       this.showWelcomeView = false;
@@ -1528,6 +1562,14 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
 
   onTemplateSelected(template: WorkflowTemplate | null): void {
     this.showWelcomeView = false;
+    const isAppendToWorkflow = !this.isInitialWelcome() && template;
+
+    if (isAppendToWorkflow) {
+      this.insertTemplateIntoCanvas(template);
+      return;
+    }
+
+    this.isInitialWelcome.set(false);
     this.mode = EditorMode.Create;
     this.workflowId = null;
     this.displayedWorkflow = null;
@@ -1545,7 +1587,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       return;
     }
 
-    // User selected a predefined or user template
+    // User selected a predefined or user template on initial welcome
     const templateData = {
       ...template,
       id: '', // Starts as an unsaved new workflow
@@ -1561,7 +1603,244 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     this.selectedStepIndex = null;
     this.selectedNodeId = null;
     this.saveHistoryState();
-    setTimeout(() => this.updateEdges(), 100);
+    if (isAppendToWorkflow) {
+      const templateStepIds = (template.steps || [])
+        .filter(s => s.type !== NodeTypes.USER_INPUT)
+        .map(s => s.stepId);
+      this.triggerHighlight(templateStepIds);
+
+      setTimeout(() => {
+        //this.updateEdges();
+        this.fitView();
+      }, 100);
+    } else {
+      setTimeout(() => this.updateEdges(), 100);
+    }
+  }
+
+  insertTemplateIntoCanvas(template: WorkflowTemplate): void {
+    const VERTICAL_MARGIN = 140;
+
+    // 1. Collect existing node IDs & calculate bottom-most Y bounding box
+    const existingStepIds = new Set<string>([NodeTypes.USER_INPUT]);
+    this.stepsArray.controls.forEach(control => {
+      const stepId = control.get('stepId')?.value as string | null;
+      if (stepId) {
+        existingStepIds.add(stepId);
+      }
+    });
+
+    let maxExistingBottomY = -Infinity;
+    existingStepIds.forEach(id => {
+      const pos = this.getNodePosition(id);
+      const dims = this.getNodeDimensions(id);
+      const bottomY = pos.y + dims.height;
+      if (bottomY > maxExistingBottomY) {
+        maxExistingBottomY = bottomY;
+      }
+    });
+    if (!Number.isFinite(maxExistingBottomY)) {
+      maxExistingBottomY = 540;
+    }
+
+    let referenceX: number;
+    if (this.stepsArray.controls.length > 0) {
+      let minStepX = Infinity;
+      this.stepsArray.controls.forEach(control => {
+        const stepId = control.get('stepId')?.value as string | null;
+        if (stepId) {
+          const pos = this.getNodePosition(stepId);
+          if (pos.x < minStepX) {
+            minStepX = pos.x;
+          }
+        }
+      });
+      referenceX = Number.isFinite(minStepX)
+        ? minStepX
+        : this.getNodePosition(NodeTypes.USER_INPUT).x + 500;
+    } else {
+      referenceX = this.getNodePosition(NodeTypes.USER_INPUT).x + 500;
+    }
+
+    // 2. Merge parameters & insert steps via WorkflowFormService
+    const {insertedStepIds, addedDefinitionIds, stepPositionMap} =
+      this.formService.insertTemplateData(template, existingStepIds);
+
+    // 3. Calculate top-left anchor of incoming template steps
+    let minTemplateX = Infinity;
+    let minTemplateY = Infinity;
+    insertedStepIds.forEach(stepId => {
+      const pos = stepPositionMap[stepId];
+      if (pos) {
+        if (pos.x < minTemplateX) minTemplateX = pos.x;
+        if (pos.y < minTemplateY) minTemplateY = pos.y;
+      }
+    });
+    if (!Number.isFinite(minTemplateX)) minTemplateX = 0;
+    if (!Number.isFinite(minTemplateY)) minTemplateY = 0;
+
+    const deltaX = referenceX - minTemplateX;
+    const deltaY = maxExistingBottomY + VERTICAL_MARGIN - minTemplateY;
+
+    // 4. Assign new positions to inserted nodes ONLY (existing nodePositions remain untouched)
+    insertedStepIds.forEach(stepId => {
+      const origPos = stepPositionMap[stepId] || {x: 0, y: 0};
+      const newPos: Point = {
+        x: origPos.x + deltaX,
+        y: origPos.y + deltaY,
+      };
+      this.nodePositions[stepId] = newPos;
+
+      const control = this.stepsArray.controls.find(
+        c => c.get('stepId')?.value === stepId,
+      );
+      if (control) {
+        control.get('position')?.setValue(newPos, {emitEvent: false});
+      }
+    });
+
+    // 5. Mark dirty, save undo/redo state, trigger 5s highlight, update edges & fit view
+    this.workflowForm.markAsDirty();
+    this.saveHistoryState();
+    this.triggerHighlight(insertedStepIds, addedDefinitionIds);
+
+    setTimeout(() => {
+      this.updateEdges();
+      this.fitView();
+    }, 100);
+  }
+
+  fitView(durationMs = 500): void {
+    if (
+      !isPlatformBrowser(this.platformId) ||
+      !this.canvasContainer?.nativeElement ||
+      !this.zoomBehavior
+    ) {
+      return;
+    }
+
+    const allNodeIds: string[] = [NodeTypes.USER_INPUT];
+    this.stepsArray.controls.forEach(control => {
+      const stepId = control.get('stepId')?.value as string | null;
+      if (stepId) {
+        allNodeIds.push(stepId);
+      }
+    });
+
+    if (allNodeIds.length === 0) {
+      return;
+    }
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    allNodeIds.forEach(id => {
+      const pos = this.getNodePosition(id);
+      const dims = this.getNodeDimensions(id);
+      if (pos.x < minX) minX = pos.x;
+      if (pos.y < minY) minY = pos.y;
+      if (pos.x + dims.width > maxX) maxX = pos.x + dims.width;
+      if (pos.y + dims.height > maxY) maxY = pos.y + dims.height;
+    });
+
+    if (!Number.isFinite(minX) || !Number.isFinite(minY)) {
+      return;
+    }
+
+    const boundsWidth = Math.max(maxX - minX, 400);
+    const boundsHeight = Math.max(maxY - minY, 400);
+
+    const containerEl = this.canvasContainer.nativeElement as HTMLElement;
+    const vw = containerEl.clientWidth || window.innerWidth || 1200;
+    const vh = containerEl.clientHeight || window.innerHeight || 800;
+
+    const PADDING_X = 100;
+    const PADDING_TOP = 120;
+    const PADDING_BOTTOM = 120;
+
+    const availableWidth = Math.max(vw - 2 * PADDING_X, 200);
+    const availableHeight = Math.max(vh - PADDING_TOP - PADDING_BOTTOM, 200);
+
+    const scaleX = availableWidth / boundsWidth;
+    const scaleY = availableHeight / boundsHeight;
+    const rawScale = Math.min(scaleX, scaleY);
+    const k = Math.min(Math.max(rawScale, 0.15), 1.0);
+
+    const cx = minX + boundsWidth / 2;
+    const cy = minY + boundsHeight / 2;
+
+    const tx = vw / 2 - cx * k;
+    const ty = PADDING_TOP + availableHeight / 2 - cy * k;
+
+    const targetTransform = d3.zoomIdentity.translate(tx, ty).scale(k);
+    const selection = d3.select(containerEl);
+
+    const transformFn = this.zoomBehavior.transform as unknown as (
+      transitionOrSelection: unknown,
+      transform: d3.ZoomTransform,
+    ) => void;
+
+    if (durationMs > 0) {
+      transformFn(selection.transition().duration(durationMs), targetTransform);
+    } else {
+      transformFn(selection, targetTransform);
+    }
+  }
+
+  triggerHighlight(stepIds: string[], definitionIds: string[] = []): void {
+    if (this.highlightTimer !== null) {
+      clearTimeout(this.highlightTimer);
+      this.highlightTimer = null;
+    }
+
+    this.highlightedNodeIds.set(new Set(stepIds));
+    this.highlightedDefinitionIds.set(new Set(definitionIds));
+
+    this.highlightTimer = setTimeout(() => {
+      this.highlightedNodeIds.set(new Set());
+      this.highlightedDefinitionIds.set(new Set());
+      this.highlightTimer = null;
+    }, 5000);
+  }
+
+  isNodeHighlighted(stepId: string): boolean {
+    return this.highlightedNodeIds().has(stepId);
+  }
+
+  private getNodeDimensions(nodeId: string): {width: number; height: number} {
+    const defaultWidth = 400;
+    const defaultHeight = 440;
+    if (
+      !isPlatformBrowser(this.platformId) ||
+      !this.canvasContent?.nativeElement
+    ) {
+      return {width: defaultWidth, height: defaultHeight};
+    }
+    const scale = this.currentTransform?.k || 1;
+    let el: HTMLElement | null = null;
+    if (nodeId === NodeTypes.USER_INPUT) {
+      el = this.canvasContent.nativeElement.querySelector('.user-input-node');
+    } else {
+      el =
+        this.canvasContent.nativeElement.querySelector(
+          `app-generic-step[data-node-id="${nodeId}"] .step-card`,
+        ) ||
+        this.canvasContent.nativeElement.querySelector(
+          `[data-node-id="${nodeId}"]`,
+        );
+    }
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        return {
+          width: rect.width / scale,
+          height: rect.height / scale,
+        };
+      }
+    }
+    return {width: defaultWidth, height: defaultHeight};
   }
 
   goBack(): void {
