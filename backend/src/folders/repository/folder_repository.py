@@ -1389,15 +1389,8 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
     ) -> dict[str, int]:
         """Inserts copied folders, media items, and assets for given folder_rows."""
         depth_map: dict[int, list] = {}
-        row_depth_map: dict[int, int] = {}
         for row in folder_rows:
-            if isinstance(getattr(row, "depth", None), int):
-                depth = row.depth
-            elif row.id == subtree_root_id or row.parent_id is None:
-                depth = 0
-            else:
-                depth = row_depth_map.get(row.parent_id, 0) + 1
-            row_depth_map[row.id] = depth
+            depth = row.depth
             depth_map.setdefault(depth, []).append(row)
 
         id_map: dict[int, int] = {}
