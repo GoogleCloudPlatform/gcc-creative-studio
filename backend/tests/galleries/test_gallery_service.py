@@ -1307,3 +1307,97 @@ async def test_bulk_copy_partial_failure_with_savepoint(service):
     assert result["copied_count"] == 1
     assert service.mock_db.begin_nested.call_count == 2
     service.mock_db.commit.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_bulk_copy_reraises_http_exception(service):
+    from pydantic import BaseModel
+    from src.galleries.dto.bulk_copy_dto import BulkCopyDto, BulkCopyItemDto
+
+    class DummyMedia(BaseModel):
+        id: int
+        workspace_id: int
+        folder_id: int | None = None
+        user_id: int
+        user_email: str
+        gcs_uris: list
+
+    bulk_dto = BulkCopyDto(
+        target_workspace_id=88,
+        items=[BulkCopyItemDto(id=1, type="media_item")],
+    )
+    current_user = UserModel(
+        id=1,
+        email="user@test.com",
+        name="User",
+        roles=[UserRoleEnum.USER],
+    )
+
+    media_1 = DummyMedia(
+        id=1,
+        workspace_id=99,
+        folder_id=12,
+        user_id=1,
+        user_email="user@test.com",
+        gcs_uris=[],
+    )
+    service.mock_media_repo.get_by_id.return_value = media_1
+
+    async def fake_authorize(workspace_id, user):
+        if workspace_id == 99:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    service.mock_workspace_auth.authorize.side_effect = fake_authorize
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.bulk_copy(bulk_dto, current_user)
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "Forbidden"
+
+
+@pytest.mark.anyio
+async def test_bulk_move_reraises_http_exception(service):
+    from pydantic import BaseModel
+    from src.galleries.dto.bulk_move_dto import BulkMoveDto, BulkMoveItemDto
+
+    class DummyMedia(BaseModel):
+        id: int
+        workspace_id: int
+        folder_id: int | None = None
+        user_id: int
+        user_email: str
+        gcs_uris: list
+
+    bulk_dto = BulkMoveDto(
+        target_workspace_id=88,
+        items=[BulkMoveItemDto(id=1, type="media_item")],
+    )
+    current_user = UserModel(
+        id=1,
+        email="user@test.com",
+        name="User",
+        roles=[UserRoleEnum.USER],
+    )
+
+    media_1 = DummyMedia(
+        id=1,
+        workspace_id=99,
+        folder_id=12,
+        user_id=1,
+        user_email="user@test.com",
+        gcs_uris=[],
+    )
+    service.mock_media_repo.get_by_id.return_value = media_1
+
+    async def fake_authorize(workspace_id, user):
+        if workspace_id == 99:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    service.mock_workspace_auth.authorize.side_effect = fake_authorize
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.bulk_move(bulk_dto, current_user)
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "Forbidden"

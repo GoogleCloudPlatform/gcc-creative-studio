@@ -878,6 +878,8 @@ class GalleryService:
                             + copy_results.get("assets_copied", 0)
                         )
 
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error copying {item.type} {item.id}: {e}")
 
@@ -1028,6 +1030,8 @@ class GalleryService:
                             + move_results.get("assets_moved", 0)
                         )
 
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error moving {item.type} {item.id}: {e}")
 
