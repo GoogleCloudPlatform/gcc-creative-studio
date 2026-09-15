@@ -41,6 +41,8 @@ import {
 import {AssignTagsDialogComponent} from '../assign-tags-dialog/assign-tags-dialog.component';
 import {TagsService} from '../../services/tags.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
+import {MoveToFolderDialogComponent} from '../move-to-folder-dialog/move-to-folder-dialog.component';
+import {FolderService} from '../../services/folder.service';
 
 @Component({
   selector: 'app-media-lightbox',
@@ -56,6 +58,7 @@ export class MediaLightboxComponent
   @Input() showShareButton = true;
   @Input() showDownloadButton = true;
   @Input() showDeleteButton = false;
+  @Input() showMoveButton = false;
 
   get isImage(): boolean {
     return this.mediaItem?.mimeType?.startsWith('image/') ?? false;
@@ -125,6 +128,7 @@ export class MediaLightboxComponent
     public dialog: MatDialog,
     private tagsService: TagsService,
     private workspaceStateService: WorkspaceStateService,
+    private folderService: FolderService,
   ) {}
 
   ngAfterViewInit(): void {
@@ -240,6 +244,65 @@ export class MediaLightboxComponent
 
   toggleShareMenu(): void {
     this.isShareMenuOpen = !this.isShareMenuOpen;
+  }
+
+  openBatchMoveDialog(): void {
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    if (!workspaceId || !this.mediaItem) return;
+
+    const dialogRef = this.dialog.open(MoveToFolderDialogComponent, {
+      data: {
+        workspaceId,
+        itemCount: 1,
+        currentFolderId: this.mediaItem.folderId,
+      },
+    });
+
+    dialogRef.afterClosed().subscribe(result => {
+      if (result && result.destinationFolderId !== undefined) {
+        const destName =
+          result.destinationFolderId === null
+            ? 'All Media'
+            : result.folderName || 'Folder';
+        this.executeMove(workspaceId, result.destinationFolderId, destName);
+      }
+    });
+  }
+
+  private executeMove(
+    workspaceId: number,
+    destinationFolderId: number | null,
+    destinationName: string,
+  ): void {
+    if (!this.mediaItem || this.mediaItem.folderId === destinationFolderId)
+      return;
+
+    const assetType = (this.mediaItem as any).itemType || 'media_item';
+
+    this.folderService
+      .moveItems({
+        workspaceId,
+        mediaItemIds: assetType === 'media_item' ? [this.mediaItem.id] : [],
+        sourceAssetIds: assetType === 'source_asset' ? [this.mediaItem.id] : [],
+        folderIds: [],
+        destinationFolderId,
+      })
+      .subscribe({
+        next: res => {
+          this.snackBar.open(
+            `${res.total_moved} item${res.total_moved === 1 ? '' : 's'} moved to "${destinationName}"`,
+            'Close',
+            {duration: 3000},
+          );
+          this.mediaItem!.folderId = destinationFolderId;
+        },
+        error: err => {
+          console.error('Error moving items via drag and drop:', err);
+          this.snackBar.open('Failed to move items', 'Close', {
+            duration: 3000,
+          });
+        },
+      });
   }
 
   get currentImageUrl(): string {
