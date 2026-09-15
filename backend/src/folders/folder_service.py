@@ -590,6 +590,7 @@ class FolderService:
                 existing_map = await self.folder_repo.get_existing_folders_map(
                     workspace_id=dto.workspace_id,
                     parent_id=dest_folder_id,
+                    exclude_folder_ids=valid_folder_ids,
                 )
                 conflicts = []
                 for f_id in valid_folder_ids:

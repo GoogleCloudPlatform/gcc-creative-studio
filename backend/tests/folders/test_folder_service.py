@@ -1228,6 +1228,50 @@ class TestCopyItems:
             user_id=10,
             user_email="test@example.com",
         )
+        mock_folder_repo.get_existing_folders_map.assert_awaited_once_with(
+            workspace_id=1,
+            parent_id=5,
+            exclude_folder_ids=[2],
+        )
+
+    @pytest.mark.anyio
+    async def test_copy_items_in_place_duplication_no_conflict(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.get_folder_by_id.return_value = Folder(
+            id=10, workspace_id=1, user_email="a@b.com", name="Parent"
+        )
+        mock_folder_repo.get_folder_depth.return_value = 1
+        source_folder = Folder(
+            id=20,
+            workspace_id=1,
+            user_email="a@b.com",
+            name="DupeMe",
+            parent_id=10,
+        )
+        mock_folder_repo.get_folders_by_ids.return_value = [source_folder]
+        mock_folder_repo.get_subtree_depth.return_value = 1
+        mock_folder_repo.get_existing_folders_map.return_value = {}
+        mock_folder_repo.copy_items.return_value = {
+            "media_items_copied": 0,
+            "source_assets_copied": 0,
+            "folders_copied": 1,
+            "total_copied": 1,
+        }
+
+        dto = CopyItemsDto(
+            workspace_id=1,
+            folder_ids=[20],
+            destination_folder_id=10,
+        )
+
+        result = await folder_service.copy_items(dto, sample_user)
+        assert result["folders_copied"] == 1
+        mock_folder_repo.get_existing_folders_map.assert_awaited_once_with(
+            workspace_id=1,
+            parent_id=10,
+            exclude_folder_ids=[20],
+        )
 
     @pytest.mark.anyio
     async def test_copy_items_dest_not_found(
