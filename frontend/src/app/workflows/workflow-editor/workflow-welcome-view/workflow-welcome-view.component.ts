@@ -37,6 +37,7 @@ export type WelcomeTab = 'all' | 'predefined' | 'user';
 })
 export class WorkflowWelcomeViewComponent implements OnInit {
   @Input() canClose = false;
+  @Input() showBlankOption = true;
   @Output() close = new EventEmitter<void>();
   @Output() templateSelected = new EventEmitter<WorkflowTemplate | null>();
 
@@ -130,6 +131,9 @@ export class WorkflowWelcomeViewComponent implements OnInit {
   }
 
   selectBlankWorkflow(): void {
+    if (!this.showBlankOption) {
+      return;
+    }
     this.templateSelected.emit(null);
   }
 

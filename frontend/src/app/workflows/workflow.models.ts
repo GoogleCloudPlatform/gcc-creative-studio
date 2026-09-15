@@ -100,6 +100,23 @@ export interface WorkflowTemplate extends WorkflowBase {
   userId?: string;
 }
 
+export interface ParameterDefinition {
+  id: string;
+  name: string;
+  type: string;
+}
+
+export interface ParameterRemapEntry {
+  newDefId: string;
+  finalName: string;
+}
+
+export interface TemplateInsertionResult {
+  insertedStepIds: string[];
+  addedDefinitionIds: string[];
+  stepPositionMap: Record<string, Point>;
+}
+
 export type WorkflowTemplateCreateDto = WorkflowBase;
 
 export type WorkflowCreateDto = WorkflowBase;
