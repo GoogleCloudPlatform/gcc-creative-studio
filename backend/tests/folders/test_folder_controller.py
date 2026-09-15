@@ -280,23 +280,22 @@ class TestDeleteFolder:
     def test_delete_folder_success(
         self, api_client, mock_folder_service, mock_workspace_auth
     ):
-        existing_folder = FolderResponseDto(
+        existing_folder = Folder(
             id=1,
             workspace_id=1,
             user_id=1,
             user_email="user@example.com",
             name="Folder To Delete",
             parent_id=None,
-            item_count=0,
-            subfolder_count=0,
         )
-        mock_folder_service.get_folder_by_id.return_value = existing_folder
+        mock_folder_service.get_raw_folder.return_value = existing_folder
         mock_folder_service.delete_folder.return_value = {"success": True}
 
         response = api_client.delete("/api/folders/1")
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["success"] is True
+        mock_folder_service.get_raw_folder.assert_called_once_with(folder_id=1)
         mock_workspace_auth.authorize.assert_called_once()
 
 

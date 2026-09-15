@@ -206,7 +206,7 @@ async def delete_folder(
     workspace_auth: WorkspaceAuth = Depends(),
 ) -> dict[str, bool]:
     """Soft delete a folder and all its subfolders."""
-    folder = await service.get_folder_by_id(folder_id=folder_id)
+    folder = await service.get_raw_folder(folder_id=folder_id)
     await workspace_auth.authorize(
         workspace_id=folder.workspace_id,
         user=current_user,
