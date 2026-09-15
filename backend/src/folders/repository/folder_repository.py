@@ -520,6 +520,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
             .where(
                 MediaItem.id.in_(media_item_ids),
                 MediaItem.workspace_id == workspace_id,
+                MediaItem.deleted_at.is_(None),
             )
             .values(folder_id=destination_folder_id)
         )
@@ -543,6 +544,7 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
             .where(
                 SourceAsset.id.in_(source_asset_ids),
                 SourceAsset.workspace_id == workspace_id,
+                SourceAsset.deleted_at.is_(None),
             )
             .values(folder_id=destination_folder_id)
         )

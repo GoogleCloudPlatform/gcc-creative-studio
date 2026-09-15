@@ -298,6 +298,8 @@ class TestFolderRepository:
         )
         assert count == 2
         mock_db.commit.assert_called_once()
+        executed_stmt = mock_db.execute.call_args[0][0]
+        assert "media_items.deleted_at IS NULL" in str(executed_stmt)
 
     @pytest.mark.anyio
     async def test_move_media_items_without_commit(self, folder_repo, mock_db):
@@ -309,6 +311,8 @@ class TestFolderRepository:
         )
         assert count == 2
         mock_db.commit.assert_not_called()
+        executed_stmt = mock_db.execute.call_args[0][0]
+        assert "media_items.deleted_at IS NULL" in str(executed_stmt)
 
     @pytest.mark.anyio
     async def test_move_source_assets(self, folder_repo, mock_db):
@@ -320,6 +324,8 @@ class TestFolderRepository:
         )
         assert count == 1
         mock_db.commit.assert_called_once()
+        executed_stmt = mock_db.execute.call_args[0][0]
+        assert "source_assets.deleted_at IS NULL" in str(executed_stmt)
 
     @pytest.mark.anyio
     async def test_move_source_assets_without_commit(
@@ -333,6 +339,8 @@ class TestFolderRepository:
         )
         assert count == 1
         mock_db.commit.assert_not_called()
+        executed_stmt = mock_db.execute.call_args[0][0]
+        assert "source_assets.deleted_at IS NULL" in str(executed_stmt)
 
     @pytest.mark.anyio
     async def test_move_folders_disambiguation(self, folder_repo, mock_db):
