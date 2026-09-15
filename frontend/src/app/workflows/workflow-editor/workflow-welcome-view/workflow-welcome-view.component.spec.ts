@@ -253,4 +253,39 @@ describe('WorkflowWelcomeViewComponent', () => {
     const userSection = element.querySelector('.user-section');
     expect(userSection).toBeNull();
   });
+
+  it('should render #card-blank-workflow and start header title when showBlankOption is true', () => {
+    component.showBlankOption = true;
+    fixture.detectChanges();
+
+    const element: HTMLElement = fixture.nativeElement;
+    const blankCard = element.querySelector('#card-blank-workflow');
+    const title = element.querySelector('.welcome-title');
+    expect(blankCard).not.toBeNull();
+    expect(title?.textContent?.trim()).toBe('Start a New Workflow');
+  });
+
+  it('should hide #card-blank-workflow and show Insert a Template header title when showBlankOption is false', () => {
+    component.showBlankOption = false;
+    fixture.detectChanges();
+
+    const element: HTMLElement = fixture.nativeElement;
+    const blankCard = element.querySelector('#card-blank-workflow');
+    const title = element.querySelector('.welcome-title');
+    const subtitle = element.querySelector('.welcome-subtitle');
+    expect(blankCard).toBeNull();
+    expect(title?.textContent?.trim()).toBe('Insert a Template');
+    expect(subtitle?.textContent?.trim()).toContain(
+      'Select a predefined template or one of your saved blueprints to add to your current workflow.',
+    );
+  });
+
+  it('should not emit templateSelected when selectBlankWorkflow is called while showBlankOption is false', () => {
+    component.showBlankOption = false;
+    spyOn(component.templateSelected, 'emit');
+
+    component.selectBlankWorkflow();
+
+    expect(component.templateSelected.emit).not.toHaveBeenCalled();
+  });
 });

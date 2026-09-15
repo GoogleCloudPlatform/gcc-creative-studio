@@ -19,6 +19,7 @@
   <app-workflow-welcome-view
     *ngIf="showWelcomeView"
     [canClose]="true"
+    [showBlankOption]="isInitialWelcome()"
     (close)="closeWelcomeView()"
     (templateSelected)="onTemplateSelected($event)"
     class="absolute inset-0 z-50"
@@ -77,7 +78,7 @@
           *ngIf="!isReadOnly"
           mat-raised-button
           id="workflow-open-templates-btn"
-          (click)="openWelcomeView()"
+          (click)="openWelcomeView(false)"
           matTooltip="Browse templates and blueprints"
         >
           <mat-icon class="mr-1">auto_awesome</mat-icon>
@@ -230,6 +231,9 @@
                       "
                       [formGroupName]="i"
                       class="definition-row flex gap-2 items-center"
+                      [class.new-param-highlight]="
+                        highlightedDefinitionMap()[def.value.id] || false
+                      "
                     >
                       <mat-form-field appearance="outline" class="flex-grow">
                         <mat-label>Name</mat-label>
@@ -313,6 +317,7 @@
               >
                 <app-generic-step
                   class="absolute"
+                  [attr.data-node-id]="step.value.stepId"
                   [style.left.px]="getNodePosition(step.value.stepId).x"
                   [style.top.px]="getNodePosition(step.value.stepId).y"
                   (mousedown)="onNodeMouseDown($event, step.value.stepId)"
@@ -325,6 +330,9 @@
                   [stepExecution]="getStepExecution(step.value.stepId)"
                   [mediaUrlMap]="mediaUrlMap"
                   [isSelected]="selectedNodeId === step.value.stepId"
+                  [isHighlighted]="
+                    highlightedNodeMap()[step.value.stepId] || false
+                  "
                   [activeMagneticPort]="magneticTargetPort"
                   [dragSourcePort]="dragSourcePort"
                   (portDragStart)="onPortDragStart($event)"
@@ -341,10 +349,18 @@
     </div>
     <!-- Floating Add Node Button -->
     <div class="add-btn-wrapper" *ngIf="!isReadOnly && !showWelcomeView">
-      <div
-        class="history-btns"
-        *ngIf="historyIndex > 0 || historyIndex < historyStack.length - 1"
-      >
+      <div class="history-btns">
+        <button
+          mat-mini-fab
+          color="primary"
+          class="mini-history-btn"
+          id="workflow-fit-view-btn"
+          (click)="fitView()"
+          matTooltip="Fit View / Reset Zoom"
+          aria-label="Fit view to canvas"
+        >
+          <mat-icon>center_focus_strong</mat-icon>
+        </button>
         <button
           mat-mini-fab
           color="primary"

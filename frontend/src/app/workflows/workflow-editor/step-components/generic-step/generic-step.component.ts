@@ -65,6 +65,7 @@ export class GenericStepComponent implements OnInit, OnChanges {
   @Input() stepExecution: any = null;
   @Input() mediaUrlMap!: Map<string, string>;
   @Input() isSelected = false;
+  @Input() isHighlighted = false;
   @Input() activeMagneticPort: {stepId: string; inputName: string} | null =
     null;
   @Input() dragSourcePort: DragSourcePort | null = null;

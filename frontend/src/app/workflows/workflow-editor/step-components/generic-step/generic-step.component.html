@@ -20,6 +20,7 @@
   [ngClass]="localConfig.type"
   [class.invalid-step]="stepForm.invalid && showValidationErrors"
   [class.selected-node]="isSelected"
+  [class.new-node-highlight]="isHighlighted"
   [class.running-node]="
     stepForm.get('status')?.value === StepStatusEnum.RUNNING
   "
