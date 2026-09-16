@@ -149,6 +149,18 @@
                 <span>From Google Drive</span>
               </button>
             </mat-menu>
+
+            <!-- New Folder Button -->
+            <studio-button
+              variant="primary"
+              size="small"
+              [disabled]="breadcrumbs.length >= folderMaxDepth"
+              (click)="openCreateFolderDialog()"
+              [title]="breadcrumbs.length >= folderMaxDepth ? 'Maximum folder depth of ' + folderMaxDepth + ' reached' : 'Create a new folder'"
+            >
+              <mat-icon class="mr-1">create_new_folder</mat-icon>
+              <span>New Folder</span>
+            </studio-button>
           </div>
 
           <!-- Select All Button -->
@@ -224,7 +236,7 @@
           shape="circle"
           (click)="copySelected()"
           title="Copy selected"
-          [disabled]="selectedItems.size === 0 || isCopying || isDownloading || isDeleting"
+          [disabled]="selectedItems.size === 0 || isCopying || isMoving || isDownloading || isDeleting"
         >
           <mat-icon *ngIf="!isCopying">content_copy</mat-icon>
           <mat-progress-spinner
@@ -237,9 +249,24 @@
           variant="primary"
           size="small"
           shape="circle"
+          (click)="openBatchMoveDialog()"
+          title="Move selected"
+          [disabled]="selectedItems.size === 0 || isCopying || isMoving || isDownloading || isDeleting"
+        >
+          <mat-icon *ngIf="!isMoving">drive_file_move</mat-icon>
+          <mat-progress-spinner
+            *ngIf="isMoving"
+            mode="indeterminate"
+            diameter="18"
+          ></mat-progress-spinner>
+        </studio-button>
+        <studio-button
+          variant="primary"
+          size="small"
+          shape="circle"
           (click)="openBulkAssignTagsDialog()"
           title="Tag selected"
-          [disabled]="selectedItems.size === 0 || isCopying || isDownloading || isDeleting"
+          [disabled]="selectedItems.size === 0 || isCopying || isMoving || isDownloading || isDeleting"
         >
           <mat-icon>label</mat-icon>
         </studio-button>
@@ -249,7 +276,7 @@
           shape="circle"
           (click)="downloadSelected()"
           title="Download selected"
-          [disabled]="isDownloading || isDeleting || isCopying"
+          [disabled]="isDownloading || isDeleting || isCopying || isMoving"
         >
           <mat-icon *ngIf="!isDownloading">download</mat-icon>
           <mat-progress-spinner
@@ -265,7 +292,7 @@
           shape="circle"
           (click)="deleteSelected()"
           title="Delete selected"
-          [disabled]="isDeleting || isDownloading || isCopying"
+          [disabled]="isDeleting || isDownloading || isCopying || isMoving"
         >
           <mat-icon *ngIf="!isDeleting">delete</mat-icon>
           <mat-progress-spinner
@@ -276,6 +303,41 @@
         </studio-button>
       </div>
     </ng-container>
+
+    <!-- Breadcrumb Navigation Bar -->
+    <div class="flex items-center gap-2 px-4 py-2 text-sm text-neutral-400 overflow-x-auto custom-scrollbar">
+      <button
+        class="flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all hover:text-white hover:bg-neutral-800/60 cursor-pointer"
+        [class.text-white]="currentFolderId === null"
+        [class.font-semibold]="currentFolderId === null"
+        [class.breadcrumb-drag-over]="dragOverBreadcrumbId === 'root'"
+        (click)="navigateToBreadcrumb(null)"
+        (dragover)="onBreadcrumbDragOver($event, null)"
+        (dragenter)="onBreadcrumbDragOver($event, null)"
+        (dragleave)="onBreadcrumbDragLeave($event, null)"
+        (drop)="onBreadcrumbDrop($event, null)"
+      >
+        <mat-icon class="!w-4 !h-4 text-[16px]">home</mat-icon>
+        <span>All Media</span>
+      </button>
+
+      <ng-container *ngFor="let crumb of breadcrumbs; let last = last">
+        <mat-icon class="!w-4 !h-4 text-[16px] text-neutral-600">chevron_right</mat-icon>
+        <button
+          class="flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all hover:text-white hover:bg-neutral-800/60 cursor-pointer"
+          [class.text-white]="last"
+          [class.font-semibold]="last"
+          [class.breadcrumb-drag-over]="dragOverBreadcrumbId === crumb.id"
+          (click)="navigateToBreadcrumb(crumb)"
+          (dragover)="onBreadcrumbDragOver($event, crumb.id)"
+          (dragenter)="onBreadcrumbDragOver($event, crumb.id)"
+          (dragleave)="onBreadcrumbDragLeave($event, crumb.id)"
+          (drop)="onBreadcrumbDrop($event, crumb.id)"
+        >
+          <span>{{ crumb.name }}</span>
+        </button>
+      </ng-container>
+    </div>
 
     <!-- A loading indicator that shows while data is being fetched -->
     <div
@@ -289,6 +351,28 @@
       <p class="pt-5 text-white">Loading media...</p>
     </div>
 
+    @if (!isLoading && folders.length > 0) {
+      <div class="flex flex-col mt-4 mb-2">
+        <div class="flex items-center justify-between mb-3 px-2">
+          <h2 class="text-white !text-xl font-semibold">Folders ({{ folders.length }})</h2>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 grid-flow-dense">
+          @for (folder of folders; track folder.id) {
+            <app-folder-card
+              [folder]="folder"
+              [isSelectorMode]="isSelectorMode"
+              (folderClicked)="navigateToFolder($event)"
+              (editRequested)="openEditFolderDialog($event)"
+              (deleteRequested)="openDeleteFolderDialog($event)"
+              (moveRequested)="openMoveFolderDialog($event)"
+              (copyRequested)="openCopyFolderDialog($event)"
+              (itemDropped)="onItemDroppedOnFolder($event.folder, $event.payload)"
+            ></app-folder-card>
+          }
+        </div>
+      </div>
+    }
+
     <div class="flex flex-col gap-8 mt-8" *ngIf="groups.length > 0">
       <div *ngFor="let group of groups; trackBy: trackByGroup">
         <h2 class="text-white text-lg mb-4 pl-2">{{ group.title }}</h2>
@@ -300,8 +384,10 @@
             <app-gallery-card
               [item]="media"
               [isSelectionMode]="isSelectionMode"
+              [isSelectorMode]="isSelectorMode"
               [isSelected]="isItemSelected(media)"
               [anyItemSelected]="selectedItems.size > 0"
+              [selectedItems]="selectedItems"
               [filteredTags]="tagsFilter"
               (mediaItemSelected)="mediaItemSelected.emit($event)"
               (mediaSelected)="mediaSelected.emit({mediaItem: $any($event), selectedIndex: 0})"

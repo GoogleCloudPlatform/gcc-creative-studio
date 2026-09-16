@@ -213,20 +213,22 @@ export class MediaUploadService implements OnDestroy {
     }
 
     // Listen to router events to cancel uploads when navigating to /login
-    this.router.events
-      .pipe(
-        filter(
-          (event): event is NavigationEnd => event instanceof NavigationEnd,
-        ),
-      )
-      .subscribe(event => {
-        if (
-          event.urlAfterRedirects.startsWith('/login') ||
-          event.url.startsWith('/login')
-        ) {
-          this.cancelAllForLogin();
-        }
-      });
+    if (this.router?.events) {
+      this.router.events
+        .pipe(
+          filter(
+            (event): event is NavigationEnd => event instanceof NavigationEnd,
+          ),
+        )
+        .subscribe(event => {
+          if (
+            event.urlAfterRedirects.startsWith('/login') ||
+            event.url.startsWith('/login')
+          ) {
+            this.cancelAllForLogin();
+          }
+        });
+    }
 
     // Effect to attach/detach window beforeunload listener when transfers are active
     effect(() => {
