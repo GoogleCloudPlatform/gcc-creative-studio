@@ -18,6 +18,7 @@ import {NO_ERRORS_SCHEMA, PLATFORM_ID} from '@angular/core';
 import {
   ComponentFixture,
   TestBed,
+  discardPeriodicTasks,
   fakeAsync,
   tick,
 } from '@angular/core/testing';
@@ -1101,6 +1102,7 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
           type: NodeTypes.USER_INPUT,
           status: StepStatusEnum.IDLE,
           position: {x: 0, y: 0},
+          collapsed: false,
           inputs: {},
           outputs: {City: {type: 'text'}},
           settings: {
@@ -1112,6 +1114,7 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
           type: NodeTypes.GENERATE_TEXT,
           status: StepStatusEnum.IDLE,
           position: {x: 100, y: 50},
+          collapsed: false,
           inputs: {
             prompt: 'Weather in <city>',
             city: {
@@ -1128,6 +1131,7 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
           type: NodeTypes.IMAGE,
           status: StepStatusEnum.IDLE,
           position: {x: 450, y: 120},
+          collapsed: false,
           inputs: {
             prompt: {step: 'inserted_step_1', output: 'generated_text'},
           },
@@ -1193,6 +1197,7 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
     it('should highlight newly inserted nodes immediately and clear highlight after 5000ms', fakeAsync(() => {
       component.isInitialWelcome.set(false);
       component.nodePositions['user_input'] = {x: 100, y: 100};
+      spyOn(component, 'fitView');
 
       component.onTemplateSelected(sampleTemplateToInsert);
 
@@ -1211,6 +1216,175 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
       expect(component.isNodeHighlighted('inserted_step_1')).toBeFalse();
       expect(component.isNodeHighlighted('inserted_step_2')).toBeFalse();
       expect(component.highlightedNodeMap()['inserted_step_1']).toBeUndefined();
+      discardPeriodicTasks();
     }));
+  });
+
+  describe('Node Collapsed State & Serialization', () => {
+    it('should toggle userInput collapsed state, mark form dirty, save history, and update edges', fakeAsync(() => {
+      spyOn(component, 'saveHistoryState');
+      spyOn<any>(component, 'updateEdges');
+
+      expect(component.isUserInputCollapsed).toBeFalse();
+
+      const mouseEvent = new MouseEvent('click');
+      spyOn(mouseEvent, 'stopPropagation');
+
+      component.toggleUserInputCollapse(mouseEvent);
+
+      expect(mouseEvent.stopPropagation).toHaveBeenCalled();
+      expect(component.isUserInputCollapsed).toBeTrue();
+      expect(
+        component.workflowForm.get('userInput.collapsed')?.value,
+      ).toBeTrue();
+      expect(component.workflowForm.dirty).toBeTrue();
+      expect(component.saveHistoryState).toHaveBeenCalled();
+
+      tick(500);
+      expect((component as any).updateEdges).toHaveBeenCalled();
+      discardPeriodicTasks();
+    }));
+
+    it('should mark form dirty, save history, and update edges on step collapse change', fakeAsync(() => {
+      spyOn(component, 'saveHistoryState');
+      spyOn<any>(component, 'updateEdges');
+
+      component.onStepCollapseChange();
+
+      expect(component.workflowForm.dirty).toBeTrue();
+      expect(component.saveHistoryState).toHaveBeenCalled();
+
+      tick(500);
+      expect((component as any).updateEdges).toHaveBeenCalled();
+      discardPeriodicTasks();
+    }));
+
+    it('should serialize collapsed state for user_input and generic steps in prepareSteps', () => {
+      component.workflowForm.get('userInput.collapsed')?.setValue(true);
+
+      formService.addStep(NodeTypes.GENERATE_TEXT, {
+        stepId: 'text_step_1',
+        type: NodeTypes.GENERATE_TEXT,
+        collapsed: true,
+        inputs: {},
+        outputs: {},
+        settings: {},
+      });
+
+      formService.addStep(NodeTypes.IMAGE, {
+        stepId: 'image_step_1',
+        type: NodeTypes.IMAGE,
+        collapsed: false,
+        inputs: {},
+        outputs: {},
+        settings: {},
+      });
+
+      const rawValue = component.workflowForm.getRawValue();
+      const prepared = (component as any).prepareSteps(rawValue);
+
+      const userInputStep = prepared.find(
+        (s: any) => s.stepId === NodeTypes.USER_INPUT,
+      );
+      const textStep = prepared.find((s: any) => s.stepId === 'text_step_1');
+      const imageStep = prepared.find((s: any) => s.stepId === 'image_step_1');
+
+      expect(userInputStep.collapsed).toBeTrue();
+      expect(textStep.collapsed).toBeTrue();
+      expect(imageStep.collapsed).toBeFalse();
+    });
+
+    it('should preserve collapsed state when saving as a template', () => {
+      const dialog = TestBed.inject(MatDialog);
+      (dialog.open as jasmine.Spy).and.returnValue({
+        afterClosed: () => of(null),
+      });
+      const workflowService = TestBed.inject(WorkflowService);
+      component.workflowForm.get('userInput.collapsed')?.setValue(true);
+      formService.addStep(NodeTypes.GENERATE_TEXT, {
+        stepId: 'collapsed_step',
+        type: NodeTypes.GENERATE_TEXT,
+        collapsed: true,
+        inputs: {prompt: 'Hello'},
+        outputs: {},
+        settings: {},
+      });
+
+      component.saveAsNewTemplate();
+
+      expect(workflowService.validateWorkflow).toHaveBeenCalled();
+      const validatedPayload = (
+        workflowService.validateWorkflow as jasmine.Spy
+      ).calls.mostRecent().args[0];
+      const userInput = validatedPayload.steps.find(
+        (s: any) => s.stepId === NodeTypes.USER_INPUT,
+      );
+      const textStep = validatedPayload.steps.find(
+        (s: any) => s.stepId === 'collapsed_step',
+      );
+      expect(userInput.collapsed).toBeTrue();
+      expect(textStep.collapsed).toBeTrue();
+    });
+
+    it('should calculate port positions using card element bounding box when node is collapsed', () => {
+      const transformLayer =
+        component.canvasContent.nativeElement.querySelector('.transform-layer');
+      const mockCard = document.createElement('div');
+      mockCard.className = 'step-card';
+      const mockGenericStep = document.createElement('app-generic-step');
+      mockGenericStep.setAttribute('data-node-id', 'step_dom_collapsed');
+      mockGenericStep.appendChild(mockCard);
+      transformLayer.appendChild(mockGenericStep);
+
+      spyOn(transformLayer, 'getBoundingClientRect').and.returnValue({
+        left: 100,
+        top: 50,
+        width: 1000,
+        height: 800,
+      } as DOMRect);
+
+      spyOn(mockCard, 'getBoundingClientRect').and.returnValue({
+        left: 300,
+        top: 150,
+        width: 400,
+        height: 54,
+      } as DOMRect);
+
+      const inputPos = (component as any).getPortPosition(
+        'step_dom_collapsed',
+        'prompt',
+        'input',
+      );
+      const outputPos = (component as any).getPortPosition(
+        'step_dom_collapsed',
+        'generated_text',
+        'output',
+      );
+
+      // Relative to layerRect (100, 50) at scale k=1: left=200, top=100, width=400, height=54
+      expect(inputPos).toEqual({x: 200, y: 127});
+      expect(outputPos).toEqual({x: 600, y: 127});
+
+      transformLayer.removeChild(mockGenericStep);
+    });
+
+    it('should fallback to nodePositions when card element is not in DOM yet', () => {
+      component.nodePositions['step_collapsed'] = {x: 300, y: 200};
+
+      // When card element is not in DOM, fallback uses NODE_WIDTH=400, HEADER_HEIGHT=54
+      const inputPos = (component as any).getPortPosition(
+        'step_collapsed',
+        'prompt',
+        'input',
+      );
+      const outputPos = (component as any).getPortPosition(
+        'step_collapsed',
+        'generated_text',
+        'output',
+      );
+
+      expect(inputPos).toEqual({x: 300, y: 227});
+      expect(outputPos).toEqual({x: 700, y: 227});
+    });
   });
 });

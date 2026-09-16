@@ -212,11 +212,30 @@
                 <mat-icon>input</mat-icon>
                 Workflow Parameters
               </div>
+              <div class="step-actions">
+                <button
+                  mat-icon-button
+                  type="button"
+                  class="collapse-icon"
+                  id="user-input-collapse-btn"
+                  (click)="toggleUserInputCollapse($event)"
+                  [matTooltip]="
+                    isUserInputCollapsed
+                      ? 'Expand parameters'
+                      : 'Collapse parameters'
+                  "
+                >
+                  <mat-icon>{{
+                    isUserInputCollapsed ? 'expand_more' : 'expand_less'
+                  }}</mat-icon>
+                </button>
+              </div>
             </div>
 
             <div
               class="step-content user-input-panel"
               formGroupName="userInput"
+              *ngIf="!isUserInputCollapsed"
             >
               <div class="section">
                 <div formGroupName="settings" class="step-settings">
@@ -272,7 +291,10 @@
               </div>
             </div>
 
-            <div class="step-footer relative min-h-[40px] pb-4">
+            <div
+              class="step-footer relative min-h-[40px] pb-4"
+              *ngIf="!isUserInputCollapsed"
+            >
               <div
                 *ngFor="
                   let def of outputDefinitionsArray.controls;
@@ -339,6 +361,7 @@
                   (portDrop)="onPortDrop($event, step.value.stepId)"
                   (delete)="deleteStep(i)"
                   (clone)="cloneStep(i)"
+                  (collapseChange)="onStepCollapseChange()"
                 >
                 </app-generic-step>
               </ng-container>

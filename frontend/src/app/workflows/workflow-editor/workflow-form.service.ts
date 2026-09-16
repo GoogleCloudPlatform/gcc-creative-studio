@@ -78,6 +78,7 @@ export class WorkflowFormService {
         type: [NodeTypes.USER_INPUT],
         status: [StepStatusEnum.IDLE],
         position: [{...DEFAULT_NODE_POSITION}],
+        collapsed: [false],
         outputs: this.fb.group({}),
         settings: this.fb.group({
           definitions: this.fb.array([]),
@@ -137,6 +138,7 @@ export class WorkflowFormService {
       type: [safeStepData.type],
       status: [safeStepData.status || StepStatusEnum.IDLE],
       position: [safeStepData.position || {...DEFAULT_NODE_POSITION}],
+      collapsed: [!!safeStepData.collapsed],
       inputs: this.createFormGroupFromData(safeStepData.inputs),
       outputs: this.createFormGroupFromData(safeStepData.outputs),
       settings: this.createFormGroupFromData(safeStepData.settings),
@@ -333,6 +335,7 @@ export class WorkflowFormService {
       userInput: {
         ...(userInputStep || {}),
         status: StepStatusEnum.IDLE,
+        collapsed: !!userInputStep?.collapsed,
       },
     });
 
@@ -381,6 +384,7 @@ export class WorkflowFormService {
       const stepData = {
         ...step,
         status: StepStatusEnum.IDLE,
+        collapsed: !!step.collapsed,
       };
 
       // Backfill _definitionId into inputs and transform output names to display names
@@ -537,6 +541,7 @@ export class WorkflowFormService {
         stepId: newStepId,
         status: StepStatusEnum.IDLE,
         position: {...originalPos},
+        collapsed: !!step.collapsed,
         inputs: remappedInputs,
       };
 
@@ -673,6 +678,7 @@ export class WorkflowFormService {
       type: type,
       status: StepStatusEnum.IDLE,
       position: {...DEFAULT_NODE_POSITION},
+      collapsed: false,
       inputs: {},
       outputs: {},
       settings: {},

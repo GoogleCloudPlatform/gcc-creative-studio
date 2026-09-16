@@ -105,6 +105,7 @@ class BaseStep(BaseDto, Generic[InputT, SettingsT]):
 
     step_id: str
     position: Point = Field(default_factory=lambda: Point(x=100.0, y=100.0))
+    collapsed: bool = Field(default=False)
 
     # --- Execution State ---
     # These fields are populated during a Workflow Run.

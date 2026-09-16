@@ -103,6 +103,7 @@ describe('WorkflowFormService', () => {
           type: NodeTypes.USER_INPUT,
           status: StepStatusEnum.IDLE,
           position: {x: 0, y: 0},
+          collapsed: false,
           inputs: {},
           outputs: {
             City: {type: 'text'},
@@ -120,6 +121,7 @@ describe('WorkflowFormService', () => {
           type: NodeTypes.GENERATE_TEXT,
           status: StepStatusEnum.IDLE,
           position: {x: 250, y: 100},
+          collapsed: false,
           inputs: {
             prompt: 'Forecast for <city>',
             city: {
@@ -136,6 +138,7 @@ describe('WorkflowFormService', () => {
           type: NodeTypes.IMAGE,
           status: StepStatusEnum.IDLE,
           position: {x: 600, y: 150},
+          collapsed: false,
           inputs: {
             prompt: {
               step: 'weather_step',
@@ -226,6 +229,118 @@ describe('WorkflowFormService', () => {
         ?.value as StepOutputReference;
       expect(occasionRef.step).toBe('user_input');
       expect(occasionRef.output).toBe('Occasion_2');
+    });
+
+    it('should preserve collapsed state on steps when inserting template data', () => {
+      const templateWithCollapsed: WorkflowTemplate = {
+        id: 'tmpl-collapsed',
+        name: 'Collapsed Template',
+        description: 'Template with collapsed steps',
+        steps: [
+          {
+            stepId: 'step_collapsed',
+            type: NodeTypes.GENERATE_TEXT,
+            status: StepStatusEnum.IDLE,
+            position: {x: 100, y: 100},
+            collapsed: true,
+            inputs: {},
+            outputs: {},
+            settings: {},
+          },
+          {
+            stepId: 'step_expanded',
+            type: NodeTypes.IMAGE,
+            status: StepStatusEnum.IDLE,
+            position: {x: 300, y: 100},
+            collapsed: false,
+            inputs: {},
+            outputs: {},
+            settings: {},
+          },
+        ],
+      };
+
+      const existingIds = new Set<string>(['user_input']);
+      service.insertTemplateData(templateWithCollapsed, existingIds);
+
+      const collapsedControl = service.stepsArray.controls.find(
+        c => c.get('stepId')?.value === 'step_collapsed',
+      );
+      const expandedControl = service.stepsArray.controls.find(
+        c => c.get('stepId')?.value === 'step_expanded',
+      );
+
+      expect(collapsedControl?.get('collapsed')?.value).toBeTrue();
+      expect(expandedControl?.get('collapsed')?.value).toBeFalse();
+    });
+  });
+
+  describe('collapsed state handling', () => {
+    it('should initialize userInput collapsed to false by default', () => {
+      expect(
+        service.workflowForm.get('userInput.collapsed')?.value,
+      ).toBeFalse();
+    });
+
+    it('should default step collapsed to false when adding step without collapsed property', () => {
+      service.addStep(NodeTypes.GENERATE_TEXT);
+      expect(service.stepsArray.at(0).get('collapsed')?.value).toBeFalse();
+    });
+
+    it('should preserve collapsed true when adding step with existingData', () => {
+      service.addStep(NodeTypes.GENERATE_TEXT, {
+        stepId: 'text_1',
+        type: NodeTypes.GENERATE_TEXT,
+        collapsed: true,
+        inputs: {},
+        outputs: {},
+        settings: {},
+      });
+      expect(service.stepsArray.at(0).get('collapsed')?.value).toBeTrue();
+    });
+
+    it('should patch collapsed state for userInput and steps in patchData', () => {
+      service.patchData({
+        id: 'wf-1',
+        name: 'Test Workflow',
+        description: '',
+        steps: [
+          {
+            stepId: 'user_input',
+            type: NodeTypes.USER_INPUT,
+            status: StepStatusEnum.IDLE,
+            position: {x: 0, y: 0},
+            collapsed: true,
+            inputs: {},
+            outputs: {},
+            settings: {definitions: []},
+          },
+          {
+            stepId: 'step_1',
+            type: NodeTypes.GENERATE_TEXT,
+            status: StepStatusEnum.IDLE,
+            position: {x: 100, y: 100},
+            collapsed: true,
+            inputs: {},
+            outputs: {},
+            settings: {},
+          },
+          {
+            stepId: 'step_2',
+            type: NodeTypes.IMAGE,
+            status: StepStatusEnum.IDLE,
+            position: {x: 200, y: 100},
+            collapsed: false,
+            inputs: {},
+            outputs: {},
+            settings: {},
+          },
+        ],
+      });
+
+      expect(service.workflowForm.get('userInput.collapsed')?.value).toBeTrue();
+      expect(service.stepsArray.at(0).get('collapsed')?.value).toBeTrue();
+      expect(service.stepsArray.at(1).get('collapsed')?.value).toBeFalse();
     });
   });
 });

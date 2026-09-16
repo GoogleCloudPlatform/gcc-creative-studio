@@ -116,6 +116,25 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   get workflowForm() {
     return this.formService.workflowForm;
   }
+  get isUserInputCollapsed(): boolean {
+    return !!this.workflowForm?.get('userInput.collapsed')?.value;
+  }
+  toggleUserInputCollapse(event: MouseEvent): void {
+    event.stopPropagation();
+    const control = this.workflowForm?.get('userInput.collapsed');
+    if (control) {
+      control.setValue(!control.value);
+      control.markAsDirty();
+    }
+    this.workflowForm?.markAsDirty();
+    this.saveHistoryState();
+    setTimeout(() => this.updateEdges(), 0);
+  }
+  onStepCollapseChange(): void {
+    this.workflowForm.markAsDirty();
+    this.saveHistoryState();
+    setTimeout(() => this.updateEdges(), 0);
+  }
   get hasWorkflowName(): boolean {
     const name = this.workflowForm?.get('name')?.value;
     return typeof name === 'string' && name.trim().length > 0;
@@ -1080,15 +1099,41 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     }
 
     // Fallback logic
+    if (this.canvasContent?.nativeElement) {
+      const transformLayer =
+        this.canvasContent.nativeElement.querySelector('.transform-layer');
+      const cardEl = this.canvasContent.nativeElement.querySelector(
+        stepId === NodeTypes.USER_INPUT
+          ? '.user-input-node'
+          : `app-generic-step[data-node-id="${stepId}"] .step-card`,
+      );
+      if (cardEl && transformLayer) {
+        const cardRect = cardEl.getBoundingClientRect();
+        const layerRect = transformLayer.getBoundingClientRect();
+        const cardLeft =
+          (cardRect.left - layerRect.left) / this.currentTransform.k;
+        const cardTop =
+          (cardRect.top - layerRect.top) / this.currentTransform.k;
+        const cardWidth = cardRect.width / this.currentTransform.k;
+        const cardHeight = cardRect.height / this.currentTransform.k;
+
+        if (type === 'input') {
+          return {x: cardLeft, y: cardTop + cardHeight / 2};
+        } else {
+          return {x: cardLeft + cardWidth, y: cardTop + cardHeight / 2};
+        }
+      }
+    }
+
     const nodePos = this.getNodePosition(stepId);
     if (!nodePos) return null;
-    const NODE_WIDTH = 320;
-    const HEADER_HEIGHT = 50;
+    const NODE_WIDTH = 400;
+    const HEADER_HEIGHT = 54;
 
     if (type === 'input') {
-      return {x: nodePos.x, y: nodePos.y + HEADER_HEIGHT + 30};
+      return {x: nodePos.x, y: nodePos.y + HEADER_HEIGHT / 2};
     } else {
-      return {x: nodePos.x + NODE_WIDTH, y: nodePos.y + HEADER_HEIGHT + 30};
+      return {x: nodePos.x + NODE_WIDTH, y: nodePos.y + HEADER_HEIGHT / 2};
     }
   }
 

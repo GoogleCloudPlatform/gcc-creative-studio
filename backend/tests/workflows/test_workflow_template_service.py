@@ -290,3 +290,43 @@ async def test_repository_methods_with_mock_db():
     repo.delete = AsyncMock(return_value=True)
     result = await repo.delete_by_id_and_user("tmpl-1", 1)
     assert result is True
+
+
+@pytest.mark.asyncio
+async def test_create_and_get_template_preserves_collapsed_state(
+    service, mock_template_repo, mock_user
+):
+    from src.workflows.schema.workflow_model import (
+        GenerateTextInputs,
+        GenerateTextSettings,
+        GenerateTextStep,
+        NodeTypes,
+    )
+
+    mock_template_repo.get_by_user_and_name.return_value = None
+    mock_template_repo.create.side_effect = lambda model: model
+
+    dto = WorkflowTemplateCreateDto(
+        name="Template With Collapsed Step",
+        description="Template testing collapsed persistence",
+        steps=[
+            GenerateTextStep(
+                step_id="step_1",
+                type=NodeTypes.GENERATE_TEXT,
+                collapsed=True,
+                inputs=GenerateTextInputs(prompt="Hello"),
+                settings=GenerateTextSettings(
+                    model="gemini-1.5", temperature=0.7
+                ),
+            ),
+        ],
+    )
+
+    created = await service.create_template(dto, mock_user)
+    assert len(created.steps) == 1
+    assert created.steps[0].collapsed is True
+
+    mock_template_repo.get_by_id.return_value = created
+    fetched = await service.get_template(created.id, mock_user.id)
+    assert fetched is not None
+    assert fetched.steps[0].collapsed is True
