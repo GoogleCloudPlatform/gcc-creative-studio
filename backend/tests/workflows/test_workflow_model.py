@@ -614,3 +614,62 @@ def test_legacy_step_translation_preserves_position():
     assert wf.steps[0].position is not None
     assert wf.steps[0].position.x == 320.0
     assert wf.steps[0].position.y == 400.0
+
+
+def test_step_collapsed_default_and_preservation():
+    """Verify collapsed defaults to False and collapsed=True is preserved across validation and serialization."""
+    user_step = UserInputStep(step_id="user_1")
+    text_step = GenerateTextStep(
+        step_id="text_1",
+        inputs=GenerateTextInputs(prompt="Test"),
+        settings=GenerateTextSettings(
+            model="gemini-3-flash-preview", temperature=0.7
+        ),
+    )
+    image_step = ImageStep(
+        step_id="img_1",
+        inputs=ImageInputs(prompt="Test"),
+        settings=ImageSettings(),
+    )
+
+    assert user_step.collapsed is False
+    assert text_step.collapsed is False
+    assert image_step.collapsed is False
+
+    adapter = TypeAdapter(WorkflowStep)
+    raw_data = {
+        "stepId": "collapsed_node_1",
+        "type": "image",
+        "collapsed": True,
+        "status": "idle",
+        "inputs": {"prompt": "A collapsed node prompt"},
+        "settings": {"mode": "generate_image"},
+        "outputs": {},
+    }
+    parsed = adapter.validate_python(raw_data)
+    assert isinstance(parsed, ImageStep)
+    assert parsed.collapsed is True
+
+    dumped = parsed.model_dump(by_alias=True)
+    assert dumped["collapsed"] is True
+
+
+def test_legacy_step_translation_preserves_collapsed():
+    """Verify legacy step translation preserves collapsed state."""
+    from src.workflows.schema.workflow_model import WorkflowBase
+
+    legacy_data = {
+        "name": "Legacy Workflow With Collapsed Node",
+        "steps": [
+            {
+                "step_id": "legacy_gen_collapsed",
+                "type": "generate_image",
+                "collapsed": True,
+                "inputs": {"prompt": "A sunny day"},
+                "settings": {"model": "imagen-3"},
+                "outputs": {},
+            }
+        ],
+    }
+    wf = WorkflowBase.model_validate(legacy_data)
+    assert wf.steps[0].collapsed is True

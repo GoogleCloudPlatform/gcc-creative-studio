@@ -55,6 +55,7 @@ interface BaseStep<T = Record<string, any>, S = Record<string, any>> {
   stepId: string;
   type: NodeTypes | string;
   position: Point;
+  collapsed: boolean;
 
   // --- Execution State ---
   status: StepStatusEnum;

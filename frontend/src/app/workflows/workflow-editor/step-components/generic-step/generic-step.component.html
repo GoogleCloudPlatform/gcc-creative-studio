@@ -69,8 +69,10 @@
       </button>
       <button
         mat-icon-button
+        type="button"
         class="collapse-icon"
-        (click)="isCollapsed = !isCollapsed"
+        (click)="toggleCollapse($event)"
+        [matTooltip]="isCollapsed ? 'Expand step' : 'Collapse step'"
       >
         <mat-icon>{{ isCollapsed ? 'expand_more' : 'expand_less' }}</mat-icon>
       </button>

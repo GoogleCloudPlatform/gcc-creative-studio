@@ -73,6 +73,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       stepId: ['image_step_1'],
       type: ['image'],
       status: ['idle'],
+      collapsed: [false],
       inputs: fb.group({
         prompt: [''],
         input_images: [null],
@@ -1240,6 +1241,42 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       expect(resolutionSetting?.options?.map(o => o.value)).toEqual(['1K']);
       // Should automatically reset to first option (1K) since 4K is not supported
       expect(component.stepForm.get('settings.resolution')?.value).toBe('1K');
+    });
+  });
+
+  describe('Collapsed State', () => {
+    it('should initialize collapsed control on stepForm and set isCollapsed to false', () => {
+      expect(component.stepForm.contains('collapsed')).toBeTrue();
+      expect(component.stepForm.get('collapsed')?.value).toBeFalse();
+      expect(component.isCollapsed).toBeFalse();
+    });
+
+    it('should update isCollapsed when collapsed form control value changes', () => {
+      component.stepForm.get('collapsed')?.setValue(true);
+      expect(component.isCollapsed).toBeTrue();
+
+      component.stepForm.get('collapsed')?.setValue(false);
+      expect(component.isCollapsed).toBeFalse();
+    });
+
+    it('should toggle collapse, mark form dirty, stop event propagation, and emit collapseChange', () => {
+      const event = new MouseEvent('click');
+      spyOn(event, 'stopPropagation');
+      spyOn(component.collapseChange, 'emit');
+
+      component.toggleCollapse(event);
+
+      expect(event.stopPropagation).toHaveBeenCalled();
+      expect(component.isCollapsed).toBeTrue();
+      expect(component.stepForm.get('collapsed')?.value).toBeTrue();
+      expect(component.stepForm.get('collapsed')?.dirty).toBeTrue();
+      expect(component.stepForm.dirty).toBeTrue();
+      expect(component.collapseChange.emit).toHaveBeenCalledWith(true);
+
+      component.toggleCollapse();
+      expect(component.isCollapsed).toBeFalse();
+      expect(component.stepForm.get('collapsed')?.value).toBeFalse();
+      expect(component.collapseChange.emit).toHaveBeenCalledWith(false);
     });
   });
 });
