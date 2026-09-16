@@ -20,3 +20,6 @@ local/
 genmedia-agent-demos
 .gemini
 .agents
+
+# Cloud SQL Auth Proxy binary downloaded by bootstrap.sh
+cloud-sql-proxy

@@ -151,13 +151,32 @@ start_sql_proxy() {
     export INSTANCE_CONNECTION_NAME="$DB_INSTANCE_NAME"
 
     # 2. Download Proxy (if missing)
+    # Select the binary for the host OS/architecture. Hardcoding linux.amd64
+    # works in Cloud Shell but fails elsewhere with "exec format error".
     if [ ! -f "cloud-sql-proxy" ]; then
-        curl -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64
+        local PROXY_OS PROXY_ARCH
+        case "$(uname -s)" in
+            Darwin) PROXY_OS="darwin" ;;
+            Linux)  PROXY_OS="linux" ;;
+            *) fail "Unsupported OS for Cloud SQL Proxy: $(uname -s)" ;;
+        esac
+        case "$(uname -m)" in
+            arm64|aarch64) PROXY_ARCH="arm64" ;;
+            x86_64|amd64)  PROXY_ARCH="amd64" ;;
+            *) fail "Unsupported architecture for Cloud SQL Proxy: $(uname -m)" ;;
+        esac
+        info "Downloading Cloud SQL Proxy for ${PROXY_OS}.${PROXY_ARCH}..."
+        curl -fsSL -o cloud-sql-proxy \
+          "https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.${PROXY_OS}.${PROXY_ARCH}" \
+          || fail "Failed to download Cloud SQL Proxy."
         chmod +x cloud-sql-proxy
     fi
 
     # 3. Start Proxy in Background (Port 5432)
-    ./cloud-sql-proxy --address 0.0.0.0 --port 5432 "$DB_INSTANCE_NAME" > /dev/null 2>&1 &
+    # Keep proxy output so startup failures can be diagnosed.
+    PROXY_LOG="${TMPDIR:-/tmp}/cloud-sql-proxy.log"
+    export PROXY_LOG
+    ./cloud-sql-proxy --address 0.0.0.0 --port 5432 "$DB_INSTANCE_NAME" > "$PROXY_LOG" 2>&1 &
     PROXY_PID=$!
     export PROXY_PID
     
@@ -172,7 +191,11 @@ start_sql_proxy() {
         sleep 1
     done
     echo
-    warn "Proxy connection check timed out, but proceeding..."
+    # Continuing here only defers the failure: seeding then dies with an
+    # opaque asyncpg "Connect call failed ('127.0.0.1', 5432)" traceback.
+    warn "Proxy failed to start. Last 20 lines of ${PROXY_LOG}:"
+    tail -20 "$PROXY_LOG" 2>/dev/null || echo "   (no proxy log written)"
+    fail "Cloud SQL Proxy did not become ready on 127.0.0.1:5432."
 }
 
 stop_sql_proxy() {
