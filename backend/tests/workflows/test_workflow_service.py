@@ -1260,3 +1260,70 @@ class TestWorkflowValidation:
         )
         mock_workflow_repo.create.assert_not_called()
         mock_workflow_repo.update.assert_not_called()
+
+
+class TestWorkflowCollapsedState:
+    """Tests for persisting and retrieving collapsed node state in workflows."""
+
+    @pytest.mark.anyio
+    @patch("src.workflows.workflow_service.workflows_v1.WorkflowsClient")
+    async def test_create_update_get_workflow_preserves_collapsed_state(
+        self,
+        mock_client_class,
+        workflow_service,
+        mock_workflow_repo,
+        sample_user,
+    ):
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+        mock_operation = MagicMock()
+        mock_operation.result.return_value = MagicMock()
+        mock_client.create_workflow.return_value = mock_operation
+        mock_client.update_workflow.return_value = mock_operation
+
+        step_collapsed = GenerateTextStep(
+            step_id="step_collapsed",
+            type=NodeTypes.GENERATE_TEXT,
+            collapsed=True,
+            inputs=GenerateTextInputs(prompt="Collapsed step prompt"),
+            settings=GenerateTextSettings(model="gemini-1.5", temperature=0.7),
+        )
+        dto = WorkflowCreateDto(
+            name="Collapsed Workflow",
+            description="Workflow with a collapsed node",
+            steps=[step_collapsed],
+        )
+
+        # Create
+        mock_workflow_repo.create.side_effect = lambda model: model
+        created = await workflow_service.create_workflow(dto, sample_user)
+        assert len(created.steps) == 1
+        assert created.steps[0].collapsed is True
+
+        # Update
+        step_updated = GenerateTextStep(
+            step_id="step_collapsed",
+            type=NodeTypes.GENERATE_TEXT,
+            collapsed=True,
+            inputs=GenerateTextInputs(prompt="Updated prompt"),
+            settings=GenerateTextSettings(model="gemini-1.5", temperature=0.7),
+        )
+        update_dto = WorkflowCreateDto(
+            name="Collapsed Workflow Updated",
+            description="Updated description",
+            steps=[step_updated],
+        )
+        mock_workflow_repo.update.side_effect = lambda wf_id, model: model
+        updated = await workflow_service.update_workflow(
+            created.id, update_dto, sample_user
+        )
+        assert updated is not None
+        assert updated.steps[0].collapsed is True
+
+        # Retrieve
+        mock_workflow_repo.get_by_id.return_value = updated
+        fetched = await workflow_service.get_workflow(
+            sample_user.id, created.id
+        )
+        assert fetched is not None
+        assert fetched.steps[0].collapsed is True

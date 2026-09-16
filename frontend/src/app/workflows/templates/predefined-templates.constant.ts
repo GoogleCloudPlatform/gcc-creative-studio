@@ -26,6 +26,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
       {
         stepId: 'user_input',
         status: StepStatusEnum.IDLE,
+        collapsed: false,
         position: {x: -324, y: 328},
         outputs: {
           City: {
@@ -71,7 +72,8 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
       {
         stepId: 'weather_forecast_step',
         status: StepStatusEnum.IDLE,
-        position: {x: 200, y: -330},
+        collapsed: true,
+        position: {x: 142, y: 666},
         outputs: {
           generated_text: {
             type: 'text',
@@ -97,7 +99,8 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
       {
         stepId: 'wardrobe_consultant_step',
         status: StepStatusEnum.IDLE,
-        position: {x: 712, y: 246},
+        collapsed: true,
+        position: {x: 612, y: 665},
         outputs: {
           generated_text: {
             type: 'text',
@@ -137,7 +140,8 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
       {
         stepId: 'outfit_image_step',
         status: StepStatusEnum.IDLE,
-        position: {x: 1236, y: 272},
+        collapsed: false,
+        position: {x: 1091, y: 666},
         outputs: {
           generated_image: {
             type: 'image',
@@ -180,6 +184,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
       {
         stepId: 'user_input',
         status: StepStatusEnum.IDLE,
+        collapsed: false,
         position: {x: -255, y: 299},
         outputs: {
           Business_name: {
@@ -209,7 +214,8 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
       {
         stepId: 'company_research_step',
         status: StepStatusEnum.IDLE,
-        position: {x: 268, y: -647},
+        collapsed: true,
+        position: {x: 227, y: 427},
         outputs: {
           generated_text: {
             type: 'text',
@@ -235,7 +241,8 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
       {
         stepId: 'caption_generator_step',
         status: StepStatusEnum.IDLE,
-        position: {x: 797, y: -151},
+        collapsed: true,
+        position: {x: 579, y: 557},
         outputs: {
           generated_text: {
             type: 'text',
@@ -270,7 +277,8 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
       {
         stepId: 'image_prompt_generator_step',
         status: StepStatusEnum.IDLE,
-        position: {x: 1292, y: 157},
+        collapsed: true,
+        position: {x: 857, y: 699},
         outputs: {
           generated_text: {
             type: 'text',
@@ -295,7 +303,8 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
       {
         stepId: 'post_image_step',
         status: StepStatusEnum.IDLE,
-        position: {x: 1797, y: 251},
+        collapsed: false,
+        position: {x: 1376, y: 405},
         outputs: {
           generated_image: {
             type: 'image',
@@ -338,6 +347,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
       {
         stepId: 'user_input',
         status: StepStatusEnum.IDLE,
+        collapsed: false,
         position: {x: 80, y: 120},
         outputs: {
           Product_name: {
@@ -367,7 +377,8 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
       {
         stepId: 'product_research_step',
         status: StepStatusEnum.IDLE,
-        position: {x: 598, y: -556},
+        collapsed: true,
+        position: {x: 518, y: 441},
         outputs: {
           generated_text: {
             type: 'text',
@@ -393,7 +404,8 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
       {
         stepId: 'ad_copywriter_step',
         status: StepStatusEnum.IDLE,
-        position: {x: 1060, y: 85},
+        collapsed: true,
+        position: {x: 947, y: 386},
         outputs: {
           generated_text: {
             type: 'text',
@@ -428,7 +440,8 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
       {
         stepId: 'video_script_step',
         status: StepStatusEnum.IDLE,
-        position: {x: 1550, y: -16},
+        collapsed: true,
+        position: {x: 958, y: 501},
         outputs: {
           generated_text: {
             type: 'text',
@@ -463,7 +476,8 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
       {
         stepId: 'product_video_step',
         status: StepStatusEnum.IDLE,
-        position: {x: 2038, y: 98},
+        collapsed: false,
+        position: {x: 1442, y: 385},
         outputs: {
           generated_video: {
             type: 'video',

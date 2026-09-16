@@ -19,6 +19,7 @@ import {
   EventEmitter,
   Input,
   OnChanges,
+  OnDestroy,
   OnInit,
   Output,
   SimpleChanges,
@@ -55,7 +56,7 @@ import {
   templateUrl: './generic-step.component.html',
   styleUrls: ['./generic-step.component.scss'],
 })
-export class GenericStepComponent implements OnInit, OnChanges {
+export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
   @Input() stepForm!: FormGroup;
   @Input() stepIndex!: number;
   @Input() availableOutputs: any[] = [];
@@ -72,6 +73,7 @@ export class GenericStepComponent implements OnInit, OnChanges {
 
   @Output() delete = new EventEmitter<void>();
   @Output() clone = new EventEmitter<void>();
+  @Output() collapseChange = new EventEmitter<boolean>();
   @Output() portDragStart = new EventEmitter<{
     stepId: string;
     outputName: string;
@@ -87,6 +89,7 @@ export class GenericStepComponent implements OnInit, OnChanges {
   private inputModeSubscription?: Subscription;
   private modeSubscription?: Subscription;
   private inputsSubscription?: Subscription;
+  private collapsedSubscription?: Subscription;
   currentMaxReferenceImages = 1;
 
   isCollapsed = false;
@@ -95,6 +98,20 @@ export class GenericStepComponent implements OnInit, OnChanges {
   newVariableName = '';
 
   constructor(private fb: FormBuilder) {}
+
+  toggleCollapse(event?: Event): void {
+    if (event) {
+      event.stopPropagation();
+    }
+    this.isCollapsed = !this.isCollapsed;
+    const collapsedControl = this.stepForm.get('collapsed');
+    if (collapsedControl) {
+      collapsedControl.setValue(this.isCollapsed);
+      collapsedControl.markAsDirty();
+    }
+    this.stepForm.markAsDirty();
+    this.collapseChange.emit(this.isCollapsed);
+  }
 
   getShortType(type: string): PortShortType {
     return getShortType(type);
@@ -227,6 +244,9 @@ export class GenericStepComponent implements OnInit, OnChanges {
     if (this.inputsSubscription) {
       this.inputsSubscription.unsubscribe();
     }
+    if (this.collapsedSubscription) {
+      this.collapsedSubscription.unsubscribe();
+    }
   }
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -240,6 +260,16 @@ export class GenericStepComponent implements OnInit, OnChanges {
 
   private initializeStepState(): void {
     if (!this.stepForm) return;
+
+    this.isCollapsed = !!this.stepForm.get('collapsed')?.value;
+    if (this.collapsedSubscription) {
+      this.collapsedSubscription.unsubscribe();
+    }
+    this.collapsedSubscription = this.stepForm
+      .get('collapsed')
+      ?.valueChanges.subscribe(value => {
+        this.isCollapsed = !!value;
+      });
 
     // Deep copy config to localConfig to allow per-instance modifications
     this.localConfig = JSON.parse(JSON.stringify(this.config));
