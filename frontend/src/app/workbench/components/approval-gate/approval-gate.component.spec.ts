@@ -72,6 +72,90 @@ describe('ApprovalGateComponent', () => {
     );
   });
 
+  it('should render Gate 1-4 messages from tool responses', () => {
+    // Gate 1: strategy
+    component.gate = {
+      ...mockGate,
+      stage: 'strategy',
+      payload: {
+        campaign: {visual_look: 'Outdoor Adventure'},
+        message:
+          'A 12s product-only ad for general audience, shot in the "Outdoor Adventure" style. Accept to continue, or tell me what to change.',
+        status: 'pending_approval',
+      },
+    };
+    fixture.detectChanges();
+    expect(component.displayMessage()).toBe(
+      'A 12s product-only ad for general audience, shot in the "Outdoor Adventure" style. Accept to continue, or tell me what to change.',
+    );
+
+    // Gate 2: storyboard
+    component.gate = {
+      ...mockGate,
+      stage: 'storyboard',
+      payload: {
+        message:
+          '4 scenes, 12 seconds in total. Accept to continue, or tell me what to change. You can adjust a scene, reorder them, or ask for a different storyboard.',
+      },
+    };
+    fixture.detectChanges();
+    expect(component.displayMessage()).toBe(
+      '4 scenes, 12 seconds in total. Accept to continue, or tell me what to change. You can adjust a scene, reorder them, or ask for a different storyboard.',
+    );
+
+    // Gate 3: frames
+    component.gate = {
+      ...mockGate,
+      stage: 'frames',
+      payload: {
+        message:
+          '4 of 4 opening frames are ready. Each one is the first frame of its scene. Accept to continue to video generation, or name the frames to redo.',
+      },
+    };
+    fixture.detectChanges();
+    expect(component.displayMessage()).toBe(
+      '4 of 4 opening frames are ready. Each one is the first frame of its scene. Accept to continue to video generation, or name the frames to redo.',
+    );
+
+    // Gate 4: final cut
+    component.gate = {
+      ...mockGate,
+      stage: 'final_cut',
+      payload: {
+        message:
+          'Your video is ready: 4 clips, stitched. Accept to finish, or name the clips that need another take and they will be re-rendered and the cut rebuilt.',
+      },
+    };
+    fixture.detectChanges();
+    expect(component.displayMessage()).toBe(
+      'Your video is ready: 4 clips, stitched. Accept to finish, or name the clips that need another take and they will be re-rendered and the cut rebuilt.',
+    );
+  });
+
+  it('should extract message from nested result or stringified JSON payload', () => {
+    // Nested result.message
+    component.gate = {
+      ...mockGate,
+      payload: {
+        result: {
+          message: 'Nested result message',
+        },
+      },
+    };
+    fixture.detectChanges();
+    expect(component.displayMessage()).toBe('Nested result message');
+
+    // Stringified JSON payload
+    component.gate = {
+      ...mockGate,
+      payload: JSON.stringify({
+        message: 'Stringified JSON message',
+      }),
+    };
+    fixture.detectChanges();
+    expect(component.displayMessage()).toBe('Stringified JSON message');
+  });
+
   it('should fallback displayMessage to stageDescription when payload is missing', () => {
     component.gate = {
       ...mockGate,

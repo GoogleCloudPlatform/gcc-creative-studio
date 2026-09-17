@@ -176,10 +176,30 @@ export class ApprovalGateComponent {
   });
 
   displayMessage = computed(() => {
-    const rawMsg = this.gateSignal()?.payload?.message;
-    if (rawMsg) {
-      const parsed = asText(rawMsg).trim();
-      if (parsed) return parsed;
+    const payload = this.gateSignal()?.payload;
+    if (payload) {
+      let data = payload;
+      if (typeof data === 'string') {
+        try {
+          data = JSON.parse(data);
+        } catch {
+          const trimmed = data.trim();
+          if (trimmed) return trimmed;
+        }
+      }
+      if (data && typeof data === 'object') {
+        const rawMsg =
+          data.message ||
+          data.result?.message ||
+          data.response?.result?.message ||
+          data.response?.message ||
+          data.campaign?.message ||
+          data.storyboard?.message;
+        if (rawMsg) {
+          const parsed = asText(rawMsg).trim();
+          if (parsed) return parsed;
+        }
+      }
     }
     return this.stageDescription();
   });

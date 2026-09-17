@@ -181,6 +181,17 @@
       </studio-button>
 
       <studio-button
+        *ngIf="showMoveButton"
+        variant="primary"
+        shape="circle"
+        size="medium"
+        (click)="openBatchMoveDialog()"
+        matTooltip="Move to folder"
+      >
+        <mat-icon>drive_file_move</mat-icon>
+      </studio-button>
+
+      <studio-button
         *ngIf="showDownloadButton"
         variant="primary"
         shape="circle"

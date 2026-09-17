@@ -13,10 +13,9 @@
 # limitations under the License.
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
-from fastapi import HTTPException, Request
+from fastapi import Request
 from src.users.user_model import UserModel
 from src.agents.agent_service import AgentService, safe_cast
-from src.agents.agent_dtos import ChatRequestDto
 
 
 def test_safe_cast():
@@ -338,6 +337,71 @@ async def test_chat_process_stream_chunks():
 
 
 @pytest.mark.anyio
+async def test_chat_process_stream_error_handling():
+    import asyncio
+    import json
+
+    with patch("vertexai.Client"):
+        mock_workspace_auth = AsyncMock()
+        service = AgentService(
+            agent_repo=MagicMock(),
+            workspace_service=MagicMock(),
+            storyboard_repo=MagicMock(),
+            workspace_auth=mock_workspace_auth,
+            project_service=MagicMock(),
+        )
+
+        user = MagicMock(spec=UserModel)
+        payload = MagicMock()
+        payload.model_dump.return_value = {
+            "sessionId": "s-err-1",
+            "workspaceId": 10,
+            "newMessage": {"role": "user", "parts": [{"text": "hello"}]},
+        }
+        request = MagicMock(spec=Request)
+
+        with patch("src.agents.agent_service.agent_engines") as mock_engines:
+            mock_remote = MagicMock()
+            mock_remote.async_stream_query.side_effect = Exception(
+                "ResourceExhausted: 429 Quota exceeded for metric"
+            )
+            mock_engines.get.return_value = mock_remote
+
+            mock_db_session = AsyncMock()
+            mock_repo_instance = AsyncMock()
+
+            with patch(
+                "src.agents.agent_service.async_session_local"
+            ) as mock_db_ctx:
+                mock_db_ctx.return_value.__aenter__.return_value = (
+                    mock_db_session
+                )
+                with patch(
+                    "src.agents.agent_service.AgentRepository"
+                ) as mock_repo_cls:
+                    mock_repo_cls.return_value = mock_repo_instance
+
+                    await service.chat(
+                        current_user=user,
+                        user_id="999",
+                        payload=payload,
+                        request=request,
+                    )
+
+                    await asyncio.sleep(0.1)
+
+            calls = mock_repo_instance.add_chat_event.call_args_list
+            assert len(calls) == 2
+            err_payload = json.loads(
+                calls[0].kwargs["payload"]["raw"].strip().split("data: ")[1]
+            )
+            assert err_payload["code"] == 429
+            assert err_payload["type"] == "quota_exceeded"
+            assert "ResourceExhausted" in err_payload["error"]
+            assert calls[1].kwargs["payload"]["raw"] == "data: [DONE]\n\n"
+
+
+@pytest.mark.anyio
 async def test_chat_detects_frame_approval_gate():
     import asyncio
     import json
@@ -458,6 +522,33 @@ def test_detect_approval_function():
     assert (
         AgentService.detect_approval_function(evt_resp)
         == "await_storyboard_approval"
+    )
+
+    # 2b. Assistant function response with nested result, status=pending_approval, and message
+    evt_resp_nested = {
+        "content": {
+            "parts": [
+                {
+                    "functionResponse": {
+                        "name": "await_strategy_approval",
+                        "response": {
+                            "result": {
+                                "campaign": {
+                                    "visual_look": "Outdoor Adventure"
+                                },
+                                "message": "A 12s product-only ad for general audience.",
+                                "stage": "strategy",
+                                "status": "pending_approval",
+                            }
+                        },
+                    }
+                }
+            ]
+        }
+    }
+    assert (
+        AgentService.detect_approval_function(evt_resp_nested)
+        == "await_strategy_approval"
     )
 
     # 3. User message / user function response answering a gate MUST return None
