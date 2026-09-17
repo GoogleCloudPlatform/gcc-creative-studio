@@ -47,13 +47,13 @@ variable "database_version" {
 variable "db_tier" {
   type        = string
   description = "The machine tier/type for the Cloud SQL instance."
-  default     = "db-perf-optimized-N-2"
+  default     = "db-custom-2-7680"
 }
 
 variable "db_availability_type" {
   type        = string
   description = "The availability type for the Cloud SQL instance (ZONAL or REGIONAL)."
-  default     = "REGIONAL"
+  default     = "ZONAL"
 }
 
 variable "initial_disk_size" {

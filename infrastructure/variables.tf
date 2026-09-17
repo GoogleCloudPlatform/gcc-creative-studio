@@ -156,3 +156,15 @@ variable "asset_bucket_name_override" {
   description = "Override the default asset bucket name (useful for legacy migrations)."
   default     = ""
 }
+
+variable "db_tier" {
+  type        = string
+  description = "The machine tier/type for the Cloud SQL instance."
+  default     = "db-custom-2-7680"
+}
+
+variable "db_availability_type" {
+  type        = string
+  description = "The availability type for the Cloud SQL instance (ZONAL or REGIONAL)."
+  default     = "ZONAL"
+}

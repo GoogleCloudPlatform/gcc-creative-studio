@@ -36,6 +36,7 @@ resource "google_sql_database_instance" "default" {
 
   settings {
     tier              = var.db_tier
+    edition           = length(regexall("^db-perf-optimized", var.db_tier)) > 0 ? "ENTERPRISE_PLUS" : "ENTERPRISE"
     availability_type = var.db_availability_type
 
     # Enable IAM Authentication for better security

@@ -6,6 +6,8 @@ module "database" {
   region          = var.region
   resource_prefix = var.resource_prefix
   environment     = var.environment
+  db_tier         = var.db_tier
+  db_availability_type = var.db_availability_type
 
   vpc_id = module.network.network_id
 
@@ -25,6 +27,10 @@ resource "google_storage_bucket" "genmedia" {
     method          = ["GET", "PUT", "POST", "DELETE", "HEAD", "OPTIONS"]
     response_header = ["Content-Type", "Access-Control-Allow-Origin", "x-goog-resumable", "Authorization", "Origin"]
     max_age_seconds = 3600
+  }
+
+  lifecycle {
+    ignore_changes = [location, name, project]
   }
 }
 
@@ -97,4 +103,9 @@ resource "google_secret_manager_secret_iam_member" "backend_accessor" {
 
   # References backend module's service account output dynamically
   member = "serviceAccount:${module.compute.service_account_email}"
+}
+
+moved {
+  from = module.creative_studio_platform.google_storage_bucket.genmedia
+  to   = google_storage_bucket.genmedia
 }

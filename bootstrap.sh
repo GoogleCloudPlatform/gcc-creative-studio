@@ -33,6 +33,8 @@ DEFAULT_BRANCH_NAME="main"
 GCS_BUCKET_SUFFIX_FORMAT="cstudio-%s-tfstate"
 GCS_BUCKET_PREFIX_FORMAT="infra/%s/state"
 DEFAULT_DEPLOY_REGION="us-central1"
+DEFAULT_DB_TIER="db-custom-2-7680"
+DEFAULT_DB_AVAILABILITY="ZONAL"
 RES_PREFIX="cs"
 BE_SERVICE_NAME="cstudio-be"
 FE_SERVICE_NAME="cstudio-fe"
@@ -58,6 +60,14 @@ C_GREEN='\033[1;32m'   # Bold/Bright Green for success
 C_YELLOW='\033[1;33m'  # Bold/Bright Yellow for warnings and URLs
 C_BLUE='\033[1;34m'    # Bold/Bright Blue for steps and prompts
 C_CYAN='\033[1;36m'    # Bold/Bright Cyan for general info
+
+# --- Argument Parsing ---
+SKIP_DB_IMPORT=false
+for arg in "$@"; do
+    if [ "$arg" == "--skip-db-import" ]; then
+        SKIP_DB_IMPORT=true
+    fi
+done
 
 # --- Helper Functions ---
 info() { echo -e "${C_CYAN}➡️  $1${C_RESET}"; }
@@ -499,6 +509,41 @@ configure_environment() {
             fi
         done
     else info "Using previously configured deploy region: $DEPLOY_REGION"; fi
+
+    if [ -z "$DB_TIER" ] || [ "$DB_TIER" == "unassigned" ]; then
+        info "Cloud SQL Machine Tier Options:"
+        echo "  [1] Standard Enterprise (db-custom-2-7680) - Recommended for testing/staging"
+        echo "  [2] High Performance (db-perf-optimized-N-2) - Recommended for heavy production (Subject to availability)"
+        echo "  [3] Custom..."
+        while true; do
+            prompt "Which database tier would you like to use?"; read -p "   Select [1/2/3] or enter custom [default: 1]: " DB_TIER_SELECTION < /dev/tty || exit 130
+            DB_TIER_SELECTION=${DB_TIER_SELECTION:-1}
+            case "$DB_TIER_SELECTION" in
+                1) DB_TIER="db-custom-2-7680"; break ;;
+                2) DB_TIER="db-perf-optimized-N-2"; break ;;
+                3) prompt "Enter custom Cloud SQL tier (e.g., db-custom-4-15360):"; read -p "   Tier: " DB_TIER < /dev/tty || exit 130; if [ -n "$DB_TIER" ]; then break; fi ;;
+                *) if [[ "$DB_TIER_SELECTION" == db-* ]]; then DB_TIER="$DB_TIER_SELECTION"; break; else warn "Invalid selection."; fi ;;
+            esac
+        done
+        write_state "DB_TIER" "$DB_TIER"
+    else info "Using previously configured database tier: $DB_TIER"; fi
+
+    if [ -z "$DB_AVAILABILITY" ] || [ "$DB_AVAILABILITY" == "unassigned" ]; then
+        info "Cloud SQL Availability Options:"
+        echo "  [1] ZONAL - Single zone. Recommended for testing and <99.9% uptime needs. Lower cost."
+        echo "  [2] REGIONAL - Multi-zone High Availability. Recommended for strict production SLAs. 2x cost."
+        while true; do
+            prompt "Which availability type would you like to use?"; read -p "   Select [1/2] [default: 1]: " DB_AVAIL_SELECTION < /dev/tty || exit 130
+            DB_AVAIL_SELECTION=${DB_AVAIL_SELECTION:-1}
+            case "$DB_AVAIL_SELECTION" in
+                1) DB_AVAILABILITY="ZONAL"; break ;;
+                2) DB_AVAILABILITY="REGIONAL"; break ;;
+                ZONAL|REGIONAL) DB_AVAILABILITY="$DB_AVAIL_SELECTION"; break ;;
+                *) warn "Invalid selection. Enter 1 or 2." ;;
+            esac
+        done
+        write_state "DB_AVAILABILITY" "$DB_AVAILABILITY"
+    else info "Using previously configured database availability: $DB_AVAILABILITY"; fi
     
     BE_SERVICE_NAME="cs-${ENV_NAME}-backend"
     FE_SERVICE_NAME="cs-${ENV_NAME}-frontend"
@@ -557,6 +602,8 @@ project_id         = "$GCP_PROJECT_ID"
 region             = "$DEPLOY_REGION"
 environment        = "$ENV_NAME"
 asset_bucket_name_override = "${ASSET_BUCKET_OVERRIDE:-}"
+db_tier            = "$DB_TIER"
+db_availability_type = "$DB_AVAILABILITY"
 resource_prefix    = "cs"
 firebase_site_id   = "YOUR_FIREBASE_SITE_ID"
 repo_host          = "$REPO_HOST"
@@ -807,8 +854,40 @@ export_legacy_database() {
 import_legacy_database() {
     step 10 "Importing Legacy Database (if applicable)"
     
+    local MIGRATION_BUCKET="${TF_BUCKET_NAME:-${GCP_PROJECT_ID}-terraform-state}"
+    
+    if [ "$SKIP_DB_IMPORT" == "true" ]; then
+        info "--skip-db-import flag passed. Bypassing legacy database check."
+        return
+    fi
+    
+    if [ "$DID_EXPORT_LEGACY_DB" != "true" ] || [ -z "$LEGACY_EXPORT_FILE" ]; then
+        local FOUND_BACKUP
+        FOUND_BACKUP=$(gcloud storage ls "gs://$MIGRATION_BUCKET/migration_backup.sql.gz" 2>/dev/null | sort | tail -n 1 || echo "")
+        
+        if [ -n "$FOUND_BACKUP" ]; then
+            LEGACY_EXPORT_FILE=$(basename "$FOUND_BACKUP")
+            warn "Found an un-imported legacy database backup in your bucket: gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE"
+            echo -e "${C_YELLOW}View it here: https://console.cloud.google.com/storage/browser/$MIGRATION_BUCKET?project=$GCP_PROJECT_ID${C_RESET}"
+            echo -e "${C_RED}WARNING: To prevent schema collisions with Cloud Run, proceeding will temporarily wipe the newly created database to ensure a blank canvas for the import.${C_RESET}"
+            echo -e "${C_RED}Cloud Run will automatically be updated with the latest code shortly after the import finishes.${C_RESET}"
+            echo -e "${C_YELLOW}(Note: This prompt will appear on every run as long as the backup file remains in GCS.)${C_RESET}"
+            echo -e "${C_YELLOW}(To silence this permanently, either delete gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE or pass --skip-db-import)${C_RESET}"
+            prompt "Would you like to import this legacy data into the new database?"
+            read -p "   Import backup? [Y/n]: " IMPORT_CHOICE < /dev/tty
+            if [[ "$IMPORT_CHOICE" =~ ^[nN]$ ]]; then
+                info "Skipping manual recovery import."
+                return
+            fi
+            export DID_EXPORT_LEGACY_DB="true"
+        else
+            info "No legacy migration needed. Skipping import."
+            return
+        fi
+    fi
+    
     if [ "$DID_EXPORT_LEGACY_DB" == "true" ] && [ -n "$LEGACY_EXPORT_FILE" ]; then
-        info "An exported legacy database was found in GCS. Restoring to the new Private VPC instance..."
+        info "Restoring legacy database backup ($LEGACY_EXPORT_FILE) to the new Private VPC instance..."
         
         local ENV_TF_DIR="$REPO_ROOT/infrastructure"
         pushd "$ENV_TF_DIR" > /dev/null
@@ -833,6 +912,10 @@ import_legacy_database() {
             warn "Failed to grant target Cloud SQL Service Account permission to the bucket."
         fi
         rm -f "$IAM_LOG"
+        
+        info "Wiping the database to ensure a perfectly blank canvas for the import..."
+        gcloud sql databases delete creative_studio --instance="$TARGET_INSTANCE" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || true
+        gcloud sql databases create creative_studio --instance="$TARGET_INSTANCE" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || true
             
         local IMPORT_LOG
         IMPORT_LOG=$(mktemp)
@@ -841,6 +924,9 @@ import_legacy_database() {
             stop_spinner
             success "Legacy database successfully restored into new private instance!"
             export DID_MIGRATE_DB="true"  # Triggers the secondary backup in seed_database
+            
+            info "Restarting Cloud Run backend to reconnect to the restored data..."
+            gcloud run services update "cs-${ENV_NAME}-backend" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --update-env-vars RESTART_TRIGGER=$(date +%s) >/dev/null 2>&1 || true
             
             info "Leaving the old migration backup in GCS as a permanent safeguard: gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE"
         else
@@ -852,8 +938,6 @@ import_legacy_database() {
             fail "Aborting deployment due to database import failure."
         fi
         rm -f "$IMPORT_LOG"
-    else
-        info "No legacy migration needed. Skipping import."
     fi
 }
 
@@ -1392,12 +1476,14 @@ select_deployment_profile() {
         echo "    [7] OAuth Web Client ID:    ${AUTO_OAUTH_CLIENT_ID:-unassigned}"
         echo "    [8] Firebase Site ID:       ${AUTO_FIREBASE_SITE_ID:-unassigned}"
         echo "    [9] Deploy Region:          ${DEPLOY_REGION:-unassigned}"
+        echo "   [10] Database Tier:          ${DB_TIER:-unassigned}"
+        echo "   [11] Database Availability:  ${DB_AVAILABILITY:-unassigned}"
         
         prompt "Use these stored deployment parameters? (Y/n / e to edit)"
         read -p "   Confirm [Y/n/e]: " CONFIRM_PROF < /dev/tty
         
         if [[ "$CONFIRM_PROF" =~ ^[eE]$ ]]; then
-            prompt "Enter the number of the property you want to edit (1-9):"
+            prompt "Enter the number of the property you want to edit (1-11):"
             read -p "   Property number: " PROP_NUM < /dev/tty
             case "$PROP_NUM" in
                 1) prompt "Enter new GCP Project ID (or empty to reset):"; read -r NEW_VAL < /dev/tty; GCP_PROJECT_ID="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset GCP_PROJECT_ID; sed -i.bak '/^GCP_PROJECT_ID=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "GCP_PROJECT_ID" "$NEW_VAL"; fi ;;
@@ -1409,6 +1495,8 @@ select_deployment_profile() {
                 7) prompt "Enter new OAuth Web Client ID (or empty to reset):"; read -r NEW_VAL < /dev/tty; AUTO_OAUTH_CLIENT_ID="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset AUTO_OAUTH_CLIENT_ID; sed -i.bak '/^AUTO_OAUTH_CLIENT_ID=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "AUTO_OAUTH_CLIENT_ID" "$NEW_VAL"; fi ;;
                 8) prompt "Enter new Firebase Site ID (or empty to reset):"; read -r NEW_VAL < /dev/tty; AUTO_FIREBASE_SITE_ID="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset AUTO_FIREBASE_SITE_ID; sed -i.bak '/^AUTO_FIREBASE_SITE_ID=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "AUTO_FIREBASE_SITE_ID" "$NEW_VAL"; fi ;;
                 9) prompt "Enter new Deploy Region (or empty to reset):"; read -r NEW_VAL < /dev/tty || exit 130; if [ -z "$NEW_VAL" ]; then unset DEPLOY_REGION; sed -i.bak '/^DEPLOY_REGION=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else if gcloud compute regions describe "$NEW_VAL" --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then DEPLOY_REGION="$NEW_VAL"; write_state "DEPLOY_REGION" "$NEW_VAL"; else warn "Invalid region: '$NEW_VAL'"; fi; fi ;;
+                10) prompt "Enter new Database Tier (or empty to reset):"; read -r NEW_VAL < /dev/tty; DB_TIER="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset DB_TIER; sed -i.bak '/^DB_TIER=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "DB_TIER" "$NEW_VAL"; fi ;;
+                11) prompt "Enter new Database Availability (ZONAL/REGIONAL) (or empty to reset):"; read -r NEW_VAL < /dev/tty; DB_AVAILABILITY="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset DB_AVAILABILITY; sed -i.bak '/^DB_AVAILABILITY=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "DB_AVAILABILITY" "$NEW_VAL"; fi ;;
                 *) warn "Invalid property number." ;;
             esac
             echo ""

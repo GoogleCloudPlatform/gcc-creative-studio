@@ -281,3 +281,9 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+
+
+### Flags and Overrides
+You can run `./bootstrap.sh` with the following flags:
+* `--skip-db-import`: Silences the legacy database recovery prompt and skips checking the GCS bucket for pending SQL dumps.
