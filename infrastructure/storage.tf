@@ -16,7 +16,7 @@ module "database" {
 
 # --- Storage Buckets ---
 resource "google_storage_bucket" "genmedia" {
-  name                        = "${var.project_id}-cs-${var.environment}-bucket"
+  name                        = var.asset_bucket_name_override != "" ? var.asset_bucket_name_override : "${var.project_id}-cs-${var.environment}-bucket"
   location                    = var.region
   uniform_bucket_level_access = true
 

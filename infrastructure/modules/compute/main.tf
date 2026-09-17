@@ -156,3 +156,8 @@ resource "google_project_iam_member" "agent_sa_aiplatform_user" {
   role    = "roles/aiplatform.user"
   member  = "serviceAccount:${google_service_account.agent_sa.email}"
 }
+resource "google_project_iam_member" "agent_sa_cloudtrace_agent" {
+  project = var.project_id
+  role    = "roles/cloudtrace.agent"
+  member  = "serviceAccount:${google_service_account.agent_sa.email}"
+}

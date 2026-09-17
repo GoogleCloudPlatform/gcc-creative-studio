@@ -119,6 +119,7 @@ variable "run_sa_project_roles" {
     "roles/secretmanager.secretAccessor",
     "roles/cloudsql.client",
     "roles/cloudsql.instanceUser",
+    "roles/cloudtrace.agent"
   ]
 }
 

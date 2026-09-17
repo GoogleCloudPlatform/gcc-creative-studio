@@ -150,3 +150,9 @@ variable "repo_branch_name" {
   type        = string
   description = "The branch name to trigger builds from."
 }
+
+variable "asset_bucket_name_override" {
+  type        = string
+  description = "Override the default asset bucket name (useful for legacy migrations)."
+  default     = ""
+}
