@@ -1050,6 +1050,11 @@ seed_database() {
         return 0
     fi
 
+    if [ "$CLI_SKIP_SEEDING" == "true" ]; then
+        warn "Skipping Database Seeding Job as requested by --skip-seeding flag."
+        return 0
+    fi
+
     local STABLE_IMAGE=""
     if [ -n "$BE_BUILD_ID" ]; then
         info "Waiting for backend Cloud Build to complete and deploy the new container..."
@@ -1310,7 +1315,7 @@ YAML
 
         DEPLOY_LOG=$(mktemp)
         start_spinner "Building and deploying agent to Vertex AI"
-        gcloud builds submit /tmp/izumi-agent --config=/tmp/izumi-agent/cloudbuild.yaml --project="$GCP_PROJECT_ID" --substitutions="_AGENT_SA_EMAIL=$AGENT_SA_EMAIL,_TRIG_SA_EMAIL=$TRIG_SA" > "$DEPLOY_LOG" 2>&1
+        gcloud builds submit /tmp/izumi-agent --config=/tmp/izumi-agent/cloudbuild.yaml --project="$GCP_PROJECT_ID" --region="$DEPLOY_REGION" --substitutions="_AGENT_SA_EMAIL=$AGENT_SA_EMAIL,_TRIG_SA_EMAIL=$TRIG_SA" > "$DEPLOY_LOG" 2>&1
         local BUILD_STATUS=$?
         stop_spinner
 
@@ -1519,6 +1524,7 @@ main() {
                 echo "  --skip-builds        Skip triggering Cloud Build and skip waiting for the backend deployment."
                 echo "  --force-builds       Force trigger Cloud Build without interactive prompting."
                 echo "  --skip-migrations    Perform the automated SQL backup, but skip running Alembic database migrations."
+                echo "  --skip-seeding       Skip the execution of the database seeding job (Step 14) to speed up testing."
                 echo "  --help, -h           Show this help menu and exit."
                 echo ""
                 exit 0
@@ -1533,6 +1539,10 @@ main() {
                 ;;
             --skip-migrations)
                 CLI_SKIP_MIGRATIONS="true"
+                shift
+                ;;
+            --skip-seeding)
+                CLI_SKIP_SEEDING="true"
                 shift
                 ;;
             *)
