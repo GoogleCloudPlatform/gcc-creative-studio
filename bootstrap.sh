@@ -1297,7 +1297,7 @@ steps:
       - '-c'
       - |
         pip install .
-        python scripts/deploy_to_agent_platform.py --project=\$PROJECT_ID --service-account=\${_AGENT_SA_EMAIL}
+        python scripts/deploy_to_agent_platform.py --project=\$PROJECT_ID --location=${DEPLOY_REGION} --service-account=\${_AGENT_SA_EMAIL}
     secretEnv: ['CREATIVE_STUDIO_USER_AUTH_TOKEN_KEY']
 availableSecrets:
   secretManager:
