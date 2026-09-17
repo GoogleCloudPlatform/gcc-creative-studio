@@ -1382,6 +1382,7 @@ describe('ChatInterfaceComponent', () => {
       expect(component['extractGateFromEvent'](userEvent)).toBeNull();
 
       const userRoleEvent = {
+        author: 'user',
         content: {
           role: 'user',
           parts: [
@@ -1440,6 +1441,92 @@ describe('ChatInterfaceComponent', () => {
         },
       };
       expect(component['extractGateFromEvent'](event)).toBeNull();
+    });
+
+    it('should extract gate from functionResponse with pending_approval and message', () => {
+      const event = {
+        content: {
+          parts: [
+            {
+              functionResponse: {
+                id: 'call_strategy_1',
+                name: 'await_strategy_approval',
+                response: {
+                  result: {
+                    campaign: {visual_look: 'Outdoor Adventure'},
+                    message:
+                      'A 12s product-only ad for general audience, shot in the "Outdoor Adventure" style. Accept to continue, or tell me what to change.',
+                    stage: 'strategy',
+                    status: 'pending_approval',
+                  },
+                },
+              },
+            },
+          ],
+        },
+      };
+      const gate = component['extractGateFromEvent'](event);
+      expect(gate).not.toBeNull();
+      expect(gate?.callId).toBe('call_strategy_1');
+      expect(gate?.toolName).toBe('await_strategy_approval');
+      expect(gate?.stage).toBe('strategy');
+      expect(gate?.payload?.message).toBe(
+        'A 12s product-only ad for general audience, shot in the "Outdoor Adventure" style. Accept to continue, or tell me what to change.',
+      );
+    });
+
+    it('should preserve tool response payload message when reconstructing gate in checkUnresolvedGate', () => {
+      const events = [
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  id: 'call_979062',
+                  args: {},
+                  name: 'await_strategy_approval',
+                },
+              },
+            ],
+          },
+        },
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionResponse: {
+                  id: 'call_979062',
+                  name: 'await_strategy_approval',
+                  response: {
+                    result: {
+                      campaign: {
+                        aspect_ratio: '16:9',
+                        brand: 'Brand',
+                        visual_look: 'Outdoor Adventure',
+                      },
+                      message:
+                        'A 12s product-only ad for general audience, shot in the "Outdoor Adventure" style. Accept to continue, or tell me what to change.',
+                      stage: 'strategy',
+                      status: 'pending_approval',
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      ];
+
+      const gate = component['checkUnresolvedGate'](events);
+      expect(gate).not.toBeNull();
+      expect(gate?.callId).toBe('call_979062');
+      expect(gate?.toolName).toBe('await_strategy_approval');
+      expect(gate?.stage).toBe('strategy');
+      expect(gate?.payload?.message).toBe(
+        'A 12s product-only ad for general audience, shot in the "Outdoor Adventure" style. Accept to continue, or tell me what to change.',
+      );
     });
 
     it('should support iterative re-gating after a modify loop in checkUnresolvedGate', () => {
@@ -1552,6 +1639,739 @@ describe('ChatInterfaceComponent', () => {
       TestBed.flushEffects();
 
       expect(component['submittedGateCallIds'].size).toBe(0);
+    });
+
+    it('should extract payload and options from functionCall.args in extractGateFromEvent', () => {
+      const eventWithObjArgs = {
+        content: {
+          parts: [
+            {
+              functionCall: {
+                id: 'call_args_1',
+                name: 'await_strategy_approval',
+                args: {
+                  message: 'Custom strategy proposal from args',
+                  options: ['accept', 'modify'],
+                },
+              },
+            },
+          ],
+        },
+      };
+
+      const gate = component['extractGateFromEvent'](eventWithObjArgs);
+      expect(gate).toBeTruthy();
+      expect(gate?.callId).toBe('call_args_1');
+      expect(gate?.toolName).toBe('await_strategy_approval');
+      expect(gate?.stage).toBe('strategy');
+      expect(gate?.payload?.message).toBe('Custom strategy proposal from args');
+      expect(gate?.options).toEqual(['accept', 'modify']);
+
+      const eventWithStringArgs = {
+        content: {
+          parts: [
+            {
+              functionCall: {
+                id: 'call_args_2',
+                name: 'await_storyboard_approval',
+                args: JSON.stringify({
+                  message: 'Stringified storyboard proposal',
+                }),
+              },
+            },
+          ],
+        },
+      };
+
+      const gate2 = component['extractGateFromEvent'](eventWithStringArgs);
+      expect(gate2).toBeTruthy();
+      expect(gate2?.payload?.message).toBe('Stringified storyboard proposal');
+      expect(gate2?.options).toEqual(['accept', 'modify', 'regenerate']);
+    });
+
+    it('should fail explicitly in handleGateDecision if callId is missing', () => {
+      component.currentSessionId = 'sess-123';
+      component.activeApprovalGate.set({
+        callId: '',
+        toolName: 'await_storyboard_approval',
+        stage: 'storyboard',
+      });
+      agentChatService.sendMessage = jasmine.createSpy('sendMessage');
+
+      component.handleGateDecision({
+        decision: 'accept',
+        guidance: '',
+      });
+
+      expect(agentChatService.sendMessage).not.toHaveBeenCalled();
+      expect(component.activeApprovalGate()).toBeNull();
+    });
+
+    it('should not resolve storyboard gate when storyboard_agent_creative or director_agent is called', () => {
+      const events = [
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  id: 'call_sb_subagent',
+                  name: 'await_storyboard_approval',
+                },
+              },
+            ],
+          },
+        },
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  name: 'storyboard_agent_creative',
+                },
+              },
+            ],
+          },
+        },
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  name: 'director_agent',
+                },
+              },
+            ],
+          },
+        },
+      ];
+
+      const gate = component['checkUnresolvedGate'](events);
+      expect(gate).toBeTruthy();
+      expect(gate?.callId).toBe('call_sb_subagent');
+      expect(gate?.stage).toBe('storyboard');
+    });
+
+    it('should ignore candidate gates with missing or empty callId in checkUnresolvedGate', () => {
+      const events = [
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  id: '',
+                  name: 'await_storyboard_approval',
+                },
+              },
+            ],
+          },
+        },
+      ];
+
+      const gate = component['checkUnresolvedGate'](events);
+      expect(gate).toBeNull();
+    });
+
+    it('should sync sessionId to router queryParams when creating session on first message', () => {
+      component.currentSessionId = null;
+      component.chatInputValue.set('Start campaign');
+      spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
+
+      const newSession: any = {
+        id: 'new_session_999',
+        user_id: 'user1',
+        created_at: new Date().toISOString(),
+        title: 'New Session',
+        session_id: 'new_session_999',
+      };
+      (agentChatService.createSession as jasmine.Spy).and.returnValue(
+        of(newSession),
+      );
+      agentChatService.sendMessage = jasmine
+        .createSpy('sendMessage')
+        .and.returnValue(Promise.resolve());
+
+      component.sendChatMessage('Start campaign');
+
+      expect(router.navigate).toHaveBeenCalledWith([], {
+        relativeTo: (component as any).route,
+        queryParams: {
+          sessionId: 'new_session_999',
+        },
+        queryParamsHandling: 'merge',
+      });
+    });
+
+    describe('Error Handling & In-Chat Recovery', () => {
+      it('should translate error codes into friendly user messages in getFriendlyErrorMessage', () => {
+        const err429 = {
+          status: 429,
+          message: 'ResourceExhausted quota exceeded',
+        };
+        const res429 = component.getFriendlyErrorMessage(err429);
+        expect(res429.code).toBe(429);
+        expect(res429.text).toContain('AI Model Quota Exceeded');
+
+        const err503 = {status: 503, message: 'Service UNAVAILABLE'};
+        const res503 = component.getFriendlyErrorMessage(err503);
+        expect(res503.code).toBe(503);
+        expect(res503.text).toContain('Agent Service Unavailable');
+
+        const err504 = {status: 504, message: 'DeadlineExceeded timeout'};
+        const res504 = component.getFriendlyErrorMessage(err504);
+        expect(res504.code).toBe(504);
+        expect(res504.text).toContain('Request Timed Out');
+
+        const err400 = {status: 400, message: 'InvalidArgument'};
+        const res400 = component.getFriendlyErrorMessage(err400);
+        expect(res400.code).toBe(400);
+        expect(res400.text).toContain('Invalid Request');
+
+        const errGeneric = new Error('Something broke');
+        const resGeneric = component.getFriendlyErrorMessage(errGeneric);
+        expect(resGeneric.code).toBe(500);
+        expect(resGeneric.text).toContain('Agent Execution Failed');
+      });
+
+      it('should append an in-chat error message card and reset isTyping when onError fires', () => {
+        component.currentSessionId = 's_err_test';
+        component.isTyping.set(true);
+        component.isSubmittingGate.set(true);
+
+        const callbacks = component['setupCallbacks']();
+        callbacks.onError!({code: 429, message: 'ResourceExhausted'});
+
+        expect(component.isTyping()).toBeFalse();
+        expect(component.isSubmittingGate()).toBeFalse();
+
+        const messages = component.chatMessages();
+        const lastMsg = messages[messages.length - 1];
+        expect(lastMsg).toBeTruthy();
+        expect(lastMsg.isError).toBeTrue();
+        expect(lastMsg.errorCode).toBe(429);
+        expect(lastMsg.sender).toBe('agent');
+        expect(lastMsg.text).toContain('AI Model Quota Exceeded');
+      });
+
+      it('should remove error message and re-send chat payload when retryLastAction is called', () => {
+        component.currentSessionId = 's_retry_test';
+        agentChatService.sendMessage = jasmine
+          .createSpy('sendMessage')
+          .and.returnValue(Promise.resolve());
+
+        // Simulate sending a chat message
+        component['executeSendMessage']('Create a campaign');
+        expect(component['lastExecutedAction']).toEqual({
+          type: 'chat',
+          text: 'Create a campaign',
+          partsParams: [{text: 'Create a campaign'}],
+        });
+
+        // Trigger onError
+        const callbacks = component['setupCallbacks']();
+        callbacks.onError!({code: 429, message: 'ResourceExhausted'});
+        expect(component.chatMessages().some(m => m.isError)).toBeTrue();
+
+        // Retry
+        component.retryLastAction();
+        expect(component.chatMessages().some(m => m.isError)).toBeFalse();
+        expect(component.isTyping()).toBeTrue();
+        expect(agentChatService.sendMessage).toHaveBeenCalledWith(
+          's_retry_test',
+          [{text: 'Create a campaign'}],
+          jasmine.anything(),
+          jasmine.anything(),
+        );
+      });
+
+      it('should remove error message and re-send gate payload when retryLastAction is called for gate decision', () => {
+        component.currentSessionId = 's_retry_gate';
+        agentChatService.sendMessage = jasmine
+          .createSpy('sendMessage')
+          .and.returnValue(Promise.resolve());
+
+        component.activeApprovalGate.set({
+          callId: 'call_gate_retry',
+          toolName: 'await_storyboard_approval',
+          stage: 'storyboard',
+          options: ['accept', 'modify', 'regenerate'],
+        });
+
+        component.handleGateDecision({decision: 'accept', guidance: ''});
+        expect(component['lastExecutedAction']?.type).toBe('gate');
+
+        // Trigger onError
+        const callbacks = component['setupCallbacks']();
+        callbacks.onError!({code: 503, message: 'Unavailable'});
+        expect(component.chatMessages().some(m => m.isError)).toBeTrue();
+
+        // Retry
+        component.retryLastAction();
+        expect(component.chatMessages().some(m => m.isError)).toBeFalse();
+        expect(component.isSubmittingGate()).toBeTrue();
+        expect(agentChatService.sendMessage).toHaveBeenCalled();
+      });
+
+      it('should detect Gate 4 even when content.role is "user" in extractGateFromEvent and checkUnresolvedGate', () => {
+        const gate4Event = {
+          author: 'final_cut_gate_agent',
+          content: {
+            role: 'user',
+            parts: [
+              {
+                functionResponse: {
+                  id: 'call_final_cut_123',
+                  name: 'await_final_cut_approval',
+                  response: {
+                    status: 'awaiting_human_review',
+                    stage: 'final_cut',
+                    options: ['accept', 'modify', 'regenerate'],
+                  },
+                },
+              },
+            ],
+          },
+        };
+
+        const extracted = component['extractGateFromEvent'](gate4Event);
+        expect(extracted).toBeTruthy();
+        expect(extracted?.callId).toBe('call_final_cut_123');
+        expect(extracted?.toolName).toBe('await_final_cut_approval');
+        expect(extracted?.stage).toBe('final_cut');
+
+        const unresolved = component['checkUnresolvedGate']([gate4Event]);
+        expect(unresolved).toBeTruthy();
+        expect(unresolved?.callId).toBe('call_final_cut_123');
+        expect(unresolved?.stage).toBe('final_cut');
+      });
+    });
+
+    describe('mapEventsToMessages gate decisions', () => {
+      it('should reconstruct user message when event has functionResponse with decision=accept', () => {
+        const events = [
+          {
+            author: 'user',
+            content: {
+              role: 'user',
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'call_strategy_1',
+                    name: 'await_strategy_approval',
+                    response: {
+                      decision: 'accept',
+                      guidance: '',
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        ];
+
+        const messages = component['mapEventsToMessages'](events);
+        expect(messages.length).toBe(1);
+        expect(messages[0].sender).toBe('user');
+        expect(messages[0].text).toBe('✅ Approved (Campaign Strategy)');
+      });
+
+      it('should reconstruct user message with guidance when decision=modify', () => {
+        const events = [
+          {
+            author: 'user',
+            content: {
+              role: 'user',
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'call_sb_1',
+                    name: 'await_storyboard_approval',
+                    response: {
+                      decision: 'modify',
+                      guidance: 'Make scene 2 shorter',
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        ];
+
+        const messages = component['mapEventsToMessages'](events);
+        expect(messages.length).toBe(1);
+        expect(messages[0].sender).toBe('user');
+        expect(messages[0].text).toBe(
+          '✏️ Requested Modifications (Storyboard): "Make scene 2 shorter"',
+        );
+      });
+
+      it('should reconstruct user message when decision=regenerate', () => {
+        const events = [
+          {
+            author: 'user',
+            content: {
+              role: 'user',
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'call_frames_1',
+                    name: 'await_frame_approval',
+                    response: {
+                      decision: 'regenerate',
+                      guidance: 'Redo all frames',
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        ];
+
+        const messages = component['mapEventsToMessages'](events);
+        expect(messages.length).toBe(1);
+        expect(messages[0].sender).toBe('user');
+        expect(messages[0].text).toBe(
+          '🔄 Requested Regeneration (First Frames): "Redo all frames"',
+        );
+      });
+
+      it('should handle snake_case function_response and stringified JSON response', () => {
+        const events = [
+          {
+            author: 'user',
+            content: {
+              parts: [
+                {
+                  function_response: {
+                    id: 'call_final_cut_1',
+                    name: 'await_final_cut_approval',
+                    response: JSON.stringify({
+                      decision: 'accept',
+                    }),
+                  },
+                },
+              ],
+            },
+          },
+        ];
+
+        const messages = component['mapEventsToMessages'](events);
+        expect(messages.length).toBe(1);
+        expect(messages[0].sender).toBe('user');
+        expect(messages[0].text).toBe('✅ Approved (Final Cut)');
+      });
+
+      it('should format decision text consistently in handleGateDecision', () => {
+        component.currentSessionId = 'test-session';
+        component.activeApprovalGate.set({
+          callId: 'call_strat_99',
+          toolName: 'await_strategy_approval',
+          stage: 'strategy',
+        });
+
+        component.handleGateDecision({
+          decision: 'accept',
+          guidance: '',
+        });
+
+        const msgs = component.chatMessages();
+        const lastMsg = msgs[msgs.length - 1];
+        expect(lastMsg.sender).toBe('user');
+        expect(lastMsg.text).toBe('✅ Approved (Campaign Strategy)');
+      });
+    });
+
+    describe('chat bubble CSS class rendering', () => {
+      it('should apply chat-bubble and user classes to user messages', () => {
+        component.chatMessages.set([
+          {
+            sender: 'user',
+            text: 'Hello from user',
+            timestamp: new Date(),
+          },
+        ]);
+        fixture.detectChanges();
+
+        const bubble = fixture.nativeElement.querySelector('.chat-bubble');
+        expect(bubble).not.toBeNull();
+        expect(bubble.classList.contains('chat-bubble')).toBeTrue();
+        expect(bubble.classList.contains('user')).toBeTrue();
+        expect(bubble.classList.contains('agent')).toBeFalse();
+      });
+
+      it('should apply chat-bubble and agent classes to agent messages', () => {
+        component.chatMessages.set([
+          {
+            sender: 'agent',
+            text: 'Hello from agent',
+            timestamp: new Date(),
+          },
+        ]);
+        fixture.detectChanges();
+
+        const bubble = fixture.nativeElement.querySelector('.chat-bubble');
+        expect(bubble).not.toBeNull();
+        expect(bubble.classList.contains('chat-bubble')).toBeTrue();
+        expect(bubble.classList.contains('agent')).toBeTrue();
+        expect(bubble.classList.contains('user')).toBeFalse();
+      });
+
+      it('should apply error classes when message is an error', () => {
+        component.chatMessages.set([
+          {
+            sender: 'agent',
+            text: 'Error occurred',
+            isError: true,
+            timestamp: new Date(),
+          },
+        ]);
+        fixture.detectChanges();
+
+        const bubble = fixture.nativeElement.querySelector('.chat-bubble');
+        expect(bubble).not.toBeNull();
+        expect(bubble.classList.contains('chat-bubble')).toBeTrue();
+        expect(bubble.classList.contains('agent')).toBeTrue();
+      });
+    });
+
+    describe('pipeline gate milestone cards', () => {
+      it('should return correct milestone metadata from getMilestoneForStage', () => {
+        const strat = component.getMilestoneForStage(
+          'strategy',
+          'await_strategy_approval',
+        );
+        expect(strat?.stage).toBe('strategy');
+        expect(strat?.title).toBe('Campaign Strategy Ready');
+        expect(strat?.icon).toBe('psychology');
+
+        const sb = component.getMilestoneForStage(
+          'storyboard',
+          'await_storyboard_approval',
+          {
+            scenes: [{}, {}, {}],
+          },
+        );
+        expect(sb?.stage).toBe('storyboard');
+        expect(sb?.title).toBe('Storyboard Ready');
+        expect(sb?.subtitle).toBe('Generated 3 scenes');
+        expect(sb?.icon).toBe('auto_awesome_motion');
+
+        const frames = component.getMilestoneForStage(
+          'frames',
+          'await_frame_approval',
+        );
+        expect(frames?.stage).toBe('frames');
+        expect(frames?.title).toBe('Scene Frames & Audio Ready');
+        expect(frames?.icon).toBe('burst_mode');
+
+        const finalCut = component.getMilestoneForStage(
+          'final_cut',
+          'await_final_cut_approval',
+        );
+        expect(finalCut?.stage).toBe('final_cut');
+        expect(finalCut?.title).toBe('Final Cut Ready');
+        expect(finalCut?.icon).toBe('movie');
+      });
+
+      it('should extract milestone cards for each gate in mapEventsToMessages', () => {
+        const events = [
+          {
+            author: 'model',
+            content: {
+              parts: [
+                {text: 'Here is the campaign strategy.'},
+                {functionCall: {id: 'c1', name: 'await_strategy_approval'}},
+              ],
+            },
+          },
+          {
+            author: 'user',
+            content: {
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'c1',
+                    name: 'await_strategy_approval',
+                    response: {decision: 'accept'},
+                  },
+                },
+              ],
+            },
+          },
+          {
+            author: 'model',
+            content: {
+              parts: [
+                {text: 'Here is the storyboard.'},
+                {functionCall: {id: 'c2', name: 'await_storyboard_approval'}},
+              ],
+            },
+            actions: {
+              storyboard: {scenes: [{}, {}, {}, {}]},
+            },
+          },
+          {
+            author: 'model',
+            content: {
+              parts: [
+                {text: 'Opening frames are ready.'},
+                {functionCall: {id: 'c3', name: 'await_frame_approval'}},
+              ],
+            },
+          },
+          {
+            author: 'model',
+            content: {
+              parts: [
+                {text: 'Final video is ready.'},
+                {functionCall: {id: 'c4', name: 'await_final_cut_approval'}},
+              ],
+            },
+          },
+        ];
+
+        const msgs = component['mapEventsToMessages'](events);
+        expect(msgs.length).toBe(5);
+
+        // Gate 1: Strategy
+        expect(msgs[0].milestone?.title).toBe('Campaign Strategy Ready');
+        expect(msgs[0].milestone?.icon).toBe('psychology');
+
+        // User Decision
+        expect(msgs[1].sender).toBe('user');
+        expect(msgs[1].text).toContain('✅ Approved (Campaign Strategy)');
+
+        // Gate 2: Storyboard
+        expect(msgs[2].milestone?.title).toBe('Storyboard Ready');
+        expect(msgs[2].milestone?.icon).toBe('auto_awesome_motion');
+
+        // Gate 3: First Frames
+        expect(msgs[3].milestone?.title).toBe('Scene Frames & Audio Ready');
+        expect(msgs[3].milestone?.icon).toBe('burst_mode');
+
+        // Gate 4: Final Cut
+        expect(msgs[4].milestone?.title).toBe('Final Cut Ready');
+        expect(msgs[4].milestone?.icon).toBe('movie');
+      });
+
+      it('should render milestone card in DOM when message has milestone', () => {
+        component.chatMessages.set([
+          {
+            sender: 'agent',
+            text: 'Strategy proposal text',
+            milestone: {
+              stage: 'strategy',
+              title: 'Campaign Strategy Ready',
+              subtitle: 'Theme, tone, and visual direction defined',
+              icon: 'psychology',
+            },
+            timestamp: new Date(),
+          },
+        ]);
+        fixture.detectChanges();
+
+        const card = fixture.nativeElement.querySelector('.border-indigo-500');
+        expect(card).not.toBeNull();
+        expect(card.textContent).toContain('Campaign Strategy Ready');
+        expect(card.textContent).toContain(
+          'Theme, tone, and visual direction defined',
+        );
+        const icon = card.querySelector('mat-icon');
+        expect(icon?.textContent?.trim()).toBe('psychology');
+      });
+
+      it('should not create duplicate milestone cards or user bubbles when intermediate tool suspension event is present in history', () => {
+        const events = [
+          {
+            author: 'model',
+            content: {
+              parts: [
+                {
+                  text: 'Here is the proposed campaign strategy and visual direction for your review.',
+                },
+                {
+                  functionCall: {
+                    id: 'call_strat_1',
+                    name: 'await_strategy_approval',
+                  },
+                },
+              ],
+            },
+          },
+          {
+            author: 'user',
+            content: {
+              role: 'user',
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'call_strat_1',
+                    name: 'await_strategy_approval',
+                    response: {
+                      status: 'awaiting_human_review',
+                      stage: 'strategy',
+                      message: 'Here is the proposed campaign strategy',
+                    },
+                  },
+                },
+              ],
+            },
+          },
+          {
+            author: 'user',
+            content: {
+              role: 'user',
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'call_strat_1',
+                    name: 'await_strategy_approval',
+                    response: {decision: 'accept'},
+                  },
+                },
+              ],
+            },
+          },
+        ];
+
+        const msgs = component['mapEventsToMessages'](events);
+        expect(msgs.length).toBe(2);
+
+        // First message: Agent proposal with milestone card
+        expect(msgs[0].sender).toBe('agent');
+        expect(msgs[0].text).toBe(
+          'Here is the proposed campaign strategy and visual direction for your review.',
+        );
+        expect(msgs[0].milestone?.title).toBe('Campaign Strategy Ready');
+
+        // Second message: User decision only, no duplicate card
+        expect(msgs[1].sender).toBe('user');
+        expect(msgs[1].text).toBe('✅ Approved (Campaign Strategy)');
+        expect(msgs[1].milestone).toBeUndefined();
+      });
+
+      it('should not render milestone card in DOM when message sender is user', () => {
+        component.chatMessages.set([
+          {
+            sender: 'user',
+            text: 'User message',
+            milestone: {
+              stage: 'strategy',
+              title: 'Campaign Strategy Ready',
+              subtitle: 'Theme, tone, and visual direction defined',
+              icon: 'psychology',
+            },
+            timestamp: new Date(),
+          },
+        ]);
+        fixture.detectChanges();
+
+        const card = fixture.nativeElement.querySelector('.border-indigo-500');
+        expect(card).toBeNull();
+      });
     });
   });
 });
