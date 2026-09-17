@@ -496,16 +496,14 @@ configure_environment() {
     
     if [ -z "$DEPLOY_REGION" ] || [ "$DEPLOY_REGION" == "unassigned" ]; then
         info "Fetching available GCP regions..."
-        local VALID_REGIONS
-        VALID_REGIONS=$(gcloud compute regions list --project="$GCP_PROJECT_ID" --format="value(name)" 2>/dev/null || echo "us-central1")
         while true; do
             prompt "Which GCP region would you like to deploy resources to?"; read -p "   Deploy Region [default value: $DEFAULT_DEPLOY_REGION]: " DEPLOY_REGION < /dev/tty || exit 130
             DEPLOY_REGION=${DEPLOY_REGION:-$DEFAULT_DEPLOY_REGION}
-            if echo "$VALID_REGIONS" | grep -qw "$DEPLOY_REGION"; then
+            if [[ "$DEPLOY_REGION" =~ ^[a-z]+-[a-z]+[0-9]+$ ]]; then
                 write_state "DEPLOY_REGION" "$DEPLOY_REGION"
                 break
             else
-                warn "Invalid region: '$DEPLOY_REGION'. Please enter a valid GCP region (e.g., us-central1, europe-west1)."
+                warn "Invalid region format: '$DEPLOY_REGION'. Please enter a valid GCP region (e.g., us-central1, europe-west1)."
             fi
         done
     else info "Using previously configured deploy region: $DEPLOY_REGION"; fi
