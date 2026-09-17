@@ -1045,44 +1045,7 @@ seed_database() {
     info "Subnetwork Egress: ${SUBNET_NAME}"
 
     local INSTANCE_NAME=$(echo "$DB_CONN_NAME" | awk -F: '{print $3}')
-    local ASSET_BUCKET="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
 
-    if [ "$DID_MIGRATE_DB" == "true" ] || [ "$CLI_SKIP_MIGRATIONS" == "true" ]; then
-        info "Starting automated SQL Dump (Preventive Backup) to gs://$ASSET_BUCKET..."
-        local SQL_SA
-        SQL_SA=$(gcloud sql instances describe "$INSTANCE_NAME" --project="$GCP_PROJECT_ID" --format="value(serviceAccountEmailAddress)")
-        if [ -n "$SQL_SA" ]; then
-            info "Granting Cloud SQL Service Account ($SQL_SA) write access to bucket..."
-            local IAM_LOG=$(mktemp)
-            if ! gcloud storage buckets add-iam-policy-binding "gs://$ASSET_BUCKET" \
-                --member="serviceAccount:$SQL_SA" \
-                --role="roles/storage.objectAdmin" --project="$GCP_PROJECT_ID" >"$IAM_LOG" 2>&1; then
-                echo -e "${C_RED}IAM Binding Error:${C_RESET}"
-                cat "$IAM_LOG"
-                warn "Failed to grant Cloud SQL Service Account permission to the bucket."
-            fi
-            rm -f "$IAM_LOG"
-            
-            local BACKUP_FILE="db_backup_$(date +%Y%m%d_%H%M%S).sql"
-            local BACKUP_LOG
-            BACKUP_LOG=$(mktemp)
-            start_spinner "Exporting database to gs://$ASSET_BUCKET/$BACKUP_FILE (Cloud SQL API)"
-            if retry_command gcloud sql export sql "$INSTANCE_NAME" "gs://$ASSET_BUCKET/$BACKUP_FILE" --database="$DB_NAME" --project="$GCP_PROJECT_ID" --quiet >"$BACKUP_LOG" 2>&1; then
-                stop_spinner
-                success "Database backup successfully exported to gs://$ASSET_BUCKET/$BACKUP_FILE"
-            else
-                stop_spinner
-                echo -e "${C_RED}Backup Error Logs:${C_RESET}"
-                cat "$BACKUP_LOG"
-                warn "Database backup failed. Please check permissions or manually export it."
-            fi
-            rm -f "$BACKUP_LOG"
-        else
-            warn "Could not retrieve Cloud SQL service account. Skipping automated backup."
-        fi
-    else
-        info "PITR is already active for this instance. Skipping manual SQL dump."
-    fi
 
     if [ "$CLI_SKIP_MIGRATIONS" == "true" ]; then
         warn "Skipping Alembic database migrations as requested by --skip-migrations flag."
@@ -1140,7 +1103,10 @@ seed_database() {
     success "Backend container successfully deployed to Cloud Run!"
 
     local CURRENT_USER=$(gcloud config get-value account 2>/dev/null || echo "system")
-    local BUCKET_ASSETS="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
+    local BUCKET_ASSETS="${ASSET_BUCKET_OVERRIDE}"
+    if [ -z "$BUCKET_ASSETS" ]; then
+        BUCKET_ASSETS="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
+    fi
 
     # 3. Create a secure, temporary Google Cloud Run Job inside the VPC boundary
     info "Registering secure administrative Job inside VPC..."
@@ -1303,7 +1269,10 @@ deploy_izumi_agent() {
         # Find the trigger service account to run the build securely
         local TRIG_SA="${RES_PREFIX}-trig-sa@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
 
-        local ASSET_BUCKET="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
+        local ASSET_BUCKET="${ASSET_BUCKET_OVERRIDE}"
+        if [ -z "$ASSET_BUCKET" ]; then
+            ASSET_BUCKET="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
+        fi
         local BE_URL=$(gcloud run services describe ${BE_SERVICE_NAME} --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(status.url)" 2>/dev/null || echo "")
         local FE_URL="https://${GCP_PROJECT_ID}.web.app"
 
