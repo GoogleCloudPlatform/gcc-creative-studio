@@ -161,3 +161,9 @@ resource "google_project_iam_member" "agent_sa_cloudtrace_agent" {
   role    = "roles/cloudtrace.agent"
   member  = "serviceAccount:${google_service_account.agent_sa.email}"
 }
+
+resource "google_project_iam_member" "agent_sa_logging_writer" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.agent_sa.email}"
+}
