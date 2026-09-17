@@ -90,9 +90,9 @@ resource "google_cloud_run_v2_service" "backend" {
           path = "/" # Your API's health endpoint
           port = 8080
         }
-        initial_delay_seconds = 10
-        timeout_seconds       = 5
-        failure_threshold     = 10
+        initial_delay_seconds = 30
+        timeout_seconds       = 10
+        failure_threshold     = 25
         period_seconds        = 10
       }
       
