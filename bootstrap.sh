@@ -1274,6 +1274,12 @@ deploy_izumi_agent() {
         local BE_URL=$(gcloud run services describe ${BE_SERVICE_NAME} --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(status.url)" 2>/dev/null || echo "")
         local FE_URL="https://${GCP_PROJECT_ID}.web.app"
 
+        # Replace hardcoded 'global' region in Izumi agent deployment script with our DEPLOY_REGION
+        # This is critical for enterprise compliance where resources are restricted to specific regions
+        if [ -f /tmp/izumi-agent/scripts/deploy_to_agent_platform.py ]; then
+            sed -i "s|\"GOOGLE_CLOUD_LOCATION\": \"global\"|\"GOOGLE_CLOUD_LOCATION\": \"${DEPLOY_REGION}\"|g" /tmp/izumi-agent/scripts/deploy_to_agent_platform.py
+        fi
+
         cat << YAML > /tmp/izumi-agent/cloudbuild.yaml
 steps:
   - name: 'python:3.12-slim'
@@ -1281,6 +1287,7 @@ steps:
     env:
       - 'PROJECT_ID=\$PROJECT_ID'
       - 'GOOGLE_CLOUD_PROJECT=\$PROJECT_ID'
+      - 'GOOGLE_CLOUD_LOCATION=${DEPLOY_REGION}'
       - 'ASSET_SERVICE_GCS_BUCKET=${ASSET_BUCKET}'
       - 'USE_CREATIVE_STUDIO=True'
       - 'ENABLE_HITL_GATES=True'
