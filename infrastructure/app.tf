@@ -41,11 +41,13 @@ module "compute" {
 
   container_env_vars = {
     PROJECT_ID                       = var.project_id
+    REGION                           = var.region
     DB_NAME                          = module.database.database_name
     DB_USER                          = module.database.user_name
     INSTANCE_CONNECTION_NAME         = module.database.instance_connection_name
     GENMEDIA_BUCKET                  = google_storage_bucket.genmedia.name
-    AGENT_LOCATION                   = var.agent_location
+    AGENT_LOCATION                   = var.agent_location != "" ? var.agent_location : var.region
+    WORKFLOWS_LOCATION               = var.region
     SIGNING_SA_EMAIL                 = google_service_account.bucket_reader_sa.email
   }
 

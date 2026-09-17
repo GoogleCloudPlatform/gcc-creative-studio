@@ -84,6 +84,7 @@ resource "google_cloudbuild_trigger" "frontend_trigger" {
   filename        = "frontend/cloudbuild-deploy.yaml"
   substitutions = {
     _GCP_PROJECT_ID      = var.project_id
+    _GCP_REGION          = var.region
     _BACKEND_URL         = "https://${google_firebase_hosting_site.frontend.site_id}.web.app"
     _BACKEND_SERVICE_ID  = module.compute.service_name
     _FIREBASE_SITE_ID    = google_firebase_hosting_site.frontend.site_id
