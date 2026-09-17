@@ -1056,7 +1056,7 @@ seed_database() {
         start_spinner "Polling Cloud Build status"
         local attempts=0
         while true; do
-            local BUILD_STATUS=$(gcloud builds describe "$BE_BUILD_ID" --project="$GCP_PROJECT_ID" --region="us-central1" --format="value(status)" 2>/dev/null || echo "UNKNOWN")
+            local BUILD_STATUS=$(gcloud builds describe "$BE_BUILD_ID" --project="$GCP_PROJECT_ID" --region="$DEPLOY_REGION" --format="value(status)" 2>/dev/null || echo "UNKNOWN")
             if [ "$BUILD_STATUS" == "SUCCESS" ]; then
                 stop_spinner
                 success "Backend build and deployment completed successfully!"
@@ -1227,12 +1227,12 @@ trigger_builds() {
     fi
 
     info "Triggering backend build..."
-    BE_BUILD_ID=$(gcloud builds triggers run "${BE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="us-central1" --format="value(metadata.build.id)" 2>/dev/null)
+    BE_BUILD_ID=$(gcloud builds triggers run "${BE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="$DEPLOY_REGION" --format="value(metadata.build.id)" 2>/dev/null)
     if [ -n "$BE_BUILD_ID" ]; then success "Backend build triggered (ID: $BE_BUILD_ID)"; else warn "Backend build triggered (Could not parse ID)"; fi
     export BE_BUILD_ID
     
     info "Triggering frontend build..."
-    FE_BUILD_ID=$(gcloud builds triggers run "${FE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="us-central1" --format="value(metadata.build.id)" 2>/dev/null)
+    FE_BUILD_ID=$(gcloud builds triggers run "${FE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="$DEPLOY_REGION" --format="value(metadata.build.id)" 2>/dev/null)
     if [ -n "$FE_BUILD_ID" ]; then success "Frontend build triggered (ID: $FE_BUILD_ID)"; else warn "Frontend build triggered (Could not parse ID)"; fi
 
     success "Builds have been triggered."; info "You can monitor their progress in the Cloud Build console:"; echo -e "   ${C_YELLOW}https://console.cloud.google.com/cloud-build/builds?project=${GCP_PROJECT_ID}${C_RESET}"
