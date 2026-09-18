@@ -29,10 +29,10 @@ If you do NOT pass the flag, and the script doesn't detect a legacy database, it
 ## Troubleshooting
 
 ### Manual Database Import
-If a migration was interrupted, your data is always safe in your project's asset bucket (`gs://[PROJECT_ID]-cs-[ENV]-bucket/migration_backup.sql.gz`). You can manually restore it via the GCP Console or CLI:
+If a migration was interrupted, your data is always safe in your project's Terraform state bucket (`gs://[PROJECT_ID]-terraform-state/migration_backup.sql.gz`). You can manually restore it via the GCP Console or CLI:
 ```bash
 gcloud sql import sql YOUR_NEW_DB_INSTANCE_NAME \
-  gs://YOUR_ASSET_BUCKET_NAME/migration_backup.sql.gz \
+  gs://YOUR_TF_BUCKET_NAME/migration_backup.sql.gz \
   --database="creative_studio" \
   --project="YOUR_PROJECT_ID"
 ```

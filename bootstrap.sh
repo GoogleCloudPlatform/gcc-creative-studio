@@ -724,21 +724,21 @@ export_legacy_database() {
     if [ "$FORCE_BACKUP" == "true" ]; then
         info "Exporting data before Terraform replaces it..."
         
-        local ASSET_BUCKET="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
+        local MIGRATION_BUCKET="${TF_BUCKET_NAME:-${GCP_PROJECT_ID}-terraform-state}"
         
         local SOURCE_SA
         SOURCE_SA=$(gcloud sql instances describe "$SOURCE_INSTANCE" --project="$GCP_PROJECT_ID" --format="value(serviceAccountEmailAddress)")
         
         info "Granting write access to source instance ($SOURCE_SA)..."
-        gcloud storage buckets add-iam-policy-binding "gs://$ASSET_BUCKET" \
+        gcloud storage buckets add-iam-policy-binding "gs://$MIGRATION_BUCKET" \
             --member="serviceAccount:$SOURCE_SA" \
             --role="roles/storage.objectAdmin" --project="$GCP_PROJECT_ID" >/dev/null 2>&1 || true
 
         # Stable export file name
         export LEGACY_EXPORT_FILE="migration_backup.sql.gz"
         
-        start_spinner "Exporting data to gs://$ASSET_BUCKET/$LEGACY_EXPORT_FILE"
-        if retry_command gcloud sql export sql "$SOURCE_INSTANCE" "gs://$ASSET_BUCKET/$LEGACY_EXPORT_FILE" --database="creative_studio" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1; then
+        start_spinner "Exporting data to gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE"
+        if retry_command gcloud sql export sql "$SOURCE_INSTANCE" "gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE" --database="creative_studio" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1; then
             stop_spinner
             success "Database successfully exported! Safe for Terraform to proceed."
             export DID_EXPORT_LEGACY_DB="true"
@@ -752,16 +752,16 @@ export_legacy_database() {
 prepare_migration_and_dummy_image() {
     step 9 "Checking Migration Intent & Preparing Safe State"
     
-    local ASSET_BUCKET="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
+    local MIGRATION_BUCKET="${TF_BUCKET_NAME:-${GCP_PROJECT_ID}-terraform-state}"
     
     # If a migration isn't already forced via flag or public DB detection
     if [ "$DID_EXPORT_LEGACY_DB" != "true" ] && [ "$CLI_MIGRATE_DB" != "true" ]; then
         local FOUND_BACKUP
-        FOUND_BACKUP=$(gcloud storage ls "gs://$ASSET_BUCKET/migration_backup.sql.gz" 2>/dev/null | sort | tail -n 1 || echo "")
+        FOUND_BACKUP=$(gcloud storage ls "gs://$MIGRATION_BUCKET/migration_backup.sql*" 2>/dev/null | grep -E "\.sql(\.gz)?$" | sort | tail -n 1 || echo "")
         
         if [ -n "$FOUND_BACKUP" ]; then
             LEGACY_EXPORT_FILE=$(basename "$FOUND_BACKUP")
-            warn "Found an un-imported database backup in your bucket: gs://$ASSET_BUCKET/$LEGACY_EXPORT_FILE"
+            warn "Found an un-imported database backup in your bucket: gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE"
             prompt "Would you like to migrate/restore this backup into your database during this deployment? (y/N)"
             echo -e "${C_CYAN}(If YES: We will deploy a safe dummy image, apply Terraform, and restore the data before booting the real app.)${C_RESET}"
             read -r MIGRATION_CHOICE < /dev/tty
@@ -793,12 +793,13 @@ import_legacy_database() {
         return
     fi
     
-    local ASSET_BUCKET="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
+    local MIGRATION_BUCKET="${TF_BUCKET_NAME:-${GCP_PROJECT_ID}-terraform-state}"
+    
     if [ -z "$LEGACY_EXPORT_FILE" ]; then
         export LEGACY_EXPORT_FILE="migration_backup.sql.gz"
     fi
     
-    if gcloud storage ls "gs://$ASSET_BUCKET/$LEGACY_EXPORT_FILE" >/dev/null 2>&1; then
+    if gcloud storage ls "gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE" >/dev/null 2>&1; then
         info "An exported database backup was found in GCS. Restoring to the new Private VPC instance..."
         
         local ENV_TF_DIR="$REPO_ROOT/infrastructure"
@@ -810,26 +811,25 @@ import_legacy_database() {
             fail "Could not find the new target Cloud SQL instance in Terraform outputs."
         fi
 
-        local ASSET_BUCKET="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
         local TARGET_SA
         TARGET_SA=$(gcloud sql instances describe "$TARGET_INSTANCE" --project="$GCP_PROJECT_ID" --format="value(serviceAccountEmailAddress)")
         
         info "Granting read access to target instance ($TARGET_SA)..."
-        gcloud storage buckets add-iam-policy-binding "gs://$ASSET_BUCKET" \
+        gcloud storage buckets add-iam-policy-binding "gs://$MIGRATION_BUCKET" \
             --member="serviceAccount:$TARGET_SA" \
             --role="roles/storage.objectViewer" --project="$GCP_PROJECT_ID" >/dev/null 2>&1 || true
             
-        start_spinner "Importing data into $TARGET_INSTANCE from gs://$ASSET_BUCKET/$LEGACY_EXPORT_FILE"
-        if gcloud sql import sql "$TARGET_INSTANCE" "gs://$ASSET_BUCKET/$LEGACY_EXPORT_FILE" --database="creative_studio" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1; then
+        start_spinner "Importing data into $TARGET_INSTANCE from gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE"
+        if gcloud sql import sql "$TARGET_INSTANCE" "gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE" --database="creative_studio" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1; then
             stop_spinner
             success "Legacy database successfully restored into new private instance!"
             export DID_MIGRATE_DB="true"  # Triggers the secondary backup in seed_database
             
-            info "Leaving the old migration backup in GCS as a permanent safeguard: gs://$ASSET_BUCKET/$LEGACY_EXPORT_FILE"
+            info "Leaving the old migration backup in GCS as a permanent safeguard: gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE"
         else
             stop_spinner
             warn "Failed to import legacy database into the new instance. Please check Cloud SQL logs."
-            warn "Your data is still safe in gs://$ASSET_BUCKET/$LEGACY_EXPORT_FILE!"
+            warn "Your data is still safe in gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE!"
             fail "Aborting deployment due to database import failure."
         fi
     else
