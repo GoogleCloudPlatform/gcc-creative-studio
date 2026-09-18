@@ -15,7 +15,6 @@
  */
 
 import {MODEL_CONFIGS} from '../../../../common/config/model-config';
-import {NodeTypes} from '../../../workflow.models';
 import {StepConfig} from '../generic-step/step.model';
 
 const model_options = MODEL_CONFIGS.filter(model => model.type === 'IMAGE').map(
@@ -26,7 +25,7 @@ const model_options = MODEL_CONFIGS.filter(model => model.type === 'IMAGE').map(
 );
 
 export const GENERATE_IMAGE_STEP_CONFIG: StepConfig = {
-  type: NodeTypes.GENERATE_IMAGE,
+  type: 'generate-image',
   title: 'Generate Image',
   icon: 'image',
   inputs: [

@@ -15,7 +15,6 @@
  */
 
 import {MODEL_CONFIGS} from '../../../../common/config/model-config';
-import {NodeTypes} from '../../../workflow.models';
 import {StepConfig} from '../generic-step/step.model';
 
 const model_options = MODEL_CONFIGS.filter(model => model.type === 'AUDIO').map(
@@ -48,7 +47,7 @@ const LANGUAGE_OPTIONS = [
 ];
 
 export const GENERATE_AUDIO_STEP_CONFIG: StepConfig = {
-  type: NodeTypes.GENERATE_AUDIO,
+  type: 'generate_audio',
   title: 'Generate Audio',
   icon: 'music_note',
   inputs: [

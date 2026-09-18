@@ -15,7 +15,6 @@
  */
 
 import {MODEL_CONFIGS} from '../../../../common/config/model-config';
-import {NodeTypes} from '../../../workflow.models';
 import {StepConfig} from '../generic-step/step.model';
 
 const model_options = MODEL_CONFIGS.filter(
@@ -29,7 +28,7 @@ const model_options = MODEL_CONFIGS.filter(
 }));
 
 export const EDIT_IMAGE_STEP_CONFIG: StepConfig = {
-  type: NodeTypes.EDIT_IMAGE,
+  type: 'edit-image',
   title: 'Edit Image',
   icon: 'auto_fix_high',
   inputs: [
