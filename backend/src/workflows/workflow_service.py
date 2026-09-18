@@ -16,6 +16,7 @@ import asyncio
 import datetime
 import json
 import logging
+from typing import Any
 import uuid
 
 import google.auth
@@ -42,9 +43,13 @@ from src.workflows.repository.workflow_repository import WorkflowRepository
 from src.workflows.repository.workflow_run_repository import (
     WorkflowRunRepository,
 )
+from src.workflows.repository.workflow_template_repository import (
+    WorkflowTemplateRepository,
+)
 from src.workflows.schema.workflow_model import (
     NodeTypes,
     StepOutputReference,
+    WorkflowBase,
     WorkflowCreateDto,
     WorkflowModel,
 )
@@ -52,6 +57,12 @@ from src.workflows.schema.workflow_run_model import (
     WorkflowRunModel,
     WorkflowRunStatusEnum,
 )
+from src.workflows.schema.workflow_template_model import (
+    WorkflowTemplateCreateDto,
+    WorkflowTemplateModel,
+)
+from src.workflows.workflow_constants import IMAGE_MODE_ALLOWED_INPUTS
+from src.workflows.workflow_utils import interpolate_prompt_variables
 
 logger = logging.getLogger(__name__)
 PROJECT_ID = config_service.PROJECT_ID
@@ -67,11 +78,13 @@ class WorkflowService:
         workflow_repository: WorkflowRepository = Depends(),
         workflow_run_repository: WorkflowRunRepository = Depends(),
         source_asset_service: SourceAssetService = Depends(),
+        workflow_template_repository: WorkflowTemplateRepository = Depends(),
     ):
         self.imagen_service = ImagenService()
         self.workflow_repository = workflow_repository
         self.workflow_run_repository = workflow_run_repository
         self.source_asset_service = source_asset_service
+        self.workflow_template_repository = workflow_template_repository
 
     def _generate_workflow_yaml(
         self,
@@ -197,6 +210,26 @@ class WorkflowService:
         yaml_output = yaml.dump(gcp_workflow, indent=2)
 
         return yaml_output
+
+    def validate_workflow(
+        self,
+        workflow_dto: WorkflowBase,
+        user: UserModel,
+    ) -> dict[str, Any]:
+        """Validates workflow definition and steps structure without persisting to database or GCP."""
+        transient_workflow = WorkflowModel(
+            id="validation-temp",
+            user_id=user.id,
+            name=workflow_dto.name,
+            description=workflow_dto.description,
+            steps=workflow_dto.steps,
+        )
+        try:
+            self._generate_workflow_yaml(transient_workflow)
+        except Exception as e:
+            logger.error("Workflow validation failed: %s", e)
+            raise ValueError(f"Invalid workflow structure: {str(e)}")
+        return {"valid": True, "message": "Workflow structure is valid."}
 
     def _create_gcp_workflow(self, source_contents: str, workflow_id: str):
         client = workflows_v1.WorkflowsClient()
@@ -566,6 +599,18 @@ class WorkflowService:
 
         return BatchExecutionResponseDto(results=results)
 
+    @staticmethod
+    def _interpolate_prompt_variables(
+        prompt: str,
+        step_inputs: dict[str, Any],
+    ) -> str:
+        """Interpolates <var_name> placeholders in prompt using step inputs."""
+        return interpolate_prompt_variables(
+            prompt=prompt,
+            variables=step_inputs,
+            keep_unresolved=True,
+        )
+
     async def get_execution_details(
         self,
         workflow_id: str,
@@ -713,7 +758,23 @@ class WorkflowService:
                     )
         # --- Lazy Status Update End ---
 
-        user_input_step_id = workflow_model.steps[0].step_id
+        user_input_step = next(
+            (
+                step
+                for step in workflow_model.steps
+                if step.type == NodeTypes.USER_INPUT
+            ),
+            None,
+        )
+        user_input_step_id = (
+            user_input_step.step_id
+            if user_input_step
+            else (
+                workflow_model.steps[0].step_id
+                if workflow_model.steps
+                else "user_input"
+            )
+        )
 
         previous_outputs = {}
         formatted_step_entries = []
@@ -721,6 +782,8 @@ class WorkflowService:
         # 1. Add User Input Step Entry (Virtual)
         # This ensures the User Input step appears in the history and its outputs are available for resolution
         previous_outputs[user_input_step_id] = user_inputs
+        if "user_input" not in previous_outputs:
+            previous_outputs["user_input"] = user_inputs
         formatted_step_entries.append(
             {
                 "step_id": user_input_step_id,
@@ -743,9 +806,32 @@ class WorkflowService:
         def resolve_value(value):
             if isinstance(value, StepOutputReference):
                 return previous_outputs.get(value.step, {}).get(value.output)
+            if (
+                isinstance(value, dict)
+                and "step" in value
+                and "output" in value
+            ):
+                return previous_outputs.get(value["step"], {}).get(
+                    value["output"]
+                )
             if isinstance(value, list):
                 return [resolve_value(item) for item in value]
-            return value
+            else:
+                return value
+
+            step_outs = previous_outputs.get(ref_step, {})
+            if ref_output in step_outs:
+                return step_outs[ref_output]
+            alt_key = ref_output.replace(" ", "_")
+            if alt_key in step_outs:
+                return step_outs[alt_key]
+            for k, v in step_outs.items():
+                if (
+                    k.lower() == ref_output.lower()
+                    or k.lower() == alt_key.lower()
+                ):
+                    return v
+            return None
 
         for entry in step_entries:
             step_id = entry.get("step")
@@ -767,15 +853,67 @@ class WorkflowService:
             step_state = entry.get("state")
 
             # Extract inputs from step
+            raw_inputs = (
+                current_step.inputs.model_dump()
+                if isinstance(current_step.inputs, BaseModel)
+                else (
+                    current_step.inputs
+                    if isinstance(current_step.inputs, dict)
+                    else {}
+                )
+            )
             step_inputs = {}
-            for inp_name, inp_value in current_step.inputs:
-                step_inputs[inp_name] = resolve_value(inp_value)
+
+            if current_step.type == NodeTypes.IMAGE:
+                settings_mode = (
+                    getattr(current_step.settings, "mode", "generate_image")
+                    if isinstance(current_step.settings, BaseModel)
+                    else (
+                        current_step.settings.get("mode", "generate_image")
+                        if isinstance(current_step.settings, dict)
+                        else "generate_image"
+                    )
+                )
+                allowed_inputs = IMAGE_MODE_ALLOWED_INPUTS.get(
+                    settings_mode, ["prompt"]
+                )
+                for inp_name, inp_value in raw_inputs.items():
+                    if inp_name in allowed_inputs and inp_value is not None:
+                        step_inputs[inp_name] = resolve_value(inp_value)
+            else:
+                for inp_name, inp_value in raw_inputs.items():
+                    if inp_value is not None:
+                        step_inputs[inp_name] = resolve_value(inp_value)
+
+                if current_step.type == NodeTypes.GENERATE_TEXT:
+                    prompt_val = step_inputs.get("prompt")
+                    if isinstance(prompt_val, str):
+                        step_inputs["prompt"] = (
+                            self._interpolate_prompt_variables(
+                                prompt_val, step_inputs
+                            )
+                        )
 
             # Extract outputs from step
             variable_data = entry.get("variableData", {})
             variables = variable_data.get("variables", {})
             step_results = variables.get(f"{step_id}_result", {})
-            step_outputs = step_results.get("body", {})
+            raw_outputs = step_results.get("body", {})
+
+            if current_step.type == NodeTypes.IMAGE and isinstance(
+                raw_outputs, dict
+            ):
+                img_val = (
+                    raw_outputs.get("generated_image")
+                    or raw_outputs.get("edited_image")
+                    or raw_outputs.get("upscaled_image")
+                    or raw_outputs.get("image_output")
+                )
+                step_outputs = (
+                    {"generated_image": img_val} if img_val is not None else {}
+                )
+            else:
+                step_outputs = raw_outputs
 
             # Store outputs for subsequent steps
             previous_outputs[step_id] = step_outputs
@@ -863,3 +1001,62 @@ class WorkflowService:
             "executions": executions,
             "next_page_token": current_page.next_page_token,
         }
+
+    async def create_template(
+        self,
+        template_dto: WorkflowTemplateCreateDto,
+        user: UserModel,
+    ) -> WorkflowTemplateModel:
+        """Creates a new workflow template, ensuring the name is unique per user."""
+        existing = await self.workflow_template_repository.get_by_user_and_name(
+            user.id, template_dto.name
+        )
+        if existing:
+            raise ValueError(
+                f"A template named '{template_dto.name}' already exists. Please choose a unique name."
+            )
+
+        template_id = f"tmpl-{uuid.uuid4()}"
+        template_model = WorkflowTemplateModel(
+            id=template_id,
+            user_id=user.id,
+            name=template_dto.name.strip(),
+            description=template_dto.description,
+            steps=template_dto.steps,
+        )
+
+        # Validate workflow steps structure by generating GCP workflow YAML representation.
+        # This guarantees that the template is a correct working version before saving.
+        self.validate_workflow(template_dto, user)
+
+        return await self.workflow_template_repository.create(template_model)
+
+    async def list_templates(
+        self,
+        user_id: int,
+    ) -> list[WorkflowTemplateModel]:
+        """Retrieves all templates created by the user."""
+        return await self.workflow_template_repository.list_by_user(user_id)
+
+    async def get_template(
+        self,
+        template_id: str,
+        user_id: int,
+    ) -> WorkflowTemplateModel | None:
+        """Retrieves a single template if owned by the user."""
+        template = await self.workflow_template_repository.get_by_id(
+            template_id
+        )
+        if template and template.user_id == user_id:
+            return template
+        return None
+
+    async def delete_template(
+        self,
+        template_id: str,
+        user_id: int,
+    ) -> bool:
+        """Deletes a template if owned by the user."""
+        return await self.workflow_template_repository.delete_by_id_and_user(
+            template_id, user_id
+        )

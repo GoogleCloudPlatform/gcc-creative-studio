@@ -28,6 +28,7 @@ import {shareReplay, switchMap, takeWhile, tap} from 'rxjs/operators';
 import {environment} from '../../environments/environment';
 import {PaginationResponseDto} from '../common/services/source-asset.service';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
+import {PREDEFINED_WORKFLOW_TEMPLATES} from './templates/predefined-templates.constant';
 import {
   BatchExecutionResponse,
   ExecutionDetails,
@@ -36,7 +37,11 @@ import {
   WorkflowModel,
   WorkflowRunModel,
   WorkflowSearchDto,
+  WorkflowTemplate,
+  WorkflowTemplateCreateDto,
   WorkflowUpdateDto,
+  WorkflowValidateDto,
+  WorkflowValidateResponse,
 } from './workflow.models';
 
 @Injectable({
@@ -196,6 +201,40 @@ export class WorkflowService implements OnDestroy {
           this._workflows.next(updatedWorkflows);
         }),
       );
+  }
+
+  validateWorkflow(
+    workflowData: WorkflowValidateDto,
+  ): Observable<WorkflowValidateResponse> {
+    return this.http.post<WorkflowValidateResponse>(
+      `${this.API_BASE_URL}/workflows/validate`,
+      workflowData,
+    );
+  }
+
+  getUserTemplates(): Observable<WorkflowTemplate[]> {
+    return this.http.get<WorkflowTemplate[]>(
+      `${this.API_BASE_URL}/workflows/templates`,
+    );
+  }
+
+  createTemplate(
+    templateData: WorkflowTemplateCreateDto,
+  ): Observable<WorkflowTemplate> {
+    return this.http.post<WorkflowTemplate>(
+      `${this.API_BASE_URL}/workflows/templates`,
+      templateData,
+    );
+  }
+
+  deleteTemplate(templateId: string): Observable<void> {
+    return this.http.delete<void>(
+      `${this.API_BASE_URL}/workflows/templates/${templateId}`,
+    );
+  }
+
+  getPredefinedTemplates(): WorkflowTemplate[] {
+    return PREDEFINED_WORKFLOW_TEMPLATES;
   }
 
   executeWorkflow(

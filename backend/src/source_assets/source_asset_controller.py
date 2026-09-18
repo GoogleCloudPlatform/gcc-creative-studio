@@ -152,6 +152,18 @@ async def upload_source_asset(
     asset_type: AssetTypeEnum | None = Form(None, alias="assetType"),
     aspect_ratio: AspectRatioEnum | None = Form(None, alias="aspectRatio"),
     upscale_factor: str | None = Form(None, alias="upscaleFactor"),
+    enhance_input_image: bool | None = Form(None, alias="enhance_input_image"),
+    enhance_input_image_camel: bool | None = Form(
+        None, alias="enhanceInputImage"
+    ),
+    image_preservation_factor: float | None = Form(
+        None,
+        alias="image_preservation_factor",
+    ),
+    image_preservation_factor_camel: float | None = Form(
+        None,
+        alias="imagePreservationFactor",
+    ),
     metadata_generation_model: GenerationModelEnum | str | None = Form(
         GenerationModelEnum.GEMINI_3_5_FLASH
     ),
@@ -175,6 +187,17 @@ async def upload_source_asset(
         user=current_user,
     )
 
+    effective_enhance_input_image = (
+        enhance_input_image
+        if enhance_input_image is not None
+        else enhance_input_image_camel
+    )
+    effective_image_preservation_factor = (
+        image_preservation_factor
+        if image_preservation_factor is not None
+        else image_preservation_factor_camel
+    )
+
     contents = await file.read()
     return await service.upload_asset(
         user=current_user,
@@ -186,6 +209,8 @@ async def upload_source_asset(
         asset_type=asset_type,
         aspect_ratio=aspect_ratio,
         upscale_factor=upscale_factor,
+        enhance_input_image=effective_enhance_input_image,
+        image_preservation_factor=effective_image_preservation_factor,
         metadata_generation_model=metadata_generation_model,
         title=title,
         description=description,

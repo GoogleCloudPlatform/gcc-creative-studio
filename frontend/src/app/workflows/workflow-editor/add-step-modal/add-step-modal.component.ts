@@ -41,22 +41,11 @@ export class AddStepModalComponent {
       icon: 'description',
     },
     {
-      type: 'generate_image',
-      label: 'Generate Image',
-      description: 'Generates an image from a text prompt.',
+      type: 'image',
+      label: 'Image',
+      description:
+        'Generates, edits, upscales, or applies virtual try-on to images.',
       icon: 'image',
-    },
-    {
-      type: 'edit_image',
-      label: 'Edit Image',
-      description: 'Modifies an image using an editing or inpainting model.',
-      icon: 'edit',
-    },
-    {
-      type: 'virtual_try_on',
-      label: 'Virtual Try-On',
-      description: 'Applies a garment to a model image.',
-      icon: 'checkroom',
     },
     {
       type: 'generate_video',

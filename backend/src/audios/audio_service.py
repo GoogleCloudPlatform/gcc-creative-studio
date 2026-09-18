@@ -25,8 +25,10 @@ from collections.abc import MutableSequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+import google.auth
 import vertexai
 from fastapi import Depends
+from google.auth.transport.requests import AuthorizedSession
 from google.cloud import aiplatform
 from google.cloud import texttospeech_v1beta1 as texttospeech
 from google.cloud.logging import Client as LoggerClient
@@ -257,73 +259,165 @@ def _process_audio_in_background(
                             permanent_gcs_uris = [u for u in results if u]
 
                         elif request_dto.model in AudioService.MUSIC_MODELS:
-                            client_options = {
-                                "api_endpoint": "us-central1-aiplatform.googleapis.com"
+                            is_lyria_3 = request_dto.model in {
+                                GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+                                GenerationModelEnum.LYRIA_3_PRO_PREVIEW,
                             }
-                            ai_client = (
-                                aiplatform.gapic.PredictionServiceClient(
-                                    client_options=client_options
+                            if is_lyria_3:
+                                model_id = (
+                                    "lyria-3-pro-preview"
+                                    if request_dto.model
+                                    == GenerationModelEnum.LYRIA_3_PRO_PREVIEW
+                                    else "lyria-3-clip-preview"
                                 )
-                            )
+                                credentials, _ = google.auth.default(
+                                    scopes=[
+                                        "https://www.googleapis.com/auth/cloud-platform"
+                                    ]
+                                )
+                                authed_session = AuthorizedSession(credentials)
+                                interactions_url = f"https://aiplatform.googleapis.com/v1beta1/projects/{cfg.PROJECT_ID}/locations/global/interactions"
 
-                            async def generate_music(index: int) -> str | None:
-                                try:
-                                    parameters_dict = {"sample_count": 1}
-                                    parameters_value = struct_pb2.Value()
-                                    json_format.ParseDict(
-                                        parameters_dict, parameters_value
-                                    )
-
-                                    instance_dict = {
-                                        "prompt": request_dto.prompt
-                                    }
-                                    if request_dto.negative_prompt:
-                                        instance_dict["negative_prompt"] = (
-                                            request_dto.negative_prompt
+                                async def generate_lyria_3(
+                                    index: int,
+                                ) -> str | None:
+                                    try:
+                                        payload = {
+                                            "model": model_id,
+                                            "input": [
+                                                {
+                                                    "type": "text",
+                                                    "text": request_dto.prompt,
+                                                }
+                                            ],
+                                        }
+                                        response = await asyncio.to_thread(
+                                            authed_session.post,
+                                            interactions_url,
+                                            json=payload,
                                         )
-                                    if request_dto.seed:
-                                        instance_dict["seed"] = request_dto.seed
+                                        if response.status_code != 200:
+                                            worker_logger.error(
+                                                f"Lyria 3 generation error: {response.status_code} {response.text}"
+                                            )
+                                            return None
 
-                                    instance_value = struct_pb2.Value()
-                                    json_format.ParseDict(
-                                        instance_dict, instance_value
-                                    )
+                                        data = response.json()
+                                        audio_b64 = None
+                                        for out in data.get("outputs", []):
+                                            if out.get(
+                                                "type"
+                                            ) == "audio" and out.get("data"):
+                                                audio_b64 = out.get("data")
+                                                break
 
-                                    endpoint = f"projects/{cfg.PROJECT_ID}/locations/global/publishers/google/models/{request_dto.model.value}"
-                                    response = await asyncio.to_thread(
-                                        ai_client.predict,
-                                        endpoint=endpoint,
-                                        instances=[instance_value],
-                                        parameters=parameters_value,
-                                    )
-                                    if not response.predictions:
+                                        if not audio_b64:
+                                            worker_logger.error(
+                                                f"Lyria 3 response contained no audio output: {data}"
+                                            )
+                                            return None
+
+                                        file_name = f"lyria_music_{media_item_id}_{uid_short}_{index}.mp3"
+                                        return gcs_service.store_to_gcs(
+                                            folder="lyria_audio",
+                                            file_name=file_name,
+                                            mime_type=MimeTypeEnum.AUDIO_MPEG,
+                                            contents=base64.b64decode(
+                                                audio_b64
+                                            ),
+                                            decode=False,
+                                        )
+                                    except Exception as e:
+                                        worker_logger.error(
+                                            f"Lyria 3 generation error: {e}"
+                                        )
                                         return None
-                                    audio_b64 = response.predictions[0].get(
-                                        "bytesBase64Encoded"
+
+                                tasks = [
+                                    generate_lyria_3(i)
+                                    for i in range(request_dto.sample_count)
+                                ]
+                                results = await asyncio.gather(*tasks)
+                                permanent_gcs_uris = [u for u in results if u]
+
+                            else:
+                                client_options = {
+                                    "api_endpoint": "us-central1-aiplatform.googleapis.com"
+                                }
+                                ai_client = (
+                                    aiplatform.gapic.PredictionServiceClient(
+                                        client_options=client_options
                                     )
-                                    if not audio_b64:
+                                )
+
+                                async def generate_lyria_2(
+                                    index: int,
+                                ) -> str | None:
+                                    try:
+                                        parameters_dict = {}
+                                        if not request_dto.seed:
+                                            parameters_dict["sample_count"] = 1
+                                        parameters_value = struct_pb2.Value()
+                                        json_format.ParseDict(
+                                            parameters_dict, parameters_value
+                                        )
+
+                                        instance_dict = {
+                                            "prompt": request_dto.prompt
+                                        }
+                                        if request_dto.negative_prompt:
+                                            instance_dict["negative_prompt"] = (
+                                                request_dto.negative_prompt
+                                            )
+                                        if request_dto.seed:
+                                            instance_dict["seed"] = (
+                                                request_dto.seed
+                                            )
+
+                                        instance_value = struct_pb2.Value()
+                                        json_format.ParseDict(
+                                            instance_dict, instance_value
+                                        )
+
+                                        endpoint = f"projects/{cfg.PROJECT_ID}/locations/us-central1/publishers/google/models/lyria-002"
+                                        response = await asyncio.to_thread(
+                                            ai_client.predict,
+                                            endpoint=endpoint,
+                                            instances=[instance_value],
+                                            parameters=parameters_value,
+                                        )
+                                        if not response.predictions:
+                                            return None
+                                        audio_b64 = response.predictions[0].get(
+                                            "bytesBase64Encoded"
+                                        ) or response.predictions[0].get(
+                                            "audioContent"
+                                        )
+                                        if not audio_b64:
+                                            return None
+
+                                        file_name = f"lyria_music_{media_item_id}_{uid_short}_{index}.wav"
+                                        return gcs_service.store_to_gcs(
+                                            folder="lyria_audio",
+                                            file_name=file_name,
+                                            mime_type=MimeTypeEnum.AUDIO_WAV,
+                                            contents=base64.b64decode(
+                                                audio_b64
+                                            ),
+                                            decode=False,
+                                        )
+                                    except Exception as e:
+                                        worker_logger.error(
+                                            f"Lyria generation error: {e}"
+                                        )
                                         return None
 
-                                    file_name = f"lyria_music_{media_item_id}_{uid_short}_{index}.wav"
-                                    return gcs_service.store_to_gcs(
-                                        folder="lyria_audio",
-                                        file_name=file_name,
-                                        mime_type=MimeTypeEnum.AUDIO_WAV,
-                                        contents=base64.b64decode(audio_b64),
-                                        decode=False,
-                                    )
-                                except Exception as e:
-                                    worker_logger.error(
-                                        f"Lyria generation error: {e}"
-                                    )
-                                    return None
-
-                            tasks = [
-                                generate_music(i)
-                                for i in range(request_dto.sample_count)
-                            ]
-                            results = await asyncio.gather(*tasks)
-                            permanent_gcs_uris = [u for u in results if u]
+                                tasks = [
+                                    generate_lyria_2(i)
+                                    for i in range(request_dto.sample_count)
+                                ]
+                                results = await asyncio.gather(*tasks)
+                                permanent_gcs_uris = [u for u in results if u]
 
                         else:
                             raise ValueError(

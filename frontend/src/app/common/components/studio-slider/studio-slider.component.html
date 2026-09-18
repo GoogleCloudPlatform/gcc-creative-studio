@@ -14,7 +14,7 @@
  limitations under the License.
 -->
 
-<div class="studio-slider-container w-full">
+<div class="studio-slider-container w-full" (mousedown)="$event.stopPropagation()" (pointerdown)="$event.stopPropagation()">
   <div class="flex justify-between items-center mb-1 text-sm text-gray-300 w-full" *ngIf="label || valueText">
     <span class="font-medium" *ngIf="label">{{ label }}</span>
     <span *ngIf="valueText">{{ valueText }}</span>
@@ -25,6 +25,8 @@
     [step]="step"
     [disabled]="disabled"
     class="studio-slider py-2 !w-full"
+    (mousedown)="$event.stopPropagation()"
+    (pointerdown)="$event.stopPropagation()"
   >
     <input matSliderThumb [(ngModel)]="value" (ngModelChange)="onModelChange($event)" />
   </mat-slider>
