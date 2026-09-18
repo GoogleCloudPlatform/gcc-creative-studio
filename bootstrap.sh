@@ -776,12 +776,21 @@ prepare_migration_and_dummy_image() {
     
     # If the user explicitly requested a reset via flag, or we are migrating the database
     if [ "$CLI_MIGRATE_DB" == "true" ] || [ "$DID_EXPORT_LEGACY_DB" == "true" ]; then
-        info "Migration planned! Deploying a safe dummy container to the backend to prevent Cloud Run deadlocks during Terraform apply..."
-        gcloud run deploy ${BE_SERVICE_NAME} \
-            --image us-docker.pkg.dev/cloudrun/container/hello \
-            --region "$DEPLOY_REGION" \
-            --project "$GCP_PROJECT_ID" \
-            --quiet >/dev/null 2>&1 || warn "Dummy deploy failed (service might not exist yet, which is fine)."
+        info "Migration planned! Deploying safe dummy containers to prevent Cloud Run deadlocks during Terraform apply..."
+        
+        local POTENTIAL_BACKENDS=("cstudio-be" "${BE_SERVICE_NAME}")
+        for BACKEND_NAME in "${POTENTIAL_BACKENDS[@]}"; do
+            if gcloud run services describe "$BACKEND_NAME" --region "$DEPLOY_REGION" --project "$GCP_PROJECT_ID" >/dev/null 2>&1; then
+                info "  -> Deploying dummy container to existing backend: ${C_YELLOW}$BACKEND_NAME${C_RESET}..."
+                gcloud run deploy "$BACKEND_NAME" \
+                    --image us-docker.pkg.dev/cloudrun/container/hello \
+                    --region "$DEPLOY_REGION" \
+                    --project "$GCP_PROJECT_ID" \
+                    --quiet >/dev/null 2>&1 || warn "  Dummy deploy failed for $BACKEND_NAME."
+            else
+                info "  -> Backend service '$BACKEND_NAME' does not exist (skipping)."
+            fi
+        done
     fi
 }
 
@@ -818,6 +827,10 @@ import_legacy_database() {
         gcloud storage buckets add-iam-policy-binding "gs://$MIGRATION_BUCKET" \
             --member="serviceAccount:$TARGET_SA" \
             --role="roles/storage.objectViewer" --project="$GCP_PROJECT_ID" >/dev/null 2>&1 || true
+            
+        info "Preparing target database for a clean import (dropping and recreating)..."
+        gcloud sql databases delete "creative_studio" --instance="$TARGET_INSTANCE" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || true
+        gcloud sql databases create "creative_studio" --instance="$TARGET_INSTANCE" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || true
             
         start_spinner "Importing data into $TARGET_INSTANCE from gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE"
         if gcloud sql import sql "$TARGET_INSTANCE" "gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE" --database="creative_studio" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1; then
