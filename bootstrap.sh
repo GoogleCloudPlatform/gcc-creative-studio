@@ -1284,6 +1284,19 @@ deploy_izumi_agent() {
         if [ -f /tmp/izumi-agent/scripts/deploy_to_agent_platform.py ]; then
             sed -i "s|\"GOOGLE_CLOUD_LOCATION\": \"global\"|\"GOOGLE_CLOUD_LOCATION\": \"${DEPLOY_REGION}\"|g" /tmp/izumi-agent/scripts/deploy_to_agent_platform.py
         fi
+        
+        info "Applying older text generation model to Izumi Agent config (gemini-2.5-flash) to ensure region compatibility..."
+        cat << JSON > /tmp/izumi-agent/mediagent_config.json
+{
+  "models": {
+    "text": {
+      "default": "gemini-2.5-flash",
+      "repair": "gemini-2.5-flash",
+      "enrichment": "gemini-2.5-flash"
+    }
+  }
+}
+JSON
 
         cat << YAML > /tmp/izumi-agent/cloudbuild.yaml
 steps:
