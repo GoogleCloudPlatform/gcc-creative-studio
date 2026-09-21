@@ -32,7 +32,9 @@ DEFAULT_ENV_NAME="dev-infra"
 DEFAULT_BRANCH_NAME="main"
 GCS_BUCKET_SUFFIX_FORMAT="cstudio-%s-tfstate"
 GCS_BUCKET_PREFIX_FORMAT="infra/%s/state"
-DEPLOY_REGION="us-central1"
+DEFAULT_DEPLOY_REGION="us-central1"
+DEFAULT_DB_TIER="db-custom-2-7680"
+DEFAULT_DB_AVAILABILITY="ZONAL"
 RES_PREFIX="cs"
 BE_SERVICE_NAME="cstudio-be"
 FE_SERVICE_NAME="cstudio-fe"
@@ -59,6 +61,14 @@ C_YELLOW='\033[1;33m'  # Bold/Bright Yellow for warnings and URLs
 C_BLUE='\033[1;34m'    # Bold/Bright Blue for steps and prompts
 C_CYAN='\033[1;36m'    # Bold/Bright Cyan for general info
 
+# --- Argument Parsing ---
+SKIP_DB_IMPORT=false
+for arg in "$@"; do
+    if [ "$arg" == "--skip-db-import" ]; then
+        SKIP_DB_IMPORT=true
+    fi
+done
+
 # --- Helper Functions ---
 info() { echo -e "${C_CYAN}➡️  $1${C_RESET}"; }
 prompt() { echo -e "${C_BLUE}🤔  $1${C_RESET}"; }
@@ -75,7 +85,8 @@ cleanup_spinner() {
         SPINNER_PID=""
     fi
 }
-trap cleanup_spinner EXIT INT TERM
+
+trap cleanup_spinner EXIT
 
 start_spinner() {
     local msg="$1"
@@ -155,7 +166,7 @@ prompt_and_update_tfvar() {
 }
 
 retry_command() {
-    local max_attempts=5
+    local max_attempts=12
     local delay=20
     local attempt=1
 
@@ -436,10 +447,101 @@ setup_repo() {
 configure_environment() {
     step 5 "Configuring Terraform Environment";
     cd "$REPO_ROOT/infrastructure"
-    if [ -z "$ENV_NAME" ]; then
+    # --- Auto-discover legacy deployments ---
+    info "Scanning GCP project for existing deployments..."
+    local LEGACY_TF
+    LEGACY_TF=$(gcloud storage buckets list --project="$GCP_PROJECT_ID" --format="value(name)" 2>/dev/null | grep -E "^${GCP_PROJECT_ID}-cstudio-.*-tfstate$" | head -n 1 || echo "")
+    if [ -n "$LEGACY_TF" ]; then
+        local DETECTED_ENV
+        DETECTED_ENV=$(echo "$LEGACY_TF" | sed -E "s/^${GCP_PROJECT_ID}-cstudio-(.*)-tfstate$/\1/")
+        
+        if [ -z "$ENV_NAME" ] || [ "$ENV_NAME" == "unassigned" ]; then
+            warn "Detected existing Terraform state bucket: ${C_YELLOW}gs://${LEGACY_TF}${C_RESET}"
+            info "Auto-populating environment name to '${C_YELLOW}${DETECTED_ENV}${C_RESET}' to match legacy state."
+            DEFAULT_ENV_NAME="$DETECTED_ENV"
+        fi
+
+        if [ -z "$TF_BUCKET_NAME" ] || [ "$TF_BUCKET_NAME" == "unassigned" ]; then
+            info "Auto-assigning Terraform state bucket to prevent recreating existing infrastructure."
+            TF_BUCKET_NAME="$LEGACY_TF"
+            write_state "TF_BUCKET_NAME" "$TF_BUCKET_NAME"
+        elif [ "$TF_BUCKET_NAME" != "$LEGACY_TF" ]; then
+            warn "Profile Terraform state bucket ('$TF_BUCKET_NAME') does not match existing bucket ('$LEGACY_TF')."
+            prompt "Would you like to auto-correct the Terraform state bucket to '${C_YELLOW}${LEGACY_TF}${C_RESET}'? (Y/n)"
+            read -r CORRECT_TF < /dev/tty || exit 130
+            if [[ ! "$CORRECT_TF" =~ ^[nN]$ ]]; then
+                TF_BUCKET_NAME="$LEGACY_TF"
+                write_state "TF_BUCKET_NAME" "$TF_BUCKET_NAME"
+                info "Terraform State Bucket auto-corrected!"
+            fi
+        fi
+    fi
+
+    local LEGACY_BUCKET
+    LEGACY_BUCKET=$(gcloud storage buckets list --project="$GCP_PROJECT_ID" --format="value(name)" 2>/dev/null | grep -E "^${GCP_PROJECT_ID}-cs-.*-bucket$" | head -n 1 || echo "")
+    if [ -n "$LEGACY_BUCKET" ]; then
+        warn "Detected existing Creative Studio asset bucket: ${C_YELLOW}gs://${LEGACY_BUCKET}${C_RESET}"
+        info "This bucket will be automatically preserved via Terraform overrides."
+        ASSET_BUCKET_OVERRIDE="$LEGACY_BUCKET"
+    else
+        ASSET_BUCKET_OVERRIDE=""
+    fi
+    # ----------------------------------------
+
+    if [ -z "$ENV_NAME" ] || [ "$ENV_NAME" == "unassigned" ]; then
         prompt "What would you like to call this deployment environment?"; read -p "   Environment Name [default value: $DEFAULT_ENV_NAME]: " ENV_NAME < /dev/tty
         ENV_NAME=${ENV_NAME:-$DEFAULT_ENV_NAME}
+        write_state "ENV_NAME" "$ENV_NAME"
     else info "Using previously configured environment: $ENV_NAME"; fi
+    
+    if [ -z "$DEPLOY_REGION" ] || [ "$DEPLOY_REGION" == "unassigned" ]; then
+        info "Fetching available GCP regions..."
+        while true; do
+            prompt "Which GCP region would you like to deploy resources to?"; read -p "   Deploy Region [default value: $DEFAULT_DEPLOY_REGION]: " DEPLOY_REGION < /dev/tty || exit 130
+            DEPLOY_REGION=${DEPLOY_REGION:-$DEFAULT_DEPLOY_REGION}
+            if [[ "$DEPLOY_REGION" =~ ^[a-z]+-[a-z]+[0-9]+$ ]]; then
+                write_state "DEPLOY_REGION" "$DEPLOY_REGION"
+                break
+            else
+                warn "Invalid region format: '$DEPLOY_REGION'. Please enter a valid GCP region (e.g., us-central1, europe-west1)."
+            fi
+        done
+    else info "Using previously configured deploy region: $DEPLOY_REGION"; fi
+
+    if [ -z "$DB_TIER" ] || [ "$DB_TIER" == "unassigned" ]; then
+        info "Cloud SQL Machine Tier Options:"
+        echo "  [1] Standard Enterprise (db-custom-2-7680) - Recommended for testing/staging"
+        echo "  [2] High Performance (db-perf-optimized-N-2) - Recommended for heavy production (Subject to availability)"
+        echo "  [3] Custom..."
+        while true; do
+            prompt "Which database tier would you like to use?"; read -p "   Select [1/2/3] or enter custom [default: 1]: " DB_TIER_SELECTION < /dev/tty || exit 130
+            DB_TIER_SELECTION=${DB_TIER_SELECTION:-1}
+            case "$DB_TIER_SELECTION" in
+                1) DB_TIER="db-custom-2-7680"; break ;;
+                2) DB_TIER="db-perf-optimized-N-2"; break ;;
+                3) prompt "Enter custom Cloud SQL tier (e.g., db-custom-4-15360):"; read -p "   Tier: " DB_TIER < /dev/tty || exit 130; if [ -n "$DB_TIER" ]; then break; fi ;;
+                *) if [[ "$DB_TIER_SELECTION" == db-* ]]; then DB_TIER="$DB_TIER_SELECTION"; break; else warn "Invalid selection."; fi ;;
+            esac
+        done
+        write_state "DB_TIER" "$DB_TIER"
+    else info "Using previously configured database tier: $DB_TIER"; fi
+
+    if [ -z "$DB_AVAILABILITY" ] || [ "$DB_AVAILABILITY" == "unassigned" ]; then
+        info "Cloud SQL Availability Options:"
+        echo "  [1] ZONAL - Single zone. Recommended for testing and <99.9% uptime needs. Lower cost."
+        echo "  [2] REGIONAL - Multi-zone High Availability. Recommended for strict production SLAs. 2x cost."
+        while true; do
+            prompt "Which availability type would you like to use?"; read -p "   Select [1/2] [default: 1]: " DB_AVAIL_SELECTION < /dev/tty || exit 130
+            DB_AVAIL_SELECTION=${DB_AVAIL_SELECTION:-1}
+            case "$DB_AVAIL_SELECTION" in
+                1) DB_AVAILABILITY="ZONAL"; break ;;
+                2) DB_AVAILABILITY="REGIONAL"; break ;;
+                ZONAL|REGIONAL) DB_AVAILABILITY="$DB_AVAIL_SELECTION"; break ;;
+                *) warn "Invalid selection. Enter 1 or 2." ;;
+            esac
+        done
+        write_state "DB_AVAILABILITY" "$DB_AVAILABILITY"
+    else info "Using previously configured database availability: $DB_AVAILABILITY"; fi
     
     BE_SERVICE_NAME="cs-${ENV_NAME}-backend"
     FE_SERVICE_NAME="cs-${ENV_NAME}-frontend"
@@ -459,10 +561,20 @@ configure_environment() {
         fi
         
         if [[ $REPLY =~ ^[Yy]$ ]]; then
-            prompt "Please enter the name of your GCS bucket:"; read -p "   Bucket Name: " BUCKET_NAME < /dev/tty
+            prompt "Please enter the name of your GCS bucket:"; read -p "   Bucket Name: " BUCKET_NAME < /dev/tty || exit 130
+            if ! gcloud storage buckets describe "gs://${BUCKET_NAME}" --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
+                fail "Bucket 'gs://${BUCKET_NAME}' does not exist or you lack access permissions."
+            fi
         else
             BUCKET_SUFFIX=$(printf "$GCS_BUCKET_SUFFIX_FORMAT" "$ENV_NAME"); BUCKET_NAME="${GCP_PROJECT_ID}-${BUCKET_SUFFIX}"
-            info "Creating GCS bucket '$BUCKET_NAME' for Terraform state..."; gsutil mb -p "$GCP_PROJECT_ID" "gs://${BUCKET_NAME}" || warn "Bucket 'gs://${BUCKET_NAME}' may already exist. Continuing..."
+            info "Creating GCS bucket '$BUCKET_NAME' for Terraform state..."
+            if ! gsutil mb -p "$GCP_PROJECT_ID" -l "$DEPLOY_REGION" "gs://${BUCKET_NAME}" 2>/dev/null; then
+                if gcloud storage buckets describe "gs://${BUCKET_NAME}" --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
+                    info "Bucket 'gs://${BUCKET_NAME}' already exists. Continuing..."
+                else
+                    fail "Failed to create Terraform state bucket 'gs://${BUCKET_NAME}'. Please check your permissions and region policies."
+                fi
+            fi
         fi
     fi
     BUCKET_PREFIX=$(printf "$GCS_BUCKET_PREFIX_FORMAT" "$ENV_NAME")
@@ -485,8 +597,11 @@ configure_environment() {
     info "Creating or repairing $TFVARS_FILE_PATH with required root parameters..."
     cat <<EOF > "$TFVARS_FILE_PATH"
 project_id         = "$GCP_PROJECT_ID"
-region             = "us-central1"
+region             = "$DEPLOY_REGION"
 environment        = "$ENV_NAME"
+asset_bucket_name_override = "${ASSET_BUCKET_OVERRIDE:-}"
+db_tier            = "$DB_TIER"
+db_availability_type = "$DB_AVAILABILITY"
 resource_prefix    = "cs"
 firebase_site_id   = "YOUR_FIREBASE_SITE_ID"
 repo_host          = "$REPO_HOST"
@@ -670,9 +785,8 @@ run_terraform() {
         info "Auto-approve flag (--auto-approve) detected. Applying infrastructure modifications automatically..."
         terraform apply -parallelism=30 "tfplan"
     else
-        warn "⚠️  WARNING: If you are making major database infrastructure changes (e.g., migrating from a Public IP to a Private IP),"
-        warn "   your Cloud Run service may crash in a deadlock while Terraform updates the network."
-        warn "   If you are doing a major migration and didn't use the --migrate-db flag, please cancel now (type 'n') and re-run this script with the --migrate-db flag."
+        warn "ℹ️  Database Upgrade Notice: If upgrading an existing installation, Terraform will provision a new Private PostgreSQL instance while keeping your existing database online."
+        warn "   After provisioning completes, the script will automatically transfer your data to the new private instance."
         prompt "\nTerraform is ready to apply the changes. This will create or update infrastructure."
         prompt "Do you want to proceed with 'terraform apply'? (y/n)"
         read -r REPLY < /dev/tty
@@ -687,41 +801,13 @@ run_terraform() {
 }
 
 export_legacy_database() {
-    step 8 "Database Backup & Export"
+    step 8 "Exporting Legacy Database (if exists)"
     
-    local SOURCE_INSTANCE=""
-    local FORCE_BACKUP="false"
+    # Check for legacy instance named "creative-studio-db"
+    local SOURCE_INSTANCE=$(gcloud sql instances list --project="$GCP_PROJECT_ID" --format="value(name)" | grep "creative-studio-db" | head -n 1 || echo "")
     
-    if [ "$CLI_MIGRATE_DB" == "true" ]; then
-        info "--migrate-db flag detected. Searching for current database to backup..."
-        SOURCE_INSTANCE=$(gcloud sql instances list --project="$GCP_PROJECT_ID" --format="value(name)" | grep -E "creative-studio-db|cs-.*-db-" | head -n 1 || echo "")
-        if [ -n "$SOURCE_INSTANCE" ]; then
-            info "Found database: ${C_YELLOW}${SOURCE_INSTANCE}${C_RESET}"
-            FORCE_BACKUP="true"
-        else
-            warn "Could not find an existing database to backup. Proceeding."
-            return
-        fi
-    else
-        # Only check for the exact legacy public DB if no flag is passed
-        SOURCE_INSTANCE=$(gcloud sql instances list --project="$GCP_PROJECT_ID" --format="value(name)" | grep "^creative-studio-db$" | head -n 1 || echo "")
-        if [ -n "$SOURCE_INSTANCE" ]; then
-            warn "Detected legacy V1 public database instance: ${C_YELLOW}${SOURCE_INSTANCE}${C_RESET}"
-            prompt "Would you like to safely back this up and migrate it to the new Private IP architecture? (y/N)"
-            read -r BACKUP_CHOICE < /dev/tty
-            if [[ "$BACKUP_CHOICE" =~ ^[Yy]$ ]]; then
-                FORCE_BACKUP="true"
-            else
-                info "Skipping legacy database migration as requested."
-                return
-            fi
-        else
-            info "No legacy public database instance found. Proceeding normally."
-            return
-        fi
-    fi
-    
-    if [ "$FORCE_BACKUP" == "true" ]; then
+    if [ -n "$SOURCE_INSTANCE" ]; then
+        warn "Detected legacy public database instance: ${C_YELLOW}${SOURCE_INSTANCE}${C_RESET}"
         info "Exporting data before Terraform replaces it..."
         
         local MIGRATION_BUCKET="${TF_BUCKET_NAME:-${GCP_PROJECT_ID}-terraform-state}"
@@ -729,87 +815,77 @@ export_legacy_database() {
         local SOURCE_SA
         SOURCE_SA=$(gcloud sql instances describe "$SOURCE_INSTANCE" --project="$GCP_PROJECT_ID" --format="value(serviceAccountEmailAddress)")
         
-        info "Granting write access to source instance ($SOURCE_SA)..."
-        gcloud storage buckets add-iam-policy-binding "gs://$MIGRATION_BUCKET" \
+        info "Granting write access to source instance ($SOURCE_SA) on gs://$MIGRATION_BUCKET..."
+        local IAM_LOG=$(mktemp)
+        if ! gcloud storage buckets add-iam-policy-binding "gs://$MIGRATION_BUCKET" \
             --member="serviceAccount:$SOURCE_SA" \
-            --role="roles/storage.objectAdmin" --project="$GCP_PROJECT_ID" >/dev/null 2>&1 || true
+            --role="roles/storage.objectAdmin" --project="$GCP_PROJECT_ID" >"$IAM_LOG" 2>&1; then
+            echo -e "${C_RED}IAM Binding Error:${C_RESET}"
+            cat "$IAM_LOG"
+            warn "Failed to grant Cloud SQL Service Account permission to the bucket."
+            warn "Please ensure you have roles/storage.admin permissions on this project."
+        fi
+        rm -f "$IAM_LOG"
 
         # Stable export file name
         export LEGACY_EXPORT_FILE="migration_backup.sql.gz"
         
+        local EXPORT_LOG
+        EXPORT_LOG=$(mktemp)
         start_spinner "Exporting data to gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE"
-        if retry_command gcloud sql export sql "$SOURCE_INSTANCE" "gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE" --database="creative_studio" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1; then
+        if retry_command gcloud sql export sql "$SOURCE_INSTANCE" "gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE" --database="creative_studio" --project="$GCP_PROJECT_ID" --quiet >"$EXPORT_LOG" 2>&1; then
             stop_spinner
-            success "Database successfully exported! Safe for Terraform to proceed."
+            success "Legacy database successfully exported! Safe for Terraform to proceed."
             export DID_EXPORT_LEGACY_DB="true"
         else
             stop_spinner
-            fail "Failed to export database. Aborting to prevent data loss."
+            echo -e "${C_RED}Export Error Logs:${C_RESET}"
+            cat "$EXPORT_LOG"
+            fail "Failed to export legacy database. Aborting to prevent data loss."
         fi
-    fi
-}
-
-prepare_migration_and_dummy_image() {
-    step 9 "Checking Migration Intent & Preparing Safe State"
-    
-    local MIGRATION_BUCKET="${TF_BUCKET_NAME:-${GCP_PROJECT_ID}-terraform-state}"
-    
-    # If a migration isn't already forced via flag or public DB detection
-    if [ "$DID_EXPORT_LEGACY_DB" != "true" ] && [ "$CLI_MIGRATE_DB" != "true" ]; then
-        local FOUND_BACKUP
-        FOUND_BACKUP=$(gcloud storage ls "gs://$MIGRATION_BUCKET/migration_backup.sql*" 2>/dev/null | grep -E "\.sql(\.gz)?$" | sort | tail -n 1 || echo "")
-        
-        if [ -n "$FOUND_BACKUP" ]; then
-            LEGACY_EXPORT_FILE=$(basename "$FOUND_BACKUP")
-            warn "Found an un-imported database backup in your bucket: gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE"
-            prompt "Would you like to migrate/restore this backup into your database during this deployment? (y/N)"
-            echo -e "${C_CYAN}(If YES: We will deploy a safe dummy image, apply Terraform, and restore the data before booting the real app.)${C_RESET}"
-            read -r MIGRATION_CHOICE < /dev/tty
-            if [[ "$MIGRATION_CHOICE" =~ ^[Yy]$ ]]; then
-                export CLI_MIGRATE_DB="true"
-                export LEGACY_EXPORT_FILE
-            else
-                info "Skipping manual recovery import as requested."
-            fi
-        fi
-    fi
-    
-    # If the user explicitly requested a reset via flag, or we are migrating the database
-    if [ "$CLI_MIGRATE_DB" == "true" ] || [ "$DID_EXPORT_LEGACY_DB" == "true" ]; then
-        info "Migration planned! Deploying safe dummy containers to prevent Cloud Run deadlocks during Terraform apply..."
-        
-        local POTENTIAL_BACKENDS=("cstudio-be" "${BE_SERVICE_NAME}")
-        for BACKEND_NAME in "${POTENTIAL_BACKENDS[@]}"; do
-            if gcloud run services describe "$BACKEND_NAME" --region "$DEPLOY_REGION" --project "$GCP_PROJECT_ID" >/dev/null 2>&1; then
-                info "  -> Deploying dummy container to existing backend: ${C_YELLOW}$BACKEND_NAME${C_RESET}..."
-                gcloud run deploy "$BACKEND_NAME" \
-                    --image us-docker.pkg.dev/cloudrun/container/hello \
-                    --region "$DEPLOY_REGION" \
-                    --project "$GCP_PROJECT_ID" \
-                    --quiet >/dev/null 2>&1 || warn "  Dummy deploy failed for $BACKEND_NAME."
-            else
-                info "  -> Backend service '$BACKEND_NAME' does not exist (skipping)."
-            fi
-        done
+        rm -f "$EXPORT_LOG"
+    else
+        info "No legacy database instance found. Proceeding normally."
     fi
 }
 
 import_legacy_database() {
-    step 11 "Importing Database Backup (if applicable)"
-    
-    if [ "$CLI_MIGRATE_DB" != "true" ] && [ "$DID_EXPORT_LEGACY_DB" != "true" ]; then
-        info "No legacy migration intent found. Skipping import."
-        return
-    fi
+    step 10 "Importing Legacy Database (if applicable)"
     
     local MIGRATION_BUCKET="${TF_BUCKET_NAME:-${GCP_PROJECT_ID}-terraform-state}"
     
-    if [ -z "$LEGACY_EXPORT_FILE" ]; then
-        export LEGACY_EXPORT_FILE="migration_backup.sql.gz"
+    if [ "$SKIP_DB_IMPORT" == "true" ]; then
+        info "--skip-db-import flag passed. Bypassing legacy database check."
+        return
     fi
     
-    if gcloud storage ls "gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE" >/dev/null 2>&1; then
-        info "An exported database backup was found in GCS. Restoring to the new Private VPC instance..."
+    if [ "$DID_EXPORT_LEGACY_DB" != "true" ] || [ -z "$LEGACY_EXPORT_FILE" ]; then
+        local FOUND_BACKUP
+        FOUND_BACKUP=$(gcloud storage ls "gs://$MIGRATION_BUCKET/migration_backup.sql.gz" 2>/dev/null | sort | tail -n 1 || echo "")
+        
+        if [ -n "$FOUND_BACKUP" ]; then
+            LEGACY_EXPORT_FILE=$(basename "$FOUND_BACKUP")
+            warn "Found an un-imported legacy database backup in your bucket: gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE"
+            echo -e "${C_YELLOW}View it here: https://console.cloud.google.com/storage/browser/$MIGRATION_BUCKET?project=$GCP_PROJECT_ID${C_RESET}"
+            echo -e "${C_RED}WARNING: To prevent schema collisions with Cloud Run, proceeding will temporarily wipe the newly created database to ensure a blank canvas for the import.${C_RESET}"
+            echo -e "${C_RED}Cloud Run will automatically be updated with the latest code shortly after the import finishes.${C_RESET}"
+            echo -e "${C_YELLOW}(Note: This prompt will appear on every run as long as the backup file remains in GCS.)${C_RESET}"
+            echo -e "${C_YELLOW}(To silence this permanently, either delete gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE or pass --skip-db-import)${C_RESET}"
+            prompt "Would you like to import this legacy data into the new database?"
+            read -p "   Import backup? [Y/n]: " IMPORT_CHOICE < /dev/tty
+            if [[ "$IMPORT_CHOICE" =~ ^[nN]$ ]]; then
+                info "Skipping manual recovery import."
+                return
+            fi
+            export DID_EXPORT_LEGACY_DB="true"
+        else
+            info "No legacy migration needed. Skipping import."
+            return
+        fi
+    fi
+    
+    if [ "$DID_EXPORT_LEGACY_DB" == "true" ] && [ -n "$LEGACY_EXPORT_FILE" ]; then
+        info "Restoring legacy database backup ($LEGACY_EXPORT_FILE) to the new Private VPC instance..."
         
         local ENV_TF_DIR="$REPO_ROOT/infrastructure"
         pushd "$ENV_TF_DIR" > /dev/null
@@ -820,33 +896,46 @@ import_legacy_database() {
             fail "Could not find the new target Cloud SQL instance in Terraform outputs."
         fi
 
+        local MIGRATION_BUCKET="${TF_BUCKET_NAME:-${GCP_PROJECT_ID}-terraform-state}"
         local TARGET_SA
         TARGET_SA=$(gcloud sql instances describe "$TARGET_INSTANCE" --project="$GCP_PROJECT_ID" --format="value(serviceAccountEmailAddress)")
         
         info "Granting read access to target instance ($TARGET_SA)..."
-        gcloud storage buckets add-iam-policy-binding "gs://$MIGRATION_BUCKET" \
+        local IAM_LOG=$(mktemp)
+        if ! gcloud storage buckets add-iam-policy-binding "gs://$MIGRATION_BUCKET" \
             --member="serviceAccount:$TARGET_SA" \
-            --role="roles/storage.objectViewer" --project="$GCP_PROJECT_ID" >/dev/null 2>&1 || true
+            --role="roles/storage.objectViewer" --project="$GCP_PROJECT_ID" >"$IAM_LOG" 2>&1; then
+            echo -e "${C_RED}IAM Binding Error:${C_RESET}"
+            cat "$IAM_LOG"
+            warn "Failed to grant target Cloud SQL Service Account permission to the bucket."
+        fi
+        rm -f "$IAM_LOG"
+        
+        info "Wiping the database to ensure a perfectly blank canvas for the import..."
+        gcloud sql databases delete creative_studio --instance="$TARGET_INSTANCE" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || true
+        gcloud sql databases create creative_studio --instance="$TARGET_INSTANCE" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || true
             
-        info "Preparing target database for a clean import (dropping and recreating)..."
-        gcloud sql databases delete "creative_studio" --instance="$TARGET_INSTANCE" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || true
-        gcloud sql databases create "creative_studio" --instance="$TARGET_INSTANCE" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || true
-            
+        local IMPORT_LOG
+        IMPORT_LOG=$(mktemp)
         start_spinner "Importing data into $TARGET_INSTANCE from gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE"
-        if gcloud sql import sql "$TARGET_INSTANCE" "gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE" --database="creative_studio" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1; then
+        if retry_command gcloud sql import sql "$TARGET_INSTANCE" "gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE" --database="creative_studio" --project="$GCP_PROJECT_ID" --quiet >"$IMPORT_LOG" 2>&1; then
             stop_spinner
             success "Legacy database successfully restored into new private instance!"
             export DID_MIGRATE_DB="true"  # Triggers the secondary backup in seed_database
             
+            info "Restarting Cloud Run backend to reconnect to the restored data..."
+            gcloud run services update "cs-${ENV_NAME}-backend" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --update-env-vars RESTART_TRIGGER=$(date +%s) >/dev/null 2>&1 || true
+            
             info "Leaving the old migration backup in GCS as a permanent safeguard: gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE"
         else
             stop_spinner
+            echo -e "${C_RED}Import Error Logs:${C_RESET}"
+            cat "$IMPORT_LOG"
             warn "Failed to import legacy database into the new instance. Please check Cloud SQL logs."
             warn "Your data is still safe in gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE!"
             fail "Aborting deployment due to database import failure."
         fi
-    else
-        info "No legacy migration needed. Skipping import."
+        rm -f "$IMPORT_LOG"
     fi
 }
 
@@ -954,34 +1043,15 @@ seed_database() {
     info "Subnetwork Egress: ${SUBNET_NAME}"
 
     local INSTANCE_NAME=$(echo "$DB_CONN_NAME" | awk -F: '{print $3}')
-    local ASSET_BUCKET="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
 
-    if [ "$DID_MIGRATE_DB" == "true" ] || [ "$CLI_SKIP_MIGRATIONS" == "true" ]; then
-        info "Starting automated SQL Dump (Preventive Backup) to gs://$ASSET_BUCKET..."
-        local SQL_SA
-        SQL_SA=$(gcloud sql instances describe "$INSTANCE_NAME" --project="$GCP_PROJECT_ID" --format="value(serviceAccountEmailAddress)")
-        if [ -n "$SQL_SA" ]; then
-            info "Granting Cloud SQL Service Account ($SQL_SA) write access to bucket..."
-            gcloud storage buckets add-iam-policy-binding gs://$ASSET_BUCKET --member="serviceAccount:$SQL_SA" --role="roles/storage.objectAdmin" --project="$GCP_PROJECT_ID" >/dev/null 2>&1 || true
-            
-            local BACKUP_FILE="db_backup_$(date +%Y%m%d_%H%M%S).sql"
-            start_spinner "Exporting database to gs://$ASSET_BUCKET/$BACKUP_FILE (Cloud SQL API)"
-            if gcloud sql export sql "$INSTANCE_NAME" "gs://$ASSET_BUCKET/$BACKUP_FILE" --database="$DB_NAME" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1; then
-                stop_spinner
-                success "Database backup successfully exported to gs://$ASSET_BUCKET/$BACKUP_FILE"
-            else
-                stop_spinner
-                warn "Database backup failed. Please check permissions or manually export it."
-            fi
-        else
-            warn "Could not retrieve Cloud SQL service account. Skipping automated backup."
-        fi
-    else
-        info "PITR is already active for this instance. Skipping manual SQL dump."
-    fi
 
     if [ "$CLI_SKIP_MIGRATIONS" == "true" ]; then
         warn "Skipping Alembic database migrations as requested by --skip-migrations flag."
+        return 0
+    fi
+
+    if [ "$CLI_SKIP_SEEDING" == "true" ]; then
+        warn "Skipping Database Seeding Job as requested by --skip-seeding flag."
         return 0
     fi
 
@@ -991,7 +1061,7 @@ seed_database() {
         start_spinner "Polling Cloud Build status"
         local attempts=0
         while true; do
-            local BUILD_STATUS=$(gcloud builds describe "$BE_BUILD_ID" --project="$GCP_PROJECT_ID" --region="us-central1" --format="value(status)" 2>/dev/null || echo "UNKNOWN")
+            local BUILD_STATUS=$(gcloud builds describe "$BE_BUILD_ID" --project="$GCP_PROJECT_ID" --region="$DEPLOY_REGION" --format="value(status)" 2>/dev/null || echo "UNKNOWN")
             if [ "$BUILD_STATUS" == "SUCCESS" ]; then
                 stop_spinner
                 success "Backend build and deployment completed successfully!"
@@ -1036,7 +1106,10 @@ seed_database() {
     success "Backend container successfully deployed to Cloud Run!"
 
     local CURRENT_USER=$(gcloud config get-value account 2>/dev/null || echo "system")
-    local BUCKET_ASSETS="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
+    local BUCKET_ASSETS="${ASSET_BUCKET_OVERRIDE}"
+    if [ -z "$BUCKET_ASSETS" ]; then
+        BUCKET_ASSETS="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
+    fi
 
     # 3. Create a secure, temporary Google Cloud Run Job inside the VPC boundary
     info "Registering secure administrative Job inside VPC..."
@@ -1159,12 +1232,12 @@ trigger_builds() {
     fi
 
     info "Triggering backend build..."
-    BE_BUILD_ID=$(gcloud builds triggers run "${BE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="us-central1" --format="value(metadata.build.id)" 2>/dev/null)
+    BE_BUILD_ID=$(gcloud builds triggers run "${BE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="$DEPLOY_REGION" --format="value(metadata.build.id)" 2>/dev/null)
     if [ -n "$BE_BUILD_ID" ]; then success "Backend build triggered (ID: $BE_BUILD_ID)"; else warn "Backend build triggered (Could not parse ID)"; fi
     export BE_BUILD_ID
     
     info "Triggering frontend build..."
-    FE_BUILD_ID=$(gcloud builds triggers run "${FE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="us-central1" --format="value(metadata.build.id)" 2>/dev/null)
+    FE_BUILD_ID=$(gcloud builds triggers run "${FE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="$DEPLOY_REGION" --format="value(metadata.build.id)" 2>/dev/null)
     if [ -n "$FE_BUILD_ID" ]; then success "Frontend build triggered (ID: $FE_BUILD_ID)"; else warn "Frontend build triggered (Could not parse ID)"; fi
 
     success "Builds have been triggered."; info "You can monitor their progress in the Cloud Build console:"; echo -e "   ${C_YELLOW}https://console.cloud.google.com/cloud-build/builds?project=${GCP_PROJECT_ID}${C_RESET}"
@@ -1176,7 +1249,8 @@ deploy_izumi_agent() {
     info "Deploying Izumi Agent..."
 
     rm -rf /tmp/izumi-agent
-    trap 'rm -rf /tmp/izumi-agent; cleanup_spinner' EXIT INT TERM
+    
+    trap 'rm -rf /tmp/izumi-agent; cleanup_spinner' EXIT
 
     IZUMI_BRANCH="${IZUMI_AGENT_BRANCH:-v0.2.1}"
     info "Cloning Izumi Agent repository (tag/branch: ${IZUMI_BRANCH})..."
@@ -1198,9 +1272,18 @@ deploy_izumi_agent() {
         # Find the trigger service account to run the build securely
         local TRIG_SA="${RES_PREFIX}-trig-sa@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
 
-        local ASSET_BUCKET="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
+        local ASSET_BUCKET="${ASSET_BUCKET_OVERRIDE}"
+        if [ -z "$ASSET_BUCKET" ]; then
+            ASSET_BUCKET="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
+        fi
         local BE_URL=$(gcloud run services describe ${BE_SERVICE_NAME} --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(status.url)" 2>/dev/null || echo "")
         local FE_URL="https://${GCP_PROJECT_ID}.web.app"
+
+        # Replace hardcoded 'global' region in Izumi agent deployment script with our DEPLOY_REGION
+        # This is critical for enterprise compliance where resources are restricted to specific regions
+        if [ -f /tmp/izumi-agent/scripts/deploy_to_agent_platform.py ]; then
+            sed -i "s|\"GOOGLE_CLOUD_LOCATION\": \"global\"|\"GOOGLE_CLOUD_LOCATION\": \"${DEPLOY_REGION}\"|g" /tmp/izumi-agent/scripts/deploy_to_agent_platform.py
+        fi
 
         cat << YAML > /tmp/izumi-agent/cloudbuild.yaml
 steps:
@@ -1209,6 +1292,8 @@ steps:
     env:
       - 'PROJECT_ID=\$PROJECT_ID'
       - 'GOOGLE_CLOUD_PROJECT=\$PROJECT_ID'
+      - 'GOOGLE_CLOUD_LOCATION=${DEPLOY_REGION}'
+      - 'MODEL_TARGET_LOCATION=global'
       - 'ASSET_SERVICE_GCS_BUCKET=${ASSET_BUCKET}'
       - 'USE_CREATIVE_STUDIO=True'
       - 'ENABLE_HITL_GATES=True'
@@ -1218,7 +1303,7 @@ steps:
       - '-c'
       - |
         pip install .
-        python scripts/deploy_to_agent_platform.py --project=\$PROJECT_ID --service-account=\${_AGENT_SA_EMAIL}
+        python scripts/deploy_to_agent_platform.py --project=\$PROJECT_ID --location=${DEPLOY_REGION} --service-account=\${_AGENT_SA_EMAIL}
     secretEnv: ['CREATIVE_STUDIO_USER_AUTH_TOKEN_KEY']
 availableSecrets:
   secretManager:
@@ -1231,7 +1316,7 @@ YAML
 
         DEPLOY_LOG=$(mktemp)
         start_spinner "Building and deploying agent to Vertex AI"
-        gcloud builds submit /tmp/izumi-agent --config=/tmp/izumi-agent/cloudbuild.yaml --project="$GCP_PROJECT_ID" --substitutions="_AGENT_SA_EMAIL=$AGENT_SA_EMAIL,_TRIG_SA_EMAIL=$TRIG_SA" > "$DEPLOY_LOG" 2>&1
+        gcloud builds submit /tmp/izumi-agent --config=/tmp/izumi-agent/cloudbuild.yaml --project="$GCP_PROJECT_ID" --region="$DEPLOY_REGION" --substitutions="_AGENT_SA_EMAIL=$AGENT_SA_EMAIL,_TRIG_SA_EMAIL=$TRIG_SA" > "$DEPLOY_LOG" 2>&1
         local BUILD_STATUS=$?
         stop_spinner
 
@@ -1266,7 +1351,8 @@ YAML
     fi
     popd > /dev/null
     rm -rf /tmp/izumi-agent
-    trap cleanup_spinner EXIT INT TERM
+    
+    trap cleanup_spinner EXIT
     success "Izumi Agent deployed successfully."
 }
 
@@ -1354,36 +1440,55 @@ select_deployment_profile() {
         fi
     done
         
-        if [ -z "$GCP_PROJECT_ID" ] && [ -z "$REPO_URL" ]; then
-            info "Profile '${C_YELLOW}$(basename "$STATE_FILE" .cstudio_bootstrap.conf)${C_RESET}' is fresh or unassigned. Interactive prompts will now guide you to complete missing settings and automatically save them to this profile!"
-            return 0
-        fi
+    if [ -z "$GCP_PROJECT_ID" ] && [ -z "$REPO_URL" ]; then
+        info "Profile '${C_YELLOW}$(basename "$STATE_FILE" .cstudio_bootstrap.conf)${C_RESET}' is fresh or unassigned. Interactive prompts will now guide you to complete missing settings and automatically save them to this profile!"
+        return 0
+    fi
 
+    while true; do
         echo -e "${C_CYAN}➡️  Loaded Profile Parameters:${C_RESET}"
-        echo "    • GCP Project ID:         ${GCP_PROJECT_ID:-unassigned}"
-        echo "    • Fork Repository URL:    ${REPO_URL:-unassigned}"
-        echo "    • Deployment Branch:      ${REPO_BRANCH:-main}"
-        echo "    • Environment Name:       ${ENV_NAME:-unassigned}"
-        echo "    • Terraform State Bucket: ${TF_BUCKET_NAME:-unassigned}"
-        echo "    • Cloud Build Conn Name:  ${REPO_CONN_NAME:-unassigned}"
-        echo "    • OAuth Web Client ID:    ${AUTO_OAUTH_CLIENT_ID:-unassigned}"
-        echo "    • Firebase Site ID:       ${AUTO_FIREBASE_SITE_ID:-unassigned}"
+        echo "    [1] GCP Project ID:         ${GCP_PROJECT_ID:-unassigned}"
+        echo "    [2] Fork Repository URL:    ${REPO_URL:-unassigned}"
+        echo "    [3] Deployment Branch:      ${REPO_BRANCH:-main}"
+        echo "    [4] Environment Name:       ${ENV_NAME:-unassigned}"
+        echo "    [5] Terraform State Bucket: ${TF_BUCKET_NAME:-unassigned}"
+        echo "    [6] Cloud Build Conn Name:  ${REPO_CONN_NAME:-unassigned}"
+        echo "    [7] OAuth Web Client ID:    ${AUTO_OAUTH_CLIENT_ID:-unassigned}"
+        echo "    [8] Firebase Site ID:       ${AUTO_FIREBASE_SITE_ID:-unassigned}"
+        echo "    [9] Deploy Region:          ${DEPLOY_REGION:-unassigned}"
+        echo "   [10] Database Tier:          ${DB_TIER:-unassigned}"
+        echo "   [11] Database Availability:  ${DB_AVAILABILITY:-unassigned}"
         
         prompt "Use these stored deployment parameters? (Y/n / e to edit)"
         read -p "   Confirm [Y/n/e]: " CONFIRM_PROF < /dev/tty
-        if [[ "$CONFIRM_PROF" =~ ^[nNeE]$ ]]; then
-            info "You opted to edit or reset parameters. Interactive prompts will allow overriding values."
-            if [[ "$CONFIRM_PROF" =~ ^[eE]$ ]]; then
-                prompt "Would you like to reset OAuth Client ID, Firebase Site ID, and Cloud Build connection to be prompted again? (y/N)"
-                read -p "   Reset OAuth/Conn [y/N]: " RESET_AUTH < /dev/tty
-                if [[ "$RESET_AUTH" =~ ^[Yy]$ ]]; then
-                    unset AUTO_OAUTH_CLIENT_ID REPO_CONN_NAME AUTO_FIREBASE_SITE_ID
-                    sed -i.bak '/^AUTO_OAUTH_CLIENT_ID=/d;/^REPO_CONN_NAME=/d;/^AUTO_FIREBASE_SITE_ID=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"
-                fi
-            fi
+        
+        if [[ "$CONFIRM_PROF" =~ ^[eE]$ ]]; then
+            prompt "Enter the number of the property you want to edit (1-11):"
+            read -p "   Property number: " PROP_NUM < /dev/tty
+            case "$PROP_NUM" in
+                1) prompt "Enter new GCP Project ID (or empty to reset):"; read -r NEW_VAL < /dev/tty; GCP_PROJECT_ID="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset GCP_PROJECT_ID; sed -i.bak '/^GCP_PROJECT_ID=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "GCP_PROJECT_ID" "$NEW_VAL"; fi ;;
+                2) prompt "Enter new Fork Repository URL (or empty to reset):"; read -r NEW_VAL < /dev/tty; REPO_URL="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset REPO_URL; sed -i.bak '/^REPO_URL=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "REPO_URL" "$NEW_VAL"; fi ;;
+                3) prompt "Enter new Deployment Branch (or empty to reset):"; read -r NEW_VAL < /dev/tty; REPO_BRANCH="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset REPO_BRANCH; sed -i.bak '/^REPO_BRANCH=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "REPO_BRANCH" "$NEW_VAL"; fi ;;
+                4) prompt "Enter new Environment Name (or empty to reset):"; read -r NEW_VAL < /dev/tty; ENV_NAME="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset ENV_NAME; sed -i.bak '/^ENV_NAME=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "ENV_NAME" "$NEW_VAL"; fi ;;
+                5) prompt "Enter new Terraform State Bucket (or empty to reset):"; read -r NEW_VAL < /dev/tty; TF_BUCKET_NAME="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset TF_BUCKET_NAME; sed -i.bak '/^TF_BUCKET_NAME=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "TF_BUCKET_NAME" "$NEW_VAL"; fi ;;
+                6) prompt "Enter new Cloud Build Conn Name (or empty to reset):"; read -r NEW_VAL < /dev/tty; REPO_CONN_NAME="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset REPO_CONN_NAME; sed -i.bak '/^REPO_CONN_NAME=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "REPO_CONN_NAME" "$NEW_VAL"; fi ;;
+                7) prompt "Enter new OAuth Web Client ID (or empty to reset):"; read -r NEW_VAL < /dev/tty; AUTO_OAUTH_CLIENT_ID="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset AUTO_OAUTH_CLIENT_ID; sed -i.bak '/^AUTO_OAUTH_CLIENT_ID=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "AUTO_OAUTH_CLIENT_ID" "$NEW_VAL"; fi ;;
+                8) prompt "Enter new Firebase Site ID (or empty to reset):"; read -r NEW_VAL < /dev/tty; AUTO_FIREBASE_SITE_ID="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset AUTO_FIREBASE_SITE_ID; sed -i.bak '/^AUTO_FIREBASE_SITE_ID=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "AUTO_FIREBASE_SITE_ID" "$NEW_VAL"; fi ;;
+                9) prompt "Enter new Deploy Region (or empty to reset):"; read -r NEW_VAL < /dev/tty || exit 130; if [ -z "$NEW_VAL" ]; then unset DEPLOY_REGION; sed -i.bak '/^DEPLOY_REGION=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else if gcloud compute regions describe "$NEW_VAL" --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then DEPLOY_REGION="$NEW_VAL"; write_state "DEPLOY_REGION" "$NEW_VAL"; else warn "Invalid region: '$NEW_VAL'"; fi; fi ;;
+                10) prompt "Enter new Database Tier (or empty to reset):"; read -r NEW_VAL < /dev/tty; DB_TIER="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset DB_TIER; sed -i.bak '/^DB_TIER=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "DB_TIER" "$NEW_VAL"; fi ;;
+                11) prompt "Enter new Database Availability (ZONAL/REGIONAL) (or empty to reset):"; read -r NEW_VAL < /dev/tty; DB_AVAILABILITY="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset DB_AVAILABILITY; sed -i.bak '/^DB_AVAILABILITY=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "DB_AVAILABILITY" "$NEW_VAL"; fi ;;
+                *) warn "Invalid property number." ;;
+            esac
+            echo ""
+            continue
+        elif [[ "$CONFIRM_PROF" =~ ^[nN]$ ]]; then
+            info "You opted to reject the profile. Some values might be prompted again if unassigned."
+            break
         else
             success "Deployment parameters locked in from profile!"
+            break
         fi
+    done
 }
 
 
@@ -1420,7 +1525,7 @@ main() {
                 echo "  --skip-builds        Skip triggering Cloud Build and skip waiting for the backend deployment."
                 echo "  --force-builds       Force trigger Cloud Build without interactive prompting."
                 echo "  --skip-migrations    Perform the automated SQL backup, but skip running Alembic database migrations."
-                echo "  --migrate-db         Force a database backup, deploy a dummy container to prevent deadlocks during Terraform apply, and restore the data into the new DB."
+                echo "  --skip-seeding       Skip the execution of the database seeding job (Step 14) to speed up testing."
                 echo "  --help, -h           Show this help menu and exit."
                 echo ""
                 exit 0
@@ -1437,8 +1542,8 @@ main() {
                 CLI_SKIP_MIGRATIONS="true"
                 shift
                 ;;
-            --migrate-db)
-                CLI_MIGRATE_DB="true"
+            --skip-seeding)
+                CLI_SKIP_SEEDING="true"
                 shift
                 ;;
             *)
@@ -1490,7 +1595,6 @@ main() {
         "handle_manual_steps"
         "setup_firebase_app"
         "export_legacy_database"
-        "prepare_migration_and_dummy_image"
         "run_terraform"
         "import_legacy_database"
         "populate_oauth_secrets"
