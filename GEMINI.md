@@ -142,3 +142,46 @@ To maintain a pristine codebase, AI Agents **MUST** follow these rules:
 13. **Isolation**: Always work in isolation, do not modify files outside the scope of the task. Work with docker containers, do not run any gcloud commands locally nor modify any cloud resources.
 
 ---
+
+## 🧠 Learnings & Hard Rules (READ THIS FIRST)
+
+> [!CAUTION]
+> This section exists because previous agents repeatedly broke working code. These are not suggestions. Violating any of them wastes the user's time and forces a full rollback of your work.
+
+### ❌ What has gone WRONG before (do not repeat)
+
+| Mistake | What actually happened | Rule |
+| --- | --- | --- |
+| **Scope creep** | Asked to change *only* migration steps, the agent also rewrote `configure_environment`, the `.tfvars` generation, and the profile editor — silently deleting the user's `db_tier` / `db_availability_type` work. | Change **only** the functions named in the request. Nothing else. Ever. |
+| **Rolling back user edits** | The user edits files *concurrently*. Large rewrites clobbered their in-flight changes, and rejecting the agent diff reverted their work too. | Prefer **small, additive** edits over rewrites. Never replace a whole function when a 3-line change works. |
+| **Assuming file state** | The agent edited based on what it *remembered* writing, not what was actually on disk after the user rejected/reverted. | **Always re-read the file** (`view_file` / `git diff`) at the start of a turn. Never trust memory of prior edits. |
+| **Running `gcloud`** | Context Aware Access blocks `gcloud` for the agent; the commands failed and wasted turns. | **NEVER run `gcloud` commands.** Write them into the script and let the user execute. |
+| **Committing** | The agent committed and pushed without permission. | **NEVER run `git commit` or `git push`.** Leave changes in the working tree. |
+| **Hardcoding `us-central1`** | Broke a client in `europe-west1` whose org policy (`constraints/gcp.resourceLocations`) blocked US resources; Terraform tried to destroy and recreate EU resources. | Always use `$DEPLOY_REGION` / `var.region`. Never hardcode a region. |
+
+### ✅ Required workflow for edits to `bootstrap.sh`
+
+1. `git status` + `git diff` first — confirm the real baseline before editing.
+2. Read the exact target function with `view_file`.
+3. Make the **smallest possible** edit. Prefer inserting a new function over modifying an existing one.
+4. Verify scope immediately:
+   ```bash
+   bash -n bootstrap.sh                          # syntax must pass
+   git diff -U0 bootstrap.sh | grep -E "^@@"     # confirm hunks land ONLY in intended functions
+   ```
+5. If a hunk appears in a function you were not asked to touch, **revert it**.
+
+### 📌 Domain knowledge worth keeping
+
+- **The Cloud Run deadlock.** When Terraform changes VPC settings on an *existing* Cloud Run service, the live container can no longer reach the DB, crash-loops, and hangs `terraform apply` indefinitely. Deploying `us-docker.pkg.dev/cloudrun/container/hello` beforehand severs that dependency and breaks the deadlock. A *brand-new* service does not deadlock, since it is created with the dummy image anyway.
+- **Why the dummy image survives `terraform apply`.** `modules/compute/main.tf` sets `lifecycle { ignore_changes = [template[0].containers[0].image, ...] }`. Terraform therefore never reverts the dummy image mid-apply; it stays until Cloud Build redeploys the real code. Removing that `ignore_changes` would silently break the entire migration flow.
+- **Never force a Cloud Run restart with an env var.** `ignore_changes` covers the *image only*, not `env`. Setting something like `RESTART_TRIGGER=$(date +%s)` via `gcloud run services update` becomes permanent Terraform drift: every later plan reports `1 to change` and churns a needless revision. To force a fresh revision safely, read the service's current image with `--format="value(image)"` and re-deploy that same image — image changes are ignored by Terraform, so there is no drift.
+- **`write_state` does NOT set the shell variable.** It only appends to the profile file. So `write_state "TF_BUCKET_NAME" "$X"` leaves `$TF_BUCKET_NAME` empty for the rest of the run unless it was sourced by `read_state` on a previous run. This caused a silent bug: the migration bucket fell back to `${GCP_PROJECT_ID}-terraform-state`, which never matches the real convention `${GCP_PROJECT_ID}-cstudio-${ENV_NAME}-tfstate`, so `gcloud storage ls` queried a non-existent bucket, `2>/dev/null` swallowed the error, and Step 9 skipped the migration prompt while printing nothing. Always resolve it via `resolve_migration_bucket()`.
+- **Never let a detection step print nothing.** Every branch of a step must emit at least one line, otherwise a silent failure is indistinguishable from a correct skip.
+- **Backend service names are not fixed.** Legacy deployments use `cstudio-be`; current ones use `cs-[ENV_NAME]-backend`. Always check both with `gcloud run services describe` before acting — never assume which exists.
+- **Imports need an empty schema.** Terraform may update a Cloud SQL instance in place, leaving tables behind. `gcloud sql import` then fails with `relation "..." already exists`. Always drop + recreate `creative_studio` right before importing.
+- **Migration artifacts live in the Terraform state bucket only.** `migration_backup.sql.gz` goes in `$TF_BUCKET_NAME` — that bucket owns infrastructure artifacts. Do not scan or write to the asset bucket for migrations.
+- **PITR makes constant backup prompts redundant.** New Private IP instances have Point-in-Time Recovery. The default "happy path" must stay **completely silent** — no prompts, no backups. Only prompt when there is a real legacy signal (V1 DB, orphaned backup) or an explicit `--migrate-db`.
+- **Izumi agent model pinning.** The agent defaults to very new models (e.g. `gemini-3.7-flash`) that 404 in some regions. `bootstrap.sh` writes a `mediagent_config.json` into the cloned repo to pin text models to `gemini-2.5-flash`. `MediagentKitConfig` merges that file over its hardcoded defaults.
+
+---

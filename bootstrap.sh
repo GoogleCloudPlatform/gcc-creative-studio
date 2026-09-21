@@ -785,8 +785,9 @@ run_terraform() {
         info "Auto-approve flag (--auto-approve) detected. Applying infrastructure modifications automatically..."
         terraform apply -parallelism=30 "tfplan"
     else
-        warn "ℹ️  Database Upgrade Notice: If upgrading an existing installation, Terraform will provision a new Private PostgreSQL instance while keeping your existing database online."
-        warn "   After provisioning completes, the script will automatically transfer your data to the new private instance."
+        warn "⚠️  WARNING: If you are making major database infrastructure changes (e.g., migrating from a Public IP to a Private IP),"
+        warn "   your Cloud Run service may crash in a deadlock while Terraform updates the network."
+        warn "   If you are doing a major migration and didn't use the --migrate-db flag, please cancel now (type 'n') and re-run this script with the --migrate-db flag."
         prompt "\nTerraform is ready to apply the changes. This will create or update infrastructure."
         prompt "Do you want to proceed with 'terraform apply'? (y/n)"
         read -r REPLY < /dev/tty
@@ -800,62 +801,168 @@ run_terraform() {
     rm -f tfplan
 }
 
-export_legacy_database() {
-    step 8 "Exporting Legacy Database (if exists)"
-    
-    # Check for legacy instance named "creative-studio-db"
-    local SOURCE_INSTANCE=$(gcloud sql instances list --project="$GCP_PROJECT_ID" --format="value(name)" | grep "creative-studio-db" | head -n 1 || echo "")
-    
-    if [ -n "$SOURCE_INSTANCE" ]; then
-        warn "Detected legacy public database instance: ${C_YELLOW}${SOURCE_INSTANCE}${C_RESET}"
-        info "Exporting data before Terraform replaces it..."
-        
-        local MIGRATION_BUCKET="${TF_BUCKET_NAME:-${GCP_PROJECT_ID}-terraform-state}"
-        
-        local SOURCE_SA
-        SOURCE_SA=$(gcloud sql instances describe "$SOURCE_INSTANCE" --project="$GCP_PROJECT_ID" --format="value(serviceAccountEmailAddress)")
-        
-        info "Granting write access to source instance ($SOURCE_SA) on gs://$MIGRATION_BUCKET..."
-        local IAM_LOG=$(mktemp)
-        if ! gcloud storage buckets add-iam-policy-binding "gs://$MIGRATION_BUCKET" \
-            --member="serviceAccount:$SOURCE_SA" \
-            --role="roles/storage.objectAdmin" --project="$GCP_PROJECT_ID" >"$IAM_LOG" 2>&1; then
-            echo -e "${C_RED}IAM Binding Error:${C_RESET}"
-            cat "$IAM_LOG"
-            warn "Failed to grant Cloud SQL Service Account permission to the bucket."
-            warn "Please ensure you have roles/storage.admin permissions on this project."
-        fi
-        rm -f "$IAM_LOG"
+resolve_migration_bucket() {
+    # All DB migration artifacts live in the Terraform state bucket, which owns infra artifacts.
+    #
+    # IMPORTANT: write_state() only persists to the profile file, it does NOT set the shell
+    # variable. On a first run TF_BUCKET_NAME is therefore still empty here, and the old
+    # "${GCP_PROJECT_ID}-terraform-state" fallback could never match the real convention
+    # ("${GCP_PROJECT_ID}-cstudio-${ENV_NAME}-tfstate"). That made `gcloud storage ls` query a
+    # non-existent bucket, silently find nothing, and skip the migration prompt entirely.
+    if [ -n "$TF_BUCKET_NAME" ] && [ "$TF_BUCKET_NAME" != "unassigned" ]; then
+        echo "$TF_BUCKET_NAME"
+        return
+    fi
 
-        # Stable export file name
-        export LEGACY_EXPORT_FILE="migration_backup.sql.gz"
-        
-        local EXPORT_LOG
-        EXPORT_LOG=$(mktemp)
-        start_spinner "Exporting data to gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE"
-        if retry_command gcloud sql export sql "$SOURCE_INSTANCE" "gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE" --database="creative_studio" --project="$GCP_PROJECT_ID" --quiet >"$EXPORT_LOG" 2>&1; then
-            stop_spinner
-            success "Legacy database successfully exported! Safe for Terraform to proceed."
-            export DID_EXPORT_LEGACY_DB="true"
-        else
-            stop_spinner
-            echo -e "${C_RED}Export Error Logs:${C_RESET}"
-            cat "$EXPORT_LOG"
-            fail "Failed to export legacy database. Aborting to prevent data loss."
+    # Authoritative source: the backend config Terraform itself initialises against.
+    local BACKEND_FILE="$REPO_ROOT/infrastructure/${ENV_NAME}.backend.tfvars"
+    if [ -f "$BACKEND_FILE" ]; then
+        local FROM_BACKEND
+        FROM_BACKEND=$(grep -E '^[[:space:]]*bucket[[:space:]]*=' "$BACKEND_FILE" | head -n 1 | sed -E 's/.*=[[:space:]]*"([^"]+)".*/\1/')
+        if [ -n "$FROM_BACKEND" ]; then
+            echo "$FROM_BACKEND"
+            return
         fi
-        rm -f "$EXPORT_LOG"
+    fi
+
+    # Last resort: rebuild the documented naming convention.
+    echo "${GCP_PROJECT_ID}-$(printf "$GCS_BUCKET_SUFFIX_FORMAT" "$ENV_NAME")"
+}
+
+export_legacy_database() {
+    step 8 "Database Backup & Export"
+    
+    local SOURCE_INSTANCE=""
+    
+    if [ "$CLI_MIGRATE_DB" == "true" ]; then
+        # Trigger 1: user explicitly asked for a migration. Intercept ANY database (public or private).
+        info "--migrate-db flag detected. Searching for current database to backup..."
+        SOURCE_INSTANCE=$(gcloud sql instances list --project="$GCP_PROJECT_ID" --format="value(name)" | grep -E "creative-studio-db|cs-.*-db-" | head -n 1 || echo "")
+        if [ -z "$SOURCE_INSTANCE" ]; then
+            warn "No existing database found to back up. Continuing without a migration backup."
+            return
+        fi
+        info "Found database: ${C_YELLOW}${SOURCE_INSTANCE}${C_RESET}"
     else
-        info "No legacy database instance found. Proceeding normally."
+        # Trigger 2: no flag passed, so only intercept the exact legacy V1 public database.
+        SOURCE_INSTANCE=$(gcloud sql instances list --project="$GCP_PROJECT_ID" --format="value(name)" | grep "^creative-studio-db$" | head -n 1 || echo "")
+        if [ -z "$SOURCE_INSTANCE" ]; then
+            info "No legacy V1 public database instance found. Nothing to back up."
+            return
+        fi
+        warn "Detected legacy V1 public database instance: ${C_YELLOW}${SOURCE_INSTANCE}${C_RESET}"
+        prompt "Would you like to safely back this up and migrate it to the new Private IP architecture? (y/N)"
+        read -r BACKUP_CHOICE < /dev/tty
+        if [[ ! "$BACKUP_CHOICE" =~ ^[Yy]$ ]]; then
+            info "Declined. Leaving '${SOURCE_INSTANCE}' untouched and skipping the migration backup."
+            return
+        fi
+    fi
+    
+    # Every "nothing to do" path returned above, so we definitely have an instance to export.
+    info "Exporting data before Terraform replaces it..."
+
+    local MIGRATION_BUCKET=$(resolve_migration_bucket)
+
+    local SOURCE_SA
+    SOURCE_SA=$(gcloud sql instances describe "$SOURCE_INSTANCE" --project="$GCP_PROJECT_ID" --format="value(serviceAccountEmailAddress)")
+
+    info "Granting write access to source instance ($SOURCE_SA) on gs://$MIGRATION_BUCKET..."
+    local IAM_LOG=$(mktemp)
+    if ! gcloud storage buckets add-iam-policy-binding "gs://$MIGRATION_BUCKET" \
+        --member="serviceAccount:$SOURCE_SA" \
+        --role="roles/storage.objectAdmin" --project="$GCP_PROJECT_ID" >"$IAM_LOG" 2>&1; then
+        echo -e "${C_RED}IAM Binding Error:${C_RESET}"
+        cat "$IAM_LOG"
+        warn "Failed to grant Cloud SQL Service Account permission to the bucket."
+        warn "Please ensure you have roles/storage.admin permissions on this project."
+    fi
+    rm -f "$IAM_LOG"
+
+    # Stable export file name
+    export LEGACY_EXPORT_FILE="migration_backup.sql.gz"
+
+    local EXPORT_LOG
+    EXPORT_LOG=$(mktemp)
+    start_spinner "Exporting data to gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE"
+    if retry_command gcloud sql export sql "$SOURCE_INSTANCE" "gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE" --database="creative_studio" --project="$GCP_PROJECT_ID" --quiet >"$EXPORT_LOG" 2>&1; then
+        stop_spinner
+        success "Legacy database successfully exported! Safe for Terraform to proceed."
+        export DID_EXPORT_LEGACY_DB="true"
+    else
+        stop_spinner
+        echo -e "${C_RED}Export Error Logs:${C_RESET}"
+        cat "$EXPORT_LOG"
+        fail "Failed to export legacy database. Aborting to prevent data loss."
+    fi
+    rm -f "$EXPORT_LOG"
+}
+
+prepare_migration_and_dummy_image() {
+    step 9 "Checking Migration Intent & Preparing Safe State"
+
+    # Only the Terraform state bucket is scanned: it is the bucket responsible for infra artifacts.
+    local MIGRATION_BUCKET=$(resolve_migration_bucket)
+
+    # Trigger 3: an orphaned backup is sitting in the infra bucket and was never imported.
+    if [ "$DID_EXPORT_LEGACY_DB" != "true" ] && [ "$CLI_MIGRATE_DB" != "true" ] && [ "$SKIP_DB_IMPORT" != "true" ]; then
+        local FOUND_BACKUP
+        FOUND_BACKUP=$(gcloud storage ls "gs://$MIGRATION_BUCKET/migration_backup.sql.gz" 2>/dev/null | head -n 1 || echo "")
+
+        if [ -n "$FOUND_BACKUP" ]; then
+            LEGACY_EXPORT_FILE=$(basename "$FOUND_BACKUP")
+            warn "Found an un-imported database backup in your infrastructure bucket: gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE"
+            echo -e "${C_CYAN}(If YES: we deploy a safe dummy image, apply Terraform, then restore the data before booting the real app.)${C_RESET}"
+            prompt "Would you like to migrate/restore this backup into your database during this deployment? (y/N)"
+            read -r MIGRATION_CHOICE < /dev/tty
+            if [[ "$MIGRATION_CHOICE" =~ ^[Yy]$ ]]; then
+                export CLI_MIGRATE_DB="true"
+                export LEGACY_EXPORT_FILE
+                # Step 10 gates on DID_EXPORT_LEGACY_DB (not CLI_MIGRATE_DB). Setting it here means
+                # "a backup is staged and confirmed", so Step 10 imports directly instead of
+                # re-running its own detection and asking the user the same question twice.
+                export DID_EXPORT_LEGACY_DB="true"
+            else
+                info "Skipping manual recovery import as requested."
+                # Reuse the existing bypass so Step 10 does not ask the same question again.
+                # The reason is carried across so Step 10 reports accurately instead of
+                # claiming the --skip-db-import flag was passed.
+                SKIP_DB_IMPORT="true"
+                SKIP_DB_IMPORT_REASON="you declined the restore at Step 9"
+            fi
+        fi
+    fi
+
+    # Migration confirmed: sever the Cloud Run <-> database link before Terraform touches the VPC,
+    # otherwise the running container crash-loops and deadlocks the apply.
+    if [ "$CLI_MIGRATE_DB" == "true" ] || [ "$DID_EXPORT_LEGACY_DB" == "true" ]; then
+        info "Migration planned! Deploying safe dummy containers to prevent Cloud Run deadlocks during Terraform apply..."
+
+        local POTENTIAL_BACKENDS=("cstudio-be" "${BE_SERVICE_NAME}")
+        for BACKEND_NAME in "${POTENTIAL_BACKENDS[@]}"; do
+            if gcloud run services describe "$BACKEND_NAME" --region "$DEPLOY_REGION" --project "$GCP_PROJECT_ID" >/dev/null 2>&1; then
+                info "  -> Deploying dummy container to existing backend: ${C_YELLOW}$BACKEND_NAME${C_RESET}..."
+                gcloud run deploy "$BACKEND_NAME" \
+                    --image us-docker.pkg.dev/cloudrun/container/hello \
+                    --region "$DEPLOY_REGION" \
+                    --project "$GCP_PROJECT_ID" \
+                    --quiet >/dev/null 2>&1 || warn "  Dummy deploy failed for $BACKEND_NAME."
+            else
+                info "  -> Backend service '$BACKEND_NAME' does not exist (skipping)."
+            fi
+        done
+    else
+        info "No migration intent detected. Skipping dummy container safeguards."
     fi
 }
 
 import_legacy_database() {
     step 10 "Importing Legacy Database (if applicable)"
     
-    local MIGRATION_BUCKET="${TF_BUCKET_NAME:-${GCP_PROJECT_ID}-terraform-state}"
+    local MIGRATION_BUCKET=$(resolve_migration_bucket)
     
     if [ "$SKIP_DB_IMPORT" == "true" ]; then
-        info "--skip-db-import flag passed. Bypassing legacy database check."
+        info "Skipping legacy database import (${SKIP_DB_IMPORT_REASON:-the --skip-db-import flag was passed})."
         return
     fi
     
@@ -896,7 +1003,7 @@ import_legacy_database() {
             fail "Could not find the new target Cloud SQL instance in Terraform outputs."
         fi
 
-        local MIGRATION_BUCKET="${TF_BUCKET_NAME:-${GCP_PROJECT_ID}-terraform-state}"
+        local MIGRATION_BUCKET=$(resolve_migration_bucket)
         local TARGET_SA
         TARGET_SA=$(gcloud sql instances describe "$TARGET_INSTANCE" --project="$GCP_PROJECT_ID" --format="value(serviceAccountEmailAddress)")
         
@@ -923,8 +1030,21 @@ import_legacy_database() {
             success "Legacy database successfully restored into new private instance!"
             export DID_MIGRATE_DB="true"  # Triggers the secondary backup in seed_database
             
-            info "Restarting Cloud Run backend to reconnect to the restored data..."
-            gcloud run services update "cs-${ENV_NAME}-backend" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --update-env-vars RESTART_TRIGGER=$(date +%s) >/dev/null 2>&1 || true
+            # Force a fresh revision so the backend picks up the restored data.
+            #
+            # Do NOT set a RESTART_TRIGGER env var here. modules/compute only declares
+            # `ignore_changes = [template[0].containers[0].image, ...]`, so a stray env var is
+            # permanent Terraform drift and every later plan reports "1 to change" while
+            # churning an extra Cloud Run revision. Re-deploying the service's *current* image
+            # produces the same fresh revision, and image changes are ignored by Terraform.
+            for RESTART_TARGET in "cstudio-be" "${BE_SERVICE_NAME}"; do
+                local CURRENT_IMAGE
+                CURRENT_IMAGE=$(gcloud run services describe "$RESTART_TARGET" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(image)" 2>/dev/null || echo "")
+                if [ -n "$CURRENT_IMAGE" ]; then
+                    info "Restarting ${C_YELLOW}${RESTART_TARGET}${C_RESET} so it reconnects to the restored data..."
+                    gcloud run deploy "$RESTART_TARGET" --image "$CURRENT_IMAGE" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || warn "  Could not restart $RESTART_TARGET."
+                fi
+            done
             
             info "Leaving the old migration backup in GCS as a permanent safeguard: gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE"
         else
@@ -1539,6 +1659,8 @@ main() {
                 echo "  --force-builds       Force trigger Cloud Build without interactive prompting."
                 echo "  --skip-migrations    Perform the automated SQL backup, but skip running Alembic database migrations."
                 echo "  --skip-seeding       Skip the execution of the database seeding job (Step 14) to speed up testing."
+                echo "  --migrate-db         Force a database backup, deploy a dummy container to prevent deadlocks during Terraform apply, and restore the data into the new DB."
+                echo "  --skip-db-import     Bypass the legacy database backup detection and never prompt to import it."
                 echo "  --help, -h           Show this help menu and exit."
                 echo ""
                 exit 0
@@ -1557,6 +1679,14 @@ main() {
                 ;;
             --skip-seeding)
                 CLI_SKIP_SEEDING="true"
+                shift
+                ;;
+            --migrate-db)
+                CLI_MIGRATE_DB="true"
+                shift
+                ;;
+            --skip-db-import)
+                SKIP_DB_IMPORT="true"
                 shift
                 ;;
             *)
@@ -1608,6 +1738,7 @@ main() {
         "handle_manual_steps"
         "setup_firebase_app"
         "export_legacy_database"
+        "prepare_migration_and_dummy_image"
         "run_terraform"
         "import_legacy_database"
         "populate_oauth_secrets"
