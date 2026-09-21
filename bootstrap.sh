@@ -1399,20 +1399,65 @@ deploy_izumi_agent() {
         local BE_URL=$(gcloud run services describe ${BE_SERVICE_NAME} --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(status.url)" 2>/dev/null || echo "")
         local FE_URL="https://${GCP_PROJECT_ID}.web.app"
 
-        # Replace hardcoded 'global' region in Izumi agent deployment script with our DEPLOY_REGION
-        # This is critical for enterprise compliance where resources are restricted to specific regions
-        if [ -f /tmp/izumi-agent/scripts/deploy_to_agent_platform.py ]; then
-            sed -i "s|\"GOOGLE_CLOUD_LOCATION\": \"global\"|\"GOOGLE_CLOUD_LOCATION\": \"${DEPLOY_REGION}\"|g" /tmp/izumi-agent/scripts/deploy_to_agent_platform.py
+        # --- Region pinning + model compatibility ------------------------------------
+        #
+        # Data residency: Vertex AI's "global" endpoint gives NO guarantee about which
+        # region performs the ML processing, so regulated deployments must call the
+        # regional endpoint. Izumi hardcodes "global", hence the patch below.
+        #
+        # The catch: Izumi also hardcodes very new models (gemini-3.7-flash) that are
+        # ONLY served from "global". Pinning the region without also pinning the model
+        # is what produced the "model not found in europe" 404s. Both must happen together.
+        #
+        # Every patch is verified. A silent no-op here either breaks the agent or
+        # silently violates data residency, so we always report what happened.
+        local IZUMI_TEXT_MODEL="${IZUMI_TEXT_MODEL:-gemini-2.5-flash}"
+        local IZUMI_PRO_MODEL="${IZUMI_PRO_MODEL:-gemini-2.5-pro}"
+
+        # 1. Runtime inference endpoint. deploy_to_agent_platform.py injects
+        #    "GOOGLE_CLOUD_LOCATION": "global" into the Agent Engine runtime env, which
+        #    mediagent_kit prefers over IZUMI_LOCATION when choosing the Vertex endpoint.
+        local IZUMI_DEPLOY_PY="/tmp/izumi-agent/scripts/deploy_to_agent_platform.py"
+        if grep -q '"GOOGLE_CLOUD_LOCATION": "global"' "$IZUMI_DEPLOY_PY" 2>/dev/null; then
+            sed -i "s|\"GOOGLE_CLOUD_LOCATION\": \"global\"|\"GOOGLE_CLOUD_LOCATION\": \"${DEPLOY_REGION}\"|g" "$IZUMI_DEPLOY_PY"
+            success "Pinned Izumi inference endpoint to ${C_YELLOW}${DEPLOY_REGION}${C_RESET} (data residency)."
+        else
+            warn "Could not find the hardcoded 'global' endpoint in deploy_to_agent_platform.py."
+            warn "Izumi may have changed upstream. The agent could run on the GLOBAL endpoint."
         fi
-        
-        info "Applying older text generation model to Izumi Agent config (gemini-2.5-flash) to ensure region compatibility..."
-        cat << JSON > /tmp/izumi-agent/mediagent_config.json
+
+        # 2. Agent models. ads_x/agent.py sets model= literally on every LlmAgent, so
+        #    mediagent_config.json does NOT reach them (it only feeds the mediagent_kit
+        #    helpers). These literals are the actual reasoning models and must be swapped
+        #    for versions that exist on the regional endpoint.
+        local IZUMI_AGENT_PY="/tmp/izumi-agent/demos/backend/ads_x/agent.py"
+        info "Pinning Izumi agent models to ${C_YELLOW}${IZUMI_TEXT_MODEL}${C_RESET} for ${DEPLOY_REGION} availability..."
+        if [ -f "$IZUMI_AGENT_PY" ]; then
+            sed -i "s|gemini-3\.1-pro-preview|${IZUMI_PRO_MODEL}|g; s|gemini-3\.7-flash|${IZUMI_TEXT_MODEL}|g" "$IZUMI_AGENT_PY"
+            local LEFTOVER=$(grep -c "gemini-3" "$IZUMI_AGENT_PY" 2>/dev/null || echo 0)
+            if [ "$LEFTOVER" -gt 0 ]; then
+                warn "${LEFTOVER} gemini-3.x model reference(s) remain in ads_x/agent.py."
+                warn "Those may 404 on the ${DEPLOY_REGION} endpoint."
+            else
+                success "All ads_x agents pinned to regionally available models."
+            fi
+        else
+            warn "ads_x/agent.py not found. Agent models left at upstream defaults."
+        fi
+
+        # 3. mediagent_kit helper models (image description, inline text generation).
+        #    This file MUST live in demos/backend/: deploy_to_agent_platform.py copies
+        #    demos/backend/* and mediagent_kit/ into the bundle and nothing else, so a copy
+        #    at the repo root (where upstream keeps its own) never reaches the deployed
+        #    agent. Items from demos/backend land at the bundle root, which is exactly
+        #    where MediagentKitConfig looks at runtime.
+        cat << JSON > /tmp/izumi-agent/demos/backend/mediagent_config.json
 {
   "models": {
     "text": {
-      "default": "gemini-2.5-flash",
-      "repair": "gemini-2.5-flash",
-      "enrichment": "gemini-2.5-flash"
+      "default": "${IZUMI_TEXT_MODEL}",
+      "repair": "${IZUMI_TEXT_MODEL}",
+      "enrichment": "${IZUMI_TEXT_MODEL}"
     }
   }
 }
@@ -1426,7 +1471,7 @@ steps:
       - 'PROJECT_ID=\$PROJECT_ID'
       - 'GOOGLE_CLOUD_PROJECT=\$PROJECT_ID'
       - 'GOOGLE_CLOUD_LOCATION=${DEPLOY_REGION}'
-      - 'MODEL_TARGET_LOCATION=global'
+      - 'MODEL_TARGET_LOCATION=${DEPLOY_REGION}'
       - 'ASSET_SERVICE_GCS_BUCKET=${ASSET_BUCKET}'
       - 'USE_CREATIVE_STUDIO=True'
       - 'ENABLE_HITL_GATES=True'
