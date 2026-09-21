@@ -1426,17 +1426,19 @@ deploy_izumi_agent() {
             warn "Izumi may have changed upstream. The agent could run on the GLOBAL endpoint."
         fi
 
-        # 2. Agent models. ads_x/agent.py sets model= literally on every LlmAgent, so
-        #    mediagent_config.json does NOT reach them (it only feeds the mediagent_kit
-        #    helpers). These literals are the actual reasoning models and must be swapped
-        #    for versions that exist on the regional endpoint.
+        # 2. Agent reasoning models. ads_x/agent.py sets model= literally on every
+        #    LlmAgent, so mediagent_config.json does NOT reach them (it only feeds the
+        #    mediagent_kit helpers). These are the models the agent actually reasons
+        #    with, and they must exist on the regional endpoint.
         local IZUMI_AGENT_PY="/tmp/izumi-agent/demos/backend/ads_x/agent.py"
         info "Pinning Izumi agent models to ${C_YELLOW}${IZUMI_TEXT_MODEL}${C_RESET} for ${DEPLOY_REGION} availability..."
         if [ -f "$IZUMI_AGENT_PY" ]; then
             sed -i "s|gemini-3\.1-pro-preview|${IZUMI_PRO_MODEL}|g; s|gemini-3\.7-flash|${IZUMI_TEXT_MODEL}|g" "$IZUMI_AGENT_PY"
-            local LEFTOVER=$(grep -c "gemini-3" "$IZUMI_AGENT_PY" 2>/dev/null || echo 0)
-            if [ "$LEFTOVER" -gt 0 ]; then
-                warn "${LEFTOVER} gemini-3.x model reference(s) remain in ads_x/agent.py."
+            # NOTE: 'grep -c' exits 1 on no match, so pipe through wc instead of using
+            # '|| echo 0', which would produce the string "0\n0" and break the test.
+            local LEFTOVER=$(grep -o "gemini-3[0-9.a-z-]*" "$IZUMI_AGENT_PY" 2>/dev/null | wc -l | tr -d ' ')
+            if [ "${LEFTOVER:-0}" -gt 0 ]; then
+                warn "${LEFTOVER} gemini-3.x reference(s) remain in ads_x/agent.py."
                 warn "Those may 404 on the ${DEPLOY_REGION} endpoint."
             else
                 success "All ads_x agents pinned to regionally available models."
@@ -1445,7 +1447,50 @@ deploy_izumi_agent() {
             warn "ads_x/agent.py not found. Agent models left at upstream defaults."
         fi
 
-        # 3. mediagent_kit helper models (image description, inline text generation).
+        # 3. Media models (image / video / music / tts).
+        #    These are NOT called from the agent. ads_x passes the model name to the
+        #    Creative Studio backend (POST /api/images/generate-images and friends),
+        #    which runs its own Vertex client. That is why media has kept working while
+        #    text was broken. The default path therefore leaves Izumi's newer media
+        #    models alone - they work today and produce better output.
+        #
+        #    Clients with hard in-region processing requirements can set
+        #    IZUMI_REGIONAL_MEDIA=true to fall back to models that regional endpoints
+        #    serve. Creative Studio's GenerationModelEnum accepts both the new and the
+        #    old IDs, so this is safe.
+        local IZUMI_MEDIA_JSON=""
+        if [ "${IZUMI_REGIONAL_MEDIA:-false}" = "true" ]; then
+            local IZUMI_IMAGE_MODEL="${IZUMI_IMAGE_MODEL:-gemini-2.5-flash-image}"
+            local IZUMI_IMAGEN_MODEL="${IZUMI_IMAGEN_MODEL:-imagen-4.0-generate-001}"
+            local IZUMI_VIDEO_MODEL="${IZUMI_VIDEO_MODEL:-veo-3.0-generate-001}"
+            local IZUMI_MUSIC_MODEL="${IZUMI_MUSIC_MODEL:-lyria-002}"
+            local IZUMI_TTS_MODEL="${IZUMI_TTS_MODEL:-gemini-2.5-flash-tts}"
+
+            info "IZUMI_REGIONAL_MEDIA=true: pinning media models to regional versions..."
+
+            # ads_x also hardcodes the image model at its generate_image() call sites,
+            # which mediagent_config.json cannot override.
+            local IMG_FILES=$(grep -rl "gemini-3\.1-flash-image" /tmp/izumi-agent/demos/backend/ads_x 2>/dev/null || true)
+            if [ -n "$IMG_FILES" ]; then
+                echo "$IMG_FILES" | while read -r f; do
+                    [ -n "$f" ] && sed -i "s|gemini-3\.1-flash-image|${IZUMI_IMAGE_MODEL}|g" "$f"
+                done
+                success "Pinned hardcoded image model to ${C_YELLOW}${IZUMI_IMAGE_MODEL}${C_RESET}."
+            else
+                info "No hardcoded image model literals found in ads_x."
+            fi
+
+            IZUMI_MEDIA_JSON=",
+    \"image_gemini\": { \"default\": \"${IZUMI_IMAGE_MODEL}\" },
+    \"image_imagen\": { \"default\": \"${IZUMI_IMAGEN_MODEL}\" },
+    \"video\": { \"default\": \"${IZUMI_VIDEO_MODEL}\" },
+    \"music\": { \"default\": \"${IZUMI_MUSIC_MODEL}\" },
+    \"tts\": { \"default\": \"${IZUMI_TTS_MODEL}\" }"
+        else
+            info "Media models left at Izumi defaults (Creative Studio generates all media)."
+        fi
+
+        # 4. mediagent_kit helper models (image description, inline text generation).
         #    This file MUST live in demos/backend/: deploy_to_agent_platform.py copies
         #    demos/backend/* and mediagent_kit/ into the bundle and nothing else, so a copy
         #    at the repo root (where upstream keeps its own) never reaches the deployed
@@ -1458,7 +1503,7 @@ deploy_izumi_agent() {
       "default": "${IZUMI_TEXT_MODEL}",
       "repair": "${IZUMI_TEXT_MODEL}",
       "enrichment": "${IZUMI_TEXT_MODEL}"
-    }
+    }${IZUMI_MEDIA_JSON}
   }
 }
 JSON
