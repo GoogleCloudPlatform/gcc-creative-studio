@@ -1426,25 +1426,38 @@ deploy_izumi_agent() {
             warn "Izumi may have changed upstream. The agent could run on the GLOBAL endpoint."
         fi
 
-        # 2. Agent reasoning models. ads_x/agent.py sets model= literally on every
-        #    LlmAgent, so mediagent_config.json does NOT reach them (it only feeds the
-        #    mediagent_kit helpers). These are the models the agent actually reasons
-        #    with, and they must exist on the regional endpoint.
-        local IZUMI_AGENT_PY="/tmp/izumi-agent/demos/backend/ads_x/agent.py"
-        info "Pinning Izumi agent models to ${C_YELLOW}${IZUMI_TEXT_MODEL}${C_RESET} for ${DEPLOY_REGION} availability..."
-        if [ -f "$IZUMI_AGENT_PY" ]; then
-            sed -i "s|gemini-3\.1-pro-preview|${IZUMI_PRO_MODEL}|g; s|gemini-3\.7-flash|${IZUMI_TEXT_MODEL}|g" "$IZUMI_AGENT_PY"
-            # NOTE: 'grep -c' exits 1 on no match, so pipe through wc instead of using
-            # '|| echo 0', which would produce the string "0\n0" and break the test.
-            local LEFTOVER=$(grep -o "gemini-3[0-9.a-z-]*" "$IZUMI_AGENT_PY" 2>/dev/null | wc -l | tr -d ' ')
-            if [ "${LEFTOVER:-0}" -gt 0 ]; then
-                warn "${LEFTOVER} gemini-3.x reference(s) remain in ads_x/agent.py."
-                warn "Those may 404 on the ${DEPLOY_REGION} endpoint."
-            else
-                success "All ads_x agents pinned to regionally available models."
-            fi
+        # 2. Model literals across EVERY tree that gets bundled.
+        #
+        #    Two independent sources of truth have to be patched, because the deployed
+        #    agent proved it uses both:
+        #      a) demos/backend/** - ads_x/agent.py sets model= literally on each LlmAgent.
+        #      b) mediagent_kit/config.py - the HARDCODED fallback dict. Agent Engine logs
+        #         showed `models={'text': {'default': 'gemini-3.7-flash'...}}` with no
+        #         "[MediagentKitConfig] Loaded models from ..." line, i.e. the JSON written
+        #         in step 3 is NOT discovered at runtime (the deployed CWD and import path
+        #         differ from the deploy-time bundle). Patching the fallback makes the
+        #         correct model the default whether or not the JSON is ever found.
+        info "Pinning Izumi models to ${C_YELLOW}${IZUMI_TEXT_MODEL}${C_RESET} for ${DEPLOY_REGION} availability..."
+        local IZUMI_PATCH_ROOTS="/tmp/izumi-agent/demos/backend /tmp/izumi-agent/mediagent_kit"
+        local IZUMI_PATCHED=0
+        for root in $IZUMI_PATCH_ROOTS; do
+            [ -d "$root" ] || { warn "Expected source tree missing: $root"; continue; }
+            while IFS= read -r f; do
+                [ -n "$f" ] || continue
+                sed -i "s|gemini-3\.1-pro-preview|${IZUMI_PRO_MODEL}|g; s|gemini-3\.7-flash|${IZUMI_TEXT_MODEL}|g" "$f"
+                IZUMI_PATCHED=$((IZUMI_PATCHED + 1))
+            done <<< "$(grep -rl "gemini-3\.7-flash\|gemini-3\.1-pro-preview" --include=*.py "$root" 2>/dev/null || true)"
+        done
+
+        # Verify: nothing we care about may survive. A silent miss here means the agent
+        # 404s at runtime on a model the regional endpoint does not serve.
+        local LEFTOVER=$(grep -rho "gemini-3\.7-flash\|gemini-3\.1-pro-preview" --include=*.py \
+            /tmp/izumi-agent/demos/backend /tmp/izumi-agent/mediagent_kit 2>/dev/null | wc -l | tr -d ' ')
+        if [ "${LEFTOVER:-0}" -gt 0 ]; then
+            warn "${LEFTOVER} unsupported model reference(s) still present after patching."
+            warn "The agent will 404 on the ${DEPLOY_REGION} endpoint. Investigate before using it."
         else
-            warn "ads_x/agent.py not found. Agent models left at upstream defaults."
+            success "Patched ${IZUMI_PATCHED} file(s); no unsupported model references remain."
         fi
 
         # 3. Media models (image / video / music / tts).
@@ -1468,16 +1481,33 @@ deploy_izumi_agent() {
 
             info "IZUMI_REGIONAL_MEDIA=true: pinning media models to regional versions..."
 
-            # ads_x also hardcodes the image model at its generate_image() call sites,
-            # which mediagent_config.json cannot override.
-            local IMG_FILES=$(grep -rl "gemini-3\.1-flash-image" /tmp/izumi-agent/demos/backend/ads_x 2>/dev/null || true)
-            if [ -n "$IMG_FILES" ]; then
-                echo "$IMG_FILES" | while read -r f; do
-                    [ -n "$f" ] && sed -i "s|gemini-3\.1-flash-image|${IZUMI_IMAGE_MODEL}|g" "$f"
-                done
-                success "Pinned hardcoded image model to ${C_YELLOW}${IZUMI_IMAGE_MODEL}${C_RESET}."
+            # The media defaults live in the SAME two places as the text models, so the
+            # JSON below is not enough on its own:
+            #   a) demos/backend/** - ads_x hardcodes the image model at its
+            #      generate_image() call sites, which mediagent_config.json cannot override.
+            #   b) mediagent_kit/config.py - the hardcoded fallback dict. The Agent Engine
+            #      logs proved this is what actually gets used at runtime, because the JSON
+            #      is never discovered there. Patching only the JSON would leave this flag
+            #      a silent no-op for video, music and tts.
+            local IZUMI_MEDIA_SUBS="gemini-3\.1-flash-image=${IZUMI_IMAGE_MODEL}
+imagen-4\.0-generate-001=${IZUMI_IMAGEN_MODEL}
+gemini-omni-flash-preview=${IZUMI_VIDEO_MODEL}
+lyria-3-clip-preview=${IZUMI_MUSIC_MODEL}
+gemini-3\.1-flash-tts-preview=${IZUMI_TTS_MODEL}"
+            while IFS='=' read -r pattern replacement; do
+                [ -n "$pattern" ] || continue
+                while IFS= read -r f; do
+                    [ -n "$f" ] || continue
+                    sed -i "s|${pattern}|${replacement}|g" "$f"
+                done <<< "$(grep -rl "$pattern" --include=*.py $IZUMI_PATCH_ROOTS 2>/dev/null || true)"
+            done <<< "$IZUMI_MEDIA_SUBS"
+
+            local MEDIA_LEFTOVER=$(grep -rho "gemini-3\.1-flash-image\|gemini-omni-flash-preview\|lyria-3-clip-preview\|gemini-3\.1-flash-tts-preview" \
+                --include=*.py $IZUMI_PATCH_ROOTS 2>/dev/null | wc -l | tr -d ' ')
+            if [ "${MEDIA_LEFTOVER:-0}" -gt 0 ]; then
+                warn "${MEDIA_LEFTOVER} non-regional media model reference(s) survived patching."
             else
-                info "No hardcoded image model literals found in ads_x."
+                success "Pinned media models: image=${C_YELLOW}${IZUMI_IMAGE_MODEL}${C_RESET}, imagen=${C_YELLOW}${IZUMI_IMAGEN_MODEL}${C_RESET}, video=${C_YELLOW}${IZUMI_VIDEO_MODEL}${C_RESET}, music=${C_YELLOW}${IZUMI_MUSIC_MODEL}${C_RESET}, tts=${C_YELLOW}${IZUMI_TTS_MODEL}${C_RESET}."
             fi
 
             IZUMI_MEDIA_JSON=",
@@ -1488,6 +1518,7 @@ deploy_izumi_agent() {
     \"tts\": { \"default\": \"${IZUMI_TTS_MODEL}\" }"
         else
             info "Media models left at Izumi defaults (Creative Studio generates all media)."
+            info "   For strict in-region processing, re-run with ${C_YELLOW}--regional-media${C_RESET}."
         fi
 
         # 4. mediagent_kit helper models (image description, inline text generation).
@@ -1525,6 +1556,18 @@ steps:
     args:
       - '-c'
       - |
+        echo "===== Verifying patches actually reached the uploaded source ====="
+        echo "--- distinct model literals in demos/backend + mediagent_kit ---"
+        grep -rho 'gemini-[0-9][0-9.a-z-]*' --include=*.py demos/backend mediagent_kit | sort | uniq -c | sort -rn
+        echo "--- mediagent_kit/config.py fallback defaults ---"
+        sed -n '/Hardcoded defaults as fallback/,/^        }/p' mediagent_kit/config.py
+        echo "--- demos/backend/mediagent_config.json ---"
+        cat demos/backend/mediagent_config.json 2>/dev/null || echo "(absent)"
+        if grep -rq 'gemini-3\.7-flash\|gemini-3\.1-pro-preview' --include=*.py demos/backend mediagent_kit; then
+          echo "FATAL: unsupported model literals reached the build. Aborting before deploy."
+          exit 1
+        fi
+        echo "===== Verification passed ====="
         pip install .
         python scripts/deploy_to_agent_platform.py --project=\$PROJECT_ID --location=${DEPLOY_REGION} --service-account=\${_AGENT_SA_EMAIL}
     secretEnv: ['CREATIVE_STUDIO_USER_AUTH_TOKEN_KEY']
@@ -1559,8 +1602,19 @@ YAML
             -H "Authorization: Bearer $AUTH_TOKEN" \
             "https://${DEPLOY_REGION}-aiplatform.googleapis.com/v1beta1/projects/$GCP_PROJECT_ID/locations/${DEPLOY_REGION}/reasoningEngines")
         
-        # Extract the resource name of the reasoning engine with displayName "izumi-ads-x-agent"
-        local API_RESOURCE_NAME=$( (echo "$API_RESPONSE" 2>/dev/null || echo "{}") | jq -r 'try (.reasoningEngines[]? | select(.displayName == "izumi-ads-x-agent") | .name) catch ""' | head -n 1)
+        # Extract the resource name of the reasoning engine with displayName "izumi-ads-x-agent".
+        #
+        # Pick the MOST RECENTLY CREATED one. The API returns engines in no guaranteed order,
+        # so the old 'head -n 1' could pin the secret to a stale engine left over from an
+        # earlier deploy. That is silently fatal: the backend keeps talking to an agent built
+        # before the region/model patches and every request 404s on gemini-3.7-flash, while
+        # the script reports success.
+        local API_RESOURCE_NAME=$( (echo "$API_RESPONSE" 2>/dev/null || echo "{}") | jq -r 'try ([.reasoningEngines[]? | select(.displayName == "izumi-ads-x-agent")] | sort_by(.createTime) | last | .name) catch ""')
+        local ENGINE_COUNT=$( (echo "$API_RESPONSE" 2>/dev/null || echo "{}") | jq -r 'try ([.reasoningEngines[]? | select(.displayName == "izumi-ads-x-agent")] | length) catch 0')
+        if [ "${ENGINE_COUNT:-0}" -gt 1 ] 2>/dev/null; then
+            warn "Found ${ENGINE_COUNT} Agent Engines named 'izumi-ads-x-agent'. Using the newest."
+            warn "Consider deleting the stale ones so the backend cannot bind to an outdated agent."
+        fi
 
         if [ -n "$API_RESOURCE_NAME" ] && [ "$API_RESOURCE_NAME" != "null" ]; then
             info "Found active Agent Engine: ${C_YELLOW}${API_RESOURCE_NAME}${C_RESET}"
@@ -1751,6 +1805,8 @@ main() {
                 echo "  --skip-seeding       Skip the execution of the database seeding job (Step 14) to speed up testing."
                 echo "  --migrate-db         Force a database backup, deploy a dummy container to prevent deadlocks during Terraform apply, and restore the data into the new DB."
                 echo "  --skip-db-import     Bypass the legacy database backup detection and never prompt to import it."
+                echo "  --regional-media     Pin the Izumi agent's image/video/music/TTS models to versions served from regional"
+                echo "                       endpoints. Only needed for clients whose Vertex AI processing must stay in-region."
                 echo "  --help, -h           Show this help menu and exit."
                 echo ""
                 exit 0
@@ -1777,6 +1833,11 @@ main() {
                 ;;
             --skip-db-import)
                 SKIP_DB_IMPORT="true"
+                shift
+                ;;
+            --regional-media)
+                # Front door for IZUMI_REGIONAL_MEDIA; exported so deploy_izumi_agent sees it.
+                export IZUMI_REGIONAL_MEDIA="true"
                 shift
                 ;;
             *)
