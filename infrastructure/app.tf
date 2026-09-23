@@ -49,6 +49,22 @@ module "compute" {
     AGENT_LOCATION                   = var.agent_location != "" ? var.agent_location : var.region
     WORKFLOWS_LOCATION               = var.region
     SIGNING_SA_EMAIL                 = google_service_account.bucket_reader_sa.email
+
+    # Base URL that Google Cloud Workflows dials back into for each workflow
+    # step. This MUST be publicly routable and MUST include the
+    # "/api/workflows-executor" route prefix, because the generated Cloud
+    # Workflows YAML appends only "/{step_type}" to this value.
+    #
+    # Unlike BACKEND_URL (which the executor uses to call itself in-container,
+    # so localhost is correct), this address is resolved from Google's
+    # Workflows runtime, where "localhost" is NOT this container. If this is
+    # unset it falls back to the http://localhost:8080 default and every
+    # workflow step fails with an HTTP 404 from the Google frontend.
+    #
+    # Regression history: this variable was dropped in b6af2155 (2026-07-23)
+    # when the old infra/ modules were deleted, which broke all workflow
+    # execution until it was restored here.
+    WORKFLOWS_EXECUTOR_URL = "${local.backend_url}/api/workflows-executor"
   }
 
   runtime_secrets = {
