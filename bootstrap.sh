@@ -1487,7 +1487,11 @@ deploy_izumi_agent() {
         if [ "${IZUMI_REGIONAL_MEDIA:-false}" = "true" ]; then
             local IZUMI_IMAGE_MODEL="${IZUMI_IMAGE_MODEL:-gemini-2.5-flash-image}"
             local IZUMI_IMAGEN_MODEL="${IZUMI_IMAGEN_MODEL:-imagen-4.0-generate-001}"
-            local IZUMI_VIDEO_MODEL="${IZUMI_VIDEO_MODEL:-veo-3.0-generate-001}"
+            # Video: veo-3.1, not veo-3.0. Izumi only names the model; the Creative Studio
+            # backend makes the Vertex call, and its client is hardcoded to the GLOBAL
+            # endpoint (config_service.LOCATION="global"). veo-3.0-generate-001 is not
+            # served there and 404s; veo-3.1-generate-001 is (verified in the CS UI).
+            local IZUMI_VIDEO_MODEL="${IZUMI_VIDEO_MODEL:-veo-3.1-generate-001}"
             local IZUMI_MUSIC_MODEL="${IZUMI_MUSIC_MODEL:-lyria-002}"
             local IZUMI_TTS_MODEL="${IZUMI_TTS_MODEL:-gemini-2.5-flash-tts}"
 
@@ -1506,7 +1510,7 @@ deploy_izumi_agent() {
             #      of every model Izumi knows about, not a set of defaults, and each enum
             #      carries @enum.unique. Every model we pin to is ALREADY a member there
             #      (lyria-002, gemini-2.5-flash-tts, gemini-2.5-flash-image,
-            #      veo-3.0-generate-001, imagen-4.0-generate-001), so rewriting a literal
+            #      veo-3.1-generate-001, imagen-4.0-generate-001), so rewriting a literal
             #      collapses two members onto one value and the import dies with:
             #        ValueError: duplicate values found in <enum 'LyriaModel'>:
             #                    LYRIA_3_CLIP_PREVIEW -> LYRIA_002

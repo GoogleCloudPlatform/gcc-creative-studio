@@ -65,7 +65,9 @@ The equivalent environment variable also works, which is handy in CI:
 IZUMI_REGIONAL_MEDIA=true ./bootstrap.sh
 ```
 
-This falls back to `gemini-2.5-flash-image`, `imagen-4.0-generate-001`, `veo-3.0-generate-001`, `lyria-002` and `gemini-2.5-flash-tts`, all of which Creative Studio accepts. Any individual model can be overridden (`IZUMI_TEXT_MODEL`, `IZUMI_PRO_MODEL`, `IZUMI_IMAGE_MODEL`, `IZUMI_IMAGEN_MODEL`, `IZUMI_VIDEO_MODEL`, `IZUMI_MUSIC_MODEL`, `IZUMI_TTS_MODEL`).
+This falls back to `gemini-2.5-flash-image`, `imagen-4.0-generate-001`, `veo-3.1-generate-001`, `lyria-002` and `gemini-2.5-flash-tts`, all of which Creative Studio accepts. Any individual model can be overridden (`IZUMI_TEXT_MODEL`, `IZUMI_PRO_MODEL`, `IZUMI_IMAGE_MODEL`, `IZUMI_IMAGEN_MODEL`, `IZUMI_VIDEO_MODEL`, `IZUMI_MUSIC_MODEL`, `IZUMI_TTS_MODEL`).
+
+Video uses `veo-3.1-generate-001` rather than `veo-3.0-generate-001` because the Creative Studio backend still calls Vertex on the `global` endpoint (see the warning below), where Veo 3.0 returns `404 Publisher model ... was not found`.
 
 > [!WARNING]
 > This flag only controls **Izumi**. The Creative Studio backend has its own `LOCATION` setting, which currently defaults to `global`. Pinning that to a region is a separate change and requires verifying every model your users can select is available there.
