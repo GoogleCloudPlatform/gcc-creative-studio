@@ -1113,6 +1113,18 @@ update_secrets() {
             "FIREBASE_APP_ID")                SECRET_VALUE=$AUTO_FIREBASE_APP_ID; AUTO_DISCOVERED=true ;;
             "FIREBASE_MEASUREMENT_ID")        SECRET_VALUE=$AUTO_FIREBASE_MEASUREMENT_ID; AUTO_DISCOVERED=true ;;
             "agent_engine_user_auth_token_key") 
+                # This is NOT a credential. It is the NAME of the session-state key the
+                # backend writes the user's token under, and the Izumi agent must read the
+                # exact same name. Both resolve `latest` but at different times: Cloud Run
+                # only at revision start, the agent only at deploy. Rotating it on every
+                # run therefore desyncs them whenever only one side is redeployed (e.g.
+                # --skip-builds), and all media fails with "user_auth_token is required".
+                # Generate it once, then keep it.
+                local EXISTING_TOKEN_KEY=$(gcloud secrets versions access latest --secret="$SECRET_NAME" --project="$GCP_PROJECT_ID" 2>/dev/null || echo "")
+                if [ -n "$EXISTING_TOKEN_KEY" ]; then
+                    info "  Existing token key found. Keeping it so the backend and agent stay in sync."
+                    continue
+                fi
                 SECRET_VALUE=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32)
                 AUTO_DISCOVERED=true 
                 ;;
@@ -1637,6 +1649,42 @@ YAML
         else
             warn "Could not resolve the Agent Engine Resource Name via API."
             warn "The backend may fail to connect to Izumi until this secret is populated."
+        fi
+
+        # --- Keep the backend in sync with what the agent was just deployed with -------
+        #
+        # The backend reads agent_engine_user_auth_token_key and agent_engine_resource_name
+        # from Secret Manager ONLY when a Cloud Run revision starts. The agent has just
+        # been deployed with the CURRENT versions. If the backend revision predates them
+        # (typical with --skip-builds), the two disagree on the session-state key and every
+        # media call fails with "user_auth_token is required for Creative Studio media
+        # generation", while text keeps working.
+        #
+        # Fix: start a fresh backend revision on the SAME image. Image changes are covered
+        # by `ignore_changes` in modules/compute, so this causes no Terraform drift (unlike
+        # setting a dummy env var).
+        #
+        # Skipped when a backend build ran this session: that build deploys its own new
+        # revision, which already reads the current secrets, and redeploying the old image
+        # here could race it and roll the new code back.
+        if [ "$BUILD_STATUS" -eq 0 ] && [ -z "${BE_BUILD_ID:-}" ]; then
+            local BE_IMAGE=$(gcloud run services describe "$BE_SERVICE_NAME" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(image)" 2>/dev/null || echo "")
+            if [ -n "$BE_IMAGE" ]; then
+                start_spinner "Refreshing backend revision so it picks up the current agent secrets"
+                local BE_REFRESH_STATUS=0
+                gcloud run deploy "$BE_SERVICE_NAME" --image="$BE_IMAGE" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || BE_REFRESH_STATUS=$?
+                stop_spinner
+                if [ "$BE_REFRESH_STATUS" -eq 0 ]; then
+                    success "Backend ${C_YELLOW}${BE_SERVICE_NAME}${C_RESET} refreshed; it now shares the agent's token key."
+                else
+                    warn "Could not refresh ${BE_SERVICE_NAME}. Media generation may fail until the backend is redeployed:"
+                    warn "   gcloud run deploy ${BE_SERVICE_NAME} --image=${BE_IMAGE} --region=${DEPLOY_REGION} --project=${GCP_PROJECT_ID}"
+                fi
+            else
+                warn "Could not read the current image of ${BE_SERVICE_NAME}; backend was not refreshed."
+            fi
+        elif [ -n "${BE_BUILD_ID:-}" ]; then
+            info "Backend build ${BE_BUILD_ID} deploys a fresh revision, which will pick up the current agent secrets."
         fi
         rm -f "$DEPLOY_LOG"
     fi
