@@ -1489,6 +1489,17 @@ deploy_izumi_agent() {
             #      logs proved this is what actually gets used at runtime, because the JSON
             #      is never discovered there. Patching only the JSON would leave this flag
             #      a silent no-op for video, music and tts.
+            #
+            #   c) ...but mediagent_kit/api/types.py must be LEFT ALONE. It is a REGISTRY
+            #      of every model Izumi knows about, not a set of defaults, and each enum
+            #      carries @enum.unique. Every model we pin to is ALREADY a member there
+            #      (lyria-002, gemini-2.5-flash-tts, gemini-2.5-flash-image,
+            #      veo-3.0-generate-001, imagen-4.0-generate-001), so rewriting a literal
+            #      collapses two members onto one value and the import dies with:
+            #        ValueError: duplicate values found in <enum 'LyriaModel'>:
+            #                    LYRIA_3_CLIP_PREVIEW -> LYRIA_002
+            #      (SpeechModel has the same trap for the TTS model.)
+            local IZUMI_ENUM_REGISTRY="mediagent_kit/api/types.py"
             local IZUMI_MEDIA_SUBS="gemini-3\.1-flash-image=${IZUMI_IMAGE_MODEL}
 imagen-4\.0-generate-001=${IZUMI_IMAGEN_MODEL}
 gemini-omni-flash-preview=${IZUMI_VIDEO_MODEL}
@@ -1499,13 +1510,13 @@ gemini-3\.1-flash-tts-preview=${IZUMI_TTS_MODEL}"
                 while IFS= read -r f; do
                     [ -n "$f" ] || continue
                     sed -i "s|${pattern}|${replacement}|g" "$f"
-                done <<< "$(grep -rl "$pattern" --include=*.py $IZUMI_PATCH_ROOTS 2>/dev/null || true)"
+                done <<< "$(grep -rl "$pattern" --include=*.py $IZUMI_PATCH_ROOTS 2>/dev/null | grep -vF "$IZUMI_ENUM_REGISTRY" || true)"
             done <<< "$IZUMI_MEDIA_SUBS"
 
-            local MEDIA_LEFTOVER=$(grep -rho "gemini-3\.1-flash-image\|gemini-omni-flash-preview\|lyria-3-clip-preview\|gemini-3\.1-flash-tts-preview" \
-                --include=*.py $IZUMI_PATCH_ROOTS 2>/dev/null | wc -l | tr -d ' ')
+            local MEDIA_LEFTOVER=$(grep -rl "gemini-3\.1-flash-image\|gemini-omni-flash-preview\|lyria-3-clip-preview\|gemini-3\.1-flash-tts-preview" \
+                --include=*.py $IZUMI_PATCH_ROOTS 2>/dev/null | grep -vF "$IZUMI_ENUM_REGISTRY" | wc -l | tr -d ' ')
             if [ "${MEDIA_LEFTOVER:-0}" -gt 0 ]; then
-                warn "${MEDIA_LEFTOVER} non-regional media model reference(s) survived patching."
+                warn "${MEDIA_LEFTOVER} file(s) still reference a non-regional media model."
             else
                 success "Pinned media models: image=${C_YELLOW}${IZUMI_IMAGE_MODEL}${C_RESET}, imagen=${C_YELLOW}${IZUMI_IMAGEN_MODEL}${C_RESET}, video=${C_YELLOW}${IZUMI_VIDEO_MODEL}${C_RESET}, music=${C_YELLOW}${IZUMI_MUSIC_MODEL}${C_RESET}, tts=${C_YELLOW}${IZUMI_TTS_MODEL}${C_RESET}."
             fi
@@ -1582,8 +1593,11 @@ YAML
 
         DEPLOY_LOG=$(mktemp)
         start_spinner "Building and deploying agent to Vertex AI"
-        gcloud builds submit /tmp/izumi-agent --config=/tmp/izumi-agent/cloudbuild.yaml --project="$GCP_PROJECT_ID" --region="$DEPLOY_REGION" --substitutions="_AGENT_SA_EMAIL=$AGENT_SA_EMAIL,_TRIG_SA_EMAIL=$TRIG_SA" > "$DEPLOY_LOG" 2>&1
-        local BUILD_STATUS=$?
+        # `set -e` is active for the whole script. A bare failing command kills
+        # bootstrap.sh outright, so the log below never prints and the EXIT trap
+        # deletes /tmp/izumi-agent. `|| BUILD_STATUS=$?` keeps the failure local.
+        local BUILD_STATUS=0
+        gcloud builds submit /tmp/izumi-agent --config=/tmp/izumi-agent/cloudbuild.yaml --project="$GCP_PROJECT_ID" --region="$DEPLOY_REGION" --substitutions="_AGENT_SA_EMAIL=$AGENT_SA_EMAIL,_TRIG_SA_EMAIL=$TRIG_SA" > "$DEPLOY_LOG" 2>&1 || BUILD_STATUS=$?
         stop_spinner
 
         if [ $BUILD_STATUS -eq 0 ]; then
