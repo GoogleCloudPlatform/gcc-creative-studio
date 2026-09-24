@@ -146,6 +146,10 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   @Output() openAudioSelectorForReference = new EventEmitter<void>();
   @Output() clearReferenceAudio = new EventEmitter<Event>();
 
+  @Input() externalUrl: string | null = null;
+  @Output() openVideoUrlInputForReference = new EventEmitter<void>();
+  @Output() clearExternalUrl = new EventEmitter<void>();
+
   @Input() image1Preview: string | null = null;
   @Input() image2Preview: string | null = null;
   @Input() referenceImages: ReferenceImage[] = [];
@@ -208,16 +212,38 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
 
   // --- Computed Values ---
   isExtendVideo = computed(() => this.selectedMode() === 'Extend Video');
+  isConcatenateVideo = computed(
+    () => this.selectedMode() === 'Concatenate Video',
+  );
+  isFramesToVideo = computed(() => this.selectedMode() === 'Frames to Video');
+  isIngredientsToVideo = computed(
+    () => this.selectedMode() === 'Ingredients to Video',
+  );
   isIngredientsToImage = computed(
     () => this.selectedMode() === 'Ingredients to Image',
   );
   isTextToVideo = computed(() => this.selectedMode() === 'Text to Video');
+  isVideoToImage = computed(() => this.selectedMode() === 'Video to Image');
+  isImageMode = computed(() => this.selectedMode().includes('Image'));
+  canEditImgSlot = computed(
+    () => !this.isExtendVideo() && !this.isConcatenateVideo(),
+  );
   hasResolutionOptions = computed(() => this.supportedResolutions().length > 0);
   hasDurationOptions = computed(
     () =>
       (this.getSelectedModelObject()?.capabilities?.supportedDurations ?? [])
         .length > 0,
   );
+
+  youtubeThumbnailUrl = computed(() => {
+    const url = this.externalUrl;
+    if (!url) return null;
+    const regExp =
+      /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+    const match = url.match(regExp);
+    const id = match && match[2].length === 11 ? match[2] : null;
+    return id ? `https://img.youtube.com/vi/${id}/hqdefault.jpg` : null;
+  });
 
   // --- Lifecycle Hooks ---
   ngOnInit(): void {
@@ -272,8 +298,9 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
       oldMode !== '' && oldMode !== mode,
     );
 
-    if (!this.isTextToVideo()) {
-      const longest = this.getSelectedModelDurations().at(-1);
+    const supportedDurations = this.getSelectedModelDurations();
+    if (!supportedDurations.includes(this.selectedDuration())) {
+      const longest = supportedDurations.at(-1);
       if (longest) this.selectDuration(longest);
     }
   }
@@ -309,10 +336,22 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
 
   // Triggered from internal dropdown
   selectInternalModel(model: any) {
+    if (this.isVideoToImage() && !model?.capabilities?.supportsVideoReference) {
+      return;
+    }
     this.isSettingsDropdownOpen.set(null);
     this.modelSelected.emit(model);
 
     this.updateSupportedResolutions(model);
+
+    const supportedDurations = this.getSelectedModelDurations(model);
+    if (
+      supportedDurations.length > 0 &&
+      !supportedDurations.includes(this.selectedDuration())
+    ) {
+      const longest = supportedDurations.at(-1);
+      if (longest) this.selectDuration(longest);
+    }
   }
 
   selectPreset(preset: string) {
@@ -322,6 +361,16 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   getSelectedModelObject(): GenerationModelConfig | undefined {
     return this.generationModelsSignal().find(
       m => m.viewValue === this.selectedGenerationModelSignal(),
+    );
+  }
+
+  isOmniModel(model?: any): boolean {
+    const activeModel = model || this.getSelectedModelObject();
+    const val = activeModel?.value;
+    return (
+      val === 'gemini-omni-flash-preview' ||
+      val === 'gemini-omni-1.1-flash-preview' ||
+      val === 'gemini-omni'
     );
   }
 
@@ -336,9 +385,13 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
 
   getSelectedModelDurations(model?: any): number[] {
     const activeModel = model || this.getSelectedModelObject();
-    // only 'text to video' mode supports shorter durations
-    // resolutions above 1K support only longest duration
-    if (!this.isTextToVideo() || this.selectedResolution() !== '1K') {
+    // Non-Omni models only support shorter durations in 'Text to Video' mode.
+    // Resolutions above 1K support only the longest duration.
+    const isOmni = this.isOmniModel(activeModel);
+    if (
+      (!isOmni && !this.isTextToVideo()) ||
+      this.selectedResolution() !== '1K'
+    ) {
       const longest = activeModel?.capabilities?.supportedDurations?.at(-1);
       return longest ? [longest] : [];
     }

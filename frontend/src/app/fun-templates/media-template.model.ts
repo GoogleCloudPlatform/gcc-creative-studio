@@ -101,9 +101,12 @@ export enum GenerationModelEnum {
   GEMINI_2_5_FLASH = 'gemini-2.5-flash-image',
 
   // Video-Specific Models
+  GEMINI_OMNI_FLASH_PREVIEW = 'gemini-omni-flash-preview',
+  GEMINI_OMNI_1_1_FLASH_PREVIEW = 'gemini-omni-1.1-flash-preview',
   VEO_3_1_FAST_GENERATE_001 = 'veo-3.1-fast-generate-001',
   VEO_3_1_GENERATE_001 = 'veo-3.1-generate-001',
   VEO_3_1_LITE_GENERATE_001 = 'veo-3.1-lite-generate-001',
+  VEO_3_1_LITE_PREVIEW = 'veo-3.1-lite-generate-preview',
   VEO_3_FAST = 'veo-3.0-fast-generate-001',
   VEO_3_QUALITY = 'veo-3.0-generate-001',
   VEO_2_FAST = 'veo-2.0-fast-generate-001',

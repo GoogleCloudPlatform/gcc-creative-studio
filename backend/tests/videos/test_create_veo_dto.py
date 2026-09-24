@@ -181,6 +181,15 @@ def test_validate_duration_seconds():
     )
     assert dto_flash.duration_seconds == 10
 
+    # 10s is valid for Gemini Omni 1.1 Flash Preview
+    dto_flash_1_1 = CreateVeoDto(
+        prompt="Test",
+        workspace_id=1,
+        generation_model=GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+        duration_seconds=10,
+    )
+    assert dto_flash_1_1.duration_seconds == 10
+
     # 10s is valid for Gemini Omni
     dto_omni = CreateVeoDto(
         prompt="Test",
