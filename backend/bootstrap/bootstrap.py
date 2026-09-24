@@ -50,6 +50,7 @@ from src.source_assets.schema.source_asset_model import (
     AssetTypeEnum as AssetType,
 )
 from src.source_assets.schema.source_asset_model import SourceAssetModel
+from src.folders.schema.folder_model import FolderModel
 from src.users.dto.user_create_dto import UserCreateDto
 from src.users.repository.user_repository import UserRepository
 from src.users.user_model import UserModel, UserRoleEnum

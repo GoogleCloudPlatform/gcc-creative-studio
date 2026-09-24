@@ -32,6 +32,10 @@ DEFAULT_ENV_NAME="dev-infra"
 DEFAULT_BRANCH_NAME="main"
 GCS_BUCKET_SUFFIX_FORMAT="cstudio-%s-tfstate"
 GCS_BUCKET_PREFIX_FORMAT="infra/%s/state"
+DEFAULT_DEPLOY_REGION="us-central1"
+DEFAULT_DB_TIER="db-custom-2-7680"
+DEFAULT_DB_AVAILABILITY="ZONAL"
+RES_PREFIX="cs"
 BE_SERVICE_NAME="cstudio-be"
 FE_SERVICE_NAME="cstudio-fe"
 
@@ -57,6 +61,14 @@ C_YELLOW='\033[1;33m'  # Bold/Bright Yellow for warnings and URLs
 C_BLUE='\033[1;34m'    # Bold/Bright Blue for steps and prompts
 C_CYAN='\033[1;36m'    # Bold/Bright Cyan for general info
 
+# --- Argument Parsing ---
+SKIP_DB_IMPORT=false
+for arg in "$@"; do
+    if [ "$arg" == "--skip-db-import" ]; then
+        SKIP_DB_IMPORT=true
+    fi
+done
+
 # --- Helper Functions ---
 info() { echo -e "${C_CYAN}➡️  $1${C_RESET}"; }
 prompt() { echo -e "${C_BLUE}🤔  $1${C_RESET}"; }
@@ -64,6 +76,42 @@ warn() { echo -e "${C_YELLOW}⚠️  $1${C_RESET}"; }
 fail() { echo -e "${C_RED}❌  $1${C_RESET}" >&2; exit 1; }
 success() { echo -e "${C_GREEN}✅  $1${C_RESET}"; }
 step() { echo -e "\n${C_BLUE}--- Step $1: $2 ---${C_RESET}"; }
+
+SPINNER_PID=""
+cleanup_spinner() {
+    if [ -n "$SPINNER_PID" ]; then
+        kill "$SPINNER_PID" >/dev/null 2>&1 || true
+        printf "\r\033[K"
+        SPINNER_PID=""
+    fi
+}
+
+trap cleanup_spinner EXIT
+
+start_spinner() {
+    local msg="$1"
+    cleanup_spinner
+    (
+        local spin='-\|/'
+        local i=0
+        local dots=""
+        local loops=0
+        while :; do
+            i=$(( (i+1) %4 ))
+            if [ $(( loops % 50 )) -eq 0 ] && [ $loops -gt 0 ]; then
+                dots="${dots}."
+            fi
+            printf "\r${C_CYAN}➡️  %s %s %s\033[K${C_RESET}" "$msg" "${spin:$i:1}" "$dots"
+            sleep 0.1
+            loops=$((loops + 1))
+        done
+    ) &
+    SPINNER_PID=$!
+}
+
+stop_spinner() {
+    cleanup_spinner
+}
 
 # --- Pre-flight Checks & Auto-configuration ---
 
@@ -76,6 +124,11 @@ configure_firebase_site_id() {
   # Check if the site ID is still the placeholder value
   if grep -q "YOUR_FIREBASE_SITE_ID" "$tfvars_file"; then
     warn "Placeholder 'YOUR_FIREBASE_SITE_ID' found in ${tfvars_file}."
+    if [ -n "$AUTO_FIREBASE_SITE_ID" ] && [ "$AUTO_FIREBASE_SITE_ID" != "null" ]; then
+      info "Using confirmed Firebase Hosting Site ID from deployment profile: ${C_YELLOW}${AUTO_FIREBASE_SITE_ID}${C_RESET}"
+      sed -i.bak "s/YOUR_FIREBASE_SITE_ID/${AUTO_FIREBASE_SITE_ID}/" "$tfvars_file" && rm -f "${tfvars_file}.bak"
+      return
+    fi
     info "Querying Firebase for an existing default hosting site..."
 
     # Query Firebase for sites and find the one marked as default (or the first one if none are default)
@@ -90,6 +143,8 @@ configure_firebase_site_id() {
 
     info "Setting 'firebase_site_id' to '${C_YELLOW}${site_id_to_use}${C_RESET}' in ${tfvars_file}."
     sed -i.bak "s/YOUR_FIREBASE_SITE_ID/${site_id_to_use}/" "$tfvars_file" && rm "${tfvars_file}.bak"
+    AUTO_FIREBASE_SITE_ID="$site_id_to_use"
+    write_state "AUTO_FIREBASE_SITE_ID" "$AUTO_FIREBASE_SITE_ID"
   fi
 }
 
@@ -110,10 +165,30 @@ prompt_and_update_tfvar() {
     eval "$var_to_set_ref='$final_value'"
 }
 
+retry_command() {
+    local max_attempts=12
+    local delay=20
+    local attempt=1
+
+    while [ $attempt -le $max_attempts ]; do
+        if "$@"; then
+            return 0
+        else
+            echo -e "\nCommand failed (attempt $attempt/$max_attempts). Retrying in $delay seconds for IAM propagation..."
+            sleep $delay
+            attempt=$((attempt + 1))
+        fi
+    done
+
+    echo "Command failed after $max_attempts attempts."
+    return 1
+}
+
 # --- State Management ---
 write_state() {
     if [ -z "$STATE_FILE" ]; then return; fi
     if ! (
+        mkdir -p "$(dirname "$STATE_FILE")" 2>/dev/null || true
         touch "$STATE_FILE"
         TMP_STATE_FILE=$(mktemp)
         grep -v "^$1=" "$STATE_FILE" > "$TMP_STATE_FILE" || true
@@ -127,72 +202,12 @@ read_state() {
     if [ -f "$STATE_FILE" ]; then
         info "Found previous state file. Resuming..."
         set -a; source "$STATE_FILE"; set +a
+        
+        # Backwards compatibility: migrate legacy GitHub variables to generic Repo variables
+        if [ -n "$GITHUB_REPO_URL" ] && [ -z "$REPO_URL" ]; then REPO_URL="$GITHUB_REPO_URL"; fi
+        if [ -n "$GITHUB_BRANCH" ] && [ -z "$REPO_BRANCH" ]; then REPO_BRANCH="$GITHUB_BRANCH"; fi
+        if [ -n "$GITHUB_CONN_NAME" ] && [ -z "$REPO_CONN_NAME" ]; then REPO_CONN_NAME="$GITHUB_CONN_NAME"; fi
     fi
-}
-
-# --- Database Connectivity Helpers ---
-start_sql_proxy() {
-    info "Starting Cloud SQL Auth Proxy..."
-    
-    # 1. Get Instance Connection Name
-    # Try Terraform output first, fallback to gcloud
-    pushd "$REPO_ROOT/infra/environments/$ENV_NAME" > /dev/null
-    DB_INSTANCE_NAME=$(terraform output -raw cloud_sql_connection_name 2>/dev/null)
-    popd > /dev/null
-
-    if [ -z "$DB_INSTANCE_NAME" ]; then
-        DB_INSTANCE_NAME=$(gcloud sql instances list --format="value(connectionName)" --filter="name:creative-studio-db*" --project="$GCP_PROJECT_ID" | head -n 1)
-    fi
-
-    if [ -z "$DB_INSTANCE_NAME" ]; then
-        fail "Could not find Cloud SQL instance. Ensure Terraform ran successfully."
-    fi
-
-    export INSTANCE_CONNECTION_NAME="$DB_INSTANCE_NAME"
-
-    # 2. Download Proxy (if missing)
-    if [ ! -f "cloud-sql-proxy" ]; then
-        curl -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.8.0/cloud-sql-proxy.linux.amd64
-        chmod +x cloud-sql-proxy
-    fi
-
-    # 3. Start Proxy in Background (Port 5432)
-    ./cloud-sql-proxy --address 0.0.0.0 --port 5432 "$DB_INSTANCE_NAME" > /dev/null 2>&1 &
-    PROXY_PID=$!
-    export PROXY_PID
-    
-    # 4. Wait for Readiness
-    echo -n "   Waiting for proxy connection..."
-    for i in {1..30}; do
-        if (echo > /dev/tcp/127.0.0.1/5432) >/dev/null 2>&1; then
-            echo " Connected!"
-            return 0
-        fi
-        echo -n "."
-        sleep 1
-    done
-    echo
-    warn "Proxy connection check timed out, but proceeding..."
-}
-
-stop_sql_proxy() {
-    if [ -n "$PROXY_PID" ]; then
-        info "Stopping Cloud SQL Proxy..."
-        kill "$PROXY_PID" 2>/dev/null || true
-        unset PROXY_PID
-    fi
-}
-
-export_db_vars() {
-    # Fetch password from Secret Manager
-    DB_PASS=$(gcloud secrets versions access latest --secret="creative-studio-db-password" --project="$GCP_PROJECT_ID")
-    
-    export DB_USER="studio_user"
-    export DB_PASS="$DB_PASS"
-    export DB_NAME="creative_studio"
-    export DB_HOST="127.0.0.1" # Proxy address
-    export DB_PORT="5432"
-    export USE_CLOUD_SQL_AUTH_PROXY=true
 }
 
 # --- Script Functions ---
@@ -292,20 +307,26 @@ setup_project() {
     # try detecting current project on the current terminal
     CURRENT_GCLOUD_PROJECT=$(gcloud config get-value project 2>/dev/null || echo "")
 
-    if [ -n "$GCP_PROJECT_ID" ]; then
-        prompt "Found project '$GCP_PROJECT_ID' from a previous run. Use this project? (y/n)"; read -r REPLY < /dev/tty
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            gcloud config set project "$GCP_PROJECT_ID"
-            success "Project '$GCP_PROJECT_ID' is configured."
-            return
-        fi
+    if [ -n "$GCP_PROJECT_ID" ] && [ "$GCP_PROJECT_ID" != "unassigned" ]; then
+        info "Using stored project ID from profile: ${C_YELLOW}${GCP_PROJECT_ID}${C_RESET}"
+        gcloud config set project "$GCP_PROJECT_ID"
+        write_state "GCP_PROJECT_ID" "$GCP_PROJECT_ID"
+        success "Project '$GCP_PROJECT_ID' is configured."
+        return
     elif [ -n "$CURRENT_GCLOUD_PROJECT" ]; then
-        prompt "Detected active gcloud project '$CURRENT_GCLOUD_PROJECT'. Use this project? (y/n)"
-        read -r REPLY < /dev/tty
+        if [ -n "$CLI_PROFILE" ]; then
+            info "Headless mode: Automatically using detected gcloud project '$CURRENT_GCLOUD_PROJECT'."
+            REPLY="y"
+        else
+            prompt "Detected active gcloud project '$CURRENT_GCLOUD_PROJECT'. Use this project? (y/n)"
+            read -r REPLY < /dev/tty
+        fi
+        
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             GCP_PROJECT_ID=$CURRENT_GCLOUD_PROJECT
             info "Using existing project '$GCP_PROJECT_ID'."
             gcloud config set project "$GCP_PROJECT_ID"
+            write_state "GCP_PROJECT_ID" "$GCP_PROJECT_ID"
             success "Project '$GCP_PROJECT_ID' is configured."
             return
         fi
@@ -320,45 +341,60 @@ setup_project() {
         info "Linking billing account '$BILLING_ACCOUNT_ID'..."; gcloud beta billing projects link "$GCP_PROJECT_ID" --billing-account="$BILLING_ACCOUNT_ID"
     fi
     info "Setting gcloud config to use project '$GCP_PROJECT_ID'..."; gcloud config set project "$GCP_PROJECT_ID"
+    write_state "GCP_PROJECT_ID" "$GCP_PROJECT_ID"
     success "Project '$GCP_PROJECT_ID' is configured."
 }
 
 setup_repo() {
     step 4 "Configuring Git Repository"
 
-    # Since the script is run via curl, it never starts inside a repo. We must clone it.
-    warn "Please fork the main repository first: ${UPSTREAM_REPO_URL}/fork"
-    while true; do
-        prompt "What is the git URL of YOUR forked repository? (e.g., https://github.com/user/repo.git)"
-        read -p "   Git URL: " GITHUB_REPO_URL < /dev/tty
-        if [ -z "$GITHUB_REPO_URL" ]; then warn "Repository URL cannot be empty."; continue; fi
-        info "Validating repository URL..."
-        if git ls-remote --exit-code -h "$GITHUB_REPO_URL" > /dev/null 2>&1; then
-            success "Repository found."; break
-        else warn "Repository not found at that URL. Please check for typos and try again."; fi
-    done
+    if [ -n "$REPO_URL" ] && [ "$REPO_URL" != "unassigned" ]; then
+        info "Using stored repository URL from profile: ${C_YELLOW}${REPO_URL}${C_RESET}"
+    else
+        # Since the script is run via curl, it never starts inside a repo. We must clone it.
+        warn "Please fork the main repository first: ${UPSTREAM_REPO_URL}/fork"
+        while true; do
+            prompt "What is the git URL of YOUR forked repository? (e.g., https://github.com/user/repo.git)"
+            read -p "   Git URL: " REPO_URL < /dev/tty
+            if [ -z "$REPO_URL" ]; then warn "Repository URL cannot be empty."; continue; fi
+            info "Validating repository URL..."
+            if git ls-remote --exit-code -h "$REPO_URL" > /dev/null 2>&1; then
+                success "Repository found."; break
+            else warn "Repository not found at that URL. Please check for typos and try again."; fi
+        done
+        write_state "REPO_URL" "$REPO_URL"
+    fi
 
     # --- Ask for Branch ---
-    prompt "Which git branch would you like to use? (default: main)"
-    read -p "   Branch Name: " SELECTED_BRANCH < /dev/tty
-    SELECTED_BRANCH=${SELECTED_BRANCH:-main}
+    if [ -n "$REPO_BRANCH" ] && [ "$REPO_BRANCH" != "unassigned" ]; then
+        SELECTED_BRANCH="$REPO_BRANCH"
+        info "Using stored Git branch from profile: ${C_YELLOW}${SELECTED_BRANCH}${C_RESET}"
+    else
+        prompt "Which git branch would you like to use? (default: main)"
+        read -p "   Branch Name: " SELECTED_BRANCH < /dev/tty
+        SELECTED_BRANCH=${SELECTED_BRANCH:-main}
+        REPO_BRANCH="$SELECTED_BRANCH"
+        write_state "REPO_BRANCH" "$REPO_BRANCH"
+    fi
     DEFAULT_BRANCH_NAME="$SELECTED_BRANCH"
 
-    local REPO_CLONE_DIR=$(basename "$GITHUB_REPO_URL" .git)
+    local REPO_CLONE_DIR=$(basename "$REPO_URL" .git)
 
     if [[ -d "$REPO_CLONE_DIR" ]]; then
-        warn "Directory '$REPO_CLONE_DIR' already exists."; prompt "Do you want to use this existing directory? (y/n)"; read -r REPLY < /dev/tty
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then fail "Please remove the directory or run the script from a different location."; fi
+        info "Directory '$REPO_CLONE_DIR' already exists. Updating from remote..."
+        cd "$REPO_CLONE_DIR"
+        git pull origin "$SELECTED_BRANCH" || warn "Could not pull latest changes. Continuing with local version."
+        cd ..
     else
         info "Performing a sparse checkout of '$REPO_CLONE_DIR' (Branch: $SELECTED_BRANCH)..."
         
         # 1. Clone with -b branch_name
-        git clone --filter=blob:none --no-checkout --depth 1 --sparse -b "$SELECTED_BRANCH" "$GITHUB_REPO_URL" "$REPO_CLONE_DIR"
+        git clone --filter=blob:none --no-checkout --depth 1 --sparse -b "$SELECTED_BRANCH" "$REPO_URL" "$REPO_CLONE_DIR"
         
         cd "$REPO_CLONE_DIR"
         
         # 2. Sparse checkout for ROOT folders only
-        git sparse-checkout set "infra" "backend" "frontend" "bootstrap.sh"
+        git sparse-checkout set "infrastructure" "backend" "frontend" "bootstrap.sh"
         
         git checkout
         cd ..
@@ -370,105 +406,243 @@ setup_repo() {
     info "Verifying project structure..."
 
     # Check if the project is at the top level
-    if [[ -d "$REPO_CLONE_DIR/infra" && -f "$REPO_CLONE_DIR/bootstrap.sh" ]]; then
+    if [[ -d "$REPO_CLONE_DIR/infrastructure" && -f "$REPO_CLONE_DIR/bootstrap.sh" ]]; then
         info "Detected project structure."
     else
         warn "Directory listing of clone:"
         ls -F "$REPO_CLONE_DIR/"
-        fail "Could not find a valid project structure. The script requires an 'infra' directory and 'bootstrap.sh' file at the root."
+        fail "Could not find a valid project structure. The script requires an 'infrastructure' directory and 'bootstrap.sh' file at the root."
     fi
 
     cd "$REPO_CLONE_DIR"
 
     REPO_ROOT=$(pwd)
     export REPO_ROOT
+    write_state "REPO_ROOT" "$REPO_ROOT"
     success "Project root successfully set to: $REPO_ROOT"
 
-    GITHUB_REPO_OWNER=$(git remote get-url origin 2>/dev/null | sed -n 's/.*github.com[:\/]\([^/]*\)\/.*/\1/p' || echo "")
-    GITHUB_REPO_NAME=$REPO_CLONE_DIR
+    if [[ "$REPO_URL" =~ ^https://([^/]+)/([^/]+)/([^/.]+)(\.git)?$ ]]; then
+        REPO_HOST="${BASH_REMATCH[1]}"
+        REPO_OWNER="${BASH_REMATCH[2]}"
+        REPO_NAME="${BASH_REMATCH[3]}"
+    elif [[ "$REPO_URL" =~ ^git@([^:]+):([^/]+)/([^/.]+)(\.git)?$ ]]; then
+        REPO_HOST="${BASH_REMATCH[1]}"
+        REPO_OWNER="${BASH_REMATCH[2]}"
+        REPO_NAME="${BASH_REMATCH[3]}"
+    else
+        REPO_HOST="github.com"
+        REPO_OWNER=$(git remote get-url origin 2>/dev/null | sed -n 's/.*github.com[:\/]\([^/]*\)\/.*/\1/p' || echo "")
+        REPO_NAME=$REPO_CLONE_DIR
+    fi
 
-    info "Detected GitHub owner: $GITHUB_REPO_OWNER"
-    info "Detected GitHub repo name: $GITHUB_REPO_NAME"
+    write_state "REPO_HOST" "$REPO_HOST"
+    write_state "REPO_OWNER" "$REPO_OWNER"
+    write_state "REPO_NAME" "$REPO_NAME"
+
+    info "Detected repository host: $REPO_HOST"
+    info "Detected repository owner: $REPO_OWNER"
+    info "Detected repository name: $REPO_NAME"
 }
 
 configure_environment() {
     step 5 "Configuring Terraform Environment";
-    cd "$REPO_ROOT/infra"
-    if [ -z "$ENV_NAME" ]; then
+    cd "$REPO_ROOT/infrastructure"
+    # --- Auto-discover legacy deployments ---
+    info "Scanning GCP project for existing deployments..."
+    local LEGACY_TF
+    LEGACY_TF=$(gcloud storage buckets list --project="$GCP_PROJECT_ID" --format="value(name)" 2>/dev/null | grep -E "^${GCP_PROJECT_ID}-cstudio-.*-tfstate$" | head -n 1 || echo "")
+    if [ -n "$LEGACY_TF" ]; then
+        local DETECTED_ENV
+        DETECTED_ENV=$(echo "$LEGACY_TF" | sed -E "s/^${GCP_PROJECT_ID}-cstudio-(.*)-tfstate$/\1/")
+        
+        if [ -z "$ENV_NAME" ] || [ "$ENV_NAME" == "unassigned" ]; then
+            warn "Detected existing Terraform state bucket: ${C_YELLOW}gs://${LEGACY_TF}${C_RESET}"
+            info "Auto-populating environment name to '${C_YELLOW}${DETECTED_ENV}${C_RESET}' to match legacy state."
+            DEFAULT_ENV_NAME="$DETECTED_ENV"
+        fi
+
+        if [ -z "$TF_BUCKET_NAME" ] || [ "$TF_BUCKET_NAME" == "unassigned" ]; then
+            info "Auto-assigning Terraform state bucket to prevent recreating existing infrastructure."
+            TF_BUCKET_NAME="$LEGACY_TF"
+            write_state "TF_BUCKET_NAME" "$TF_BUCKET_NAME"
+        elif [ "$TF_BUCKET_NAME" != "$LEGACY_TF" ]; then
+            warn "Profile Terraform state bucket ('$TF_BUCKET_NAME') does not match existing bucket ('$LEGACY_TF')."
+            prompt "Would you like to auto-correct the Terraform state bucket to '${C_YELLOW}${LEGACY_TF}${C_RESET}'? (Y/n)"
+            read -r CORRECT_TF < /dev/tty || exit 130
+            if [[ ! "$CORRECT_TF" =~ ^[nN]$ ]]; then
+                TF_BUCKET_NAME="$LEGACY_TF"
+                write_state "TF_BUCKET_NAME" "$TF_BUCKET_NAME"
+                info "Terraform State Bucket auto-corrected!"
+            fi
+        fi
+    fi
+
+    local LEGACY_BUCKET
+    LEGACY_BUCKET=$(gcloud storage buckets list --project="$GCP_PROJECT_ID" --format="value(name)" 2>/dev/null | grep -E "^${GCP_PROJECT_ID}-cs-.*-bucket$" | head -n 1 || echo "")
+    if [ -n "$LEGACY_BUCKET" ]; then
+        warn "Detected existing Creative Studio asset bucket: ${C_YELLOW}gs://${LEGACY_BUCKET}${C_RESET}"
+        info "This bucket will be automatically preserved via Terraform overrides."
+        ASSET_BUCKET_OVERRIDE="$LEGACY_BUCKET"
+    else
+        ASSET_BUCKET_OVERRIDE=""
+    fi
+    # ----------------------------------------
+
+    if [ -z "$ENV_NAME" ] || [ "$ENV_NAME" == "unassigned" ]; then
         prompt "What would you like to call this deployment environment?"; read -p "   Environment Name [default value: $DEFAULT_ENV_NAME]: " ENV_NAME < /dev/tty
         ENV_NAME=${ENV_NAME:-$DEFAULT_ENV_NAME}
+        write_state "ENV_NAME" "$ENV_NAME"
     else info "Using previously configured environment: $ENV_NAME"; fi
-    ENV_DIR="environments/$ENV_NAME";
-    TFVARS_FILE_PATH="$REPO_ROOT/infra/$ENV_DIR/$ENV_NAME.tfvars"
-    STATE_FILE="$REPO_ROOT/infra/$ENV_DIR/.bootstrap_state";
-    read_state
-    if [ ! -d "$ENV_DIR" ]; then
-        info "Creating new environment directory from template: $TEMPLATE_ENV_DIR"; cp -r "$TEMPLATE_ENV_DIR" "$ENV_DIR"
-        prompt "Do you have an existing GCS bucket for Terraform state? (y/n)"; read -r REPLY < /dev/tty
+    
+    if [ -z "$DEPLOY_REGION" ] || [ "$DEPLOY_REGION" == "unassigned" ]; then
+        info "Fetching available GCP regions..."
+        while true; do
+            prompt "Which GCP region would you like to deploy resources to?"; read -p "   Deploy Region [default value: $DEFAULT_DEPLOY_REGION]: " DEPLOY_REGION < /dev/tty || exit 130
+            DEPLOY_REGION=${DEPLOY_REGION:-$DEFAULT_DEPLOY_REGION}
+            if [[ "$DEPLOY_REGION" =~ ^[a-z]+-[a-z]+[0-9]+$ ]]; then
+                write_state "DEPLOY_REGION" "$DEPLOY_REGION"
+                break
+            else
+                warn "Invalid region format: '$DEPLOY_REGION'. Please enter a valid GCP region (e.g., us-central1, europe-west1)."
+            fi
+        done
+    else info "Using previously configured deploy region: $DEPLOY_REGION"; fi
+
+    if [ -z "$DB_TIER" ] || [ "$DB_TIER" == "unassigned" ]; then
+        info "Cloud SQL Machine Tier Options:"
+        echo "  [1] Standard Enterprise (db-custom-2-7680) - Recommended for testing/staging"
+        echo "  [2] High Performance (db-perf-optimized-N-2) - Recommended for heavy production (Subject to availability)"
+        echo "  [3] Custom..."
+        while true; do
+            prompt "Which database tier would you like to use?"; read -p "   Select [1/2/3] or enter custom [default: 1]: " DB_TIER_SELECTION < /dev/tty || exit 130
+            DB_TIER_SELECTION=${DB_TIER_SELECTION:-1}
+            case "$DB_TIER_SELECTION" in
+                1) DB_TIER="db-custom-2-7680"; break ;;
+                2) DB_TIER="db-perf-optimized-N-2"; break ;;
+                3) prompt "Enter custom Cloud SQL tier (e.g., db-custom-4-15360):"; read -p "   Tier: " DB_TIER < /dev/tty || exit 130; if [ -n "$DB_TIER" ]; then break; fi ;;
+                *) if [[ "$DB_TIER_SELECTION" == db-* ]]; then DB_TIER="$DB_TIER_SELECTION"; break; else warn "Invalid selection."; fi ;;
+            esac
+        done
+        write_state "DB_TIER" "$DB_TIER"
+    else info "Using previously configured database tier: $DB_TIER"; fi
+
+    if [ -z "$DB_AVAILABILITY" ] || [ "$DB_AVAILABILITY" == "unassigned" ]; then
+        info "Cloud SQL Availability Options:"
+        echo "  [1] ZONAL - Single zone. Recommended for testing and <99.9% uptime needs. Lower cost."
+        echo "  [2] REGIONAL - Multi-zone High Availability. Recommended for strict production SLAs. 2x cost."
+        while true; do
+            prompt "Which availability type would you like to use?"; read -p "   Select [1/2] [default: 1]: " DB_AVAIL_SELECTION < /dev/tty || exit 130
+            DB_AVAIL_SELECTION=${DB_AVAIL_SELECTION:-1}
+            case "$DB_AVAIL_SELECTION" in
+                1) DB_AVAILABILITY="ZONAL"; break ;;
+                2) DB_AVAILABILITY="REGIONAL"; break ;;
+                ZONAL|REGIONAL) DB_AVAILABILITY="$DB_AVAIL_SELECTION"; break ;;
+                *) warn "Invalid selection. Enter 1 or 2." ;;
+            esac
+        done
+        write_state "DB_AVAILABILITY" "$DB_AVAILABILITY"
+    else info "Using previously configured database availability: $DB_AVAILABILITY"; fi
+    
+    BE_SERVICE_NAME="cs-${ENV_NAME}-backend"
+    FE_SERVICE_NAME="cs-${ENV_NAME}-frontend"
+    # Use flattened structure directly under infrastructure/
+    ENV_DIR="$REPO_ROOT/infrastructure"
+    TFVARS_FILE_PATH="$ENV_DIR/$ENV_NAME.tfvars"
+    info "Configuring environment files in flattened infrastructure directory..."
+    if [ -n "$TF_BUCKET_NAME" ] && [ "$TF_BUCKET_NAME" != "unassigned" ]; then
+        info "Using stored Terraform state bucket from profile: ${C_YELLOW}${TF_BUCKET_NAME}${C_RESET}"
+        BUCKET_NAME="$TF_BUCKET_NAME"
+    else
+        if [ -n "$CLI_PROFILE" ]; then
+            info "Headless mode: Automatically determining Terraform state bucket."
+            REPLY="n"
+        else
+            prompt "Do you have an existing GCS bucket for Terraform state? (y/n)"; read -r REPLY < /dev/tty
+        fi
+        
         if [[ $REPLY =~ ^[Yy]$ ]]; then
-            prompt "Please enter the name of your GCS bucket:"; read -p "   Bucket Name: " BUCKET_NAME < /dev/tty
+            prompt "Please enter the name of your GCS bucket:"; read -p "   Bucket Name: " BUCKET_NAME < /dev/tty || exit 130
+            if ! gcloud storage buckets describe "gs://${BUCKET_NAME}" --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
+                fail "Bucket 'gs://${BUCKET_NAME}' does not exist or you lack access permissions."
+            fi
         else
             BUCKET_SUFFIX=$(printf "$GCS_BUCKET_SUFFIX_FORMAT" "$ENV_NAME"); BUCKET_NAME="${GCP_PROJECT_ID}-${BUCKET_SUFFIX}"
-            info "Creating GCS bucket '$BUCKET_NAME' for Terraform state..."; gsutil mb -p "$GCP_PROJECT_ID" "gs://${BUCKET_NAME}" || warn "Bucket 'gs://${BUCKET_NAME}' may already exist. Continuing..."
+            info "Creating GCS bucket '$BUCKET_NAME' for Terraform state..."
+            if ! gsutil mb -p "$GCP_PROJECT_ID" -l "$DEPLOY_REGION" "gs://${BUCKET_NAME}" 2>/dev/null; then
+                if gcloud storage buckets describe "gs://${BUCKET_NAME}" --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
+                    info "Bucket 'gs://${BUCKET_NAME}' already exists. Continuing..."
+                else
+                    fail "Failed to create Terraform state bucket 'gs://${BUCKET_NAME}'. Please check your permissions and region policies."
+                fi
+            fi
         fi
-        BUCKET_PREFIX=$(printf "$GCS_BUCKET_PREFIX_FORMAT" "$ENV_NAME")
-        info "Updating backend.tf with default prefix: $BUCKET_PREFIX"; echo "terraform {
-  backend \"gcs\" {
-    bucket = \"$BUCKET_NAME\"
-    prefix = \"$BUCKET_PREFIX\"
-  }
-}" > "$ENV_DIR/backend.tf"
-        info "Updating $TFVARS_FILE_PATH...";
-        mv "$ENV_DIR/dev.tfvars" "$TFVARS_FILE_PATH"
+    fi
+    BUCKET_PREFIX=$(printf "$GCS_BUCKET_PREFIX_FORMAT" "$ENV_NAME")
+    info "Creating backend config file ${ENV_NAME}.backend.tfvars..."; echo -e "bucket = \"$BUCKET_NAME\"\nprefix = \"$BUCKET_PREFIX\"" > "$ENV_DIR/${ENV_NAME}.backend.tfvars"
+    
+    if [ -z "$REPO_NAME" ]; then
+        REPO_NAME=$(basename "$REPO_URL" .git)
+        if [[ "$REPO_URL" =~ ^https://([^/]+)/([^/]+)/ ]]; then
+            REPO_HOST="${BASH_REMATCH[1]}"
+            REPO_OWNER="${BASH_REMATCH[2]}"
+        elif [[ "$REPO_URL" =~ ^git@([^:]+):([^/]+)/ ]]; then
+            REPO_HOST="${BASH_REMATCH[1]}"
+            REPO_OWNER="${BASH_REMATCH[2]}"
+        fi
+        write_state "REPO_NAME" "$REPO_NAME"
+        write_state "REPO_HOST" "$REPO_HOST"
+        write_state "REPO_OWNER" "$REPO_OWNER"
+    fi
 
-        sed -i.bak "s|^[#[:space:]]*gcp_project_id[[:space:]]*=.*|gcp_project_id = \"$GCP_PROJECT_ID\"|g" "$TFVARS_FILE_PATH"
-        sed -i.bak "s|^[#[:space:]]*github_repo_owner[[:space:]]*=.*|github_repo_owner = \"$GITHUB_REPO_OWNER\"|g" "$TFVARS_FILE_PATH"
-        sed -i.bak "s|^[#[:space:]]*github_repo_name[[:space:]]*=.*|github_repo_name = \"$GITHUB_REPO_NAME\"|g" "$TFVARS_FILE_PATH"
-
-        # Set service names automatically
-        info "Default service names will be '$BE_SERVICE_NAME' and '$FE_SERVICE_NAME'."
-        sed -i.bak "s|^[#[:space:]]*backend_service_name[[:space:]]*=.*|backend_service_name = \"$BE_SERVICE_NAME\"|g" "$TFVARS_FILE_PATH"
-        sed -i.bak "s|^[#[:space:]]*frontend_service_name[[:space:]]*=.*|frontend_service_name = \"$FE_SERVICE_NAME\"|g" "$TFVARS_FILE_PATH"
-
-        # --- Discover and Set Firebase Site ID ---
-        # This function will query Firebase for the default site and update the
-        # 'YOUR_FIREBASE_SITE_ID' placeholder in the .tfvars file.
-        configure_firebase_site_id "$TFVARS_FILE_PATH" "$GCP_PROJECT_ID"
-        # After discovery, read the final value into a global variable for later use
-        AUTO_FIREBASE_SITE_ID=$(grep 'firebase_site_id' "$TFVARS_FILE_PATH" | awk -F'"' '{print $2}')
-
-        # Prompt only for the branch name
-        export TFVARS_FILE=$TFVARS_FILE_PATH # Set context for helper function
-        prompt "Please provide the following value:"
-        prompt_and_update_tfvar "GitHub Branch to deploy from" "$DEFAULT_BRANCH_NAME" "github_branch_name" "GITHUB_BRANCH"
-
-        write_state "ENV_NAME" "$ENV_NAME"; write_state "BE_SERVICE_NAME" "$BE_SERVICE_NAME"; write_state "FE_SERVICE_NAME" "$FE_SERVICE_NAME"; write_state "GITHUB_BRANCH" "$GITHUB_BRANCH"
-    else info "Environment directory '$ENV_DIR' already configured."; fi
+    info "Creating or repairing $TFVARS_FILE_PATH with required root parameters..."
+    cat <<EOF > "$TFVARS_FILE_PATH"
+project_id         = "$GCP_PROJECT_ID"
+region             = "$DEPLOY_REGION"
+environment        = "$ENV_NAME"
+asset_bucket_name_override = "${ASSET_BUCKET_OVERRIDE:-}"
+db_tier            = "$DB_TIER"
+db_availability_type = "$DB_AVAILABILITY"
+resource_prefix    = "cs"
+firebase_site_id   = "YOUR_FIREBASE_SITE_ID"
+repo_host          = "$REPO_HOST"
+repo_owner         = "$REPO_OWNER"
+repo_name          = "$REPO_NAME"
+repo_branch_name   = "$REPO_BRANCH"
+repo_conn_name     = "${REPO_CONN_NAME:-}"
+EOF
+    info "Default service names will be '$BE_SERVICE_NAME' and '$FE_SERVICE_NAME'."
+    write_state "ENV_NAME" "$ENV_NAME"; write_state "BE_SERVICE_NAME" "$BE_SERVICE_NAME"; write_state "FE_SERVICE_NAME" "$FE_SERVICE_NAME"; write_state "REPO_BRANCH" "$REPO_BRANCH"; write_state "TF_BUCKET_NAME" "$BUCKET_NAME"
     success "Configuration files for '$ENV_NAME' environment are ready."
 }
 
 handle_manual_steps() {
-    step 6 "Manual Steps Required"; cd "$REPO_ROOT/infra"; TFVARS_FILE_PATH="$ENV_DIR/$ENV_NAME.tfvars"
-    info "Enabling required Google Cloud APIs..."; gcloud services enable cloudbuild.googleapis.com secretmanager.googleapis.com firebase.googleapis.com iap.googleapis.com identitytoolkit.googleapis.com texttospeech.googleapis.com workflows.googleapis.com --project="$GCP_PROJECT_ID"
-    if [ -z "$GITHUB_CONN_NAME" ]; then
-        prompt "\nDo you already have a Cloud Build Host Connection for GitHub in this project? (y/n)"; read -r REPLY < /dev/tty
-        if [[ $REPLY =~ ^[Yy]$ ]]; then prompt "Please enter the existing connection name:"; read -p "   Connection Name: " GITHUB_CONN_NAME < /dev/tty
+    step 6 "Manual Steps Required"; cd "$REPO_ROOT/infrastructure"; TFVARS_FILE_PATH="$ENV_DIR/$ENV_NAME.tfvars"
+    info "Enabling required Google Cloud APIs..."; gcloud services enable cloudbuild.googleapis.com secretmanager.googleapis.com firebase.googleapis.com iap.googleapis.com identitytoolkit.googleapis.com texttospeech.googleapis.com workflows.googleapis.com sqladmin.googleapis.com --project="$GCP_PROJECT_ID"
+    if [ -z "$REPO_CONN_NAME" ]; then
+        local PROVIDER_NAME="GitHub"
+        if [[ "$REPO_HOST" == *"gitlab"* ]]; then PROVIDER_NAME="GitLab"; fi
+        
+        prompt "\nDo you already have a Cloud Build Host Connection for $PROVIDER_NAME in this project? (y/n)"; read -r REPLY < /dev/tty
+        if [[ $REPLY =~ ^[Yy]$ ]]; then prompt "Please enter the existing connection name:"; read -p "   Connection Name: " REPO_CONN_NAME < /dev/tty
         else
-            warn "You will now be guided to create a new GitHub connection."; info "Please perform the following manual steps:"
+            warn "You will now be guided to create a new $PROVIDER_NAME connection."; info "Please perform the following manual steps:"
             echo "1. Open this URL in your browser:"; echo -e "   ${C_YELLOW}https://console.cloud.google.com/cloud-build/connections/create?project=${GCP_PROJECT_ID}${C_RESET}"
-            echo "2. Select 'GitHub (Cloud Build GitHub App)' and click 'CONTINUE'."
-            echo "3. Follow the prompts to authorize the app on your GitHub account."; 
-            echo "4. Grant access to your forked repository: '${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}'."
-            echo "5. After creating the connection, copy its name (e.g., 'gh-yourname-con')."
-            prompt "Paste the new Cloud Build Connection Name here:"; read -p "   Connection Name: " GITHUB_CONN_NAME < /dev/tty
+            echo "2. Select your provider ('GitHub' or 'GitLab') and click 'CONTINUE'."
+            echo "3. Follow the prompts to authorize the app on your $PROVIDER_NAME account."; 
+            echo "4. Grant access to your forked repository: '${REPO_OWNER}/${REPO_NAME}'."
+            echo "5. After creating the connection, copy its name (e.g., 'gh-yourname-con' or 'gl-yourname-con')."
+            prompt "Paste the new Cloud Build Connection Name here:"; read -p "   Connection Name: " REPO_CONN_NAME < /dev/tty
         fi
-        sed -i.bak "s|^[#[:space:]]*github_conn_name[[:space:]]*=.*|github_conn_name = \"$GITHUB_CONN_NAME\"|g" "$TFVARS_FILE_PATH"
-        write_state "GITHUB_CONN_NAME" "$GITHUB_CONN_NAME"
+        sed -i.bak "s|^[#[:space:]]*repo_conn_name[[:space:]]*=.*|repo_conn_name = \"$REPO_CONN_NAME\"|g" "$TFVARS_FILE_PATH"
+        write_state "REPO_CONN_NAME" "$REPO_CONN_NAME"
     fi
-    warn "\nTerraform cannot accept legal terms on your behalf."; info "Please perform this one-time manual step for Firebase:"
-    echo "1. Open this URL in your browser:"; echo -e "   ${C_YELLOW}https://console.firebase.google.com/?project=${GCP_PROJECT_ID}${C_RESET}"
-    echo "2. You should be prompted to 'Add Firebase' to your existing project."; echo "3. Follow the prompts and accept the terms."
-    prompt "Press [Enter] to continue after you have linked the project."; read -r < /dev/tty
+    if [ -z "$FIREBASE_TERMS_ACCEPTED" ]; then
+        warn "\nTerraform cannot accept legal terms on your behalf."; info "Please perform this one-time manual step for Firebase:"
+        echo "1. Open this URL in your browser:"; echo -e "   ${C_YELLOW}https://console.firebase.google.com/?project=${GCP_PROJECT_ID}${C_RESET}"
+        echo "2. You should be prompted to 'Add Firebase' to your existing project."; echo "3. Follow the prompts and accept the terms."
+        prompt "Press [Enter] to continue after you have linked the project."; read -r < /dev/tty
+        write_state "FIREBASE_TERMS_ACCEPTED" "true"
+    fi
     rm -f "$TFVARS_FILE_PATH.bak"
 
     # --- Automate .tfvars placeholder replacement ---
@@ -481,6 +655,7 @@ handle_manual_steps() {
         prompt "Paste the OAuth Client ID here:"
         read -p "   Client ID: " AUTO_OAUTH_CLIENT_ID < /dev/tty
         if [ -z "$AUTO_OAUTH_CLIENT_ID" ]; then fail "OAuth Client ID is required to proceed."; fi
+        write_state "AUTO_OAUTH_CLIENT_ID" "$AUTO_OAUTH_CLIENT_ID"
     fi
 
     sed -i.bak "s|YOUR_OAUTH_WEB_CLIENT_ID_HERE|$AUTO_OAUTH_CLIENT_ID|g" "$TFVARS_FILE_PATH"
@@ -510,43 +685,66 @@ setup_firebase_app() {
     AUTO_FIREBASE_MEASUREMENT_ID=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.measurementId // "") catch ""' 2>/dev/null || echo "" )
 
     if [ -z "$AUTO_FIREBASE_API_KEY" ]; then fail "Could not automatically fetch Firebase API Key. Please check your Firebase setup."; fi
+    
+    info "Resolving Firebase Hosting Site ID for project '$GCP_PROJECT_ID'..."
+    if [ -n "$AUTO_FIREBASE_SITE_ID" ] && [ "$AUTO_FIREBASE_SITE_ID" != "null" ] && [ "$AUTO_FIREBASE_SITE_ID" != "unassigned" ]; then
+        info "Using confirmed Firebase Hosting Site ID from profile: ${C_YELLOW}${AUTO_FIREBASE_SITE_ID}${C_RESET}"
+    else
+        local default_site_name=$( (firebase hosting:sites:list --project "$GCP_PROJECT_ID" --json 2>/dev/null || echo "{}") | jq -r 'try ((.result.sites // []) | (map(select(.type == "DEFAULT_SITE"))[0].name // .[0].name // "")) catch ""' 2>/dev/null || echo "" )
+        AUTO_FIREBASE_SITE_ID=$GCP_PROJECT_ID
+        [ -n "$default_site_name" ] && AUTO_FIREBASE_SITE_ID=$(basename "$default_site_name")
+        info "Discovered Firebase Hosting Site ID: ${C_YELLOW}${AUTO_FIREBASE_SITE_ID}${C_RESET}"
+        write_state "AUTO_FIREBASE_SITE_ID" "$AUTO_FIREBASE_SITE_ID"
+    fi
+
+    local TFVARS_FILE_PATH="$REPO_ROOT/infrastructure/$ENV_NAME.tfvars"
+    if [ -f "$TFVARS_FILE_PATH" ]; then
+        sed -i.bak "s/YOUR_FIREBASE_SITE_ID/${AUTO_FIREBASE_SITE_ID}/" "$TFVARS_FILE_PATH" 2>/dev/null && rm -f "${TFVARS_FILE_PATH}.bak"
+    fi
+    
     success "Firebase secrets have been fetched and will be populated automatically after Terraform runs."
 }
 
 populate_oauth_secrets() {
     step 8 "Automating OAuth Secret Population"
     cd "$REPO_ROOT"
-    info "Looking for the OAuth 2.0 Web Client ID using the Firebase Management API..."
-
-    local AUTH_TOKEN=$(gcloud auth print-access-token)
-    local APP_ID=$( (firebase apps:list --project="$GCP_PROJECT_ID" --json 2>/dev/null || echo "{}") | jq -r --arg name "$FE_SERVICE_NAME" 'try (.result[]? | select(.displayName == $name) | .appId) catch ""' 2>/dev/null || echo "" )
-
-    if [ -z "$APP_ID" ]; then
-        warn "Could not find Firebase App ID for '$FE_SERVICE_NAME'. Skipping OAuth secret population."
-        return
-    fi
-
-    # Use the Firebase Management API to get the auth config, which includes the client ID.
-    local API_RESPONSE=$(curl -s -X GET \
-        -H "Authorization: Bearer $AUTH_TOKEN" \
-        "https://firebase.googleapis.com/v1beta1/projects/$GCP_PROJECT_ID/webApps/$APP_ID/config")
-
-    # The client ID is the one NOT associated with the API key.
-    AUTO_OAUTH_CLIENT_ID=$( (echo "$API_RESPONSE" 2>/dev/null || echo "{}") | jq -r 'try (.oauthClientId // "") catch ""' 2>/dev/null || echo "" )
-
-    if [ -z "$AUTO_OAUTH_CLIENT_ID" ] || [ "$AUTO_OAUTH_CLIENT_ID" == "null" ]; then
-        warn "Could not automatically find the OAuth Client ID via API."
-        info "Please perform the following manual steps:"
-        echo "1. Open this URL in your browser to find your OAuth Client ID:"
-        echo -e "   ${C_YELLOW}https://console.cloud.google.com/apis/credentials?project=${GCP_PROJECT_ID}${C_RESET}"
-        echo "2. Find the OAuth 2.0 Client ID of type 'Web application'."
-        prompt "Paste the OAuth Client ID here:"
-        read -p "   Client ID: " AUTO_OAUTH_CLIENT_ID < /dev/tty
-        if [ -z "$AUTO_OAUTH_CLIENT_ID" ]; then
-            fail "OAuth Client ID is required to proceed. Please restart the script."
-        fi
+    
+    if [ -n "$AUTO_OAUTH_CLIENT_ID" ] && [ "$AUTO_OAUTH_CLIENT_ID" != "null" ]; then
+        info "Using confirmed OAuth Client ID from deployment profile: ${C_YELLOW}${AUTO_OAUTH_CLIENT_ID}${C_RESET}"
     else
-        info "Found OAuth Client ID via Firebase API."
+        info "Looking for the OAuth 2.0 Web Client ID using the Firebase Management API..."
+
+        local AUTH_TOKEN=$(gcloud auth print-access-token)
+        local APP_ID=$( (firebase apps:list --project="$GCP_PROJECT_ID" --json 2>/dev/null || echo "{}") | jq -r --arg name "$FE_SERVICE_NAME" 'try (.result[]? | select(.displayName == $name) | .appId) catch ""' 2>/dev/null || echo "" )
+
+        if [ -z "$APP_ID" ]; then
+            warn "Could not find Firebase App ID for '$FE_SERVICE_NAME'. Skipping OAuth secret population."
+            return
+        fi
+
+        # Use the Firebase Management API to get the auth config, which includes the client ID.
+        local API_RESPONSE=$(curl -s -X GET \
+            -H "Authorization: Bearer $AUTH_TOKEN" \
+            "https://firebase.googleapis.com/v1beta1/projects/$GCP_PROJECT_ID/webApps/$APP_ID/config")
+
+        # The client ID is the one NOT associated with the API key.
+        AUTO_OAUTH_CLIENT_ID=$( (echo "$API_RESPONSE" 2>/dev/null || echo "{}") | jq -r 'try (.oauthClientId // "") catch ""' 2>/dev/null || echo "" )
+
+        if [ -z "$AUTO_OAUTH_CLIENT_ID" ] || [ "$AUTO_OAUTH_CLIENT_ID" == "null" ]; then
+            warn "Could not automatically find the OAuth Client ID via API."
+            info "Please perform the following manual steps:"
+            echo "1. Open this URL in your browser to find your OAuth Client ID:"
+            echo -e "   ${C_YELLOW}https://console.cloud.google.com/apis/credentials?project=${GCP_PROJECT_ID}${C_RESET}"
+            echo "2. Find the OAuth 2.0 Client ID of type 'Web application'."
+            prompt "Paste the OAuth Client ID here:"
+            read -p "   Client ID: " AUTO_OAUTH_CLIENT_ID < /dev/tty
+            if [ -z "$AUTO_OAUTH_CLIENT_ID" ]; then
+                fail "OAuth Client ID is required to proceed. Please restart the script."
+            fi
+        else
+            info "Found OAuth Client ID via Firebase API."
+        fi
+        write_state "AUTO_OAUTH_CLIENT_ID" "$AUTO_OAUTH_CLIENT_ID"
     fi
 
     info "Populating secrets with Client ID: ${C_YELLOW}${AUTO_OAUTH_CLIENT_ID}${C_RESET}"
@@ -560,45 +758,305 @@ populate_oauth_secrets() {
     success "Audiences updated in .tfvars file."
 }
 
-setup_db_secrets() {
-    step 9 "Configuring Database Secrets" # Renumber subsequent steps
-    
-    # 1. Enable required APIs first
-    info "Enabling Secret Manager and SQL Admin APIs..."
-    gcloud services enable secretmanager.googleapis.com sqladmin.googleapis.com --project="$GCP_PROJECT_ID"
 
-    local SECRET_NAME="creative-studio-db-password"
-    
-    # 2. Check if the secret already exists
-    if gcloud secrets describe "$SECRET_NAME" --project="$GCP_PROJECT_ID" > /dev/null 2>&1; then
-        info "Secret '$SECRET_NAME' already exists. Skipping creation."
-    else
-        info "Creating new secret '$SECRET_NAME'..."
-        
-        # 3. Generate a secure random password (alphanumeric, no special chars that break URLs)
-        # using openssl. We use base64 but strip non-alphanumeric chars to be safe for DB connection strings
-        local DB_PASSWORD=$(openssl rand -base64 20 | tr -dc 'a-zA-Z0-9' | head -c 16)
-        
-        # 4. Create the secret and add the first version
-        # We use printf to avoid trailing newlines
-        printf "%s" "$DB_PASSWORD" | gcloud secrets create "$SECRET_NAME" \
-            --data-file=- \
-            --replication-policy="automatic" \
-            --project="$GCP_PROJECT_ID" \
-            --quiet
-
-        success "Secret '$SECRET_NAME' created successfully."
-    fi
-}
 
 run_terraform() {
     step 10 "Deploying Infrastructure with Terraform";
-	TFVARS_FILE_PATH="$REPO_ROOT/infra/environments/$ENV_NAME/$ENV_NAME.tfvars"; info "Navigating to $REPO_ROOT/infra/environments/$ENV_NAME..."; cd "$REPO_ROOT/infra/environments/$ENV_NAME"
-    info "Initializing Terraform..."; terraform init -reconfigure
-    info "Planning Terraform changes..."; terraform plan -var-file="$TFVARS_FILE_PATH"
-    prompt "\nTerraform is ready to apply the changes. This will create the infrastructure, including empty secret shells."; prompt "Do you want to proceed with 'terraform apply'? (y/n)"; read -r REPLY < /dev/tty
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then warn "Apply cancelled."; return; fi
-    terraform apply -auto-approve -var-file="$TFVARS_FILE_PATH" -parallelism=30
+    local ENV_TF_DIR="$REPO_ROOT/infrastructure"
+    TFVARS_FILE_PATH="$ENV_TF_DIR/$ENV_NAME.tfvars"; info "Navigating to $ENV_TF_DIR..."; cd "$ENV_TF_DIR"
+    info "Initializing Terraform..."; terraform init -reconfigure -upgrade -backend-config="${ENV_NAME}.backend.tfvars"
+    info "Planning Terraform changes..."
+    
+    set +e
+    terraform plan -detailed-exitcode -var-file="$TFVARS_FILE_PATH" -out="tfplan"
+    local PLAN_STATUS=$?
+    set -e
+
+    if [ $PLAN_STATUS -eq 0 ]; then
+        success "Terraform plan detected zero required infrastructure modifications. Skipping apply step!"
+        rm -f tfplan
+        return 0
+    elif [ $PLAN_STATUS -ne 2 ]; then
+        rm -f tfplan
+        fail "Terraform plan encountered an error (exit code $PLAN_STATUS)."
+    fi
+
+    if [ "$TF_AUTO_APPROVE" = "true" ]; then
+        info "Auto-approve flag (--auto-approve) detected. Applying infrastructure modifications automatically..."
+        terraform apply -parallelism=30 "tfplan"
+    else
+        warn "⚠️  WARNING: If you are making major database infrastructure changes (e.g., migrating from a Public IP to a Private IP),"
+        warn "   your Cloud Run service may crash in a deadlock while Terraform updates the network."
+        warn "   If you are doing a major migration and didn't use the --migrate-db flag, please cancel now (type 'n') and re-run this script with the --migrate-db flag."
+        prompt "\nTerraform is ready to apply the changes. This will create or update infrastructure."
+        prompt "Do you want to proceed with 'terraform apply'? (y/n)"
+        read -r REPLY < /dev/tty
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            rm -f tfplan
+            warn "Apply cancelled by user."
+            return 0
+        fi
+        terraform apply -parallelism=30 "tfplan"
+    fi
+    rm -f tfplan
+}
+
+resolve_migration_bucket() {
+    # All DB migration artifacts live in the Terraform state bucket, which owns infra artifacts.
+    #
+    # IMPORTANT: write_state() only persists to the profile file, it does NOT set the shell
+    # variable. On a first run TF_BUCKET_NAME is therefore still empty here, and the old
+    # "${GCP_PROJECT_ID}-terraform-state" fallback could never match the real convention
+    # ("${GCP_PROJECT_ID}-cstudio-${ENV_NAME}-tfstate"). That made `gcloud storage ls` query a
+    # non-existent bucket, silently find nothing, and skip the migration prompt entirely.
+    if [ -n "$TF_BUCKET_NAME" ] && [ "$TF_BUCKET_NAME" != "unassigned" ]; then
+        echo "$TF_BUCKET_NAME"
+        return
+    fi
+
+    # Authoritative source: the backend config Terraform itself initialises against.
+    local BACKEND_FILE="$REPO_ROOT/infrastructure/${ENV_NAME}.backend.tfvars"
+    if [ -f "$BACKEND_FILE" ]; then
+        local FROM_BACKEND
+        FROM_BACKEND=$(grep -E '^[[:space:]]*bucket[[:space:]]*=' "$BACKEND_FILE" | head -n 1 | sed -E 's/.*=[[:space:]]*"([^"]+)".*/\1/')
+        if [ -n "$FROM_BACKEND" ]; then
+            echo "$FROM_BACKEND"
+            return
+        fi
+    fi
+
+    # Last resort: rebuild the documented naming convention.
+    echo "${GCP_PROJECT_ID}-$(printf "$GCS_BUCKET_SUFFIX_FORMAT" "$ENV_NAME")"
+}
+
+export_legacy_database() {
+    step 8 "Database Backup & Export"
+    
+    local SOURCE_INSTANCE=""
+    
+    if [ "$CLI_MIGRATE_DB" == "true" ]; then
+        # Trigger 1: user explicitly asked for a migration. Intercept ANY database (public or private).
+        info "--migrate-db flag detected. Searching for current database to backup..."
+        SOURCE_INSTANCE=$(gcloud sql instances list --project="$GCP_PROJECT_ID" --format="value(name)" | grep -E "creative-studio-db|cs-.*-db-" | head -n 1 || echo "")
+        if [ -z "$SOURCE_INSTANCE" ]; then
+            warn "No existing database found to back up. Continuing without a migration backup."
+            return
+        fi
+        info "Found database: ${C_YELLOW}${SOURCE_INSTANCE}${C_RESET}"
+    else
+        # Trigger 2: no flag passed, so only intercept the exact legacy V1 public database.
+        SOURCE_INSTANCE=$(gcloud sql instances list --project="$GCP_PROJECT_ID" --format="value(name)" | grep "^creative-studio-db$" | head -n 1 || echo "")
+        if [ -z "$SOURCE_INSTANCE" ]; then
+            info "No legacy V1 public database instance found. Nothing to back up."
+            return
+        fi
+        warn "Detected legacy V1 public database instance: ${C_YELLOW}${SOURCE_INSTANCE}${C_RESET}"
+        prompt "Would you like to safely back this up and migrate it to the new Private IP architecture? (y/N)"
+        read -r BACKUP_CHOICE < /dev/tty
+        if [[ ! "$BACKUP_CHOICE" =~ ^[Yy]$ ]]; then
+            info "Declined. Leaving '${SOURCE_INSTANCE}' untouched and skipping the migration backup."
+            return
+        fi
+    fi
+    
+    # Every "nothing to do" path returned above, so we definitely have an instance to export.
+    info "Exporting data before Terraform replaces it..."
+
+    local MIGRATION_BUCKET=$(resolve_migration_bucket)
+
+    local SOURCE_SA
+    SOURCE_SA=$(gcloud sql instances describe "$SOURCE_INSTANCE" --project="$GCP_PROJECT_ID" --format="value(serviceAccountEmailAddress)")
+
+    info "Granting write access to source instance ($SOURCE_SA) on gs://$MIGRATION_BUCKET..."
+    local IAM_LOG=$(mktemp)
+    if ! gcloud storage buckets add-iam-policy-binding "gs://$MIGRATION_BUCKET" \
+        --member="serviceAccount:$SOURCE_SA" \
+        --role="roles/storage.objectAdmin" --project="$GCP_PROJECT_ID" >"$IAM_LOG" 2>&1; then
+        echo -e "${C_RED}IAM Binding Error:${C_RESET}"
+        cat "$IAM_LOG"
+        warn "Failed to grant Cloud SQL Service Account permission to the bucket."
+        warn "Please ensure you have roles/storage.admin permissions on this project."
+    fi
+    rm -f "$IAM_LOG"
+
+    # Stable export file name
+    export LEGACY_EXPORT_FILE="migration_backup.sql.gz"
+
+    local EXPORT_LOG
+    EXPORT_LOG=$(mktemp)
+    start_spinner "Exporting data to gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE"
+    if retry_command gcloud sql export sql "$SOURCE_INSTANCE" "gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE" --database="creative_studio" --project="$GCP_PROJECT_ID" --quiet >"$EXPORT_LOG" 2>&1; then
+        stop_spinner
+        success "Legacy database successfully exported! Safe for Terraform to proceed."
+        export DID_EXPORT_LEGACY_DB="true"
+    else
+        stop_spinner
+        echo -e "${C_RED}Export Error Logs:${C_RESET}"
+        cat "$EXPORT_LOG"
+        fail "Failed to export legacy database. Aborting to prevent data loss."
+    fi
+    rm -f "$EXPORT_LOG"
+}
+
+prepare_migration_and_dummy_image() {
+    step 9 "Checking Migration Intent & Preparing Safe State"
+
+    # Only the Terraform state bucket is scanned: it is the bucket responsible for infra artifacts.
+    local MIGRATION_BUCKET=$(resolve_migration_bucket)
+
+    # Trigger 3: an orphaned backup is sitting in the infra bucket and was never imported.
+    if [ "$DID_EXPORT_LEGACY_DB" != "true" ] && [ "$CLI_MIGRATE_DB" != "true" ] && [ "$SKIP_DB_IMPORT" != "true" ]; then
+        local FOUND_BACKUP
+        FOUND_BACKUP=$(gcloud storage ls "gs://$MIGRATION_BUCKET/migration_backup.sql.gz" 2>/dev/null | head -n 1 || echo "")
+
+        if [ -n "$FOUND_BACKUP" ]; then
+            LEGACY_EXPORT_FILE=$(basename "$FOUND_BACKUP")
+            warn "Found an un-imported database backup in your infrastructure bucket: gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE"
+            echo -e "${C_CYAN}(If YES: we deploy a safe dummy image, apply Terraform, then restore the data before booting the real app.)${C_RESET}"
+            prompt "Would you like to migrate/restore this backup into your database during this deployment? (y/N)"
+            read -r MIGRATION_CHOICE < /dev/tty
+            if [[ "$MIGRATION_CHOICE" =~ ^[Yy]$ ]]; then
+                export CLI_MIGRATE_DB="true"
+                export LEGACY_EXPORT_FILE
+                # Step 10 gates on DID_EXPORT_LEGACY_DB (not CLI_MIGRATE_DB). Setting it here means
+                # "a backup is staged and confirmed", so Step 10 imports directly instead of
+                # re-running its own detection and asking the user the same question twice.
+                export DID_EXPORT_LEGACY_DB="true"
+            else
+                info "Skipping manual recovery import as requested."
+                # Reuse the existing bypass so Step 10 does not ask the same question again.
+                # The reason is carried across so Step 10 reports accurately instead of
+                # claiming the --skip-db-import flag was passed.
+                SKIP_DB_IMPORT="true"
+                SKIP_DB_IMPORT_REASON="you declined the restore at Step 9"
+            fi
+        fi
+    fi
+
+    # Migration confirmed: sever the Cloud Run <-> database link before Terraform touches the VPC,
+    # otherwise the running container crash-loops and deadlocks the apply.
+    if [ "$CLI_MIGRATE_DB" == "true" ] || [ "$DID_EXPORT_LEGACY_DB" == "true" ]; then
+        info "Migration planned! Deploying safe dummy containers to prevent Cloud Run deadlocks during Terraform apply..."
+
+        local POTENTIAL_BACKENDS=("cstudio-be" "${BE_SERVICE_NAME}")
+        for BACKEND_NAME in "${POTENTIAL_BACKENDS[@]}"; do
+            if gcloud run services describe "$BACKEND_NAME" --region "$DEPLOY_REGION" --project "$GCP_PROJECT_ID" >/dev/null 2>&1; then
+                info "  -> Deploying dummy container to existing backend: ${C_YELLOW}$BACKEND_NAME${C_RESET}..."
+                gcloud run deploy "$BACKEND_NAME" \
+                    --image us-docker.pkg.dev/cloudrun/container/hello \
+                    --region "$DEPLOY_REGION" \
+                    --project "$GCP_PROJECT_ID" \
+                    --quiet >/dev/null 2>&1 || warn "  Dummy deploy failed for $BACKEND_NAME."
+            else
+                info "  -> Backend service '$BACKEND_NAME' does not exist (skipping)."
+            fi
+        done
+    else
+        info "No migration intent detected. Skipping dummy container safeguards."
+    fi
+}
+
+import_legacy_database() {
+    step 10 "Importing Legacy Database (if applicable)"
+    
+    local MIGRATION_BUCKET=$(resolve_migration_bucket)
+    
+    if [ "$SKIP_DB_IMPORT" == "true" ]; then
+        info "Skipping legacy database import (${SKIP_DB_IMPORT_REASON:-the --skip-db-import flag was passed})."
+        return
+    fi
+    
+    if [ "$DID_EXPORT_LEGACY_DB" != "true" ] || [ -z "$LEGACY_EXPORT_FILE" ]; then
+        local FOUND_BACKUP
+        FOUND_BACKUP=$(gcloud storage ls "gs://$MIGRATION_BUCKET/migration_backup.sql.gz" 2>/dev/null | sort | tail -n 1 || echo "")
+        
+        if [ -n "$FOUND_BACKUP" ]; then
+            LEGACY_EXPORT_FILE=$(basename "$FOUND_BACKUP")
+            warn "Found an un-imported legacy database backup in your bucket: gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE"
+            echo -e "${C_YELLOW}View it here: https://console.cloud.google.com/storage/browser/$MIGRATION_BUCKET?project=$GCP_PROJECT_ID${C_RESET}"
+            echo -e "${C_RED}WARNING: To prevent schema collisions with Cloud Run, proceeding will temporarily wipe the newly created database to ensure a blank canvas for the import.${C_RESET}"
+            echo -e "${C_RED}Cloud Run will automatically be updated with the latest code shortly after the import finishes.${C_RESET}"
+            echo -e "${C_YELLOW}(Note: This prompt will appear on every run as long as the backup file remains in GCS.)${C_RESET}"
+            echo -e "${C_YELLOW}(To silence this permanently, either delete gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE or pass --skip-db-import)${C_RESET}"
+            prompt "Would you like to import this legacy data into the new database?"
+            read -p "   Import backup? [Y/n]: " IMPORT_CHOICE < /dev/tty
+            if [[ "$IMPORT_CHOICE" =~ ^[nN]$ ]]; then
+                info "Skipping manual recovery import."
+                return
+            fi
+            export DID_EXPORT_LEGACY_DB="true"
+        else
+            info "No legacy migration needed. Skipping import."
+            return
+        fi
+    fi
+    
+    if [ "$DID_EXPORT_LEGACY_DB" == "true" ] && [ -n "$LEGACY_EXPORT_FILE" ]; then
+        info "Restoring legacy database backup ($LEGACY_EXPORT_FILE) to the new Private VPC instance..."
+        
+        local ENV_TF_DIR="$REPO_ROOT/infrastructure"
+        pushd "$ENV_TF_DIR" > /dev/null
+        local TARGET_INSTANCE=$(terraform output -raw cloud_sql_connection_name 2>/dev/null | cut -d':' -f3 || echo "")
+        popd > /dev/null
+
+        if [ -z "$TARGET_INSTANCE" ]; then
+            fail "Could not find the new target Cloud SQL instance in Terraform outputs."
+        fi
+
+        local MIGRATION_BUCKET=$(resolve_migration_bucket)
+        local TARGET_SA
+        TARGET_SA=$(gcloud sql instances describe "$TARGET_INSTANCE" --project="$GCP_PROJECT_ID" --format="value(serviceAccountEmailAddress)")
+        
+        info "Granting read access to target instance ($TARGET_SA)..."
+        local IAM_LOG=$(mktemp)
+        if ! gcloud storage buckets add-iam-policy-binding "gs://$MIGRATION_BUCKET" \
+            --member="serviceAccount:$TARGET_SA" \
+            --role="roles/storage.objectViewer" --project="$GCP_PROJECT_ID" >"$IAM_LOG" 2>&1; then
+            echo -e "${C_RED}IAM Binding Error:${C_RESET}"
+            cat "$IAM_LOG"
+            warn "Failed to grant target Cloud SQL Service Account permission to the bucket."
+        fi
+        rm -f "$IAM_LOG"
+        
+        info "Wiping the database to ensure a perfectly blank canvas for the import..."
+        gcloud sql databases delete creative_studio --instance="$TARGET_INSTANCE" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || true
+        gcloud sql databases create creative_studio --instance="$TARGET_INSTANCE" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || true
+            
+        local IMPORT_LOG
+        IMPORT_LOG=$(mktemp)
+        start_spinner "Importing data into $TARGET_INSTANCE from gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE"
+        if retry_command gcloud sql import sql "$TARGET_INSTANCE" "gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE" --database="creative_studio" --project="$GCP_PROJECT_ID" --quiet >"$IMPORT_LOG" 2>&1; then
+            stop_spinner
+            success "Legacy database successfully restored into new private instance!"
+            export DID_MIGRATE_DB="true"  # Triggers the secondary backup in seed_database
+            
+            # Force a fresh revision so the backend picks up the restored data.
+            #
+            # Do NOT set a RESTART_TRIGGER env var here. modules/compute only declares
+            # `ignore_changes = [template[0].containers[0].image, ...]`, so a stray env var is
+            # permanent Terraform drift and every later plan reports "1 to change" while
+            # churning an extra Cloud Run revision. Re-deploying the service's *current* image
+            # produces the same fresh revision, and image changes are ignored by Terraform.
+            for RESTART_TARGET in "cstudio-be" "${BE_SERVICE_NAME}"; do
+                local CURRENT_IMAGE
+                CURRENT_IMAGE=$(gcloud run services describe "$RESTART_TARGET" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(image)" 2>/dev/null || echo "")
+                if [ -n "$CURRENT_IMAGE" ]; then
+                    info "Restarting ${C_YELLOW}${RESTART_TARGET}${C_RESET} so it reconnects to the restored data..."
+                    gcloud run deploy "$RESTART_TARGET" --image "$CURRENT_IMAGE" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || warn "  Could not restart $RESTART_TARGET."
+                fi
+            done
+            
+            info "Leaving the old migration backup in GCS as a permanent safeguard: gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE"
+        else
+            stop_spinner
+            echo -e "${C_RED}Import Error Logs:${C_RESET}"
+            cat "$IMPORT_LOG"
+            warn "Failed to import legacy database into the new instance. Please check Cloud SQL logs."
+            warn "Your data is still safe in gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE!"
+            fail "Aborting deployment due to database import failure."
+        fi
+        rm -f "$IMPORT_LOG"
+    fi
 }
 
 update_oauth_client() {
@@ -614,7 +1072,7 @@ update_oauth_client() {
 }
 
 update_secrets() {
-    step 12 "Updating Remaining Secrets"; info "Navigating to $REPO_ROOT/infra/environments/$ENV_NAME..."; cd "$REPO_ROOT/infra/environments/$ENV_NAME"
+    step 12 "Updating Remaining Secrets"; info "Navigating to $REPO_ROOT/infrastructure..."; cd "$REPO_ROOT/infrastructure"
     info "Populating values in Secret Manager..."; local TERRAFORM_OUTPUTS=$(terraform output -json 2>/dev/null || echo "{}")
     local FRONTEND_SECRETS=$( (echo "$TERRAFORM_OUTPUTS" 2>/dev/null || echo "{}") | jq -r 'try (.frontend_secrets.value[]?) catch ""' 2>/dev/null || echo "" ); local BACKEND_SECRETS=$( (echo "$TERRAFORM_OUTPUTS" 2>/dev/null || echo "{}") | jq -r 'try (.backend_secrets.value[]?) catch ""' 2>/dev/null || echo "" )
     local ALL_SECRETS=$(echo "${FRONTEND_SECRETS} ${BACKEND_SECRETS}" | tr ' ' '\n' | sort -u | grep .)
@@ -623,15 +1081,11 @@ update_secrets() {
     # --- Double-check for Firebase config if variables are not set ---
     # This handles cases where the script is resumed after step 7
     if [ -z "$AUTO_FIREBASE_API_KEY" ]; then
-        info "Auto-discovered Firebase variables not set. Re-running discovery..."
-        local FE_APP_NAME=$(grep 'frontend_service_name' "$TFVARS_FILE_PATH" | awk -F'"' '{print $2}')
-        if [ -z "$FE_APP_NAME" ]; then
-            warn "Could not determine frontend service name from .tfvars. Cannot auto-discover Firebase secrets."
-        else
-            local APP_ID=$( (firebase apps:list --project="$GCP_PROJECT_ID" --json 2>/dev/null || echo "{}") | jq -r --arg name "$FE_SERVICE_NAME" 'try (.result[]? | select(.displayName == $name) | .appId) catch ""' 2>/dev/null || echo "" )
-            if [ -n "$APP_ID" ]; then
-                local SDK_CONFIG_JSON=$(firebase apps:sdkconfig WEB "$APP_ID" --project="$GCP_PROJECT_ID" --json 2>/dev/null || echo "{}")
-				AUTO_FIREBASE_API_KEY=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.apiKey // "") catch ""' 2>/dev/null || echo "" )
+        info "Auto-discovered Firebase variables not set in memory. Re-fetching from Firebase API..."
+        local APP_ID=$( (firebase apps:list --project="$GCP_PROJECT_ID" --json 2>/dev/null || echo "{}") | jq -r --arg name "$FE_SERVICE_NAME" 'try (.result[]? | select(.displayName == $name) | .appId) catch ""' 2>/dev/null || echo "" )
+        if [ -n "$APP_ID" ]; then
+            local SDK_CONFIG_JSON=$(firebase apps:sdkconfig WEB "$APP_ID" --project="$GCP_PROJECT_ID" --json 2>/dev/null || echo "{}")
+            AUTO_FIREBASE_API_KEY=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.apiKey // "") catch ""' 2>/dev/null || echo "" )
                 # ... (re-populate all other AUTO_... variables)
 				AUTO_FIREBASE_AUTH_DOMAIN=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.authDomain // "") catch ""' 2>/dev/null || echo "" )
 				AUTO_FIREBASE_PROJECT_ID=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.projectId // "") catch ""' 2>/dev/null || echo "" )
@@ -641,7 +1095,6 @@ update_secrets() {
 				AUTO_FIREBASE_MEASUREMENT_ID=$( (echo "$SDK_CONFIG_JSON" 2>/dev/null || echo "{}") | jq -r 'try (.result.sdkConfig.measurementId // "") catch ""' 2>/dev/null || echo "" )
                 success "Successfully re-discovered Firebase configuration."
             fi
-        fi
     fi
 
     for SECRET_NAME in $ALL_SECRETS; do
@@ -659,13 +1112,33 @@ update_secrets() {
             "FIREBASE_MESSAGING_SENDER_ID")   SECRET_VALUE=$AUTO_FIREBASE_MESSAGING_SENDER_ID; AUTO_DISCOVERED=true ;;
             "FIREBASE_APP_ID")                SECRET_VALUE=$AUTO_FIREBASE_APP_ID; AUTO_DISCOVERED=true ;;
             "FIREBASE_MEASUREMENT_ID")        SECRET_VALUE=$AUTO_FIREBASE_MEASUREMENT_ID; AUTO_DISCOVERED=true ;;
+            "agent_engine_user_auth_token_key") 
+                # This is NOT a credential. It is the NAME of the session-state key the
+                # backend writes the user's token under, and the Izumi agent must read the
+                # exact same name. Both resolve `latest` but at different times: Cloud Run
+                # only at revision start, the agent only at deploy. Rotating it on every
+                # run therefore desyncs them whenever only one side is redeployed (e.g.
+                # --skip-builds), and all media fails with "user_auth_token is required".
+                # Generate it once, then keep it.
+                local EXISTING_TOKEN_KEY=$(gcloud secrets versions access latest --secret="$SECRET_NAME" --project="$GCP_PROJECT_ID" 2>/dev/null || echo "")
+                if [ -n "$EXISTING_TOKEN_KEY" ]; then
+                    info "  Existing token key found. Keeping it so the backend and agent stay in sync."
+                    continue
+                fi
+                SECRET_VALUE=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32)
+                AUTO_DISCOVERED=true 
+                ;;
+            "agent_engine_resource_name") 
+                info "  Value will be populated automatically during Agent Engine deployment. Skipping."
+                continue
+                ;;
             # GOOGLE_CLIENT_ID is handled by populate_oauth_secrets, so we skip it here
             "GOOGLE_CLIENT_ID")               info "  Value is handled by the OAuth population step. Skipping."; continue ;;
             "GOOGLE_TOKEN_AUDIENCE")          info "  Value is handled by the OAuth population step. Skipping."; continue ;;
         esac
 
         if [ "$AUTO_DISCOVERED" = true ] && [ -n "$SECRET_VALUE" ]; then
-            info "  Value was auto-detected from Firebase. Populating automatically."
+            info "  Value was auto-generated or detected. Populating automatically."
             echo -n "$SECRET_VALUE" | gcloud secrets versions add "$SECRET_NAME" --data-file="-" --project="$GCP_PROJECT_ID" --quiet
             success "  Successfully added new version for ${SECRET_NAME}."
 
@@ -682,85 +1155,176 @@ update_secrets() {
     done; success "All secrets have been populated."
 }
 
-seed_data() {
-    step 13 "Seeding Initial Data (Workspaces, Templates, Assets)"
-    cd "$REPO_ROOT"
+seed_database() {
+    step 14 "Executing Database Migrations & Initial Seeding (Cloud Run Job)"
+    cd "$REPO_ROOT/infrastructure"
 
-    info "The user running this script will be set as the owner of initial data."
-    local CURRENT_USER=$(gcloud config get-value account 2>/dev/null)
-    if [ -z "$CURRENT_USER" ]; then
-      warn "Could not determine current gcloud user. Defaulting to 'system' owner in bootstrap script."
-      CURRENT_USER="system"
+    # 1. Fetch secure outputs from Terraform
+    info "Resolving secure database credentials..."
+    local DB_CONN_NAME=$(terraform output -raw cloud_sql_connection_name 2>/dev/null || echo "")
+    local DB_NAME=$(terraform output -raw db_name 2>/dev/null || echo "")
+    local DB_USER=$(terraform output -raw db_user 2>/dev/null || echo "")
+    local DB_PASS_SECRET=$(terraform output -raw db_secret_id 2>/dev/null || echo "")
+    local SUBNET_NAME=$(terraform output -raw cloud_run_subnet_name 2>/dev/null || echo "")
+    
+    if [ -z "$DB_CONN_NAME" ] || [ -z "$DB_PASS_SECRET" ] || [ -z "$SUBNET_NAME" ]; then
+        fail "Could not query network or database outputs. Verify Terraform apply ran successfully."
     fi
 
-    info "Project:      ${C_YELLOW}${GCP_PROJECT_ID}${C_RESET}"
-    info "Deploying as: ${C_YELLOW}${CURRENT_USER}${C_RESET}"
+    info "Database: ${DB_CONN_NAME}"
+    info "Subnetwork Egress: ${SUBNET_NAME}"
 
-    # Establish Database Connectivity
-    export_db_vars
-    start_sql_proxy
-    # Ensure proxy stops even if this function fails
-    trap stop_sql_proxy EXIT
+    local INSTANCE_NAME=$(echo "$DB_CONN_NAME" | awk -F: '{print $3}')
 
-    # Temporarily change to the project root so Python module resolution works
-    pushd "$REPO_ROOT" > /dev/null
 
-    # 1. Manually construct the CORRECT asset bucket name
-    local ASSET_BUCKET_NAME="${GCP_PROJECT_ID}-cs-development-bucket"
-    success "Using asset bucket: gs://${ASSET_BUCKET_NAME}"
-
-    info "Setting bootstrap script environment variables..."
-    export GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID
-    export ADMIN_USER_EMAIL=$CURRENT_USER
-    export GENMEDIA_BUCKET=$ASSET_BUCKET_NAME
-    export ENVIRONMENT="${ENVIRONMENT:-development}"
-
-    local PYTHON_SCRIPT_PATH="backend/bootstrap/bootstrap.py"
-    if [ ! -f "$PYTHON_SCRIPT_PATH" ]; then
-        fail "Bootstrap script not found at: ${PYTHON_SCRIPT_PATH}"
+    if [ "$CLI_SKIP_MIGRATIONS" == "true" ]; then
+        warn "Skipping Alembic database migrations as requested by --skip-migrations flag."
+        return 0
     fi
 
-    # --- Set up virtual environment and install dependencies using uv ---
-    info "Setting up Python virtual environment for data seeding using uv..."
-    VENV_DIR="$REPO_ROOT/backend/.venv"
-    PYPROJECT_FILE="$REPO_ROOT/backend/pyproject.toml"
-
-    if [ ! -f "$PYPROJECT_FILE" ]; then
-        popd > /dev/null
-        fail "Python project file not found at '$PYPROJECT_FILE'."
+    if [ "$CLI_SKIP_SEEDING" == "true" ]; then
+        warn "Skipping Database Seeding Job as requested by --skip-seeding flag."
+        return 0
     fi
 
-    # Create venv if it doesn't exist
-    uv venv "$VENV_DIR" --python python3
-
-    # Install dependencies from pyproject.toml into the virtual environment
-    info "Installing Python project and its dependencies from 'backend/pyproject.toml'..."
-    # Use an editable install (-e) to ensure all project dependencies are installed.
-    uv pip install --python "$VENV_DIR/bin/python" -e backend
-
-    info "Executing Python bootstrap script..."
-    # We `cd` into the backend directory so that relative paths to assets inside the python script resolve correctly.
-    # The editable install ensures that `from src...` imports work without needing PYTHONPATH.
-    if (cd backend && "$VENV_DIR/bin/python" -m bootstrap.bootstrap); then
-        success "Python bootstrap script executed successfully."
+    local STABLE_IMAGE=""
+    if [ -n "$BE_BUILD_ID" ]; then
+        info "Waiting for backend Cloud Build to complete and deploy the new container..."
+        start_spinner "Polling Cloud Build status"
+        local attempts=0
+        while true; do
+            local BUILD_STATUS=$(gcloud builds describe "$BE_BUILD_ID" --project="$GCP_PROJECT_ID" --region="$DEPLOY_REGION" --format="value(status)" 2>/dev/null || echo "UNKNOWN")
+            if [ "$BUILD_STATUS" == "SUCCESS" ]; then
+                stop_spinner
+                success "Backend build and deployment completed successfully!"
+                break
+            elif [ "$BUILD_STATUS" == "FAILURE" ] || [ "$BUILD_STATUS" == "TIMEOUT" ] || [ "$BUILD_STATUS" == "INTERNAL_ERROR" ] || [ "$BUILD_STATUS" == "CANCELLED" ]; then
+                stop_spinner
+                fail "Backend build failed with status: $BUILD_STATUS. Aborting database migrations."
+            fi
+            
+            attempts=$((attempts + 1))
+            if [ $attempts -gt 180 ]; then
+                stop_spinner
+                fail "Backend build timed out after 30 minutes. Aborting database migrations."
+            fi
+            sleep 10
+        done
+        STABLE_IMAGE=$(gcloud run services describe ${BE_SERVICE_NAME} --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(image)" 2>/dev/null || echo "")
     else
-        fail "Python bootstrap script failed."
+        info "Waiting for a valid backend container to be deployed..."
+        start_spinner "Checking Cloud Run image"
+        local attempts=0
+        while true; do
+            STABLE_IMAGE=$(gcloud run services describe ${BE_SERVICE_NAME} --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(image)" 2>/dev/null || echo "")
+            if [[ -n "$STABLE_IMAGE" ]] && [[ "$STABLE_IMAGE" != *"cloudrun/container/hello"* ]]; then
+                stop_spinner
+                break
+            fi
+            attempts=$((attempts + 1))
+            if [ $attempts -gt 90 ]; then
+                stop_spinner
+                warn "Backend service not updated after 15 minutes. Please verify Cloud Build completion."
+                fail "Database seeding aborted."
+            fi
+            sleep 10
+        done
+    fi
+    info "Target secure runtime image: ${C_YELLOW}${STABLE_IMAGE}${C_RESET}"
+    
+    local RUN_SA=$(gcloud run services describe ${BE_SERVICE_NAME} --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(template.serviceAccount)" 2>/dev/null || echo "")
+    if [ -z "$RUN_SA" ]; then warn "Could not detect service account from backend service. Using default."; fi
+    
+    success "Backend container successfully deployed to Cloud Run!"
+
+    local CURRENT_USER=$(gcloud config get-value account 2>/dev/null || echo "system")
+    local BUCKET_ASSETS="${ASSET_BUCKET_OVERRIDE}"
+    if [ -z "$BUCKET_ASSETS" ]; then
+        BUCKET_ASSETS="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
     fi
 
-    # Return to the original directory
-    popd > /dev/null
+    # 3. Create a secure, temporary Google Cloud Run Job inside the VPC boundary
+    info "Registering secure administrative Job inside VPC..."
+    
+    gcloud run jobs delete temp-db-bootstrap-job --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || true
 
-    # Cleanup
-    stop_sql_proxy
-    trap - EXIT
+    local SA_FLAG=""
+    if [ -n "$RUN_SA" ]; then SA_FLAG="--service-account=$RUN_SA"; fi
+
+    # 3. Create the temporary Job
+    info "Creating temporary serverless seeding job..."
+    start_spinner "Provisioning infrastructure"
+    
+    gcloud run jobs create temp-db-bootstrap-job \
+        --image="$STABLE_IMAGE" \
+        --region="$DEPLOY_REGION" \
+        --subnet="$SUBNET_NAME" \
+        $SA_FLAG \
+        --command="python" \
+        --args="-m,bootstrap.bootstrap" \
+        --set-env-vars="INSTANCE_CONNECTION_NAME=${DB_CONN_NAME},DB_NAME=${DB_NAME},DB_USER=${DB_USER},PROJECT_ID=${GCP_PROJECT_ID},GENMEDIA_BUCKET=${BUCKET_ASSETS},ADMIN_USER_EMAIL=${CURRENT_USER},ENVIRONMENT=development" \
+        --set-secrets="DB_PASS=${DB_PASS_SECRET}:latest" \
+        --project="$GCP_PROJECT_ID" \
+        --quiet >/dev/null 2>&1 &
+    
+    local CREATE_PID=$!
+    if ! wait $CREATE_PID; then
+        stop_spinner
+        fail "Failed to create Database Migration Job."
+    fi
+    stop_spinner
+    success "Job provisioned."
+
+    # 4. Trigger Job execution serverless and wait for completion
+    info "Executing database migration job serverless... (This may take 1-2 minutes)"
+    start_spinner "Starting execution"
+    
+    local EXEC_TMP
+    EXEC_TMP=$(mktemp)
+    gcloud run jobs execute temp-db-bootstrap-job --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(metadata.name)" > "$EXEC_TMP" 2>/dev/null &
+    
+    local EXEC_PID=$!
+    if ! wait $EXEC_PID; then
+        stop_spinner
+        fail "Failed to start Database Migration Job."
+    fi
+    stop_spinner
+    EXECUTION_ID=$(cat "$EXEC_TMP")
+    rm -f "$EXEC_TMP"
+
+    if [ -z "$EXECUTION_ID" ]; then
+        fail "Failed to capture Database Migration Execution ID."
+    fi
+
+    start_spinner "Waiting for execution to complete"
+    while true; do
+        IS_DONE=$(gcloud run jobs executions describe "$EXECUTION_ID" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(status.completionTime)" 2>/dev/null)
+        if [ -n "$IS_DONE" ]; then
+            SUCCEEDED=$(gcloud run jobs executions describe "$EXECUTION_ID" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(status.succeededCount)" 2>/dev/null)
+            if [ "$SUCCEEDED" == "1" ]; then
+                stop_spinner
+                success "Database migrations and initial database data seeding executed successfully!"
+                
+                # Clean up administrative Job only on success
+                info "Cleaning up temporary seeding job..."
+                gcloud run jobs delete temp-db-bootstrap-job --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --quiet
+                success "Temporary serverless seeding infrastructure securely dismantled."
+                break
+            else
+                stop_spinner
+                warn "Database seeding failed! Please check logs in the Cloud Run Job console for 'temp-db-bootstrap-job'."
+                warn "MANUAL MIGRATION REQUIRED: Once you fix the issue, you can manually execute the job again from the Google Cloud Console."
+                warn "The script will continue deploying the Izumi Agent, but the backend may be unstable until the database is successfully migrated."
+                break
+            fi
+        fi
+        sleep 5
+    done
+
 }
 
-
-
 trigger_builds() {
-    step 14 "Triggering Initial Builds"; cd "$REPO_ROOT"
-    prompt "Would you like to trigger the initial builds for the frontend and backend now? (y/n)"; read -r REPLY < /dev/tty
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then info "You can trigger the builds manually later by pushing a commit or via the Cloud Build UI."; return; fi
+    step 13 "Triggering Initial Builds"; cd "$REPO_ROOT"
 
     local BRANCH_TO_USE
     BRANCH_TO_USE=$(git branch --show-current 2>/dev/null)
@@ -769,8 +1333,8 @@ trigger_builds() {
     fi
 
     if [ -z "$BRANCH_TO_USE" ] || [ "$BRANCH_TO_USE" = "HEAD" ]; then
-        if [ -n "$GITHUB_BRANCH" ] && [ "$GITHUB_BRANCH" != "HEAD" ]; then
-            BRANCH_TO_USE="$GITHUB_BRANCH"
+        if [ -n "$REPO_BRANCH" ] && [ "$REPO_BRANCH" != "HEAD" ]; then
+            BRANCH_TO_USE="$REPO_BRANCH"
         elif git show-ref --verify --quiet refs/heads/develop || git show-ref --verify --quiet refs/remotes/origin/develop; then
             BRANCH_TO_USE="develop"
         else
@@ -781,14 +1345,574 @@ trigger_builds() {
         info "Detected current Git branch: ${C_YELLOW}${BRANCH_TO_USE}${C_RESET}"
     fi
 
-    info "Triggering backend build..."; gcloud builds triggers run "${BE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="us-central1"
-    info "Triggering frontend build..."; gcloud builds triggers run "${GCP_PROJECT_ID}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="us-central1"
+    if [ "$CLI_SKIP_BUILDS" = "true" ]; then
+        info "Skipping builds (--skip-builds flag is set)."
+        export BE_BUILD_ID=""
+        return 0
+    fi
+
+    if [ "$CLI_FORCE_BUILDS" != "true" ]; then
+        echo -e "\n${C_BLUE}🤔  Would you like to trigger new builds for the frontend and backend now? (y/n)${C_RESET}"
+        read -r run_builds < /dev/tty || true
+        if [ "$run_builds" != "y" ]; then
+            info "Skipping builds."
+            export BE_BUILD_ID=""
+            return 0
+        fi
+    else
+        info "Forcing builds (--force-builds flag is set)."
+    fi
+
+    info "Triggering backend build..."
+    BE_BUILD_ID=$(gcloud builds triggers run "${BE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="$DEPLOY_REGION" --format="value(metadata.build.id)" 2>/dev/null)
+    if [ -n "$BE_BUILD_ID" ]; then success "Backend build triggered (ID: $BE_BUILD_ID)"; else warn "Backend build triggered (Could not parse ID)"; fi
+    export BE_BUILD_ID
+    
+    info "Triggering frontend build..."
+    FE_BUILD_ID=$(gcloud builds triggers run "${FE_SERVICE_NAME}-trigger" --branch="$BRANCH_TO_USE" --project="$GCP_PROJECT_ID" --region="$DEPLOY_REGION" --format="value(metadata.build.id)" 2>/dev/null)
+    if [ -n "$FE_BUILD_ID" ]; then success "Frontend build triggered (ID: $FE_BUILD_ID)"; else warn "Frontend build triggered (Could not parse ID)"; fi
 
     success "Builds have been triggered."; info "You can monitor their progress in the Cloud Build console:"; echo -e "   ${C_YELLOW}https://console.cloud.google.com/cloud-build/builds?project=${GCP_PROJECT_ID}${C_RESET}"
+
 }
+
+deploy_izumi_agent() {
+    step 15 "Automated Izumi Agent Deployment"
+    info "Deploying Izumi Agent..."
+
+    rm -rf /tmp/izumi-agent
+    
+    trap 'rm -rf /tmp/izumi-agent; cleanup_spinner' EXIT
+
+    IZUMI_BRANCH="${IZUMI_AGENT_BRANCH:-v0.2.1}"
+    info "Cloning Izumi Agent repository (tag/branch: ${IZUMI_BRANCH})..."
+    git clone -b "$IZUMI_BRANCH" https://github.com/GoogleCloudPlatform/genmedia-izumi-agent.git /tmp/izumi-agent
+
+    pushd /tmp/izumi-agent > /dev/null
+
+    if [ "$MOCK_IZUMI_DEPLOY" = "true" ]; then
+        info "MOCK_IZUMI_DEPLOY is set to true. Skipping real GCP connection."
+        info "Mock execution of deploy_to_agent_engine.py successful."
+    else
+        info "Executing deployment via serverless Cloud Build..."
+        AGENT_SA_EMAIL=""
+        local ENV_TF_DIR="$REPO_ROOT/infrastructure"
+        if [ -d "$ENV_TF_DIR" ]; then
+            AGENT_SA_EMAIL=$(cd "$ENV_TF_DIR" && terraform output -raw agent_service_account_email 2>/dev/null || echo "")
+        fi
+
+        # Find the trigger service account to run the build securely
+        local TRIG_SA="${RES_PREFIX}-trig-sa@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+
+        local ASSET_BUCKET="${ASSET_BUCKET_OVERRIDE}"
+        if [ -z "$ASSET_BUCKET" ]; then
+            ASSET_BUCKET="${GCP_PROJECT_ID}-cs-${ENV_NAME}-bucket"
+        fi
+        local BE_URL=$(gcloud run services describe ${BE_SERVICE_NAME} --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(status.url)" 2>/dev/null || echo "")
+        local FE_URL="https://${GCP_PROJECT_ID}.web.app"
+
+        # --- Region pinning + model compatibility ------------------------------------
+        #
+        # Data residency: Vertex AI's "global" endpoint gives NO guarantee about which
+        # region performs the ML processing, so regulated deployments must call the
+        # regional endpoint. Izumi hardcodes "global", hence the patch below.
+        #
+        # The catch: Izumi also hardcodes very new models (gemini-3.7-flash) that are
+        # ONLY served from "global". Pinning the region without also pinning the model
+        # is what produced the "model not found in europe" 404s. Both must happen together.
+        #
+        # Every patch is verified. A silent no-op here either breaks the agent or
+        # silently violates data residency, so we always report what happened.
+        local IZUMI_TEXT_MODEL="${IZUMI_TEXT_MODEL:-gemini-2.5-flash}"
+        local IZUMI_PRO_MODEL="${IZUMI_PRO_MODEL:-gemini-2.5-pro}"
+
+        # 1. Runtime inference endpoint. deploy_to_agent_platform.py injects
+        #    "GOOGLE_CLOUD_LOCATION": "global" into the Agent Engine runtime env, which
+        #    mediagent_kit prefers over IZUMI_LOCATION when choosing the Vertex endpoint.
+        local IZUMI_DEPLOY_PY="/tmp/izumi-agent/scripts/deploy_to_agent_platform.py"
+        if grep -q '"GOOGLE_CLOUD_LOCATION": "global"' "$IZUMI_DEPLOY_PY" 2>/dev/null; then
+            sed -i "s|\"GOOGLE_CLOUD_LOCATION\": \"global\"|\"GOOGLE_CLOUD_LOCATION\": \"${DEPLOY_REGION}\"|g" "$IZUMI_DEPLOY_PY"
+            success "Pinned Izumi inference endpoint to ${C_YELLOW}${DEPLOY_REGION}${C_RESET} (data residency)."
+        else
+            warn "Could not find the hardcoded 'global' endpoint in deploy_to_agent_platform.py."
+            warn "Izumi may have changed upstream. The agent could run on the GLOBAL endpoint."
+        fi
+
+        # 2. Model literals across EVERY tree that gets bundled.
+        #
+        #    Two independent sources of truth have to be patched, because the deployed
+        #    agent proved it uses both:
+        #      a) demos/backend/** - ads_x/agent.py sets model= literally on each LlmAgent.
+        #      b) mediagent_kit/config.py - the HARDCODED fallback dict. Agent Engine logs
+        #         showed `models={'text': {'default': 'gemini-3.7-flash'...}}` with no
+        #         "[MediagentKitConfig] Loaded models from ..." line, i.e. the JSON written
+        #         in step 3 is NOT discovered at runtime (the deployed CWD and import path
+        #         differ from the deploy-time bundle). Patching the fallback makes the
+        #         correct model the default whether or not the JSON is ever found.
+        info "Pinning Izumi models to ${C_YELLOW}${IZUMI_TEXT_MODEL}${C_RESET} for ${DEPLOY_REGION} availability..."
+        local IZUMI_PATCH_ROOTS="/tmp/izumi-agent/demos/backend /tmp/izumi-agent/mediagent_kit"
+        local IZUMI_PATCHED=0
+        for root in $IZUMI_PATCH_ROOTS; do
+            [ -d "$root" ] || { warn "Expected source tree missing: $root"; continue; }
+            while IFS= read -r f; do
+                [ -n "$f" ] || continue
+                sed -i "s|gemini-3\.1-pro-preview|${IZUMI_PRO_MODEL}|g; s|gemini-3\.7-flash|${IZUMI_TEXT_MODEL}|g" "$f"
+                IZUMI_PATCHED=$((IZUMI_PATCHED + 1))
+            done <<< "$(grep -rl "gemini-3\.7-flash\|gemini-3\.1-pro-preview" --include=*.py "$root" 2>/dev/null || true)"
+        done
+
+        # Verify: nothing we care about may survive. A silent miss here means the agent
+        # 404s at runtime on a model the regional endpoint does not serve.
+        local LEFTOVER=$(grep -rho "gemini-3\.7-flash\|gemini-3\.1-pro-preview" --include=*.py \
+            /tmp/izumi-agent/demos/backend /tmp/izumi-agent/mediagent_kit 2>/dev/null | wc -l | tr -d ' ')
+        if [ "${LEFTOVER:-0}" -gt 0 ]; then
+            warn "${LEFTOVER} unsupported model reference(s) still present after patching."
+            warn "The agent will 404 on the ${DEPLOY_REGION} endpoint. Investigate before using it."
+        else
+            success "Patched ${IZUMI_PATCHED} file(s); no unsupported model references remain."
+        fi
+
+        # 3. Media models (image / video / music / tts).
+        #    These are NOT called from the agent. ads_x passes the model name to the
+        #    Creative Studio backend (POST /api/images/generate-images and friends),
+        #    which runs its own Vertex client. That is why media has kept working while
+        #    text was broken. The default path therefore leaves Izumi's newer media
+        #    models alone - they work today and produce better output.
+        #
+        #    Clients with hard in-region processing requirements can set
+        #    IZUMI_REGIONAL_MEDIA=true to fall back to models that regional endpoints
+        #    serve. Creative Studio's GenerationModelEnum accepts both the new and the
+        #    old IDs, so this is safe.
+        local IZUMI_MEDIA_JSON=""
+        if [ "${IZUMI_REGIONAL_MEDIA:-false}" = "true" ]; then
+            local IZUMI_IMAGE_MODEL="${IZUMI_IMAGE_MODEL:-gemini-2.5-flash-image}"
+            local IZUMI_IMAGEN_MODEL="${IZUMI_IMAGEN_MODEL:-imagen-4.0-generate-001}"
+            # Video: veo-3.1, not veo-3.0. Izumi only names the model; the Creative Studio
+            # backend makes the Vertex call, and its client is hardcoded to the GLOBAL
+            # endpoint (config_service.LOCATION="global"). veo-3.0-generate-001 is not
+            # served there and 404s; veo-3.1-generate-001 is (verified in the CS UI).
+            local IZUMI_VIDEO_MODEL="${IZUMI_VIDEO_MODEL:-veo-3.1-generate-001}"
+            local IZUMI_MUSIC_MODEL="${IZUMI_MUSIC_MODEL:-lyria-002}"
+            local IZUMI_TTS_MODEL="${IZUMI_TTS_MODEL:-gemini-2.5-flash-tts}"
+
+            info "IZUMI_REGIONAL_MEDIA=true: pinning media models to regional versions..."
+
+            # The media defaults live in the SAME two places as the text models, so the
+            # JSON below is not enough on its own:
+            #   a) demos/backend/** - ads_x hardcodes the image model at its
+            #      generate_image() call sites, which mediagent_config.json cannot override.
+            #   b) mediagent_kit/config.py - the hardcoded fallback dict. The Agent Engine
+            #      logs proved this is what actually gets used at runtime, because the JSON
+            #      is never discovered there. Patching only the JSON would leave this flag
+            #      a silent no-op for video, music and tts.
+            #
+            #   c) ...but mediagent_kit/api/types.py must be LEFT ALONE. It is a REGISTRY
+            #      of every model Izumi knows about, not a set of defaults, and each enum
+            #      carries @enum.unique. Every model we pin to is ALREADY a member there
+            #      (lyria-002, gemini-2.5-flash-tts, gemini-2.5-flash-image,
+            #      veo-3.1-generate-001, imagen-4.0-generate-001), so rewriting a literal
+            #      collapses two members onto one value and the import dies with:
+            #        ValueError: duplicate values found in <enum 'LyriaModel'>:
+            #                    LYRIA_3_CLIP_PREVIEW -> LYRIA_002
+            #      (SpeechModel has the same trap for the TTS model.)
+            local IZUMI_ENUM_REGISTRY="mediagent_kit/api/types.py"
+            local IZUMI_MEDIA_SUBS="gemini-3\.1-flash-image=${IZUMI_IMAGE_MODEL}
+imagen-4\.0-generate-001=${IZUMI_IMAGEN_MODEL}
+gemini-omni-flash-preview=${IZUMI_VIDEO_MODEL}
+lyria-3-clip-preview=${IZUMI_MUSIC_MODEL}
+gemini-3\.1-flash-tts-preview=${IZUMI_TTS_MODEL}"
+            while IFS='=' read -r pattern replacement; do
+                [ -n "$pattern" ] || continue
+                while IFS= read -r f; do
+                    [ -n "$f" ] || continue
+                    sed -i "s|${pattern}|${replacement}|g" "$f"
+                done <<< "$(grep -rl "$pattern" --include=*.py $IZUMI_PATCH_ROOTS 2>/dev/null | grep -vF "$IZUMI_ENUM_REGISTRY" || true)"
+            done <<< "$IZUMI_MEDIA_SUBS"
+
+            local MEDIA_LEFTOVER=$(grep -rl "gemini-3\.1-flash-image\|gemini-omni-flash-preview\|lyria-3-clip-preview\|gemini-3\.1-flash-tts-preview" \
+                --include=*.py $IZUMI_PATCH_ROOTS 2>/dev/null | grep -vF "$IZUMI_ENUM_REGISTRY" | wc -l | tr -d ' ')
+            if [ "${MEDIA_LEFTOVER:-0}" -gt 0 ]; then
+                warn "${MEDIA_LEFTOVER} file(s) still reference a non-regional media model."
+            else
+                success "Pinned media models: image=${C_YELLOW}${IZUMI_IMAGE_MODEL}${C_RESET}, imagen=${C_YELLOW}${IZUMI_IMAGEN_MODEL}${C_RESET}, video=${C_YELLOW}${IZUMI_VIDEO_MODEL}${C_RESET}, music=${C_YELLOW}${IZUMI_MUSIC_MODEL}${C_RESET}, tts=${C_YELLOW}${IZUMI_TTS_MODEL}${C_RESET}."
+            fi
+
+            IZUMI_MEDIA_JSON=",
+    \"image_gemini\": { \"default\": \"${IZUMI_IMAGE_MODEL}\" },
+    \"image_imagen\": { \"default\": \"${IZUMI_IMAGEN_MODEL}\" },
+    \"video\": { \"default\": \"${IZUMI_VIDEO_MODEL}\" },
+    \"music\": { \"default\": \"${IZUMI_MUSIC_MODEL}\" },
+    \"tts\": { \"default\": \"${IZUMI_TTS_MODEL}\" }"
+        else
+            info "Media models left at Izumi defaults (Creative Studio generates all media)."
+            info "   For strict in-region processing, re-run with ${C_YELLOW}--regional-media${C_RESET}."
+        fi
+
+        # 4. mediagent_kit helper models (image description, inline text generation).
+        #    This file MUST live in demos/backend/: deploy_to_agent_platform.py copies
+        #    demos/backend/* and mediagent_kit/ into the bundle and nothing else, so a copy
+        #    at the repo root (where upstream keeps its own) never reaches the deployed
+        #    agent. Items from demos/backend land at the bundle root, which is exactly
+        #    where MediagentKitConfig looks at runtime.
+        cat << JSON > /tmp/izumi-agent/demos/backend/mediagent_config.json
+{
+  "models": {
+    "text": {
+      "default": "${IZUMI_TEXT_MODEL}",
+      "repair": "${IZUMI_TEXT_MODEL}",
+      "enrichment": "${IZUMI_TEXT_MODEL}"
+    }${IZUMI_MEDIA_JSON}
+  }
+}
+JSON
+
+        cat << YAML > /tmp/izumi-agent/cloudbuild.yaml
+steps:
+  - name: 'python:3.12-slim'
+    entrypoint: 'bash'
+    env:
+      - 'PROJECT_ID=\$PROJECT_ID'
+      - 'GOOGLE_CLOUD_PROJECT=\$PROJECT_ID'
+      - 'GOOGLE_CLOUD_LOCATION=${DEPLOY_REGION}'
+      - 'MODEL_TARGET_LOCATION=${DEPLOY_REGION}'
+      - 'ASSET_SERVICE_GCS_BUCKET=${ASSET_BUCKET}'
+      - 'USE_CREATIVE_STUDIO=True'
+      - 'ENABLE_HITL_GATES=True'
+      - 'CREATIVE_STUDIO_BACKEND_URL=${BE_URL}'
+      - 'CREATIVE_STUDIO_FRONTEND_URL=${FE_URL}'
+    args:
+      - '-c'
+      - |
+        echo "===== Verifying patches actually reached the uploaded source ====="
+        echo "--- distinct model literals in demos/backend + mediagent_kit ---"
+        grep -rho 'gemini-[0-9][0-9.a-z-]*' --include=*.py demos/backend mediagent_kit | sort | uniq -c | sort -rn
+        echo "--- mediagent_kit/config.py fallback defaults ---"
+        sed -n '/Hardcoded defaults as fallback/,/^        }/p' mediagent_kit/config.py
+        echo "--- demos/backend/mediagent_config.json ---"
+        cat demos/backend/mediagent_config.json 2>/dev/null || echo "(absent)"
+        if grep -rq 'gemini-3\.7-flash\|gemini-3\.1-pro-preview' --include=*.py demos/backend mediagent_kit; then
+          echo "FATAL: unsupported model literals reached the build. Aborting before deploy."
+          exit 1
+        fi
+        echo "===== Verification passed ====="
+        pip install .
+        python scripts/deploy_to_agent_platform.py --project=\$PROJECT_ID --location=${DEPLOY_REGION} --service-account=\${_AGENT_SA_EMAIL}
+    secretEnv: ['CREATIVE_STUDIO_USER_AUTH_TOKEN_KEY']
+availableSecrets:
+  secretManager:
+  - versionName: projects/\$PROJECT_ID/secrets/agent_engine_user_auth_token_key/versions/latest
+    env: 'CREATIVE_STUDIO_USER_AUTH_TOKEN_KEY'
+serviceAccount: 'projects/\$PROJECT_ID/serviceAccounts/\${_TRIG_SA_EMAIL}'
+options:
+  logging: CLOUD_LOGGING_ONLY
+YAML
+
+        DEPLOY_LOG=$(mktemp)
+        start_spinner "Building and deploying agent to Vertex AI"
+        # `set -e` is active for the whole script. A bare failing command kills
+        # bootstrap.sh outright, so the log below never prints and the EXIT trap
+        # deletes /tmp/izumi-agent. `|| BUILD_STATUS=$?` keeps the failure local.
+        local BUILD_STATUS=0
+        gcloud builds submit /tmp/izumi-agent --config=/tmp/izumi-agent/cloudbuild.yaml --project="$GCP_PROJECT_ID" --region="$DEPLOY_REGION" --substitutions="_AGENT_SA_EMAIL=$AGENT_SA_EMAIL,_TRIG_SA_EMAIL=$TRIG_SA" > "$DEPLOY_LOG" 2>&1 || BUILD_STATUS=$?
+        stop_spinner
+
+        if [ $BUILD_STATUS -eq 0 ]; then
+            rm -f "$DEPLOY_LOG"
+            success "Izumi Agent successfully deployed via Cloud Build."
+        else
+            cat "$DEPLOY_LOG"
+            rm -f "$DEPLOY_LOG"
+            warn "Izumi Agent deployment via Cloud Build encountered an error."
+        fi
+
+        # Always try to fetch the latest agent resource name via API as an idempotent fallback
+        info "Verifying Agent Engine resource name from Vertex AI API..."
+        local AUTH_TOKEN=$(gcloud auth print-access-token 2>/dev/null)
+        local API_RESPONSE=$(curl -s -X GET \
+            -H "Authorization: Bearer $AUTH_TOKEN" \
+            "https://${DEPLOY_REGION}-aiplatform.googleapis.com/v1beta1/projects/$GCP_PROJECT_ID/locations/${DEPLOY_REGION}/reasoningEngines")
+        
+        # Extract the resource name of the reasoning engine with displayName "izumi-ads-x-agent".
+        #
+        # Pick the MOST RECENTLY CREATED one. The API returns engines in no guaranteed order,
+        # so the old 'head -n 1' could pin the secret to a stale engine left over from an
+        # earlier deploy. That is silently fatal: the backend keeps talking to an agent built
+        # before the region/model patches and every request 404s on gemini-3.7-flash, while
+        # the script reports success.
+        local API_RESOURCE_NAME=$( (echo "$API_RESPONSE" 2>/dev/null || echo "{}") | jq -r 'try ([.reasoningEngines[]? | select(.displayName == "izumi-ads-x-agent")] | sort_by(.createTime) | last | .name) catch ""')
+        local ENGINE_COUNT=$( (echo "$API_RESPONSE" 2>/dev/null || echo "{}") | jq -r 'try ([.reasoningEngines[]? | select(.displayName == "izumi-ads-x-agent")] | length) catch 0')
+        if [ "${ENGINE_COUNT:-0}" -gt 1 ] 2>/dev/null; then
+            warn "Found ${ENGINE_COUNT} Agent Engines named 'izumi-ads-x-agent'. Using the newest."
+            warn "Consider deleting the stale ones so the backend cannot bind to an outdated agent."
+        fi
+
+        if [ -n "$API_RESOURCE_NAME" ] && [ "$API_RESOURCE_NAME" != "null" ]; then
+            info "Found active Agent Engine: ${C_YELLOW}${API_RESOURCE_NAME}${C_RESET}"
+            echo -n "$API_RESOURCE_NAME" | gcloud secrets versions add agent_engine_resource_name --data-file="-" --project="$GCP_PROJECT_ID" --quiet
+            success "Stored agent_engine_resource_name in Secret Manager."
+        else
+            warn "Could not resolve the Agent Engine Resource Name via API."
+            warn "The backend may fail to connect to Izumi until this secret is populated."
+        fi
+
+        # --- Keep the backend in sync with what the agent was just deployed with -------
+        #
+        # The backend reads agent_engine_user_auth_token_key and agent_engine_resource_name
+        # from Secret Manager ONLY when a Cloud Run revision starts. The agent has just
+        # been deployed with the CURRENT versions. If the backend revision predates them
+        # (typical with --skip-builds), the two disagree on the session-state key and every
+        # media call fails with "user_auth_token is required for Creative Studio media
+        # generation", while text keeps working.
+        #
+        # Fix: start a fresh backend revision on the SAME image. Image changes are covered
+        # by `ignore_changes` in modules/compute, so this causes no Terraform drift (unlike
+        # setting a dummy env var).
+        #
+        # Skipped when a backend build ran this session: that build deploys its own new
+        # revision, which already reads the current secrets, and redeploying the old image
+        # here could race it and roll the new code back.
+        if [ "$BUILD_STATUS" -eq 0 ] && [ -z "${BE_BUILD_ID:-}" ]; then
+            local BE_IMAGE=$(gcloud run services describe "$BE_SERVICE_NAME" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(image)" 2>/dev/null || echo "")
+            if [ -n "$BE_IMAGE" ]; then
+                start_spinner "Refreshing backend revision so it picks up the current agent secrets"
+                local BE_REFRESH_STATUS=0
+                gcloud run deploy "$BE_SERVICE_NAME" --image="$BE_IMAGE" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || BE_REFRESH_STATUS=$?
+                stop_spinner
+                if [ "$BE_REFRESH_STATUS" -eq 0 ]; then
+                    success "Backend ${C_YELLOW}${BE_SERVICE_NAME}${C_RESET} refreshed; it now shares the agent's token key."
+                else
+                    warn "Could not refresh ${BE_SERVICE_NAME}. Media generation may fail until the backend is redeployed:"
+                    warn "   gcloud run deploy ${BE_SERVICE_NAME} --image=${BE_IMAGE} --region=${DEPLOY_REGION} --project=${GCP_PROJECT_ID}"
+                fi
+            else
+                warn "Could not read the current image of ${BE_SERVICE_NAME}; backend was not refreshed."
+            fi
+        elif [ -n "${BE_BUILD_ID:-}" ]; then
+            info "Backend build ${BE_BUILD_ID} deploys a fresh revision, which will pick up the current agent secrets."
+        fi
+        rm -f "$DEPLOY_LOG"
+    fi
+    popd > /dev/null
+    rm -rf /tmp/izumi-agent
+    
+    trap cleanup_spinner EXIT
+    success "Izumi Agent deployed successfully."
+}
+
+select_deployment_profile() {
+    step 2 "Selecting Deployment Configuration Profile"
+    local PROFILE_DIR="${HOME}/.cstudio/profiles"
+    mkdir -p "$PROFILE_DIR"
+
+    if [ -n "$CLI_PROFILE" ]; then
+        local PROFILE_NAME="${CLI_PROFILE%.cstudio_bootstrap.conf}.cstudio_bootstrap.conf"
+        STATE_FILE="$PROFILE_DIR/$PROFILE_NAME"
+        info "Loading targeted deployment profile via CLI flag: ${C_YELLOW}${STATE_FILE}${C_RESET}"
+        read_state
+        return 0
+    fi
+
+    while true; do
+        local profiles=()
+        while IFS= read -r file; do
+            [ -f "$file" ] && profiles+=("$file")
+        done < <(find "$PROFILE_DIR" -maxdepth 1 -name "*.cstudio_bootstrap.conf" 2>/dev/null | sort)
+
+        if [ ${#profiles[@]} -eq 0 ]; then
+            info "No persistent profiles detected in $PROFILE_DIR. Initializing 'default.cstudio_bootstrap.conf'..."
+            STATE_FILE="$PROFILE_DIR/default.cstudio_bootstrap.conf"
+            write_state "PROFILE_INITIALIZED" "true"
+            return 0
+        fi
+
+        echo -e "${C_CYAN}➡️  Detected persistent deployment profiles in ${PROFILE_DIR}:${C_RESET}"
+        for i in "${!profiles[@]}"; do
+            local p_file="${profiles[$i]}"
+            local p_name=$(basename "$p_file")
+            local p_proj=$(grep "^GCP_PROJECT_ID=" "$p_file" | cut -d'=' -f2 || echo "unassigned")
+            local p_branch=$(grep "^REPO_BRANCH=" "$p_file" | cut -d'=' -f2 || echo "main")
+            echo -e "    [$((i + 1))] ${C_YELLOW}${p_name}${C_RESET} (Project: ${p_proj} | Branch: ${p_branch})"
+        done
+        echo "    [N] + Create a brand new deployment profile"
+        echo "    [D] - Delete an existing deployment profile"
+
+        prompt "Which deployment profile would you like to use? [Default: 1 / N for new / D to delete]"
+        read -p "   Select Profile [1]: " PROF_CHOICE < /dev/tty
+        PROF_CHOICE=${PROF_CHOICE:-1}
+
+        if [[ "$PROF_CHOICE" =~ ^[dD]$ ]]; then
+            prompt "Which profile would you like to delete? [1-${#profiles[@]}]"
+            read -p "   Delete Profile: " DEL_CHOICE < /dev/tty
+            if [[ "$DEL_CHOICE" =~ ^[0-9]+$ ]]; then
+                local idx=$((DEL_CHOICE - 1))
+                if [ -n "${profiles[$idx]}" ]; then
+                    local del_file="${profiles[$idx]}"
+                    rm -f "$del_file"
+                    success "Deleted profile: $(basename "$del_file")"
+                    echo ""
+                    continue
+                fi
+            fi
+            warn "Invalid selection. Going back to profile selection."
+            echo ""
+            continue
+        fi
+
+        if [[ "$PROF_CHOICE" =~ ^[nN]$ ]]; then
+            prompt "Enter a name for your new deployment profile (e.g. dev, staging, prod):"
+            read -p "   Profile Name: " NEW_PROF_NAME < /dev/tty
+            NEW_PROF_NAME=${NEW_PROF_NAME:-custom}
+            NEW_PROF_NAME="${NEW_PROF_NAME%.cstudio_bootstrap.conf}.cstudio_bootstrap.conf"
+            STATE_FILE="$PROFILE_DIR/$NEW_PROF_NAME"
+            info "Created new deployment profile at: $STATE_FILE"
+            write_state "PROFILE_INITIALIZED" "true"
+            return 0
+        fi
+
+        local idx=$((PROF_CHOICE - 1))
+        if [ -n "${profiles[$idx]}" ]; then
+            STATE_FILE="${profiles[$idx]}"
+            info "Loading deployment profile: ${C_YELLOW}${STATE_FILE}${C_RESET}"
+            read_state
+            break
+        else
+            warn "Invalid selection. Defaulting to first profile..."
+            STATE_FILE="${profiles[0]}"
+            read_state
+            break
+        fi
+    done
+        
+    if [ -z "$GCP_PROJECT_ID" ] && [ -z "$REPO_URL" ]; then
+        info "Profile '${C_YELLOW}$(basename "$STATE_FILE" .cstudio_bootstrap.conf)${C_RESET}' is fresh or unassigned. Interactive prompts will now guide you to complete missing settings and automatically save them to this profile!"
+        return 0
+    fi
+
+    while true; do
+        echo -e "${C_CYAN}➡️  Loaded Profile Parameters:${C_RESET}"
+        echo "    [1] GCP Project ID:         ${GCP_PROJECT_ID:-unassigned}"
+        echo "    [2] Fork Repository URL:    ${REPO_URL:-unassigned}"
+        echo "    [3] Deployment Branch:      ${REPO_BRANCH:-main}"
+        echo "    [4] Environment Name:       ${ENV_NAME:-unassigned}"
+        echo "    [5] Terraform State Bucket: ${TF_BUCKET_NAME:-unassigned}"
+        echo "    [6] Cloud Build Conn Name:  ${REPO_CONN_NAME:-unassigned}"
+        echo "    [7] OAuth Web Client ID:    ${AUTO_OAUTH_CLIENT_ID:-unassigned}"
+        echo "    [8] Firebase Site ID:       ${AUTO_FIREBASE_SITE_ID:-unassigned}"
+        echo "    [9] Deploy Region:          ${DEPLOY_REGION:-unassigned}"
+        echo "   [10] Database Tier:          ${DB_TIER:-unassigned}"
+        echo "   [11] Database Availability:  ${DB_AVAILABILITY:-unassigned}"
+        
+        prompt "Use these stored deployment parameters? (Y/n / e to edit)"
+        read -p "   Confirm [Y/n/e]: " CONFIRM_PROF < /dev/tty
+        
+        if [[ "$CONFIRM_PROF" =~ ^[eE]$ ]]; then
+            prompt "Enter the number of the property you want to edit (1-11):"
+            read -p "   Property number: " PROP_NUM < /dev/tty
+            case "$PROP_NUM" in
+                1) prompt "Enter new GCP Project ID (or empty to reset):"; read -r NEW_VAL < /dev/tty; GCP_PROJECT_ID="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset GCP_PROJECT_ID; sed -i.bak '/^GCP_PROJECT_ID=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "GCP_PROJECT_ID" "$NEW_VAL"; fi ;;
+                2) prompt "Enter new Fork Repository URL (or empty to reset):"; read -r NEW_VAL < /dev/tty; REPO_URL="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset REPO_URL; sed -i.bak '/^REPO_URL=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "REPO_URL" "$NEW_VAL"; fi ;;
+                3) prompt "Enter new Deployment Branch (or empty to reset):"; read -r NEW_VAL < /dev/tty; REPO_BRANCH="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset REPO_BRANCH; sed -i.bak '/^REPO_BRANCH=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "REPO_BRANCH" "$NEW_VAL"; fi ;;
+                4) prompt "Enter new Environment Name (or empty to reset):"; read -r NEW_VAL < /dev/tty; ENV_NAME="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset ENV_NAME; sed -i.bak '/^ENV_NAME=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "ENV_NAME" "$NEW_VAL"; fi ;;
+                5) prompt "Enter new Terraform State Bucket (or empty to reset):"; read -r NEW_VAL < /dev/tty; TF_BUCKET_NAME="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset TF_BUCKET_NAME; sed -i.bak '/^TF_BUCKET_NAME=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "TF_BUCKET_NAME" "$NEW_VAL"; fi ;;
+                6) prompt "Enter new Cloud Build Conn Name (or empty to reset):"; read -r NEW_VAL < /dev/tty; REPO_CONN_NAME="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset REPO_CONN_NAME; sed -i.bak '/^REPO_CONN_NAME=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "REPO_CONN_NAME" "$NEW_VAL"; fi ;;
+                7) prompt "Enter new OAuth Web Client ID (or empty to reset):"; read -r NEW_VAL < /dev/tty; AUTO_OAUTH_CLIENT_ID="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset AUTO_OAUTH_CLIENT_ID; sed -i.bak '/^AUTO_OAUTH_CLIENT_ID=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "AUTO_OAUTH_CLIENT_ID" "$NEW_VAL"; fi ;;
+                8) prompt "Enter new Firebase Site ID (or empty to reset):"; read -r NEW_VAL < /dev/tty; AUTO_FIREBASE_SITE_ID="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset AUTO_FIREBASE_SITE_ID; sed -i.bak '/^AUTO_FIREBASE_SITE_ID=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "AUTO_FIREBASE_SITE_ID" "$NEW_VAL"; fi ;;
+                9) prompt "Enter new Deploy Region (or empty to reset):"; read -r NEW_VAL < /dev/tty || exit 130; if [ -z "$NEW_VAL" ]; then unset DEPLOY_REGION; sed -i.bak '/^DEPLOY_REGION=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else if gcloud compute regions describe "$NEW_VAL" --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then DEPLOY_REGION="$NEW_VAL"; write_state "DEPLOY_REGION" "$NEW_VAL"; else warn "Invalid region: '$NEW_VAL'"; fi; fi ;;
+                10) prompt "Enter new Database Tier (or empty to reset):"; read -r NEW_VAL < /dev/tty; DB_TIER="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset DB_TIER; sed -i.bak '/^DB_TIER=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "DB_TIER" "$NEW_VAL"; fi ;;
+                11) prompt "Enter new Database Availability (ZONAL/REGIONAL) (or empty to reset):"; read -r NEW_VAL < /dev/tty; DB_AVAILABILITY="$NEW_VAL"; if [ -z "$NEW_VAL" ]; then unset DB_AVAILABILITY; sed -i.bak '/^DB_AVAILABILITY=/d' "$STATE_FILE" 2>/dev/null && rm -f "${STATE_FILE}.bak"; else write_state "DB_AVAILABILITY" "$NEW_VAL"; fi ;;
+                *) warn "Invalid property number." ;;
+            esac
+            echo ""
+            continue
+        elif [[ "$CONFIRM_PROF" =~ ^[nN]$ ]]; then
+            info "You opted to reject the profile. Some values might be prompted again if unassigned."
+            break
+        else
+            success "Deployment parameters locked in from profile!"
+            break
+        fi
+    done
+}
+
 
 # --- Main Execution ---
 main() {
+    TF_AUTO_APPROVE="false"
+    CLI_PROFILE=""
+    CLI_SKIP_BUILDS="false"
+    CLI_FORCE_BUILDS="false"
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --profile|-p)
+                CLI_PROFILE="$2"
+                shift 2
+                ;;
+            --auto-approve|-a)
+                TF_AUTO_APPROVE="true"
+                shift
+                ;;
+            --help|-h)
+                echo -e "${C_BLUE}"
+                echo -e " ██████ ██████  ███████  █████  ████████ ██ ██    ██ ███████     ███████ ████████ ██    ██ ██████  ██  ██████  "
+                echo -e "██      ██   ██ ██      ██   ██    ██    ██ ██    ██ ██          ██         ██    ██    ██ ██   ██ ██ ██    ██ "
+                echo -e "██      ██████  █████   ███████    ██    ██ ██    ██ █████       ███████    ██    ██    ██ ██   ██ ██ ██    ██ "
+                echo -e "██      ██   ██ ██      ██   ██    ██    ██  ██  ██  ██               ██    ██    ██    ██ ██   ██ ██ ██    ██ "
+                echo -e " ██████ ██   ██ ███████ ██   ██    ██    ██   ████   ███████     ███████    ██     ██████  ██████  ██  ██████   "
+                echo -e "${C_RESET}"
+                echo -e "${C_GREEN}Creative Studio Infrastructure Setup Script${C_RESET}\n"
+                echo "Usage: $0 [FLAGS]"
+                echo ""
+                echo "Flags:"
+                echo "  --profile, -p <name> Automatically load the specified profile and skip the prompt."
+                echo "  --auto-approve, -a   Skip interactive Terraform 'yes/no' confirmation prompts."
+                echo "  --skip-builds        Skip triggering Cloud Build and skip waiting for the backend deployment."
+                echo "  --force-builds       Force trigger Cloud Build without interactive prompting."
+                echo "  --skip-migrations    Perform the automated SQL backup, but skip running Alembic database migrations."
+                echo "  --skip-seeding       Skip the execution of the database seeding job (Step 14) to speed up testing."
+                echo "  --migrate-db         Force a database backup, deploy a dummy container to prevent deadlocks during Terraform apply, and restore the data into the new DB."
+                echo "  --skip-db-import     Bypass the legacy database backup detection and never prompt to import it."
+                echo "  --regional-media     Pin the Izumi agent's image/video/music/TTS models to versions served from regional"
+                echo "                       endpoints. Only needed for clients whose Vertex AI processing must stay in-region."
+                echo "  --help, -h           Show this help menu and exit."
+                echo ""
+                exit 0
+                ;;
+            --skip-builds)
+                CLI_SKIP_BUILDS="true"
+                shift
+                ;;
+            --force-builds)
+                CLI_FORCE_BUILDS="true"
+                shift
+                ;;
+            --skip-migrations)
+                CLI_SKIP_MIGRATIONS="true"
+                shift
+                ;;
+            --skip-seeding)
+                CLI_SKIP_SEEDING="true"
+                shift
+                ;;
+            --migrate-db)
+                CLI_MIGRATE_DB="true"
+                shift
+                ;;
+            --skip-db-import)
+                SKIP_DB_IMPORT="true"
+                shift
+                ;;
+            --regional-media)
+                # Front door for IZUMI_REGIONAL_MEDIA; exported so deploy_izumi_agent sees it.
+                export IZUMI_REGIONAL_MEDIA="true"
+                shift
+                ;;
+            *)
+                warn "Unknown parameter: $1. Ignoring."
+                shift
+                ;;
+        esac
+    done
+    export TF_AUTO_APPROVE CLI_PROFILE
     echo -e "${C_GREEN}============================================================${C_RESET}"
     echo -e "${C_GREEN} 🚀  Welcome to the Creative Studio Infrastructure Setup 🚀 ${C_RESET}"
     echo -e "${C_GREEN}============================================================${C_RESET}"
@@ -801,36 +1925,54 @@ main() {
     echo -e " ██████ ██   ██ ███████ ██   ██    ██    ██   ████   ███████     ███████    ██     ██████  ██████  ██  ██████   "
     echo -e "${C_RESET}"
 
-    read_state; LAST_COMPLETED_STEP=${LAST_COMPLETED_STEP:-0}
+    info "ℹ️  Network & Database Update Notice: Creative Studio deploys PostgreSQL inside a Private VPC by default for enterprise security."
+    info "   If upgrading an existing installation, data will be migrated automatically to the new private instance during deployment."
+    echo ""
+
+    read_state
+
+
+    if [ -z "$REPO_ROOT" ] || [ ! -d "$REPO_ROOT/infrastructure" ]; then
+        local SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        if [ -d "$SCRIPT_DIR/infrastructure" ]; then
+            REPO_ROOT="$SCRIPT_DIR"
+            write_state "REPO_ROOT" "$REPO_ROOT"
+        elif [ -d "$(pwd)/gcc-creative-studio/infrastructure" ]; then
+            REPO_ROOT="$(pwd)/gcc-creative-studio"
+            write_state "REPO_ROOT" "$REPO_ROOT"
+        elif [ -d "infrastructure" ]; then
+            REPO_ROOT="$(pwd)"
+            write_state "REPO_ROOT" "$REPO_ROOT"
+        fi
+    fi
+    export REPO_ROOT
     declare -a steps_to_run=(
         "check_prerequisites"
+        "select_deployment_profile"
         "check_and_install_terraform"
         "setup_project" "setup_repo"
         "configure_environment"
         "handle_manual_steps"
         "setup_firebase_app"
-        "setup_db_secrets"
+        "export_legacy_database"
+        "prepare_migration_and_dummy_image"
         "run_terraform"
+        "import_legacy_database"
         "populate_oauth_secrets"
         "update_oauth_client"
         "update_secrets"
-        "seed_data"
-        "trigger_builds" 
+        "trigger_builds"
+        "seed_database"
+        "deploy_izumi_agent"
     )
     for i in "${!steps_to_run[@]}"; do
-        step_num=$((i + 1))
-        if (( LAST_COMPLETED_STEP < step_num )); then
-            if [ -z "$STATE_FILE" ] && [ "$step_num" -gt 4 ]; then
-                STATE_FILE="$REPO_ROOT/infra/environments/$ENV_NAME/.bootstrap_state"
-                write_state "REPO_ROOT" "$REPO_ROOT"
-            fi
-            ${steps_to_run[$i]}; write_state "LAST_COMPLETED_STEP" "$step_num"
-        fi
+        ${steps_to_run[$i]}
     done
 
-    step 14 "🎉 Deployment Complete! 🎉";
+    step 16 "🎉 Deployment Complete! 🎉";
     info "Fetching your application URLs...";
-    cd "$REPO_ROOT/infra/environments/$ENV_NAME"
+    local ENV_TF_DIR="$REPO_ROOT/infrastructure"
+    cd "$ENV_TF_DIR"
 
     # Try to get the frontend URL from terraform output, but handle the error
     FRONTEND_URL=$(terraform output -raw frontend_service_url 2>/dev/null || echo "")
