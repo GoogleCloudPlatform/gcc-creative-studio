@@ -14,14 +14,14 @@
  limitations under the License.
 -->
 
-<label class="block text-sm font-medium text-neutral-300 mb-2">inputs</label>
-<div class="bg-neutral-700 p-3 rounded-lg mb-4">
+<label class="block text-sm font-medium text-neutral-300 mb-2" *ngIf="inputCount > 0">inputs</label>
+<div class="bg-neutral-700 p-3 rounded-lg mb-4" *ngIf="inputCount > 0">
   <div class="grid gap-2" [ngClass]="{'grid-cols-1': inputCount === 1, 'grid-cols-2': inputCount > 1}">
-     <ng-container *ngFor="let input of inputs | keyvalue">
+     <ng-container *ngFor="let input of filteredInputs | keyvalue; trackBy: trackByKey">
         <!-- Image Input -->
         <div *ngIf="isImageInput(input.key)" class="col-span-full">
             <div *ngIf="input.value" class="grid gap-2 grid-cols-[repeat(auto-fit,minmax(150px,1fr))] p-2 bg-neutral-700/50 rounded-lg">
-                <ng-container *ngFor="let img of getResolvedValues(input.value)">
+                <ng-container *ngFor="let img of getResolvedValues(input.value); trackBy: trackByMedia">
                     <div class="relative group rounded-lg overflow-hidden border border-neutral-700 bg-neutral-900 flex justify-center items-center">
                         <div class="relative w-full h-full cursor-pointer flex justify-center items-center" (click)="navigateToGallery(img)"
                             matTooltip="Open in Gallery">
@@ -45,44 +45,52 @@
         </div>
 
         <!-- Video Input -->
-        <div *ngIf="isVideoInput(input.key)" class="col-span-2">
-            <div *ngIf="input.value" class="relative group rounded-lg overflow-hidden border border-neutral-700 bg-neutral-900">
-                <!-- Loading Spinner -->
-                <div *ngIf="!isLoaded(input.value)" class="absolute inset-0 flex items-center justify-center bg-neutral-800 z-10">
-                    <div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                </div>
+        <div *ngIf="isVideoInput(input.key)" class="col-span-full">
+            <div *ngIf="input.value" class="grid gap-2 grid-cols-[repeat(auto-fit,minmax(200px,1fr))] p-2 bg-neutral-700/50 rounded-lg">
+                <ng-container *ngFor="let vid of getResolvedValues(input.value); trackBy: trackByMedia">
+                    <div class="relative group rounded-lg overflow-hidden border border-neutral-700 bg-neutral-900">
+                        <!-- Loading Spinner -->
+                        <div *ngIf="!isLoaded(vid)" class="absolute inset-0 flex items-center justify-center bg-neutral-800 z-10">
+                            <div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                        </div>
 
-                <video [src]="getMediaUrl(input.value)" 
-                       controls 
-                       class="w-full h-auto transition-opacity duration-300"
-                       [class.opacity-0]="!isLoaded(input.value)"
-                       [class.opacity-100]="isLoaded(input.value)"
-                       (loadedmetadata)="onMediaLoaded(input.value)"
-                       alt="Input Video"></video>
-                <div class="absolute bottom-0 left-0 right-0 bg-black/60 p-1 text-[10px] text-white truncate px-2">
-                    {{ input.key }}
-                </div>
+                        <video [src]="getMediaUrl(vid)" 
+                               controls 
+                               class="w-full h-auto transition-opacity duration-300"
+                               [class.opacity-0]="!isLoaded(vid)"
+                               [class.opacity-100]="isLoaded(vid)"
+                               (loadedmetadata)="onMediaLoaded(vid)"
+                               alt="Input Video"></video>
+                        <div class="absolute bottom-0 left-0 right-0 bg-black/60 p-1 text-[10px] text-white truncate px-2">
+                            {{ input.key }}
+                        </div>
+                    </div>
+                </ng-container>
             </div>
         </div>
 
         <!-- Audio Input -->
-        <div *ngIf="isAudioInput(input.key)" class="col-span-2">
-            <div *ngIf="input.value" class="relative group rounded-lg overflow-hidden border border-neutral-700 bg-neutral-900 p-2 flex items-center justify-center min-h-[50px]">
-                <!-- Loading Spinner -->
-                <div *ngIf="!isLoaded(input.value)" class="absolute inset-0 flex items-center justify-center bg-neutral-900 z-10">
-                    <div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                </div>
+        <div *ngIf="isAudioInput(input.key)" class="col-span-full">
+            <div *ngIf="input.value" class="flex flex-col gap-2 p-2 bg-neutral-700/50 rounded-lg">
+                <ng-container *ngFor="let aud of getResolvedValues(input.value); trackBy: trackByMedia">
+                    <div class="relative group rounded-lg overflow-hidden border border-neutral-700 bg-neutral-900 p-2 flex items-center justify-center min-h-[50px]">
+                        <!-- Loading Spinner -->
+                        <div *ngIf="!isLoaded(aud)" class="absolute inset-0 flex items-center justify-center bg-neutral-900 z-10">
+                            <div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                        </div>
 
-                <audio [src]="getMediaUrl(input.value)" 
-                       controls 
-                       class="w-full transition-opacity duration-300"
-                       [class.opacity-0]="!isLoaded(input.value)"
-                       [class.opacity-100]="isLoaded(input.value)"
-                       (canplay)="onMediaLoaded(input.value)"
-                       alt="Input Audio"></audio>
-                <div class="absolute bottom-0 left-0 right-0 p-1 text-[10px] text-neutral-400 truncate px-2 text-center pointer-events-none">
-                    {{ input.key }}
-                </div>
+                        <audio [src]="getMediaUrl(aud)" 
+                               controls 
+                               class="w-full transition-opacity duration-300"
+                               [class.opacity-0]="!isLoaded(aud)"
+                               [class.opacity-100]="isLoaded(aud)"
+                               (canplay)="onMediaLoaded(aud)"
+                               alt="Input Audio"></audio>
+                        <div class="absolute bottom-0 left-0 right-0 p-1 text-[10px] text-neutral-400 truncate px-2 text-center pointer-events-none">
+                            {{ input.key }}
+                        </div>
+                    </div>
+                </ng-container>
             </div>
         </div>
 
@@ -90,20 +98,20 @@
         <!-- Non-Image/Video/Audio Input -->
         <div *ngIf="!isImageInput(input.key) && !isVideoInput(input.key) && !isAudioInput(input.key)" class="col-span-2 bg-neutral-900 p-2 rounded border border-neutral-800 mb-2">
             <span class="text-xs text-neutral-500 block mb-1">{{ input.key }}</span>
-            <p class="text-xs text-neutral-300 font-mono whitespace-pre-wrap">{{ input.value | json }}</p>
+            <p class="text-xs text-neutral-300 font-mono whitespace-pre-wrap">{{ formatDisplayValue(input.value) }}</p>
         </div>
      </ng-container>
   </div>
 </div>
 
-<label class="block text-sm font-medium text-neutral-300 mb-2">outputs</label>
-<div class="bg-neutral-700 p-3 rounded-lg">
+<label class="block text-sm font-medium text-neutral-300 mb-2" *ngIf="outputCount > 0">outputs</label>
+<div class="bg-neutral-700 p-3 rounded-lg" *ngIf="outputCount > 0">
    <div class="grid gap-2" [ngClass]="{'grid-cols-1': outputCount === 1, 'grid-cols-2': outputCount > 1}">
-    <ng-container *ngFor="let output of outputs | keyvalue">
+    <ng-container *ngFor="let output of filteredOutputs | keyvalue; trackBy: trackByKey">
        <!-- Image Output -->
        <div *ngIf="isImageOutput(output.key)" class="col-span-full">
            <div *ngIf="output.value" class="grid gap-2 grid-cols-[repeat(auto-fit,minmax(150px,1fr))] p-2 bg-neutral-700/50 rounded-lg">
-               <ng-container *ngFor="let img of getResolvedValues(output.value)">
+               <ng-container *ngFor="let img of getResolvedValues(output.value); trackBy: trackByMedia">
                    <div class="relative group rounded-lg overflow-hidden border border-neutral-700 bg-neutral-900 flex justify-center items-center">
                        <!-- Loading Spinner -->
                        <div *ngIf="!isLoaded(img)" class="absolute inset-0 flex items-center justify-center bg-neutral-800 z-10">
@@ -130,7 +138,7 @@
        <!-- Video Output -->
        <div *ngIf="isVideoOutput(output.key)" class="col-span-full">
            <div *ngIf="output.value" class="grid gap-2 grid-cols-[repeat(auto-fit,minmax(200px,1fr))] p-2 bg-neutral-700/50 rounded-lg">
-               <ng-container *ngFor="let vid of getResolvedValues(output.value)">
+               <ng-container *ngFor="let vid of getResolvedValues(output.value); trackBy: trackByMedia">
                    <div class="relative group rounded-lg overflow-hidden border border-neutral-700 bg-neutral-900">
                       <!-- Loading Spinner -->
                       <div *ngIf="!isLoaded(vid)" class="absolute inset-0 flex items-center justify-center bg-neutral-800 z-10">
@@ -153,30 +161,34 @@
        </div>
 
        <!-- Audio Output -->
-       <div *ngIf="isAudioOutput(output.key)" class="col-span-2">
-           <div *ngIf="output.value" class="relative group rounded-lg overflow-hidden border border-neutral-700 bg-neutral-900 p-2 flex items-center justify-center min-h-[50px]">
-              <!-- Loading Spinner -->
-              <div *ngIf="!loadedMedia.has($any(output.value))" class="absolute inset-0 flex items-center justify-center bg-neutral-900 z-10">
-                  <div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-              </div>
+       <div *ngIf="isAudioOutput(output.key)" class="col-span-full">
+           <div *ngIf="output.value" class="flex flex-col gap-2 p-2 bg-neutral-700/50 rounded-lg">
+               <ng-container *ngFor="let aud of getResolvedValues(output.value); trackBy: trackByMedia">
+                   <div class="relative group rounded-lg overflow-hidden border border-neutral-700 bg-neutral-900 p-2 flex items-center justify-center min-h-[50px]">
+                      <!-- Loading Spinner -->
+                      <div *ngIf="!isLoaded(aud)" class="absolute inset-0 flex items-center justify-center bg-neutral-900 z-10">
+                          <div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                      </div>
 
-              <audio [src]="getMediaUrl(output.value)" 
-                     controls 
-                     class="w-full transition-opacity duration-300"
-                     [class.opacity-0]="!loadedMedia.has($any(output.value))"
-                     [class.opacity-100]="loadedMedia.has($any(output.value))"
-                     (canplay)="onMediaLoaded(output.value)"
-                     alt="Generated Audio"></audio>
-              <div class="absolute bottom-0 left-0 right-0 p-1 text-[10px] text-neutral-400 truncate px-2 text-center pointer-events-none">
-                {{ output.key }}
-              </div>
+                      <audio [src]="getMediaUrl(aud)" 
+                             controls 
+                             class="w-full transition-opacity duration-300"
+                             [class.opacity-0]="!isLoaded(aud)"
+                             [class.opacity-100]="isLoaded(aud)"
+                             (canplay)="onMediaLoaded(aud)"
+                             alt="Generated Audio"></audio>
+                      <div class="absolute bottom-0 left-0 right-0 p-1 text-[10px] text-neutral-400 truncate px-2 text-center pointer-events-none">
+                        {{ output.key }}
+                      </div>
+                   </div>
+               </ng-container>
            </div>
        </div>
 
        <!-- Text/Other Output -->
        <div *ngIf="!isImageOutput(output.key) && !isVideoOutput(output.key) && !isAudioOutput(output.key)" class="col-span-2 bg-neutral-900 p-2 rounded border border-neutral-800 mb-2">
             <span class="text-xs text-neutral-500 block mb-1">{{ output.key }}</span>
-            <p class="text-sm text-neutral-200 whitespace-pre-wrap font-mono">{{ output.value | json }}</p>
+            <p class="text-sm text-neutral-200 whitespace-pre-wrap font-mono">{{ formatDisplayValue(output.value) }}</p>
        </div>
     </ng-container>
    </div>
