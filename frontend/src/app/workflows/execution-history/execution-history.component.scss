@@ -242,48 +242,151 @@
     border-color: rgba(255, 255, 255, 0.2);
   }
 
+  &.needs-attention-card {
+    border-color: rgba(255, 138, 101, 0.35);
+    background: linear-gradient(
+      180deg,
+      rgba(255, 138, 101, 0.1) 0%,
+      rgba(255, 255, 255, 0.02) 100%
+    );
+
+    &:hover {
+      border-color: rgba(255, 138, 101, 0.55);
+    }
+  }
+
   .card-content {
     display: flex;
     justify-content: space-between;
     align-items: center;
     width: 100%;
+    gap: 16px;
   }
 
   .info-group {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 6px;
+    min-width: 0;
 
     .status-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
 
-        .execution-id {
-            font-family: 'Google Sans Mono', monospace;
-            font-size: 12px;
-            color: #C4C7C5;
-            background: rgba(255, 255, 255, 0.05);
-            padding: 2px 6px;
-            border-radius: 4px;
+      .execution-id {
+        font-family: 'Google Sans Mono', monospace;
+        font-size: 12px;
+        color: #c4c7c5;
+        background: rgba(255, 255, 255, 0.05);
+        padding: 2px 6px;
+        border-radius: 4px;
+      }
+
+      .status-label-pill {
+        font-size: 12px;
+        font-weight: 500;
+        padding: 2px 10px;
+        border-radius: 999px;
+        letter-spacing: 0.2px;
+
+        &.status-completed,
+        &.status-succeeded {
+          background-color: rgba(129, 201, 149, 0.15);
+          color: #81c995;
         }
+        &.status-running,
+        &.status-active,
+        &.status-in-progress {
+          background-color: rgba(138, 180, 248, 0.15);
+          color: #8ab4f8;
+        }
+        &.status-queued {
+          background-color: rgba(168, 199, 250, 0.16);
+          color: #a8c7fa;
+        }
+        &.status-step-failed {
+          background-color: rgba(255, 183, 77, 0.18);
+          color: #ffb74d;
+        }
+        &.status-needs-attention {
+          background-color: rgba(255, 138, 101, 0.2);
+          color: #ff8a65;
+        }
+        &.status-canceled,
+        &.status-cancelled {
+          background-color: rgba(154, 160, 166, 0.16);
+          color: #bdc1c6;
+        }
+      }
+
+      .queue-badge,
+      .attempt-badge,
+      .error-category-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 11px;
+        font-weight: 500;
+        padding: 2px 8px;
+        border-radius: 999px;
+
+        mat-icon.tiny-icon {
+          font-size: 13px;
+          width: 13px;
+          height: 13px;
+        }
+      }
+
+      .queue-position-badge {
+        background: rgba(168, 199, 250, 0.14);
+        border: 1px solid rgba(168, 199, 250, 0.3);
+        color: #a8c7fa;
+      }
+
+      .queue-reason-badge {
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        color: #c4c7c5;
+      }
+
+      .attempt-badge {
+        background: rgba(255, 255, 255, 0.06);
+        color: #e3e3e3;
+      }
+
+      .error-category-badge {
+        background: rgba(255, 138, 101, 0.18);
+        border: 1px solid rgba(255, 138, 101, 0.35);
+        color: #ffab91;
+      }
     }
 
     .meta-row {
       display: flex;
       align-items: center;
+      flex-wrap: wrap;
       gap: 16px;
       font-size: 12px;
-      color: #8E918F;
+      color: #8e918f;
       font-family: 'Google Sans Text', sans-serif;
-      margin-top: 4px;
+      margin-top: 2px;
 
       span {
         display: flex;
         align-items: center;
         gap: 4px;
       }
-      
+
+      .error-detail-snippet {
+        color: #ffab91;
+        max-width: 480px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
       mat-icon.tiny-icon {
         font-size: 14px;
         width: 14px;
@@ -296,50 +399,126 @@
     display: flex;
     gap: 8px;
     align-items: center;
+    flex-shrink: 0;
+
+    .action-pill-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-family: 'Google Sans', sans-serif;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+
+      mat-icon {
+        font-size: 16px;
+        width: 16px;
+        height: 16px;
+      }
+
+      &.resume-pill-btn {
+        background: rgba(129, 201, 149, 0.16);
+        border: 1px solid rgba(129, 201, 149, 0.4);
+        color: #81c995;
+
+        &:hover {
+          background: rgba(129, 201, 149, 0.26);
+          border-color: rgba(129, 201, 149, 0.65);
+          color: #a8dab5;
+        }
+      }
+
+      &.cancel-pill-btn {
+        background: rgba(242, 139, 130, 0.12);
+        border: 1px solid rgba(242, 139, 130, 0.35);
+        color: #f28b82;
+
+        &:hover {
+          background: rgba(242, 139, 130, 0.22);
+          border-color: rgba(242, 139, 130, 0.6);
+          color: #f6aea9;
+        }
+      }
+    }
 
     /* View Details Button as simple text or icon */
     .details-btn {
-        color: #C4C7C5;
-        &:hover { color: white; }
+      color: #c4c7c5;
+      &:hover {
+        color: white;
+      }
     }
   }
 }
 
 /* Status Chips/Colors */
 .status-chip {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    
-    mat-icon {
-        font-size: 18px;
-        width: 18px;
-        height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+
+  mat-icon {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+
+    &.spin-icon {
+      animation: statusSpin 1.8s linear infinite;
     }
-    
-    &.status-succeeded, &.status-completed { 
-        background-color: rgba(129, 201, 149, 0.15);
-        color: #81c995; 
-    }
-    &.status-failed, &.status-cancelled { 
-        background-color: rgba(242, 139, 130, 0.15);
-        color: #f28b82; 
-    }
-    &.status-active, &.status-running { 
-        background-color: rgba(138, 180, 248, 0.15);
-        color: #8ab4f8; 
-    }
-    &.status-pending { 
-        background-color: rgba(232, 234, 237, 0.1);
-        color: #e8eaed; 
-    }
-    &.status-skipped {
-        background-color: rgba(255, 202, 40, 0.15);
-        color: #ffd54f;
-    }
+  }
+
+  &.status-succeeded,
+  &.status-completed {
+    background-color: rgba(129, 201, 149, 0.15);
+    color: #81c995;
+  }
+  &.status-failed,
+  &.status-canceled,
+  &.status-cancelled {
+    background-color: rgba(154, 160, 166, 0.16);
+    color: #bdc1c6;
+  }
+  &.status-active,
+  &.status-running,
+  &.status-in-progress {
+    background-color: rgba(138, 180, 248, 0.15);
+    color: #8ab4f8;
+  }
+  &.status-queued {
+    background-color: rgba(168, 199, 250, 0.18);
+    color: #a8c7fa;
+  }
+  &.status-step-failed {
+    background-color: rgba(255, 183, 77, 0.18);
+    color: #ffb74d;
+  }
+  &.status-needs-attention {
+    background-color: rgba(255, 138, 101, 0.2);
+    color: #ff8a65;
+  }
+  &.status-pending {
+    background-color: rgba(232, 234, 237, 0.1);
+    color: #e8eaed;
+  }
+  &.status-skipped {
+    background-color: rgba(255, 202, 40, 0.15);
+    color: #ffd54f;
+  }
+}
+
+@keyframes statusSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 

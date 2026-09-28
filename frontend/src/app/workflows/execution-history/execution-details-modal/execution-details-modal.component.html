@@ -15,79 +15,301 @@
 -->
 
 <h2 mat-dialog-title class="!mb-0 flex justify-between items-center">
-  <span>Execution Details</span>
-  <span class="text-sm font-mono text-neutral-400"> {{ data.executionId }}</span>
+  <span>Run Details</span>
+  <span class="text-sm font-mono text-neutral-400">{{ runId }}</span>
 </h2>
 
 <mat-dialog-content class="!pb-4">
-  <div *ngIf="isLoading" class="flex justify-center items-center h-40">
+  <div *ngIf="isLoading()" class="flex justify-center items-center h-40">
     <mat-spinner diameter="40"></mat-spinner>
   </div>
 
-  <div *ngIf="!isLoading && details" class="space-y-6 mt-4">
-    <!-- Summary -->
-    <div class="grid grid-cols-2 gap-4">
+  <div *ngIf="!isLoading() && runDetails() as details" class="space-y-6 mt-4">
+    <!-- Summary Cards -->
+    <div class="summary-grid">
       <div class="glass-card">
         <label class="text-xs text-neutral-400 uppercase font-semibold">Status</label>
-        <div class="mt-1">
-            <div class="status-chip" [ngClass]="details.state | workflowStatus:'class'" matTooltip="{{ details.state | titlecase }}">
-            <mat-icon>{{ details.state | workflowStatus:'icon' }}</mat-icon>
+        <div class="mt-2 flex items-center gap-2">
+          <div
+            class="status-chip"
+            [ngClass]="runStatus() | workflowStatus:'class'"
+            [matTooltip]="runStatusLabel()"
+          >
+            <mat-icon [class.spin-icon]="runStatus() === 'step_failed'">{{
+              runStatus() | workflowStatus:'icon'
+            }}</mat-icon>
           </div>
+          <span class="status-text" [ngClass]="runStatus() | workflowStatus:'class'">
+            {{ runStatusLabel() }}
+          </span>
+        </div>
+        <div *ngIf="queueInfoDisplay() as qInfo" class="mt-2 text-xs text-blue-300">
+          {{ qInfo }}
         </div>
       </div>
+
       <div class="glass-card">
         <label class="text-xs text-neutral-400 uppercase font-semibold">Duration</label>
-        <div class="mt-1 text-neutral-200 font-mono">{{ details.duration }}s</div>
+        <div class="mt-2 text-neutral-200 font-mono text-base">{{ durationDisplay() }}</div>
+      </div>
+
+      <div class="glass-card">
+        <label class="text-xs text-neutral-400 uppercase font-semibold">Attempts</label>
+        <div class="mt-2 text-neutral-200 font-mono text-base">
+          {{ attemptCount() }}
+        </div>
       </div>
     </div>
 
-    <!-- Error (if any) -->
-    <div *ngIf="details.error" class="bg-red-900/20 border border-red-500/50 p-4 rounded-lg">
-      <h4 class="text-red-400 font-semibold mb-2 flex items-center">
-        <mat-icon class="mr-2">error</mat-icon> Error
-      </h4>
-      <pre class="text-red-200 text-xs whitespace-pre-wrap overflow-auto max-h-32">{{ details.error | json }}</pre>
+    <!-- NEEDS_ATTENTION Warning Banner -->
+    <div
+      *ngIf="needsAttentionBanner() as banner"
+      id="needs-attention-banner"
+      class="needs-attention-banner"
+    >
+      <div class="banner-header">
+        <div class="banner-title-group">
+          <mat-icon class="banner-icon">warning_amber</mat-icon>
+          <span class="banner-title">{{ banner.title }}</span>
+          <span class="banner-category-pill">{{ banner.category }}</span>
+        </div>
+        <div class="banner-actions">
+          <button
+            id="toggle-resume-inputs-btn"
+            type="button"
+            class="banner-btn secondary-banner-btn"
+            (click)="toggleResumeForm()"
+            [disabled]="isSubmitting()"
+          >
+            <mat-icon>tune</mat-icon>
+            <span>{{ showResumeForm() ? 'Hide Inputs' : 'Edit Inputs' }}</span>
+          </button>
+          <button
+            id="banner-resume-run-btn"
+            type="button"
+            class="banner-btn primary-banner-btn"
+            (click)="submitResume()"
+            [disabled]="isSubmitting()"
+          >
+            <mat-icon>play_arrow</mat-icon>
+            <span>Resume Run</span>
+          </button>
+        </div>
+      </div>
+
+      <p id="needs-attention-guidance" class="banner-guidance">
+        {{ banner.guidance }}
+      </p>
+
+      <pre *ngIf="banner.detail" id="needs-attention-detail" class="banner-detail">{{
+        banner.detail
+      }}</pre>
     </div>
 
-    <!-- Steps -->
-    <div>
+    <!-- Resume Input Override Form -->
+    <div
+      *ngIf="canResume() && showResumeForm()"
+      id="resume-inputs-panel"
+      class="glass-card resume-form-card"
+    >
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-base font-semibold m-0">Resume with Updated Inputs</h3>
+        <span class="text-xs text-neutral-400">
+          Completed steps will be reused automatically
+        </span>
+      </div>
+
+      <div
+        *ngIf="missingInputs().length > 0"
+        id="missing-inputs-alert"
+        class="missing-inputs-alert mb-3"
+      >
+        <mat-icon class="alert-icon">error_outline</mat-icon>
+        <span>
+          Missing required inputs for current workflow definition:
+          <strong>{{ missingInputs().join(', ') }}</strong>
+        </span>
+      </div>
+
+      <form
+        *ngIf="resumeFieldList().length > 0; else noEditableInputs"
+        [formGroup]="resumeForm"
+        class="resume-fields-grid"
+      >
+        <div
+          *ngFor="let field of resumeFieldList()"
+          class="resume-field-item"
+          [class.has-field-error]="field.errorMessage !== null"
+        >
+          <label [for]="'resume-input-' + field.name" class="resume-field-label">
+            {{ field.label }}
+          </label>
+          <textarea
+            [id]="'resume-input-' + field.name"
+            [formControlName]="field.name"
+            rows="2"
+            class="resume-field-input"
+            [placeholder]="'Enter value for ' + field.label"
+          ></textarea>
+          <span
+            *ngIf="field.errorMessage"
+            [id]="'resume-error-' + field.name"
+            class="resume-field-error"
+          >
+            {{ field.errorMessage }}
+          </span>
+        </div>
+      </form>
+
+      <ng-template #noEditableInputs>
+        <p class="text-xs text-neutral-400 italic m-0">
+          This workflow has no user input parameters. Click "Confirm & Resume" to retry from the failed step.
+        </p>
+      </ng-template>
+
+      <div class="flex justify-end gap-2 mt-3">
+        <button
+          id="confirm-resume-run-btn"
+          type="button"
+          class="banner-btn primary-banner-btn"
+          (click)="submitResume()"
+          [disabled]="isSubmitting()"
+        >
+          <mat-icon>play_arrow</mat-icon>
+          <span>Confirm & Resume</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Run Inputs Summary -->
+    <div *ngIf="inputArgsEntries().length > 0 && !showResumeForm()">
+      <h3 class="text-base font-semibold mb-2">Run Inputs</h3>
+      <div class="glass-card input-args-grid">
+        <div *ngFor="let arg of inputArgsEntries()" class="input-arg-item">
+          <span class="input-arg-key">{{ arg.key }}</span>
+          <pre class="input-arg-value">{{ arg.displayValue }}</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Steps List (Rendered when step_states or step_entries exist) -->
+    <div *ngIf="stepViewModels().length > 0">
       <h3 class="text-lg font-semibold mb-3">Steps</h3>
-      <div class="space-y-4">
-        <div *ngFor="let step of visibleStepEntries" class="glass-card !p-0 overflow-hidden">
+      <div class="space-y-3">
+        <div
+          *ngFor="let step of stepViewModels()"
+          [id]="'modal-step-card-' + step.stepId"
+          class="glass-card !p-0 overflow-hidden"
+        >
           <!-- Step Header -->
-          <div class="p-3 flex justify-between items-center cursor-pointer hover:bg-white/5 transition-colors" (click)="toggleStep(step.step_id)">
+          <div
+            class="p-3 flex justify-between items-center cursor-pointer hover:bg-white/5 transition-colors"
+            (click)="toggleStep(step.stepId)"
+          >
             <div class="flex items-center gap-3">
-              <mat-icon [class.rotate-90]="expandedSteps.has(step.step_id)" class="transition-transform text-neutral-400">chevron_right</mat-icon>
-              <span class="font-medium text-neutral-200">{{ step.step_id }}</span>
+              <mat-icon
+                [class.rotate-90]="step.isExpanded"
+                class="transition-transform text-neutral-400"
+              >
+                chevron_right
+              </mat-icon>
+              <span class="font-medium text-neutral-200">{{ step.stepId }}</span>
+              <span *ngIf="step.attempts > 0" class="step-attempt-pill">
+                Attempts: {{ step.attempts }}
+              </span>
+              <span *ngIf="step.lastError as stepErr" class="step-error-pill">
+                {{ stepErr.category }}
+              </span>
             </div>
-            <div class="status-chip" [ngClass]="step.state | workflowStatus:'class'" matTooltip="{{ step.state | titlecase }}">
-              <mat-icon>{{ step.state | workflowStatus:'icon' }}</mat-icon>
+            <div
+              class="status-chip"
+              [ngClass]="step.status | workflowStatus:'class'"
+              [matTooltip]="step.status | titlecase"
+            >
+              <mat-icon>{{ step.status | workflowStatus:'icon' }}</mat-icon>
             </div>
           </div>
 
           <!-- Step Details (Collapsible) -->
-          <div *ngIf="expandedSteps.has(step.step_id)" class="p-4 border-t border-white/10 space-y-4 bg-black/20">
-            <!-- Inputs -->
-            <div *ngIf="hasData(step.step_inputs) || hasData(step.step_outputs)">
+          <div
+            *ngIf="step.isExpanded"
+            class="p-4 border-t border-white/10 space-y-4 bg-black/20"
+          >
+            <div *ngIf="step.hasContent">
               <app-step-execution-details
-                [stepId]="step.step_id"
-                [stepType]="getStepType(step.step_id) || ''"
-                [inputs]="step.step_inputs"
-                [outputs]="step.step_outputs"
-                [mediaUrlMap]="mediaUrlMap">
+                [stepId]="step.stepId"
+                [stepType]="step.stepType"
+                [inputs]="step.inputs"
+                [outputs]="step.outputs"
+                [attempts]="step.attempts"
+                [lastError]="step.lastError"
+                [mediaUrlMap]="mediaUrlMap"
+                [mode]="step.stepMode"
+              >
               </app-step-execution-details>
             </div>
-            
-            <div *ngIf="!hasData(step.step_inputs) && !hasData(step.step_outputs)" class="text-neutral-500 text-sm italic">
+
+            <div *ngIf="!step.hasContent" class="text-neutral-500 text-sm italic">
               No inputs or outputs recorded.
             </div>
           </div>
         </div>
       </div>
     </div>
+
+    <!-- Snapshot Summary (always available when workflow_snapshot is present) -->
+    <div *ngIf="workflowSignal() as wf" class="glass-card snapshot-summary-card">
+      <div class="flex items-center justify-between">
+        <div>
+          <span class="text-xs text-neutral-400 uppercase font-semibold block">
+            Workflow Snapshot
+          </span>
+          <span class="text-sm text-neutral-200">
+            {{ wf.name || wf.id }} ({{ workflowSnapshotStepCount() }} steps)
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Execution Attempts History -->
+    <div *ngIf="executionAttempts().length > 0">
+      <h3 class="text-sm font-semibold text-neutral-400 uppercase mb-2">
+        Execution Attempts
+      </h3>
+      <div class="attempts-list">
+        <div *ngFor="let att of executionAttempts()" class="attempt-item">
+          <span class="attempt-num">#{{ att.attempt }}</span>
+          <span class="attempt-trigger">{{ att.trigger }}</span>
+          <span class="attempt-exec-id font-mono">{{ att.executionId }}</span>
+          <span *ngIf="att.startedAt" class="attempt-time">
+            {{ att.startedAt | date:'short' }}
+          </span>
+        </div>
+      </div>
+    </div>
   </div>
 </mat-dialog-content>
 
-<mat-dialog-actions align="end" class="!p-6 !pt-2">
-  <button mat-button mat-dialog-close>Close</button>
+<mat-dialog-actions align="end" class="!p-6 !pt-2 gap-2">
+  <button
+    *ngIf="canCancel()"
+    id="modal-cancel-run-btn"
+    mat-stroked-button
+    color="warn"
+    (click)="cancelRun()"
+    [disabled]="isSubmitting()"
+  >
+    Cancel Run
+  </button>
+  <button
+    *ngIf="canResume()"
+    id="modal-resume-run-btn"
+    mat-flat-button
+    color="primary"
+    (click)="submitResume()"
+    [disabled]="isSubmitting()"
+  >
+    Resume Run
+  </button>
+  <button id="modal-close-btn" mat-button mat-dialog-close>Close</button>
 </mat-dialog-actions>

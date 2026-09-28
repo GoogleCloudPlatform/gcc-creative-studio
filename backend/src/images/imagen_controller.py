@@ -145,9 +145,16 @@ async def upload_upscale(
     file_hash: str | None = Form(None, alias="fileHash"),
     asset_type: AssetTypeEnum | None = Form(None, alias="assetType"),
     enhance_input_image: bool | None = Form(None, alias="enhance_input_image"),
+    enhance_input_image_camel: bool | None = Form(
+        None, alias="enhanceInputImage"
+    ),
     image_preservation_factor: float | None = Form(
         None,
         alias="image_preservation_factor",
+    ),
+    image_preservation_factor_camel: float | None = Form(
+        None,
+        alias="imagePreservationFactor",
     ),
     current_user: UserModel = Depends(get_current_user),
     service: ImagenService = Depends(),
@@ -160,6 +167,17 @@ async def upload_upscale(
         file_bytes = await file.read()
         filename = file.filename
     await workspace_auth.authorize(workspace_id=workspace_id, user=current_user)
+
+    effective_enhance_input_image = (
+        enhance_input_image
+        if enhance_input_image is not None
+        else enhance_input_image_camel
+    )
+    effective_image_preservation_factor = (
+        image_preservation_factor
+        if image_preservation_factor is not None
+        else image_preservation_factor_camel
+    )
 
     executor = request.app.state.executor
 
@@ -177,8 +195,8 @@ async def upload_upscale(
         filename=filename,
         scope=scope,
         mime_type=mime_type,
-        enhance_input_image=enhance_input_image,
-        image_preservation_factor=image_preservation_factor,
+        enhance_input_image=effective_enhance_input_image,
+        image_preservation_factor=effective_image_preservation_factor,
     )
 
 

@@ -10,6 +10,17 @@ local/
 
 # Terraform state and providers
 /.terraform/
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
 
 # Ignore all content inside environments directories...
 **/environments/*
@@ -20,3 +31,8 @@ local/
 genmedia-agent-demos
 .gemini
 .agents
+
+# Persistent deployment configuration profiles
+*.cstudio_bootstrap.conf
+cstudio_profiles/
+**/infrastructure/profiles/

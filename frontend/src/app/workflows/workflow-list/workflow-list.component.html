@@ -68,59 +68,60 @@
     </div>
 
     <div *ngIf="dataSource.data.length > 0 || !isLoading">
+      <ng-container *ngIf="obs$ | async as workflows">
+        <div
+          *ngFor="let wf of workflows"
+          class="workflow-card"
+          (click)="navigateToEdit(wf)"
+        >
+          <!-- Double click to view history -->
 
-    <div
-      *ngFor="let wf of obs$ | async"
-      class="workflow-card"
-      (click)="navigateToEdit(wf)"
-    >
-      <!-- Double click to view history -->
+          <div class="card-content">
+            <!-- Info Left -->
+            <div class="info-group">
+              <h2>{{ wf.name }}</h2>
+              <p class="description">{{ wf.description || 'No description provided' }}</p>
 
-      <div class="card-content">
-        <!-- Info Left -->
-        <div class="info-group">
-          <h2>{{ wf.name }}</h2>
-          <p class="description">{{ wf.description || 'No description provided' }}</p>
+              <div class="meta-row">
+                <span>Created: {{ wf.createdAt | date:'longDate' }}</span>
 
-          <div class="meta-row">
-            <span>Created: {{ wf.createdAt | date:'longDate' }}</span>
+                <div class="time-ago">
+                  <mat-icon class="tiny-icon">schedule</mat-icon>
+                  <span> {{ formatTimeAgo(wf.updatedAt) }}</span>
+                </div>
+              </div>
+            </div>
 
-            <div class="time-ago">
-              <mat-icon class="tiny-icon">schedule</mat-icon>
-              <span> {{ formatTimeAgo(wf.updatedAt) }}</span>
+            <!-- Actions Right (Always visible or hover? Screenshot shows them clearly) -->
+            <div class="actions-group">
+              <button
+                mat-icon-button
+                (click)="$event.stopPropagation(); navigateToHistory(wf)"
+                matTooltip="View History"
+              >
+                <mat-icon>history</mat-icon>
+              </button>
+              <button
+                mat-icon-button
+                (click)="deleteWorkflow(wf, $event)"
+                matTooltip="Delete Workflow"
+              >
+                <mat-icon>delete</mat-icon>
+              </button>
             </div>
           </div>
         </div>
 
-        <!-- Actions Right (Always visible or hover? Screenshot shows them clearly) -->
-        <div class="actions-group">
-          <button
-            mat-icon-button
-            (click)="$event.stopPropagation(); navigateToHistory(wf)"
-            matTooltip="View History"
-          >
-            <mat-icon>history</mat-icon>
-          </button>
-          <button
-            mat-icon-button
-            (click)="deleteWorkflow(wf, $event)"
-            matTooltip="Delete Workflow"
-          >
-            <mat-icon>delete</mat-icon>
-          </button>
+        <!-- Empty State -->
+        <div
+          *ngIf="workflows.length === 0"
+          class="empty-state"
+        >
+          <mat-icon>toc</mat-icon>
+          <p>No workflows found.</p>
         </div>
-      </div>
+      </ng-container>
     </div>
-
-    <!-- Empty State -->
-    <div
-      *ngIf="(obs$ | async)?.length === 0"
-      class="empty-state"
-    >
-      <mat-icon>toc</mat-icon>
-      <p>No workflows found.</p>
-    </div>
-  </div>
 
   <mat-paginator
     class="!bg-transparent text-gray-400 mt-4"

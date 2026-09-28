@@ -14,16 +14,92 @@
  * limitations under the License.
  */
 
-import {Component, Inject, OnInit} from '@angular/core';
+import {Component, Inject, OnInit, computed, signal} from '@angular/core';
+import {
+  AbstractControl,
+  FormBuilder,
+  FormControl,
+  FormGroup,
+  ValidationErrors,
+} from '@angular/forms';
 import {MAT_DIALOG_DATA, MatDialogRef} from '@angular/material/dialog';
+import {MatSnackBar} from '@angular/material/snack-bar';
+import {Router} from '@angular/router';
+import {GalleryService} from '../../../gallery/gallery.service';
+import {
+  handleErrorSnackbar,
+  handleSuccessSnackbar,
+} from '../../../utils/handleMessageSnackbar';
+import {MediaResolutionService} from '../../shared/media-resolution.service';
+import {
+  ERROR_CATEGORY_GUIDANCE,
+  ErrorCategoryGuidance,
+  ExecutionAttemptEntry,
+  NodeTypes,
+  QUEUE_REASON_LABELS,
+  QueueReason,
+  StepEntry,
+  StepErrorInfo,
+  StepState,
+  WorkflowModel,
+  WorkflowRunDetail,
+  WorkflowRunStatusEnum,
+} from '../../workflow.models';
 import {WorkflowService} from '../../workflow.service';
 
-import {NodeTypes, WorkflowModel} from '../../workflow.models';
+export interface ExecutionDetailsDialogData {
+  workflowId: string;
+  runId?: string;
+  executionId?: string;
+  openResumeForm?: boolean;
+}
 
-import {GalleryService} from '../../../gallery/gallery.service';
+export interface RunStepViewModel {
+  stepId: string;
+  stepType: string;
+  stepMode: string | undefined;
+  status: string;
+  attempts: number;
+  lastError: StepErrorInfo | null;
+  inputs: Record<string, unknown>;
+  outputs: Record<string, unknown>;
+  hasContent: boolean;
+  isExpanded: boolean;
+}
 
-import {Router} from '@angular/router';
-import {MediaResolutionService} from '../../shared/media-resolution.service';
+export interface NeedsAttentionBannerViewModel {
+  category: string;
+  title: string;
+  guidance: string;
+  detail: string | null;
+}
+
+export interface InputArgEntryViewModel {
+  key: string;
+  displayValue: string;
+}
+
+export interface ResumeFieldViewModel {
+  name: string;
+  label: string;
+  errorMessage: string | null;
+}
+
+export interface ExecutionAttemptViewModel {
+  executionId: string;
+  attempt: number;
+  trigger: string;
+  startedAt: string | null;
+}
+
+const RUN_STATUS_LABELS: Record<string, string> = {
+  [WorkflowRunStatusEnum.QUEUED]: 'Queued',
+  [WorkflowRunStatusEnum.RUNNING]: 'Running',
+  [WorkflowRunStatusEnum.STEP_FAILED]: 'Retrying Step',
+  [WorkflowRunStatusEnum.NEEDS_ATTENTION]: 'Needs Attention',
+  [WorkflowRunStatusEnum.COMPLETED]: 'Completed',
+  [WorkflowRunStatusEnum.CANCELED]: 'Canceled',
+};
 
 @Component({
   selector: 'app-execution-details-modal',
@@ -31,103 +107,539 @@ import {MediaResolutionService} from '../../shared/media-resolution.service';
   styleUrls: ['./execution-details-modal.component.scss'],
 })
 export class ExecutionDetailsModalComponent implements OnInit {
-  isLoading = true;
-  details: any = null;
-  workflow: WorkflowModel | null = null;
-  NodeTypes = NodeTypes;
-  expandedSteps = new Set<string>();
+  readonly isLoading = signal<boolean>(true);
+  readonly isSubmitting = signal<boolean>(false);
+  readonly runDetails = signal<WorkflowRunDetail | null>(null);
+  readonly workflowSignal = signal<WorkflowModel | null>(null);
+  readonly expandedStepIds = signal<Set<string>>(new Set<string>());
+  readonly showResumeForm = signal<boolean>(false);
+  readonly missingInputs = signal<string[]>([]);
+  readonly fieldErrors = signal<Record<string, string>>({});
+  readonly resumeFieldNames = signal<string[]>([]);
+
+  resumeForm: FormGroup;
   mediaUrlMap = new Map<string, string>();
   loadedMedia = new Set<string>();
+  NodeTypes = NodeTypes;
+
+  /** Backwards-compatible getter/setter for specs accessing `component.details`. */
+  get details(): WorkflowRunDetail | null {
+    return this.runDetails();
+  }
+  set details(value: WorkflowRunDetail | null) {
+    this.runDetails.set(value);
+  }
+
+  /** Backwards-compatible getter/setter for specs accessing `component.workflow`. */
+  get workflow(): WorkflowModel | null {
+    return this.workflowSignal();
+  }
+  set workflow(value: WorkflowModel | null) {
+    this.workflowSignal.set(value);
+  }
+
+  get runId(): string {
+    return this.data?.runId || this.data?.executionId || '';
+  }
+
+  readonly runStatus = computed<string>(() => {
+    const d = this.runDetails();
+    return d?.status ?? d?.state ?? '';
+  });
+
+  readonly runStatusLabel = computed<string>(() => {
+    const st = this.runStatus();
+    return RUN_STATUS_LABELS[st] ?? st;
+  });
+
+  readonly attemptCount = computed<number>(() => {
+    const d = this.runDetails();
+    return d?.attempt_count ?? d?.attemptCount ?? 0;
+  });
+
+  readonly durationDisplay = computed<string>(() => {
+    const d = this.runDetails();
+    if (!d) return '—';
+    if (d.duration !== undefined && d.duration !== null) {
+      return `${d.duration}s`;
+    }
+    const startedAt = d.started_at ?? d.startedAt ?? null;
+    const completedAt = d.completed_at ?? d.completedAt ?? null;
+    if (startedAt && completedAt) {
+      const startMs = Date.parse(startedAt);
+      const endMs = Date.parse(completedAt);
+      if (!Number.isNaN(startMs) && !Number.isNaN(endMs) && endMs >= startMs) {
+        return `${Math.round((endMs - startMs) / 1000)}s`;
+      }
+    }
+    return '—';
+  });
+
+  readonly queueInfoDisplay = computed<string | null>(() => {
+    const d = this.runDetails();
+    if (!d || this.runStatus() !== WorkflowRunStatusEnum.QUEUED) return null;
+    const pos = d.queue_position ?? d.queuePosition ?? null;
+    const reason = (d.queue_reason ??
+      d.queueReason ??
+      null) as QueueReason | null;
+    const parts: string[] = [];
+    if (pos !== null && pos > 0) {
+      parts.push(`#${pos} in queue`);
+    }
+    if (reason) {
+      parts.push(QUEUE_REASON_LABELS[reason] ?? reason);
+    }
+    return parts.length > 0 ? parts.join(' · ') : null;
+  });
+
+  readonly canResume = computed<boolean>(() => {
+    return this.runStatus() === WorkflowRunStatusEnum.NEEDS_ATTENTION;
+  });
+
+  readonly canCancel = computed<boolean>(() => {
+    const st = this.runStatus();
+    return (
+      st === WorkflowRunStatusEnum.QUEUED ||
+      st === WorkflowRunStatusEnum.RUNNING ||
+      st === WorkflowRunStatusEnum.STEP_FAILED ||
+      st === WorkflowRunStatusEnum.NEEDS_ATTENTION
+    );
+  });
+
+  readonly stepViewModels = computed<RunStepViewModel[]>(() => {
+    const d = this.runDetails();
+    if (!d) return [];
+    const wf = this.workflowSignal();
+    const expanded = this.expandedStepIds();
+
+    const stepStates: Record<string, StepState> =
+      d.step_states ?? d.stepStates ?? {};
+    const stepEntries: StepEntry[] = d.step_entries ?? d.stepEntries ?? [];
+    const stepStateKeys = Object.keys(stepStates);
+
+    const orderedStepIds: string[] = [];
+    const seen = new Set<string>();
+
+    if (wf?.steps?.length) {
+      for (const wfStep of wf.steps) {
+        if (wfStep.type === NodeTypes.USER_INPUT) continue;
+        if (
+          stepStateKeys.includes(wfStep.stepId) ||
+          stepEntries.some(e => e.step_id === wfStep.stepId)
+        ) {
+          orderedStepIds.push(wfStep.stepId);
+          seen.add(wfStep.stepId);
+        }
+      }
+    }
+
+    for (const key of stepStateKeys) {
+      if (!seen.has(key)) {
+        const wfStep = wf?.steps?.find(s => s.stepId === key);
+        if (wfStep?.type === NodeTypes.USER_INPUT) continue;
+        orderedStepIds.push(key);
+        seen.add(key);
+      }
+    }
+
+    for (const entry of stepEntries) {
+      if (!seen.has(entry.step_id)) {
+        const wfStep = wf?.steps?.find(s => s.stepId === entry.step_id);
+        if (wfStep?.type === NodeTypes.USER_INPUT) continue;
+        orderedStepIds.push(entry.step_id);
+        seen.add(entry.step_id);
+      }
+    }
+
+    return orderedStepIds.map(stepId => {
+      const state: StepState | undefined = stepStates[stepId];
+      const entry = stepEntries.find(e => e.step_id === stepId);
+      const wfStep = wf?.steps?.find(s => s.stepId === stepId);
+      const stepType = wfStep?.type ?? '';
+      const stepMode = wfStep?.settings?.['mode'] as string | undefined;
+
+      const status = state?.status ?? entry?.state ?? 'PENDING';
+      const attempts = state?.attempts ?? entry?.attempts ?? 0;
+
+      let lastError: StepErrorInfo | null =
+        state?.last_error ?? entry?.last_error ?? null;
+      if (!lastError && entry?.error) {
+        if (typeof entry.error === 'string') {
+          lastError = {category: 'ERROR', detail: entry.error};
+        } else if (typeof entry.error === 'object') {
+          lastError = entry.error;
+        }
+      }
+
+      const inputs: Record<string, unknown> = entry?.step_inputs ?? {};
+      const outputs: Record<string, unknown> =
+        state?.outputs ?? entry?.step_outputs ?? {};
+      const hasContent =
+        Object.keys(inputs).length > 0 ||
+        Object.keys(outputs).length > 0 ||
+        attempts > 0 ||
+        Boolean(lastError);
+
+      return {
+        stepId,
+        stepType,
+        stepMode,
+        status,
+        attempts,
+        lastError,
+        inputs,
+        outputs,
+        hasContent,
+        isExpanded: expanded.has(stepId),
+      };
+    });
+  });
+
+  readonly needsAttentionBanner =
+    computed<NeedsAttentionBannerViewModel | null>(() => {
+      const d = this.runDetails();
+      if (!d || this.runStatus() !== WorkflowRunStatusEnum.NEEDS_ATTENTION) {
+        return null;
+      }
+
+      const steps = this.stepViewModels();
+      const firstFailedStepError =
+        steps.find(s => s.lastError !== null)?.lastError ?? null;
+
+      const rawCategory =
+        d.last_error_category ??
+        d.lastErrorCategory ??
+        firstFailedStepError?.category ??
+        'UNKNOWN';
+      const guidanceEntry: ErrorCategoryGuidance =
+        ERROR_CATEGORY_GUIDANCE[rawCategory] ??
+        ERROR_CATEGORY_GUIDANCE['UNKNOWN'];
+
+      const detail =
+        d.last_error_detail ??
+        d.lastErrorDetail ??
+        firstFailedStepError?.detail ??
+        (typeof d.error === 'string' ? d.error : null);
+
+      return {
+        category: rawCategory,
+        title: guidanceEntry.title,
+        guidance: guidanceEntry.guidance,
+        detail,
+      };
+    });
+
+  readonly inputArgsEntries = computed<InputArgEntryViewModel[]>(() => {
+    const d = this.runDetails();
+    const args = d?.input_args ?? d?.inputArgs ?? null;
+    if (!args || typeof args !== 'object') return [];
+    return Object.entries(args).map(([key, value]) => ({
+      key,
+      displayValue:
+        typeof value === 'string'
+          ? value
+          : value === null || value === undefined
+            ? ''
+            : JSON.stringify(value),
+    }));
+  });
+
+  readonly workflowSnapshotStepCount = computed<number>(() => {
+    const wf = this.workflowSignal();
+    return wf?.steps?.length ?? 0;
+  });
+
+  readonly resumeFieldList = computed<ResumeFieldViewModel[]>(() => {
+    const names = this.resumeFieldNames();
+    const errors = this.fieldErrors();
+    return names.map(name => ({
+      name,
+      label: name,
+      errorMessage: errors[name] ?? null,
+    }));
+  });
+
+  readonly executionAttempts = computed<ExecutionAttemptViewModel[]>(() => {
+    const d = this.runDetails();
+    const rawList = d?.execution_ids ?? d?.executionIds ?? [];
+    if (!Array.isArray(rawList)) return [];
+
+    return rawList.map((item, idx) => {
+      if (typeof item === 'string') {
+        return {
+          executionId: item,
+          attempt: idx + 1,
+          trigger: idx === 0 ? 'initial' : 'retry',
+          startedAt: null,
+        };
+      }
+      const obj = item as ExecutionAttemptEntry;
+      return {
+        executionId: obj.execution_id,
+        attempt: obj.attempt ?? idx + 1,
+        trigger: obj.trigger ?? 'initial',
+        startedAt: obj.started_at ?? null,
+      };
+    });
+  });
 
   constructor(
     public dialogRef: MatDialogRef<ExecutionDetailsModalComponent>,
     @Inject(MAT_DIALOG_DATA)
-    public data: {workflowId: string; executionId: string},
+    public data: ExecutionDetailsDialogData,
     private workflowService: WorkflowService,
     private galleryService: GalleryService,
     private router: Router,
     private mediaResolutionService: MediaResolutionService,
-  ) {}
+    private fb: FormBuilder,
+    private snackBar: MatSnackBar,
+  ) {
+    this.resumeForm = this.fb.group({});
+    if (this.data?.openResumeForm) {
+      this.showResumeForm.set(true);
+    }
+  }
 
   ngOnInit(): void {
     this.loadDetails();
   }
 
-  visibleStepEntries: any[] = [];
-
   loadDetails(): void {
-    this.isLoading = true;
+    this.isLoading.set(true);
     this.workflowService
-      .getExecutionDetails(this.data.workflowId, this.data.executionId)
+      .getRunDetails(this.data.workflowId, this.runId)
       .subscribe({
         next: details => {
-          this.details = details;
-          if (details.workflow_definition) {
-            this.workflow = details.workflow_definition as WorkflowModel;
+          this.runDetails.set(details);
+          const snapshot =
+            details.workflow_snapshot ??
+            details.workflowSnapshot ??
+            details.workflow_definition ??
+            null;
+          if (snapshot) {
+            this.workflowSignal.set(snapshot);
           }
 
-          this.filterStepEntries();
+          this.initResumeForm(details, snapshot);
+          this.autoExpandFailedSteps();
           this.resolveMediaUrls();
-          this.isLoading = false;
+          this.isLoading.set(false);
         },
         error: err => {
-          console.error('Failed to load details', err);
-          this.isLoading = false;
+          console.error('Failed to load run details', err);
+          this.isLoading.set(false);
         },
       });
   }
 
-  filterStepEntries(): void {
-    if (!this.details?.step_entries || !this.workflow) {
-      this.visibleStepEntries = [];
-      return;
+  toggleStep(stepId: string): void {
+    const next = new Set(this.expandedStepIds());
+    if (next.has(stepId)) {
+      next.delete(stepId);
+    } else {
+      next.add(stepId);
     }
-    this.visibleStepEntries = this.details.step_entries.filter((step: any) => {
-      const type = this.getStepType(step.step_id);
-      return type !== NodeTypes.USER_INPUT;
+    this.expandedStepIds.set(next);
+  }
+
+  toggleResumeForm(): void {
+    this.showResumeForm.set(!this.showResumeForm());
+  }
+
+  submitResume(): void {
+    if (this.isSubmitting() || !this.data.workflowId || !this.runId) return;
+
+    this.isSubmitting.set(true);
+    this.missingInputs.set([]);
+    this.fieldErrors.set({});
+
+    const argsOverride = this.buildArgsOverride();
+    this.workflowService
+      .resumeRun(this.data.workflowId, this.runId, argsOverride)
+      .subscribe({
+        next: () => {
+          this.isSubmitting.set(false);
+          handleSuccessSnackbar(this.snackBar, 'Workflow run resumed!');
+          this.dialogRef.close({updated: true});
+        },
+        error: err => {
+          this.isSubmitting.set(false);
+          if (err?.status === 422) {
+            this.handleMissingInputsError(err);
+            return;
+          }
+          handleErrorSnackbar(this.snackBar, err, 'Resume workflow run');
+        },
+      });
+  }
+
+  cancelRun(): void {
+    if (this.isSubmitting() || !this.data.workflowId || !this.runId) return;
+
+    this.isSubmitting.set(true);
+    this.workflowService.cancelRun(this.data.workflowId, this.runId).subscribe({
+      next: () => {
+        this.isSubmitting.set(false);
+        handleSuccessSnackbar(this.snackBar, 'Workflow run canceled.');
+        this.dialogRef.close({updated: true});
+      },
+      error: err => {
+        this.isSubmitting.set(false);
+        handleErrorSnackbar(this.snackBar, err, 'Cancel workflow run');
+      },
     });
   }
 
   resolveMediaUrls(): void {
-    if (!this.details || !this.details.step_entries || !this.workflow) return;
+    const wf = this.workflowSignal();
+    const steps = this.stepViewModels();
+    if (!wf || steps.length === 0) return;
 
     const stepTypeMap = new Map<string, NodeTypes | string>();
-    this.workflow.steps.forEach(s => stepTypeMap.set(s.stepId, s.type));
+    wf.steps?.forEach(s => stepTypeMap.set(s.stepId, s.type));
+
+    const entriesForResolution: StepEntry[] = steps.map(s => ({
+      step_id: s.stepId,
+      state: s.status as StepEntry['state'],
+      step_inputs: s.inputs,
+      step_outputs: s.outputs,
+    }));
 
     this.mediaResolutionService.resolveMediaUrls(
-      this.details.step_entries,
+      entriesForResolution,
       stepTypeMap,
       this.mediaUrlMap,
     );
   }
 
-  toggleStep(stepId: string): void {
-    if (this.expandedSteps.has(stepId)) {
-      this.expandedSteps.delete(stepId);
-    } else {
-      this.expandedSteps.add(stepId);
+  private initResumeForm(
+    details: WorkflowRunDetail,
+    workflow: WorkflowModel | null,
+  ): void {
+    const inputArgs: Record<string, unknown> =
+      details.input_args ?? details.inputArgs ?? {};
+    const fieldSet = new Set<string>(Object.keys(inputArgs));
+
+    const userInputStep = workflow?.steps?.find(
+      s => s.type === NodeTypes.USER_INPUT,
+    );
+    const dynamicDefinitions =
+      (userInputStep?.settings?.['definitions'] as Array<{name?: string}>) ??
+      [];
+    for (const def of dynamicDefinitions) {
+      if (def?.name) {
+        fieldSet.add(def.name);
+      }
+    }
+    if (userInputStep?.outputs && typeof userInputStep.outputs === 'object') {
+      for (const key of Object.keys(userInputStep.outputs)) {
+        fieldSet.add(key);
+      }
+    }
+
+    const controls: Record<string, FormControl> = {};
+    const orderedNames = Array.from(fieldSet);
+    for (const name of orderedNames) {
+      const rawVal = inputArgs[name];
+      const strVal =
+        rawVal === undefined || rawVal === null
+          ? ''
+          : typeof rawVal === 'string'
+            ? rawVal
+            : JSON.stringify(rawVal);
+      controls[name] = new FormControl(strVal);
+    }
+
+    this.resumeForm = this.fb.group(controls);
+    this.resumeFieldNames.set(orderedNames);
+  }
+
+  private autoExpandFailedSteps(): void {
+    const steps = this.stepViewModels();
+    const next = new Set<string>();
+    for (const step of steps) {
+      if (step.lastError || step.status === 'FAILED') {
+        next.add(step.stepId);
+      }
+    }
+    if (next.size > 0) {
+      this.expandedStepIds.set(next);
     }
   }
 
-  hasData(obj: any): boolean {
-    return obj && Object.keys(obj).length > 0;
+  private buildArgsOverride(): Record<string, unknown> | undefined {
+    const names = this.resumeFieldNames();
+    if (names.length === 0) return undefined;
+    const rawValues = this.resumeForm.getRawValue() as Record<string, unknown>;
+    const originalArgs: Record<string, unknown> =
+      this.runDetails()?.input_args ?? this.runDetails()?.inputArgs ?? {};
+    const override: Record<string, unknown> = {};
+
+    for (const key of names) {
+      const val = rawValues[key];
+      const origVal = originalArgs[key];
+      if (
+        typeof val === 'string' &&
+        origVal !== undefined &&
+        typeof origVal !== 'string'
+      ) {
+        try {
+          override[key] = JSON.parse(val);
+        } catch {
+          override[key] = val;
+        }
+      } else {
+        override[key] = val;
+      }
+    }
+    return override;
   }
 
-  getStatusClass(state: string): string {
-    return ''; // Legacy/Unused
-  }
+  private handleMissingInputsError(err: {
+    error?: {
+      missing_inputs?: string[];
+      detail?: {missing_inputs?: string[]; message?: string} | string;
+    };
+  }): void {
+    const detailObj =
+      typeof err?.error?.detail === 'object' ? err.error.detail : null;
+    const missing =
+      err?.error?.missing_inputs ?? detailObj?.missing_inputs ?? [];
 
-  getStepType(stepId: string): NodeTypes | string | undefined {
-    return this.workflow?.steps.find(s => s.stepId === stepId)?.type;
-  }
+    this.showResumeForm.set(true);
+    this.missingInputs.set(missing);
 
-  isImageOutput(stepId: string): boolean {
-    const type = this.getStepType(stepId);
-    return (
-      type === NodeTypes.GENERATE_IMAGE ||
-      type === NodeTypes.EDIT_IMAGE ||
-      type === NodeTypes.CROP_IMAGE ||
-      type === NodeTypes.VIRTUAL_TRY_ON
-    );
+    const nextNames = new Set(this.resumeFieldNames());
+    const nextFieldErrors: Record<string, string> = {};
+
+    const missingInputValidator = (
+      control: AbstractControl,
+    ): ValidationErrors | null => {
+      const val = control.value;
+      return val === null || val === undefined || String(val).trim() === ''
+        ? {missingRequiredInput: true}
+        : null;
+    };
+
+    for (const fieldName of missing) {
+      nextNames.add(fieldName);
+      if (!this.resumeForm.contains(fieldName)) {
+        this.resumeForm.addControl(
+          fieldName,
+          new FormControl('', [missingInputValidator]),
+        );
+      } else {
+        const existingCtrl = this.resumeForm.get(fieldName);
+        existingCtrl?.setValidators([missingInputValidator]);
+        existingCtrl?.updateValueAndValidity();
+      }
+      const ctrl = this.resumeForm.get(fieldName);
+      ctrl?.setErrors({missingRequiredInput: true});
+      ctrl?.markAsTouched();
+      nextFieldErrors[fieldName] = `Required input "${fieldName}" is missing.`;
+    }
+
+    this.resumeFieldNames.set(Array.from(nextNames));
+    this.fieldErrors.set(nextFieldErrors);
   }
 }

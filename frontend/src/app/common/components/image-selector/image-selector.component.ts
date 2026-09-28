@@ -31,6 +31,15 @@ import {MediaItem} from '../../models/media-item.model';
 import {MediaGalleryComponent} from '../../../gallery/media-gallery/media-gallery.component';
 import {ImageCropperDialogComponent} from '../image-cropper-dialog/image-cropper-dialog.component';
 
+export type SelectorMimeType =
+  | 'image/*'
+  | 'image/png'
+  | 'video/mp4'
+  | 'video/*'
+  | 'audio/*'
+  | 'audio/mpeg'
+  | null;
+
 export interface MediaItemSelection {
   mediaItem: MediaItem;
   selectedIndex: number;
@@ -57,14 +66,7 @@ export class ImageSelectorComponent implements OnInit {
     private userService: UserService,
     @Inject(MAT_DIALOG_DATA)
     public data: {
-      mimeType:
-        | 'image/*'
-        | 'image/png'
-        | 'video/mp4'
-        | 'video/*'
-        | 'audio/*'
-        | 'audio/mpeg'
-        | null;
+      mimeType: SelectorMimeType;
       assetType: AssetTypeEnum;
       enableUpscale?: boolean;
       multiSelect?: boolean;

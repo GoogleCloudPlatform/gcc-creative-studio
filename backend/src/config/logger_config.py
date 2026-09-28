@@ -19,6 +19,8 @@ from os import getenv
 from google.cloud.logging import Client as LoggerClient
 from google.cloud.logging.handlers import CloudLoggingHandler
 
+from src.common.secret_redaction import install_global_secret_redaction
+
 
 def setup_logging():
     """Configures the root logger for the entire application.
@@ -51,3 +53,6 @@ def setup_logging():
         )
         handler.setFormatter(formatter)
         root_logger.addHandler(handler)
+
+    # Keep bearer tokens out of every log record (spec §10).
+    install_global_secret_redaction()

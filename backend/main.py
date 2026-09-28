@@ -125,13 +125,30 @@ async def lifespan(app: FastAPI):
     # Create the pool and attach it to the app's state
     app.state.executor = ThreadPoolExecutor(max_workers=4)
 
+    # Register workflow session store + dispatcher hooks (spec §4.3, §8.2, §8.5).
+    from src.auth.auth_guard import register_post_auth_hook
+    from src.workflows.queue.run_state_service import set_dispatch_hook
+    from src.workflows.queue.workflow_dispatcher import (
+        handle_post_auth_session,
+        run_default_dispatch,
+    )
+
+    register_post_auth_hook(handle_post_auth_session)
+    set_dispatch_hook(run_default_dispatch)
+
     yield
 
     logger.info("Application shutdown terminating")
 
     logger.info("Closing ThreadPoolExecutor...")
     app.state.executor.shutdown(wait=True)
-    # Your shutdown logic here, e.g., closing database connections
+    logger.info("Closing Cloud SQL Python Connector...")
+    try:
+        from src.database import cleanup_connector
+
+        await cleanup_connector()
+    except Exception as e:
+        logger.error(f"Error during database connector cleanup: {e}")
 
 
 app = FastAPI(
