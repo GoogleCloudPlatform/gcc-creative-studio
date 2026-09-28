@@ -131,6 +131,16 @@
               <mat-icon>bookmark_border</mat-icon>
               <span>Save as a template</span>
             </button>
+            <button
+              *ngIf="mode === EditorMode.Edit && workflowId"
+              mat-menu-item
+              id="workflow-delete-btn"
+              (click)="deleteWorkflow()"
+              [disabled]="isLoading"
+            >
+              <mat-icon>delete_outline</mat-icon>
+              <span>Delete workflow</span>
+            </button>
           </mat-menu>
         </div>
 
@@ -146,6 +156,37 @@
       </div>
     </div>
   </header>
+
+  <!-- HTTP 409 Runs-in-Flight Conflict Banner -->
+  <div
+    *ngIf="conflictBannerMessage() as conflictMsg"
+    id="runs-in-flight-conflict-banner"
+    class="mx-6 mt-2 px-4 py-3 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-200 flex items-center justify-between gap-4 z-30"
+  >
+    <div class="flex items-center gap-2 text-sm">
+      <mat-icon class="text-amber-400">warning_amber</mat-icon>
+      <span>{{ conflictMsg }}</span>
+    </div>
+    <div class="flex items-center gap-2 shrink-0">
+      <button
+        id="open-execution-history-link-btn"
+        type="button"
+        mat-stroked-button
+        color="accent"
+        (click)="navigateToExecutionHistory()"
+      >
+        Open Execution History
+      </button>
+      <button
+        id="dismiss-conflict-banner-btn"
+        type="button"
+        mat-icon-button
+        (click)="dismissConflictBanner()"
+      >
+        <mat-icon>close</mat-icon>
+      </button>
+    </div>
+  </div>
 
   <!-- Main Content Area (Canvas) -->
   <div

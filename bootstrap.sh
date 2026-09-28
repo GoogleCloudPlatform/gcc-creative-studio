@@ -907,6 +907,15 @@ update_secrets() {
                 SECRET_VALUE=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32)
                 AUTO_DISCOVERED=true 
                 ;;
+            "workflow_token_encryption_key")
+                CURRENT_SECRET_VALUE=$(gcloud secrets versions access latest --secret="$SECRET_NAME" --project="$GCP_PROJECT_ID" 2>/dev/null || echo "")
+                if [ -n "$CURRENT_SECRET_VALUE" ] && [ "$CURRENT_SECRET_VALUE" != "placeholder_value_waiting_for_bootstrap_sh" ]; then
+                    info "  Existing encryption key found in Secret Manager. Preserving current key without rotating."
+                    continue
+                fi
+                SECRET_VALUE=$(openssl rand -base64 32 | tr '+/' '-_')
+                AUTO_DISCOVERED=true
+                ;;
             "agent_engine_resource_name") 
                 info "  Value will be populated automatically during Agent Engine deployment. Skipping."
                 continue

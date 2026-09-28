@@ -24,7 +24,7 @@ from typing import (
 )
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy import DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -353,13 +353,19 @@ WorkflowStep = Annotated[WorkflowStepUnion, Field(discriminator="type")]
 
 
 class WorkflowRunStatusEnum(str, Enum):
-    """Defines the states for a long-running generation Workflow *run*."""
+    """Defines the states for a long-running generation Workflow *run*.
 
+    There is no ``FAILED`` run status: every unrecovered failure parks the
+    run in ``NEEDS_ATTENTION`` with its completed steps preserved.
+    """
+
+    QUEUED = "queued"
     RUNNING = "running"
+    # Short-lived: set by the failure callback, then classified.
+    STEP_FAILED = "step_failed"
+    NEEDS_ATTENTION = "needs_attention"
     COMPLETED = "completed"
-    FAILED = "failed"
     CANCELED = "canceled"
-    SCHEDULED = "scheduled"
 
 
 class Workflow(Base):
@@ -384,6 +390,9 @@ class Workflow(Base):
         onupdate=func.now(),
         server_default=func.now(),
     )
+    # Version of the generated YAML deployed to GCP. NULL or older than the
+    # builder's current version => redeployed before the next dispatch.
+    yaml_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class WorkflowBase(BaseModel):
@@ -407,6 +416,7 @@ class WorkflowModel(BaseStringDocument, WorkflowBase):
     """
 
     user_id: int
+    yaml_version: int | None = None
 
 
 class WorkflowCreateDto(WorkflowBase, BaseDto):
@@ -426,26 +436,3 @@ class WorkflowValidationResponseDto(BaseModel):
 
 class WorkflowExecuteDto(BaseModel):
     args: dict[str, Any]
-
-
-class WorkflowRunModel(BaseStringDocument):
-    """A record of a single, immutable workflow *execution*.
-    This is the "history" item.
-    """
-
-    # --- Contextual Info ---
-    workflow_id: str  # ID of the WorkflowModel definition this run was based on
-    user_id: int
-    workspace_id: int  # Denormalized for easier querying
-
-    # --- Execution Status ---
-    status: WorkflowRunStatusEnum = Field(default=WorkflowRunStatusEnum.RUNNING)
-    started_at: datetime.datetime = Field(
-        default_factory=lambda: datetime.datetime.now(datetime.UTC),
-    )
-    completed_at: datetime.datetime | None = None
-
-    # --- THE SNAPSHOT ---
-    # A copy of the WorkflowBase at the time of the run.
-    # The 'outputs' field in each step will be populated as the run executes.
-    workflow_snapshot: WorkflowBase

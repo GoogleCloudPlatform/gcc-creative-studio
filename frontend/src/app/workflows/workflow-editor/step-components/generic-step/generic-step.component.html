@@ -371,6 +371,8 @@
         [inputs]="stepExecution.step_inputs"
         [outputs]="stepExecution.step_outputs"
         [mediaUrlMap]="mediaUrlMap"
+        [attempts]="stepExecution.attempts ?? null"
+        [lastError]="stepExecution.last_error ?? stepExecution.error ?? null"
         [mode]="
           stepForm.get('settings.mode')?.value || stepForm.value?.settings?.mode
         "

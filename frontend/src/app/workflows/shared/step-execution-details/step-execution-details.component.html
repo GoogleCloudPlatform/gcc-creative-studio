@@ -14,6 +14,18 @@
  limitations under the License.
 -->
 
+<div *ngIf="resolvedAttempts !== null || resolvedError" class="step-run-meta mb-3">
+  <div *ngIf="resolvedAttempts !== null" class="step-attempts-row">
+    <span class="step-attempts-badge">Attempts: {{ resolvedAttempts }}</span>
+  </div>
+  <div *ngIf="resolvedError as err" class="step-error-box">
+    <div class="step-error-header">
+      <span class="step-error-category">{{ err.category }}</span>
+    </div>
+    <p *ngIf="err.detail" class="step-error-detail">{{ err.detail }}</p>
+  </div>
+</div>
+
 <label class="block text-sm font-medium text-neutral-300 mb-2" *ngIf="inputCount > 0">inputs</label>
 <div class="bg-neutral-700 p-3 rounded-lg mb-4" *ngIf="inputCount > 0">
   <div class="grid gap-2" [ngClass]="{'grid-cols-1': inputCount === 1, 'grid-cols-2': inputCount > 1}">

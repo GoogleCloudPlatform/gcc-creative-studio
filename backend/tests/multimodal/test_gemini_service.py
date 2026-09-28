@@ -16,7 +16,9 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
+from google.genai import errors
 
 from src.images.dto.create_imagen_dto import CreateImagenDto
 from src.multimodal.gemini_service import (
@@ -739,3 +741,114 @@ async def test_enhance_prompt_from_dto_video_omni_flash_landscape(
             in call_args["original_prompt"]
         )
         assert "gemini-omni-flash-preview" in call_args["original_prompt"]
+
+
+# --- L1 retry predicate (spec §7.1, Q10) ----------------------------------
+
+
+def _genai_error(code: int, message: str, status: str) -> errors.APIError:
+    error_class = errors.ClientError if code < 500 else errors.ServerError
+    return error_class(
+        code, {"error": {"code": code, "message": message, "status": status}}
+    )
+
+
+def _call_generate_text(service: GeminiService) -> str:
+    return service.generate_text("Hello")
+
+
+def _call_generate_structured_prompt(service: GeminiService) -> str:
+    return service.generate_structured_prompt(
+        original_prompt="test",
+        target_type=PromptTargetEnum.IMAGE,
+        prompt_template="enhance:",
+        response_mime_type=ResponseMimeTypeEnum.TEXT,
+    )
+
+
+L1_METHODS = [
+    pytest.param("generate_text", _call_generate_text, id="generate_text"),
+    pytest.param(
+        "generate_structured_prompt",
+        _call_generate_structured_prompt,
+        id="generate_structured_prompt",
+    ),
+]
+RETRIED_ERRORS = [
+    pytest.param(
+        _genai_error(429, "Resource exhausted", "RESOURCE_EXHAUSTED"), id="429"
+    ),
+    pytest.param(
+        _genai_error(
+            503, "The service is currently unavailable.", "UNAVAILABLE"
+        ),
+        id="503",
+    ),
+    pytest.param(httpx.ConnectError("connection refused"), id="network"),
+]
+NOT_RETRIED_ERRORS = [
+    pytest.param(
+        _genai_error(
+            400,
+            "The prompt was blocked due to safety reasons",
+            "INVALID_ARGUMENT",
+        ),
+        id="safety-block",
+    ),
+    pytest.param(
+        _genai_error(400, "Invalid argument", "INVALID_ARGUMENT"), id="400"
+    ),
+    pytest.param(_genai_error(500, "Internal error", "INTERNAL"), id="500"),
+]
+
+
+@pytest.mark.parametrize("error", RETRIED_ERRORS)
+@pytest.mark.parametrize(("method_name", "invoke"), L1_METHODS)
+def test_l1_retries_quota_unavailable_and_network_errors(
+    gemini_service, method_name, invoke, error
+):
+    generate_content = gemini_service.client.models.generate_content
+    generate_content.side_effect = [error, MagicMock(text="ok")]
+
+    with patch.object(
+        getattr(GeminiService, method_name).retry, "sleep"
+    ) as sleep:
+        assert invoke(gemini_service) == "ok"
+
+    assert generate_content.call_count == 2
+    sleep.assert_called_once()
+
+
+@pytest.mark.parametrize("error", NOT_RETRIED_ERRORS)
+@pytest.mark.parametrize(("method_name", "invoke"), L1_METHODS)
+def test_l1_does_not_retry_safety_blocks_or_other_errors(
+    gemini_service, method_name, invoke, error
+):
+    generate_content = gemini_service.client.models.generate_content
+    generate_content.side_effect = error
+
+    with patch.object(
+        getattr(GeminiService, method_name).retry, "sleep"
+    ) as sleep:
+        with pytest.raises(type(error)):
+            invoke(gemini_service)
+
+    assert generate_content.call_count == 1
+    sleep.assert_not_called()
+
+
+@pytest.mark.parametrize(("method_name", "invoke"), L1_METHODS)
+def test_l1_gives_up_after_three_attempts(gemini_service, method_name, invoke):
+    generate_content = gemini_service.client.models.generate_content
+    generate_content.side_effect = _genai_error(
+        429, "Resource exhausted", "RESOURCE_EXHAUSTED"
+    )
+
+    with patch.object(
+        getattr(GeminiService, method_name).retry, "sleep"
+    ) as sleep:
+        with pytest.raises(errors.ClientError):
+            invoke(gemini_service)
+
+    assert generate_content.call_count == 3
+    assert sleep.call_count == 2

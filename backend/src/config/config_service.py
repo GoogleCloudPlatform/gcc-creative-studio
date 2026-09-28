@@ -108,6 +108,29 @@ class ConfigService(BaseSettings):
     )
     BACKEND_SERVICE_ACCOUNT_EMAIL: str = ""
 
+    # --- Workflow queue, retries and checkpoints ---
+    # Global cap of concurrently RUNNING runs (no per-user cap).
+    MAX_RUNNING_WORKFLOWS: int = Field(default=20, ge=1)
+    # Failure-driven L3 re-queues per step (continuations excluded).
+    WORKFLOW_MAX_STEP_ATTEMPTS: int = Field(default=5, ge=1)
+    # Wall time of one step across in-progress continuations.
+    WORKFLOW_MAX_STEP_DURATION_SECONDS: int = Field(default=1800, ge=1)
+    # Failure-driven GCP executions per run.
+    WORKFLOW_MAX_RUN_EXECUTIONS: int = Field(default=10, ge=1)
+    # Run age cap, excluding the time spent waiting for a session.
+    WORKFLOW_MAX_RUN_AGE_HOURS: int = Field(default=24, ge=1)
+    WORKFLOW_MAX_SESSION_WAIT_DAYS: int = Field(default=7, ge=1)
+    # L3 backoff (exponential with jitter, capped).
+    WORKFLOW_RETRY_BASE_SECONDS: int = Field(default=30, ge=1)
+    WORKFLOW_RETRY_MAX_SECONDS: int = Field(default=900, ge=1)
+    # YAML http.post timeout; equals the Cloud Run request limit.
+    WORKFLOW_STEP_HTTP_TIMEOUT_SECONDS: int = Field(default=300, ge=1)
+    # Executor poll budget per request; STEP_IN_PROGRESS once exceeded.
+    WORKFLOW_GEN_POLL_TIMEOUT_SECONDS: int = Field(default=270, ge=1)
+    WORKFLOW_DISPATCH_TICK_MIN_INTERVAL_SECONDS: int = Field(default=10, ge=0)
+    # Fernet key (or comma-separated MultiFernet keys) for short-lived token storage.
+    WORKFLOW_TOKEN_ENCRYPTION_KEY: str = ""
+
     @model_validator(mode="before")
     @classmethod
     def get_default_project_id(cls, values: Any) -> Any:
