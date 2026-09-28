@@ -837,15 +837,25 @@ export_legacy_database() {
     if [ "$CLI_MIGRATE_DB" == "true" ]; then
         # Trigger 1: user explicitly asked for a migration. Intercept ANY database (public or private).
         info "--migrate-db flag detected. Searching for current database to backup..."
-        SOURCE_INSTANCE=$(gcloud sql instances list --project="$GCP_PROJECT_ID" --format="value(name)" | grep -E "creative-studio-db|cs-.*-db-" | head -n 1 || echo "")
+        # Prefer the legacy V1 instance. After a partial run both V1 and a fresh V2 can exist,
+        # and `gcloud sql instances list` has no guaranteed order: a plain `head -n 1` could
+        # back up the new EMPTY database instead of the one holding the real data.
+        local ALL_INSTANCES=$(gcloud sql instances list --project="$GCP_PROJECT_ID" --format="value(name)" 2>/dev/null || echo "")
+        SOURCE_INSTANCE=$(echo "$ALL_INSTANCES" | grep -E "^creative-studio-db(-[0-9a-f]+)?$" | head -n 1 || echo "")
+        if [ -z "$SOURCE_INSTANCE" ]; then
+            SOURCE_INSTANCE=$(echo "$ALL_INSTANCES" | grep -E "^cs-.*-db-" | head -n 1 || echo "")
+        fi
         if [ -z "$SOURCE_INSTANCE" ]; then
             warn "No existing database found to back up. Continuing without a migration backup."
             return
         fi
         info "Found database: ${C_YELLOW}${SOURCE_INSTANCE}${C_RESET}"
     else
-        # Trigger 2: no flag passed, so only intercept the exact legacy V1 public database.
-        SOURCE_INSTANCE=$(gcloud sql instances list --project="$GCP_PROJECT_ID" --format="value(name)" | grep "^creative-studio-db$" | head -n 1 || echo "")
+        # Trigger 2: no flag passed, so only intercept the legacy V1 public database.
+        # V1 instances carry a random hex suffix (e.g. creative-studio-db-6eb3034d), so an
+        # exact '^creative-studio-db$' match never fired and the backup was silently skipped.
+        # V2 instances are named cs-<env>-db-<hex> and can never match this pattern.
+        SOURCE_INSTANCE=$(gcloud sql instances list --project="$GCP_PROJECT_ID" --format="value(name)" | grep -E "^creative-studio-db(-[0-9a-f]+)?$" | head -n 1 || echo "")
         if [ -z "$SOURCE_INSTANCE" ]; then
             info "No legacy V1 public database instance found. Nothing to back up."
             return

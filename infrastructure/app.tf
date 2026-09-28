@@ -48,6 +48,8 @@ module "compute" {
     GENMEDIA_BUCKET                  = google_storage_bucket.genmedia.name
     AGENT_LOCATION                   = var.agent_location != "" ? var.agent_location : var.region
     WORKFLOWS_LOCATION               = var.region
+    BACKEND_URL                      = local.backend_url
+    WORKFLOWS_EXECUTOR_URL           = "${local.backend_url}/api/workflows-executor"
     SIGNING_SA_EMAIL                 = google_service_account.bucket_reader_sa.email
   }
 
