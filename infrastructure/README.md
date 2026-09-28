@@ -18,13 +18,18 @@ To safely prevent this, the `bootstrap.sh` script employs a smart **Migration Fl
 
 The script employs a hybrid detection mechanism to protect you automatically while keeping the "happy path" silent:
 
-- **Automatic Trigger (V1 Legacy DBs):** If the script detects you are upgrading from an ancient V1 Public IP database (exactly `creative-studio-db`), it automatically pauses and asks if you want to run the migration flow. Answering `n` skips it entirely.
+- **Automatic Trigger (V1 Legacy DBs):** If the script detects you are upgrading from an ancient V1 Public IP database (`creative-studio-db` or `creative-studio-db-<hex>`, e.g. `creative-studio-db-6eb3034d`), it automatically pauses and asks if you want to run the migration flow. Answering `n` skips it entirely.
 - **Automatic Trigger (Orphaned Backups):** If the script detects a `migration_backup.sql.gz` file sitting in your **Terraform state bucket**, it will ask if you want to restore it using the migration flow. Only that bucket is scanned, because it is the bucket responsible for infrastructure artifacts.
 - **Manual Trigger (`--migrate-db`):** If you are intentionally making a dangerous infrastructure change (e.g. changing database regions or network paths manually), you can manually force this safety flow by running:
   ```bash
   ./bootstrap.sh --migrate-db
   ```
   Unlike the automatic triggers, this one intercepts **any** database it finds — public *or* private.
+- **Resume from an existing backup (`--use-existing-backup`):** If a previous run already exported the data but `terraform apply` then failed half-way (e.g. the `creative_studio` database was dropped while the instance survived), a new export is impossible. This flag skips the export and runs the migration flow with the `migration_backup.sql.gz` already in the Terraform state bucket:
+  ```bash
+  ./bootstrap.sh --use-existing-backup
+  ```
+  Without the flag, if an export fails and that backup exists, the script offers to reuse it instead of aborting.
 
 If you do NOT pass the flag, and the script doesn't detect a legacy database, it assumes a standard "happy path" deployment and relies entirely on Cloud SQL's automated **Point-In-Time Recovery (PITR)**. Steps 8, 9 and the import are all no-ops in that case — zero prompts, zero downtime.
 

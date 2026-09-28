@@ -833,6 +833,26 @@ export_legacy_database() {
     step 8 "Database Backup & Export"
     
     local SOURCE_INSTANCE=""
+
+    # --use-existing-backup: a previous run already exported the data, but Terraform then
+    # failed half-way through destroying the legacy DB (e.g. the `creative_studio` database
+    # is gone while the instance survives). Re-exporting is impossible at that point, so
+    # skip the export and restore the backup already sitting in the Terraform state bucket.
+    if [ "${CLI_USE_EXISTING_BACKUP:-}" == "true" ]; then
+        local REUSE_BUCKET=$(resolve_migration_bucket)
+        local REUSE_OBJECT="gs://$REUSE_BUCKET/migration_backup.sql.gz"
+        info "--use-existing-backup flag detected. Skipping the SQL export."
+        local REUSE_INFO=$(gcloud storage ls -l "$REUSE_OBJECT" --project="$GCP_PROJECT_ID" 2>/dev/null | grep "migration_backup.sql.gz" | head -n 1 || echo "")
+        if [ -z "$REUSE_INFO" ]; then
+            fail "No backup found at $REUSE_OBJECT. Re-run without --use-existing-backup to create one."
+        fi
+        info "Reusing existing backup: ${C_YELLOW}${REUSE_OBJECT}${C_RESET}"
+        echo "   $REUSE_INFO"
+        export LEGACY_EXPORT_FILE="migration_backup.sql.gz"
+        # Same contract as a fresh export: Step 9 deploys the dummy image, Step 10 imports.
+        export DID_EXPORT_LEGACY_DB="true"
+        return
+    fi
     
     if [ "$CLI_MIGRATE_DB" == "true" ]; then
         # Trigger 1: user explicitly asked for a migration. Intercept ANY database (public or private).
@@ -903,7 +923,22 @@ export_legacy_database() {
         stop_spinner
         echo -e "${C_RED}Export Error Logs:${C_RESET}"
         cat "$EXPORT_LOG"
-        fail "Failed to export legacy database. Aborting to prevent data loss."
+        rm -f "$EXPORT_LOG"
+        # A failed export does not touch the existing object, so a backup from an earlier
+        # run (typically before a Terraform apply that half-destroyed the source) is intact.
+        local PREV_BACKUP=$(gcloud storage ls -l "gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE" --project="$GCP_PROJECT_ID" 2>/dev/null | grep "$LEGACY_EXPORT_FILE" | head -n 1 || echo "")
+        if [ -n "$PREV_BACKUP" ]; then
+            warn "The export failed, but a backup from a previous run exists:"
+            echo "   $PREV_BACKUP"
+            prompt "Use this existing backup for the migration instead? (y/N)"
+            read -r REUSE_CHOICE < /dev/tty
+            if [[ "$REUSE_CHOICE" =~ ^[Yy]$ ]]; then
+                success "Reusing gs://$MIGRATION_BUCKET/$LEGACY_EXPORT_FILE."
+                export DID_EXPORT_LEGACY_DB="true"
+                return
+            fi
+        fi
+        fail "Failed to export legacy database. Aborting to prevent data loss. (If a previous run already exported it, re-run with --use-existing-backup.)"
     fi
     rm -f "$EXPORT_LOG"
 }
@@ -1900,6 +1935,8 @@ main() {
                 echo "  --skip-seeding       Skip the execution of the database seeding job (Step 14) to speed up testing."
                 echo "  --migrate-db         Force a database backup, deploy a dummy container to prevent deadlocks during Terraform apply, and restore the data into the new DB."
                 echo "  --skip-db-import     Bypass the legacy database backup detection and never prompt to import it."
+                echo "  --use-existing-backup Migrate using the migration_backup.sql.gz already in the Terraform state bucket,"
+                echo "                       skipping the SQL export (e.g. after a failed apply left the source DB unusable)."
                 echo "  --regional-media     Pin the Izumi agent's image/video/music/TTS models to versions served from regional"
                 echo "                       endpoints. Only needed for clients whose Vertex AI processing must stay in-region."
                 echo "  --help, -h           Show this help menu and exit."
@@ -1928,6 +1965,12 @@ main() {
                 ;;
             --skip-db-import)
                 SKIP_DB_IMPORT="true"
+                shift
+                ;;
+            --use-existing-backup)
+                # Implies a migration: skip the export, restore the existing backup.
+                CLI_USE_EXISTING_BACKUP="true"
+                CLI_MIGRATE_DB="true"
                 shift
                 ;;
             --regional-media)
