@@ -1678,10 +1678,29 @@ YAML
         # by `ignore_changes` in modules/compute, so this causes no Terraform drift (unlike
         # setting a dummy env var).
         #
-        # Skipped when a backend build ran this session: that build deploys its own new
-        # revision, which already reads the current secrets, and redeploying the old image
-        # here could race it and roll the new code back.
-        if [ "$BUILD_STATUS" -eq 0 ] && [ -z "${BE_BUILD_ID:-}" ]; then
+        # This must run EVEN WHEN a backend build ran this session. seed_database (step 14)
+        # waits for that build, so its revision starts BEFORE this step writes
+        # agent_engine_resource_name. That revision keeps Terraform's
+        # "placeholder_value_waiting_for_bootstrap_sh", and every /api/agent call 404s.
+        # To avoid racing a still-running build (--skip-seeding / --skip-migrations skip
+        # that wait), wait for it to reach a terminal state first, then redeploy whatever
+        # image is live.
+        if [ -n "${BE_BUILD_ID:-}" ]; then
+            start_spinner "Waiting for backend build ${BE_BUILD_ID} before refreshing secrets"
+            local BE_WAIT=0
+            local BE_BUILD_STATE="UNKNOWN"
+            while [ $BE_WAIT -lt 180 ]; do
+                BE_BUILD_STATE=$(gcloud builds describe "$BE_BUILD_ID" --project="$GCP_PROJECT_ID" --region="$DEPLOY_REGION" --format="value(status)" 2>/dev/null || echo "UNKNOWN")
+                case "$BE_BUILD_STATE" in
+                    SUCCESS|FAILURE|TIMEOUT|INTERNAL_ERROR|CANCELLED|EXPIRED) break ;;
+                esac
+                BE_WAIT=$((BE_WAIT + 1))
+                sleep 10
+            done
+            stop_spinner
+            info "Backend build ${BE_BUILD_ID} status: ${BE_BUILD_STATE}."
+        fi
+        if [ -n "${API_RESOURCE_NAME:-}" ] && [ "$API_RESOURCE_NAME" != "null" ]; then
             local BE_IMAGE=$(gcloud run services describe "$BE_SERVICE_NAME" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(image)" 2>/dev/null || echo "")
             if [ -n "$BE_IMAGE" ]; then
                 start_spinner "Refreshing backend revision so it picks up the current agent secrets"
@@ -1689,16 +1708,16 @@ YAML
                 gcloud run deploy "$BE_SERVICE_NAME" --image="$BE_IMAGE" --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1 || BE_REFRESH_STATUS=$?
                 stop_spinner
                 if [ "$BE_REFRESH_STATUS" -eq 0 ]; then
-                    success "Backend ${C_YELLOW}${BE_SERVICE_NAME}${C_RESET} refreshed; it now shares the agent's token key."
+                    success "Backend ${C_YELLOW}${BE_SERVICE_NAME}${C_RESET} refreshed; it now uses the current agent resource name and token key."
                 else
-                    warn "Could not refresh ${BE_SERVICE_NAME}. Media generation may fail until the backend is redeployed:"
+                    warn "Could not refresh ${BE_SERVICE_NAME}. Izumi chat/media may fail until the backend is redeployed:"
                     warn "   gcloud run deploy ${BE_SERVICE_NAME} --image=${BE_IMAGE} --region=${DEPLOY_REGION} --project=${GCP_PROJECT_ID}"
                 fi
             else
                 warn "Could not read the current image of ${BE_SERVICE_NAME}; backend was not refreshed."
             fi
-        elif [ -n "${BE_BUILD_ID:-}" ]; then
-            info "Backend build ${BE_BUILD_ID} deploys a fresh revision, which will pick up the current agent secrets."
+        else
+            warn "Backend not refreshed: agent_engine_resource_name was not updated in this run."
         fi
         rm -f "$DEPLOY_LOG"
     fi
