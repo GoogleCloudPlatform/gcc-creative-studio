@@ -14,9 +14,18 @@
  * limitations under the License.
  */
 
-import {Injectable} from '@angular/core';
+import {Injectable, signal} from '@angular/core';
 import {Observable, timer, of} from 'rxjs';
-import {switchMap, map, catchError, shareReplay} from 'rxjs/operators';
+import {
+  exhaustMap,
+  map,
+  catchError,
+  shareReplay,
+  takeWhile,
+  tap,
+  finalize,
+} from 'rxjs/operators';
+import {isNonTerminalRunStatus, WorkflowRunSummary} from '../workflow.models';
 import {WorkflowService} from '../workflow.service';
 
 @Injectable({
@@ -25,28 +34,57 @@ import {WorkflowService} from '../workflow.service';
 export class WorkflowExecutionPollingService {
   private readonly POLLING_INTERVAL = 3000;
 
+  readonly runs = signal<WorkflowRunSummary[]>([]);
+  readonly isPolling = signal<boolean>(false);
+
   constructor(private workflowService: WorkflowService) {}
 
   /**
-   * Polls for executions for a given workflowID every 3 seconds.
-   * Returns the most recent 20 executions.
-   * @param workflowId
-   * @returns Observable of execution list
+   * Checks whether any run in the list is in an active/non-terminal state
+   * (`queued`, `running`, or `step_failed`).
    */
-  pollExecutions(workflowId: string): Observable<any[]> {
+  hasActiveRuns(runs: WorkflowRunSummary[]): boolean {
+    return runs.some(run => isNonTerminalRunStatus(run.status));
+  }
+
+  /**
+   * Polls for runs for a given workflowId every 3 seconds while any run is
+   * in `queued`, `running`, or `step_failed` state. Uses `exhaustMap` so an
+   * in-flight request is kept alive and new timer ticks are ignored until the
+   * current request completes. Stops polling automatically once all runs reach
+   * a terminal or paused state (`completed`, `canceled`, `needs_attention`).
+   */
+  pollRuns(
+    workflowId: string,
+    limit = 20,
+    status = 'ALL',
+  ): Observable<WorkflowRunSummary[]> {
+    this.isPolling.set(true);
     return timer(0, this.POLLING_INTERVAL).pipe(
-      switchMap(() =>
-        this.workflowService
-          .getExecutions(workflowId, 20, undefined, 'ALL')
-          .pipe(
-            map(response => response.executions),
-            catchError(err => {
-              console.error('Error fetching executions in poll:', err);
-              return of([]);
-            }),
-          ),
+      exhaustMap(() =>
+        this.workflowService.getRuns(workflowId, limit, 0, status).pipe(
+          map(response => response?.data ?? response?.runs ?? []),
+          catchError(err => {
+            console.error('Error fetching runs in poll:', err);
+            return of([] as WorkflowRunSummary[]);
+          }),
+        ),
       ),
-      shareReplay(1),
+      tap(runs => this.runs.set(runs)),
+      takeWhile(runs => this.hasActiveRuns(runs), true),
+      finalize(() => this.isPolling.set(false)),
+      shareReplay({bufferSize: 1, refCount: true}),
     );
+  }
+
+  /**
+   * Alias for `pollRuns` to preserve compatibility with existing callers.
+   */
+  pollExecutions(
+    workflowId: string,
+    limit = 20,
+    status = 'ALL',
+  ): Observable<WorkflowRunSummary[]> {
+    return this.pollRuns(workflowId, limit, status);
   }
 }

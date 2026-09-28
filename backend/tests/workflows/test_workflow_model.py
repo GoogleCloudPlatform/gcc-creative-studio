@@ -13,8 +13,13 @@
 # limitations under the License.
 """Unit tests for Workflow Schema & ImageStep model validation."""
 
+import datetime
+import importlib
+import json
+
 from pydantic import TypeAdapter
 
+from src.workflows.queue.failure_classifier import ErrorCategory
 from src.workflows.schema.workflow_model import (
     GenerateTextInputs,
     GenerateTextSettings,
@@ -27,10 +32,19 @@ from src.workflows.schema.workflow_model import (
     ImageStep,
     NodeTypes,
     StepOutputReference,
+    StepStatusEnum,
     UserInputDefinition,
     UserInputSettings,
     UserInputStep,
+    WorkflowRunStatusEnum,
     WorkflowStep,
+)
+from src.workflows.schema.workflow_run_model import (
+    QueueReasonEnum,
+    StepState,
+    WorkflowRun,
+    WorkflowRunExecution,
+    WorkflowRunModel,
 )
 
 
@@ -673,3 +687,165 @@ def test_legacy_step_translation_preserves_collapsed():
     }
     wf = WorkflowBase.model_validate(legacy_data)
     assert wf.steps[0].collapsed is True
+
+
+# --- Workflow runs: statuses and queue / checkpoint columns (spec §5) -----
+
+RUN_STARTED_AT = datetime.datetime(2026, 1, 1, 12, 0, tzinfo=datetime.UTC)
+QUEUE_COLUMNS = (
+    "input_args",
+    "definition_hash",
+    "queued_at",
+    "dispatched_at",
+    "queue_reason",
+    "waiting_for_session_since",
+    "session_wait_seconds",
+    "current_step_id",
+    "attempt_count",
+    "next_retry_at",
+    "last_error_category",
+    "last_error_detail",
+    "execution_ids",
+    "step_states",
+    "canceled_by_user",
+)
+
+
+def _run_row(**overrides) -> dict:
+    row = {
+        "id": "exec-1",
+        "workflow_id": "wf-1",
+        "user_id": 1,
+        "workspace_id": None,
+        "status": "needs_attention",
+        "started_at": RUN_STARTED_AT,
+        "completed_at": None,
+        "workflow_snapshot": {"name": "Workflow", "steps": []},
+    }
+    row.update({column: None for column in QUEUE_COLUMNS})
+    row.update(overrides)
+    return row
+
+
+def test_run_status_enum_has_no_failed_or_scheduled():
+    assert {status.value for status in WorkflowRunStatusEnum} == {
+        "queued",
+        "running",
+        "step_failed",
+        "needs_attention",
+        "completed",
+        "canceled",
+    }
+    assert "FAILED" not in WorkflowRunStatusEnum.__members__
+    assert "SCHEDULED" not in WorkflowRunStatusEnum.__members__
+
+
+def test_duplicate_run_model_is_no_longer_in_workflow_model():
+    module = importlib.import_module("src.workflows.schema.workflow_model")
+    assert not hasattr(module, "WorkflowRunModel")
+
+
+def test_run_model_maps_null_queue_columns_to_generic_defaults():
+    run = WorkflowRunModel.model_validate(_run_row())
+
+    # use_enum_values=True: enum fields hold their (str) values.
+    assert run.status == WorkflowRunStatusEnum.NEEDS_ATTENTION
+    assert run.input_args == {}
+    assert run.step_states == {}
+    assert run.execution_ids == []
+    assert run.attempt_count == 0
+    assert run.session_wait_seconds == 0
+    for column in (
+        "definition_hash",
+        "queued_at",
+        "dispatched_at",
+        "queue_reason",
+        "waiting_for_session_since",
+        "current_step_id",
+        "next_retry_at",
+        "last_error_category",
+        "last_error_detail",
+        "canceled_by_user",
+    ):
+        assert getattr(run, column) is None, column
+
+
+def test_run_model_reads_orm_rows_with_null_columns():
+    orm_row = WorkflowRun(
+        id="exec-2",
+        workflow_id="wf-1",
+        user_id=1,
+        status="running",
+        started_at=RUN_STARTED_AT,
+        workflow_snapshot={"name": "Workflow", "steps": []},
+    )
+
+    run = WorkflowRunModel.model_validate(orm_row)
+
+    assert run.status == WorkflowRunStatusEnum.RUNNING
+    assert (run.input_args, run.step_states, run.execution_ids) == ({}, {}, [])
+    assert (run.attempt_count, run.session_wait_seconds) == (0, 0)
+
+
+def test_run_model_parses_and_dumps_checkpoint_data_as_json():
+    run = WorkflowRunModel.model_validate(
+        _run_row(
+            status="queued",
+            queue_reason="RETRY_SCHEDULED",
+            last_error_category="QUOTA",
+            attempt_count=2,
+            execution_ids=[
+                {"execution_id": "exec-1", "started_at": RUN_STARTED_AT}
+            ],
+            step_states={
+                "image_1": {
+                    "status": "completed",
+                    "outputs": {"generated_image": 5},
+                    "job_id": 5,
+                    "attempts": None,
+                    "completed_at": RUN_STARTED_AT,
+                    "error": {"category": "QUOTA", "http_status": 429},
+                }
+            },
+        )
+    )
+
+    assert run.queue_reason == QueueReasonEnum.RETRY_SCHEDULED
+    assert run.last_error_category == ErrorCategory.QUOTA
+    assert isinstance(run.execution_ids[0], WorkflowRunExecution)
+    step = run.step_states["image_1"]
+    assert isinstance(step, StepState)
+    assert step.status == StepStatusEnum.COMPLETED
+    assert step.attempts == 0
+    assert step.in_progress_continuations == 0
+
+    # Repositories write model_dump() output straight into JSONB columns.
+    dumped = run.model_dump()
+    assert dumped["execution_ids"] == [
+        {"execution_id": "exec-1", "started_at": "2026-01-01T12:00:00Z"}
+    ]
+    assert dumped["step_states"]["image_1"] == {
+        "status": "completed",
+        "outputs": {"generated_image": 5},
+        "attempts": 0,
+        "in_progress_continuations": 0,
+        "job_id": 5,
+        "completed_at": "2026-01-01T12:00:00Z",
+        "error": {"category": "QUOTA", "http_status": 429},
+    }
+    json.dumps(dumped["step_states"])
+
+
+def test_step_state_defaults_and_json_output():
+    state = StepState()
+    assert state.status == StepStatusEnum.PENDING
+    assert state.to_json() == {
+        "status": "pending",
+        "attempts": 0,
+        "in_progress_continuations": 0,
+    }
+    state = StepState.model_validate(
+        {"status": "running", "in_progress_continuations": None, "extra": 1}
+    )
+    assert state.in_progress_continuations == 0
+    assert state.to_json()["extra"] == 1

@@ -367,4 +367,48 @@ describe('StepExecutionDetailsComponent', () => {
       );
     });
   });
+
+  describe('Step attempts and last_error rendering', () => {
+    it('should expose resolvedAttempts when attempts > 0 and null otherwise', () => {
+      component.attempts = 0;
+      expect(component.resolvedAttempts).toBeNull();
+
+      component.attempts = 3;
+      fixture.detectChanges();
+      expect(component.resolvedAttempts).toBe(3);
+
+      const badge = fixture.nativeElement.querySelector('.step-attempts-badge');
+      expect(badge?.textContent).toContain('Attempts: 3');
+    });
+
+    it('should expose resolvedError from lastError or string error and render category/detail', () => {
+      component.lastError = {
+        category: 'SAFETY_BLOCK',
+        detail: 'Prompt blocked by safety filter',
+      };
+      fixture.detectChanges();
+
+      expect(component.resolvedError).toEqual({
+        category: 'SAFETY_BLOCK',
+        detail: 'Prompt blocked by safety filter',
+      });
+
+      const categoryEl = fixture.nativeElement.querySelector(
+        '.step-error-category',
+      );
+      const detailEl =
+        fixture.nativeElement.querySelector('.step-error-detail');
+      expect(categoryEl?.textContent).toContain('SAFETY_BLOCK');
+      expect(detailEl?.textContent).toContain(
+        'Prompt blocked by safety filter',
+      );
+
+      component.lastError = null;
+      component.error = 'Plain error string';
+      expect(component.resolvedError).toEqual({
+        category: 'ERROR',
+        detail: 'Plain error string',
+      });
+    });
+  });
 });

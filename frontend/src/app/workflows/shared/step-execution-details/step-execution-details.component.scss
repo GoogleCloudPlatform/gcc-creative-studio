@@ -15,5 +15,56 @@
  */
 
 :host {
-    display: block;
+  display: block;
+}
+
+.step-run-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.step-attempts-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.08);
+  color: #e3e3e3;
+}
+
+.step-error-box {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(242, 139, 130, 0.12);
+  border: 1px solid rgba(242, 139, 130, 0.35);
+
+  .step-error-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+
+  .step-error-category {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(242, 139, 130, 0.22);
+    color: #f6aea9;
+  }
+
+  .step-error-detail {
+    margin: 0;
+    font-size: 12px;
+    font-family: 'Google Sans Mono', monospace;
+    color: #f28b82;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
 }

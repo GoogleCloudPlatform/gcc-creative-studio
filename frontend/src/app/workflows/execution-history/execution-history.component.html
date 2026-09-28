@@ -16,143 +16,271 @@
 
 <div class="workflow-list-container">
   <!-- Header -->
-  <div class="header-section">
+  <header class="header-section">
     <div class="top-actions-group">
-      <button mat-icon-button routerLink="/workflows" matTooltip="Generic Go Back">
+      <button
+        id="back-to-workflows-btn"
+        mat-icon-button
+        routerLink="/workflows"
+        matTooltip="Back to Workflows"
+      >
         <mat-icon>arrow_back</mat-icon>
       </button>
     </div>
     <div class="in-line-wrapper">
       <div class="title-group">
-        <h1 *ngIf="workflow" class="page-title">{{ workflow.name }}</h1>
-        <h1 *ngIf="!workflow" class="page-title">Execution History</h1>
-        
-        <div class="workflow-meta" *ngIf="workflow">
-          <p class="description">{{ workflow.description || 'No description provided' }}</p>
+        <h1 *ngIf="workflow() as wf; else defaultTitle" class="page-title">
+          {{ wf.name }}
+        </h1>
+        <ng-template #defaultTitle>
+          <h1 class="page-title">Execution History</h1>
+        </ng-template>
+
+        <div class="workflow-meta" *ngIf="workflow() as wf">
+          <p class="description">
+            {{ wf.description || 'No description provided' }}
+          </p>
           <div class="meta-details">
-            <span>Created: {{ workflow.createdAt | date:'mediumDate' }}</span>
-            <span>Updated: {{ workflow.updatedAt | date:'mediumDate' }}</span>
-            <span class="select-all" title="Click to select ID">ID: {{ workflow.id }}</span>
+            <span>Created: {{ wf.createdAt | date: 'mediumDate' }}</span>
+            <span>Updated: {{ wf.updatedAt | date: 'mediumDate' }}</span>
+            <span class="select-all" title="Click to select ID"
+              >ID: {{ wf.id }}</span
+            >
           </div>
         </div>
       </div>
-      
+
       <div class="actions-wrapper">
-        <studio-button variant="primary" size="medium"
+        <studio-button
+          id="open-batch-execution-btn"
+          variant="primary"
+          size="medium"
           mat-flat-button
-          *ngIf="authService.isUserAdmin() || authService.isUserWorkflows()"
+          *ngIf="canRunBatch()"
           (click)="openBatchExecution()"
-          [disabled]="isLoading"
-          style="margin-right: 8px;"
+          [disabled]="isLoading()"
+          style="margin-right: 8px"
         >
-            <mat-icon>dataset</mat-icon>
-            Batch
+          <mat-icon>dataset</mat-icon>
+          Batch
         </studio-button>
-        <studio-button variant="cta" size="medium"
+        <studio-button
+          id="run-workflow-btn"
+          variant="cta"
+          size="medium"
           mat-flat-button
-          
           (click)="runWorkflow()"
-          [disabled]="isLoading"
+          [disabled]="isLoading()"
         >
-            <mat-icon>play_arrow</mat-icon>
-            Run
+          <mat-icon>play_arrow</mat-icon>
+          Run
         </studio-button>
-        <studio-button variant="primary" size="medium" shape="circle"
+        <studio-button
+          id="open-workflow-editor-btn"
+          variant="primary"
+          size="medium"
+          shape="circle"
           mat-flat-button
-          [routerLink]="['/workflows/edit', workflowId]"
-          [queryParams]="{ returnUrl: '/workflows/' + workflowId + '/executions' }"
-          matTooltip="Open Editor">
-            <mat-icon>edit</mat-icon>
+          [routerLink]="['/workflows/edit', workflowId()]"
+          [queryParams]="editorQueryParams()"
+          matTooltip="Open Editor"
+        >
+          <mat-icon>edit</mat-icon>
         </studio-button>
       </div>
     </div>
-  </div>
+  </header>
 
   <!-- Loading Indicator (Initial) -->
-  <div *ngIf="isLoading && executions.length === 0" class="loading-state">
+  <div *ngIf="isLoading() && runRows().length === 0" class="loading-state">
     <mat-spinner diameter="50" color="accent"></mat-spinner>
   </div>
 
-  <!-- Executions List (Cards) -->
-  <div class="executions-list" *ngIf="!isLoading || executions.length > 0">
-    
+  <!-- Runs List (Cards) -->
+  <section class="executions-list" *ngIf="!isLoading() || runRows().length > 0">
     <!-- Controls (Filter + Refresh) -->
     <div class="list-controls">
-        <mat-form-field appearance="outline" class="status-filter no-subscript dense-form-field">
-            <mat-select [(value)]="selectedStatus" (selectionChange)="onStatusChange()" placeholder="Status" panelClass="glass-select-panel">
-                <mat-option value="ALL">All Statuses</mat-option>
-                <mat-option value="SUCCEEDED">Succeeded</mat-option>
-                <mat-option value="FAILED">Failed</mat-option>
-                <mat-option value="ACTIVE">Active</mat-option>
-            </mat-select>
-        </mat-form-field>
+      <mat-form-field
+        appearance="outline"
+        class="status-filter no-subscript dense-form-field"
+      >
+        <mat-select
+          id="run-status-filter-select"
+          [value]="selectedStatus()"
+          (selectionChange)="onStatusChange($event.value)"
+          placeholder="Status"
+          panelClass="glass-select-panel"
+        >
+          <mat-option value="ALL">All Statuses</mat-option>
+          <mat-option value="queued">Queued</mat-option>
+          <mat-option value="running">Running</mat-option>
+          <mat-option value="step_failed">Retrying (Step Failed)</mat-option>
+          <mat-option value="needs_attention">Needs Attention</mat-option>
+          <mat-option value="completed">Completed</mat-option>
+          <mat-option value="canceled">Canceled</mat-option>
+        </mat-select>
+      </mat-form-field>
 
-        <button mat-icon-button class="refresh-btn" (click)="loadExecutions(true)" [disabled]="isLoading" matTooltip="Refresh">
-            <mat-icon [class.animate-spin]="isLoading">refresh</mat-icon>
-        </button>
+      <button
+        id="refresh-runs-btn"
+        mat-icon-button
+        class="refresh-btn"
+        (click)="loadRuns(true)"
+        [disabled]="isLoading()"
+        matTooltip="Refresh"
+      >
+        <mat-icon [class.animate-spin]="isLoading()">refresh</mat-icon>
+      </button>
     </div>
 
-    <div *ngFor="let exec of executions" 
-         class="execution-card"
-         (click)="openDetails(exec.id)">
-      
+    <div
+      *ngFor="let row of runRows()"
+      [id]="'execution-card-' + row.id"
+      class="execution-card"
+      [class.needs-attention-card]="row.canResume"
+      (click)="openDetails(row.id)"
+    >
       <div class="card-content">
         <!-- Info Left -->
         <div class="info-group">
-            <div class="status-row">
-                <div class="status-chip" [ngClass]="exec.state | workflowStatus:'class'" matTooltip="{{ exec.state | titlecase }}">
-                    <mat-icon>{{ exec.state | workflowStatus:'icon' }}</mat-icon>
-                </div>
-                <span class="execution-id">{{ exec.id }}</span>
+          <div class="status-row">
+            <div
+              class="status-chip"
+              [ngClass]="row.status | workflowStatus: 'class'"
+              [matTooltip]="row.statusLabel"
+            >
+              <mat-icon [class.spin-icon]="row.status === 'step_failed'">{{
+                row.status | workflowStatus: 'icon'
+              }}</mat-icon>
             </div>
-          
-          <div class="meta-row">
-            <span>
-                <mat-icon class="tiny-icon">calendar_today</mat-icon>
-                {{ exec.start_time | date:'medium' }}
+            <span
+              class="status-label-pill"
+              [ngClass]="row.status | workflowStatus: 'class'"
+            >
+              {{ row.statusLabel }}
             </span>
-            <span *ngIf="exec.duration">
-                <mat-icon class="tiny-icon">timer</mat-icon>
-                {{ exec.duration }}s
+            <span class="execution-id">{{ row.id }}</span>
+
+            <span
+              *ngIf="row.queuePositionLabel"
+              class="queue-badge queue-position-badge"
+            >
+              <mat-icon class="tiny-icon">schedule</mat-icon>
+              {{ row.queuePositionLabel }}
+            </span>
+
+            <span
+              *ngIf="row.queueReasonLabel"
+              class="queue-badge queue-reason-badge"
+            >
+              {{ row.queueReasonLabel }}
+            </span>
+
+            <span *ngIf="row.attemptCount > 0" class="attempt-badge">
+              Attempt #{{ row.attemptCount }}
+            </span>
+
+            <span
+              *ngIf="row.lastErrorCategory && row.canResume"
+              class="error-category-badge"
+            >
+              <mat-icon class="tiny-icon">warning_amber</mat-icon>
+              {{ row.lastErrorCategory }}
+            </span>
+          </div>
+
+          <div class="meta-row">
+            <span *ngIf="row.startedAt">
+              <mat-icon class="tiny-icon">calendar_today</mat-icon>
+              {{ row.startedAt | date: 'medium' }}
+            </span>
+            <span *ngIf="row.durationSeconds !== null">
+              <mat-icon class="tiny-icon">timer</mat-icon>
+              {{ row.durationSeconds }}s
+            </span>
+            <span
+              *ngIf="row.lastErrorDetail && row.canResume"
+              class="error-detail-snippet"
+            >
+              {{ row.lastErrorDetail }}
             </span>
           </div>
         </div>
 
         <!-- Actions Right -->
         <div class="actions-group">
-           <button mat-icon-button class="view-snapshot-btn"
-                   (click)="$event.stopPropagation()"
-                   [routerLink]="['/workflows/edit', workflowId]"
-                   [queryParams]="{ executionId: exec.id, returnUrl: '/workflows/' + workflowId + '/executions' }"
-                   matTooltip="View Snapshot">
-             <mat-icon>visibility</mat-icon>
-           </button>
-           <button mat-icon-button class="details-btn">
-             <mat-icon>chevron_right</mat-icon>
-           </button>
+          <button
+            *ngIf="row.canResume"
+            [id]="'resume-run-' + row.id"
+            type="button"
+            class="action-pill-btn resume-pill-btn"
+            (click)="resumeRun(row.id, $event)"
+            matTooltip="Resume paused workflow run"
+          >
+            <mat-icon>play_arrow</mat-icon>
+            <span>Resume</span>
+          </button>
+
+          <button
+            *ngIf="row.canCancel"
+            [id]="'cancel-run-' + row.id"
+            type="button"
+            class="action-pill-btn cancel-pill-btn"
+            (click)="cancelRun(row.id, $event)"
+            matTooltip="Cancel workflow run"
+          >
+            <mat-icon>cancel</mat-icon>
+            <span>Cancel</span>
+          </button>
+
+          <button
+            [id]="'view-snapshot-' + row.id"
+            mat-icon-button
+            class="view-snapshot-btn"
+            (click)="$event.stopPropagation()"
+            [routerLink]="['/workflows/edit', workflowId()]"
+            [queryParams]="row.snapshotQueryParams"
+            matTooltip="View Snapshot"
+          >
+            <mat-icon>visibility</mat-icon>
+          </button>
+          <button
+            [id]="'open-details-' + row.id"
+            mat-icon-button
+            class="details-btn"
+          >
+            <mat-icon>chevron_right</mat-icon>
+          </button>
         </div>
       </div>
     </div>
-    
+
     <!-- Empty State -->
-    <div *ngIf="!isLoading && executions.length === 0" class="empty-state">
+    <div *ngIf="!isLoading() && runRows().length === 0" class="empty-state">
       <mat-icon>history</mat-icon>
-      <p>No executions found.</p>
+      <p>No workflow runs found.</p>
     </div>
-  </div>
+  </section>
 
   <mat-paginator
-    *ngIf="executions.length > 0"
+    *ngIf="runRows().length > 0"
     class="!bg-transparent text-gray-400 mt-4"
-    [length]="executions.length" 
+    [length]="runRows().length"
     [pageSize]="20"
     [hidePageSize]="true"
     (page)="loadMore()"
-    [disabled]="!nextPageToken">
+    [disabled]="!nextPageToken()"
+  >
   </mat-paginator>
 
-  <!-- Manual Load More button if paginator isn't fitting well or just as simple alternative at bottom -->
-   <div *ngIf="nextPageToken" class="flex justify-center mt-4">
-        <button mat-stroked-button (click)="loadMore()" [disabled]="isLoading">Load More</button>
-   </div>
+  <div *ngIf="nextPageToken()" class="flex justify-center mt-4">
+    <button
+      id="load-more-runs-btn"
+      mat-stroked-button
+      (click)="loadMore()"
+      [disabled]="isLoading()"
+    >
+      Load More
+    </button>
+  </div>
 </div>

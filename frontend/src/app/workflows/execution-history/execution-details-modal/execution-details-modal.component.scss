@@ -16,7 +16,11 @@
 
 /* Glassmorphism Styles */
 .glass-panel {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.08) 0%,
+    rgba(255, 255, 255, 0.02) 100%
+  );
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
   backdrop-filter: blur(12px);
@@ -27,63 +31,420 @@
   @extend .glass-panel;
   padding: 16px;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  
+
   &:hover {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.06) 100%);
+    background: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.12) 0%,
+      rgba(255, 255, 255, 0.06) 100%
+    );
     border-color: rgba(255, 255, 255, 0.2);
   }
 }
 
 .glass-header {
-    background: rgba(255, 255, 255, 0.05);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-/* Override default dialog styles if needed, though panelClass usually handles container */
 :host {
-    display: block;
-    color: #E3E3E3;
+  display: block;
+  color: #e3e3e3;
 }
 
-h2, h3, h4, label, span, div {
-    font-family: 'Google Sans', sans-serif;
+h2,
+h3,
+h4,
+label,
+span,
+div {
+  font-family: 'Google Sans', sans-serif;
 }
 
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.status-text {
+  font-size: 13px;
+  font-weight: 500;
+
+  &.status-completed,
+  &.status-succeeded {
+    color: #81c995;
+  }
+  &.status-running,
+  &.status-active,
+  &.status-in-progress {
+    color: #8ab4f8;
+  }
+  &.status-queued {
+    color: #a8c7fa;
+  }
+  &.status-step-failed {
+    color: #ffb74d;
+  }
+  &.status-needs-attention {
+    color: #ff8a65;
+  }
+  &.status-canceled,
+  &.status-cancelled {
+    color: #bdc1c6;
+  }
+}
+
+/* NEEDS_ATTENTION Banner */
+.needs-attention-banner {
+  padding: 16px;
+  border-radius: 12px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 138, 101, 0.16) 0%,
+    rgba(242, 139, 130, 0.08) 100%
+  );
+  border: 1px solid rgba(255, 138, 101, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+
+  .banner-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .banner-title-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    .banner-icon {
+      color: #ff8a65;
+      font-size: 20px;
+      width: 20px;
+      height: 20px;
+    }
+
+    .banner-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #ffccbc;
+    }
+
+    .banner-category-pill {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(255, 138, 101, 0.25);
+      border: 1px solid rgba(255, 138, 101, 0.5);
+      color: #ffab91;
+    }
+  }
+
+  .banner-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .banner-guidance {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #f5e6e0;
+  }
+
+  .banner-detail {
+    margin: 0;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 138, 101, 0.25);
+    color: #ffab91;
+    font-family: 'Google Sans Mono', monospace;
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 140px;
+    overflow: auto;
+  }
+}
+
+.banner-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-family: 'Google Sans', sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+
+  mat-icon {
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  &.primary-banner-btn {
+    background: rgba(129, 201, 149, 0.2);
+    border: 1px solid rgba(129, 201, 149, 0.5);
+    color: #81c995;
+
+    &:hover:not(:disabled) {
+      background: rgba(129, 201, 149, 0.32);
+      border-color: rgba(129, 201, 149, 0.75);
+      color: #a8dab5;
+    }
+  }
+
+  &.secondary-banner-btn {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #e3e3e3;
+
+    &:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.15);
+      border-color: rgba(255, 255, 255, 0.35);
+    }
+  }
+}
+
+/* Resume Input Override Form */
+.resume-form-card {
+  border-color: rgba(138, 180, 248, 0.35);
+
+  .missing-inputs-alert {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(242, 139, 130, 0.15);
+    border: 1px solid rgba(242, 139, 130, 0.45);
+    color: #f6aea9;
+    font-size: 12px;
+
+    .alert-icon {
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
+      color: #f28b82;
+    }
+  }
+
+  .resume-fields-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .resume-field-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+
+    .resume-field-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: #c4c7c5;
+    }
+
+    .resume-field-input {
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      color: #f1f3f4;
+      font-family: 'Google Sans Mono', monospace;
+      font-size: 12px;
+      resize: vertical;
+
+      &:focus {
+        outline: none;
+        border-color: #8ab4f8;
+      }
+    }
+
+    &.has-field-error .resume-field-input {
+      border-color: #f28b82;
+      background: rgba(242, 139, 130, 0.08);
+    }
+
+    .resume-field-error {
+      font-size: 11px;
+      color: #f28b82;
+    }
+  }
+}
+
+/* Input Args Summary */
+.input-args-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+
+  .input-arg-item {
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.28);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+
+    .input-arg-key {
+      display: block;
+      font-size: 11px;
+      color: #9aa0a6;
+      margin-bottom: 4px;
+    }
+
+    .input-arg-value {
+      margin: 0;
+      font-size: 12px;
+      font-family: 'Google Sans Mono', monospace;
+      color: #e8eaed;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  }
+}
+
+.step-attempt-pill {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #c4c7c5;
+}
+
+.step-error-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(242, 139, 130, 0.2);
+  color: #f6aea9;
+}
+
+/* Attempts List */
+.attempts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  .attempt-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 12px;
+
+    .attempt-num {
+      font-weight: 600;
+      color: #8ab4f8;
+    }
+
+    .attempt-trigger {
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.08);
+      color: #c4c7c5;
+      font-size: 11px;
+    }
+
+    .attempt-exec-id {
+      color: #9aa0a6;
+      font-size: 11px;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .attempt-time {
+      color: #8e918f;
+      font-size: 11px;
+    }
+  }
+}
 
 /* Status Chips/Colors */
 .status-chip {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    
-    mat-icon {
-        font-size: 18px;
-        width: 18px;
-        height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+
+  mat-icon {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+
+    &.spin-icon {
+      animation: modalStatusSpin 1.8s linear infinite;
     }
-    
-    &.status-succeeded, &.status-completed { 
-        background-color: rgba(129, 201, 149, 0.15);
-        color: #81c995; 
-    }
-    &.status-failed, &.status-cancelled { 
-        background-color: rgba(242, 139, 130, 0.15);
-        color: #f28b82; 
-    }
-    &.status-active, &.status-running { 
-        background-color: rgba(138, 180, 248, 0.15);
-        color: #8ab4f8; 
-    }
-    &.status-pending { 
-        background-color: rgba(232, 234, 237, 0.1);
-        color: #e8eaed; 
-    }
-    &.status-skipped {
-        background-color: rgba(255, 202, 40, 0.15);
-        color: #ffd54f;
-    }
+  }
+
+  &.status-succeeded,
+  &.status-completed {
+    background-color: rgba(129, 201, 149, 0.15);
+    color: #81c995;
+  }
+  &.status-failed,
+  &.status-canceled,
+  &.status-cancelled {
+    background-color: rgba(242, 139, 130, 0.15);
+    color: #f28b82;
+  }
+  &.status-active,
+  &.status-running,
+  &.status-in-progress {
+    background-color: rgba(138, 180, 248, 0.15);
+    color: #8ab4f8;
+  }
+  &.status-queued {
+    background-color: rgba(168, 199, 250, 0.18);
+    color: #a8c7fa;
+  }
+  &.status-step-failed {
+    background-color: rgba(255, 183, 77, 0.18);
+    color: #ffb74d;
+  }
+  &.status-needs-attention {
+    background-color: rgba(255, 138, 101, 0.2);
+    color: #ff8a65;
+  }
+  &.status-pending {
+    background-color: rgba(232, 234, 237, 0.1);
+    color: #e8eaed;
+  }
+  &.status-skipped {
+    background-color: rgba(255, 202, 40, 0.15);
+    color: #ffd54f;
+  }
 }
 
+@keyframes modalStatusSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}

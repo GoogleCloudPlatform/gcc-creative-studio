@@ -14,22 +14,58 @@
  * limitations under the License.
  */
 
-import {Component, OnInit, OnDestroy} from '@angular/core';
+import {Component, OnDestroy, OnInit, computed, signal} from '@angular/core';
 import {MatDialog} from '@angular/material/dialog';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {ActivatedRoute} from '@angular/router';
+import {Subscription} from 'rxjs';
+import {AuthService} from '../../common/services/auth.service';
 import {
   handleErrorSnackbar,
   handleSuccessSnackbar,
 } from '../../utils/handleMessageSnackbar';
 import {RunWorkflowModalComponent} from '../workflow-editor/run-workflow-modal/run-workflow-modal.component';
-import {NodeTypes} from '../workflow.models';
+import {
+  isNonTerminalRunStatus,
+  NodeTypes,
+  QUEUE_REASON_LABELS,
+  QueueReason,
+  WorkflowModel,
+  WorkflowRunStatus,
+  WorkflowRunStatusEnum,
+  WorkflowRunSummary,
+  WorkflowStep,
+} from '../workflow.models';
 import {WorkflowService} from '../workflow.service';
-import {WorkflowExecutionPollingService} from './workflow-execution-polling.service';
-import {Subscription} from 'rxjs';
 import {BatchExecutionModalComponent} from './batch-execution-modal/batch-execution-modal.component';
 import {ExecutionDetailsModalComponent} from './execution-details-modal/execution-details-modal.component';
-import {AuthService} from '../../common/services/auth.service';
+import {WorkflowExecutionPollingService} from './workflow-execution-polling.service';
+
+export interface ExecutionRunRowViewModel {
+  id: string;
+  status: WorkflowRunStatus;
+  statusLabel: string;
+  queuePositionLabel: string | null;
+  queueReasonLabel: string | null;
+  attemptCount: number;
+  startedAt: string | null;
+  durationSeconds: number | null;
+  lastErrorCategory: string | null;
+  lastErrorDetail: string | null;
+  canResume: boolean;
+  canCancel: boolean;
+  snapshotQueryParams: Record<string, string>;
+  raw: WorkflowRunSummary;
+}
+
+const RUN_STATUS_LABELS: Record<string, string> = {
+  [WorkflowRunStatusEnum.QUEUED]: 'Queued',
+  [WorkflowRunStatusEnum.RUNNING]: 'Running',
+  [WorkflowRunStatusEnum.STEP_FAILED]: 'Retrying Step',
+  [WorkflowRunStatusEnum.NEEDS_ATTENTION]: 'Needs Attention',
+  [WorkflowRunStatusEnum.COMPLETED]: 'Completed',
+  [WorkflowRunStatusEnum.CANCELED]: 'Canceled',
+};
 
 @Component({
   selector: 'app-execution-history',
@@ -37,11 +73,34 @@ import {AuthService} from '../../common/services/auth.service';
   styleUrls: ['./execution-history.component.scss'],
 })
 export class ExecutionHistoryComponent implements OnInit, OnDestroy {
-  workflowId: string | null = null;
-  workflow: any | null = null;
-  executions: any[] = [];
-  isLoading = false;
-  nextPageToken: string | null = null;
+  private readonly pageSize = 20;
+  private pollingSubscription: Subscription | null = null;
+
+  readonly workflowId = signal<string | null>(null);
+  readonly workflow = signal<WorkflowModel | null>(null);
+  readonly runs = signal<WorkflowRunSummary[]>([]);
+  /** Alias for `runs` to keep backwards compatibility with existing specs/callers. */
+  readonly executions = this.runs;
+  readonly isLoading = signal<boolean>(false);
+  readonly nextPageToken = signal<string | null>(null);
+  readonly currentOffset = signal<number>(0);
+  readonly selectedStatus = signal<string>('ALL');
+  readonly canRunBatch = signal<boolean>(false);
+
+  readonly returnUrl = computed<string>(() => {
+    const id = this.workflowId();
+    return id ? `/workflows/${id}/executions` : '/workflows';
+  });
+
+  readonly editorQueryParams = computed<Record<string, string>>(() => ({
+    returnUrl: this.returnUrl(),
+  }));
+
+  readonly runRows = computed<ExecutionRunRowViewModel[]>(() => {
+    const retUrl = this.returnUrl();
+    return this.runs().map(run => this.toRunRowViewModel(run, retUrl));
+  });
+
   displayedColumns: string[] = [
     'status',
     'id',
@@ -49,8 +108,6 @@ export class ExecutionHistoryComponent implements OnInit, OnDestroy {
     'duration',
     'actions',
   ];
-  selectedStatus = 'ALL';
-  private pollingSubscription: Subscription | null = null;
 
   constructor(
     private route: ActivatedRoute,
@@ -59,14 +116,22 @@ export class ExecutionHistoryComponent implements OnInit, OnDestroy {
     private dialog: MatDialog,
     private snackBar: MatSnackBar,
     public authService: AuthService,
-  ) {}
+  ) {
+    this.canRunBatch.set(
+      Boolean(
+        this.authService?.isUserAdmin?.() ||
+          this.authService?.isUserWorkflows?.(),
+      ),
+    );
+  }
 
   ngOnInit(): void {
     this.route.paramMap.subscribe(params => {
-      this.workflowId = params.get('id');
-      if (this.workflowId) {
+      const id = params.get('id');
+      this.workflowId.set(id);
+      if (id) {
         this.loadWorkflow();
-        this.loadExecutions(true);
+        this.loadRuns(true);
       }
     });
   }
@@ -76,10 +141,11 @@ export class ExecutionHistoryComponent implements OnInit, OnDestroy {
   }
 
   loadWorkflow(): void {
-    if (!this.workflowId) return;
-    this.workflowService.getWorkflowById(this.workflowId).subscribe({
+    const id = this.workflowId();
+    if (!id) return;
+    this.workflowService.getWorkflowById(id).subscribe({
       next: workflow => {
-        this.workflow = workflow;
+        this.workflow.set(workflow as WorkflowModel);
       },
       error: err => {
         console.error('Failed to load workflow details', err);
@@ -88,109 +154,189 @@ export class ExecutionHistoryComponent implements OnInit, OnDestroy {
     });
   }
 
-  loadExecutions(reset = false): void {
-    if (!this.workflowId || this.isLoading) return;
+  loadRuns(reset = false): void {
+    const id = this.workflowId();
+    if (!id || this.isLoading()) return;
 
-    this.isLoading = true;
-    const pageToken = reset ? undefined : this.nextPageToken || undefined;
+    this.isLoading.set(true);
+    const offset = reset ? 0 : this.currentOffset();
 
     this.workflowService
-      .getExecutions(this.workflowId, 20, pageToken, this.selectedStatus)
+      .getRuns(id, this.pageSize, offset, this.selectedStatus())
       .subscribe({
         next: response => {
+          const incomingRuns = response?.data ?? response?.runs ?? [];
           if (reset) {
-            this.executions = response.executions;
+            this.runs.set(incomingRuns);
           } else {
-            this.executions = [...this.executions, ...response.executions];
+            this.runs.set([...this.runs(), ...incomingRuns]);
           }
-          this.nextPageToken = response.next_page_token || null;
-          this.isLoading = false;
+          const nextOffset = offset + incomingRuns.length;
+          this.currentOffset.set(nextOffset);
+          const totalCount = response?.count ?? null;
+          const explicitToken =
+            response?.next_page_token ??
+            response?.nextPageToken ??
+            response?.nextPageCursor ??
+            null;
+          const hasMoreByCount =
+            totalCount !== null &&
+            nextOffset < totalCount &&
+            incomingRuns.length > 0;
+          this.nextPageToken.set(
+            explicitToken ?? (hasMoreByCount ? String(nextOffset) : null),
+          );
+          this.isLoading.set(false);
 
-          // Check if we need to start polling
-          this.checkAndStartPolling(this.executions);
+          this.checkAndStartPolling(this.runs());
         },
         error: err => {
-          console.error('Failed to load executions', err);
-          this.isLoading = false;
+          console.error('Failed to load workflow runs', err);
+          this.isLoading.set(false);
         },
       });
   }
 
+  /** Alias for `loadRuns` for backwards compatibility. */
+  loadExecutions(reset = false): void {
+    this.loadRuns(reset);
+  }
+
   loadMore(): void {
-    if (this.nextPageToken) {
-      this.loadExecutions(false);
+    if (this.nextPageToken()) {
+      this.loadRuns(false);
     }
   }
 
-  onStatusChange(): void {
-    this.loadExecutions(true);
+  onStatusChange(newStatus?: string): void {
+    if (newStatus !== undefined) {
+      this.selectedStatus.set(newStatus);
+    }
+    this.loadRuns(true);
   }
 
-  openDetails(executionId: string): void {
-    if (!this.workflowId) return;
+  openDetails(runId: string, openResumeForm = false): void {
+    const id = this.workflowId();
+    if (!id) return;
 
-    this.dialog.open(ExecutionDetailsModalComponent, {
-      width: '800px',
-      maxWidth: '90vw',
+    const dialogRef = this.dialog.open(ExecutionDetailsModalComponent, {
+      width: '840px',
+      maxWidth: '92vw',
       maxHeight: '90vh',
       data: {
-        workflowId: this.workflowId,
-        executionId: executionId,
+        workflowId: id,
+        runId,
+        executionId: runId,
+        openResumeForm,
       },
       panelClass: 'execution-details-modal',
+    });
+
+    dialogRef.afterClosed().subscribe(result => {
+      if (result?.updated) {
+        this.loadRuns(true);
+      }
+    });
+  }
+
+  resumeRun(runId: string, event?: Event): void {
+    event?.stopPropagation();
+    const id = this.workflowId();
+    if (!id) return;
+
+    this.workflowService.resumeRun(id, runId).subscribe({
+      next: () => {
+        handleSuccessSnackbar(this.snackBar, 'Workflow run resumed!');
+        this.loadRuns(true);
+      },
+      error: err => {
+        if (err?.status === 422) {
+          this.openDetails(runId, true);
+          return;
+        }
+        handleErrorSnackbar(this.snackBar, err, 'Resume workflow run');
+      },
+    });
+  }
+
+  cancelRun(runId: string, event?: Event): void {
+    event?.stopPropagation();
+    const id = this.workflowId();
+    if (!id) return;
+
+    this.workflowService.cancelRun(id, runId).subscribe({
+      next: () => {
+        handleSuccessSnackbar(this.snackBar, 'Workflow run canceled.');
+        this.loadRuns(true);
+      },
+      error: err => {
+        handleErrorSnackbar(this.snackBar, err, 'Cancel workflow run');
+      },
     });
   }
 
   openBatchExecution(): void {
-    if (!this.workflowId) return;
+    const id = this.workflowId();
+    if (!id) return;
 
-    // Ensure workflow is loaded
-    if (!this.workflow) {
-      this.workflowService.getWorkflowById(this.workflowId).subscribe(wf => {
-        this.workflow = wf;
-        this.openBatchDialog();
+    const currentWorkflow = this.workflow();
+    if (!currentWorkflow) {
+      this.workflowService.getWorkflowById(id).subscribe(wf => {
+        const workflowModel = wf as WorkflowModel;
+        this.workflow.set(workflowModel);
+        this.openBatchDialog(workflowModel);
       });
     } else {
-      this.openBatchDialog();
+      this.openBatchDialog(currentWorkflow);
     }
   }
 
-  private openBatchDialog(): void {
-    this.dialog.open(BatchExecutionModalComponent, {
+  private openBatchDialog(workflow: WorkflowModel): void {
+    const dialogRef = this.dialog.open(BatchExecutionModalComponent, {
       width: '900px',
       maxWidth: '95vw',
       maxHeight: '90vh',
       data: {
-        workflow: this.workflow,
+        workflow,
       },
       panelClass: 'batch-execution-modal',
+    });
+
+    dialogRef.afterClosed().subscribe(() => {
+      this.loadRuns(true);
     });
   }
 
   runWorkflow(): void {
-    if (!this.workflowId || this.isLoading) return;
+    const id = this.workflowId();
+    if (!id || this.isLoading()) return;
 
-    // Use the already loaded workflow if available, otherwise fetch it (though it should be loaded)
-    if (this.workflow) {
-      this.openRunDialog(this.workflow);
+    const currentWorkflow = this.workflow();
+    if (currentWorkflow) {
+      this.openRunDialog(currentWorkflow);
     } else {
-      this.isLoading = true;
-      this.workflowService.getWorkflowById(this.workflowId).subscribe({
-        next: (workflow: any) => {
-          this.isLoading = false;
-          this.openRunDialog(workflow);
+      this.isLoading.set(true);
+      this.workflowService.getWorkflowById(id).subscribe({
+        next: workflow => {
+          const workflowModel = workflow as WorkflowModel;
+          this.isLoading.set(false);
+          this.workflow.set(workflowModel);
+          this.openRunDialog(workflowModel);
         },
         error: err => {
-          this.isLoading = false;
+          this.isLoading.set(false);
           handleErrorSnackbar(this.snackBar, err, 'Load workflow');
         },
       });
     }
   }
 
-  private openRunDialog(workflow: any): void {
+  private openRunDialog(workflow: WorkflowModel): void {
+    const id = this.workflowId();
+    if (!id) return;
+
     const userInputStep = workflow.steps?.find(
-      (s: any) => s.type === NodeTypes.USER_INPUT,
+      (s: WorkflowStep) => s.type === NodeTypes.USER_INPUT,
     );
 
     const dialogRef = this.dialog.open(RunWorkflowModalComponent, {
@@ -200,37 +346,45 @@ export class ExecutionHistoryComponent implements OnInit, OnDestroy {
 
     dialogRef.afterClosed().subscribe(result => {
       if (result) {
-        this.isLoading = true;
-        this.workflowService
-          .executeWorkflow(this.workflowId!, result)
-          .subscribe({
-            next: res => {
-              this.isLoading = false;
-              handleSuccessSnackbar(
-                this.snackBar,
-                'Workflow execution started!',
-              );
-              this.loadExecutions(true);
-              // Polling will be triggered by loadExecutions if ACTIVE
-            },
-            error: err => {
-              this.isLoading = false;
-              handleErrorSnackbar(this.snackBar, err, 'Workflow execution');
-            },
-          });
+        this.isLoading.set(true);
+        this.workflowService.executeWorkflow(id, result).subscribe({
+          next: res => {
+            this.isLoading.set(false);
+            const isQueued = res.status === WorkflowRunStatusEnum.QUEUED;
+            handleSuccessSnackbar(
+              this.snackBar,
+              isQueued ? 'Workflow run queued!' : 'Workflow execution started!',
+            );
+            this.loadRuns(true);
+          },
+          error: err => {
+            this.isLoading.set(false);
+            handleErrorSnackbar(this.snackBar, err, 'Workflow execution');
+          },
+        });
       }
     });
   }
 
   private startPolling(): void {
-    if (this.pollingSubscription || !this.workflowId) return;
+    const id = this.workflowId();
+    if ((this.pollingSubscription && !this.pollingSubscription.closed) || !id) {
+      return;
+    }
 
-    this.pollingSubscription = this.pollingService
-      .pollExecutions(this.workflowId)
-      .subscribe({
-        next: executions => this.handlePollingUpdate(executions),
-        error: err => console.error('Polling error', err),
-      });
+    const sub = new Subscription();
+    this.pollingSubscription = sub;
+    sub.add(
+      this.pollingService
+        .pollRuns(id, this.pageSize, this.selectedStatus())
+        .subscribe({
+          next: updatedRuns => this.handlePollingUpdate(updatedRuns),
+          error: err => console.error('Polling error', err),
+          complete: () => {
+            this.pollingSubscription = null;
+          },
+        }),
+    );
   }
 
   private stopPolling(): void {
@@ -240,8 +394,8 @@ export class ExecutionHistoryComponent implements OnInit, OnDestroy {
     }
   }
 
-  private checkAndStartPolling(executions: any[]): void {
-    const hasActive = executions.some(e => e.state === 'ACTIVE');
+  private checkAndStartPolling(runs: WorkflowRunSummary[]): void {
+    const hasActive = runs.some(r => isNonTerminalRunStatus(r.status));
     if (hasActive) {
       this.startPolling();
     } else {
@@ -249,24 +403,97 @@ export class ExecutionHistoryComponent implements OnInit, OnDestroy {
     }
   }
 
-  private handlePollingUpdate(updatedExecutions: any[]): void {
-    if (!updatedExecutions || updatedExecutions.length === 0) return;
+  private handlePollingUpdate(updatedRuns: WorkflowRunSummary[]): void {
+    if (!updatedRuns || updatedRuns.length === 0) return;
 
-    const currentIds = new Set(this.executions.map(e => e.id));
-    const newExecutions = updatedExecutions.filter(e => !currentIds.has(e.id));
+    const existing = this.runs();
+    const currentIds = new Set(existing.map(r => r.id));
+    const newRuns = updatedRuns.filter(r => !currentIds.has(r.id));
 
-    // Update existing
-    this.executions = this.executions.map(exec => {
-      const updated = updatedExecutions.find(u => u.id === exec.id);
-      return updated ? updated : exec;
+    const merged = existing.map(run => {
+      const updated = updatedRuns.find(u => u.id === run.id);
+      return updated ? updated : run;
     });
 
-    // Prepend new
-    if (newExecutions.length > 0) {
-      this.executions = [...newExecutions, ...this.executions];
+    this.runs.set(newRuns.length > 0 ? [...newRuns, ...merged] : merged);
+    const hasActive = updatedRuns.some(r => isNonTerminalRunStatus(r.status));
+    if (!hasActive) {
+      this.stopPolling();
+    }
+  }
+
+  private toRunRowViewModel(
+    run: WorkflowRunSummary,
+    returnUrl: string,
+  ): ExecutionRunRowViewModel {
+    const status = run.status;
+    const statusLabel = RUN_STATUS_LABELS[status] ?? status;
+
+    const queuePosition = run.queue_position ?? run.queuePosition ?? null;
+    const queuePositionLabel =
+      status === WorkflowRunStatusEnum.QUEUED &&
+      queuePosition !== null &&
+      queuePosition > 0
+        ? `#${queuePosition} in queue`
+        : null;
+
+    const queueReason = (run.queue_reason ??
+      run.queueReason ??
+      null) as QueueReason | null;
+    const queueReasonLabel =
+      status === WorkflowRunStatusEnum.QUEUED && queueReason
+        ? (QUEUE_REASON_LABELS[queueReason] ?? queueReason)
+        : null;
+
+    const attemptCount = run.attempt_count ?? run.attemptCount ?? 0;
+    const startedAt =
+      run.started_at ??
+      run.startedAt ??
+      run.created_at ??
+      run.createdAt ??
+      null;
+
+    let durationSeconds: number | null = run.duration ?? null;
+    const completedAt = run.completed_at ?? run.completedAt ?? null;
+    if (durationSeconds === null && startedAt && completedAt) {
+      const startMs = Date.parse(startedAt);
+      const endMs = Date.parse(completedAt);
+      if (!Number.isNaN(startMs) && !Number.isNaN(endMs) && endMs >= startMs) {
+        durationSeconds = Math.round((endMs - startMs) / 1000);
+      }
     }
 
-    // Check continuously if we should stop
-    this.checkAndStartPolling(updatedExecutions);
+    const lastErrorCategory =
+      run.last_error_category ?? run.lastErrorCategory ?? null;
+    const lastErrorDetail =
+      run.last_error_detail ?? run.lastErrorDetail ?? null;
+
+    const canResume = status === WorkflowRunStatusEnum.NEEDS_ATTENTION;
+    const canCancel =
+      status === WorkflowRunStatusEnum.QUEUED ||
+      status === WorkflowRunStatusEnum.RUNNING ||
+      status === WorkflowRunStatusEnum.STEP_FAILED ||
+      status === WorkflowRunStatusEnum.NEEDS_ATTENTION;
+
+    return {
+      id: run.id,
+      status,
+      statusLabel,
+      queuePositionLabel,
+      queueReasonLabel,
+      attemptCount,
+      startedAt,
+      durationSeconds,
+      lastErrorCategory,
+      lastErrorDetail,
+      canResume,
+      canCancel,
+      snapshotQueryParams: {
+        runId: run.id,
+        executionId: run.id,
+        returnUrl,
+      },
+      raw: run,
+    };
   }
 }
