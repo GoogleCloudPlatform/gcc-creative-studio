@@ -146,6 +146,42 @@ async def test_get_connection_cloud_sql():
 
 
 @pytest.mark.anyio
+async def test_get_connection_cloud_sql_private_iam():
+    from google.cloud.sql.connector import IPTypes
+
+    with (
+        patch.object(config_service, "USE_CLOUD_SQL_AUTH_PROXY", False),
+        patch.object(
+            config_service,
+            "INSTANCE_CONNECTION_NAME",
+            "projects/p/locations/l/instances/i",
+        ),
+        patch.object(config_service, "DB_IP_TYPE", "PRIVATE"),
+        patch.object(config_service, "DB_IAM_AUTH", True),
+        patch.object(config_service, "DB_USER", "sa@proj.iam"),
+        patch.object(config_service, "DB_NAME", "creative_studio"),
+    ):
+        mock_connector = AsyncMock()
+        mock_connector.connect_async = AsyncMock(return_value="cloud_iam_conn")
+
+        with patch.object(DatabaseConnector, "get_instance") as mock_inst:
+            mock_inst_obj = MagicMock()
+            mock_inst_obj.get_connector.return_value = mock_connector
+            mock_inst.return_value = mock_inst_obj
+
+            res = await get_connection()
+            assert res == "cloud_iam_conn"
+            mock_connector.connect_async.assert_called_once_with(
+                "projects/p/locations/l/instances/i",
+                "asyncpg",
+                user="sa@proj.iam",
+                db="creative_studio",
+                ip_type=IPTypes.PRIVATE,
+                enable_iam_auth=True,
+            )
+
+
+@pytest.mark.anyio
 async def test_cleanup_connector():
     with patch.object(DatabaseConnector, "get_instance") as mock_inst:
         mock_inst_obj = MagicMock()

@@ -69,6 +69,8 @@ class ConfigService(BaseSettings):
     USE_CLOUD_SQL_AUTH_PROXY: bool = False
     DB_HOST: str = "localhost"
     DB_PORT: str = "5432"
+    DB_IP_TYPE: str = "PUBLIC"
+    DB_IAM_AUTH: bool = False
 
     # --- Veo ---
     VEO_MODEL_ID: str = "veo-3.1-generate-001"
