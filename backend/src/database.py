@@ -124,14 +124,24 @@ async def get_connection():
         return conn
 
     connector = DatabaseConnector.get_instance().get_connector()
+    ip_type = (
+        IPTypes.PRIVATE
+        if config_service.DB_IP_TYPE.upper() == "PRIVATE"
+        else IPTypes.PUBLIC
+    )
+    connect_kwargs: dict = {
+        "user": config_service.DB_USER,
+        "db": config_service.DB_NAME,
+        "ip_type": ip_type,
+        "enable_iam_auth": config_service.DB_IAM_AUTH,
+    }
+    if not config_service.DB_IAM_AUTH:
+        connect_kwargs["password"] = config_service.DB_PASS
 
     conn = await connector.connect_async(
         config_service.INSTANCE_CONNECTION_NAME,
         "asyncpg",
-        user=config_service.DB_USER,
-        password=config_service.DB_PASS,
-        db=config_service.DB_NAME,
-        ip_type=IPTypes.PUBLIC,  # Adjust if using Private IP
+        **connect_kwargs,
     )
 
     return conn
@@ -188,15 +198,25 @@ class WorkerDatabase:
         ):
             # Create a fresh Connector for the current (worker) loop
             self.connector = Connector(loop=asyncio.get_running_loop())
+            ip_type = (
+                IPTypes.PRIVATE
+                if config_service.DB_IP_TYPE.upper() == "PRIVATE"
+                else IPTypes.PUBLIC
+            )
+            connect_kwargs: dict = {
+                "user": config_service.DB_USER,
+                "db": config_service.DB_NAME,
+                "ip_type": ip_type,
+                "enable_iam_auth": config_service.DB_IAM_AUTH,
+            }
+            if not config_service.DB_IAM_AUTH:
+                connect_kwargs["password"] = config_service.DB_PASS
 
             async def get_conn():
                 return await self.connector.connect_async(
                     config_service.INSTANCE_CONNECTION_NAME,
                     "asyncpg",
-                    user=config_service.DB_USER,
-                    password=config_service.DB_PASS,
-                    db=config_service.DB_NAME,
-                    ip_type=IPTypes.PUBLIC,
+                    **connect_kwargs,
                 )
 
             self.engine = create_async_engine(

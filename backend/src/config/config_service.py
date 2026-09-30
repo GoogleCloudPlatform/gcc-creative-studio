@@ -69,6 +69,8 @@ class ConfigService(BaseSettings):
     USE_CLOUD_SQL_AUTH_PROXY: bool = False
     DB_HOST: str = "localhost"
     DB_PORT: str = "5432"
+    DB_IP_TYPE: str = "PUBLIC"
+    DB_IAM_AUTH: bool = False
 
     # --- Veo ---
     VEO_MODEL_ID: str = "veo-3.1-generate-001"
@@ -95,7 +97,7 @@ class ConfigService(BaseSettings):
     ADMIN_USER_EMAIL: str = "system"
 
     # --- Workflows ---
-    WORKFLOWS_LOCATION: str = "us-central1"
+    WORKFLOWS_LOCATION: str = "asia-southeast1"
     WORKFLOWS_EXECUTOR_URL: str = (
         "http://localhost:8080"  # This service could be deployed alone in the future
     )

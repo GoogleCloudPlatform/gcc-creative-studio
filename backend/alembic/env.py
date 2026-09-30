@@ -109,13 +109,24 @@ async def alembic_get_connection():
         # Fallback if loop arg is not supported
         connector = Connector()
 
+    ip_type = (
+        IPTypes.PRIVATE
+        if config_service.DB_IP_TYPE.upper() == "PRIVATE"
+        else IPTypes.PUBLIC
+    )
+    connect_kwargs: dict = {
+        "user": config_service.DB_USER,
+        "db": config_service.DB_NAME,
+        "ip_type": ip_type,
+        "enable_iam_auth": config_service.DB_IAM_AUTH,
+    }
+    if not config_service.DB_IAM_AUTH:
+        connect_kwargs["password"] = config_service.DB_PASS
+
     conn = await connector.connect_async(
         config_service.INSTANCE_CONNECTION_NAME,
         "asyncpg",
-        user=config_service.DB_USER,
-        password=config_service.DB_PASS,
-        db=config_service.DB_NAME,
-        ip_type=IPTypes.PUBLIC,
+        **connect_kwargs,
     )
     return conn
 
