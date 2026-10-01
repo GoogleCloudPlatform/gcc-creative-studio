@@ -38,6 +38,12 @@ from src.agents.agent_dtos import (
     PollEventsResponseDto,
 )
 from src.database import async_session_local
+from src.auth.auth_guard import get_current_user
+from src.agents.local_agent_client import (
+    LocalAgentEngineClient,
+    LocalRemoteAgent,
+    local_agent_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,16 +107,27 @@ class AgentService:
         storyboard_repo: StoryboardRepository = Depends(),
         workspace_auth: WorkspaceAuth = Depends(),
         project_service: ProjectService = Depends(),
+        # Resolved once per request (FastAPI caches it with the controller's
+        # own get_current_user). Only needed by the local agent client, whose
+        # REST paths are scoped by user.
+        current_user: UserModel = Depends(get_current_user),
     ):
         self.agent_repo = agent_repo
         self.workspace_service = workspace_service
         self.storyboard_repo = storyboard_repo
         self.workspace_auth = workspace_auth
         self.project_service = project_service
-        self.client = vertexai.Client(
-            project=config_service.PROJECT_ID,
-            location=config_service.AGENT_LOCATION,
-        )
+        if config_service.AGENT_BACKEND == "local":
+            user_id = getattr(current_user, "id", None)
+            self.client = LocalAgentEngineClient(
+                config_service.IZUMI_AGENT_URL,
+                user_id=str(user_id) if user_id is not None else None,
+            )
+        else:
+            self.client = vertexai.Client(
+                project=config_service.PROJECT_ID,
+                location=config_service.AGENT_LOCATION,
+            )
 
     @staticmethod
     def detect_approval_function(evt: Any) -> str | None:
@@ -193,6 +210,11 @@ class AgentService:
         return None
 
     def _get_agent_config(self, appName: str) -> dict:
+        if config_service.AGENT_BACKEND == "local":
+            return {
+                "resource_name": local_agent_name(appName),
+                "token_key": config_service.AGENT_ENGINE_USER_AUTH_TOKEN_KEY,
+            }
         default_config = {
             "resource_name": config_service.AGENT_ENGINE_RESOURCE_NAME,
             "token_key": config_service.AGENT_ENGINE_USER_AUTH_TOKEN_KEY,
@@ -213,6 +235,10 @@ class AgentService:
         return agent_name
 
     def _get_remote_agent(self, appName: str = APP_NAME) -> Any:
+        if config_service.AGENT_BACKEND == "local":
+            return LocalRemoteAgent(
+                config_service.IZUMI_AGENT_URL, app_name=appName
+            )
         vertexai.init(
             project=config_service.PROJECT_ID,
             location=config_service.AGENT_LOCATION,

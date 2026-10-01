@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any
+from typing import Any, Literal
 
 import google.auth
 from google.auth.exceptions import DefaultCredentialsError
@@ -100,6 +100,11 @@ class ConfigService(BaseSettings):
     AGENT_ENGINE_RESOURCE_NAME: str = ""
     AGENT_LOCATION: str = "us-central1"
     AGENT_ENGINE_USER_AUTH_TOKEN_KEY: str = "user_auth_token"
+    # Where the Izumi agent runs:
+    #   "agent_engine": Vertex AI Agent Engine (AGENT_ENGINE_RESOURCE_NAME).
+    #   "local": a self-hosted Izumi ADK web server at IZUMI_AGENT_URL
+    #            (local docker compose). Only allowed with ENVIRONMENT=local.
+    AGENT_BACKEND: Literal["agent_engine", "local"] = "agent_engine"
 
     # --- Workflows ---
     WORKFLOWS_LOCATION: str = "us-central1"
@@ -143,6 +148,13 @@ class ConfigService(BaseSettings):
         # If these fields were not set by environment variables, set their default now.
         if not self.GENMEDIA_BUCKET:
             self.GENMEDIA_BUCKET = f"{self.PROJECT_ID}-assets"
+
+        # The local agent is reached over plain, unauthenticated HTTP and gets
+        # the user's token in its session state. Never allow it in a deployment.
+        if self.AGENT_BACKEND == "local" and self.ENVIRONMENT != "local":
+            raise ValueError(
+                "AGENT_BACKEND=local is only allowed with ENVIRONMENT=local.",
+            )
 
         return self
 
