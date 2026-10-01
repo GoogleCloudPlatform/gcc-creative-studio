@@ -252,6 +252,87 @@ class WorkflowService:
         except InvalidArgument as e:
             raise ValueError(str(e))
 
+    def _get_gcp_workflow(
+        self, workflow_id: str
+    ) -> workflows_v1.Workflow | None:
+        """Fetches the deployed Cloud Workflow, or None if it does not exist."""
+        client = workflows_v1.WorkflowsClient()
+        name = client.workflow_path(PROJECT_ID, LOCATION, workflow_id)
+        try:
+            return client.get_workflow(name=name)
+        except NotFound:
+            return None
+
+    async def _ensure_gcp_workflow_is_current(
+        self, workflow_model: WorkflowModel
+    ) -> None:
+        """Self-heals the deployed Cloud Workflow before it is executed.
+
+        The executor URL (WORKFLOWS_EXECUTOR_URL) and the runtime service
+        account (BACKEND_SERVICE_ACCOUNT_EMAIL) are compiled into the Cloud
+        Workflows ``source_contents`` when a workflow is saved. After a
+        migration or a redeploy that changes either of them, workflows saved
+        earlier keep calling the old backend host and fail with HTTP 404.
+
+        Regenerating the definition from the current config and comparing it
+        with what is deployed makes execution idempotent: a stale workflow is
+        updated in place once, an up-to-date one costs a single cheap
+        ``get_workflow`` call, and a missing one is re-created.
+
+        This is best-effort on purpose: any error is logged and execution
+        proceeds, so a transient Workflows API issue never blocks a run that
+        would otherwise have succeeded.
+        """
+        workflow_id = workflow_model.id
+        try:
+            expected_yaml = self._generate_workflow_yaml(workflow_model)
+            expected_sa = config_service.BACKEND_SERVICE_ACCOUNT_EMAIL
+
+            deployed = await asyncio.to_thread(
+                self._get_gcp_workflow, workflow_id
+            )
+            if deployed is None:
+                logger.warning(
+                    "Cloud Workflow %s is missing in %s/%s. Re-creating it.",
+                    workflow_id,
+                    PROJECT_ID,
+                    LOCATION,
+                )
+                await asyncio.to_thread(
+                    self._create_gcp_workflow, expected_yaml, workflow_id
+                )
+                return
+
+            yaml_is_stale = deployed.source_contents != expected_yaml
+            # The API returns the SA as projects/<p>/serviceAccounts/<email>.
+            deployed_sa = deployed.service_account or ""
+            sa_is_stale = bool(expected_sa) and not (
+                deployed_sa == expected_sa
+                or deployed_sa.endswith(f"/{expected_sa}")
+            )
+
+            if not yaml_is_stale and not sa_is_stale:
+                return
+
+            logger.info(
+                "Cloud Workflow %s is stale (yaml_changed=%s, sa_changed=%s). "
+                "Re-deploying it with executor URL %s.",
+                workflow_id,
+                yaml_is_stale,
+                sa_is_stale,
+                BACKEND_EXECUTOR_URL,
+            )
+            await asyncio.to_thread(
+                self._update_gcp_workflow, expected_yaml, workflow_id
+            )
+            logger.info("Cloud Workflow %s re-deployed.", workflow_id)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.exception(
+                "Could not verify/heal Cloud Workflow %s before execution: %s",
+                workflow_id,
+                e,
+            )
+
     def _delete_gcp_workflow(self, workflow_id: str):
         client = workflows_v1.WorkflowsClient()
 
@@ -385,12 +466,22 @@ class WorkflowService:
         workflow_id: str,
         args: dict,
         user: UserModel,
+        ensure_current: bool = True,
     ) -> str:
-        """Executes a workflow with snapshotting."""
+        """Executes a workflow with snapshotting.
+
+        ``ensure_current`` re-syncs the deployed Cloud Workflow with the current
+        executor URL / service account before running. Batch callers set it to
+        False and heal once up-front to avoid concurrent updates on the same
+        Cloud Workflow.
+        """
         # 1. Fetch current workflow state (Snapshot source)
         workflow_model = await self.get_by_id(workflow_id)
         if not workflow_model:
             raise ValueError(f"Workflow {workflow_id} not found")
+
+        if ensure_current:
+            await self._ensure_gcp_workflow_is_current(workflow_model)
 
         # 2. Trigger GCP Execution
         # Initialize API clients.
@@ -480,6 +571,12 @@ class WorkflowService:
         """
         results: list[BatchItemResultDto] = []
 
+        # Rows run concurrently, so sync the deployed Cloud Workflow exactly
+        # once here instead of racing N updates from execute_workflow.
+        workflow_model = await self.get_by_id(workflow_id)
+        if workflow_model:
+            await self._ensure_gcp_workflow_is_current(workflow_model)
+
         async def process_row(item) -> BatchItemResultDto:
             try:
                 # 1. Process Arguments (Ingest GCS URIs)
@@ -541,11 +638,12 @@ class WorkflowService:
                     else:
                         processed_args[key] = value
 
-                # 2. Execute Workflow
+                # 2. Execute Workflow (already healed once above)
                 execution_id = await self.execute_workflow(
                     workflow_id=workflow_id,
                     args=processed_args,
                     user=user,
+                    ensure_current=False,
                 )
 
                 return BatchItemResultDto(

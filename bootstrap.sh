@@ -1456,161 +1456,10 @@ deploy_izumi_agent() {
         local BE_URL=$(gcloud run services describe ${BE_SERVICE_NAME} --region="$DEPLOY_REGION" --project="$GCP_PROJECT_ID" --format="value(status.url)" 2>/dev/null || echo "")
         local FE_URL="https://${GCP_PROJECT_ID}.web.app"
 
-        # --- Region pinning + model compatibility ------------------------------------
-        #
-        # Data residency: Vertex AI's "global" endpoint gives NO guarantee about which
-        # region performs the ML processing, so regulated deployments must call the
-        # regional endpoint. Izumi hardcodes "global", hence the patch below.
-        #
-        # The catch: Izumi also hardcodes very new models (gemini-3.7-flash) that are
-        # ONLY served from "global". Pinning the region without also pinning the model
-        # is what produced the "model not found in europe" 404s. Both must happen together.
-        #
-        # Every patch is verified. A silent no-op here either breaks the agent or
-        # silently violates data residency, so we always report what happened.
-        local IZUMI_TEXT_MODEL="${IZUMI_TEXT_MODEL:-gemini-2.5-flash}"
-        local IZUMI_PRO_MODEL="${IZUMI_PRO_MODEL:-gemini-2.5-pro}"
-
-        # 1. Runtime inference endpoint. deploy_to_agent_platform.py injects
-        #    "GOOGLE_CLOUD_LOCATION": "global" into the Agent Engine runtime env, which
-        #    mediagent_kit prefers over IZUMI_LOCATION when choosing the Vertex endpoint.
-        local IZUMI_DEPLOY_PY="/tmp/izumi-agent/scripts/deploy_to_agent_platform.py"
-        if grep -q '"GOOGLE_CLOUD_LOCATION": "global"' "$IZUMI_DEPLOY_PY" 2>/dev/null; then
-            sed -i "s|\"GOOGLE_CLOUD_LOCATION\": \"global\"|\"GOOGLE_CLOUD_LOCATION\": \"${DEPLOY_REGION}\"|g" "$IZUMI_DEPLOY_PY"
-            success "Pinned Izumi inference endpoint to ${C_YELLOW}${DEPLOY_REGION}${C_RESET} (data residency)."
-        else
-            warn "Could not find the hardcoded 'global' endpoint in deploy_to_agent_platform.py."
-            warn "Izumi may have changed upstream. The agent could run on the GLOBAL endpoint."
-        fi
-
-        # 2. Model literals across EVERY tree that gets bundled.
-        #
-        #    Two independent sources of truth have to be patched, because the deployed
-        #    agent proved it uses both:
-        #      a) demos/backend/** - ads_x/agent.py sets model= literally on each LlmAgent.
-        #      b) mediagent_kit/config.py - the HARDCODED fallback dict. Agent Engine logs
-        #         showed `models={'text': {'default': 'gemini-3.7-flash'...}}` with no
-        #         "[MediagentKitConfig] Loaded models from ..." line, i.e. the JSON written
-        #         in step 3 is NOT discovered at runtime (the deployed CWD and import path
-        #         differ from the deploy-time bundle). Patching the fallback makes the
-        #         correct model the default whether or not the JSON is ever found.
-        info "Pinning Izumi models to ${C_YELLOW}${IZUMI_TEXT_MODEL}${C_RESET} for ${DEPLOY_REGION} availability..."
-        local IZUMI_PATCH_ROOTS="/tmp/izumi-agent/demos/backend /tmp/izumi-agent/mediagent_kit"
-        local IZUMI_PATCHED=0
-        for root in $IZUMI_PATCH_ROOTS; do
-            [ -d "$root" ] || { warn "Expected source tree missing: $root"; continue; }
-            while IFS= read -r f; do
-                [ -n "$f" ] || continue
-                sed -i "s|gemini-3\.1-pro-preview|${IZUMI_PRO_MODEL}|g; s|gemini-3\.7-flash|${IZUMI_TEXT_MODEL}|g" "$f"
-                IZUMI_PATCHED=$((IZUMI_PATCHED + 1))
-            done <<< "$(grep -rl "gemini-3\.7-flash\|gemini-3\.1-pro-preview" --include=*.py "$root" 2>/dev/null || true)"
-        done
-
-        # Verify: nothing we care about may survive. A silent miss here means the agent
-        # 404s at runtime on a model the regional endpoint does not serve.
-        local LEFTOVER=$(grep -rho "gemini-3\.7-flash\|gemini-3\.1-pro-preview" --include=*.py \
-            /tmp/izumi-agent/demos/backend /tmp/izumi-agent/mediagent_kit 2>/dev/null | wc -l | tr -d ' ')
-        if [ "${LEFTOVER:-0}" -gt 0 ]; then
-            warn "${LEFTOVER} unsupported model reference(s) still present after patching."
-            warn "The agent will 404 on the ${DEPLOY_REGION} endpoint. Investigate before using it."
-        else
-            success "Patched ${IZUMI_PATCHED} file(s); no unsupported model references remain."
-        fi
-
-        # 3. Media models (image / video / music / tts).
-        #    These are NOT called from the agent. ads_x passes the model name to the
-        #    Creative Studio backend (POST /api/images/generate-images and friends),
-        #    which runs its own Vertex client. That is why media has kept working while
-        #    text was broken. The default path therefore leaves Izumi's newer media
-        #    models alone - they work today and produce better output.
-        #
-        #    Clients with hard in-region processing requirements can set
-        #    IZUMI_REGIONAL_MEDIA=true to fall back to models that regional endpoints
-        #    serve. Creative Studio's GenerationModelEnum accepts both the new and the
-        #    old IDs, so this is safe.
-        local IZUMI_MEDIA_JSON=""
-        if [ "${IZUMI_REGIONAL_MEDIA:-false}" = "true" ]; then
-            local IZUMI_IMAGE_MODEL="${IZUMI_IMAGE_MODEL:-gemini-2.5-flash-image}"
-            local IZUMI_IMAGEN_MODEL="${IZUMI_IMAGEN_MODEL:-imagen-4.0-generate-001}"
-            # Video: veo-3.1, not veo-3.0. Izumi only names the model; the Creative Studio
-            # backend makes the Vertex call, and its client is hardcoded to the GLOBAL
-            # endpoint (config_service.LOCATION="global"). veo-3.0-generate-001 is not
-            # served there and 404s; veo-3.1-generate-001 is (verified in the CS UI).
-            local IZUMI_VIDEO_MODEL="${IZUMI_VIDEO_MODEL:-veo-3.1-generate-001}"
-            local IZUMI_MUSIC_MODEL="${IZUMI_MUSIC_MODEL:-lyria-002}"
-            local IZUMI_TTS_MODEL="${IZUMI_TTS_MODEL:-gemini-2.5-flash-tts}"
-
-            info "IZUMI_REGIONAL_MEDIA=true: pinning media models to regional versions..."
-
-            # The media defaults live in the SAME two places as the text models, so the
-            # JSON below is not enough on its own:
-            #   a) demos/backend/** - ads_x hardcodes the image model at its
-            #      generate_image() call sites, which mediagent_config.json cannot override.
-            #   b) mediagent_kit/config.py - the hardcoded fallback dict. The Agent Engine
-            #      logs proved this is what actually gets used at runtime, because the JSON
-            #      is never discovered there. Patching only the JSON would leave this flag
-            #      a silent no-op for video, music and tts.
-            #
-            #   c) ...but mediagent_kit/api/types.py must be LEFT ALONE. It is a REGISTRY
-            #      of every model Izumi knows about, not a set of defaults, and each enum
-            #      carries @enum.unique. Every model we pin to is ALREADY a member there
-            #      (lyria-002, gemini-2.5-flash-tts, gemini-2.5-flash-image,
-            #      veo-3.1-generate-001, imagen-4.0-generate-001), so rewriting a literal
-            #      collapses two members onto one value and the import dies with:
-            #        ValueError: duplicate values found in <enum 'LyriaModel'>:
-            #                    LYRIA_3_CLIP_PREVIEW -> LYRIA_002
-            #      (SpeechModel has the same trap for the TTS model.)
-            local IZUMI_ENUM_REGISTRY="mediagent_kit/api/types.py"
-            local IZUMI_MEDIA_SUBS="gemini-3\.1-flash-image=${IZUMI_IMAGE_MODEL}
-imagen-4\.0-generate-001=${IZUMI_IMAGEN_MODEL}
-gemini-omni-flash-preview=${IZUMI_VIDEO_MODEL}
-lyria-3-clip-preview=${IZUMI_MUSIC_MODEL}
-gemini-3\.1-flash-tts-preview=${IZUMI_TTS_MODEL}"
-            while IFS='=' read -r pattern replacement; do
-                [ -n "$pattern" ] || continue
-                while IFS= read -r f; do
-                    [ -n "$f" ] || continue
-                    sed -i "s|${pattern}|${replacement}|g" "$f"
-                done <<< "$(grep -rl "$pattern" --include=*.py $IZUMI_PATCH_ROOTS 2>/dev/null | grep -vF "$IZUMI_ENUM_REGISTRY" || true)"
-            done <<< "$IZUMI_MEDIA_SUBS"
-
-            local MEDIA_LEFTOVER=$(grep -rl "gemini-3\.1-flash-image\|gemini-omni-flash-preview\|lyria-3-clip-preview\|gemini-3\.1-flash-tts-preview" \
-                --include=*.py $IZUMI_PATCH_ROOTS 2>/dev/null | grep -vF "$IZUMI_ENUM_REGISTRY" | wc -l | tr -d ' ')
-            if [ "${MEDIA_LEFTOVER:-0}" -gt 0 ]; then
-                warn "${MEDIA_LEFTOVER} file(s) still reference a non-regional media model."
-            else
-                success "Pinned media models: image=${C_YELLOW}${IZUMI_IMAGE_MODEL}${C_RESET}, imagen=${C_YELLOW}${IZUMI_IMAGEN_MODEL}${C_RESET}, video=${C_YELLOW}${IZUMI_VIDEO_MODEL}${C_RESET}, music=${C_YELLOW}${IZUMI_MUSIC_MODEL}${C_RESET}, tts=${C_YELLOW}${IZUMI_TTS_MODEL}${C_RESET}."
-            fi
-
-            IZUMI_MEDIA_JSON=",
-    \"image_gemini\": { \"default\": \"${IZUMI_IMAGE_MODEL}\" },
-    \"image_imagen\": { \"default\": \"${IZUMI_IMAGEN_MODEL}\" },
-    \"video\": { \"default\": \"${IZUMI_VIDEO_MODEL}\" },
-    \"music\": { \"default\": \"${IZUMI_MUSIC_MODEL}\" },
-    \"tts\": { \"default\": \"${IZUMI_TTS_MODEL}\" }"
-        else
-            info "Media models left at Izumi defaults (Creative Studio generates all media)."
-            info "   For strict in-region processing, re-run with ${C_YELLOW}--regional-media${C_RESET}."
-        fi
-
-        # 4. mediagent_kit helper models (image description, inline text generation).
-        #    This file MUST live in demos/backend/: deploy_to_agent_platform.py copies
-        #    demos/backend/* and mediagent_kit/ into the bundle and nothing else, so a copy
-        #    at the repo root (where upstream keeps its own) never reaches the deployed
-        #    agent. Items from demos/backend land at the bundle root, which is exactly
-        #    where MediagentKitConfig looks at runtime.
-        cat << JSON > /tmp/izumi-agent/demos/backend/mediagent_config.json
-{
-  "models": {
-    "text": {
-      "default": "${IZUMI_TEXT_MODEL}",
-      "repair": "${IZUMI_TEXT_MODEL}",
-      "enrichment": "${IZUMI_TEXT_MODEL}"
-    }${IZUMI_MEDIA_JSON}
-  }
-}
-JSON
-
+        # Izumi is deployed exactly as upstream ships it: Vertex AI endpoint, model IDs and
+        # mediagent_kit defaults are left untouched (global endpoint). The only location we
+        # set is where the Agent Engine resource itself lives (--location below), because
+        # reasoning engines must be placed in a concrete region.
         cat << YAML > /tmp/izumi-agent/cloudbuild.yaml
 steps:
   - name: 'python:3.12-slim'
@@ -1619,7 +1468,7 @@ steps:
       - 'PROJECT_ID=\$PROJECT_ID'
       - 'GOOGLE_CLOUD_PROJECT=\$PROJECT_ID'
       - 'GOOGLE_CLOUD_LOCATION=${DEPLOY_REGION}'
-      - 'MODEL_TARGET_LOCATION=${DEPLOY_REGION}'
+      - 'MODEL_TARGET_LOCATION=global'
       - 'ASSET_SERVICE_GCS_BUCKET=${ASSET_BUCKET}'
       - 'USE_CREATIVE_STUDIO=True'
       - 'ENABLE_HITL_GATES=True'
@@ -1628,18 +1477,6 @@ steps:
     args:
       - '-c'
       - |
-        echo "===== Verifying patches actually reached the uploaded source ====="
-        echo "--- distinct model literals in demos/backend + mediagent_kit ---"
-        grep -rho 'gemini-[0-9][0-9.a-z-]*' --include=*.py demos/backend mediagent_kit | sort | uniq -c | sort -rn
-        echo "--- mediagent_kit/config.py fallback defaults ---"
-        sed -n '/Hardcoded defaults as fallback/,/^        }/p' mediagent_kit/config.py
-        echo "--- demos/backend/mediagent_config.json ---"
-        cat demos/backend/mediagent_config.json 2>/dev/null || echo "(absent)"
-        if grep -rq 'gemini-3\.7-flash\|gemini-3\.1-pro-preview' --include=*.py demos/backend mediagent_kit; then
-          echo "FATAL: unsupported model literals reached the build. Aborting before deploy."
-          exit 1
-        fi
-        echo "===== Verification passed ====="
         pip install .
         python scripts/deploy_to_agent_platform.py --project=\$PROJECT_ID --location=${DEPLOY_REGION} --service-account=\${_AGENT_SA_EMAIL}
     secretEnv: ['CREATIVE_STUDIO_USER_AUTH_TOKEN_KEY']
@@ -1681,9 +1518,8 @@ YAML
         #
         # Pick the MOST RECENTLY CREATED one. The API returns engines in no guaranteed order,
         # so the old 'head -n 1' could pin the secret to a stale engine left over from an
-        # earlier deploy. That is silently fatal: the backend keeps talking to an agent built
-        # before the region/model patches and every request 404s on gemini-3.7-flash, while
-        # the script reports success.
+        # earlier deploy. That is silently fatal: the backend keeps talking to an outdated
+        # agent while the script reports success.
         local API_RESOURCE_NAME=$( (echo "$API_RESPONSE" 2>/dev/null || echo "{}") | jq -r 'try ([.reasoningEngines[]? | select(.displayName == "izumi-ads-x-agent")] | sort_by(.createTime) | last | .name) catch ""')
         local ENGINE_COUNT=$( (echo "$API_RESPONSE" 2>/dev/null || echo "{}") | jq -r 'try ([.reasoningEngines[]? | select(.displayName == "izumi-ads-x-agent")] | length) catch 0')
         if [ "${ENGINE_COUNT:-0}" -gt 1 ] 2>/dev/null; then
@@ -1937,8 +1773,6 @@ main() {
                 echo "  --skip-db-import     Bypass the legacy database backup detection and never prompt to import it."
                 echo "  --use-existing-backup Migrate using the migration_backup.sql.gz already in the Terraform state bucket,"
                 echo "                       skipping the SQL export (e.g. after a failed apply left the source DB unusable)."
-                echo "  --regional-media     Pin the Izumi agent's image/video/music/TTS models to versions served from regional"
-                echo "                       endpoints. Only needed for clients whose Vertex AI processing must stay in-region."
                 echo "  --help, -h           Show this help menu and exit."
                 echo ""
                 exit 0
@@ -1971,11 +1805,6 @@ main() {
                 # Implies a migration: skip the export, restore the existing backup.
                 CLI_USE_EXISTING_BACKUP="true"
                 CLI_MIGRATE_DB="true"
-                shift
-                ;;
-            --regional-media)
-                # Front door for IZUMI_REGIONAL_MEDIA; exported so deploy_izumi_agent sees it.
-                export IZUMI_REGIONAL_MEDIA="true"
                 shift
                 ;;
             *)
