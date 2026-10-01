@@ -28,17 +28,29 @@
         Characters
       </button> -->
       <button
-        class="sb-tab !cursor-auto"
+        class="sb-tab"
         [class.active]="activeTab() === 'scenes'"
+        (click)="setActiveTab('scenes')"
       >
         <mat-icon class="sb-icon-sm">movie</mat-icon>
         Scenes
+      </button>
+      <!-- Read-only campaign brief; only offered once the agent has produced it -->
+      <button
+        *ngIf="hasCampaignDetails()"
+        class="sb-tab"
+        [class.active]="activeTab() === 'campaign'"
+        (click)="setActiveTab('campaign')"
+        title="Campaign brief (read-only)"
+      >
+        <mat-icon class="sb-icon-sm">campaign</mat-icon>
+        Campaign
       </button>
     </div>
 
     <div class="flex gap-2 ml-auto">
       <button
-        *ngIf="!isGenerating()"
+        *ngIf="!isGenerating() && activeTab() === 'scenes'"
         class="sb-btn-primary"
         (click)="onAddScene()"
       >
@@ -94,7 +106,7 @@
       </p>
     </div>
 
-    <ng-container *ngIf="!isGenerating()">
+    <ng-container *ngIf="!isGenerating() && activeTab() === 'scenes'">
       @for (scene of scenes(); track scene.id; let sceneIdx = $index) {
         <div class="sb-scene-card" cdkDrag>
           <!-- Scene Header -->
@@ -211,5 +223,184 @@
         <mat-icon>chevron_right</mat-icon>
       </div>
     </ng-container>
+
+    <!-- Read-only Campaign brief -->
+    @if (!isGenerating() && activeTab() === 'campaign' && campaignDetails(); as campaign) {
+      <section class="sb-campaign" aria-label="Campaign brief (read-only)">
+        <header class="sb-campaign-header">
+          <div class="sb-campaign-title-group">
+            <mat-icon class="sb-campaign-lock" title="Read-only">lock</mat-icon>
+            <h2>{{ campaign.title || 'Campaign Brief' }}</h2>
+          </div>
+          <div class="sb-campaign-chips">
+            @if (campaign.templateName) {
+              <span class="sb-campaign-chip">
+                <mat-icon class="sb-icon-sm">dashboard_customize</mat-icon>
+                {{ campaign.templateName }}
+              </span>
+            }
+            @if (campaign.theme) {
+              <span class="sb-campaign-chip">
+                <mat-icon class="sb-icon-sm">palette</mat-icon>
+                {{ campaign.theme }}
+              </span>
+            }
+            @if (campaign.tone) {
+              <span class="sb-campaign-chip">
+                <mat-icon class="sb-icon-sm">mood</mat-icon>
+                {{ campaign.tone }}
+              </span>
+            }
+          </div>
+        </header>
+
+        @if (campaign.keyMessage) {
+          <blockquote class="sb-campaign-key-message">
+            “{{ campaign.keyMessage }}”
+          </blockquote>
+        }
+
+        @if (campaign.concept) {
+          <div class="sb-campaign-card">
+            <h3>Concept</h3>
+            <p>{{ campaign.concept }}</p>
+          </div>
+        }
+
+        <div class="sb-campaign-grid">
+          @if (campaign.targetAudience) {
+            <div class="sb-campaign-card">
+              <h3><mat-icon class="sb-icon-sm">groups</mat-icon> Target audience</h3>
+              <p>{{ campaign.targetAudience }}</p>
+            </div>
+          }
+          @if (campaign.visualStyle) {
+            <div class="sb-campaign-card">
+              <h3><mat-icon class="sb-icon-sm">brush</mat-icon> Visual style</h3>
+              <p>{{ campaign.visualStyle }}</p>
+            </div>
+          }
+          @if (campaign.setting) {
+            <div class="sb-campaign-card">
+              <h3><mat-icon class="sb-icon-sm">location_on</mat-icon> Setting</h3>
+              <p>{{ campaign.setting }}</p>
+            </div>
+          }
+          @if (campaign.backgroundMusic) {
+            <div class="sb-campaign-card">
+              <h3><mat-icon class="sb-icon-sm">music_note</mat-icon> Background music</h3>
+              <p>{{ campaign.backgroundMusic }}</p>
+            </div>
+          }
+        </div>
+
+        @if (campaign.voiceoverGroups.length > 0) {
+          <div class="sb-campaign-card">
+            <h3><mat-icon class="sb-icon-sm">record_voice_over</mat-icon> Voice-over</h3>
+            <ul class="sb-campaign-list">
+              @for (group of campaign.voiceoverGroups; track $index) {
+                <li>
+                  <div class="sb-campaign-meta">
+                    @if (group.narrativeBlock) {
+                      <span class="sb-campaign-tag">{{ group.narrativeBlock }}</span>
+                    }
+                    @if (group.sceneIds.length > 0) {
+                      <span>{{ group.sceneIds.join(', ') }}</span>
+                    }
+                    @if (group.totalDurationSeconds !== undefined) {
+                      <span>{{ group.totalDurationSeconds }}s</span>
+                    }
+                  </div>
+                  @if (group.script) {
+                    <p>{{ group.script }}</p>
+                  }
+                </li>
+              }
+            </ul>
+          </div>
+        }
+
+        @if (campaign.scenes.length > 0) {
+          <h3 class="sb-campaign-section-title">Scene breakdown</h3>
+          <div class="sb-campaign-scenes">
+            @for (scene of campaign.scenes; track scene.id; let i = $index) {
+              <article class="sb-campaign-card sb-campaign-scene">
+                <header>
+                  <span class="sb-campaign-scene-index">{{ i + 1 }}</span>
+                  <h4>{{ scene.topic }}</h4>
+                  @if (scene.durationSeconds !== undefined) {
+                    <span class="sb-campaign-tag">{{ scene.durationSeconds }}s</span>
+                  }
+                </header>
+                <dl>
+                  @if (scene.establishmentShot) {
+                    <dt>Shot</dt>
+                    <dd>{{ scene.establishmentShot }}</dd>
+                  }
+                  @if (scene.narrativeAction) {
+                    <dt>Action</dt>
+                    <dd>{{ scene.narrativeAction }}</dd>
+                  }
+                  @if (scene.onScreenText) {
+                    <dt>On-screen text</dt>
+                    <dd>{{ scene.onScreenText }}</dd>
+                  }
+                  @if (scene.transition) {
+                    <dt>Transition</dt>
+                    <dd>
+                      @if (scene.transition.type) {
+                        <span class="sb-campaign-tag">{{ scene.transition.type }}</span>
+                      }
+                      @if (scene.transition.durationSeconds) {
+                        <span class="sb-campaign-tag">{{ scene.transition.durationSeconds }}s</span>
+                      }
+                      @if (scene.transition.description) {
+                        {{ scene.transition.description }}
+                      }
+                    </dd>
+                  }
+                  @if (scene.voiceover; as vo) {
+                    @if (vo.text) {
+                      <dt>Voice-over</dt>
+                      <dd>
+                        “{{ vo.text }}”
+                        @if (vo.gender || vo.style) {
+                          <span class="sb-campaign-muted">
+                            — {{ joinMeta(vo.gender, vo.style) }}
+                          </span>
+                        }
+                      </dd>
+                    }
+                  }
+                  @if (scene.cinematography; as cine) {
+                    <dt>Cinematography</dt>
+                    <dd>
+                      <ul class="sb-campaign-inline-list">
+                        @if (cine.camera) { <li><b>Camera:</b> {{ cine.camera }}</li> }
+                        @if (cine.lens) { <li><b>Lens:</b> {{ cine.lens }}</li> }
+                        @if (cine.lighting) { <li><b>Lighting:</b> {{ cine.lighting }}</li> }
+                        @if (cine.mood) { <li><b>Mood:</b> {{ cine.mood }}</li> }
+                        @if (cine.colorAnchors) { <li><b>Colors:</b> {{ cine.colorAnchors }}</li> }
+                        @if (cine.velocity) { <li><b>Pace:</b> {{ cine.velocity }}</li> }
+                      </ul>
+                    </dd>
+                  }
+                  @if (scene.audioHints.length > 0) {
+                    <dt>Audio</dt>
+                    <dd>
+                      <ul class="sb-campaign-inline-list">
+                        @for (hint of scene.audioHints; track hint.label) {
+                          <li><b>{{ hint.label }}:</b> {{ hint.value }}</li>
+                        }
+                      </ul>
+                    </dd>
+                  }
+                </dl>
+              </article>
+            }
+          </div>
+        }
+      </section>
+    }
   </main>
 </div>

@@ -1820,8 +1820,53 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         };
         return updated;
       });
+      // The playback engine reads in-between transitions from the clip itself
+      // (transition_to_next_*), which is only denormalised on timeline load.
+      // Mirror the change into the clips so it takes effect without a reload.
+      this.applyMiddleTransitionToClips(
+        event.index,
+        event.type,
+        event.duration_seconds,
+      );
     }
     this.saveTimeline().subscribe();
+  }
+
+  private applyMiddleTransitionToClips(
+    index: number,
+    type: TransitionType,
+    durationSeconds: number,
+  ) {
+    this.timelineState.timelineClips.update(prev => {
+      const videoClips = prev
+        .filter(c => c.trackIndex === 0)
+        .sort((a, b) => a.startTime - b.startTime);
+      if (index < 0 || index >= videoClips.length - 1) return prev;
+
+      const others = prev.filter(c => c.trackIndex !== 0);
+      let currentTime = 0;
+      const relaid = videoClips.map((clip, idx) => {
+        const newClip: TimelineClip =
+          idx === index
+            ? {
+                ...clip,
+                startTime: currentTime,
+                transition_to_next_type: type,
+                transition_to_next_duration:
+                  type === TransitionType.NONE ? 0 : durationSeconds,
+              }
+            : {...clip, startTime: currentTime};
+        const tType = newClip.transition_to_next_type || TransitionType.NONE;
+        const tDuration =
+          tType !== TransitionType.NONE
+            ? newClip.transition_to_next_duration || 0
+            : 0;
+        // Same overlap layout used by processGeneratedData / resolveOverlaps
+        currentTime += clip.duration - tDuration / 2;
+        return newClip;
+      });
+      return [...others, ...relaid];
+    });
   }
 
   getLastVideoClipEndTime(): number {

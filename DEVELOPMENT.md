@@ -137,7 +137,10 @@ In the cloud, the Workbench chat talks to the Izumi `ads_x` agent deployed on **
 # 1. Clone upstream Izumi into the repo root (the folder is gitignored)
 git clone --depth 1 -b v0.2.1 https://github.com/GoogleCloudPlatform/genmedia-izumi-agent.git genmedia-izumi-agent
 
-# 2. Configure and start the agent (+ a Firestore emulator for ADK sessions)
+# 2. Upstream ships no compose file for ads_x: copy our tracked reference files in
+cp docs/local-izumi/docker-compose.yml docs/local-izumi/.env.example genmedia-izumi-agent/demos/backend/ads_x/
+
+# 3. Configure and start the agent (+ a Firestore emulator for ADK sessions)
 cd genmedia-izumi-agent/demos/backend/ads_x
 cp .env.example .env            # GOOGLE_CLOUD_PROJECT, ASSET_SERVICE_GCS_BUCKET, ...
 docker compose up --build       # first build takes a few minutes
@@ -149,6 +152,35 @@ docker compose up --build       # first build takes a few minutes
 - Agent API / ADK dev UI on the host: `http://localhost:8082` (`/docs`, `/dev-ui`).
 - `demos/backend` and `mediagent_kit` are bind-mounted with `--reload`, so edits to the agent apply live.
 - To keep using a deployed Agent Engine from a local backend instead, set `USE_LOCAL_IZUMI_AGENT=false` and `AGENT_ENGINE_RESOURCE_NAME=...` in `backend/.env`.
+- The reference `docker-compose.yml` / `.env.example` are versioned in [`docs/local-izumi/`](docs/local-izumi/README.md). If you tweak the copy inside `genmedia-izumi-agent/`, copy it back so the change is tracked.
+
+<details>
+<summary><b>Without Docker Compose</b> (plain <code>docker build</code> / <code>docker run</code>)</summary>
+
+The compose file is only a convenience wrapper around upstream's `deployment/Dockerfile`. The same setup with the Docker CLI alone (run from the `genmedia-izumi-agent/` folder, with Creative Studio already up):
+
+```bash
+# Build the image (APP_ENV=local makes mediagent_kit use the emulator/local settings)
+docker build -f deployment/Dockerfile --build-arg APP_ENV=local -t izumi-ads-x:local .
+
+# Firestore emulator for ADK sessions
+docker run -d --name izumi-firestore-emulator --network gcc-creative-studio_default -p 8086:8086 \
+  google/cloud-sdk:emulators gcloud emulators firestore start --host-port=0.0.0.0:8086
+
+# The agent itself (same env as the compose file; root user to reuse the host ADC mount)
+docker run -d --name izumi-agent --network gcc-creative-studio_default -p 8082:8080 --user root \
+  --env-file demos/backend/ads_x/.env \
+  -e PORT=8080 -e APP_ENV=local -e GOOGLE_GENAI_USE_VERTEXAI=True \
+  -e FIRESTORE_EMULATOR_HOST=izumi-firestore-emulator:8086 -e FIRESTORE_DATABASE_ID= \
+  -e USE_CREATIVE_STUDIO=True -e ENABLE_HITL_GATES=True \
+  -e GRPC_ENABLE_FORK_SUPPORT=0 -e GRPC_POLL_STRATEGY=poll -e PYTHONPATH=/app \
+  -v "$HOME/.config/gcloud:/root/.config/gcloud:ro" \
+  izumi-ads-x:local
+```
+
+This runs the code baked into the image (no hot reload). Rebuild the image to pick up agent changes, or add the `demos/backend` / `mediagent_kit` bind mounts from the compose file. Clean up with `docker rm -f izumi-agent izumi-firestore-emulator`.
+
+</details>
 
 ## 5. Code Quality & Pre-commit Hooks
 

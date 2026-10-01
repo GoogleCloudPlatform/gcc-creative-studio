@@ -51,10 +51,15 @@ describe('ChatInterfaceComponent', () => {
       currentStoryboard: signal(null),
       activeAgent: signal('director'),
       isGeneratingStoryboard: signal(false),
+      isGeneratingVideo: signal(false),
+      campaignDetails: signal<any>(null),
+      interruptedSessionId: signal<string | null>(null),
       sessions: signal([]),
       chatMessages: signal([]),
       generateVideoRequest$: new Subject<void>(),
       videoGenerated$: new Subject<any>(),
+      isPolling: jasmine.createSpy('isPolling').and.returnValue(false),
+      startPolling: jasmine.createSpy('startPolling'),
       getSessions: jasmine.createSpy('getSessions').and.returnValue(of([])),
       getSessionDetail: jasmine
         .createSpy('getSessionDetail')

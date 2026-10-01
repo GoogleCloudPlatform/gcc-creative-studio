@@ -88,14 +88,19 @@ export class StoryboardComponent {
   private storyboardService = inject(StoryboardService);
 
   // Navigation State
-  activeTab = signal<'characters' | 'scenes'>('scenes');
+  activeTab = signal<'characters' | 'scenes' | 'campaign'>('scenes');
+
+  // Read-only campaign brief from the agent; the tab only exists when present
+  campaignDetails = this.agentChatService.campaignDetails;
+  hasCampaignDetails = computed(() => this.campaignDetails() !== null);
 
   // Dynamic Data
   scenes = signal<Scene[]>([]);
   isGeneratingStoryboard = computed(() =>
     this.agentChatService.isGeneratingStoryboard(),
   );
-  isGeneratingVideo = signal<boolean>(false);
+  // Shared with the chat so the overlay copy matches the agent's actual stage
+  isGeneratingVideo = this.agentChatService.isGeneratingVideo;
   isGenerating = computed(
     () => this.isGeneratingStoryboard() || this.isGeneratingVideo(),
   );
@@ -241,8 +246,25 @@ export class StoryboardComponent {
     );
   }
 
-  setActiveTab(tab: 'characters' | 'scenes') {
+  setActiveTab(tab: 'characters' | 'scenes' | 'campaign') {
+    if (tab === 'campaign' && !this.hasCampaignDetails()) return;
     this.activeTab.set(tab);
+  }
+
+  private campaignTabGuard = effect(
+    () => {
+      // The brief is cleared on new chat / session switch; never strand the
+      // user on an empty tab.
+      if (!this.hasCampaignDetails() && this.activeTab() === 'campaign') {
+        this.activeTab.set('scenes');
+      }
+    },
+    {allowSignalWrites: true},
+  );
+
+  /** Joins optional labels with a separator, skipping empty ones. */
+  joinMeta(...parts: (string | undefined)[]): string {
+    return parts.filter((p): p is string => !!p).join(' · ');
   }
 
   onAddScene() {

@@ -62,6 +62,9 @@ With `ENVIRONMENT=local`, `AgentService` talks to a **local Izumi container** at
 # One-time: clone upstream Izumi next to this repo (already gitignored)
 git clone --depth 1 -b v0.2.1 https://github.com/GoogleCloudPlatform/genmedia-izumi-agent.git genmedia-izumi-agent
 
+# Upstream has no compose file for ads_x: copy the tracked reference files from docs/local-izumi/
+cp docs/local-izumi/docker-compose.yml docs/local-izumi/.env.example genmedia-izumi-agent/demos/backend/ads_x/
+
 # Start the ads_x agent + Firestore emulator (Creative Studio must already be up:
 # the compose joins the `gcc-creative-studio_default` network)
 cd genmedia-izumi-agent/demos/backend/ads_x
@@ -71,6 +74,7 @@ docker compose up --build # first build is slow (node + python stages)
 
 - The agent is reachable from the host at `http://localhost:8082` (ADK dev UI at `/dev-ui`).
 - `demos/backend` and `mediagent_kit` are bind-mounted with `--reload`; the venv lives in the `izumi_backend_venv` volume.
+- `docs/local-izumi/` is the source of truth for the compose file and `.env.example` (the Izumi clone is gitignored, so edits there are not tracked). `DEVELOPMENT.md` also documents a plain `docker build` / `docker run` fallback for hosts without Docker Compose.
 - The adapter lives in `backend/src/agents/local_adk_client.py` (ADK REST API: `/apps/{app}/users/{user}/sessions`, `PATCH` state delta, `/run_sse`); sessions require the `user_id`, so `AgentService` routes every session call through its `_sessions_*` helpers.
 
 ---

@@ -138,6 +138,24 @@ describe('TransitionIndicatorComponent', () => {
       component.selectType(TransitionType.WIPE_RIGHT);
       expect(component.selectedType).toBe(TransitionType.WIPE_RIGHT);
     });
+
+    it('should default duration to 1s when a transition is picked with 0 duration', () => {
+      component.durationSeconds = 0;
+      component.selectType(TransitionType.FADE);
+      expect(component.durationSeconds).toBe(1);
+    });
+
+    it('should keep an explicit duration when a transition is picked', () => {
+      component.durationSeconds = 2.5;
+      component.selectType(TransitionType.FADE);
+      expect(component.durationSeconds).toBe(2.5);
+    });
+
+    it('should not touch the duration when NONE is picked', () => {
+      component.durationSeconds = 0;
+      component.selectType(TransitionType.NONE);
+      expect(component.durationSeconds).toBe(0);
+    });
   });
 
   describe('openModal method', () => {

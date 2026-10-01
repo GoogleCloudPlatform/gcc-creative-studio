@@ -66,6 +66,7 @@ import {
   ApprovalGateInfo,
   ApprovalGateSubmission,
 } from '../approval-gate/approval-gate.component';
+import {parseCampaignDetails} from '../../utils/campaign-details';
 
 interface DropdownOption {
   value: string;
@@ -363,6 +364,12 @@ export class ChatInterfaceComponent
   }
 
   ngOnDestroy() {
+    // The chat is torn down whenever the user switches side panels. Remember an
+    // in-flight stream so the next instance resumes polling instead of leaving
+    // undelivered events (and the final [DONE]) queued server-side forever.
+    this.agentChatService.interruptedSessionId.set(
+      this.agentChatService.isPolling() ? this.currentSessionId : null,
+    );
     this.agentChatService.stopPolling();
   }
 
@@ -427,6 +434,8 @@ export class ChatInterfaceComponent
           this.sessions.set([]);
           this.activeApprovalGate.set(null);
           this.agentChatService.currentStoryboard.set(null);
+          this.agentChatService.campaignDetails.set(null);
+          this.agentChatService.interruptedSessionId.set(null);
           this.addWelcomeMessage();
           this.shouldScrollToBottom = true;
           this.lastWorkspaceId = workspaceId;
@@ -442,6 +451,19 @@ export class ChatInterfaceComponent
             });
             return;
           }
+        }
+      }
+
+      // A previous chat instance was torn down mid-stream (panel switch). The
+      // shared chatMessages signal still holds the conversation and the missing
+      // events are queued server-side, so simply pick the poll loop back up.
+      const interruptedSessionId = this.agentChatService.interruptedSessionId();
+      if (interruptedSessionId) {
+        this.agentChatService.interruptedSessionId.set(null);
+        if (interruptedSessionId === this.currentSessionId) {
+          this.isLoadingHistory.set(false);
+          this.resumePolling(interruptedSessionId);
+          return;
         }
       }
 
@@ -523,6 +545,7 @@ export class ChatInterfaceComponent
                           res.storyboard,
                         );
                       }
+                      this.syncCampaignDetails(res.session?.state);
                       if (res.session && res.session.id) {
                         this.currentSessionId = res.session.id;
                         this.agentChatService.selectedSessionId.set(
@@ -647,6 +670,7 @@ export class ChatInterfaceComponent
             } else {
               this.agentChatService.currentStoryboard.set(null);
             }
+            this.syncCampaignDetails(res.session?.state);
 
             const messages = (res.session && res.session.events) || [];
             const mappedMessages = this.mapEventsToMessages(messages);
@@ -1006,6 +1030,7 @@ export class ChatInterfaceComponent
     this.chatMessages.set([]);
     this.activeApprovalGate.set(null);
     this.agentChatService.currentStoryboard.set(null);
+    this.agentChatService.campaignDetails.set(null);
     this.addWelcomeMessage();
     this.shouldScrollToBottom = true;
 
@@ -1231,6 +1256,10 @@ export class ChatInterfaceComponent
     this.isTyping.set(true);
     if (this.currentAgent === 'ads_x') {
       this.agentChatService.isGeneratingStoryboard.set(true);
+      // Accepting the frames starts the video render + stitch stage
+      if (gate.stage === 'frames' && submission.decision === 'accept') {
+        this.agentChatService.isGeneratingVideo.set(true);
+      }
     }
     this.shouldScrollToBottom = true;
 
@@ -1676,6 +1705,7 @@ export class ChatInterfaceComponent
       const nowSeconds = Date.now() / 1000;
       const lastUpdateSeconds = res.session.lastUpdateTime;
       if (lastUpdateSeconds && nowSeconds - lastUpdateSeconds > 1200) {
+        this.clearGeneratingState();
         return;
       }
 
@@ -1693,9 +1723,20 @@ export class ChatInterfaceComponent
           isLastEventPendingTool
         ) {
           this.resumePolling(res.session.id);
+          return;
         }
       }
     }
+    // Nothing in flight for this session: drop any "generating" state inherited
+    // from a previous session or a torn-down poll loop.
+    this.clearGeneratingState();
+  }
+
+  private clearGeneratingState() {
+    this.isTyping.set(false);
+    this.isSubmittingGate.set(false);
+    this.agentChatService.isGeneratingStoryboard.set(false);
+    this.agentChatService.isGeneratingVideo.set(false);
   }
 
   private setupCallbacks(): SSECallbacks<any> {
@@ -1745,6 +1786,7 @@ export class ChatInterfaceComponent
           this.isTyping.set(false);
           this.isSubmittingGate.set(false);
           this.agentChatService.isGeneratingStoryboard.set(false);
+          this.agentChatService.isGeneratingVideo.set(false);
         } else {
           const parts =
             data.content?.parts || data.raw_event?.content?.parts || [];
@@ -1783,6 +1825,22 @@ export class ChatInterfaceComponent
             this.isSubmittingGate.set(false);
           }
         }
+        // The final video is stitched well before the stream ends (the agent
+        // still writes a summary and opens the final-cut gate). Surface it
+        // immediately instead of leaving the storyboard in its loading state.
+        if (this.isFinalVideoReadyEvent(data)) {
+          this.agentChatService.isGeneratingStoryboard.set(false);
+          this.agentChatService.isGeneratingVideo.set(false);
+          this.refreshStoryboardForSession();
+        }
+        // The agent republishes its full campaign brief in the state delta
+        // whenever it changes; keep the read-only Campaign tab in sync.
+        this.syncCampaignDetails(
+          data.actions?.state_delta ||
+            data.actions?.stateDelta ||
+            data.raw_event?.actions?.state_delta,
+          true,
+        );
         if (data.actions?.storyboard) {
           this.isTyping.set(false);
           this.agentChatService.isGeneratingStoryboard.set(false);
@@ -1990,11 +2048,13 @@ export class ChatInterfaceComponent
         this.isTyping.set(false);
         this.isSubmittingGate.set(false);
         this.agentChatService.isGeneratingStoryboard.set(false);
+        this.agentChatService.isGeneratingVideo.set(false);
       },
       onClose: () => {
         this.isTyping.set(false);
         this.isSubmittingGate.set(false);
         this.agentChatService.isGeneratingStoryboard.set(false);
+        this.agentChatService.isGeneratingVideo.set(false);
         if (agentMessageIndex !== -1) {
           const currentMsgs = this.chatMessages();
           const msg = currentMsgs[agentMessageIndex];
@@ -2018,37 +2078,89 @@ export class ChatInterfaceComponent
         }
 
         // Always query database on stream completion to get the latest storyboard & scenes
-        const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
-        if (workspaceId && this.currentSessionId) {
-          this.storyboardService
-            .getStoryboardForSession(workspaceId, this.currentSessionId)
-            .subscribe({
-              next: storyboards => {
-                if (storyboards && storyboards.length > 0) {
-                  if (storyboards[0].timeline_id) {
-                    this.timelineState.loadedTimelineId.set(undefined);
-                  }
-                  this.agentChatService.currentStoryboard.set(storyboards[0]);
-                  if (storyboards[0].timeline_id) {
-                    this.agentChatService.videoGenerated$.next(true);
-                  }
-                } else {
-                  this.agentChatService.videoGenerated$.next(true);
-                }
-              },
-              error: err => {
-                console.error(
-                  'Failed to fetch storyboard after stream completion:',
-                  err,
-                );
-                this.agentChatService.videoGenerated$.next(true);
-              },
-            });
-        } else {
-          this.agentChatService.videoGenerated$.next(true);
-        }
+        this.refreshStoryboardForSession();
       },
     };
+  }
+
+  /**
+   * True when the event marks the final video as produced: either the
+   * `stitch_final_video` tool succeeded or the agent published the final asset
+   * in its state delta. Handles both snake_case (Agent Engine / local ADK) and
+   * camelCase payloads.
+   */
+  private isFinalVideoReadyEvent(data: any): boolean {
+    if (!data) return false;
+    const delta =
+      data.actions?.state_delta ||
+      data.actions?.stateDelta ||
+      data.raw_event?.actions?.state_delta ||
+      {};
+    if (delta.final_video_asset_id || delta.final_video_asset_ref) {
+      return true;
+    }
+    const parts = data.content?.parts || data.raw_event?.content?.parts || [];
+    return parts.some((p: any) => {
+      const fr =
+        p?.functionResponse ||
+        p?.function_response ||
+        p?.toolResponse ||
+        p?.tool_response;
+      if (!fr || fr.name !== 'stitch_final_video') return false;
+      const status = fr.response?.status;
+      return !status || status === 'succeeded' || status === 'success';
+    });
+  }
+
+  /**
+   * Updates the read-only campaign brief from an agent state object (either a
+   * full `session.state` or a streamed `state_delta`). With `keepExisting`
+   * (streaming), deltas without a `storyboard` key leave the brief untouched;
+   * otherwise (session load) a missing/invalid brief hides the Campaign tab.
+   */
+  private syncCampaignDetails(state: any, keepExisting = false) {
+    const raw = state?.storyboard;
+    if (raw === undefined && keepExisting) return;
+    const parsed = parseCampaignDetails(raw);
+    if (parsed === null && keepExisting) return;
+    this.agentChatService.campaignDetails.set(parsed);
+  }
+
+  /**
+   * Re-reads the storyboard bound to the current session so `currentStoryboard`
+   * reflects the latest scenes / `timeline_id`, then notifies listeners that a
+   * video may be available (the storyboard panel toggles its "See Video" CTA).
+   */
+  private refreshStoryboardForSession() {
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    if (!workspaceId || !this.currentSessionId) {
+      this.agentChatService.videoGenerated$.next(true);
+      return;
+    }
+    this.storyboardService
+      .getStoryboardForSession(workspaceId, this.currentSessionId)
+      .subscribe({
+        next: storyboards => {
+          if (storyboards && storyboards.length > 0) {
+            if (storyboards[0].timeline_id) {
+              this.timelineState.loadedTimelineId.set(undefined);
+            }
+            this.agentChatService.currentStoryboard.set(storyboards[0]);
+            if (storyboards[0].timeline_id) {
+              this.agentChatService.videoGenerated$.next(true);
+            }
+          } else {
+            this.agentChatService.videoGenerated$.next(true);
+          }
+        },
+        error: err => {
+          console.error(
+            'Failed to fetch storyboard after stream completion:',
+            err,
+          );
+          this.agentChatService.videoGenerated$.next(true);
+        },
+      });
   }
 
   private scrollToBottom(): void {

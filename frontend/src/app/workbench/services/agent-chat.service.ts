@@ -24,6 +24,7 @@ import {
   ChatSession,
   SessionDetailResponse,
 } from '../../common/models/workbench.model';
+import {CampaignDetails} from '../utils/campaign-details';
 
 export interface SSECallbacks<T> {
   onClose?: () => void;
@@ -100,18 +101,31 @@ export class AgentChatService {
   // Global parsed storyboard
   currentStoryboard = signal<any>(null);
 
+  // Read-only campaign brief published by the ads_x agent (null = not ready)
+  campaignDetails = signal<CampaignDetails | null>(null);
+
   // Selected session ID from route query params
   selectedSessionId = signal<string | null>(null);
 
   // Agent Selection State
   activeAgent = signal<string>('ads_x');
   isGeneratingStoryboard = signal<boolean>(false);
+  // True while the agent renders/stitches the final video (after frame approval)
+  isGeneratingVideo = signal<boolean>(false);
+
+  // Session whose poll loop was torn down (chat panel closed) while a stream
+  // was still in flight. The next chat instance resumes polling for it.
+  interruptedSessionId = signal<string | null>(null);
 
   // Triggers video generation from the Storyboard component
   generateVideoRequest$ = new Subject<void>();
 
   // Broadcasts a fully generated video asset from the chat processor
   videoGenerated$ = new Subject<any>();
+
+  isPolling(): boolean {
+    return this.activePollInterval !== null;
+  }
 
   // Shared sessions state & caching
   sessions = signal<ChatSession[]>([]);

@@ -113,8 +113,16 @@ export class TransitionIndicatorComponent {
     );
   }
 
+  static readonly DEFAULT_DURATION_SECONDS = 1;
+
   selectType(type: TransitionType) {
     this.selectedType = type;
+    // A 0s transition is a no-op for the playback engine; give newly selected
+    // transitions a sensible default so they are visible without extra tweaking.
+    if (type !== TransitionType.NONE && !(this.durationSeconds > 0)) {
+      this.durationSeconds =
+        TransitionIndicatorComponent.DEFAULT_DURATION_SECONDS;
+    }
   }
 
   saveTransition() {
