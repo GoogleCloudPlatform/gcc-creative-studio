@@ -57,6 +57,71 @@ from src.users.user_model import UserModel
 logger = logging.getLogger(__name__)
 
 
+def _build_lyria3_prompt(request_dto: CreateAudioDto) -> str:
+    """Builds the text input for a Lyria 3 interaction.
+
+    Lyria 3 has no dedicated ``negative_prompt`` parameter, so a user-provided
+    negative prompt is folded into the text as explicit guidance.
+    """
+    prompt = (request_dto.prompt or "").strip()
+    negative = (request_dto.negative_prompt or "").strip()
+    if negative:
+        prompt = f"{prompt}\n\nAvoid: {negative}"
+    return prompt
+
+
+def _get_attr_or_key(obj: Any, name: str) -> Any:
+    """Reads ``name`` from a pydantic model / object or a plain dict."""
+    if isinstance(obj, dict):
+        return obj.get(name)
+    return getattr(obj, name, None)
+
+
+def _decode_audio_payload(data: Any) -> bytes | None:
+    if not data:
+        return None
+    if isinstance(data, (bytes, bytearray)):
+        return bytes(data)
+    if isinstance(data, str):
+        return base64.b64decode(data)
+    return None
+
+
+def _extract_lyria3_audio(interaction: Any) -> tuple[bytes | None, str]:
+    """Extracts the generated audio from a Lyria 3 ``Interaction`` response.
+
+    The google-genai SDK exposes the first audio item as ``output_audio``; as a
+    fallback this walks ``steps[].content[]`` (normalised shape) and the raw
+    ``outputs[]`` list (REST shape). Returns ``(audio_bytes, mime_type)``;
+    ``audio_bytes`` is ``None`` when no audio item is present.
+    """
+    default_mime = MimeTypeEnum.AUDIO_MPEG.value
+
+    candidates: list[Any] = []
+    output_audio = _get_attr_or_key(interaction, "output_audio")
+    if output_audio is not None:
+        candidates.append(output_audio)
+
+    for step in _get_attr_or_key(interaction, "steps") or []:
+        for item in _get_attr_or_key(step, "content") or []:
+            candidates.append(item)
+
+    for item in _get_attr_or_key(interaction, "outputs") or []:
+        candidates.append(item)
+
+    for item in candidates:
+        if _get_attr_or_key(item, "type") not in (None, "audio"):
+            continue
+        audio_bytes = _decode_audio_payload(_get_attr_or_key(item, "data"))
+        if audio_bytes:
+            mime_type = _get_attr_or_key(item, "mime_type") or default_mime
+            if mime_type == MimeTypeEnum.AUDIO_MP3.value:
+                mime_type = default_mime
+            return audio_bytes, str(mime_type)
+
+    return None, default_mime
+
+
 def _process_audio_in_background(
     media_item_id: int,
     request_dto: CreateAudioDto,
@@ -109,6 +174,8 @@ def _process_audio_in_background(
 
                         permanent_gcs_uris = []
                         uid_short = str(user_id)[:4]
+                        # Media items are created as WAV; Lyria 3 returns MP3.
+                        output_mime_type = MimeTypeEnum.AUDIO_WAV
 
                         if request_dto.model in AudioService.GEMINI_MODELS:
                             client = GenAIModelSetup.init()
@@ -256,7 +323,64 @@ def _process_audio_in_background(
                             results = await asyncio.gather(*tasks)
                             permanent_gcs_uris = [u for u in results if u]
 
-                        elif request_dto.model in AudioService.MUSIC_MODELS:
+                        elif request_dto.model in AudioService.LYRIA_3_MODELS:
+                            # Lyria 3 is only exposed through the Interactions
+                            # API on the global endpoint (no :predict support).
+                            lyria_client = GenAIModelSetup.get_omni_client()
+
+                            async def generate_lyria3(index: int) -> str | None:
+                                try:
+                                    interaction = await asyncio.to_thread(
+                                        lyria_client.interactions.create,
+                                        model=request_dto.model.value,
+                                        input=[
+                                            {
+                                                "type": "text",
+                                                "text": _build_lyria3_prompt(
+                                                    request_dto
+                                                ),
+                                            }
+                                        ],
+                                        timeout=AudioService.LYRIA_3_TIMEOUT_SECONDS,
+                                    )
+                                    audio_bytes, mime_type = (
+                                        _extract_lyria3_audio(interaction)
+                                    )
+                                    if not audio_bytes:
+                                        worker_logger.error(
+                                            "Lyria 3 interaction %s returned no audio output.",
+                                            getattr(interaction, "id", None),
+                                        )
+                                        return None
+
+                                    extension = (
+                                        "wav"
+                                        if mime_type == "audio/wav"
+                                        else "mp3"
+                                    )
+                                    file_name = f"lyria3_music_{media_item_id}_{uid_short}_{index}.{extension}"
+                                    return gcs_service.store_to_gcs(
+                                        folder="lyria_audio",
+                                        file_name=file_name,
+                                        mime_type=mime_type,
+                                        contents=audio_bytes,
+                                        decode=False,
+                                    )
+                                except Exception as e:
+                                    worker_logger.error(
+                                        f"Lyria 3 generation error: {e}"
+                                    )
+                                    return None
+
+                            tasks = [
+                                generate_lyria3(i)
+                                for i in range(request_dto.sample_count)
+                            ]
+                            results = await asyncio.gather(*tasks)
+                            permanent_gcs_uris = [u for u in results if u]
+                            output_mime_type = MimeTypeEnum.AUDIO_MPEG
+
+                        elif request_dto.model in AudioService.LYRIA_2_MODELS:
                             client_options = {
                                 "api_endpoint": "us-central1-aiplatform.googleapis.com"
                             }
@@ -298,9 +422,10 @@ def _process_audio_in_background(
                                     )
                                     if not response.predictions:
                                         return None
-                                    audio_b64 = response.predictions[0].get(
+                                    prediction = response.predictions[0]
+                                    audio_b64 = prediction.get(
                                         "bytesBase64Encoded"
-                                    )
+                                    ) or prediction.get("audioContent")
                                     if not audio_b64:
                                         return None
 
@@ -342,6 +467,10 @@ def _process_audio_in_background(
                             "gcs_uris": permanent_gcs_uris,
                             "generation_time": generation_time,
                         }
+                        if output_mime_type != MimeTypeEnum.AUDIO_WAV:
+                            # Media item was created as WAV; fix it so the
+                            # gallery/lightbox serve the right content type.
+                            update_data["mime_type"] = output_mime_type
                         if (
                             getattr(
                                 request_dto, "metadata_generation_model", None
@@ -404,11 +533,18 @@ class AudioService:
     TTS_MODELS = {
         GenerationModelEnum.CHIRP_3,
     }
-    MUSIC_MODELS = {
+    # Lyria 2 is served through the regional PredictionService (:predict).
+    LYRIA_2_MODELS = {
         GenerationModelEnum.LYRIA_002,
+    }
+    # Lyria 3 is served only through the Interactions API on `global`.
+    LYRIA_3_MODELS = {
         GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
         GenerationModelEnum.LYRIA_3_PRO_PREVIEW,
     }
+    MUSIC_MODELS = LYRIA_2_MODELS | LYRIA_3_MODELS
+    # Lyria 3 Pro renders full songs (up to ~3 min); keep a generous ceiling.
+    LYRIA_3_TIMEOUT_SECONDS = 600.0
 
     def __init__(
         self,

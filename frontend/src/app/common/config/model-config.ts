@@ -377,7 +377,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
   // --- Audio Models ---
   {
     value: 'lyria-002',
-    viewValue: 'Lyria',
+    viewValue: 'Lyria 2',
     type: 'AUDIO',
     icon: 'music_note',
     capabilities: {
@@ -403,7 +403,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportedAspectRatios: [],
       supportedResolutions: [],
       supportedDurations: [],
-      supportsSeed: true,
+      supportsSeed: false,
       supportsNegativePrompt: true,
       supportsVoice: false,
       supportsLanguage: false,
@@ -420,7 +420,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportedAspectRatios: [],
       supportedResolutions: [],
       supportedDurations: [],
-      supportsSeed: true,
+      supportsSeed: false,
       supportsNegativePrompt: true,
       supportsVoice: false,
       supportsLanguage: false,

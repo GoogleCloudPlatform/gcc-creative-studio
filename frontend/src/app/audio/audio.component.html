@@ -103,6 +103,15 @@
         <div class="config-grid">
 
             <ng-container *ngIf="selectedModel === 'lyria'">
+                <mat-form-field appearance="outline">
+                    <mat-label>Music Model</mat-label>
+                    <mat-select [ngModel]="lyriaModel" (selectionChange)="onLyriaModelChange($event.value)" name="lyriaModel">
+                        <mat-option *ngFor="let m of lyriaModels" [value]="m.value">
+                            {{ m.viewValue }}
+                        </mat-option>
+                    </mat-select>
+                </mat-form-field>
+
                 <mat-form-field appearance="outline" class="large-field">
                     <mat-label>Prompt</mat-label>
                     <textarea matInput [(ngModel)]="prompt" (ngModelChange)="saveState()" placeholder="Describe the music..." (keydown.control.enter)="generate()"></textarea>
@@ -113,7 +122,7 @@
                     <input matInput [(ngModel)]="negativePrompt" (ngModelChange)="saveState()" placeholder="What to avoid">
                 </mat-form-field>
 
-                <mat-form-field appearance="outline" class="short-field">
+                <mat-form-field *ngIf="lyriaSupportsSeed" appearance="outline" class="short-field">
                     <mat-label>Seed</mat-label>
                     <input matInput type="number" [(ngModel)]="seed" (ngModelChange)="saveState()">
                 </mat-form-field>
@@ -170,6 +179,10 @@
         </div>
 
         <div class="action-row">
+            <span class="model-hint" *ngIf="selectedModel === 'lyria' && lyriaModelHint">
+                <mat-icon>info_outline</mat-icon>
+                {{ lyriaModelHint }}
+            </span>
             <button mat-raised-button color="primary" class="create-btn"
                     (click)="generate()" [disabled]="(activeAudioJob$ | async)?.status === JobStatus.PROCESSING">
                 <mat-spinner diameter="20" *ngIf="(activeAudioJob$ | async)?.status === JobStatus.PROCESSING"></mat-spinner>

@@ -23,7 +23,12 @@ from src.common.schema.media_item_model import (
 )
 from src.users.user_model import UserModel
 from src.audios.dto.create_audio_dto import CreateAudioDto
-from src.audios.audio_service import AudioService, _process_audio_in_background
+from src.audios.audio_service import (
+    AudioService,
+    _build_lyria3_prompt,
+    _extract_lyria3_audio,
+    _process_audio_in_background,
+)
 from src.audios.audio_constants import LanguageEnum, VoiceEnum
 
 
@@ -296,3 +301,190 @@ class TestBackgroundWorkers:
             gemini31_dto.model
             == GenerationModelEnum.GEMINI_3_1_FLASH_TTS_PREVIEW
         )
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.audios.audio_service.MediaRepository")
+    @patch("src.audios.audio_service.GenAIModelSetup")
+    @patch("src.audios.audio_service.GcsService")
+    def test_process_lyria3_in_background_uses_interactions_api(
+        self,
+        mock_gcs,
+        mock_genai_setup,
+        mock_repo_cls,
+        mock_worker_db,
+        sample_user,
+    ):
+        mock_db_factory = MagicMock()
+        mock_worker_db.return_value.__aenter__.return_value = mock_db_factory
+        mock_db_session = AsyncMock()
+        mock_db_factory.return_value.__aenter__.return_value = mock_db_session
+
+        mock_repo = AsyncMock()
+        mock_repo_cls.return_value = mock_repo
+
+        mock_gcs_singleton = MagicMock()
+        mock_gcs_singleton.store_to_gcs.return_value = "gs://foo/lyria3.mp3"
+        mock_gcs.return_value = mock_gcs_singleton
+
+        interaction = MagicMock()
+        interaction.id = "int-1"
+        interaction.output_audio = MagicMock(
+            type="audio", mime_type="audio/mpeg", data="SGVsbG8="
+        )
+        mock_client = MagicMock()
+        mock_client.interactions.create.return_value = interaction
+        mock_genai_setup.get_omni_client.return_value = mock_client
+
+        lyria3_dto = CreateAudioDto(
+            workspace_id=1,
+            prompt="Warm lo-fi beat",
+            negative_prompt="vocals",
+            model=GenerationModelEnum.LYRIA_3_PRO_PREVIEW,
+            sample_count=2,
+        )
+
+        _process_audio_in_background(
+            media_item_id=127,
+            request_dto=lyria3_dto,
+            user_email=sample_user.email,
+            user_id=sample_user.id,
+        )
+
+        # Lyria 3 must never go through the legacy :predict client.
+        mock_genai_setup.get_omni_client.assert_called_once()
+        assert mock_client.interactions.create.call_count == 2
+        _, call_kwargs = mock_client.interactions.create.call_args
+        assert call_kwargs["model"] == "lyria-3-pro-preview"
+        assert call_kwargs["input"] == [
+            {"type": "text", "text": "Warm lo-fi beat\n\nAvoid: vocals"}
+        ]
+        assert call_kwargs["timeout"] == AudioService.LYRIA_3_TIMEOUT_SECONDS
+
+        store_kwargs = mock_gcs_singleton.store_to_gcs.call_args.kwargs
+        assert store_kwargs["file_name"].endswith(".mp3")
+        assert store_kwargs["mime_type"] == "audio/mpeg"
+        assert store_kwargs["contents"] == b"Hello"
+
+        mock_repo.update.assert_called_with(
+            127,
+            {
+                "status": JobStatusEnum.COMPLETED,
+                "gcs_uris": ["gs://foo/lyria3.mp3", "gs://foo/lyria3.mp3"],
+                "generation_time": pytest.approx(0, abs=10.0),
+                "mime_type": MimeTypeEnum.AUDIO_MPEG,
+            },
+        )
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.audios.audio_service.MediaRepository")
+    @patch("src.audios.audio_service.GenAIModelSetup")
+    @patch("src.audios.audio_service.GcsService")
+    def test_process_lyria3_in_background_fails_without_audio(
+        self,
+        mock_gcs,
+        mock_genai_setup,
+        mock_repo_cls,
+        mock_worker_db,
+        sample_user,
+    ):
+        mock_db_factory = MagicMock()
+        mock_worker_db.return_value.__aenter__.return_value = mock_db_factory
+        mock_db_factory.return_value.__aenter__.return_value = AsyncMock()
+
+        mock_repo = AsyncMock()
+        mock_repo_cls.return_value = mock_repo
+
+        interaction = MagicMock(output_audio=None, steps=[], outputs=[])
+        mock_client = MagicMock()
+        mock_client.interactions.create.return_value = interaction
+        mock_genai_setup.get_omni_client.return_value = mock_client
+
+        lyria3_dto = CreateAudioDto(
+            workspace_id=1,
+            prompt="Silence",
+            model=GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+            sample_count=1,
+        )
+
+        _process_audio_in_background(
+            media_item_id=128,
+            request_dto=lyria3_dto,
+            user_email=sample_user.email,
+            user_id=sample_user.id,
+        )
+
+        mock_gcs.return_value.store_to_gcs.assert_not_called()
+        mock_repo.update.assert_called_with(
+            128,
+            {
+                "status": JobStatusEnum.FAILED,
+                "error_message": "Failed to generate any audio samples.",
+            },
+        )
+
+
+class TestLyria3Helpers:
+
+    def test_model_sets_are_partitioned(self):
+        assert AudioService.LYRIA_2_MODELS == {GenerationModelEnum.LYRIA_002}
+        assert AudioService.LYRIA_3_MODELS == {
+            GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+            GenerationModelEnum.LYRIA_3_PRO_PREVIEW,
+        }
+        assert AudioService.MUSIC_MODELS == (
+            AudioService.LYRIA_2_MODELS | AudioService.LYRIA_3_MODELS
+        )
+
+    def test_build_prompt_without_negative(self):
+        dto = CreateAudioDto(
+            workspace_id=1,
+            prompt="  Upbeat synthwave  ",
+            model=GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+        )
+        assert _build_lyria3_prompt(dto) == "Upbeat synthwave"
+
+    def test_build_prompt_folds_negative_prompt(self):
+        dto = CreateAudioDto(
+            workspace_id=1,
+            prompt="Upbeat synthwave",
+            negative_prompt=" drums ",
+            model=GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+        )
+        assert _build_lyria3_prompt(dto) == "Upbeat synthwave\n\nAvoid: drums"
+
+    def test_extract_prefers_sdk_output_audio(self):
+        interaction = MagicMock()
+        interaction.output_audio = MagicMock(
+            type="audio", mime_type="audio/mp3", data="SGVsbG8="
+        )
+        audio, mime = _extract_lyria3_audio(interaction)
+        assert audio == b"Hello"
+        # audio/mp3 is normalised to the canonical audio/mpeg.
+        assert mime == "audio/mpeg"
+
+    def test_extract_falls_back_to_steps_content(self):
+        text_item = MagicMock(type="text", text="lyrics", data=None)
+        audio_item = MagicMock(type="audio", mime_type=None, data=b"\x00\x01")
+        step = MagicMock(type="model_output", content=[text_item, audio_item])
+        interaction = MagicMock(output_audio=None, steps=[step], outputs=None)
+        audio, mime = _extract_lyria3_audio(interaction)
+        assert audio == b"\x00\x01"
+        assert mime == "audio/mpeg"
+
+    def test_extract_handles_raw_rest_dict(self):
+        interaction = {
+            "status": "completed",
+            "outputs": [
+                {"type": "text", "text": "Caption"},
+                {"type": "audio", "mime_type": "audio/wav", "data": "SGk="},
+            ],
+        }
+        audio, mime = _extract_lyria3_audio(interaction)
+        assert audio == b"Hi"
+        assert mime == "audio/wav"
+
+    def test_extract_returns_none_without_audio(self):
+        interaction = {"outputs": [{"type": "text", "text": "only text"}]}
+        audio, mime = _extract_lyria3_audio(interaction)
+        assert audio is None
+        assert mime == "audio/mpeg"

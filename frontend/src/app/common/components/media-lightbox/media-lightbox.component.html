@@ -31,7 +31,13 @@
             <mat-icon class="stage-icon">music_note</mat-icon>
         </div>
         <div class="audio-metadata">
-            <h2 class="audio-prompt">{{ mediaItem.prompt || 'Untitled Audio' }}</h2>
+            <h2
+              class="audio-prompt"
+              [matTooltip]="mediaItem.prompt || ''"
+              [matTooltipDisabled]="!mediaItem.prompt"
+              matTooltipClass="full-prompt-tooltip"
+              matTooltipShowDelay="300"
+            >{{ mediaItem.prompt || 'Untitled Audio' }}</h2>
             <p class="audio-type">{{ mediaItem.mimeType }}</p>
         </div>
     </div>
