@@ -54,6 +54,25 @@ If the database is fresh, run the bootstrap script to seed templates:
 docker exec -t creative-studio-backend sh -c "PYTHONPATH=/app uv run python -m bootstrap.bootstrap"
 ```
 
+### 5. Local Izumi Agent (optional, for the Workbench chat)
+
+With `ENVIRONMENT=local`, `AgentService` talks to a **local Izumi container** at `IZUMI_AGENT_URL` (default `http://izumi-agent:8080`) instead of Vertex AI Agent Engine. Set `USE_LOCAL_IZUMI_AGENT=false` in `backend/.env` to force the Agent Engine path locally (requires `AGENT_ENGINE_RESOURCE_NAME`).
+
+```bash
+# One-time: clone upstream Izumi next to this repo (already gitignored)
+git clone --depth 1 -b v0.2.1 https://github.com/GoogleCloudPlatform/genmedia-izumi-agent.git genmedia-izumi-agent
+
+# Start the ads_x agent + Firestore emulator (Creative Studio must already be up:
+# the compose joins the `gcc-creative-studio_default` network)
+cd genmedia-izumi-agent/demos/backend/ads_x
+cp .env.example .env      # set GOOGLE_CLOUD_PROJECT / ASSET_SERVICE_GCS_BUCKET
+docker compose up --build # first build is slow (node + python stages)
+```
+
+- The agent is reachable from the host at `http://localhost:8082` (ADK dev UI at `/dev-ui`).
+- `demos/backend` and `mediagent_kit` are bind-mounted with `--reload`; the venv lives in the `izumi_backend_venv` volume.
+- The adapter lives in `backend/src/agents/local_adk_client.py` (ADK REST API: `/apps/{app}/users/{user}/sessions`, `PATCH` state delta, `/run_sse`); sessions require the `user_id`, so `AgentService` routes every session call through its `_sessions_*` helpers.
+
 ---
 
 ## 🛠️ Development Workflow

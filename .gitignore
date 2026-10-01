@@ -29,6 +29,7 @@ override.tf.json
 !**/environments/dev-infra-example/
 
 genmedia-agent-demos
+genmedia-izumi-agent
 .gemini
 .agents
 

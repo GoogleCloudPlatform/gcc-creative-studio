@@ -31,6 +31,7 @@ from src.projects.project_repository import StoryboardRepository
 from src.projects.project_service import ProjectService
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
 from src.agents.agent_repository import AgentRepository
+from src.agents.local_adk_client import LocalAdkAgentClient
 from src.agents.agent_dtos import (
     ChatRequestDto,
     SessionResponseDto,
@@ -56,6 +57,10 @@ AGENT_REASONING_ENGINES = {
 }
 
 APP_NAME = "ads_x"
+
+# Pseudo resource name used for sessions when the agent runs in the local
+# Izumi container (there is no Agent Engine resource to point at).
+LOCAL_AGENT_NAME_PREFIX = "local-izumi-agent"
 
 APPROVAL_FUNCTIONS = {
     "await_strategy_approval",
@@ -107,6 +112,19 @@ class AgentService:
         self.storyboard_repo = storyboard_repo
         self.workspace_auth = workspace_auth
         self.project_service = project_service
+        # ENVIRONMENT=local (or USE_LOCAL_IZUMI_AGENT=true) routes the agent
+        # chat to the Izumi container started from
+        # genmedia-izumi-agent/demos/backend/ads_x/docker-compose.yml.
+        self.use_local_agent = config_service.IS_LOCAL_IZUMI_AGENT
+        self.local_client: LocalAdkAgentClient | None = None
+        if self.use_local_agent:
+            self.local_client = LocalAdkAgentClient(
+                config_service.IZUMI_AGENT_URL
+            )
+            logger.info(
+                "AgentService using local Izumi agent at %s",
+                config_service.IZUMI_AGENT_URL,
+            )
         self.client = vertexai.Client(
             project=config_service.PROJECT_ID,
             location=config_service.AGENT_LOCATION,
@@ -203,6 +221,10 @@ class AgentService:
         agent_config = self._get_agent_config(appName)
         agent_name = agent_config.get("resource_name")
         if not agent_name:
+            if self.use_local_agent:
+                # No Agent Engine resource exists for the local container; the
+                # name is only used to label sessions in logs.
+                return f"{LOCAL_AGENT_NAME_PREFIX}/{appName}"
             logger.error(
                 "Agent resource name is not configured for app %s.", appName
             )
@@ -213,6 +235,8 @@ class AgentService:
         return agent_name
 
     def _get_remote_agent(self, appName: str = APP_NAME) -> Any:
+        if self.use_local_agent:
+            return self.local_client.remote_agent(appName)
         vertexai.init(
             project=config_service.PROJECT_ID,
             location=config_service.AGENT_LOCATION,
@@ -220,6 +244,102 @@ class AgentService:
         )
         agent_name = self._get_validated_agent_name(appName)
         return agent_engines.get(agent_name)
+
+    # --- Session backend helpers -------------------------------------------
+    # Each helper hides whether sessions live in Vertex AI Agent Engine (the
+    # default) or in the local Izumi container (ENVIRONMENT=local). The Vertex
+    # branches are the original inline calls, kept verbatim.
+
+    async def _sessions_list(
+        self, agent_name: str, app_name: str, user_id: str
+    ) -> Any:
+        if self.use_local_agent:
+            return await self.local_client.list_sessions(app_name, user_id)
+        return self.client.agent_engines.sessions.list(
+            name=agent_name, config={"filter": f'user_id="{user_id}"'}
+        )
+
+    async def _sessions_create(
+        self, agent_name: str, app_name: str, user_id: str, state: dict
+    ) -> Any:
+        if self.use_local_agent:
+            return await self.local_client.create_session(
+                app_name, user_id, state
+            )
+        return self.client.agent_engines.sessions.create(
+            name=agent_name,
+            user_id=user_id,
+            config={"session_state": state},
+        )
+
+    async def _sessions_get(
+        self, agent_name: str, app_name: str, user_id: str, session_id: str
+    ) -> Any:
+        if self.use_local_agent:
+            return await self.local_client.get_session(
+                app_name, user_id, session_id
+            )
+        return self.client.agent_engines.sessions.get(
+            name=f"{agent_name}/sessions/{session_id}"
+        )
+
+    async def _sessions_delete(
+        self, agent_name: str, app_name: str, user_id: str, session_id: str
+    ) -> None:
+        if self.use_local_agent:
+            await self.local_client.delete_session(
+                app_name, user_id, session_id
+            )
+            return
+        self.client.agent_engines.sessions.delete(
+            name=f"{agent_name}/sessions/{session_id}"
+        )
+
+    async def _events_list(
+        self,
+        agent_name: str,
+        app_name: str,
+        user_id: str,
+        session_id: str,
+        session: Any = None,
+    ) -> list:
+        if self.use_local_agent:
+            # The ADK session payload already embeds its events; only refetch
+            # when the caller did not hand us a session dict.
+            if isinstance(session, dict) and "events" in session:
+                return list(session.get("events") or [])
+            fetched = await self.local_client.get_session(
+                app_name, user_id, session_id
+            )
+            return list((fetched or {}).get("events") or [])
+        return list(
+            self.client.agent_engines.sessions.events.list(
+                name=f"{agent_name}/sessions/{session_id}"
+            )
+        )
+
+    async def _append_state_delta(
+        self,
+        agent_name: str,
+        app_name: str,
+        user_id: str,
+        session_id: str,
+        state_delta: dict,
+    ) -> None:
+        if self.use_local_agent:
+            await self.local_client.update_session_state(
+                app_name, user_id, session_id, state_delta
+            )
+            return
+        import datetime
+
+        self.client.agent_engines.sessions.events.append(
+            name=f"{agent_name}/sessions/{session_id}",
+            author="system",
+            invocation_id="token_propagation",
+            timestamp=datetime.datetime.now(datetime.timezone.utc),
+            config={"actions": {"state_delta": state_delta}},
+        )
 
     def _map_session_to_dto(
         self,
@@ -355,8 +475,8 @@ class AgentService:
 
             agent_name = self._get_validated_agent_name(appName)
 
-            raw_sessions = self.client.agent_engines.sessions.list(
-                name=agent_name, config={"filter": f'user_id="{user_id}"'}
+            raw_sessions = await self._sessions_list(
+                agent_name, appName, user_id
             )
 
             mapped_sessions = []
@@ -414,10 +534,8 @@ class AgentService:
                 "workspace_id": workspace_id,
                 auth_key: auth_header,
             }
-            op = self.client.agent_engines.sessions.create(
-                name=agent_name,
-                user_id=user_id,
-                config={"session_state": state_data},
+            op = await self._sessions_create(
+                agent_name, appName, user_id, state_data
             )
             session = getattr(op, "response", None) or op
             return self._map_session_to_dto(session, appName, user_id)
@@ -483,12 +601,9 @@ class AgentService:
         if resolved_session_id is not None:
             try:
                 agent_name = self._get_validated_agent_name(appName)
-                full_session_name = (
-                    f"{agent_name}/sessions/{resolved_session_id}"
-                )
                 try:
-                    session = self.client.agent_engines.sessions.get(
-                        name=full_session_name
+                    session = await self._sessions_get(
+                        agent_name, appName, user_id, resolved_session_id
                     )
 
                     if session is None:
@@ -509,10 +624,8 @@ class AgentService:
                             "workspace_id": workspace_id,
                             auth_key: auth_header,
                         }
-                        op = self.client.agent_engines.sessions.create(
-                            name=agent_name,
-                            user_id=user_id,
-                            config={"session_state": state_data},
+                        op = await self._sessions_create(
+                            agent_name, appName, user_id, state_data
                         )
                         session = getattr(op, "response", None) or op
                         new_session_id = (
@@ -525,15 +638,19 @@ class AgentService:
                                 storyboard.id, {"session_id": new_session_id}
                             )
                             storyboard.session_id = new_session_id
+                        if new_session_id:
+                            resolved_session_id = new_session_id
                     else:
                         raise inner_e
 
                 events_list = []
                 try:
-                    events_list = list(
-                        self.client.agent_engines.sessions.events.list(
-                            name=full_session_name
-                        )
+                    events_list = await self._events_list(
+                        agent_name,
+                        appName,
+                        user_id,
+                        resolved_session_id,
+                        session,
                     )
                 except Exception as e_err:
                     logger.warning(
@@ -576,9 +693,8 @@ class AgentService:
                 )
 
             agent_name = self._get_validated_agent_name(appName)
-            full_session_name = f"{agent_name}/sessions/{session_id}"
-            session = self.client.agent_engines.sessions.get(
-                name=full_session_name
+            session = await self._sessions_get(
+                agent_name, appName, user_id, session_id
             )
             if session is None:
                 raise HTTPException(status_code=404, detail="Session not found")
@@ -600,10 +716,8 @@ class AgentService:
 
             events_list = []
             try:
-                events_list = list(
-                    self.client.agent_engines.sessions.events.list(
-                        name=full_session_name
-                    )
+                events_list = await self._events_list(
+                    agent_name, appName, user_id, session_id, session
                 )
             except Exception as e_err:
                 logger.warning(
@@ -638,12 +752,11 @@ class AgentService:
                 )
 
             agent_name = self._get_validated_agent_name(appName)
-            full_session_name = f"{agent_name}/sessions/{session_id}"
 
             # Fetch session to extract workspace_id and authorize
             try:
-                session = self.client.agent_engines.sessions.get(
-                    name=full_session_name
+                session = await self._sessions_get(
+                    agent_name, appName, user_id, session_id
                 )
                 if session:
                     s_state = getattr(session, "session_state", None)
@@ -664,7 +777,9 @@ class AgentService:
                     f"Could not retrieve session for delete authorization: {e_err}"
                 )
 
-            self.client.agent_engines.sessions.delete(name=full_session_name)
+            await self._sessions_delete(
+                agent_name, appName, user_id, session_id
+            )
             return {"status": "success"}
         except HTTPException:
             raise
@@ -699,9 +814,8 @@ class AgentService:
             try:
                 agent_config = self._get_agent_config(body["appName"])
                 agent_name = agent_config.get("resource_name")
-                full_session_name = f"{agent_name}/sessions/{session_id}"
-                session = self.client.agent_engines.sessions.get(
-                    name=full_session_name
+                session = await self._sessions_get(
+                    agent_name, body["appName"], user_id, session_id
                 )
                 if session:
                     s_state = getattr(session, "session_state", None)
@@ -788,7 +902,6 @@ class AgentService:
         # Internal background task function
         async def process_stream():
             try:
-                import datetime
                 import json
 
                 app_name = body.get("appName") or APP_NAME
@@ -801,23 +914,16 @@ class AgentService:
 
                 if session_id and auth_header:
                     agent_name = self._get_validated_agent_name(app_name)
-                    full_session_name = f"{agent_name}/sessions/{session_id}"
                     try:
                         logger.info(
                             f"[Agent Stream] Appending state delta token propagation for session_id={session_id}"
                         )
-                        self.client.agent_engines.sessions.events.append(
-                            name=full_session_name,
-                            author="system",
-                            invocation_id="token_propagation",
-                            timestamp=datetime.datetime.now(
-                                datetime.timezone.utc
-                            ),
-                            config={
-                                "actions": {
-                                    "state_delta": {auth_key: auth_header}
-                                }
-                            },
+                        await self._append_state_delta(
+                            agent_name,
+                            app_name,
+                            user_id,
+                            session_id,
+                            {auth_key: auth_header},
                         )
                         logger.info(
                             f"[Agent Stream] State delta token propagation appended successfully for session_id={session_id}"

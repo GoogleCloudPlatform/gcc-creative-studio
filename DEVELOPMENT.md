@@ -129,6 +129,27 @@ docker exec -t creative-studio-backend sh -c "PYTHONPATH=/app uv run python -m b
 
 As this uses volumes, and we use hot reload to start the services, every time you change something on the files the container will be refreshed with the changes.
 
+### 🤖 Running the Izumi Agent locally (Workbench chat)
+
+In the cloud, the Workbench chat talks to the Izumi `ads_x` agent deployed on **Vertex AI Agent Engine**. Locally, with `ENVIRONMENT="local"`, the backend instead targets a **local Izumi container** at `IZUMI_AGENT_URL` (default `http://izumi-agent:8080`), so you can iterate on both projects without deploying anything.
+
+```bash
+# 1. Clone upstream Izumi into the repo root (the folder is gitignored)
+git clone --depth 1 -b v0.2.1 https://github.com/GoogleCloudPlatform/genmedia-izumi-agent.git genmedia-izumi-agent
+
+# 2. Configure and start the agent (+ a Firestore emulator for ADK sessions)
+cd genmedia-izumi-agent/demos/backend/ads_x
+cp .env.example .env            # GOOGLE_CLOUD_PROJECT, ASSET_SERVICE_GCS_BUCKET, ...
+docker compose up --build       # first build takes a few minutes
+```
+
+> [!NOTE]
+> Start Creative Studio first (`docker compose up` at the repo root): the Izumi compose joins its `gcc-creative-studio_default` network so the two backends can reach each other as `http://backend:8080` and `http://izumi-agent:8080`. The agent reuses your host `~/.config/gcloud` ADC for Vertex AI calls.
+
+- Agent API / ADK dev UI on the host: `http://localhost:8082` (`/docs`, `/dev-ui`).
+- `demos/backend` and `mediagent_kit` are bind-mounted with `--reload`, so edits to the agent apply live.
+- To keep using a deployed Agent Engine from a local backend instead, set `USE_LOCAL_IZUMI_AGENT=false` and `AGENT_ENGINE_RESOURCE_NAME=...` in `backend/.env`.
+
 ## 5. Code Quality & Pre-commit Hooks
 
 To maintain code quality and consistency, we use a fully containerized `pre-commit` pipeline. **DO NOT** run linters locally on your host machine.
