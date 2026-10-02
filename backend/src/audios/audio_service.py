@@ -18,6 +18,7 @@ import base64
 import io
 import logging
 import os
+import re
 import sys
 import time
 import wave
@@ -68,6 +69,56 @@ def _build_lyria3_prompt(request_dto: CreateAudioDto) -> str:
     if negative:
         prompt = f"{prompt}\n\nAvoid: {negative}"
     return prompt
+
+
+# Vertex returns HTTP 400 with ``code: content_blocked`` when Lyria 3's policy
+# filter refuses a prompt. The refusal depends on the wording, so the retry
+# rewords rather than repeats (see ``_simplify_lyria3_prompt``).
+LYRIA_3_CONTENT_BLOCKED_CODE = "content_blocked"
+LYRIA_3_CONTENT_BLOCKED_MESSAGE = (
+    "content_blocked: Lyria 3 refused the prompt on policy grounds, even "
+    "after retrying with a simplified brief. Please reword the prompt and "
+    "try again."
+)
+# Words that introduce imagery/narrative rather than musical style; the
+# simplified brief ends right before the first of them.
+_LYRIA_3_IMAGERY_INTRODUCERS = re.compile(
+    r"\b(?:featuring|with|that|which|evoking|evokes|layered|transitioning|"
+    r"paired|accented|building|as if|like)\b",
+    re.IGNORECASE,
+)
+_LYRIA_3_SIMPLIFIED_MAX_WORDS = 12
+_LYRIA_3_SIMPLIFIED_SUFFIX = (
+    "Instrumental background music for a commercial, clean and unobtrusive, "
+    "no vocals."
+)
+
+
+def _is_lyria3_content_blocked(error: BaseException) -> bool:
+    """True when ``error`` is a Lyria 3 policy refusal (``content_blocked``)."""
+    code = getattr(error, "code", None)
+    if isinstance(code, str) and code == LYRIA_3_CONTENT_BLOCKED_CODE:
+        return True
+    return LYRIA_3_CONTENT_BLOCKED_CODE in str(error)
+
+
+def _simplify_lyria3_prompt(prompt: str) -> str:
+    """Rewords a refused Lyria 3 prompt into a neutral style-only brief.
+
+    Keeps the opening style phrase of the first sentence (cut before the
+    first imagery introducer and capped at a few words) and appends a plain
+    instrumental instruction. The imagery that usually draws the refusal is
+    discarded; for a background bed it carries the least weight anyway.
+
+    Returns an empty string when no usable phrase remains.
+    """
+    head = re.split(r"(?<=[.!?])\s+|\n", (prompt or "").strip(), maxsplit=1)[0]
+    head = _LYRIA_3_IMAGERY_INTRODUCERS.split(head, maxsplit=1)[0]
+    head = " ".join(head.split()[:_LYRIA_3_SIMPLIFIED_MAX_WORDS])
+    head = head.strip(" ,;:-.!?")
+    if not head:
+        return ""
+    return f"{head}. {_LYRIA_3_SIMPLIFIED_SUFFIX}"
 
 
 def _get_attr_or_key(obj: Any, name: str) -> Any:
@@ -176,6 +227,8 @@ def _process_audio_in_background(
                         uid_short = str(user_id)[:4]
                         # Media items are created as WAV; Lyria 3 returns MP3.
                         output_mime_type = MimeTypeEnum.AUDIO_WAV
+                        # Set when a reworded prompt (not the user's) rendered.
+                        effective_prompt: str | None = None
 
                         if request_dto.model in AudioService.GEMINI_MODELS:
                             client = GenAIModelSetup.init()
@@ -327,22 +380,52 @@ def _process_audio_in_background(
                             # Lyria 3 is only exposed through the Interactions
                             # API on the global endpoint (no :predict support).
                             lyria_client = GenAIModelSetup.get_omni_client()
+                            lyria3_state: dict[str, Any] = {
+                                "prompt": _build_lyria3_prompt(request_dto),
+                                "blocked": False,
+                            }
+                            lyria3_retry_prompt = _simplify_lyria3_prompt(
+                                request_dto.prompt or ""
+                            )
+
+                            async def run_lyria3(prompt: str) -> Any:
+                                return await asyncio.to_thread(
+                                    lyria_client.interactions.create,
+                                    model=request_dto.model.value,
+                                    input=[{"type": "text", "text": prompt}],
+                                    timeout=AudioService.LYRIA_3_TIMEOUT_SECONDS,
+                                )
 
                             async def generate_lyria3(index: int) -> str | None:
+                                prompt = lyria3_state["prompt"]
                                 try:
-                                    interaction = await asyncio.to_thread(
-                                        lyria_client.interactions.create,
-                                        model=request_dto.model.value,
-                                        input=[
-                                            {
-                                                "type": "text",
-                                                "text": _build_lyria3_prompt(
-                                                    request_dto
-                                                ),
-                                            }
-                                        ],
-                                        timeout=AudioService.LYRIA_3_TIMEOUT_SECONDS,
-                                    )
+                                    try:
+                                        interaction = await run_lyria3(prompt)
+                                    except Exception as first_error:
+                                        # The refusal depends on the wording,
+                                        # so retry once with a reworded brief
+                                        # (still Lyria 3) instead of repeating.
+                                        if not (
+                                            _is_lyria3_content_blocked(
+                                                first_error
+                                            )
+                                            and lyria3_retry_prompt
+                                            and lyria3_retry_prompt != prompt
+                                        ):
+                                            raise
+                                        worker_logger.warning(
+                                            "Lyria 3 refused the prompt on "
+                                            "policy grounds (content_blocked). "
+                                            "Retrying with a simplified brief: "
+                                            "%r",
+                                            lyria3_retry_prompt,
+                                        )
+                                        interaction = await run_lyria3(
+                                            lyria3_retry_prompt
+                                        )
+                                        lyria3_state["prompt"] = (
+                                            lyria3_retry_prompt
+                                        )
                                     audio_bytes, mime_type = (
                                         _extract_lyria3_audio(interaction)
                                     )
@@ -367,6 +450,8 @@ def _process_audio_in_background(
                                         decode=False,
                                     )
                                 except Exception as e:
+                                    if _is_lyria3_content_blocked(e):
+                                        lyria3_state["blocked"] = True
                                     worker_logger.error(
                                         f"Lyria 3 generation error: {e}"
                                     )
@@ -379,6 +464,19 @@ def _process_audio_in_background(
                             results = await asyncio.gather(*tasks)
                             permanent_gcs_uris = [u for u in results if u]
                             output_mime_type = MimeTypeEnum.AUDIO_MPEG
+                            if (
+                                not permanent_gcs_uris
+                                and lyria3_state["blocked"]
+                            ):
+                                raise ValueError(
+                                    LYRIA_3_CONTENT_BLOCKED_MESSAGE
+                                )
+                            if lyria3_state["prompt"] != _build_lyria3_prompt(
+                                request_dto
+                            ):
+                                # Record the brief that actually rendered;
+                                # ``original_prompt`` keeps the user's text.
+                                effective_prompt = lyria3_state["prompt"]
 
                         elif request_dto.model in AudioService.LYRIA_2_MODELS:
                             client_options = {
@@ -471,6 +569,8 @@ def _process_audio_in_background(
                             # Media item was created as WAV; fix it so the
                             # gallery/lightbox serve the right content type.
                             update_data["mime_type"] = output_mime_type
+                        if effective_prompt:
+                            update_data["prompt"] = effective_prompt
                         if (
                             getattr(
                                 request_dto, "metadata_generation_model", None

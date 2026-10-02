@@ -24,10 +24,13 @@ from src.common.schema.media_item_model import (
 from src.users.user_model import UserModel
 from src.audios.dto.create_audio_dto import CreateAudioDto
 from src.audios.audio_service import (
+    LYRIA_3_CONTENT_BLOCKED_MESSAGE,
     AudioService,
     _build_lyria3_prompt,
     _extract_lyria3_audio,
+    _is_lyria3_content_blocked,
     _process_audio_in_background,
+    _simplify_lyria3_prompt,
 )
 from src.audios.audio_constants import LanguageEnum, VoiceEnum
 
@@ -422,6 +425,186 @@ class TestBackgroundWorkers:
             },
         )
 
+    # The exact brief Lyria 3 refused in a real Ads-X run (media item 75).
+    BLOCKED_PROMPT = (
+        "A pulsing, heavy synthwave bassline paired with sharp, high-tempo "
+        "electronic beats, accented by deep, resonant mechanical swells that "
+        "evoke a powerful engine roaring to life. Instrumental only: no "
+        "vocals, no singing, no spoken word, no lyrics. This is a background "
+        "bed beneath a separate voiceover."
+    )
+    BLOCKED_ERROR = Exception(
+        "Error code: 400 - {'error': {'message': 'Request blocked for an "
+        "unspecified policy reason. Please modify your input and retry.', "
+        "'code': 'content_blocked'}}"
+    )
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.audios.audio_service.MediaRepository")
+    @patch("src.audios.audio_service.GenAIModelSetup")
+    @patch("src.audios.audio_service.GcsService")
+    def test_process_lyria3_retries_with_simplified_prompt_when_blocked(
+        self,
+        mock_gcs,
+        mock_genai_setup,
+        mock_repo_cls,
+        mock_worker_db,
+        sample_user,
+    ):
+        mock_db_factory = MagicMock()
+        mock_worker_db.return_value.__aenter__.return_value = mock_db_factory
+        mock_db_factory.return_value.__aenter__.return_value = AsyncMock()
+
+        mock_repo = AsyncMock()
+        mock_repo_cls.return_value = mock_repo
+
+        mock_gcs_singleton = MagicMock()
+        mock_gcs_singleton.store_to_gcs.return_value = "gs://foo/retry.mp3"
+        mock_gcs.return_value = mock_gcs_singleton
+
+        interaction = MagicMock()
+        interaction.id = "int-retry"
+        interaction.output_audio = MagicMock(
+            type="audio", mime_type="audio/mpeg", data="SGVsbG8="
+        )
+        mock_client = MagicMock()
+        # First call: policy refusal. Second call (reworded brief): success.
+        mock_client.interactions.create.side_effect = [
+            self.BLOCKED_ERROR,
+            interaction,
+        ]
+        mock_genai_setup.get_omni_client.return_value = mock_client
+
+        lyria3_dto = CreateAudioDto(
+            workspace_id=1,
+            prompt=self.BLOCKED_PROMPT,
+            model=GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+            sample_count=1,
+        )
+
+        _process_audio_in_background(
+            media_item_id=129,
+            request_dto=lyria3_dto,
+            user_email=sample_user.email,
+            user_id=sample_user.id,
+        )
+
+        assert mock_client.interactions.create.call_count == 2
+        first_call, second_call = mock_client.interactions.create.call_args_list
+        assert first_call.kwargs["input"][0]["text"] == self.BLOCKED_PROMPT
+        retry_text = second_call.kwargs["input"][0]["text"]
+        assert retry_text == _simplify_lyria3_prompt(self.BLOCKED_PROMPT)
+        assert "engine roaring" not in retry_text
+        assert "voiceover" not in retry_text
+        # Retry stays on Lyria 3 - never falls back to another model.
+        assert second_call.kwargs["model"] == "lyria-3-clip-preview"
+
+        mock_repo.update.assert_called_with(
+            129,
+            {
+                "status": JobStatusEnum.COMPLETED,
+                "gcs_uris": ["gs://foo/retry.mp3"],
+                "generation_time": pytest.approx(0, abs=10.0),
+                "mime_type": MimeTypeEnum.AUDIO_MPEG,
+                "prompt": retry_text,
+            },
+        )
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.audios.audio_service.MediaRepository")
+    @patch("src.audios.audio_service.GenAIModelSetup")
+    @patch("src.audios.audio_service.GcsService")
+    def test_process_lyria3_reports_content_blocked_when_retry_also_blocked(
+        self,
+        mock_gcs,
+        mock_genai_setup,
+        mock_repo_cls,
+        mock_worker_db,
+        sample_user,
+    ):
+        mock_db_factory = MagicMock()
+        mock_worker_db.return_value.__aenter__.return_value = mock_db_factory
+        mock_db_factory.return_value.__aenter__.return_value = AsyncMock()
+
+        mock_repo = AsyncMock()
+        mock_repo_cls.return_value = mock_repo
+
+        mock_client = MagicMock()
+        mock_client.interactions.create.side_effect = self.BLOCKED_ERROR
+        mock_genai_setup.get_omni_client.return_value = mock_client
+
+        lyria3_dto = CreateAudioDto(
+            workspace_id=1,
+            prompt=self.BLOCKED_PROMPT,
+            model=GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+            sample_count=1,
+        )
+
+        _process_audio_in_background(
+            media_item_id=130,
+            request_dto=lyria3_dto,
+            user_email=sample_user.email,
+            user_id=sample_user.id,
+        )
+
+        # Exactly one reword retry, then give up with an actionable message.
+        assert mock_client.interactions.create.call_count == 2
+        mock_gcs.return_value.store_to_gcs.assert_not_called()
+        mock_repo.update.assert_called_with(
+            130,
+            {
+                "status": JobStatusEnum.FAILED,
+                "error_message": LYRIA_3_CONTENT_BLOCKED_MESSAGE,
+            },
+        )
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.audios.audio_service.MediaRepository")
+    @patch("src.audios.audio_service.GenAIModelSetup")
+    @patch("src.audios.audio_service.GcsService")
+    def test_process_lyria3_does_not_retry_other_errors(
+        self,
+        mock_gcs,
+        mock_genai_setup,
+        mock_repo_cls,
+        mock_worker_db,
+        sample_user,
+    ):
+        mock_db_factory = MagicMock()
+        mock_worker_db.return_value.__aenter__.return_value = mock_db_factory
+        mock_db_factory.return_value.__aenter__.return_value = AsyncMock()
+
+        mock_repo = AsyncMock()
+        mock_repo_cls.return_value = mock_repo
+
+        mock_client = MagicMock()
+        mock_client.interactions.create.side_effect = RuntimeError("quota")
+        mock_genai_setup.get_omni_client.return_value = mock_client
+
+        lyria3_dto = CreateAudioDto(
+            workspace_id=1,
+            prompt=self.BLOCKED_PROMPT,
+            model=GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+            sample_count=1,
+        )
+
+        _process_audio_in_background(
+            media_item_id=131,
+            request_dto=lyria3_dto,
+            user_email=sample_user.email,
+            user_id=sample_user.id,
+        )
+
+        mock_client.interactions.create.assert_called_once()
+        mock_gcs.return_value.store_to_gcs.assert_not_called()
+        mock_repo.update.assert_called_with(
+            131,
+            {
+                "status": JobStatusEnum.FAILED,
+                "error_message": "Failed to generate any audio samples.",
+            },
+        )
+
 
 class TestLyria3Helpers:
 
@@ -451,6 +634,38 @@ class TestLyria3Helpers:
             model=GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
         )
         assert _build_lyria3_prompt(dto) == "Upbeat synthwave\n\nAvoid: drums"
+
+    def test_is_content_blocked_detects_code_attribute_and_message(self):
+        with_code = Exception("blocked")
+        with_code.code = "content_blocked"  # type: ignore[attr-defined]
+        assert _is_lyria3_content_blocked(with_code)
+        assert _is_lyria3_content_blocked(
+            Exception("400 {'error': {'code': 'content_blocked'}}")
+        )
+        assert not _is_lyria3_content_blocked(Exception("recitation"))
+        assert not _is_lyria3_content_blocked(RuntimeError("quota"))
+
+    def test_simplify_prompt_keeps_style_head_only(self):
+        simplified = _simplify_lyria3_prompt(
+            "A pulsing, heavy synthwave bassline paired with sharp beats that "
+            "evoke an engine roaring. Instrumental only: no vocals. This is a "
+            "bed beneath a separate voiceover."
+        )
+        assert simplified.startswith("A pulsing, heavy synthwave bassline.")
+        assert "engine" not in simplified
+        assert "voiceover" not in simplified
+        assert simplified.endswith("no vocals.")
+
+    def test_simplify_prompt_caps_long_heads(self):
+        head = " ".join(f"word{i}" for i in range(20))
+        simplified = _simplify_lyria3_prompt(head)
+        assert simplified.startswith(" ".join(f"word{i}" for i in range(12)))
+        assert "word12" not in simplified
+
+    def test_simplify_prompt_returns_empty_when_nothing_usable(self):
+        assert _simplify_lyria3_prompt("") == ""
+        assert _simplify_lyria3_prompt("   ") == ""
+        assert _simplify_lyria3_prompt("with drums") == ""
 
     def test_extract_prefers_sdk_output_audio(self):
         interaction = MagicMock()
