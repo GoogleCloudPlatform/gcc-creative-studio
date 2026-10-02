@@ -41,13 +41,16 @@ describe('StoryboardComponent – Campaign tab reveal', () => {
   let component: StoryboardComponent;
   let campaignDetails: WritableSignal<CampaignDetails | null>;
   let currentStoryboard: WritableSignal<unknown>;
+  let finalVideoReady: WritableSignal<boolean>;
 
   beforeEach(async () => {
     campaignDetails = signal<CampaignDetails | null>(null);
     currentStoryboard = signal<unknown>(null);
+    finalVideoReady = signal(false);
     const mockAgentChatService = {
       campaignDetails,
       currentStoryboard,
+      finalVideoReady,
       isGeneratingStoryboard: signal(false),
       isGeneratingVideo: signal(false),
       videoGenerated$: new Subject<void>(),
@@ -157,5 +160,30 @@ describe('StoryboardComponent – Campaign tab reveal', () => {
     campaignDetails.set(brief({stage: 'generation'}));
     expect(component.campaignStageLabel()).toBe('Generated');
     expect(component.campaignSteps().every(s => s.state === 'done')).toBeTrue();
+  });
+
+  describe('"See Video" CTA', () => {
+    it('is hidden while the campaign is being built even if a timeline exists', () => {
+      currentStoryboard.set({id: 1, timeline_id: 42, scenes: []});
+      fixture.detectChanges();
+      expect(component.showSeeVideoBtn()).toBeFalse();
+    });
+
+    it('appears once the agent publishes the final cut', () => {
+      currentStoryboard.set({id: 1, timeline_id: 42, scenes: []});
+      finalVideoReady.set(true);
+      fixture.detectChanges();
+      expect(component.showSeeVideoBtn()).toBeTrue();
+    });
+
+    it('hides again when the final cut is cleared (regeneration / new session)', () => {
+      finalVideoReady.set(true);
+      fixture.detectChanges();
+      expect(component.showSeeVideoBtn()).toBeTrue();
+
+      finalVideoReady.set(false);
+      fixture.detectChanges();
+      expect(component.showSeeVideoBtn()).toBeFalse();
+    });
   });
 });

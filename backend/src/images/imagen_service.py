@@ -52,6 +52,7 @@ from src.common.schema.media_item_model import (
 )
 from src.common.storage_service import GcsService
 from src.config.config_service import config_service
+from src.folders.agent_output_folder import resolve_agent_output_folder_id
 from src.database import WorkerDatabase
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.images.dto.create_imagen_dto import CreateImagenDto
@@ -1771,8 +1772,12 @@ class ImagenService:
                     )
 
         # 1. Create Placeholder
+        folder_id = await resolve_agent_output_folder_id(
+            self.media_repo.db, workspace_id, user
+        )
         placeholder_item = MediaItemModel(
             workspace_id=workspace_id,
+            folder_id=folder_id,
             user_email=user.email,
             user_id=user.id,
             mime_type=MimeTypeEnum.IMAGE_PNG,
@@ -1837,8 +1842,12 @@ class ImagenService:
         generation in the background.
         """
         # Create a placeholder document
+        folder_id = await resolve_agent_output_folder_id(
+            self.media_repo.db, request_dto.workspace_id, user
+        )
         placeholder_item = MediaItemModel(
             workspace_id=request_dto.workspace_id,
+            folder_id=folder_id,
             user_email=user.email,
             user_id=user.id,
             # Default to PNG, will update if needed
@@ -1904,8 +1913,12 @@ class ImagenService:
         """
         # 2. Create a placeholder document
         # Do not allow manually setting ID for auto-increment columns
+        folder_id = await resolve_agent_output_folder_id(
+            self.media_repo.db, request_dto.workspace_id, user
+        )
         placeholder_item = MediaItemModel(
             workspace_id=request_dto.workspace_id,
+            folder_id=folder_id,
             user_email=user.email,
             user_id=user.id,
             mime_type=MimeTypeEnum.IMAGE_PNG,

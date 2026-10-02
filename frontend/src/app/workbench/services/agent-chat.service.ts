@@ -112,6 +112,11 @@ export class AgentChatService {
   isGeneratingStoryboard = signal<boolean>(false);
   // True while the agent renders/stitches the final video (after frame approval)
   isGeneratingVideo = signal<boolean>(false);
+  // True once the agent has published a stitched final cut for the current
+  // session (`final_video_asset_id` / `final_video_asset_ref` in its state).
+  // Unlike `timeline_id`, which exists as soon as the storyboard is persisted,
+  // this only flips after `stitch_final_video` succeeds.
+  finalVideoReady = signal<boolean>(false);
 
   // Session whose poll loop was torn down (chat panel closed) while a stream
   // was still in flight. The next chat instance resumes polling for it.

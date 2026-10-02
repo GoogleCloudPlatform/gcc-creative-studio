@@ -129,4 +129,43 @@ describe('FolderCardComponent', () => {
     expect(component.menuTrigger.closeMenu).toHaveBeenCalled();
     expect(component.copyRequested.emit).toHaveBeenCalledWith(component.folder);
   });
+
+  it('should default canManage to true', () => {
+    expect(component.canManage).toBeTrue();
+  });
+
+  it('should block dragging when the user cannot manage the folder', () => {
+    component.canManage = false;
+    const setData = jasmine.createSpy('setData');
+    const mockEvent = {
+      preventDefault: jasmine.createSpy('preventDefault'),
+      stopPropagation: jasmine.createSpy('stopPropagation'),
+      dataTransfer: {setData, effectAllowed: ''},
+    } as unknown as DragEvent;
+
+    component.onDragStart(mockEvent);
+
+    expect(mockEvent.preventDefault).toHaveBeenCalled();
+    expect(component.isDragging).toBeFalse();
+    expect(setData).not.toHaveBeenCalled();
+  });
+
+  it('should allow dragging when the user can manage the folder', () => {
+    component.canManage = true;
+    const setData = jasmine.createSpy('setData');
+    const mockEvent = {
+      preventDefault: jasmine.createSpy('preventDefault'),
+      stopPropagation: jasmine.createSpy('stopPropagation'),
+      dataTransfer: {setData, effectAllowed: '', setDragImage: () => {}},
+    } as unknown as DragEvent;
+
+    component.onDragStart(mockEvent);
+
+    expect(mockEvent.preventDefault).not.toHaveBeenCalled();
+    expect(component.isDragging).toBeTrue();
+    expect(setData).toHaveBeenCalledWith(
+      'application/json',
+      jasmine.stringMatching(/"folderIds":\[1\]/),
+    );
+  });
 });

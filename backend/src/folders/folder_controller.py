@@ -187,9 +187,17 @@ async def update_folder(
 ) -> FolderResponseDto:
     """Update folder properties or move folder to new parent."""
     folder = await service.get_raw_folder(folder_id=folder_id)
-    await workspace_auth.authorize(
+    workspace = await workspace_auth.authorize(
         workspace_id=folder.workspace_id,
         user=current_user,
+    )
+    # Re-parenting relocates the whole subtree; rename/recolor does not.
+    is_move = (
+        "parent_id" in dto.model_fields_set
+        and dto.parent_id != folder.parent_id
+    )
+    await service.ensure_can_manage_folder(
+        folder, current_user, workspace, check_subtree=is_move
     )
     return await service.update_folder(
         folder_id=folder_id, dto=dto, user=current_user, folder=folder
@@ -207,9 +215,13 @@ async def delete_folder(
 ) -> dict[str, bool]:
     """Soft delete a folder and all its subfolders."""
     folder = await service.get_raw_folder(folder_id=folder_id)
-    await workspace_auth.authorize(
+    workspace = await workspace_auth.authorize(
         workspace_id=folder.workspace_id,
         user=current_user,
+    )
+    # Deleting cascades over the whole subtree (subfolders + media).
+    await service.ensure_can_manage_folder(
+        folder, current_user, workspace, check_subtree=True
     )
     return await service.delete_folder(
         folder_id=folder_id, user=current_user, folder=folder
@@ -226,10 +238,11 @@ async def move_items(
     workspace_auth: WorkspaceAuth = Depends(),
 ) -> dict[str, int]:
     """Batch move media items, source assets, and folders to a destination folder."""
-    await workspace_auth.authorize(
+    workspace = await workspace_auth.authorize(
         workspace_id=dto.workspace_id,
         user=current_user,
     )
+    await service.ensure_can_move_items(dto, current_user, workspace)
     return await service.move_items(dto=dto, user=current_user)
 
 

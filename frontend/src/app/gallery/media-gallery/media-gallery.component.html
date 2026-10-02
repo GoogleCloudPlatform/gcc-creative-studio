@@ -361,6 +361,7 @@
             <app-folder-card
               [folder]="folder"
               [isSelectorMode]="isSelectorMode"
+              [canManage]="canManageFolder(folder)"
               (folderClicked)="navigateToFolder($event)"
               (editRequested)="openEditFolderDialog($event)"
               (deleteRequested)="openDeleteFolderDialog($event)"
@@ -389,6 +390,7 @@
               [anyItemSelected]="selectedItems.size > 0"
               [selectedItems]="selectedItems"
               [filteredTags]="tagsFilter"
+              [firstIndexOnly]="firstIndexOnly"
               (mediaItemSelected)="mediaItemSelected.emit($event)"
               (mediaSelected)="mediaSelected.emit({mediaItem: $any($event), selectedIndex: 0})"
               (selectionToggled)="toggleSelection($event.item, $event.event, $event.selectedIndex)"

@@ -52,6 +52,7 @@ describe('ChatInterfaceComponent', () => {
       activeAgent: signal('director'),
       isGeneratingStoryboard: signal(false),
       isGeneratingVideo: signal(false),
+      finalVideoReady: signal(false),
       campaignDetails: signal<any>(null),
       interruptedSessionId: signal<string | null>(null),
       sessions: signal([]),
@@ -373,6 +374,30 @@ describe('ChatInterfaceComponent', () => {
     expect(component.selectedImages()).toEqual(mockSelected as any);
   });
 
+  it('opens the picker in first-index-only mode and pins media selections to index 0', () => {
+    // The Izumi agent always resolves the FIRST image of a media item, so the
+    // chat must never attach (or preview) another index.
+    const mockDialogRef = jasmine.createSpyObj('MatDialogRef', ['afterClosed']);
+    mockDialogRef.afterClosed.and.returnValue(
+      of([
+        {mediaItem: {id: 7, presignedUrls: ['a', 'b', 'c']}, selectedIndex: 2},
+        {id: 'src1', mimeType: 'image/png'},
+      ]),
+    );
+    const openSpy = spyOn(component['dialog'], 'open').and.returnValue(
+      mockDialogRef,
+    );
+
+    component.openImageSelector();
+
+    const dialogData = openSpy.calls.mostRecent().args[1]?.data as any;
+    expect(dialogData.firstIndexOnly).toBeTrue();
+    const [media, source] = component.selectedImages() as any[];
+    expect(media.mediaItem.id).toBe(7);
+    expect(media.selectedIndex).toBe(0);
+    expect(source.id).toBe('src1');
+  });
+
   it('should allow removing a selected image by index', () => {
     component.selectedImages.set([
       {id: 'img1', name: 'img1.png'} as any,
@@ -517,6 +542,85 @@ describe('ChatInterfaceComponent', () => {
       'http://example.com/test.jpg',
       '_blank',
     );
+  });
+
+  describe('final video readiness ("See Video" CTA)', () => {
+    it('does not announce a video on stream close just because a timeline exists', () => {
+      storyboardService.getStoryboardForSession.and.returnValue(
+        of([{id: 5, timeline_id: 42, scenes: []}]),
+      );
+      spyOn(agentChatService.videoGenerated$, 'next');
+      component.currentSessionId = 'session-123';
+      component.sendChatMessage('hello');
+
+      sseCallbacks.onClose();
+
+      expect(storyboardService.getStoryboardForSession).toHaveBeenCalled();
+      expect(agentChatService.currentStoryboard()).toEqual(
+        jasmine.objectContaining({id: 5, timeline_id: 42}),
+      );
+      expect(agentChatService.videoGenerated$.next).not.toHaveBeenCalled();
+      expect(agentChatService.finalVideoReady()).toBeFalse();
+    });
+
+    it('flags the final cut and announces it when stitch_final_video succeeds mid-stream', () => {
+      spyOn(agentChatService.videoGenerated$, 'next');
+      component.currentSessionId = 'session-123';
+      component.sendChatMessage('hello');
+
+      sseCallbacks.onMessage({
+        content: {
+          parts: [
+            {
+              functionResponse: {
+                name: 'stitch_final_video',
+                response: {status: 'succeeded'},
+              },
+            },
+          ],
+        },
+      });
+
+      expect(agentChatService.finalVideoReady()).toBeTrue();
+      expect(agentChatService.videoGenerated$.next).toHaveBeenCalledWith(true);
+    });
+
+    it('follows the agent state delta, including the reset on regeneration', () => {
+      component.currentSessionId = 'session-123';
+      component.sendChatMessage('hello');
+
+      sseCallbacks.onMessage({
+        actions: {state_delta: {final_video_asset_id: '77'}},
+      });
+      expect(agentChatService.finalVideoReady()).toBeTrue();
+
+      // Unrelated delta leaves the flag alone.
+      sseCallbacks.onMessage({actions: {state_delta: {parameters: {}}}});
+      expect(agentChatService.finalVideoReady()).toBeTrue();
+
+      // regenerate_* tools null the keys out.
+      sseCallbacks.onMessage({
+        actions: {
+          state_delta: {
+            final_video_asset_id: null,
+            final_video_asset_ref: null,
+          },
+        },
+      });
+      expect(agentChatService.finalVideoReady()).toBeFalse();
+    });
+
+    it('derives the flag from session state on load and clears it on reset', () => {
+      component['syncFinalVideoReady']({final_video_asset_ref: {id: '9'}});
+      expect(agentChatService.finalVideoReady()).toBeTrue();
+
+      component['syncFinalVideoReady']({parameters: {}});
+      expect(agentChatService.finalVideoReady()).toBeFalse();
+
+      agentChatService.finalVideoReady.set(true);
+      component['clearCampaignDetails']();
+      expect(agentChatService.finalVideoReady()).toBeFalse();
+    });
   });
 
   it('should open asset links in window.open onMessageClick and prevent default', () => {

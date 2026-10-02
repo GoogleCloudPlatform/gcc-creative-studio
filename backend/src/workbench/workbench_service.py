@@ -45,6 +45,7 @@ from src.common.schema.media_item_model import (
     SourceMediaItemLink,
 )
 from src.common.storage_service import GcsService
+from src.folders.agent_output_folder import resolve_agent_output_folder_id
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.images.repository.media_item_repository import MediaRepository
 from src.source_assets.repository.source_asset_repository import (
@@ -425,6 +426,9 @@ class WorkbenchService:
             else 1
         )
 
+        folder_id = await resolve_agent_output_folder_id(
+            self.media_repo.db, ws_id, user
+        )
         new_media_item = MediaItemModel(
             prompt=f"Render of timeline {timeline_id}",
             mime_type=MimeTypeEnum.VIDEO_MP4,
@@ -432,6 +436,7 @@ class WorkbenchService:
             user_id=user.id,
             user_email=user.email,
             workspace_id=ws_id,
+            folder_id=folder_id,
             model=GenerationModelEnum.WORKBENCH_RENDER,
             aspect_ratio=timeline_aspect_ratio,
             gcs_uris=[],

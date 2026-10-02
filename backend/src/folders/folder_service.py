@@ -30,11 +30,25 @@ from src.folders.dto.folder_dto import (
 )
 from src.folders.repository.folder_repository import FolderRepository
 from src.folders.schema.folder_model import Folder
-from src.users.user_model import UserModel
+from src.users.user_model import UserModel, UserRoleEnum
+from src.workspaces.schema.workspace_model import (
+    WorkspaceModel,
+    WorkspaceScopeEnum,
+)
 
 logger = logging.getLogger(__name__)
 
 MAX_FOLDER_DEPTH: int = 20
+
+FOLDER_NOT_OWNED_DETAIL = (
+    "You can only modify folders you created. Ask the workspace owner or an "
+    "administrator to do this for you."
+)
+FOLDER_SUBTREE_NOT_OWNED_DETAIL = (
+    "This folder contains subfolders or items owned by other users. Only the "
+    "workspace owner or an administrator can move or delete it."
+)
+ITEMS_NOT_OWNED_DETAIL = "You can only move items you own."
 
 
 class FolderService:
@@ -42,6 +56,84 @@ class FolderService:
 
     def __init__(self, folder_repo: FolderRepository = Depends()):
         self.folder_repo = folder_repo
+
+    # ------------------------------------------------------------------
+    # Permission policy
+    # ------------------------------------------------------------------
+    @staticmethod
+    def is_workspace_manager(
+        user: UserModel, workspace: WorkspaceModel
+    ) -> bool:
+        """Global admins manage every folder; the owner of a *private*
+        workspace manages every folder in it. On public workspaces only
+        admins get blanket rights."""
+        if UserRoleEnum.ADMIN in (user.roles or []):
+            return True
+        return (
+            workspace.scope == WorkspaceScopeEnum.PRIVATE
+            and workspace.owner_id == user.id
+        )
+
+    async def ensure_can_manage_folder(
+        self,
+        folder: Folder,
+        user: UserModel,
+        workspace: WorkspaceModel,
+        *,
+        check_subtree: bool,
+    ) -> None:
+        """Raises 403 unless ``user`` may modify ``folder``.
+
+        Non-managers must be the folder's creator. When ``check_subtree`` is
+        set (delete / move, i.e. operations that affect the whole subtree) the
+        tree must additionally contain nothing owned by other users.
+        """
+        if self.is_workspace_manager(user, workspace):
+            return
+        if folder.user_id != user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=FOLDER_NOT_OWNED_DETAIL,
+            )
+        if (
+            check_subtree
+            and await self.folder_repo.subtree_has_foreign_content(
+                folder.id, user.id
+            )
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=FOLDER_SUBTREE_NOT_OWNED_DETAIL,
+            )
+
+    async def ensure_can_move_items(
+        self, dto: MoveItemsDto, user: UserModel, workspace: WorkspaceModel
+    ) -> None:
+        """Raises 403 unless ``user`` owns every folder (and its subtree) and
+        every media item / source asset listed in ``dto``."""
+        if self.is_workspace_manager(user, workspace):
+            return
+        if dto.folder_ids:
+            folders = await self.folder_repo.get_folders_by_ids(
+                folder_ids=list(dict.fromkeys(dto.folder_ids)),
+                workspace_id=dto.workspace_id,
+            )
+            for folder in folders:
+                await self.ensure_can_manage_folder(
+                    folder, user, workspace, check_subtree=True
+                )
+        if (
+            dto.media_item_ids or dto.source_asset_ids
+        ) and await self.folder_repo.has_foreign_items(
+            media_item_ids=dto.media_item_ids,
+            source_asset_ids=dto.source_asset_ids,
+            workspace_id=dto.workspace_id,
+            user_id=user.id,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=ITEMS_NOT_OWNED_DETAIL,
+            )
 
     async def _handle_integrity_error(
         self, e: IntegrityError, folder_name: str

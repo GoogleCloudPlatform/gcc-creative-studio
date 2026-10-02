@@ -185,6 +185,17 @@ export class StoryboardComponent {
       this.showSeeVideoBtn.set(true);
     });
 
+    // "See Video" follows the agent's final-cut flag, not `timeline_id`: the
+    // timeline exists from the moment the storyboard is persisted, so it would
+    // surface the CTA while the campaign is still being built. The flag also
+    // drops back to false when the user regenerates and the agent clears it.
+    effect(
+      () => {
+        this.showSeeVideoBtn.set(this.agentChatService.finalVideoReady());
+      },
+      {allowSignalWrites: true},
+    );
+
     effect(
       () => {
         const generating = this.isGenerating();
@@ -217,9 +228,6 @@ export class StoryboardComponent {
       () => {
         const sb = this.agentChatService.currentStoryboard();
         if (sb) {
-          if (sb.timeline_id) {
-            this.showSeeVideoBtn.set(true);
-          }
           if (sb.scenes && sb.scenes.length > 0) {
             const parsedScenes = sb.scenes.map((s: any, idx: number) => {
               return {

@@ -549,6 +549,7 @@ export class ChatInterfaceComponent
                         );
                       }
                       this.syncCampaignDetails(res.session?.state);
+                      this.syncFinalVideoReady(res.session?.state);
                       if (res.session && res.session.id) {
                         this.currentSessionId = res.session.id;
                         this.agentChatService.selectedSessionId.set(
@@ -674,6 +675,7 @@ export class ChatInterfaceComponent
               this.agentChatService.currentStoryboard.set(null);
             }
             this.syncCampaignDetails(res.session?.state);
+            this.syncFinalVideoReady(res.session?.state);
 
             const messages = (res.session && res.session.events) || [];
             const mappedMessages = this.mapEventsToMessages(messages);
@@ -1834,16 +1836,17 @@ export class ChatInterfaceComponent
         if (this.isFinalVideoReadyEvent(data)) {
           this.agentChatService.isGeneratingStoryboard.set(false);
           this.agentChatService.isGeneratingVideo.set(false);
-          this.refreshStoryboardForSession();
+          this.agentChatService.finalVideoReady.set(true);
+          this.refreshStoryboardForSession(true);
         }
         // The agent republishes its full campaign brief in the state delta
         // whenever it changes; keep the read-only Campaign tab in sync.
-        this.syncCampaignDetails(
+        const stateDelta =
           data.actions?.state_delta ||
-            data.actions?.stateDelta ||
-            data.raw_event?.actions?.state_delta,
-          true,
-        );
+          data.actions?.stateDelta ||
+          data.raw_event?.actions?.state_delta;
+        this.syncCampaignDetails(stateDelta, true);
+        this.syncFinalVideoReady(stateDelta, true);
         if (data.actions?.storyboard) {
           this.isTyping.set(false);
           this.agentChatService.isGeneratingStoryboard.set(false);
@@ -2152,21 +2155,50 @@ export class ChatInterfaceComponent
     this.agentChatService.campaignDetails.set(parseCampaignState(picked));
   }
 
-  /** Forgets the campaign brief (new chat / session switch). */
+  /** Forgets the campaign brief and final-cut flag (new chat / session switch). */
   private clearCampaignDetails() {
     this.campaignState = null;
     this.agentChatService.campaignDetails.set(null);
+    this.agentChatService.finalVideoReady.set(false);
+  }
+
+  /**
+   * Updates `finalVideoReady` from an agent state object (full `session.state`
+   * or a streamed `state_delta`). The agent writes `final_video_asset_id` /
+   * `final_video_asset_ref` when `stitch_final_video` succeeds and resets them
+   * to `null` when the user regenerates. With `keepExisting` (streaming), a
+   * delta without either key leaves the flag untouched; otherwise (session
+   * load) a missing key means no final cut exists yet.
+   */
+  private syncFinalVideoReady(state: any, keepExisting = false) {
+    const hasKey =
+      !!state &&
+      typeof state === 'object' &&
+      ('final_video_asset_id' in state || 'final_video_asset_ref' in state);
+    if (!hasKey) {
+      if (!keepExisting) this.agentChatService.finalVideoReady.set(false);
+      return;
+    }
+    this.agentChatService.finalVideoReady.set(
+      !!(state.final_video_asset_id || state.final_video_asset_ref),
+    );
   }
 
   /**
    * Re-reads the storyboard bound to the current session so `currentStoryboard`
-   * reflects the latest scenes / `timeline_id`, then notifies listeners that a
-   * video may be available (the storyboard panel toggles its "See Video" CTA).
+   * reflects the latest scenes / `timeline_id`. With `videoReady` it also
+   * notifies listeners that the final cut is available (the storyboard panel
+   * toggles its "See Video" CTA). `timeline_id` alone is NOT evidence of a
+   * video: the agent creates the timeline when it persists the storyboard,
+   * long before `stitch_final_video` runs.
    */
-  private refreshStoryboardForSession() {
+  private refreshStoryboardForSession(videoReady = false) {
+    const announce = () => {
+      if (videoReady) this.agentChatService.videoGenerated$.next(true);
+    };
     const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
     if (!workspaceId || !this.currentSessionId) {
-      this.agentChatService.videoGenerated$.next(true);
+      announce();
       return;
     }
     this.storyboardService
@@ -2178,19 +2210,15 @@ export class ChatInterfaceComponent
               this.timelineState.loadedTimelineId.set(undefined);
             }
             this.agentChatService.currentStoryboard.set(storyboards[0]);
-            if (storyboards[0].timeline_id) {
-              this.agentChatService.videoGenerated$.next(true);
-            }
-          } else {
-            this.agentChatService.videoGenerated$.next(true);
           }
+          announce();
         },
         error: err => {
           console.error(
             'Failed to fetch storyboard after stream completion:',
             err,
           );
-          this.agentChatService.videoGenerated$.next(true);
+          announce();
         },
       });
   }
@@ -2390,6 +2418,11 @@ export class ChatInterfaceComponent
         mimeType: 'image/*',
         multiSelect: true,
         maxSelection: 10 - this.selectedImages().length,
+        // The Izumi agent resolves an attached media item by id and always
+        // takes its FIRST image, ignoring `mediaIndex`. Until that is fixed
+        // upstream, only let the user pick index 0 so the preview matches
+        // what the agent actually receives.
+        firstIndexOnly: true,
       },
       panelClass: 'image-selector-dialog',
     });
@@ -2406,7 +2439,12 @@ export class ChatInterfaceComponent
         ) => {
           if (!result) return;
 
-          const results = Array.isArray(result) ? result : [result];
+          const results = (Array.isArray(result) ? result : [result]).map(
+            img =>
+              'mediaItem' in img && img.selectedIndex
+                ? {...img, selectedIndex: 0}
+                : img,
+          );
           this.selectedImages.update(current => {
             return [...current, ...results];
           });

@@ -119,6 +119,7 @@ import {StoryboardComponent} from './workbench/components/storyboard/storyboard.
 import {TimeRulerComponent} from './workbench/components/time-ruler/time-ruler.component';
 import {TransitionIndicatorComponent} from './workbench/components/transition-indicator/transition-indicator.component';
 import {ApprovalGateComponent} from './workbench/components/approval-gate/approval-gate.component';
+import {FeedbackFabComponent} from './common/components/feedback-fab/feedback-fab.component';
 import {SafeUrlPipe} from './common/pipes/safe-url.pipe';
 
 @NgModule({
@@ -155,6 +156,7 @@ import {SafeUrlPipe} from './common/pipes/safe-url.pipe';
     BatchExecutionModalComponent,
     UpscaleComponent,
     ProjectsComponent,
+    FeedbackFabComponent,
   ],
   imports: [
     BrowserModule,

@@ -76,6 +76,7 @@ describe('GalleryCardComponent', () => {
     let setDataCall: {type: string; data: string} | null = null;
     const mockEvent = {
       preventDefault: jasmine.createSpy('preventDefault'),
+      stopPropagation: jasmine.createSpy('stopPropagation'),
       dataTransfer: {
         setData: (type: string, data: string) => {
           setDataCall = {type, data};
@@ -106,6 +107,7 @@ describe('GalleryCardComponent', () => {
     let setDataCall: {type: string; data: string} | null = null;
     const mockEvent = {
       preventDefault: jasmine.createSpy('preventDefault'),
+      stopPropagation: jasmine.createSpy('stopPropagation'),
       dataTransfer: {
         setData: (type: string, data: string) => {
           setDataCall = {type, data};

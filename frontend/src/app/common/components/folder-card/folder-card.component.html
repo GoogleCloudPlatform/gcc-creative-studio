@@ -57,23 +57,27 @@
       <mat-icon>more_vert</mat-icon>
     </button>
     <mat-menu #menu="matMenu" xPosition="before" yPosition="below" class="folder-mat-menu">
-      <button mat-menu-item (click)="onEdit($event)">
-        <mat-icon>edit</mat-icon>
-        <span>Edit</span>
-      </button>
+      @if (canManage) {
+        <button mat-menu-item (click)="onEdit($event)">
+          <mat-icon>edit</mat-icon>
+          <span>Edit</span>
+        </button>
+      }
       <button mat-menu-item (click)="onCopy($event)">
         <mat-icon>content_copy</mat-icon>
         <span>Copy</span>
       </button>
-      <button mat-menu-item (click)="onMove($event)">
-        <mat-icon>drive_file_move</mat-icon>
-        <span>Move</span>
-      </button>
-      <mat-divider></mat-divider>
-      <button mat-menu-item (click)="onDelete($event)">
-        <mat-icon color="warn">delete</mat-icon>
-        <span class="text-red-400">Delete</span>
-      </button>
+      @if (canManage) {
+        <button mat-menu-item (click)="onMove($event)">
+          <mat-icon>drive_file_move</mat-icon>
+          <span>Move</span>
+        </button>
+        <mat-divider></mat-divider>
+        <button mat-menu-item (click)="onDelete($event)">
+          <mat-icon color="warn">delete</mat-icon>
+          <span class="text-red-400">Delete</span>
+        </button>
+      }
     </mat-menu>
   </div>
 </div>
