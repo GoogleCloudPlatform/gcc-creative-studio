@@ -21,6 +21,7 @@ import {
   inject,
   effect,
   computed,
+  untracked,
   Output,
   EventEmitter,
 } from '@angular/core';
@@ -90,9 +91,52 @@ export class StoryboardComponent {
   // Navigation State
   activeTab = signal<'characters' | 'scenes' | 'campaign'>('scenes');
 
-  // Read-only campaign brief from the agent; the tab only exists when present
+  // Read-only campaign brief from the agent; the tab only exists when present.
+  // It appears as soon as the agent extracted the brief and fills in as the
+  // planning pipeline progresses (see `parseCampaignState`).
   campaignDetails = this.agentChatService.campaignDetails;
   hasCampaignDetails = computed(() => this.campaignDetails() !== null);
+  /** True until the agent has produced the storyboard (brief/strategy stages). */
+  isCampaignInProgress = computed(() => {
+    const stage = this.campaignDetails()?.stage;
+    return stage === 'brief' || stage === 'strategy';
+  });
+  campaignStageLabel = computed(() => {
+    switch (this.campaignDetails()?.stage) {
+      case 'brief':
+        return 'Brief';
+      case 'strategy':
+        return 'Strategy';
+      case 'storyboard':
+        return 'Storyboard';
+      case 'frames':
+        return 'Frames';
+      case 'generation':
+        return 'Generated';
+      default:
+        return '';
+    }
+  });
+  /**
+   * Planning progress for the header stepper (Brief → Strategy → Storyboard).
+   * `stage` names the last *completed* planning step, so that step is done and
+   * the following one is current; storyboard or later means all three are done.
+   */
+  campaignSteps = computed<
+    {label: string; icon: string; state: 'done' | 'current' | 'todo'}[]
+  >(() => {
+    const stage = this.campaignDetails()?.stage ?? 'brief';
+    const doneCount = stage === 'brief' ? 1 : stage === 'strategy' ? 2 : 3;
+    const meta = [
+      {label: 'Brief', icon: 'description'},
+      {label: 'Strategy', icon: 'insights'},
+      {label: 'Storyboard', icon: 'movie'},
+    ];
+    return meta.map((m, i) => ({
+      ...m,
+      state: i < doneCount ? 'done' : i === doneCount ? 'current' : 'todo',
+    }));
+  });
 
   // Dynamic Data
   scenes = signal<Scene[]>([]);
@@ -248,8 +292,47 @@ export class StoryboardComponent {
 
   setActiveTab(tab: 'characters' | 'scenes' | 'campaign') {
     if (tab === 'campaign' && !this.hasCampaignDetails()) return;
+    if (tab === 'campaign') this.campaignTabSeen.set(true);
     this.activeTab.set(tab);
   }
+
+  /** False until the user has opened the Campaign tab for the current brief. */
+  campaignTabSeen = signal(false);
+  /** Guards the one-time reveal below; reset when the brief is cleared. */
+  private campaignRevealed = false;
+
+  /**
+   * Reveal the Campaign tab the first time a brief lands in a session. When
+   * there are no scenes yet (the usual case: the brief arrives on the agent's
+   * first turn) we switch to it so the user notices the new tab. If scenes
+   * already exist (e.g. reopening a finished session) we leave the user on
+   * Scenes and just mark the tab as new until they open it.
+   */
+  private campaignRevealEffect = effect(
+    () => {
+      const details = this.campaignDetails();
+      if (!details) {
+        this.campaignRevealed = false;
+        untracked(() => this.campaignTabSeen.set(false));
+        return;
+      }
+      if (this.campaignRevealed) return;
+      this.campaignRevealed = true;
+      untracked(() => {
+        // `scenes` holds a Welcome placeholder when empty, so look at the
+        // real storyboard to decide whether there is anything else to see.
+        const sb = this.agentChatService.currentStoryboard();
+        const hasScenes =
+          details.scenes.length > 0 ||
+          (Array.isArray(sb?.scenes) && sb.scenes.length > 0);
+        if (!hasScenes) {
+          this.activeTab.set('campaign');
+          this.campaignTabSeen.set(true);
+        }
+      });
+    },
+    {allowSignalWrites: true},
+  );
 
   private campaignTabGuard = effect(
     () => {

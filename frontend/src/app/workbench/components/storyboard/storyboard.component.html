@@ -35,16 +35,20 @@
         <mat-icon class="sb-icon-sm">movie</mat-icon>
         Scenes
       </button>
-      <!-- Read-only campaign brief; only offered once the agent has produced it -->
+      <!-- Read-only campaign brief; appears once the agent has extracted the brief and fills in progressively -->
       <button
         *ngIf="hasCampaignDetails()"
-        class="sb-tab"
+        class="sb-tab sb-tab-campaign"
         [class.active]="activeTab() === 'campaign'"
+        [class.is-new]="!campaignTabSeen()"
         (click)="setActiveTab('campaign')"
         title="Campaign brief (read-only)"
       >
         <mat-icon class="sb-icon-sm">campaign</mat-icon>
         Campaign
+        @if (!campaignTabSeen()) {
+          <span class="sb-tab-new-dot" aria-label="New"></span>
+        }
       </button>
     </div>
 
@@ -224,19 +228,70 @@
       </div>
     </ng-container>
 
-    <!-- Read-only Campaign brief -->
+    <!-- Read-only Campaign brief; fills in progressively as the agent plans -->
     @if (!isGenerating() && activeTab() === 'campaign' && campaignDetails(); as campaign) {
       <section class="sb-campaign" aria-label="Campaign brief (read-only)">
-        <header class="sb-campaign-header">
-          <div class="sb-campaign-title-group">
-            <mat-icon class="sb-campaign-lock" title="Read-only">lock</mat-icon>
-            <h2>{{ campaign.title || 'Campaign Brief' }}</h2>
+        <header class="sb-campaign-hero" [class.in-progress]="isCampaignInProgress()">
+          <div class="sb-campaign-hero-top">
+            <div class="sb-campaign-title-group">
+              <span class="sb-campaign-eyebrow">
+                <mat-icon class="sb-icon-sm">lock</mat-icon>
+                Campaign brief · read-only
+              </span>
+              <h2>{{ campaign.title || 'Campaign Brief' }}</h2>
+            </div>
+            <ol
+              class="sb-campaign-stepper"
+              [attr.aria-label]="'Planning progress: ' + campaignStageLabel()"
+            >
+              @for (step of campaignSteps(); track step.label; let last = $last) {
+                <li class="sb-campaign-step" [class]="step.state">
+                  <span class="sb-campaign-step-dot">
+                    @if (step.state === 'done') {
+                      <mat-icon>check</mat-icon>
+                    } @else {
+                      <mat-icon>{{ step.icon }}</mat-icon>
+                    }
+                  </span>
+                  <span class="sb-campaign-step-label">{{ step.label }}</span>
+                  @if (!last) {
+                    <span class="sb-campaign-step-line" aria-hidden="true"></span>
+                  }
+                </li>
+              }
+            </ol>
           </div>
+
+          @if (campaign.keyMessage) {
+            <blockquote class="sb-campaign-key-message">
+              <mat-icon class="sb-campaign-quote-icon">format_quote</mat-icon>
+              <span>{{ campaign.keyMessage }}</span>
+            </blockquote>
+          }
+
           <div class="sb-campaign-chips">
             @if (campaign.templateName) {
               <span class="sb-campaign-chip">
                 <mat-icon class="sb-icon-sm">dashboard_customize</mat-icon>
                 {{ campaign.templateName }}
+              </span>
+            }
+            @if (campaign.vertical) {
+              <span class="sb-campaign-chip">
+                <mat-icon class="sb-icon-sm">category</mat-icon>
+                {{ campaign.vertical }}
+              </span>
+            }
+            @if (campaign.duration) {
+              <span class="sb-campaign-chip">
+                <mat-icon class="sb-icon-sm">timer</mat-icon>
+                {{ campaign.duration }}
+              </span>
+            }
+            @if (campaign.orientation) {
+              <span class="sb-campaign-chip">
+                <mat-icon class="sb-icon-sm">crop_rotate</mat-icon>
+                {{ campaign.orientation }}
               </span>
             }
             @if (campaign.theme) {
@@ -251,13 +306,25 @@
                 {{ campaign.tone }}
               </span>
             }
+            @if (campaign.look; as look) {
+              @if (look.name) {
+                <span class="sb-campaign-chip accent" [title]="look.archetype || 'Visual Look'">
+                  <mat-icon class="sb-icon-sm">auto_awesome</mat-icon>
+                  {{ look.name }}
+                </span>
+              }
+            }
           </div>
         </header>
 
-        @if (campaign.keyMessage) {
-          <blockquote class="sb-campaign-key-message">
-            “{{ campaign.keyMessage }}”
-          </blockquote>
+        @if (isCampaignInProgress()) {
+          <p class="sb-campaign-hint">
+            <mat-icon class="sb-icon-sm">forum</mat-icon>
+            <span>
+              <b>The agent is still shaping this brief.</b>
+              Keep chatting to refine it — sections fill in as the plan progresses.
+            </span>
+          </p>
         }
 
         @if (campaign.concept) {
@@ -267,11 +334,48 @@
           </div>
         }
 
+        @if (campaign.brief && campaign.brief !== campaign.concept) {
+          <div class="sb-campaign-card">
+            <h3><mat-icon class="sb-icon-sm">description</mat-icon> Brief</h3>
+            <p>{{ campaign.brief }}</p>
+          </div>
+        }
+
+        @if (campaign.storylineArc && campaign.storylineArc !== campaign.concept) {
+          <div class="sb-campaign-card">
+            <h3><mat-icon class="sb-icon-sm">timeline</mat-icon> Storyline</h3>
+            <p>{{ campaign.storylineArc }}</p>
+          </div>
+        }
+
         <div class="sb-campaign-grid">
-          @if (campaign.targetAudience) {
+          @if (campaign.targetAudience || campaign.audience) {
             <div class="sb-campaign-card">
               <h3><mat-icon class="sb-icon-sm">groups</mat-icon> Target audience</h3>
-              <p>{{ campaign.targetAudience }}</p>
+              @if (campaign.targetAudience) {
+                <p>{{ campaign.targetAudience }}</p>
+              }
+              @if (campaign.audience; as audience) {
+                @if (audience.persona && audience.persona !== campaign.targetAudience) {
+                  <p>{{ audience.persona }}</p>
+                }
+                @if (audience.painPoints.length > 0) {
+                  <p class="sb-campaign-muted">
+                    <b>Pain points:</b> {{ audience.painPoints.join(' · ') }}
+                  </p>
+                }
+                @if (audience.desires.length > 0) {
+                  <p class="sb-campaign-muted">
+                    <b>Desires:</b> {{ audience.desires.join(' · ') }}
+                  </p>
+                }
+              }
+            </div>
+          }
+          @if (campaign.brandVoice) {
+            <div class="sb-campaign-card">
+              <h3><mat-icon class="sb-icon-sm">campaign</mat-icon> Brand voice</h3>
+              <p>{{ campaign.brandVoice }}</p>
             </div>
           }
           @if (campaign.visualStyle) {
@@ -286,6 +390,17 @@
               <p>{{ campaign.setting }}</p>
             </div>
           }
+          @if (campaign.virtualCreator; as creator) {
+            <div class="sb-campaign-card">
+              <h3><mat-icon class="sb-icon-sm">person</mat-icon> On-screen talent</h3>
+              <p>
+                {{ creator.enabled ? 'Features a virtual creator' : 'Product-only (no presenter)' }}
+              </p>
+              @if (creator.enabled && creator.description) {
+                <p class="sb-campaign-muted">{{ creator.description }}</p>
+              }
+            </div>
+          }
           @if (campaign.backgroundMusic) {
             <div class="sb-campaign-card">
               <h3><mat-icon class="sb-icon-sm">music_note</mat-icon> Background music</h3>
@@ -293,6 +408,31 @@
             </div>
           }
         </div>
+
+        <!-- Planned beats from the brief; replaced by the real scene breakdown once the storyboard lands -->
+        @if (campaign.scenes.length === 0 && campaign.plannedBeats.length > 0) {
+          <h3 class="sb-campaign-section-title">Planned beats</h3>
+          <div class="sb-campaign-scenes">
+            @for (beat of campaign.plannedBeats; track $index; let i = $index) {
+              <article class="sb-campaign-card sb-campaign-scene">
+                <header>
+                  <span class="sb-campaign-scene-index">{{ i + 1 }}</span>
+                  <h4>{{ beat.setting || 'Beat ' + (i + 1) }}</h4>
+                </header>
+                <dl>
+                  @if (beat.visualAction) {
+                    <dt>Action</dt>
+                    <dd>{{ beat.visualAction }}</dd>
+                  }
+                  @if (beat.voiceoverScript) {
+                    <dt>Voice-over</dt>
+                    <dd>“{{ beat.voiceoverScript }}”</dd>
+                  }
+                </dl>
+              </article>
+            }
+          </div>
+        }
 
         @if (campaign.voiceoverGroups.length > 0) {
           <div class="sb-campaign-card">

@@ -66,7 +66,10 @@ import {
   ApprovalGateInfo,
   ApprovalGateSubmission,
 } from '../approval-gate/approval-gate.component';
-import {parseCampaignDetails} from '../../utils/campaign-details';
+import {
+  CAMPAIGN_STATE_KEYS,
+  parseCampaignState,
+} from '../../utils/campaign-details';
 
 interface DropdownOption {
   value: string;
@@ -434,7 +437,7 @@ export class ChatInterfaceComponent
           this.sessions.set([]);
           this.activeApprovalGate.set(null);
           this.agentChatService.currentStoryboard.set(null);
-          this.agentChatService.campaignDetails.set(null);
+          this.clearCampaignDetails();
           this.agentChatService.interruptedSessionId.set(null);
           this.addWelcomeMessage();
           this.shouldScrollToBottom = true;
@@ -1030,7 +1033,7 @@ export class ChatInterfaceComponent
     this.chatMessages.set([]);
     this.activeApprovalGate.set(null);
     this.agentChatService.currentStoryboard.set(null);
-    this.agentChatService.campaignDetails.set(null);
+    this.clearCampaignDetails();
     this.addWelcomeMessage();
     this.shouldScrollToBottom = true;
 
@@ -2113,17 +2116,46 @@ export class ChatInterfaceComponent
   }
 
   /**
+   * Raw copy of the campaign-related session-state keys seen so far
+   * (see `CAMPAIGN_STATE_KEYS`). Streamed `state_delta`s are partial, so they
+   * are merged into this before parsing; a session load replaces it.
+   */
+  private campaignState: Record<string, unknown> | null = null;
+
+  /**
    * Updates the read-only campaign brief from an agent state object (either a
    * full `session.state` or a streamed `state_delta`). With `keepExisting`
-   * (streaming), deltas without a `storyboard` key leave the brief untouched;
+   * (streaming), deltas without any campaign key leave the brief untouched;
    * otherwise (session load) a missing/invalid brief hides the Campaign tab.
    */
   private syncCampaignDetails(state: any, keepExisting = false) {
-    const raw = state?.storyboard;
-    if (raw === undefined && keepExisting) return;
-    const parsed = parseCampaignDetails(raw);
-    if (parsed === null && keepExisting) return;
-    this.agentChatService.campaignDetails.set(parsed);
+    const picked: Record<string, unknown> = {};
+    let hasAny = false;
+    if (state && typeof state === 'object') {
+      for (const key of CAMPAIGN_STATE_KEYS) {
+        if (state[key] !== undefined) {
+          picked[key] = state[key];
+          hasAny = true;
+        }
+      }
+    }
+    if (keepExisting) {
+      if (!hasAny) return;
+      const merged = {...(this.campaignState || {}), ...picked};
+      const parsed = parseCampaignState(merged);
+      if (parsed === null) return;
+      this.campaignState = merged;
+      this.agentChatService.campaignDetails.set(parsed);
+      return;
+    }
+    this.campaignState = hasAny ? picked : null;
+    this.agentChatService.campaignDetails.set(parseCampaignState(picked));
+  }
+
+  /** Forgets the campaign brief (new chat / session switch). */
+  private clearCampaignDetails() {
+    this.campaignState = null;
+    this.agentChatService.campaignDetails.set(null);
   }
 
   /**

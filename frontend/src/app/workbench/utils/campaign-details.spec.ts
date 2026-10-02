@@ -14,7 +14,11 @@
  * limitations under the License.
  */
 
-import {parseCampaignDetails} from './campaign-details';
+import {
+  CAMPAIGN_STATE_KEYS,
+  parseCampaignDetails,
+  parseCampaignState,
+} from './campaign-details';
 
 // Trimmed copy of a real `state_delta.storyboard` payload from the ads_x agent
 const AGENT_STORYBOARD = {
@@ -192,5 +196,218 @@ describe('parseCampaignDetails', () => {
     expect(details.title).toBe('Solo');
     expect(details.scenes).toEqual([]);
     expect(details.voiceoverGroups).toEqual([]);
+    expect(details.stage).toBe('storyboard');
+    expect(details.plannedBeats).toEqual([]);
+  });
+});
+
+// Shape of `state.parameters` as written by the ads_x `parameters_agent`
+const AGENT_PARAMETERS = {
+  campaign_brief: 'Launch the new Cymbal fragrance to urban professionals.',
+  campaign_name: 'Cymbal Launch',
+  target_audience: 'Urban professionals 25-40',
+  target_duration: '30s',
+  target_orientation: 'Vertical',
+  campaign_theme: 'Sensory Awakening',
+  campaign_tone: 'Luxurious',
+  global_visual_style: null,
+  global_setting: 'Rooftop at dusk',
+  key_message: null,
+  template_name: 'Custom',
+  generate_virtual_creator: true,
+  creator_description: 'A confident woman in her thirties.',
+  vertical: 'Luxury',
+  brief_results: {
+    primary_hook: 'A scent that lingers.',
+    audience: {
+      persona: 'The ambitious tastemaker',
+      pain_points: ['Generic scents', 'Short-lived fragrance'],
+      desires: ['Distinction', 'Confidence'],
+    },
+    brand_voice: ['Refined', 'Intimate'],
+  },
+  storyline_guidance: {
+    narrative_arc: 'From anonymity to presence.',
+    scenes: [
+      {
+        visual_action: 'Bottle emerges from shadow.',
+        voiceover_script: 'Some presences are felt before seen.',
+        setting: 'Dark vanity',
+      },
+      {visual_action: 'She steps into the city lights.', voiceover_script: ''},
+      {visual_action: '', voiceover_script: '', setting: ''},
+    ],
+  },
+};
+
+describe('parseCampaignState', () => {
+  it('returns null when no campaign key is present', () => {
+    expect(parseCampaignState(null)).toBeNull();
+    expect(parseCampaignState({})).toBeNull();
+    expect(parseCampaignState({parameters: {}})).toBeNull();
+    expect(parseCampaignState({unrelated: 1})).toBeNull();
+    expect(parseCampaignState({storyboard: {scenes: []}})).toBeNull();
+  });
+
+  it('exposes the brief as soon as only `parameters` exists (stage: brief)', () => {
+    const details = parseCampaignState({parameters: AGENT_PARAMETERS})!;
+    expect(details).not.toBeNull();
+    expect(details.stage).toBe('brief');
+    expect(details.title).toBe('Cymbal Launch');
+    expect(details.brief).toContain('Launch the new Cymbal');
+    expect(details.duration).toBe('30s');
+    expect(details.orientation).toBe('Vertical');
+    expect(details.vertical).toBe('Luxury');
+    expect(details.templateName).toBe('Custom');
+    expect(details.theme).toBe('Sensory Awakening');
+    expect(details.tone).toBe('Luxurious');
+    expect(details.setting).toBe('Rooftop at dusk');
+    expect(details.visualStyle).toBeUndefined();
+    // key message falls back to the research hook
+    expect(details.keyMessage).toBe('A scent that lingers.');
+    expect(details.primaryHook).toBe('A scent that lingers.');
+    expect(details.targetAudience).toBe('Urban professionals 25-40');
+    expect(details.audience).toEqual({
+      persona: 'The ambitious tastemaker',
+      painPoints: ['Generic scents', 'Short-lived fragrance'],
+      desires: ['Distinction', 'Confidence'],
+    });
+    expect(details.brandVoice).toBe('Refined, Intimate');
+    expect(details.virtualCreator).toEqual({
+      enabled: true,
+      description: 'A confident woman in her thirties.',
+    });
+    expect(details.storylineArc).toBe('From anonymity to presence.');
+    // empty beats are dropped
+    expect(details.plannedBeats.length).toBe(2);
+    expect(details.plannedBeats[0]).toEqual({
+      visualAction: 'Bottle emerges from shadow.',
+      voiceoverScript: 'Some presences are felt before seen.',
+      setting: 'Dark vanity',
+    });
+    expect(details.plannedBeats[1].voiceoverScript).toBeUndefined();
+    expect(details.scenes).toEqual([]);
+    expect(details.voiceoverGroups).toEqual([]);
+    expect(details.concept).toBeUndefined();
+  });
+
+  it('overlays strategy metadata and the chosen Look (stage: strategy)', () => {
+    const details = parseCampaignState({
+      parameters: AGENT_PARAMETERS,
+      forced_metadata: {
+        campaign_title: 'Cymbal: The Lasting Note',
+        concept_description: 'From anonymity to presence.',
+        key_message: 'Elegance meets innovation.',
+        target_audience_profile: 'Persona: The ambitious tastemaker',
+        global_visual_style: null,
+      },
+      master_production_recipe: {
+        look_name: 'Noir Luxe',
+        brand_archetype: 'The Sophisticate',
+        style_mode: 'COMMERCIAL_PREMIUM',
+      },
+      stage_completed: 'strategy',
+    })!;
+    expect(details.stage).toBe('strategy');
+    // strategy wins over parameters
+    expect(details.title).toBe('Cymbal: The Lasting Note');
+    expect(details.keyMessage).toBe('Elegance meets innovation.');
+    expect(details.targetAudience).toBe('Persona: The ambitious tastemaker');
+    expect(details.concept).toBe('From anonymity to presence.');
+    // parameters-only fields survive the overlay
+    expect(details.duration).toBe('30s');
+    expect(details.setting).toBe('Rooftop at dusk');
+    expect(details.audience?.persona).toBe('The ambitious tastemaker');
+    expect(details.plannedBeats.length).toBe(2);
+    expect(details.look).toEqual({
+      name: 'Noir Luxe',
+      archetype: 'The Sophisticate',
+    });
+  });
+
+  it('lets the storyboard override everything and carries its scenes', () => {
+    const details = parseCampaignState({
+      parameters: AGENT_PARAMETERS,
+      forced_metadata: {campaign_title: 'Interim title'},
+      storyboard: AGENT_STORYBOARD,
+    })!;
+    expect(details.stage).toBe('storyboard');
+    expect(details.title).toBe('Cymbal: The Lasting Note');
+    expect(details.theme).toBe('Sensory Awakening & Lingering Presence');
+    expect(details.keyMessage).toBe('Elegance meets innovation.');
+    expect(details.backgroundMusic).toBe('Deep, resonant cello.');
+    expect(details.scenes.length).toBeGreaterThan(0);
+    expect(details.voiceoverGroups.length).toBeGreaterThan(0);
+    // brief-only fields are still available alongside the storyboard
+    expect(details.duration).toBe('30s');
+    expect(details.plannedBeats.length).toBe(2);
+    expect(details.virtualCreator?.enabled).toBeTrue();
+  });
+
+  it('derives the stage from the agent cursor without going below the evidence', () => {
+    expect(
+      parseCampaignState({
+        parameters: AGENT_PARAMETERS,
+        stage_completed: 'user_assets',
+      })!.stage,
+    ).toBe('brief');
+    expect(
+      parseCampaignState({
+        parameters: AGENT_PARAMETERS,
+        stage_completed: 'frames',
+      })!.stage,
+    ).toBe('frames');
+    expect(
+      parseCampaignState({
+        parameters: AGENT_PARAMETERS,
+        stage_completed: 'generation',
+      })!.stage,
+    ).toBe('generation');
+    // storyboard present but cursor stale/unknown → at least 'storyboard'
+    expect(
+      parseCampaignState({
+        storyboard: AGENT_STORYBOARD,
+        stage_completed: 'parameters',
+      })!.stage,
+    ).toBe('storyboard');
+    expect(
+      parseCampaignState({
+        storyboard: AGENT_STORYBOARD,
+        stage_completed: 'bogus',
+      })!.stage,
+    ).toBe('storyboard');
+    // a Look alone proves strategy ran
+    expect(
+      parseCampaignState({master_production_recipe: {look_name: 'Noir Luxe'}})!
+        .stage,
+    ).toBe('strategy');
+  });
+
+  it('ignores malformed layers instead of throwing', () => {
+    const details = parseCampaignState({
+      parameters: {
+        campaign_name: 'X',
+        brief_results: 'nope',
+        storyline_guidance: [],
+      },
+      forced_metadata: [],
+      master_production_recipe: 'str',
+      storyboard: 42,
+    })!;
+    expect(details.title).toBe('X');
+    expect(details.audience).toBeUndefined();
+    expect(details.plannedBeats).toEqual([]);
+    expect(details.look).toBeUndefined();
+    expect(details.stage).toBe('brief');
+  });
+
+  it('lists the session-state keys the tab depends on', () => {
+    expect([...CAMPAIGN_STATE_KEYS]).toEqual([
+      'parameters',
+      'forced_metadata',
+      'master_production_recipe',
+      'storyboard',
+      'stage_completed',
+    ]);
   });
 });
