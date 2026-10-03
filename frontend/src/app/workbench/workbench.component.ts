@@ -741,21 +741,36 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     );
   }
 
+  /**
+   * Re-lays the video track from t=0 using the same cross-fade overlap model
+   * as the backend ffmpeg graph: clip N+1 starts at `end(N) - transition/2`.
+   * Every site that relayouts the video track (delete, trim, metadata
+   * extraction, drag) MUST go through this helper so the UI never drifts
+   * from what the render actually produces.
+   */
+  private layoutVideoTrack(videoClips: TimelineClip[]): TimelineClip[] {
+    const ordered = [...videoClips].sort((a, b) => a.startTime - b.startTime);
+    let currentTime = 0;
+    return ordered.map(clip => {
+      const newClip = {...clip, startTime: currentTime};
+      const transitionType =
+        clip.transition_to_next_type || TransitionType.NONE;
+      const transitionDuration =
+        transitionType !== TransitionType.NONE &&
+        clip.transition_to_next_duration !== undefined &&
+        clip.transition_to_next_duration !== null
+          ? clip.transition_to_next_duration
+          : 0;
+      currentTime += clip.duration - transitionDuration / 2;
+      return newClip;
+    });
+  }
+
   refreshTimelineLayout() {
     this.timelineState.timelineClips.update(clips => {
       const vClips = clips.filter(c => c.trackIndex === 0);
       const otherClips = clips.filter(c => c.trackIndex !== 0);
-
-      const layoutTrack = (trackClips: TimelineClip[]) => {
-        let currentTime = 0;
-        return trackClips.map(clip => {
-          const newClip = {...clip, startTime: currentTime};
-          currentTime += clip.duration;
-          return newClip;
-        });
-      };
-
-      return [...layoutTrack(vClips), ...otherClips];
+      return [...this.layoutVideoTrack(vClips), ...otherClips];
     });
   }
 
@@ -1545,27 +1560,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     if (!movedClip) return;
 
     if (movedClip.trackIndex === 0) {
-      // Video Track: Magnetic / Ripple Edit
-      // 1. Sort all video clips by startTime to determine order
-      // 2. Remove gaps
-      const videoClips = allClips
-        .filter(c => c.trackIndex === 0)
-        .sort((a, b) => a.startTime - b.startTime);
-
-      let currentTime = 0;
-      const newVideoClips = videoClips.map(clip => {
-        const newClip = {...clip, startTime: currentTime};
-        const transitionType =
-          clip.transition_to_next_type || TransitionType.NONE;
-        const transitionDuration =
-          transitionType !== TransitionType.NONE &&
-          clip.transition_to_next_duration !== undefined &&
-          clip.transition_to_next_duration !== null
-            ? clip.transition_to_next_duration
-            : 0;
-        currentTime += clip.duration - transitionDuration / 2;
-        return newClip;
-      });
+      // Video Track: Magnetic / Ripple Edit — sort by startTime and remove
+      // gaps using the shared overlap-aware layout.
+      const newVideoClips = this.layoutVideoTrack(
+        allClips.filter(c => c.trackIndex === 0),
+      );
 
       // Update state
       this.timelineState.timelineClips.update(prev => {

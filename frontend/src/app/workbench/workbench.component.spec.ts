@@ -33,7 +33,12 @@ import {AgentChatService} from './services/agent-chat.service';
 import {TimelineStateService} from './services/timeline-state.service';
 import {PlayheadSyncService} from './services/playhead-sync.service';
 
-import {TimelineDTO, MediaAsset} from '../common/models/workbench.model';
+import {
+  TimelineDTO,
+  MediaAsset,
+  TimelineClip,
+  TransitionType,
+} from '../common/models/workbench.model';
 import {MediaItemSelection} from '../common/components/image-selector/image-selector.component';
 import {StoryboardService} from '../services/storyboard/storyboard.service';
 import {WorkbenchService} from './workbench.service';
@@ -127,6 +132,111 @@ describe('WorkbenchComponent', () => {
 
     expect(stateService.timelineClips()).toEqual([]);
     expect(stateService.selectedClipId()).toBeNull();
+  });
+
+  describe('Video track layout (cross-fade overlap)', () => {
+    let stateService: TimelineStateService;
+
+    // Three 5 s clips joined by 1 s fades, laid out exactly as the backend
+    // ffmpeg graph does it: clip N+1 starts at end(N) - transition/2.
+    const makeVideoClip = (
+      id: string,
+      startTime: number,
+      transitionDuration: number | null,
+    ): TimelineClip => ({
+      id,
+      assetId: `asset-${id}`,
+      startTime,
+      duration: 5,
+      offset: 0,
+      trackIndex: 0,
+      color: 'blue',
+      transition_to_next_type:
+        transitionDuration === null ? TransitionType.NONE : TransitionType.FADE,
+      transition_to_next_duration: transitionDuration,
+    });
+
+    const voiceover: TimelineClip = {
+      id: 'vo',
+      assetId: 'asset-vo',
+      startTime: 11.5,
+      duration: 2,
+      offset: 0,
+      trackIndex: 1,
+      color: 'green',
+    };
+
+    beforeEach(() => {
+      stateService = TestBed.inject(TimelineStateService);
+      spyOn(component, 'triggerAutoSave');
+      stateService.timelineClips.set([
+        makeVideoClip('v1', 0, 1),
+        makeVideoClip('v2', 4.5, 1),
+        makeVideoClip('v3', 9, null),
+        voiceover,
+      ]);
+    });
+
+    it('keeps the overlap-aware layout when a clip is deleted (regression: moved voiceover rendered at old spot)', () => {
+      // Deleting an *audio* clip must not shift the video track at all —
+      // before the fix refreshTimelineLayout dropped the transition overlap
+      // and every video clip after the first slid later by Σ(transition/2).
+      stateService.selectedClipId.set('vo');
+      component.deleteSelectedClip();
+
+      const vClips = stateService
+        .timelineClips()
+        .filter(c => c.trackIndex === 0)
+        .sort((a, b) => a.startTime - b.startTime);
+      expect(vClips.map(c => c.startTime)).toEqual([0, 4.5, 9]);
+      expect(component.getLastVideoClipEndTime()).toBe(14);
+    });
+
+    it('closes the gap with the overlap when a middle video clip is deleted and leaves audio untouched', () => {
+      stateService.selectedClipId.set('v2');
+      component.deleteSelectedClip();
+
+      const clips = stateService.timelineClips();
+      const vClips = clips
+        .filter(c => c.trackIndex === 0)
+        .sort((a, b) => a.startTime - b.startTime);
+      // v1 keeps its 1 s fade, so v3 now starts at 5 - 0.5 = 4.5.
+      expect(vClips.map(c => c.id)).toEqual(['v1', 'v3']);
+      expect(vClips.map(c => c.startTime)).toEqual([0, 4.5]);
+
+      const audio = clips.find(c => c.id === 'vo');
+      expect(audio?.startTime).toBe(11.5);
+    });
+
+    it('produces the same layout from a drag relayout as from a delete relayout', () => {
+      // Simulate the user dragging v3 slightly out of place, then dropping.
+      stateService.timelineClips.update(clips =>
+        clips.map(c => (c.id === 'v3' ? {...c, startTime: 9.7} : c)),
+      );
+      component['resolveOverlaps']('v3');
+
+      const vClips = stateService
+        .timelineClips()
+        .filter(c => c.trackIndex === 0)
+        .sort((a, b) => a.startTime - b.startTime);
+      expect(vClips.map(c => c.startTime)).toEqual([0, 4.5, 9]);
+      expect(component.triggerAutoSave).toHaveBeenCalled();
+    });
+
+    it('falls back to butt-joined clips when there are no transitions', () => {
+      stateService.timelineClips.set([
+        makeVideoClip('v1', 0, null),
+        makeVideoClip('v2', 5, null),
+        {...makeVideoClip('v3', 10, null), transition_to_next_type: undefined},
+      ]);
+
+      component.refreshTimelineLayout();
+
+      const vClips = stateService
+        .timelineClips()
+        .sort((a, b) => a.startTime - b.startTime);
+      expect(vClips.map(c => c.startTime)).toEqual([0, 5, 10]);
+    });
   });
 
   it('should split selected clip', () => {
