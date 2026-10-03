@@ -335,9 +335,25 @@
         }
 
         @if (campaign.brief && campaign.brief !== campaign.concept) {
-          <div class="sb-campaign-card">
+          <div class="sb-campaign-card sb-campaign-brief">
             <h3><mat-icon class="sb-icon-sm">description</mat-icon> Brief</h3>
-            <p>{{ campaign.brief }}</p>
+            <p
+              class="sb-campaign-brief-text"
+              [class.is-clamped]="isLongBrief() && !briefExpanded()"
+            >{{ campaign.brief }}</p>
+            @if (isLongBrief()) {
+              <button
+                type="button"
+                class="sb-campaign-brief-toggle"
+                (click)="toggleBrief()"
+                [attr.aria-expanded]="briefExpanded()"
+              >
+                <span>{{ briefExpanded() ? 'Show less' : 'Show more' }}</span>
+                <mat-icon class="sb-icon-sm">{{
+                  briefExpanded() ? 'expand_less' : 'expand_more'
+                }}</mat-icon>
+              </button>
+            }
           </div>
         }
 
@@ -412,6 +428,9 @@
         <!-- Planned beats from the brief; replaced by the real scene breakdown once the storyboard lands -->
         @if (campaign.scenes.length === 0 && campaign.plannedBeats.length > 0) {
           <h3 class="sb-campaign-section-title">Planned beats</h3>
+          @if (plannedBeatsHint(); as hint) {
+            <p class="sb-campaign-muted sb-campaign-section-hint">{{ hint }}</p>
+          }
           <div class="sb-campaign-scenes">
             @for (beat of campaign.plannedBeats; track $index; let i = $index) {
               <article class="sb-campaign-card sb-campaign-scene">

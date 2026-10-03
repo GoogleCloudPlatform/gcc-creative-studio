@@ -68,7 +68,9 @@ import {
 } from '../approval-gate/approval-gate.component';
 import {
   CAMPAIGN_STATE_KEYS,
+  findStorylineGuidanceInEvents,
   parseCampaignState,
+  withStorylineGuidance,
 } from '../../utils/campaign-details';
 
 interface DropdownOption {
@@ -548,7 +550,11 @@ export class ChatInterfaceComponent
                           res.storyboard,
                         );
                       }
-                      this.syncCampaignDetails(res.session?.state);
+                      this.syncCampaignDetails(
+                        res.session?.state,
+                        false,
+                        res.session?.events,
+                      );
                       this.syncFinalVideoReady(res.session?.state);
                       if (res.session && res.session.id) {
                         this.currentSessionId = res.session.id;
@@ -674,7 +680,11 @@ export class ChatInterfaceComponent
             } else {
               this.agentChatService.currentStoryboard.set(null);
             }
-            this.syncCampaignDetails(res.session?.state);
+            this.syncCampaignDetails(
+              res.session?.state,
+              false,
+              res.session?.events,
+            );
             this.syncFinalVideoReady(res.session?.state);
 
             const messages = (res.session && res.session.events) || [];
@@ -2130,8 +2140,16 @@ export class ChatInterfaceComponent
    * full `session.state` or a streamed `state_delta`). With `keepExisting`
    * (streaming), deltas without any campaign key leave the brief untouched;
    * otherwise (session load) a missing/invalid brief hides the Campaign tab.
+   *
+   * The agent strips `parameters.storyline_guidance` once strategy is mapped
+   * (templated mode), so a `parameters` value without it inherits the one
+   * already seen while streaming, or the last one in `events` on a load.
    */
-  private syncCampaignDetails(state: any, keepExisting = false) {
+  private syncCampaignDetails(
+    state: any,
+    keepExisting = false,
+    events?: unknown[],
+  ) {
     const picked: Record<string, unknown> = {};
     let hasAny = false;
     if (state && typeof state === 'object') {
@@ -2141,6 +2159,15 @@ export class ChatInterfaceComponent
           hasAny = true;
         }
       }
+    }
+    if (picked['parameters'] !== undefined) {
+      const fallback = keepExisting
+        ? (this.campaignState?.['parameters'] as any)?.storyline_guidance
+        : findStorylineGuidanceInEvents(events);
+      picked['parameters'] = withStorylineGuidance(
+        picked['parameters'],
+        fallback,
+      );
     }
     if (keepExisting) {
       if (!hasAny) return;

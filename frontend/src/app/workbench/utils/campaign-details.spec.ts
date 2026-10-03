@@ -16,8 +16,10 @@
 
 import {
   CAMPAIGN_STATE_KEYS,
+  findStorylineGuidanceInEvents,
   parseCampaignDetails,
   parseCampaignState,
+  withStorylineGuidance,
 } from './campaign-details';
 
 // Trimmed copy of a real `state_delta.storyboard` payload from the ads_x agent
@@ -409,5 +411,100 @@ describe('parseCampaignState', () => {
       'storyboard',
       'stage_completed',
     ]);
+  });
+});
+
+describe('storyline guidance recovery', () => {
+  const guidance = {
+    narrative_arc: 'Bottle → protagonist → tagline.',
+    scenes: [
+      {visual_action: 'Light crosses the bottle.', voiceover_script: ''},
+    ],
+  };
+  // Mirrors a real session: extract_campaign_parameters publishes the
+  // storyline, map_strategy_to_metadata re-publishes `parameters` without it.
+  const events = [
+    {author: 'user', actions: {state_delta: {user_auth_token: 'x'}}},
+    {
+      author: 'parameters_agent',
+      actions: {
+        state_delta: {
+          parameters: {campaign_name: 'C', storyline_guidance: guidance},
+        },
+      },
+    },
+    {
+      author: 'strategy_agent',
+      actions: {
+        state_delta: {
+          parameters: {campaign_name: 'C', template_name: 'Feature Spotlight'},
+        },
+      },
+    },
+  ];
+
+  it('finds the last meaningful storyline in the event log', () => {
+    expect(findStorylineGuidanceInEvents(events)).toBe(guidance);
+  });
+
+  it('reads camelCase and raw_event deltas too', () => {
+    expect(
+      findStorylineGuidanceInEvents([
+        {actions: {stateDelta: {parameters: {storyline_guidance: guidance}}}},
+      ]),
+    ).toBe(guidance);
+    expect(
+      findStorylineGuidanceInEvents([
+        {
+          raw_event: {
+            actions: {
+              state_delta: {parameters: {storyline_guidance: guidance}},
+            },
+          },
+        },
+      ]),
+    ).toBe(guidance);
+  });
+
+  it('ignores empty storylines and malformed input', () => {
+    expect(findStorylineGuidanceInEvents(undefined)).toBeUndefined();
+    expect(findStorylineGuidanceInEvents([])).toBeUndefined();
+    expect(
+      findStorylineGuidanceInEvents([
+        null,
+        {
+          actions: {
+            state_delta: {parameters: {storyline_guidance: {scenes: []}}},
+          },
+        },
+        {actions: {state_delta: {parameters: 'nope'}}},
+      ]),
+    ).toBeUndefined();
+  });
+
+  it('re-attaches the storyline to sanitised parameters', () => {
+    const sanitised = {campaign_name: 'C', template_name: 'Feature Spotlight'};
+    const restored = withStorylineGuidance(sanitised, guidance) as any;
+    expect(restored).not.toBe(sanitised);
+    expect(restored.storyline_guidance).toBe(guidance);
+    expect(restored.campaign_name).toBe('C');
+    expect(
+      parseCampaignState({parameters: restored})!.plannedBeats.length,
+    ).toBe(1);
+  });
+
+  it('keeps parameters that already carry a storyline', () => {
+    const other = {scenes: [{visual_action: 'Other'}]};
+    const params = {storyline_guidance: other};
+    expect(withStorylineGuidance(params, guidance)).toBe(params);
+  });
+
+  it('is a no-op without a usable fallback or parameters object', () => {
+    const params = {campaign_name: 'C'};
+    expect(withStorylineGuidance(params, undefined)).toBe(params);
+    expect(withStorylineGuidance(params, {scenes: []})).toBe(params);
+    expect(withStorylineGuidance(null, guidance)).toBeNull();
+    expect(withStorylineGuidance('str', guidance)).toBe('str');
+    expect(withStorylineGuidance([1], guidance)).toEqual([1]);
   });
 });

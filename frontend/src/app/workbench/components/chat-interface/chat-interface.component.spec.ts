@@ -623,6 +623,58 @@ describe('ChatInterfaceComponent', () => {
     });
   });
 
+  describe('planned beats survive the templated-mode sanitisation', () => {
+    const storyline = {
+      narrative_arc: 'Bottle → protagonist → tagline.',
+      scenes: [{visual_action: 'Light crosses the bottle.'}],
+    };
+    const extracted = {
+      campaign_name: 'Cymbal',
+      template_name: 'Feature Spotlight',
+      storyline_guidance: storyline,
+    };
+    const sanitised = {
+      campaign_name: 'Cymbal',
+      template_name: 'Feature Spotlight',
+    };
+
+    it('keeps the beats when a later parameters delta drops storyline_guidance', () => {
+      component.currentSessionId = 'session-123';
+      component.sendChatMessage('hello');
+
+      sseCallbacks.onMessage({actions: {state_delta: {parameters: extracted}}});
+      expect(agentChatService.campaignDetails()?.plannedBeats.length).toBe(1);
+
+      sseCallbacks.onMessage({
+        actions: {
+          state_delta: {parameters: sanitised, stage_completed: 'strategy'},
+        },
+      });
+      const details = agentChatService.campaignDetails()!;
+      expect(details.plannedBeats.length).toBe(1);
+      expect(details.storylineArc).toBe(storyline.narrative_arc);
+      expect(details.stage).toBe('strategy');
+    });
+
+    it('recovers the beats from the event log on session load', () => {
+      component['syncCampaignDetails']({parameters: sanitised}, false, [
+        {actions: {state_delta: {parameters: extracted}}},
+        {actions: {state_delta: {parameters: sanitised}}},
+      ]);
+      expect(agentChatService.campaignDetails()?.plannedBeats.length).toBe(1);
+    });
+
+    it('does not invent beats when the log never had any', () => {
+      component['syncCampaignDetails']({parameters: sanitised}, false, [
+        {actions: {state_delta: {parameters: sanitised}}},
+      ]);
+      expect(agentChatService.campaignDetails()?.plannedBeats).toEqual([]);
+
+      component['syncCampaignDetails']({parameters: sanitised});
+      expect(agentChatService.campaignDetails()?.plannedBeats).toEqual([]);
+    });
+  });
+
   it('should open asset links in window.open onMessageClick and prevent default', () => {
     spyOn(window, 'open');
     const mockLink = document.createElement('a');

@@ -469,3 +469,69 @@ export function parseCampaignState(state: unknown): CampaignDetails | null {
 
   return merged as CampaignDetails;
 }
+
+/**
+ * True when `guidance` (a `parameters.storyline_guidance` object) carries
+ * something worth showing: at least one scene beat or a narrative arc.
+ */
+function hasPlannedStoryline(guidance: unknown): boolean {
+  if (!guidance || typeof guidance !== 'object' || Array.isArray(guidance)) {
+    return false;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const g = guidance as any;
+  return (
+    (Array.isArray(g.scenes) && g.scenes.length > 0) || !!str(g.narrative_arc)
+  );
+}
+
+/**
+ * Finds the most recent `parameters.storyline_guidance` published in a
+ * session's event `state_delta`s.
+ *
+ * The `ads_x` agent extracts the user's scene breakdown into
+ * `parameters.storyline_guidance` and then, for any `template_name` other
+ * than "Custom", deletes it again from `parameters` in
+ * `map_strategy_to_metadata` ("Storyline sanitized for templated mode"). The
+ * final `session.state` therefore loses the planned beats, but the earlier
+ * delta is still in the event log — this recovers it for display.
+ */
+export function findStorylineGuidanceInEvents(events: unknown): unknown {
+  if (!Array.isArray(events)) return undefined;
+  for (let i = events.length - 1; i >= 0; i--) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ev = events[i] as any;
+    const delta =
+      ev?.actions?.state_delta ??
+      ev?.actions?.stateDelta ??
+      ev?.raw_event?.actions?.state_delta;
+    const guidance = delta?.parameters?.storyline_guidance;
+    if (hasPlannedStoryline(guidance)) return guidance;
+  }
+  return undefined;
+}
+
+/**
+ * Returns `parameters` with `storyline_guidance` set to `fallback` when the
+ * agent dropped it (see {@link findStorylineGuidanceInEvents}). Leaves the
+ * object untouched when it already carries a meaningful storyline or when
+ * there is nothing useful to restore.
+ */
+export function withStorylineGuidance(
+  parameters: unknown,
+  fallback: unknown,
+): unknown {
+  if (
+    !parameters ||
+    typeof parameters !== 'object' ||
+    Array.isArray(parameters) ||
+    !hasPlannedStoryline(fallback)
+  ) {
+    return parameters;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if (hasPlannedStoryline((parameters as any).storyline_guidance)) {
+    return parameters;
+  }
+  return {...(parameters as object), storyline_guidance: fallback};
+}

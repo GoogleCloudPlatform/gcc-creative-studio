@@ -138,6 +138,30 @@ export class StoryboardComponent {
     }));
   });
 
+  /** Briefs longer than this are clamped behind a "Show more" toggle. */
+  static readonly BRIEF_COLLAPSE_THRESHOLD = 280;
+  /** True while a long brief is expanded; resets when the brief changes. */
+  briefExpanded = signal(false);
+  private lastBrief: string | undefined;
+  isLongBrief = computed(
+    () =>
+      (this.campaignDetails()?.brief?.length ?? 0) >
+      StoryboardComponent.BRIEF_COLLAPSE_THRESHOLD,
+  );
+  /**
+   * Shown under "Planned beats" when a template other than "Custom" drives the
+   * campaign: the agent keeps the user's beats for reference only.
+   */
+  plannedBeatsHint = computed(() => {
+    const template = this.campaignDetails()?.templateName?.trim();
+    if (!template || template.toLowerCase() === 'custom') return '';
+    return `From your brief. The “${template}” template drives the final scene structure.`;
+  });
+
+  toggleBrief(): void {
+    this.briefExpanded.update(v => !v);
+  }
+
   // Dynamic Data
   scenes = signal<Scene[]>([]);
   isGeneratingStoryboard = computed(() =>
@@ -192,6 +216,21 @@ export class StoryboardComponent {
     effect(
       () => {
         this.showSeeVideoBtn.set(this.agentChatService.finalVideoReady());
+      },
+      {allowSignalWrites: true},
+    );
+
+    // A different brief (session switch / re-extracted) starts collapsed.
+    // Compare the text: `campaignDetails` is re-emitted on every streamed
+    // state delta and must not collapse a brief the user is reading.
+    effect(
+      () => {
+        const brief = this.campaignDetails()?.brief;
+        untracked(() => {
+          if (brief === this.lastBrief) return;
+          this.lastBrief = brief;
+          this.briefExpanded.set(false);
+        });
       },
       {allowSignalWrites: true},
     );

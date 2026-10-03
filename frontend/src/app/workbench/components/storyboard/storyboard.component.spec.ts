@@ -186,4 +186,86 @@ describe('StoryboardComponent – Campaign tab reveal', () => {
       expect(component.showSeeVideoBtn()).toBeFalse();
     });
   });
+
+  describe('collapsible brief', () => {
+    const longBrief = '1. Basic Information\n'.padEnd(
+      StoryboardComponent.BRIEF_COLLAPSE_THRESHOLD + 50,
+      'x',
+    );
+
+    it('does not clamp short briefs', () => {
+      campaignDetails.set(brief({brief: 'Short brief.'}));
+      fixture.detectChanges();
+      expect(component.isLongBrief()).toBeFalse();
+      const el: HTMLElement = fixture.nativeElement;
+      expect(el.querySelector('.sb-campaign-brief-toggle')).toBeNull();
+      expect(
+        el.querySelector('.sb-campaign-brief-text')?.classList,
+      ).not.toContain('is-clamped');
+    });
+
+    it('clamps long briefs and toggles with Show more / Show less', () => {
+      campaignDetails.set(brief({brief: longBrief}));
+      fixture.detectChanges();
+      const el: HTMLElement = fixture.nativeElement;
+      const text = () => el.querySelector('.sb-campaign-brief-text')!;
+      const toggle = () =>
+        el.querySelector<HTMLButtonElement>('.sb-campaign-brief-toggle')!;
+
+      expect(component.isLongBrief()).toBeTrue();
+      expect(text().classList).toContain('is-clamped');
+      expect(toggle().textContent).toContain('Show more');
+      expect(toggle().getAttribute('aria-expanded')).toBe('false');
+
+      toggle().click();
+      fixture.detectChanges();
+      expect(component.briefExpanded()).toBeTrue();
+      expect(text().classList).not.toContain('is-clamped');
+      expect(toggle().textContent).toContain('Show less');
+      expect(toggle().getAttribute('aria-expanded')).toBe('true');
+    });
+
+    it('stays expanded across state deltas with the same brief, collapses on a new one', () => {
+      campaignDetails.set(brief({brief: longBrief}));
+      fixture.detectChanges();
+      component.toggleBrief();
+      fixture.detectChanges();
+      expect(component.briefExpanded()).toBeTrue();
+
+      // Same text, new object (streamed strategy delta)
+      campaignDetails.set(brief({brief: longBrief, stage: 'strategy'}));
+      fixture.detectChanges();
+      expect(component.briefExpanded()).toBeTrue();
+
+      campaignDetails.set(brief({brief: longBrief + ' revised'}));
+      fixture.detectChanges();
+      expect(component.briefExpanded()).toBeFalse();
+    });
+  });
+
+  describe('planned beats hint', () => {
+    it('is empty for custom or unnamed templates', () => {
+      campaignDetails.set(brief());
+      expect(component.plannedBeatsHint()).toBe('');
+      campaignDetails.set(brief({templateName: 'Custom'}));
+      expect(component.plannedBeatsHint()).toBe('');
+      campaignDetails.set(brief({templateName: ' custom '}));
+      expect(component.plannedBeatsHint()).toBe('');
+    });
+
+    it('names the template that drives the structure and renders under the beats', () => {
+      campaignDetails.set(
+        brief({
+          templateName: 'Feature Spotlight',
+          plannedBeats: [{visualAction: 'Light crosses the bottle.'}],
+        }),
+      );
+      fixture.detectChanges();
+      expect(component.plannedBeatsHint()).toContain('“Feature Spotlight”');
+      const hint: HTMLElement | null = fixture.nativeElement.querySelector(
+        '.sb-campaign-section-hint',
+      );
+      expect(hint?.textContent).toContain('Feature Spotlight');
+    });
+  });
 });
