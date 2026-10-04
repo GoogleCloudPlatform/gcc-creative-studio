@@ -20,19 +20,12 @@
   </div>
 
 <div *ngIf="mediaItem" class="lg:container lg:mx-auto py-8 px-4">
-  <div class="flex justify-end gap-4 items-center mb-8">
-    <button [routerLink]="['/gallery']"
-      class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded inline-flex items-center">
-      &larr; Go to Gallery
+  <div *ngIf="isAdmin" class="flex justify-end gap-4 items-center mb-8">
+    <button (click)="createTemplateFromMediaItem()" matTooltip="Create Template from Media"
+      class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded inline-flex items-center">
+      <mat-icon>auto_stories</mat-icon>
+      <span class="ml-2">Create Template</span>
     </button>
-
-    <div class="flex items-center gap-4">
-      <button *ngIf="isAdmin" (click)="createTemplateFromMediaItem()" matTooltip="Create Template from Media"
-        class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded inline-flex items-center">
-        <mat-icon>auto_stories</mat-icon>
-        <span class="ml-2">Create Template</span>
-        </button>
-        </div>
   </div>
 
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -49,6 +42,7 @@
         (editWithOmniClicked)="handleEditWithOmni($event)"
         (deleteClicked)="deleteCurrentMedia()"
         (tagsChanged)="onTagsChanged($event)"
+        (moved)="onMediaMoved($event)"
         [showMoveButton]="true"
         style="max-height: 80vh"
       ></app-media-lightbox>
@@ -56,6 +50,28 @@
 
     <!-- Right Column: The Metadata -->
     <div class="lg:col-span-1 text-white">
+      <!-- Location trail: where this file lives in the gallery. Lives in the
+           details column (not the page header) so it never sits under the
+           fixed workspace switcher / navigation column on laptop widths. -->
+      <nav class="media-location mb-3" aria-label="Media location">
+        <button type="button" class="media-location__crumb" [class.is-current]="locationCrumbs.length === 0"
+          (click)="navigateToFolder(null)" matTooltip="All Media">
+          <mat-icon class="media-location__icon">home</mat-icon>
+          <span>All Media</span>
+        </button>
+
+        <ng-container *ngFor="let crumb of locationCrumbs; trackBy: trackCrumb; let last = last">
+          <mat-icon class="media-location__sep" aria-hidden="true">chevron_right</mat-icon>
+          <button *ngIf="crumb.id !== null; else collapsedCrumb" type="button" class="media-location__crumb"
+            [class.is-current]="last" (click)="navigateToFolder(crumb)" [matTooltip]="crumb.name">
+            <span class="truncate">{{ crumb.name }}</span>
+          </button>
+          <ng-template #collapsedCrumb>
+            <span class="media-location__ellipsis" [matTooltip]="crumb.tooltip || ''">…</span>
+          </ng-template>
+        </ng-container>
+      </nav>
+
       <h2 class="text-3xl font-bold mb-4 break-words">{{ currentTitle }}</h2>
       <p *ngIf="currentDescription" class="text-gray-400 text-sm mb-6 break-words whitespace-pre-line">{{ currentDescription }}</p>
 

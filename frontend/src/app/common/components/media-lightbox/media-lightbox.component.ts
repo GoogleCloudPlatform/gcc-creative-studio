@@ -100,6 +100,8 @@ export class MediaLightboxComponent
   @Output() deleteClicked = new EventEmitter<number>();
   @Output() tagsChanged = new EventEmitter<any>();
   @Output() slideChanged = new EventEmitter<number>();
+  /** Emits the destination folder id (null = All Media) after a successful move. */
+  @Output() moved = new EventEmitter<number | null>();
 
   selectedIndex = 0;
   selectedUrl: string | undefined;
@@ -295,6 +297,7 @@ export class MediaLightboxComponent
             {duration: 3000},
           );
           this.mediaItem!.folderId = destinationFolderId;
+          this.moved.emit(destinationFolderId);
         },
         error: err => {
           console.error('Error moving items via drag and drop:', err);
