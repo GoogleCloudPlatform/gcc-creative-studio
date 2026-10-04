@@ -217,6 +217,79 @@ describe('HeaderComponent', () => {
       tick(200);
       expect(component.toolsMenuHovered).toBeTrue();
     }));
+
+    // Regression: a single exit used to emit two `mouseleave`s (wrapper +
+    // flyout). The first close timer was orphaned when the second overwrote
+    // the handle, so it fired after the user re-entered and closed the menu
+    // under the pointer.
+    it('should not let an orphaned close timer fire after re-entering (generation)', fakeAsync(() => {
+      component.onGenEnter();
+      component.onGenLeave();
+      component.onGenLeave(); // second leave for the same exit
+      component.onGenEnter(); // user comes back within the grace period
+      tick(500);
+      expect(component.generationMenuHovered).toBeTrue();
+    }));
+
+    it('should not let an orphaned close timer fire after re-entering (tools)', fakeAsync(() => {
+      component.onToolsEnter();
+      component.onToolsLeave();
+      component.onToolsLeave();
+      component.onToolsEnter();
+      tick(500);
+      expect(component.toolsMenuHovered).toBeTrue();
+    }));
+
+    it('should survive rapid enter/leave jitter and settle on the last event', fakeAsync(() => {
+      for (let i = 0; i < 5; i++) {
+        component.onGenEnter();
+        component.onGenLeave();
+        component.onToolsEnter();
+        component.onToolsLeave();
+      }
+      component.onGenEnter();
+      component.onToolsEnter();
+      tick(500);
+      expect(component.generationMenuHovered).toBeTrue();
+      expect(component.toolsMenuHovered).toBeTrue();
+
+      component.onGenLeave();
+      component.onToolsLeave();
+      tick(500);
+      expect(component.generationMenuHovered).toBeFalse();
+      expect(component.toolsMenuHovered).toBeFalse();
+    }));
+
+    it('should cancel pending close timers on destroy', fakeAsync(() => {
+      component.onGenEnter();
+      component.onToolsEnter();
+      component.onGenLeave();
+      component.onToolsLeave();
+      component.ngOnDestroy();
+      tick(500); // would throw / flip the flags if the timers were still queued
+      expect(component.generationMenuHovered).toBeTrue();
+      expect(component.toolsMenuHovered).toBeTrue();
+    }));
+
+    it('should let the wrapper own hover: mouseleave on the open flyout must not close it', fakeAsync(() => {
+      component.isDesktop = false; // render .menu-items without hovering
+      component.onGenEnter();
+      component.onToolsEnter();
+      fixture.detectChanges();
+
+      const host: HTMLElement = fixture.nativeElement;
+      const flyouts = host.querySelectorAll(
+        '.menu-items .absolute.left-\\[70px\\]',
+      );
+      expect(flyouts.length).toBe(2);
+
+      flyouts.forEach(panel =>
+        panel.dispatchEvent(new MouseEvent('mouseleave', {bubbles: false})),
+      );
+      tick(500);
+      expect(component.generationMenuHovered).toBeTrue();
+      expect(component.toolsMenuHovered).toBeTrue();
+    }));
   });
 
   describe('desktop menu geometry (expanded)', () => {

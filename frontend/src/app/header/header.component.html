@@ -72,10 +72,11 @@
         </div>
       </div>
 
+      <!-- Hover is owned by the wrapper above: this panel is its DOM descendant,
+           so the wrapper's mouseenter/mouseleave already cover it. Do not add
+           listeners here — a second mouseleave per exit orphans the close timer. -->
       <div
         *ngIf="generationMenuHovered"
-        (mouseenter)="onGenEnter()"
-        (mouseleave)="onGenLeave()"
         class="absolute left-[70px] top-0 p-3 flex flex-col gap-3 bg-gradient-to-b from-zinc-500/50 to-neutral-700/20 rounded-[24px] shadow-[2px_2px_12px_0px_rgba(0,0,0,0.10)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-[10px] z-[1001] min-w-[220px]"
         [@fadeSlideInOut]
       >
@@ -194,10 +195,9 @@
         </div>
       </div>
 
+      <!-- Hover is owned by the wrapper above (see the Media flyout note). -->
       <div
         *ngIf="toolsMenuHovered"
-        (mouseenter)="onToolsEnter()"
-        (mouseleave)="onToolsLeave()"
         class="absolute left-[70px] top-0 p-3 flex flex-col gap-3 bg-gradient-to-b from-zinc-500/50 to-neutral-700/20 rounded-[24px] shadow-[2px_2px_12px_0px_rgba(0,0,0,0.10)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-[10px] z-[1001] min-w-[220px]"
         [@fadeSlideInOut]
       >
