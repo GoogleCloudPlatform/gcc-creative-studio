@@ -49,7 +49,7 @@
 
     <!-- 1st: Media Generation Dropdown (Image, Video, Audio) -->
     <div
-      class="relative md:mb-[10px]"
+      class="relative flex"
       (mouseenter)="onGenEnter()"
       (mouseleave)="onGenLeave()"
     >
@@ -130,7 +130,7 @@
       routerLink="/workbench"
       matTooltip="Workbench"
       matTooltipPosition="right"
-      class="md:mb-[10px] cursor-pointer md:w-14 md:h-14 w-10 h-10 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-1.5 md:gap-2.5 overflow-hidden"
+      class="cursor-pointer md:w-14 md:h-14 w-10 h-10 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-1.5 md:gap-2.5 overflow-hidden"
     >
       <div
         *ngIf="router.isActive('/workbench', true)"
@@ -152,7 +152,7 @@
       routerLink="/workflows"
       matTooltip="Workflows"
       matTooltipPosition="right"
-      class="md:mb-[10px] cursor-pointer md:w-14 md:h-14 w-10 h-10 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-1.5 md:gap-2.5 overflow-hidden"
+      class="cursor-pointer md:w-14 md:h-14 w-10 h-10 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-1.5 md:gap-2.5 overflow-hidden"
     >
       <div
         *ngIf="router.isActive('/workflows', false)"
@@ -171,7 +171,7 @@
 
     <!-- 4th: Tools Dropdown (Virtual Try-On, Fun Templates) -->
     <div
-      class="relative md:mb-[10px]"
+      class="relative flex"
       (mouseenter)="onToolsEnter()"
       (mouseleave)="onToolsLeave()"
     >
@@ -240,7 +240,7 @@
       routerLink="/gallery"
       matTooltip="Media Gallery"
       matTooltipPosition="right"
-      class="md:mb-[10px] cursor-pointer md:w-14 md:h-14 w-10 h-10 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-1.5 md:gap-2.5 overflow-hidden"
+      class="cursor-pointer md:w-14 md:h-14 w-10 h-10 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-1.5 md:gap-2.5 overflow-hidden"
     >
       <div
         *ngIf="isGalleryActive"
@@ -263,7 +263,7 @@
       *ngIf="authService.isUserAdmin()"
       matTooltip="Admin"
       matTooltipPosition="right"
-      class="md:mb-[10px] cursor-pointer md:w-14 md:h-14 w-10 h-10 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-1.5 md:gap-2.5 overflow-hidden"
+      class="cursor-pointer md:w-14 md:h-14 w-10 h-10 bg-blend-soft-light bg-white/40 rounded-[48px] shadow-[0px_4px_4px_0px_rgba(0,0,0,0.25)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-2xl inline-flex justify-start items-start gap-1.5 md:gap-2.5 overflow-hidden"
     >
       <div
         *ngIf="router.isActive('/admin', false)"

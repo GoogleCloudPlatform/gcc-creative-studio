@@ -24,6 +24,7 @@ import {Event, NavigationEnd, NavigationStart, Router} from '@angular/router';
 import {NO_ERRORS_SCHEMA} from '@angular/core';
 import {of, Subject} from 'rxjs';
 import {BreakpointObserver} from '@angular/cdk/layout';
+import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {HeaderComponent} from './header.component';
 import {UserService} from '../common/services/user.service';
 import {AuthService} from '../common/services/auth.service';
@@ -46,10 +47,14 @@ describe('HeaderComponent', () => {
       },
     );
     routerSpy.isActive.and.returnValue(false);
-    authServiceSpy = jasmine.createSpyObj('AuthService', ['logout']);
+    authServiceSpy = jasmine.createSpyObj('AuthService', [
+      'logout',
+      'isUserAdmin',
+    ]);
 
     await TestBed.configureTestingModule({
       declarations: [HeaderComponent],
+      imports: [NoopAnimationsModule],
       schemas: [NO_ERRORS_SCHEMA],
       providers: [
         {provide: Router, useValue: routerSpy},
@@ -212,5 +217,52 @@ describe('HeaderComponent', () => {
       tick(200);
       expect(component.toolsMenuHovered).toBeTrue();
     }));
+  });
+
+  describe('desktop menu geometry (expanded)', () => {
+    // Matches the `@media (min-width: 768px)` block in header.component.scss.
+    const DESKTOP_MIN_WIDTH = 768;
+    const rect = (el: Element) => el.getBoundingClientRect();
+
+    it('insets the avatar and the last tab equally and spaces every pill evenly', () => {
+      if (window.innerWidth < DESKTOP_MIN_WIDTH) {
+        pending(
+          `viewport is ${window.innerWidth}px (< ${DESKTOP_MIN_WIDTH}px); desktop column layout not active`,
+        );
+        return;
+      }
+
+      component.menuFixed = true; // keep the tab list open without hovering
+      fixture.detectChanges();
+
+      const host: HTMLElement = fixture.nativeElement;
+      const menu = host.querySelector('.mat-menu-floating')!;
+      const avatar = host.querySelector('.user-profile-button')!;
+      const tabs = Array.from(host.querySelectorAll('.menu-items > div'));
+      expect(tabs.length).toBeGreaterThan(1);
+
+      const box = rect(menu);
+      const pills = [avatar, ...tabs].map(rect);
+      const first = pills[0];
+      const last = pills[pills.length - 1];
+
+      // Avatar (first) and Logout (last) sit the same distance from the
+      // menu's top and bottom edges; the avatar is centred horizontally too.
+      expect(first.top - box.top).toBeCloseTo(box.bottom - last.bottom, 0);
+      expect(first.left - box.left).toBeCloseTo(box.right - first.right, 0);
+
+      // Every pill is the same size as the avatar (dropdown wrappers must not
+      // add inline-box descender height).
+      for (const p of pills) {
+        expect(p.width).toBeCloseTo(first.width, 0);
+        expect(p.height).toBeCloseTo(first.height, 0);
+      }
+
+      // Uniform vertical rhythm: avatar→tab and tab→tab gaps are identical.
+      const gaps = pills.slice(1).map((p, i) => p.top - pills[i].bottom);
+      for (const g of gaps) {
+        expect(g).toBeCloseTo(gaps[0], 0);
+      }
+    });
   });
 });
