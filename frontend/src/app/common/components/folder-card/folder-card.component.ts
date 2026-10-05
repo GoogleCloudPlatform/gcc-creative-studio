@@ -36,6 +36,12 @@ export class FolderCardComponent {
   @Input() folder!: Folder;
   @Input() isSelectorMode = false;
   @Input() isSelected = false;
+  /**
+   * Whether the current user may rename, move or delete this folder.
+   * Mirrors the backend policy (admin / private-workspace owner / creator);
+   * the backend remains the source of truth and answers 403 otherwise.
+   */
+  @Input() canManage = true;
 
   @Output() folderClicked = new EventEmitter<Folder>();
   @Output() editRequested = new EventEmitter<Folder>();
@@ -68,7 +74,7 @@ export class FolderCardComponent {
   }
 
   onDragStart(event: DragEvent): void {
-    if (this.isSelectorMode) {
+    if (this.isSelectorMode || !this.canManage) {
       event.preventDefault();
       return;
     }

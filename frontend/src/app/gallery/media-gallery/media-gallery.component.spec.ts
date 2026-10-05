@@ -37,8 +37,25 @@ import {MediaUploadService} from '../../common/services/media-upload/media-uploa
 import {GoogleDriveService} from '../../common/services/google-drive/google-drive.service';
 import {FolderService} from '../../common/services/folder.service';
 import {Folder} from '../../common/models/folder.model';
+import {WorkspaceService} from '../../services/workspace/workspace.service';
+import {Workspace, WorkspaceScope} from '../../common/models/workspace.model';
 import {FolderConflictDialogComponent} from '../../common/components/folder-conflict-dialog/folder-conflict-dialog.component';
 import {MatSnackBar} from '@angular/material/snack-bar';
+
+const mockWorkspaces: Workspace[] = [
+  {
+    id: 1,
+    name: 'Public',
+    ownerId: '1',
+    scope: WorkspaceScope.PUBLIC,
+  } as Workspace,
+  {
+    id: 2,
+    name: 'Private',
+    ownerId: '7',
+    scope: WorkspaceScope.PRIVATE,
+  } as Workspace,
+];
 
 describe('MediaGalleryComponent', () => {
   let component: MediaGalleryComponent;
@@ -90,6 +107,12 @@ describe('MediaGalleryComponent', () => {
       schemas: [NO_ERRORS_SCHEMA],
       providers: [
         MediaUploadService,
+        {
+          provide: WorkspaceService,
+          useValue: {
+            getWorkspaces: () => of(mockWorkspaces),
+          },
+        },
         {
           provide: FolderService,
           useValue: folderServiceSpy,
@@ -1176,6 +1199,75 @@ describe('MediaGalleryComponent', () => {
 
       expect(component.currentFolderId).toBe(42);
       expect(routerSpy.navigate).not.toHaveBeenCalledWith(['/gallery']);
+    });
+  });
+
+  describe('canManageFolder', () => {
+    const folderOwnedBy = (userId: number, workspaceId = 1): Folder =>
+      ({
+        id: 100,
+        workspaceId,
+        userId,
+        userEmail: 'owner@example.com',
+        name: 'F',
+      }) as Folder;
+
+    beforeEach(() => {
+      // beforeEach above already ran ngOnInit → workspaces loaded from stub.
+      component.isAdmin = false;
+      component.userId = 5;
+    });
+
+    it('allows admins on any folder', () => {
+      component.isAdmin = true;
+      expect(component.canManageFolder(folderOwnedBy(99))).toBeTrue();
+    });
+
+    it('allows the creator of the folder', () => {
+      expect(component.canManageFolder(folderOwnedBy(5))).toBeTrue();
+    });
+
+    it('denies other users on a public workspace', () => {
+      expect(component.canManageFolder(folderOwnedBy(99, 1))).toBeFalse();
+    });
+
+    it('allows the owner of a private workspace on any folder in it', () => {
+      component.userId = 7;
+      expect(component.canManageFolder(folderOwnedBy(99, 2))).toBeTrue();
+    });
+
+    it('denies a non-owner member on a private workspace', () => {
+      expect(component.canManageFolder(folderOwnedBy(99, 2))).toBeFalse();
+    });
+
+    it('denies the public workspace owner on folders they did not create', () => {
+      component.userId = 1; // owner of public workspace 1
+      expect(component.canManageFolder(folderOwnedBy(99, 1))).toBeFalse();
+    });
+
+    it('denies when the current user id is unknown', () => {
+      component.userId = undefined;
+      expect(component.canManageFolder(folderOwnedBy(5))).toBeFalse();
+    });
+
+    it('surfaces the backend detail when deleting a folder is forbidden', () => {
+      const snackBar = TestBed.inject(MatSnackBar);
+      const dialogRef = {afterClosed: () => of(true)};
+      spyOn(component.dialog, 'open').and.returnValue(dialogRef as any);
+      folderService.deleteFolder.and.returnValue(
+        throwError(() => ({
+          status: 403,
+          error: {detail: 'This folder contains items owned by other users.'},
+        })),
+      );
+
+      component.openDeleteFolderDialog(folderOwnedBy(5));
+
+      expect(snackBar.open).toHaveBeenCalledWith(
+        'This folder contains items owned by other users.',
+        'Close',
+        jasmine.objectContaining({duration: 4000}),
+      );
     });
   });
 });

@@ -73,6 +73,7 @@
             [filterByType]="data.mimeType"
             [maxSelection]="data.maxSelection ?? null"
             [includeExternal]="data.includeExternal ?? false"
+            [firstIndexOnly]="data.firstIndexOnly ?? false"
             (mediaItemSelected)="onMediaItemSelected($event)"
             (mediaSelected)="onMediaSelected($event)"
           ></app-media-gallery>
@@ -88,6 +89,7 @@
             [maxSelection]="data.maxSelection ?? null"
             [itemType]="'source_asset'"
             [includeExternal]="data.includeExternal ?? false"
+            [firstIndexOnly]="data.firstIndexOnly ?? false"
             (mediaItemSelected)="onMediaItemSelected($event)"
             (mediaSelected)="onMediaSelected($event)"
           ></app-media-gallery>

@@ -681,7 +681,6 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         this.isLoading = true;
         this.workflowService.executeWorkflow(workflowId, result).subscribe({
           next: res => {
-            console.log('Workflow execution started', res);
             this.currentExecutionId = res.execution_id;
             this.currentExecutionState = 'ACTIVE';
             this.isLoading = false;
@@ -752,7 +751,6 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   }
 
   private handleExecutionUpdate(details: any): void {
-    console.log('Execution details:', details);
     this.currentExecutionState = details.state;
     this.executionStepEntries = details.step_entries || [];
     this.updateStepStatuses(details);

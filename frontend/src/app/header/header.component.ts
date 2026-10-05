@@ -56,8 +56,10 @@ export class HeaderComponent implements OnDestroy {
   private readonly destroy$ = new Subject<void>();
   toolsMenuHovered = false;
   generationMenuHovered = false;
-  private menuTimeout: any;
-  private genMenuTimeout: any;
+  /** Grace period before a flyout closes, so the pointer can cross to it. */
+  private static readonly MENU_CLOSE_DELAY_MS = 200;
+  private menuTimeout: ReturnType<typeof setTimeout> | null = null;
+  private genMenuTimeout: ReturnType<typeof setTimeout> | null = null;
   isBrowser: boolean;
   isGalleryActive = false;
 
@@ -99,6 +101,8 @@ export class HeaderComponent implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.clearGenMenuTimeout();
+    this.clearToolsMenuTimeout();
     this.destroy$.next();
     this.destroy$.complete();
   }
@@ -123,33 +127,49 @@ export class HeaderComponent implements OnDestroy {
   }
 
   onGenEnter() {
-    if (this.genMenuTimeout) {
-      clearTimeout(this.genMenuTimeout);
-    }
+    // Entering cancels any pending close so the flyout stays open.
+    this.clearGenMenuTimeout();
     this.generationMenuHovered = true;
   }
 
   onGenLeave() {
+    // Always drop a pending close *before* scheduling a new one. A single exit
+    // can emit more than one `mouseleave`; an orphaned timer would otherwise
+    // fire after the user re-entered and close the flyout under the pointer.
+    this.clearGenMenuTimeout();
     this.genMenuTimeout = setTimeout(() => {
+      this.genMenuTimeout = null;
       this.generationMenuHovered = false;
-    }, 200);
+    }, HeaderComponent.MENU_CLOSE_DELAY_MS);
   }
 
   onToolsEnter() {
-    // If we enter the area, cancel any pending close action
-    if (this.menuTimeout) {
-      clearTimeout(this.menuTimeout);
-    }
+    // Entering cancels any pending close so the flyout stays open.
+    this.clearToolsMenuTimeout();
     this.toolsMenuHovered = true;
   }
 
   onToolsLeave() {
-    // When leaving, wait 200ms before actually closing.
-    // If the user enters the menu during this time, onToolsEnter()
-    // will cancel this timer, keeping the menu open.
+    // See onGenLeave(): cancel first, then wait before actually closing.
+    this.clearToolsMenuTimeout();
     this.menuTimeout = setTimeout(() => {
+      this.menuTimeout = null;
       this.toolsMenuHovered = false;
-    }, 200);
+    }, HeaderComponent.MENU_CLOSE_DELAY_MS);
+  }
+
+  private clearGenMenuTimeout(): void {
+    if (this.genMenuTimeout !== null) {
+      clearTimeout(this.genMenuTimeout);
+      this.genMenuTimeout = null;
+    }
+  }
+
+  private clearToolsMenuTimeout(): void {
+    if (this.menuTimeout !== null) {
+      clearTimeout(this.menuTimeout);
+      this.menuTimeout = null;
+    }
   }
 
   private checkIsGalleryActive(): boolean {

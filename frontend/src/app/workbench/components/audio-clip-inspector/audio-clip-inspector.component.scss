@@ -1,0 +1,111 @@
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+$accent: rgba(30, 220, 136, 1); // matches the audio clip waveform gradient
+$accent-soft: rgba(30, 220, 136, 0.18);
+$text-dim: rgba(255, 255, 255, 0.55);
+
+:host {
+  display: block;
+}
+
+.audio-inspector {
+  border: 1px solid rgba(30, 220, 136, 0.25);
+  animation: inspector-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.label {
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: $text-dim;
+}
+
+.readout {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.8rem;
+
+  .percent {
+    font-weight: 600;
+  }
+
+  .db {
+    font-size: 0.65rem;
+    color: $text-dim;
+    margin-top: 2px;
+  }
+
+  .boost-flag {
+    color: #fbbf24;
+    margin-left: 2px;
+  }
+}
+
+.mute-toggle {
+  color: $accent;
+  background: $accent-soft;
+
+  &:hover:not(:disabled) {
+    background: rgba(30, 220, 136, 0.3);
+  }
+
+  &.is-muted {
+    color: #f87171;
+    background: rgba(248, 113, 113, 0.15);
+  }
+}
+
+.preset-chip {
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid transparent;
+
+  &:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  &.is-active {
+    color: $accent;
+    border-color: rgba(30, 220, 136, 0.5);
+    background: $accent-soft;
+  }
+}
+
+.divider {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.close-btn {
+  color: $text-dim;
+
+  &:hover {
+    color: white;
+    background: rgba(255, 255, 255, 0.1);
+  }
+}
+
+@keyframes inspector-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

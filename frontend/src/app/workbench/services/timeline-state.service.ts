@@ -39,6 +39,8 @@ export class TimelineStateService {
   transitionIn = signal<Transition | null>(null);
   transitionOut = signal<Transition | null>(null);
   loadedTimelineId = signal<number | string | undefined>(undefined);
+  /** True while the Workbench is fetching the timeline for `loadedTimelineId`. */
+  isLoadingTimeline = signal<boolean>(false);
 
   // Computed Values
   totalDuration = computed(() => {

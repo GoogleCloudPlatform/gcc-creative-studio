@@ -856,9 +856,6 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
       .startImagenGeneration(payload)
       .pipe(finalize(() => (this.isLoading = false)))
       .subscribe({
-        next: (initialResponse: MediaItem) => {
-          console.log('Image generation job started:', initialResponse);
-        },
         error: error => {
           this.isImageGenerating = false;
           handleErrorSnackbar(this._snackBar, error, 'Search');

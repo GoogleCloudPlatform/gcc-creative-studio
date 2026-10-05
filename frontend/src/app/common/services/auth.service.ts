@@ -261,7 +261,6 @@ export class AuthService {
         tap((userDetails: UserModel) => {
           // The backend is the source of truth. Save the returned profile to local storage.
           localStorage.setItem(USER_DETAILS, JSON.stringify(userDetails));
-          console.log('User profile successfully synced with backend.');
         }),
         catchError((error: HttpErrorResponse) => {
           console.error('Failed to sync user with backend', error);

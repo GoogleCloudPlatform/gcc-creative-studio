@@ -53,10 +53,42 @@ class ProjectService:
                     scene.first_frame_generated_url = presigned_url
 
     async def create_storyboard(
-        self, storyboard_create: StoryboardCreate, user_id: int
+        self,
+        storyboard_create: StoryboardCreate,
+        user_id: int,
+        reuse_session_record: bool = False,
     ) -> StoryboardCreateResponse:
+        """Creates a storyboard record.
+
+        With ``reuse_session_record`` (the agent's create path) a session that
+        already owns a storyboard gets that record back, with the scalar
+        fields refreshed, instead of a second one: Izumi re-creates its
+        storyboard on every pipeline restart and would otherwise leave the
+        Workbench pointing at a stale record.
+        """
         data = storyboard_create.model_dump()
         data["user_id"] = user_id
+        session_id = storyboard_create.session_id
+        if reuse_session_record and session_id:
+            existing = await self.storyboard_repo.find_latest_by_session(
+                storyboard_create.workspace_id, session_id, user_id
+            )
+            if existing:
+                scalar_updates = {
+                    key: data[key]
+                    for key in (
+                        "template_name",
+                        "bg_music_description",
+                        "bg_music_asset_id",
+                    )
+                    if data.get(key) is not None
+                }
+                if scalar_updates:
+                    await self.storyboard_repo.update(
+                        existing.id, scalar_updates
+                    )
+                    existing = existing.model_copy(update=scalar_updates)
+                return existing
         return await self.storyboard_repo.create(data)
 
     async def get_storyboard(
@@ -113,7 +145,7 @@ class ProjectService:
             scenes_dto = None
             if scenes_data is not None:
                 scenes_dto = []
-                for scene_data in scenes_data:
+                for idx, scene_data in enumerate(scenes_data):
                     first_frame_media_item_id = scene_data.get(
                         "first_frame_prompt", {}
                     ).get("media_item_id", None) or scene_data.get(
@@ -138,8 +170,15 @@ class ProjectService:
                         "asset_id"
                     )
 
+                    raw_scene_id = scene_data.get("scene_id")
                     scenes_dto.append(
                         SceneDTO(
+                            scene_id=(
+                                str(raw_scene_id)
+                                if raw_scene_id not in (None, "")
+                                else None
+                            ),
+                            order=idx,
                             topic=scene_data.get("topic"),
                             duration_seconds=scene_data.get("duration_seconds"),
                             first_frame_description=scene_data.get(
@@ -197,9 +236,45 @@ class ProjectService:
                     scenes=scenes_dto,
                 )
             )
+            if updated_storyboard:
+                await self._enrich_storyboard(updated_storyboard)
             return updated_storyboard
 
-        return await self.storyboard_repo.get_by_id_with_details(storyboard_id)
+        refreshed = await self.storyboard_repo.get_by_id_with_details(
+            storyboard_id
+        )
+        if refreshed:
+            await self._enrich_storyboard(refreshed)
+        return refreshed
+
+    async def assign_scene_ids(
+        self,
+        storyboard_id: int,
+        scenes: list[SceneDTO],
+        scene_ids: list[str],
+    ) -> dict[int, str]:
+        """Stamps the agent's stable identities onto freshly saved scene rows.
+
+        ``scene_ids`` is what the session sync resolved, one per scene in
+        display order. Rows that already carry their id are left alone; the
+        others are written and the DTOs patched in place, so the response
+        the Workbench adopts carries them and the next edit matches by
+        identity. Returns ``{row_id: scene_id}`` of what was written.
+        """
+        if len(scene_ids) != len(scenes):
+            return {}
+        assignments: dict[int, str] = {}
+        for scene, scene_id in zip(scenes, scene_ids):
+            if scene.id is None or not scene_id or scene.scene_id == scene_id:
+                continue
+            assignments[scene.id] = scene_id
+        if not assignments:
+            return {}
+        await self.storyboard_repo.set_scene_ids(storyboard_id, assignments)
+        for scene in scenes:
+            if scene.id in assignments:
+                scene.scene_id = assignments[scene.id]
+        return assignments
 
     async def delete_storyboard(self, storyboard_id: int):
         await self.storyboard_repo.delete(storyboard_id)

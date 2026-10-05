@@ -34,9 +34,13 @@
   </div>
   -->
 
-  <!-- Session Selector -->
+  <!-- Session Selector (locked while a session switch is still loading) -->
   <div
-    class="mb-4 flex items-center gap-2 relative z-10"
+    class="mb-4 flex items-center gap-2 relative z-10 transition-opacity"
+    [class.pointer-events-none]="isSessionLocked()"
+    [class.opacity-60]="isSessionLocked()"
+    [attr.aria-busy]="isSessionLocked()"
+    [title]="isSessionLocked() ? 'Loading conversation…' : ''"
     *ngIf="sessions().length > 0"
   >
     <studio-dropdown
@@ -50,6 +54,7 @@
     <button
       mat-icon-button
       (click)="deleteChat()"
+      [disabled]="isSessionLocked()"
       class="text-red-500 hover:text-red-700"
       title="Delete Chat"
     >
@@ -78,7 +83,7 @@
           <mat-icon class="!text-[18px] !w-[18px] !h-[18px]"
             >error_outline</mat-icon
           >
-          <span>Agent Execution Failed</span>
+          <span>{{ errorCardTitle(msg) }}</span>
           <span
             *ngIf="msg.errorCode"
             class="ml-auto px-2 py-0.5 rounded text-[10px] bg-red-500/20 text-red-300 font-mono font-bold"
@@ -87,18 +92,26 @@
           </span>
         </div>
         <p class="text-xs text-neutral-200 leading-relaxed">{{ msg.text }}</p>
-        <div class="flex justify-end pt-1">
-          <button
-            type="button"
-            (click)="retryLastAction()"
-            [disabled]="isBusy()"
-            class="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-900/60 hover:bg-red-800/80 text-red-200 text-xs font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+        <div class="flex justify-end pt-1" *ngIf="isRetryableError(msg)">
+          <span
+            [matTooltip]="
+              canRetry()
+                ? ''
+                : 'Nothing to retry in this session yet. Type a new message below to continue.'
+            "
           >
-            <mat-icon class="!text-[14px] !w-[14px] !h-[14px]"
-              >refresh</mat-icon
+            <button
+              type="button"
+              (click)="retryLastAction()"
+              [disabled]="!canRetry()"
+              class="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-900/60 hover:bg-red-800/80 text-red-200 text-xs font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-            <span>Retry</span>
-          </button>
+              <mat-icon class="!text-[14px] !w-[14px] !h-[14px]"
+                >refresh</mat-icon
+              >
+              <span>Retry</span>
+            </button>
+          </span>
         </div>
       </div>
 
@@ -109,11 +122,35 @@
           *ngIf="msg.sender === 'user' && msg.images?.length > 0"
           class="flex gap-2 mb-2 flex-wrap"
         >
-          <img
-            *ngFor="let img of msg.images"
-            [src]="getAssetUrl(img)"
-            class="w-20 h-20 object-cover rounded-md border border-gray-600 shadow"
-          />
+          <ng-container *ngFor="let img of msg.images">
+            <img
+              *ngIf="getAssetUrl(img) as src; else chatImagePlaceholder"
+              [src]="src"
+              class="w-20 h-20 object-cover rounded-md border border-gray-600 shadow"
+            />
+            <!-- Shown while the presigned URL is being resolved, or for good
+                 once the asset turned out to be deleted / inaccessible. -->
+            <ng-template #chatImagePlaceholder>
+              <div
+                class="chat-image-placeholder w-20 h-20 rounded-md border border-gray-600 shadow flex items-center justify-center"
+                [class.is-unavailable]="isAssetUnavailable(img)"
+                [matTooltip]="
+                  isAssetUnavailable(img)
+                    ? 'Image no longer available'
+                    : 'Loading image…'
+                "
+                [attr.data-testid]="
+                  isAssetUnavailable(img)
+                    ? 'chat-image-unavailable'
+                    : 'chat-image-loading'
+                "
+              >
+                <mat-icon>{{
+                  isAssetUnavailable(img) ? 'broken_image' : 'image'
+                }}</mat-icon>
+              </div>
+            </ng-template>
+          </ng-container>
         </div>
         <div class="chat-text text-sm" (click)="onMessageClick($event)">
           <!-- Text or Markdown -->
@@ -207,9 +244,18 @@
       class="relative group shrink-0"
     >
       <img
-        [src]="getAssetUrl(img)"
+        *ngIf="getAssetUrl(img) as src; else selectedImagePlaceholder"
+        [src]="src"
         class="w-16 h-16 object-cover rounded-lg !border !border-gray-600"
       />
+      <ng-template #selectedImagePlaceholder>
+        <div
+          class="chat-image-placeholder w-16 h-16 rounded-lg !border !border-gray-600 flex items-center justify-center"
+          data-testid="selected-image-loading"
+        >
+          <mat-icon>image</mat-icon>
+        </div>
+      </ng-template>
       <button
         class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center shadow-lg hover:bg-red-600"
         (click)="removeSelectedImage(i)"
@@ -235,11 +281,11 @@
   >
     <div
       class="flex gap-2 bg-gray-800 border border-gray-700 rounded-2xl px-3 py-2 focus-within:border-blue-500 flex items-center"
-      [class.opacity-60]="isBusy()"
+      [class.opacity-60]="isBusy() || isSessionLocked()"
     >
       <button
         (click)="openImageSelector()"
-        [disabled]="isBusy()"
+        [disabled]="isBusy() || isSessionLocked()"
         class="p-1.5 hover:bg-neutral-700 rounded-lg text-gray-400 hover:text-white flex items-center justify-center flex-shrink-0 h-8 w-8 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         matTooltip="Attach Reference Images"
       >
@@ -251,8 +297,15 @@
 
       <textarea
         #chatInput
-        placeholder="Ask Izumi..."
-        [disabled]="isBusy()"
+        data-chat-input
+        [placeholder]="
+          isSessionLocked()
+            ? 'Loading conversation…'
+            : isBusy()
+              ? 'Izumi is working on your request…'
+              : 'Ask Izumi...'
+        "
+        [disabled]="isBusy() || isSessionLocked()"
         class="flex-1 bg-transparent text-sm text-white focus:outline-none resize-none max-h-48 overflow-y-auto py-1 px-1 leading-relaxed disabled:opacity-50 disabled:cursor-not-allowed"
         rows="1"
         [ngModel]="chatInputValue()"
@@ -262,7 +315,7 @@
 
       <button
         (click)="toggleInputExpand()"
-        [disabled]="isBusy()"
+        [disabled]="isBusy() || isSessionLocked()"
         class="p-1.5 hover:bg-neutral-700 rounded-lg text-gray-400 hover:text-white flex items-center justify-center flex-shrink-0 h-8 w-8 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         matTooltip="Expand input"
       >
@@ -279,6 +332,7 @@
         class="flex-shrink-0 flex items-center justify-center"
         [disabled]="
           isBusy() ||
+          isSessionLocked() ||
           ((!chatInputValue() || !chatInputValue().trim()) &&
             selectedImages().length === 0)
         "

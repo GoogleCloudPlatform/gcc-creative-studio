@@ -1,0 +1,115 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Local Izumi "ads_x" agent for Creative Studio development.
+#
+# Runs the upstream Izumi backend (ADK api_server) in a container that joins
+# Creative Studio's docker-compose network, so:
+#   * Creative Studio's backend reaches the agent at  http://izumi-agent:8080
+#   * the agent reaches Creative Studio's backend at  http://backend:8080
+#
+# Usage (from this directory):
+#   cp .env.example .env            # set GOOGLE_CLOUD_PROJECT + bucket
+#   docker compose up --build       # first run builds the image (slow)
+#
+# Creative Studio must already be running (`docker compose up` at the repo
+# root creates the shared `gcc-creative-studio_default` network) and its
+# backend/.env must have ENVIRONMENT=local so AgentService targets this
+# container instead of Vertex AI Agent Engine.
+
+name: izumi-ads-x
+
+services:
+  firestore-emulator:
+    # Sessions/state are stored through mediagent_kit's FirestoreSessionService;
+    # the emulator keeps local runs isolated from any cloud Firestore DB.
+    image: google/cloud-sdk:emulators
+    container_name: izumi-firestore-emulator
+    command: gcloud emulators firestore start --host-port=0.0.0.0:8086
+    ports:
+      - "8086:8086"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8086/ || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  izumi-agent:
+    build:
+      context: ../../..
+      dockerfile: deployment/Dockerfile
+      args:
+        APP_ENV: local
+    image: izumi-ads-x:local
+    container_name: izumi-agent
+    # The image runs as `myuser`; root lets us reuse the host ADC mount at
+    # /root/.config/gcloud exactly like Creative Studio's backend container.
+    user: root
+    ports:
+      - "8082:8080"
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      - PORT=8080
+      - APP_ENV=local
+      # --- Google Cloud -------------------------------------------------
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT:?Set GOOGLE_CLOUD_PROJECT in demos/backend/ads_x/.env}
+      - GOOGLE_GENAI_USE_VERTEXAI=True
+      - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION:-global}
+      - MODEL_TARGET_LOCATION=${MODEL_TARGET_LOCATION:-global}
+      - ASSET_SERVICE_GCS_BUCKET=${ASSET_SERVICE_GCS_BUCKET:-}
+      # --- Firestore emulator -------------------------------------------
+      - FIRESTORE_EMULATOR_HOST=izumi-firestore-emulator:8086
+      - FIRESTORE_DATABASE_ID=
+      # --- Creative Studio integration ----------------------------------
+      - USE_CREATIVE_STUDIO=True
+      - ENABLE_HITL_GATES=True
+      - CREATIVE_STUDIO_BACKEND_URL=${CREATIVE_STUDIO_BACKEND_URL:-http://backend:8080}
+      - CREATIVE_STUDIO_FRONTEND_URL=${CREATIVE_STUDIO_FRONTEND_URL:-http://localhost:4200}
+      - CREATIVE_STUDIO_USER_AUTH_TOKEN_KEY=${CREATIVE_STUDIO_USER_AUTH_TOKEN_KEY:-user_auth_token}
+      # --- gRPC fork safety (mirrors scripts/start-local-server.sh) -----
+      - GRPC_ENABLE_FORK_SUPPORT=0
+      - GRPC_POLL_STRATEGY=poll
+      - PYTHONPATH=/app
+    volumes:
+      # Host Application Default Credentials (read-only).
+      - ${HOME}/.config/gcloud:/root/.config/gcloud:ro
+      # Live source for hot reload.
+      - ../../../demos/backend:/app/demos/backend
+      - ../../../mediagent_kit:/app/mediagent_kit
+      - ../../../mediagent_config.json:/app/mediagent_config.json:ro
+      # Keep the image's virtualenv (the bind mount above would hide it).
+      - izumi_backend_venv:/app/demos/backend/.venv
+    working_dir: /app/demos/backend
+    command: >
+      sh -c "
+      uv sync --locked --no-dev &&
+      /app/demos/backend/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8080
+      --reload --reload-dir /app/demos/backend --reload-dir /app/mediagent_kit
+      "
+    depends_on:
+      firestore-emulator:
+        condition: service_healthy
+    restart: unless-stopped
+
+networks:
+  default:
+    # Join Creative Studio's compose network (created by the root docker-compose.yml).
+    name: gcc-creative-studio_default
+    external: true
+
+volumes:
+  izumi_backend_venv:

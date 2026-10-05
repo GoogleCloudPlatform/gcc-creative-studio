@@ -21,6 +21,7 @@ import {environment} from '../../../environments/environment';
 import {
   StoryboardResponse,
   StoryboardUpdate,
+  StoryboardUpdateResponse,
 } from '../../common/models/workbench.model';
 
 @Injectable({
@@ -42,11 +43,15 @@ export class StoryboardService {
     return this.http.get<StoryboardResponse[]>(url);
   }
 
+  /**
+   * Persists a human edit. The answer carries `agent_sync`, describing how
+   * the Izumi session took the change (`synced`, `busy`, `rejected`, ...).
+   */
   updateStoryboard(
     storyboardId: number,
     updateData: StoryboardUpdate,
-  ): Observable<StoryboardResponse> {
-    return this.http.put<StoryboardResponse>(
+  ): Observable<StoryboardUpdateResponse> {
+    return this.http.put<StoryboardUpdateResponse>(
       `${this.apiUrl}/${storyboardId}`,
       updateData,
     );

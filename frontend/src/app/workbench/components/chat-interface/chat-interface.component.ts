@@ -26,6 +26,7 @@ import {
   AfterViewChecked,
   TemplateRef,
   OnDestroy,
+  untracked,
 } from '@angular/core';
 import {
   AgentChatService,
@@ -37,7 +38,7 @@ import {WorkspaceStateService} from '../../../services/workspace/workspace-state
 import {StoryboardService} from '../../../services/storyboard/storyboard.service';
 import {TimelineStateService} from '../../services/timeline-state.service';
 import {ActivatedRoute, Router} from '@angular/router';
-import {combineLatest} from 'rxjs';
+import {combineLatest, Subscription} from 'rxjs';
 import {CommonModule} from '@angular/common';
 import {FormsModule} from '@angular/forms';
 import {MatIconModule} from '@angular/material/icon';
@@ -52,7 +53,6 @@ import {
 } from '../../../common/components/image-selector/image-selector.component';
 import {GalleryService} from '../../../gallery/gallery.service';
 import {SourceAssetResponseDto} from '../../../common/services/source-asset.service';
-import {environment} from '../../../../environments/environment';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {handleErrorSnackbar} from '../../../utils/handleMessageSnackbar';
 
@@ -66,12 +66,29 @@ import {
   ApprovalGateInfo,
   ApprovalGateSubmission,
 } from '../approval-gate/approval-gate.component';
+import {
+  CAMPAIGN_STATE_KEYS,
+  findStorylineGuidanceInEvents,
+  parseCampaignState,
+  withStorylineGuidance,
+} from '../../utils/campaign-details';
 
 interface DropdownOption {
   value: string;
   label: string;
   tooltip?: string;
 }
+
+/**
+ * Prefixes emitted by `formatGateDecisionText` for user gate decisions
+ * reconstructed from history. Used by `recoverLastActionFromHistory` to avoid
+ * replaying a consumed `function_response` on Retry.
+ */
+const GATE_DECISION_MARKERS: readonly string[] = [
+  '✅ Approved',
+  '✏️ Requested Modifications',
+  '🔄 Requested Regeneration',
+];
 
 @Component({
   selector: 'app-chat-interface',
@@ -101,8 +118,31 @@ export class ChatInterfaceComponent
   selectedImages = signal<(SourceAssetResponseDto | MediaItemSelection)[]>([]);
   isTyping = signal<boolean>(false);
   isSubmittingGate = signal<boolean>(false);
-  isBusy = computed<boolean>(() => this.isTyping() || this.isSubmittingGate());
+  /**
+   * Locks the composer, Send and Retry. `isTyping` only covers the typing
+   * dots (cleared on the first text chunk) and `isSubmittingGate` the gate
+   * round-trip; `streamActive` covers the whole run until `[DONE]` or an
+   * error event, so no second run can be started on the same session while
+   * e.g. `generate_all_media` is still executing.
+   */
+  isBusy = computed<boolean>(
+    () =>
+      this.isTyping() ||
+      this.isSubmittingGate() ||
+      this.agentChatService.streamActive(),
+  );
   isLoadingHistory = signal<boolean>(false);
+  /**
+   * True while a session switch is still settling: either the chat history
+   * (`getSessionDetail`) or the storyboard's timeline (Workbench
+   * `getTimeline`) is in flight. The session picker, delete and composer are
+   * disabled while locked so a user cannot queue a second switch on top of
+   * one that has not finished yet. "New Chat" stays enabled as the escape
+   * hatch; it resets both loaders synchronously.
+   */
+  isSessionLocked = computed<boolean>(
+    () => this.isLoadingHistory() || this.timelineState.isLoadingTimeline(),
+  );
   agentUnavailable = signal<boolean>(false);
   activeApprovalGate = signal<ApprovalGateInfo | null>(null);
   visibleApprovalGate = computed<ApprovalGateInfo | null>(() => {
@@ -120,45 +160,54 @@ export class ChatInterfaceComponent
     submission?: ApprovalGateSubmission;
     gate?: ApprovalGateInfo;
   } | null = null;
+  /** In-flight `getSessionDetail` request; replaced on every session switch. */
+  private loadSubscription: Subscription | null = null;
 
-  private sessionSelectorEffect = effect(() => {
-    const sessionId = this.agentChatService.selectedSessionId();
-    if (sessionId && sessionId !== this.currentSessionId) {
-      this.currentSessionId = sessionId;
-      this.submittedGateCallIds.clear();
-      this.lastExecutedAction = null;
-      this.loadChatMessages(sessionId);
-    }
-  });
-
-  private storyboardSessionSyncEffect = effect(() => {
-    const sb = this.agentChatService.currentStoryboard();
-    if (
-      sb &&
-      sb.session_id &&
-      sb.session_id !== this.agentChatService.selectedSessionId()
-    ) {
-      this.agentChatService.selectedSessionId.set(sb.session_id);
-    }
-  });
-
-  private storyboardUrlSyncEffect = effect(() => {
-    const sb = this.agentChatService.currentStoryboard();
-    if (sb && sb.id) {
-      const currentStoryboardId =
-        this.route.snapshot.queryParams['storyboardId'];
-      if (Number(currentStoryboardId) !== Number(sb.id)) {
-        void this.router.navigate([], {
-          relativeTo: this.route,
-          queryParams: {
-            sessionId: null,
-            storyboardId: sb.id,
-          },
-          queryParamsHandling: 'merge',
-        });
+  /**
+   * Reacts to `selectedSessionId` being changed by someone other than this
+   * component (URL query params, a storyboard pick, ...). The picker calls
+   * `loadChatMessages` directly and sets `currentSessionId` first, so it never
+   * re-enters here. `allowSignalWrites` is required: without it Angular 18
+   * throws NG0600 at the first `.set()` inside `loadChatMessages`, *after*
+   * `currentSessionId` was already overwritten — the chat then shows the old
+   * history under the new session id. `untracked` keeps the dozens of signal
+   * reads inside the load from becoming dependencies of this effect.
+   */
+  private sessionSelectorEffect = effect(
+    () => {
+      const sessionId = this.agentChatService.selectedSessionId();
+      if (sessionId && sessionId !== this.currentSessionId) {
+        this.currentSessionId = sessionId;
+        this.submittedGateCallIds.clear();
+        this.lastExecutedAction = null;
+        this.streamedStoryboardId = null;
+        untracked(() => this.loadChatMessages(sessionId));
       }
-    }
-  });
+    },
+    {allowSignalWrites: true},
+  );
+
+  private storyboardSessionSyncEffect = effect(
+    () => {
+      const sb = this.agentChatService.currentStoryboard();
+      if (
+        sb &&
+        sb.session_id &&
+        sb.session_id !== this.agentChatService.selectedSessionId()
+      ) {
+        this.agentChatService.selectedSessionId.set(sb.session_id);
+      }
+    },
+    {allowSignalWrites: true},
+  );
+
+  // NOTE: there is deliberately no "storyboard → URL" effect here. The
+  // session-detail response handlers (`loadChatMessages`, `loadChatSessions`)
+  // are the single writers of `sessionId` / `storyboardId` in the URL. A
+  // previous effect navigated with `sessionId: null` whenever the storyboard
+  // changed while `route.snapshot` was still stale, stripping the session the
+  // response handler had just written and re-triggering every queryParams
+  // subscriber — one arc of the session ping-pong loop.
 
   private resolvingAssetIds = new Set<string>();
 
@@ -190,7 +239,11 @@ export class ChatInterfaceComponent
                   },
                   error: err => {
                     console.error('Failed to resolve media item:', id, err);
-                    this.resolvingAssetIds.delete(assetId);
+                    // Keep the id in `resolvingAssetIds`: a deleted or
+                    // inaccessible item must not be re-fetched on every
+                    // render. The template shows a "no longer available" tile.
+                    img.unavailable = true;
+                    this.chatMessages.update(msgs => [...msgs]);
                   },
                 });
               }
@@ -207,7 +260,8 @@ export class ChatInterfaceComponent
                   },
                   error: err => {
                     console.error('Failed to resolve source asset:', id, err);
-                    this.resolvingAssetIds.delete(assetId);
+                    img.unavailable = true;
+                    this.chatMessages.update(msgs => [...msgs]);
                   },
                 });
               }
@@ -360,10 +414,31 @@ export class ChatInterfaceComponent
         );
       }
     });
+
+    // The Characters tab rewrites session state outside an agent run; merge
+    // the returned slice exactly like a streamed `state_delta`.
+    this.campaignStateSubscription =
+      this.agentChatService.campaignStateUpdated$.subscribe(state => {
+        this.syncCampaignDetails(state, true);
+      });
   }
 
+  private campaignStateSubscription: Subscription | null = null;
+
   ngOnDestroy() {
+    // The chat is torn down whenever the user switches side panels. Remember an
+    // in-flight stream so the next instance resumes polling instead of leaving
+    // undelivered events (and the final [DONE]) queued server-side forever.
+    this.agentChatService.interruptedSessionId.set(
+      this.agentChatService.isPolling() ? this.currentSessionId : null,
+    );
     this.agentChatService.stopPolling();
+    // A late session-detail response must not write into the shared service
+    // signals from a component that no longer exists.
+    this.loadSubscription?.unsubscribe();
+    this.loadSubscription = null;
+    this.campaignStateSubscription?.unsubscribe();
+    this.campaignStateSubscription = null;
   }
 
   ngAfterViewChecked() {
@@ -427,6 +502,8 @@ export class ChatInterfaceComponent
           this.sessions.set([]);
           this.activeApprovalGate.set(null);
           this.agentChatService.currentStoryboard.set(null);
+          this.clearCampaignDetails();
+          this.agentChatService.interruptedSessionId.set(null);
           this.addWelcomeMessage();
           this.shouldScrollToBottom = true;
           this.lastWorkspaceId = workspaceId;
@@ -445,6 +522,19 @@ export class ChatInterfaceComponent
         }
       }
 
+      // A previous chat instance was torn down mid-stream (panel switch). The
+      // shared chatMessages signal still holds the conversation and the missing
+      // events are queued server-side, so simply pick the poll loop back up.
+      const interruptedSessionId = this.agentChatService.interruptedSessionId();
+      if (interruptedSessionId) {
+        this.agentChatService.interruptedSessionId.set(null);
+        if (interruptedSessionId === this.currentSessionId) {
+          this.isLoadingHistory.set(false);
+          this.resumePolling(interruptedSessionId);
+          return;
+        }
+      }
+
       const isExplicitNewChat =
         !sessionId &&
         !storyboardId &&
@@ -453,6 +543,19 @@ export class ChatInterfaceComponent
 
       if (isExplicitNewChat) {
         this.isLoadingHistory.set(false);
+        return;
+      }
+
+      // URL echo: the query params already describe the state we hold (this
+      // is how every navigate() we issue ourselves comes back to us). Doing
+      // nothing here is what keeps "session → URL → session" from looping.
+      const urlMatchesCurrentState =
+        this.lastWorkspaceId === workspaceId &&
+        this.sessions().length > 0 &&
+        (sessionId ?? null) === (this.currentSessionId ?? null) &&
+        (storyboardId ? Number(storyboardId) : null) ===
+          (this.agentChatService.currentStoryboard()?.id ?? null);
+      if (urlMatchesCurrentState) {
         return;
       }
 
@@ -497,10 +600,26 @@ export class ChatInterfaceComponent
 
               if (isDifferentSession || isDifferentWorkspace) {
                 this.lastWorkspaceId = workspaceId;
+
+                if (sessionId && sessionExistsInWorkspace) {
+                  // Session-first deep link: reuse the single hardened loader
+                  // (request cancellation, stale-response guard,
+                  // navigate-only-if-different) instead of a second copy.
+                  this.currentSessionId = sessionId;
+                  this.submittedGateCallIds.clear();
+                  this.lastExecutedAction = null;
+                  this.loadChatMessages(
+                    sessionId,
+                    storyboardId ? Number(storyboardId) : undefined,
+                  );
+                  return;
+                }
+
+                // Storyboard-first deep link (no session in the URL).
                 this.agentChatService
                   .getSessionDetail(
                     workspaceId,
-                    sessionId || undefined,
+                    undefined,
                     storyboardId ? Number(storyboardId) : undefined,
                   )
                   .subscribe({
@@ -523,6 +642,12 @@ export class ChatInterfaceComponent
                           res.storyboard,
                         );
                       }
+                      this.syncCampaignDetails(
+                        res.session?.state,
+                        false,
+                        res.session?.events,
+                      );
+                      this.syncFinalVideoReady(res.session?.state);
                       if (res.session && res.session.id) {
                         this.currentSessionId = res.session.id;
                         this.agentChatService.selectedSessionId.set(
@@ -539,7 +664,7 @@ export class ChatInterfaceComponent
                         );
                         this.activeApprovalGate.set(pendingGate);
                         this.shouldScrollToBottom = true;
-                        this.checkAndResumePolling(res);
+                        this.checkAndResumePolling(res, pendingGate);
 
                         // Synchronize URL: retain both sessionId and storyboardId
                         const targetSessionId = res.session.id;
@@ -625,15 +750,24 @@ export class ChatInterfaceComponent
 
   loadChatMessages(sessionId: string, storyboardId?: number) {
     this.agentChatService.stopPolling();
+    // Latest click wins: a session-detail response for a session the user has
+    // already left must never be applied — it would write the stale session
+    // back into `selectedSessionId`, the storyboard and the URL, and each of
+    // those re-triggers a load (the "ping-pong" when switching chats quickly).
+    this.loadSubscription?.unsubscribe();
     this.isLoadingHistory.set(true);
 
     const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
 
     if (workspaceId) {
-      this.agentChatService
+      this.loadSubscription = this.agentChatService
         .getSessionDetail(workspaceId, sessionId, storyboardId)
         .subscribe({
           next: (res: SessionDetailResponse) => {
+            if (this.currentSessionId !== sessionId) {
+              // The user switched again while this request was in flight.
+              return;
+            }
             const activeSessionId =
               (res.session && res.session.id) || sessionId;
             this.currentSessionId = activeSessionId;
@@ -647,6 +781,13 @@ export class ChatInterfaceComponent
             } else {
               this.agentChatService.currentStoryboard.set(null);
             }
+            this.syncCampaignDetails(
+              res.session?.state,
+              false,
+              res.session?.events,
+            );
+            this.syncFinalVideoReady(res.session?.state);
+            this.trackStreamedStoryboardId(res.session?.state);
 
             const messages = (res.session && res.session.events) || [];
             const mappedMessages = this.mapEventsToMessages(messages);
@@ -656,24 +797,36 @@ export class ChatInterfaceComponent
               res.session?.state,
             );
             this.activeApprovalGate.set(pendingGate);
-            this.checkAndResumePolling(res);
+            this.checkAndResumePolling(res, pendingGate);
             if (mappedMessages.length === 0) {
               this.addWelcomeMessage();
             }
             this.isLoadingHistory.set(false);
             this.shouldScrollToBottom = true;
 
-            // Sync URL query parameters
+            // Sync URL query parameters — only when they actually differ, so
+            // the `queryParams` subscription in the Workbench is not re-fed
+            // with the session it already knows about.
             const targetSessionId = activeSessionId;
             const targetStoryboardId = res.storyboard?.id || null;
-            void this.router.navigate([], {
-              relativeTo: this.route,
-              queryParams: {
-                sessionId: targetSessionId,
-                storyboardId: targetStoryboardId,
-              },
-              queryParamsHandling: 'merge',
-            });
+            const qp = this.route.snapshot?.queryParams ?? {};
+            const urlSessionId = qp['sessionId'] || null;
+            const urlStoryboardId = qp['storyboardId']
+              ? Number(qp['storyboardId'])
+              : null;
+            if (
+              urlSessionId !== targetSessionId ||
+              urlStoryboardId !== targetStoryboardId
+            ) {
+              void this.router.navigate([], {
+                relativeTo: this.route,
+                queryParams: {
+                  sessionId: targetSessionId,
+                  storyboardId: targetStoryboardId,
+                },
+                queryParamsHandling: 'merge',
+              });
+            }
           },
           error: err => {
             console.error('Error loading session details:', err);
@@ -739,12 +892,24 @@ export class ChatInterfaceComponent
       };
     }
 
-    if (s === 'storyboard' || t.includes('storyboard') || storyboard) {
-      const sceneCount = storyboard?.scenes?.length || 4;
+    if (
+      s === 'storyboard' ||
+      t.includes('storyboard') ||
+      (!s && !t && storyboard)
+    ) {
+      const sceneCount = Array.isArray(storyboard?.scenes)
+        ? storyboard.scenes.length
+        : 0;
       return {
         stage: 'storyboard',
         title: 'Storyboard Ready',
-        subtitle: `Generated ${sceneCount} scenes`,
+        // Never invent a number: the count is shown only when it comes from
+        // the agent's own storyboard data (state delta or tool result). A
+        // placeholder here once reported "4 scenes" for a 2-scene storyboard.
+        subtitle:
+          sceneCount > 0
+            ? `Generated ${sceneCount} scene${sceneCount === 1 ? '' : 's'}`
+            : 'Ready for review',
         icon: 'auto_awesome_motion',
       };
     }
@@ -779,6 +944,10 @@ export class ChatInterfaceComponent
     ]);
 
     const resultMessages: any[] = [];
+    // The storyboard the agent currently holds, as republished in the events'
+    // state deltas. Gate cards use it for a truthful scene count (a gate call
+    // event itself carries no storyboard).
+    let lastKnownStoryboard: StoryboardResponse | null = null;
 
     for (const m of messages) {
       const content = m.content || {};
@@ -790,6 +959,8 @@ export class ChatInterfaceComponent
       let isUserDecision = false;
       let milestone: StageMilestone | undefined = undefined;
       const extractedImages: any[] = [];
+      lastKnownStoryboard =
+        this.storyboardFromStateDelta(m) || lastKnownStoryboard;
       if (m.actions?.storyboard) {
         const extracted = this.extractStoryboardData(m.actions.storyboard);
         if (extracted) {
@@ -833,7 +1004,7 @@ export class ChatInterfaceComponent
           milestone = this.getMilestoneForStage(
             undefined,
             fc.name,
-            storyboardMetadata,
+            storyboardMetadata || lastKnownStoryboard,
           );
         }
 
@@ -868,7 +1039,7 @@ export class ChatInterfaceComponent
             milestone = this.getMilestoneForStage(
               undefined,
               fr.name,
-              storyboardMetadata,
+              storyboardMetadata || lastKnownStoryboard,
             );
           }
 
@@ -1006,6 +1177,8 @@ export class ChatInterfaceComponent
     this.chatMessages.set([]);
     this.activeApprovalGate.set(null);
     this.agentChatService.currentStoryboard.set(null);
+    this.streamedStoryboardId = null;
+    this.clearCampaignDetails();
     this.addWelcomeMessage();
     this.shouldScrollToBottom = true;
 
@@ -1020,6 +1193,10 @@ export class ChatInterfaceComponent
     });
   }
   onSessionChange(sessionId: string) {
+    // The picker is disabled in the template while locked; this is the
+    // backstop for keyboard / programmatic calls. Dropping the click (instead
+    // of queueing it) is what keeps a rapid A→B→C from stacking requests.
+    if (this.isSessionLocked()) return;
     if (sessionId && sessionId !== this.currentSessionId) {
       this.activeApprovalGate.set(null);
       this.currentSessionId = sessionId;
@@ -1038,7 +1215,7 @@ export class ChatInterfaceComponent
     this.loadChatSessions();
   }
   deleteChat() {
-    if (!this.currentSessionId) return;
+    if (!this.currentSessionId || this.isSessionLocked()) return;
     const dialogRef = this.dialog.open(ConfirmationDialogComponent, {
       data: {
         title: 'Delete Chat',
@@ -1077,7 +1254,7 @@ export class ChatInterfaceComponent
     });
   }
   sendChatMessage(text: string) {
-    if (this.isBusy()) return;
+    if (this.isBusy() || this.isSessionLocked()) return;
     if ((!text || !text.trim()) && this.selectedImages().length === 0) return;
 
     if (!this.currentSessionId) {
@@ -1231,6 +1408,10 @@ export class ChatInterfaceComponent
     this.isTyping.set(true);
     if (this.currentAgent === 'ads_x') {
       this.agentChatService.isGeneratingStoryboard.set(true);
+      // Accepting the frames starts the video render + stitch stage
+      if (gate.stage === 'frames' && submission.decision === 'accept') {
+        this.agentChatService.isGeneratingVideo.set(true);
+      }
     }
     this.shouldScrollToBottom = true;
 
@@ -1587,11 +1768,12 @@ export class ChatInterfaceComponent
       if (candidateGate.stage === 'frames' && state.frame_decision) return null;
       if (candidateGate.stage === 'final_cut' && state.final_cut_decision)
         return null;
-      if (
-        state.stage_completed === 'generation' ||
-        state.stage_completed === 'complete'
-      )
-        return null;
+      // NOTE: `stage_completed` is monotonic — it stays `generation` for the
+      // rest of the session, including while a *re-opened* gate (after a
+      // `regenerate` decision) is pending. Only the per-stage `*_decision`
+      // keys above say whether the current gate is decided; the agent nulls
+      // them when it re-opens a gate.
+      if (state.stage_completed === 'complete') return null;
     }
 
     return candidateGate;
@@ -1670,18 +1852,43 @@ export class ChatInterfaceComponent
     return false;
   }
 
-  checkAndResumePolling(res: SessionDetailResponse) {
+  /**
+   * Decides on session load whether a run is still in flight and the poll
+   * loop must be re-attached. Getting this wrong in the "resume" direction
+   * is a dead end: `resumePolling` locks the composer and the gate card
+   * behind `isBusy`, and the loop only ends on a `[DONE]`/error event that
+   * a finished run has already delivered (the queue is drained on read).
+   *
+   * Two things therefore must NOT count as "in flight":
+   * - A pending approval gate. The run ended at `await_*_approval` and is
+   *   waiting for the user; `checkUnresolvedGate` already proved nobody has
+   *   answered it yet.
+   * - Content-less events. Every state write that bypasses the runner
+   *   (`PATCH …/sessions/{id}` with a `stateDelta`: token propagation,
+   *   character edits, storyboard sync) is appended by ADK as an
+   *   `author: "user"` event with no `content.parts`. It is not a user turn,
+   *   so the decision is based on the last event that carries parts.
+   */
+  checkAndResumePolling(
+    res: SessionDetailResponse,
+    pendingGate: ApprovalGateInfo | null = null,
+  ) {
     if (res.session) {
       // If the session hasn't been updated in over 20 minutes, do not poll
       const nowSeconds = Date.now() / 1000;
       const lastUpdateSeconds = res.session.lastUpdateTime;
       if (lastUpdateSeconds && nowSeconds - lastUpdateSeconds > 1200) {
+        this.clearGeneratingState();
         return;
       }
 
-      if (res.session.events && res.session.events.length > 0) {
-        const events = res.session.events;
-        const lastEvent = events[events.length - 1];
+      if (pendingGate) {
+        this.clearGeneratingState();
+        return;
+      }
+
+      const lastEvent = this.lastEventWithParts(res.session.events);
+      if (lastEvent) {
         const role = lastEvent.content?.role || lastEvent.author;
 
         const isLastEventUser = role === 'user';
@@ -1693,18 +1900,55 @@ export class ChatInterfaceComponent
           isLastEventPendingTool
         ) {
           this.resumePolling(res.session.id);
+          return;
         }
       }
     }
+    // Nothing in flight for this session: drop any "generating" state inherited
+    // from a previous session or a torn-down poll loop.
+    this.clearGeneratingState();
+  }
+
+  /**
+   * Last event that carries `content.parts` (or `raw_event.content.parts`).
+   * State-delta-only events are skipped: they say nothing about whose turn
+   * it is.
+   */
+  private lastEventWithParts(events: any[] | undefined | null): any | null {
+    if (!events) return null;
+    const hasParts = (parts: unknown) =>
+      Array.isArray(parts) && parts.length > 0;
+    for (let i = events.length - 1; i >= 0; i--) {
+      const ev = events[i];
+      if (
+        hasParts(ev?.content?.parts) ||
+        hasParts(ev?.raw_event?.content?.parts)
+      ) {
+        return ev;
+      }
+    }
+    return null;
+  }
+
+  private clearGeneratingState() {
+    this.isTyping.set(false);
+    this.isSubmittingGate.set(false);
+    this.agentChatService.isGeneratingStoryboard.set(false);
+    this.agentChatService.isGeneratingVideo.set(false);
   }
 
   private setupCallbacks(): SSECallbacks<any> {
     let agentMessageIndex = -1;
     let lastInvocationId = '';
     const isInJsonBlock = false;
+    // Storyboard the agent published in this run's state deltas; the gate
+    // event itself carries none, so the milestone count comes from here.
+    let lastStreamedStoryboard: StoryboardResponse | null = null;
 
     return {
       onMessage: (data: any) => {
+        lastStreamedStoryboard =
+          this.storyboardFromStateDelta(data) || lastStreamedStoryboard;
         const gate = this.extractGateFromEvent(data);
         if (gate) {
           this.activeApprovalGate.update(existing => {
@@ -1727,6 +1971,7 @@ export class ChatInterfaceComponent
           const milestone = this.getMilestoneForStage(
             gate.stage,
             gate.toolName,
+            gate.stage === 'storyboard' ? lastStreamedStoryboard : undefined,
           );
           if (milestone) {
             this.chatMessages.update(msgs => {
@@ -1745,6 +1990,7 @@ export class ChatInterfaceComponent
           this.isTyping.set(false);
           this.isSubmittingGate.set(false);
           this.agentChatService.isGeneratingStoryboard.set(false);
+          this.agentChatService.isGeneratingVideo.set(false);
         } else {
           const parts =
             data.content?.parts || data.raw_event?.content?.parts || [];
@@ -1783,6 +2029,24 @@ export class ChatInterfaceComponent
             this.isSubmittingGate.set(false);
           }
         }
+        // The final video is stitched well before the stream ends (the agent
+        // still writes a summary and opens the final-cut gate). Surface it
+        // immediately instead of leaving the storyboard in its loading state.
+        if (this.isFinalVideoReadyEvent(data)) {
+          this.agentChatService.isGeneratingStoryboard.set(false);
+          this.agentChatService.isGeneratingVideo.set(false);
+          this.agentChatService.finalVideoReady.set(true);
+          this.refreshStoryboardForSession(true);
+        }
+        // The agent republishes its full campaign brief in the state delta
+        // whenever it changes; keep the read-only Campaign tab in sync.
+        const stateDelta =
+          data.actions?.state_delta ||
+          data.actions?.stateDelta ||
+          data.raw_event?.actions?.state_delta;
+        this.syncCampaignDetails(stateDelta, true);
+        this.syncFinalVideoReady(stateDelta, true);
+        this.trackStreamedStoryboardId(stateDelta);
         if (data.actions?.storyboard) {
           this.isTyping.set(false);
           this.agentChatService.isGeneratingStoryboard.set(false);
@@ -1955,6 +2219,15 @@ export class ChatInterfaceComponent
       onError: err => {
         console.error('SSE Error:', err);
         const friendly = this.getFriendlyErrorMessage(err);
+        if (friendly.type === 'agent_busy') {
+          // The backend refused to start a second run on this session, so
+          // nothing reached the agent: roll back the optimistic user turn
+          // and follow the run that is actually executing.
+          this.rollbackUnsentAction();
+          this.snackBar.open(friendly.text, 'OK', {duration: 6000});
+          this.reattachToLiveRun();
+          return;
+        }
         if (friendly.code === 503) {
           console.warn(
             'Backend returned 503: Agent Engine is likely missing AGENT_ENGINE_RESOURCE_NAME in environment.',
@@ -1990,11 +2263,19 @@ export class ChatInterfaceComponent
         this.isTyping.set(false);
         this.isSubmittingGate.set(false);
         this.agentChatService.isGeneratingStoryboard.set(false);
+        this.agentChatService.isGeneratingVideo.set(false);
+
+        if (friendly.type === 'concurrent_run') {
+          // The run we were following lost the optimistic-concurrency race;
+          // the other run is still live, so keep showing its progress.
+          this.reattachToLiveRun();
+        }
       },
       onClose: () => {
         this.isTyping.set(false);
         this.isSubmittingGate.set(false);
         this.agentChatService.isGeneratingStoryboard.set(false);
+        this.agentChatService.isGeneratingVideo.set(false);
         if (agentMessageIndex !== -1) {
           const currentMsgs = this.chatMessages();
           const msg = currentMsgs[agentMessageIndex];
@@ -2018,37 +2299,222 @@ export class ChatInterfaceComponent
         }
 
         // Always query database on stream completion to get the latest storyboard & scenes
-        const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
-        if (workspaceId && this.currentSessionId) {
-          this.storyboardService
-            .getStoryboardForSession(workspaceId, this.currentSessionId)
-            .subscribe({
-              next: storyboards => {
-                if (storyboards && storyboards.length > 0) {
-                  if (storyboards[0].timeline_id) {
-                    this.timelineState.loadedTimelineId.set(undefined);
-                  }
-                  this.agentChatService.currentStoryboard.set(storyboards[0]);
-                  if (storyboards[0].timeline_id) {
-                    this.agentChatService.videoGenerated$.next(true);
-                  }
-                } else {
-                  this.agentChatService.videoGenerated$.next(true);
-                }
-              },
-              error: err => {
-                console.error(
-                  'Failed to fetch storyboard after stream completion:',
-                  err,
-                );
-                this.agentChatService.videoGenerated$.next(true);
-              },
-            });
-        } else {
-          this.agentChatService.videoGenerated$.next(true);
-        }
+        this.refreshStoryboardForSession();
       },
     };
+  }
+
+  /**
+   * True when the event marks the final video as produced: either the
+   * `stitch_final_video` tool succeeded or the agent published the final asset
+   * in its state delta. Handles both snake_case (Agent Engine / local ADK) and
+   * camelCase payloads.
+   */
+  private isFinalVideoReadyEvent(data: any): boolean {
+    if (!data) return false;
+    const delta =
+      data.actions?.state_delta ||
+      data.actions?.stateDelta ||
+      data.raw_event?.actions?.state_delta ||
+      {};
+    if (delta.final_video_asset_id || delta.final_video_asset_ref) {
+      return true;
+    }
+    const parts = data.content?.parts || data.raw_event?.content?.parts || [];
+    return parts.some((p: any) => {
+      const fr =
+        p?.functionResponse ||
+        p?.function_response ||
+        p?.toolResponse ||
+        p?.tool_response;
+      if (!fr || fr.name !== 'stitch_final_video') return false;
+      const status = fr.response?.status;
+      return !status || status === 'succeeded' || status === 'success';
+    });
+  }
+
+  /**
+   * Raw copy of the campaign-related session-state keys seen so far
+   * (see `CAMPAIGN_STATE_KEYS`). Streamed `state_delta`s are partial, so they
+   * are merged into this before parsing; a session load replaces it.
+   */
+  private campaignState: Record<string, unknown> | null = null;
+
+  /**
+   * Updates the read-only campaign brief from an agent state object (either a
+   * full `session.state` or a streamed `state_delta`). With `keepExisting`
+   * (streaming), deltas without any campaign key leave the brief untouched;
+   * otherwise (session load) a missing/invalid brief hides the Campaign tab.
+   *
+   * The agent strips `parameters.storyline_guidance` once strategy is mapped
+   * (templated mode), so a `parameters` value without it inherits the one
+   * already seen while streaming, or the last one in `events` on a load.
+   */
+  private syncCampaignDetails(
+    state: any,
+    keepExisting = false,
+    events?: unknown[],
+  ) {
+    const picked: Record<string, unknown> = {};
+    let hasAny = false;
+    if (state && typeof state === 'object') {
+      for (const key of CAMPAIGN_STATE_KEYS) {
+        if (state[key] !== undefined) {
+          picked[key] = state[key];
+          hasAny = true;
+        }
+      }
+    }
+    if (picked['parameters'] !== undefined) {
+      const fallback = keepExisting
+        ? (this.campaignState?.['parameters'] as any)?.storyline_guidance
+        : findStorylineGuidanceInEvents(events);
+      picked['parameters'] = withStorylineGuidance(
+        picked['parameters'],
+        fallback,
+      );
+    }
+    if (keepExisting) {
+      if (!hasAny) return;
+      const merged = {...(this.campaignState || {}), ...picked};
+      const parsed = parseCampaignState(merged);
+      if (parsed === null) return;
+      this.campaignState = merged;
+      this.agentChatService.campaignDetails.set(parsed);
+      this.publishCampaignSession();
+      return;
+    }
+    this.campaignState = hasAny ? picked : null;
+    this.agentChatService.campaignDetails.set(parseCampaignState(picked));
+    this.publishCampaignSession();
+  }
+
+  /** Tells side panels which session/workspace `campaignDetails` describe. */
+  private publishCampaignSession() {
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const sessionId = this.currentSessionId;
+    this.agentChatService.campaignSession.set(
+      sessionId && workspaceId && this.agentChatService.campaignDetails()
+        ? {sessionId, workspaceId}
+        : null,
+    );
+  }
+
+  /** Forgets the campaign brief and final-cut flag (new chat / session switch). */
+  private clearCampaignDetails() {
+    this.campaignState = null;
+    this.agentChatService.campaignDetails.set(null);
+    this.agentChatService.campaignSession.set(null);
+    this.agentChatService.finalVideoReady.set(false);
+  }
+
+  /**
+   * Updates `finalVideoReady` from an agent state object (full `session.state`
+   * or a streamed `state_delta`). The agent writes `final_video_asset_id` /
+   * `final_video_asset_ref` when `stitch_final_video` succeeds and resets them
+   * to `null` when the user regenerates. With `keepExisting` (streaming), a
+   * delta without either key leaves the flag untouched; otherwise (session
+   * load) a missing key means no final cut exists yet.
+   */
+  private syncFinalVideoReady(state: any, keepExisting = false) {
+    const hasKey =
+      !!state &&
+      typeof state === 'object' &&
+      ('final_video_asset_id' in state || 'final_video_asset_ref' in state);
+    if (!hasKey) {
+      if (!keepExisting) this.agentChatService.finalVideoReady.set(false);
+      return;
+    }
+    this.agentChatService.finalVideoReady.set(
+      !!(state.final_video_asset_id || state.final_video_asset_ref),
+    );
+  }
+
+  /**
+   * Storyboard id the agent last announced for this session, taken from
+   * `current_storyboard_id` in the loaded state or a streamed delta. It is
+   * the authoritative record to show: the agent may rewrite it in place or,
+   * on legacy sessions, re-point to a fresh row.
+   */
+  private streamedStoryboardId: number | null = null;
+
+  private trackStreamedStoryboardId(state: any) {
+    if (!state || typeof state !== 'object') return;
+    let raw: unknown;
+    if ('current_storyboard_id' in state) raw = state.current_storyboard_id;
+    else if ('currentStoryboardId' in state) raw = state.currentStoryboardId;
+    else return; // not part of this delta
+    const id = Number(raw);
+    this.streamedStoryboardId =
+      raw !== null && raw !== '' && Number.isFinite(id) && id > 0 ? id : null;
+  }
+
+  /**
+   * Re-reads the storyboard bound to the current session so `currentStoryboard`
+   * reflects the latest scenes / `timeline_id`. With `videoReady` it also
+   * notifies listeners that the final cut is available (the storyboard panel
+   * toggles its "See Video" CTA). `timeline_id` alone is NOT evidence of a
+   * video: the agent creates the timeline when it persists the storyboard,
+   * long before `stitch_final_video` runs.
+   */
+  private refreshStoryboardForSession(videoReady = false) {
+    const announce = () => {
+      if (videoReady) this.agentChatService.videoGenerated$.next(true);
+    };
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    if (!workspaceId || !this.currentSessionId) {
+      announce();
+      return;
+    }
+    const sessionId = this.currentSessionId;
+    this.storyboardService
+      .getStoryboardForSession(workspaceId, sessionId)
+      .subscribe({
+        next: storyboards => {
+          if (
+            storyboards &&
+            storyboards.length > 0 &&
+            this.currentSessionId === sessionId
+          ) {
+            // The backend lists newest first; prefer the record the agent
+            // says it is working on when we know it.
+            const preferred =
+              this.streamedStoryboardId !== null
+                ? storyboards.find(
+                    s => Number(s.id) === this.streamedStoryboardId,
+                  )
+                : undefined;
+            const storyboard = preferred ?? storyboards[0];
+            if (storyboard.timeline_id) {
+              this.timelineState.loadedTimelineId.set(undefined);
+            }
+            this.agentChatService.currentStoryboard.set(storyboard);
+            this.syncStoryboardUrl(sessionId, storyboard.id);
+          }
+          announce();
+        },
+        error: err => {
+          console.error(
+            'Failed to fetch storyboard after stream completion:',
+            err,
+          );
+          announce();
+        },
+      });
+  }
+
+  /** Keeps `?storyboardId=` pointing at the storyboard actually shown. */
+  private syncStoryboardUrl(sessionId: string, storyboardId: number) {
+    const qp = this.route.snapshot?.queryParams ?? {};
+    const urlStoryboardId = qp['storyboardId']
+      ? Number(qp['storyboardId'])
+      : null;
+    if (urlStoryboardId === storyboardId) return;
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: {sessionId, storyboardId},
+      queryParamsHandling: 'merge',
+    });
   }
 
   private scrollToBottom(): void {
@@ -2083,6 +2549,22 @@ export class ChatInterfaceComponent
         window.open(url, '_blank');
       }
     }
+  }
+
+  /**
+   * The storyboard the agent republished in an event's state delta
+   * (`actions.state_delta.storyboard` / `actions.stateDelta.storyboard`), or
+   * `null` when the event carries none or an empty one. This is the agent's
+   * own record, so it is the only source a scene count may be quoted from.
+   */
+  private storyboardFromStateDelta(event: any): StoryboardResponse | null {
+    const actions = event?.actions || event?.raw_event?.actions || {};
+    const delta = actions.state_delta || actions.stateDelta || {};
+    const sb = delta.storyboard;
+    if (sb && Array.isArray(sb.scenes) && sb.scenes.length > 0) {
+      return sb as StoryboardResponse;
+    }
+    return null;
   }
 
   private extractStoryboardData(parsed: unknown): StoryboardResponse | null {
@@ -2246,6 +2728,11 @@ export class ChatInterfaceComponent
         mimeType: 'image/*',
         multiSelect: true,
         maxSelection: 10 - this.selectedImages().length,
+        // The Izumi agent resolves an attached media item by id and always
+        // takes its FIRST image, ignoring `mediaIndex`. Until that is fixed
+        // upstream, only let the user pick index 0 so the preview matches
+        // what the agent actually receives.
+        firstIndexOnly: true,
       },
       panelClass: 'image-selector-dialog',
     });
@@ -2262,7 +2749,12 @@ export class ChatInterfaceComponent
         ) => {
           if (!result) return;
 
-          const results = Array.isArray(result) ? result : [result];
+          const results = (Array.isArray(result) ? result : [result]).map(
+            img =>
+              'mediaItem' in img && img.selectedIndex
+                ? {...img, selectedIndex: 0}
+                : img,
+          );
           this.selectedImages.update(current => {
             return [...current, ...results];
           });
@@ -2295,8 +2787,71 @@ export class ChatInterfaceComponent
       const asset = img as SourceAssetResponseDto;
       if (asset.presignedThumbnailUrl) return asset.presignedThumbnailUrl;
       if (asset.presignedUrl) return asset.presignedUrl;
-      return `${environment.backendURL}/assets/source-assets/${asset.id}/download`;
+      // No presigned URL yet: `resolveMessageImagesEffect` is fetching it.
+      // Never guess a backend URL here — all media is served through
+      // presigned GCS URLs; there is no "download" route.
+      return '';
     }
+  }
+
+  /** True once the resolver gave up on this image (deleted / not accessible). */
+  isAssetUnavailable(
+    img: SourceAssetResponseDto | MediaItemSelection,
+  ): boolean {
+    return (img as {unavailable?: boolean}).unavailable === true;
+  }
+
+  /** Error types for which re-sending the last turn would make things worse. */
+  private static readonly NON_RETRYABLE_ERROR_TYPES = new Set([
+    'agent_busy',
+    'concurrent_run',
+  ]);
+
+  /** Whether an error card should offer the Retry button. */
+  isRetryableError(msg: ChatMessageUI): boolean {
+    return !ChatInterfaceComponent.NON_RETRYABLE_ERROR_TYPES.has(
+      msg.errorType || '',
+    );
+  }
+
+  errorCardTitle(msg: ChatMessageUI): string {
+    return this.isRetryableError(msg) ? 'Agent Execution Failed' : 'Agent Busy';
+  }
+
+  /**
+   * Undoes the optimistic UI of a turn the backend refused (409): drops the
+   * user bubble, puts the text back into the composer or re-opens the gate
+   * card so the decision can be submitted again once the run is over.
+   */
+  private rollbackUnsentAction() {
+    const action = this.lastExecutedAction;
+    this.lastExecutedAction = null;
+    this.chatMessages.update(msgs => {
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i].sender === 'user') {
+          return msgs.filter((_, idx) => idx !== i);
+        }
+      }
+      return msgs;
+    });
+    if (action?.type === 'chat' && action.text) {
+      this.chatInputValue.set(action.text);
+    } else if (action?.type === 'gate' && action.gate) {
+      if (action.gate.callId) {
+        this.submittedGateCallIds.delete(action.gate.callId);
+      }
+      this.activeApprovalGate.set(action.gate);
+    }
+    this.isTyping.set(false);
+    this.isSubmittingGate.set(false);
+    this.agentChatService.isGeneratingStoryboard.set(false);
+    this.agentChatService.isGeneratingVideo.set(false);
+  }
+
+  /** Follows the run that is still executing on the current session. */
+  private reattachToLiveRun() {
+    if (!this.currentSessionId) return;
+    this.resumePolling(this.currentSessionId);
   }
 
   getFriendlyErrorMessage(err: any): {
@@ -2311,6 +2866,14 @@ export class ChatInterfaceComponent
 
     if (!code) {
       if (
+        rawMsg.includes('401') ||
+        rawMsg.toLowerCase().includes('unauthorized') ||
+        rawMsg.toLowerCase().includes('unauthenticated') ||
+        rawMsg.toLowerCase().includes('token expired')
+      ) {
+        code = 401;
+        type = 'auth_expired';
+      } else if (
         rawMsg.includes('429') ||
         rawMsg.includes('ResourceExhausted') ||
         rawMsg.toLowerCase().includes('quota')
@@ -2331,6 +2894,30 @@ export class ChatInterfaceComponent
         code = 400;
         type = 'invalid_argument';
       }
+    }
+
+    if (type === 'agent_busy') {
+      return {
+        text: 'Izumi is still working on the previous step in this conversation. Your message was not sent — wait for the current step to finish, then send it again.',
+        code: 409,
+        type: 'agent_busy',
+      };
+    }
+
+    if (type === 'concurrent_run' || code === 409) {
+      return {
+        text: 'Two requests ran on this conversation at the same time and this one was dropped. The other request is still running — wait for it to finish before continuing.',
+        code: 409,
+        type: 'concurrent_run',
+      };
+    }
+
+    if (code === 401 || type === 'auth_expired') {
+      return {
+        text: 'Your sign-in expired while the agent was working. Sign in again and press Retry to resume from your last message.',
+        code: 401,
+        type: 'auth_expired',
+      };
     }
 
     if (code === 429 || type === 'quota_exceeded') {
@@ -2372,15 +2959,33 @@ export class ChatInterfaceComponent
     };
   }
 
+  /**
+   * Whether the Retry button on an error card can do anything.
+   * `lastExecutedAction` only survives while this component instance lives;
+   * after a re-login (token expired mid-run) the component is re-created, so
+   * we also accept a user turn that can be recovered from the loaded history.
+   */
+  canRetry(): boolean {
+    if (this.isBusy() || !this.currentSessionId) return false;
+    return (
+      this.lastExecutedAction !== null ||
+      this.recoverLastActionFromHistory() !== null
+    );
+  }
+
   retryLastAction() {
-    if (this.isBusy() || !this.lastExecutedAction || !this.currentSessionId) {
+    if (this.isBusy() || !this.currentSessionId) {
+      return;
+    }
+    const action =
+      this.lastExecutedAction ?? this.recoverLastActionFromHistory();
+    if (!action) {
       return;
     }
 
     // Remove the error card from the chat
     this.chatMessages.update(msgs => msgs.filter(m => !m.isError));
 
-    const action = this.lastExecutedAction;
     this.isTyping.set(true);
     if (this.currentAgent === 'ads_x') {
       this.agentChatService.isGeneratingStoryboard.set(true);
@@ -2402,6 +3007,56 @@ export class ChatInterfaceComponent
       workspaceId,
       callbacks,
     );
+  }
+
+  /**
+   * Rebuilds a retryable action from the last user turn in `chatMessages`.
+   * Used when `lastExecutedAction` is null (new component instance after a
+   * login redirect or session switch). Gate decisions are NOT replayed as a
+   * `function_response`: their tool-call id was already consumed by the agent
+   * and the backend rejects it, so we ask the agent to continue in plain text.
+   */
+  private recoverLastActionFromHistory(): {
+    type: 'chat';
+    text: string;
+    partsParams: any[];
+  } | null {
+    const msgs = this.chatMessages();
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const msg = msgs[i];
+      if (msg.isError || msg.sender !== 'user') continue;
+      const text = (msg.text || '').trim();
+      const images: any[] = msg.images || [];
+      if (!text && images.length === 0) continue;
+
+      if (GATE_DECISION_MARKERS.some(marker => text.includes(marker))) {
+        const continuation = `Please continue from where you left off. My last decision was: ${text}`;
+        return {
+          type: 'chat',
+          text: continuation,
+          partsParams: [{text: continuation}],
+        };
+      }
+
+      const partsParams: any[] = [];
+      if (text) partsParams.push({text});
+      for (const img of images) {
+        if (img && 'mediaItem' in img && img.mediaItem?.id) {
+          partsParams.push({
+            sourceMediaItem: {
+              mediaItemId: img.mediaItem.id,
+              mediaIndex: img.selectedIndex || 0,
+              role: 'input',
+            },
+          });
+        } else if (img?.id) {
+          partsParams.push({sourceAssetId: img.id});
+        }
+      }
+      if (partsParams.length === 0) continue;
+      return {type: 'chat', text, partsParams};
+    }
+    return null;
   }
 
   toggleInputExpand() {
@@ -2454,7 +3109,7 @@ export class ChatInterfaceComponent
     // Reset height of textarea in base input area
     setTimeout(() => {
       const textarea = document.querySelector(
-        'textarea[placeholder="Ask Izumi..."]',
+        'textarea[data-chat-input]',
       ) as HTMLTextAreaElement;
       if (textarea) {
         textarea.style.height = 'auto';

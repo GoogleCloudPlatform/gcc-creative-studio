@@ -52,6 +52,8 @@ import {
 import {UserService} from '../../common/services/user.service';
 import {GalleryService} from '../gallery.service';
 import {WorkspaceStateService} from '../../services/workspace/workspace-state.service';
+import {WorkspaceService} from '../../services/workspace/workspace.service';
+import {Workspace, WorkspaceScope} from '../../common/models/workspace.model';
 import {TagsService, TagModel} from '../../common/services/tags.service';
 import {AssignTagsDialogComponent} from '../../common/components/assign-tags-dialog/assign-tags-dialog.component';
 import {UserRolesEnum} from '../../common/models/user.model';
@@ -118,6 +120,8 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   @Input() filterByUserEmail: string | null = null;
   @Input() showFiltersInSelector = false;
   @Input() includeExternal = false;
+  /** Restrict picks to the first image of each media item (see GalleryCard). */
+  @Input() firstIndexOnly = false;
   private isInitialized = false;
 
   @Input() set itemType(value: string) {
@@ -254,6 +258,8 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   isBrowser: boolean;
+  /** Workspaces visible to the user; used to resolve scope/owner for folder permissions. */
+  private workspaces: Workspace[] = [];
 
   constructor(
     private galleryService: GalleryService,
@@ -263,6 +269,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     private elementRef: ElementRef,
     private ngZone: NgZone,
     private workspaceStateService: WorkspaceStateService,
+    private workspaceService: WorkspaceService,
     private snackBar: MatSnackBar,
     public dialog: MatDialog,
     private tagsService: TagsService,
@@ -282,6 +289,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     this.isInitialized = true;
     const userDetails = this.userService.getUserDetails();
     this.isAdmin = userDetails?.roles?.includes(UserRolesEnum.ADMIN) || false;
+    this.loadWorkspaces();
 
     this.mediaTypeFilter = this.filterByType || '';
 
@@ -560,6 +568,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
       event.preventDefault();
       event.stopPropagation();
     }
+    if (this.firstIndexOnly) selectedIndex = 0;
 
     const currentIndex = this.images.findIndex(
       img => img.id === item.id && img.itemType === item.itemType,
@@ -1433,13 +1442,48 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
           },
           error: err => {
             console.error('Error deleting folder:', err);
-            this.snackBar.open('Failed to delete folder', 'Close', {
-              duration: 3000,
+            const detail = err?.error?.detail;
+            const message =
+              typeof detail === 'string' ? detail : 'Failed to delete folder';
+            this.snackBar.open(message, 'Close', {
+              duration: 4000,
             });
           },
         });
       }
     });
+  }
+
+  private loadWorkspaces(): void {
+    this.workspaceService.getWorkspaces().subscribe({
+      next: workspaces => {
+        this.workspaces = workspaces;
+      },
+      error: err => {
+        // Non-fatal: without workspace metadata we fall back to the
+        // stricter creator-only rule and let the backend decide.
+        console.error('Error loading workspaces for folder permissions:', err);
+      },
+    });
+  }
+
+  /**
+   * Client-side mirror of the backend folder policy
+   * (`FolderService.ensure_can_manage_folder`): admins and private-workspace
+   * owners manage every folder; everyone else only the folders they created.
+   * The backend remains authoritative (subtree ownership is only checked
+   * there) and answers 403 when this optimistic check is wrong.
+   */
+  canManageFolder(folder: Folder): boolean {
+    if (this.isAdmin) return true;
+    if (this.userId === undefined || this.userId === null) return false;
+    if (folder.userId === this.userId) return true;
+    const workspace = this.workspaces.find(w => w.id === folder.workspaceId);
+    return (
+      !!workspace &&
+      workspace.scope === WorkspaceScope.PRIVATE &&
+      Number(workspace.ownerId) === Number(this.userId)
+    );
   }
 
   openCopyFolderDialog(folder: Folder): void {

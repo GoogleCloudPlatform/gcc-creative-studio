@@ -71,6 +71,12 @@ export class ImageSelectorComponent implements OnInit {
       showFooter?: boolean;
       maxSelection?: number;
       includeExternal?: boolean;
+      /**
+       * Only the first image of each multi-image media item can be picked.
+       * For consumers (e.g. the Izumi agent) that address a media item by id
+       * and always resolve its first index.
+       */
+      firstIndexOnly?: boolean;
     },
   ) {
     this.dialogRef.addPanelClass('image-selector-dialog');

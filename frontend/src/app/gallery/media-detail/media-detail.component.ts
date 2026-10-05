@@ -37,6 +37,22 @@ import {
 import {GalleryService} from '../gallery.service';
 import {ConfirmationDialogComponent} from '../../common/components/confirmation-dialog/confirmation-dialog.component';
 import {WorkspaceStateService} from '../../services/workspace/workspace-state.service';
+import {FolderService} from '../../common/services/folder.service';
+import {FolderBreadcrumb} from '../../common/models/folder.model';
+
+/**
+ * One segment of the location trail shown above the media details.
+ * `id === null` marks the collapsed "…" segment that stands in for the
+ * folders hidden between the root folder and the last two ancestors.
+ */
+export interface LocationCrumb {
+  id: number | null;
+  name: string;
+  tooltip?: string;
+}
+
+/** Folder segments shown before the trail collapses the middle into "…". */
+export const MAX_VISIBLE_FOLDER_CRUMBS = 3;
 
 @Component({
   selector: 'app-media-detail',
@@ -57,6 +73,53 @@ export class MediaDetailComponent implements OnDestroy {
   public isIdentityExpanded = false;
   public selectedAssetForLightbox: GalleryItem | null = null;
   public lightboxInitialIndex = 0;
+
+  /**
+   * Root→leaf ancestors of the folder that holds this item ([] = All Media).
+   * Assigning recomputes `locationCrumbs` exactly once: the trail is rendered
+   * with `*ngFor`, and a getter returning fresh objects on every change
+   * detection would re-create the buttons between mousedown and mouseup,
+   * silently swallowing clicks.
+   */
+  get folderBreadcrumbs(): FolderBreadcrumb[] {
+    return this._folderBreadcrumbs;
+  }
+  set folderBreadcrumbs(crumbs: FolderBreadcrumb[]) {
+    this._folderBreadcrumbs = crumbs ?? [];
+    this.locationCrumbs = MediaDetailComponent.buildLocationCrumbs(
+      this._folderBreadcrumbs,
+    );
+  }
+  private _folderBreadcrumbs: FolderBreadcrumb[] = [];
+  private breadcrumbSub?: Subscription;
+
+  /** Stable, memoised folder segments for the location trail. */
+  public locationCrumbs: LocationCrumb[] = [];
+
+  /**
+   * Long paths keep the first folder and the last two, and collapse
+   * everything in between into a single "…" segment whose tooltip lists
+   * the hidden folder names.
+   */
+  private static buildLocationCrumbs(
+    crumbs: FolderBreadcrumb[],
+  ): LocationCrumb[] {
+    if (crumbs.length <= MAX_VISIBLE_FOLDER_CRUMBS) {
+      return crumbs.map(c => ({id: c.id, name: c.name}));
+    }
+    const first = crumbs[0];
+    const tail = crumbs.slice(-2);
+    const hidden = crumbs.slice(1, -2);
+    return [
+      {id: first.id, name: first.name},
+      {id: null, name: '…', tooltip: hidden.map(h => h.name).join(' › ')},
+      ...tail.map(c => ({id: c.id, name: c.name})),
+    ];
+  }
+
+  trackCrumb(_index: number, crumb: LocationCrumb): number | string {
+    return crumb.id ?? 'ellipsis';
+  }
 
   get identityFields(): {label: string; value: any; type: string}[] {
     if (!this.mediaItem) return [];
@@ -159,6 +222,7 @@ export class MediaDetailComponent implements OnDestroy {
     private authService: AuthService,
     private sanitizer: DomSanitizer,
     private workspaceStateService: WorkspaceStateService,
+    private folderService: FolderService,
     public dialog: MatDialog,
   ) {
     // Check if user is admin
@@ -182,6 +246,7 @@ export class MediaDetailComponent implements OnDestroy {
   ngOnDestroy(): void {
     this.routeSub?.unsubscribe();
     this.mediaSub?.unsubscribe();
+    this.breadcrumbSub?.unsubscribe();
   }
 
   fetchMediaDetails(id: number, isAsset = false): void {
@@ -196,7 +261,7 @@ export class MediaDetailComponent implements OnDestroy {
         this.loadingService.hide();
         this.readInitialIndexFromUrl();
         this.parsePrompt();
-        console.log('fetchMediaDetails - mediaItem', this.mediaItem);
+        this.loadFolderBreadcrumbs();
       },
       error: err => {
         console.error('Failed to fetch media details', err);
@@ -205,6 +270,45 @@ export class MediaDetailComponent implements OnDestroy {
         handleErrorSnackbar(this._snackBar, err, 'Fetch details');
       },
     });
+  }
+
+  /**
+   * Resolves the folder path of the current item for the location trail.
+   * Uses the item's own workspace (not the active one) so direct links to
+   * items in other workspaces still render where the file lives. Failures
+   * only degrade the trail to "All Media" — they never block the page.
+   */
+  private loadFolderBreadcrumbs(): void {
+    this.breadcrumbSub?.unsubscribe();
+    const folderId = this.mediaItem?.folderId;
+    if (!folderId) {
+      this.folderBreadcrumbs = [];
+      return;
+    }
+    this.breadcrumbSub = this.folderService
+      .getBreadcrumbs(folderId, this.mediaItem?.workspaceId)
+      .subscribe({
+        next: crumbs => {
+          this.folderBreadcrumbs = crumbs ?? [];
+        },
+        error: err => {
+          console.warn('Could not resolve folder location for media', err);
+          this.folderBreadcrumbs = [];
+        },
+      });
+  }
+
+  /** Called by the lightbox after a successful "Move to folder". */
+  onMediaMoved(folderId: number | null): void {
+    if (!this.mediaItem) return;
+    this.mediaItem.folderId = folderId ?? undefined;
+    this.loadFolderBreadcrumbs();
+  }
+
+  /** Navigates to a folder in the gallery; `null` means "All Media". */
+  navigateToFolder(crumb: LocationCrumb | null): void {
+    if (crumb && crumb.id === null) return; // collapsed "…" segment
+    void this.router.navigate(crumb ? ['/folders', crumb.id] : ['/gallery']);
   }
 
   private parsePrompt(): void {

@@ -306,6 +306,11 @@ $border-radius-pill: 99px;
     background: rgba(0, 0, 0, 0.7);
   }
 }
+// Same pill as the edit button, sitting to its left (36px button + 8px gap).
+.sb-open-shot-btn {
+  @extend .sb-edit-shot-btn;
+  right: 52px;
+}
 .sb-shot-badge {
   position: absolute;
   top: 8px;
@@ -459,4 +464,726 @@ $border-radius-pill: 99px;
   font-size: 20px;
   width: 20px;
     height: 20px;
+}
+
+// Read-only Campaign brief tab
+// Palette: the storyboard's dark tokens + Creative Studio's brand gradient
+// (brand blue → violet → coral) used sparingly as accents.
+$cs-brand-blue: #3186ff;
+$cs-brand-violet: #8b5cf6;
+$cs-brand-coral: #f87171;
+$cs-brand-gradient: linear-gradient(
+  90deg,
+  $cs-brand-blue 0%,
+  $cs-brand-violet 55%,
+  $cs-brand-coral 100%
+);
+$cs-success: #81c995;
+$cs-warning: #fdd663;
+
+@keyframes sb-campaign-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes sb-campaign-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes sb-tab-new-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(94, 153, 255, 0.6);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(94, 153, 255, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(94, 153, 255, 0);
+  }
+}
+@keyframes sb-tab-new-glow {
+  0%,
+  100% {
+    background-color: rgba(94, 153, 255, 0.08);
+  }
+  50% {
+    background-color: rgba(94, 153, 255, 0.22);
+  }
+}
+@keyframes sb-step-current {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(94, 153, 255, 0.55);
+  }
+  60% {
+    box-shadow: 0 0 0 6px rgba(94, 153, 255, 0);
+  }
+}
+
+// Tab button: pulses until the user opens the new Campaign tab
+.sb-tab-campaign {
+  position: relative;
+  &.is-new:not(.active) {
+    color: $text-primary;
+    animation: sb-tab-new-glow 1.8s ease-in-out infinite;
+  }
+}
+.sb-tab-new-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: $cs-brand-gradient;
+  margin-left: 2px;
+  animation: sb-tab-new-pulse 1.8s ease-out infinite;
+  flex-shrink: 0;
+}
+
+.sb-campaign {
+  flex: 1 0 100%;
+  min-width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  padding-right: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  animation: sb-campaign-enter 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  // The section itself scrolls; its children must never be squeezed to fit.
+  // (A child with `overflow: hidden`, like the hero, would otherwise get
+  // `min-height: 0` and collapse, clipping its own text.)
+  > * {
+    flex-shrink: 0;
+  }
+  &::-webkit-scrollbar {
+    width: 8px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: $border-radius-pill;
+  }
+  h2,
+  h3,
+  h4,
+  p {
+    margin: 0;
+  }
+  p {
+    color: $text-secondary;
+    font-size: 14px;
+    line-height: 1.55;
+    white-space: pre-line;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    &,
+    .sb-campaign-card,
+    .sb-tab-new-dot,
+    .sb-campaign-step.current .sb-campaign-step-dot {
+      animation: none;
+    }
+  }
+}
+
+// --- Hero -------------------------------------------------------------------
+.sb-campaign-hero {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  padding: 1.125rem 1.25rem 1.125rem;
+  border-radius: $border-radius-lg;
+  border: 1px solid $border-light;
+  background:
+    radial-gradient(
+      120% 140% at 0% 0%,
+      rgba(49, 134, 255, 0.18) 0%,
+      rgba(49, 134, 255, 0) 55%
+    ),
+    radial-gradient(
+      90% 120% at 100% 100%,
+      rgba(139, 92, 246, 0.14) 0%,
+      rgba(139, 92, 246, 0) 60%
+    ),
+    $bg-surface;
+  // Brand gradient hairline on top
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 3px;
+    background: $cs-brand-gradient;
+  }
+  &.in-progress::before {
+    background: linear-gradient(90deg, $cs-brand-blue, $cs-warning);
+  }
+}
+.sb-campaign-hero-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+}
+.sb-campaign-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  h2 {
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+    background: linear-gradient(90deg, #ffffff 0%, #cfe0ff 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    overflow-wrap: anywhere;
+  }
+}
+.sb-campaign-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  line-height: 20px;
+  min-height: 20px;
+  white-space: nowrap;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: $text-secondary;
+  mat-icon {
+    font-size: 14px;
+    width: 14px;
+    height: 14px;
+    line-height: 14px;
+  }
+}
+
+// Stepper: Brief → Strategy → Storyboard
+.sb-campaign-stepper {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.sb-campaign-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: $text-secondary;
+  .sb-campaign-step-dot {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid $border-light;
+    background: rgba(255, 255, 255, 0.04);
+    transition:
+      background 0.25s ease,
+      border-color 0.25s ease,
+      color 0.25s ease;
+    mat-icon {
+      font-size: 15px;
+      width: 15px;
+      height: 15px;
+    }
+  }
+  .sb-campaign-step-line {
+    width: 28px;
+    height: 2px;
+    border-radius: 2px;
+    margin: 0 10px 0 2px;
+    background: rgba(255, 255, 255, 0.12);
+  }
+  &.done {
+    color: $text-primary;
+    .sb-campaign-step-dot {
+      background: $cs-brand-gradient;
+      border-color: transparent;
+      color: #fff;
+    }
+    .sb-campaign-step-line {
+      background: $cs-brand-gradient;
+    }
+  }
+  &.current {
+    color: $text-primary;
+    .sb-campaign-step-dot {
+      border-color: $glow-color;
+      color: $glow-color;
+      background: rgba(94, 153, 255, 0.12);
+      animation: sb-step-current 1.6s ease-out infinite;
+    }
+  }
+  &.todo {
+    .sb-campaign-step-dot {
+      color: rgba(255, 255, 255, 0.35);
+    }
+  }
+}
+
+.sb-campaign-key-message {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 0;
+  padding: 0.875rem 1rem 0.875rem 0.875rem;
+  border-radius: $border-radius-md;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid $border-color;
+  font-size: 16px;
+  font-weight: 500;
+  font-style: italic;
+  line-height: 1.45;
+  color: $text-primary;
+  .sb-campaign-quote-icon {
+    flex-shrink: 0;
+    font-size: 22px;
+    width: 22px;
+    height: 22px;
+    color: $cs-brand-blue;
+    transform: translateY(-2px);
+  }
+}
+
+.sb-campaign-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.sb-campaign-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: $border-radius-pill;
+  border: 1px solid $border-color;
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 12px;
+  font-weight: 500;
+  color: $text-primary;
+  mat-icon {
+    color: $text-secondary;
+  }
+  &.accent {
+    border-color: rgba(139, 92, 246, 0.45);
+    background: rgba(139, 92, 246, 0.14);
+    mat-icon {
+      color: #c4b5fd;
+    }
+  }
+}
+
+// Progress hint shown until the storyboard exists
+.sb-campaign-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  padding: 0.7rem 0.9rem;
+  border-radius: $border-radius-md;
+  border: 1px solid rgba(253, 214, 99, 0.3);
+  background: rgba(253, 214, 99, 0.07);
+  font-size: 13px;
+  line-height: 1.45;
+  color: $text-secondary;
+  b {
+    color: $text-primary;
+    font-weight: 600;
+  }
+  mat-icon {
+    flex-shrink: 0;
+    color: $cs-warning;
+    margin-top: 1px;
+  }
+}
+
+// --- Cards ------------------------------------------------------------------
+.sb-campaign-card {
+  position: relative;
+  background: $bg-surface;
+  border: 1px solid $border-color;
+  border-radius: $border-radius-md;
+  padding: 0.95rem 1.05rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  animation: sb-campaign-card-enter 0.3s ease-out both;
+  transition:
+    border-color 0.2s ease,
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+  &:hover {
+    border-color: $border-light;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  }
+  h3 {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: $text-secondary;
+    mat-icon {
+      color: $cs-brand-blue;
+    }
+  }
+  p {
+    color: #e3e3e3;
+  }
+  p.sb-campaign-muted {
+    color: $text-secondary;
+  }
+}
+.sb-campaign-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.75rem;
+  // Stagger the entrance a touch so progressive updates feel alive
+  > .sb-campaign-card:nth-child(2) {
+    animation-delay: 0.04s;
+  }
+  > .sb-campaign-card:nth-child(3) {
+    animation-delay: 0.08s;
+  }
+  > .sb-campaign-card:nth-child(4) {
+    animation-delay: 0.12s;
+  }
+  > .sb-campaign-card:nth-child(n + 5) {
+    animation-delay: 0.16s;
+  }
+}
+.sb-campaign-section-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: $text-secondary;
+  margin-top: 0.5rem;
+  &::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(90deg, $border-light, transparent);
+  }
+}
+.sb-campaign-section-hint {
+  margin: -0.25rem 0 0;
+  font-size: 12px;
+  color: $text-secondary;
+}
+
+// Brief: keep the user's line breaks; long briefs clamp behind a toggle.
+.sb-campaign-brief {
+  .sb-campaign-brief-text {
+    position: relative;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+    &.is-clamped {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 4;
+      line-clamp: 4;
+      overflow: hidden;
+      &::after {
+        content: '';
+        position: absolute;
+        inset: auto 0 0 0;
+        height: 1.6em;
+        background: linear-gradient(to bottom, transparent, $bg-surface);
+        pointer-events: none;
+      }
+    }
+  }
+  .sb-campaign-brief-toggle {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 4px 2px 0;
+    border: 0;
+    background: none;
+    color: $cs-brand-blue;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    &:hover,
+    &:focus-visible {
+      text-decoration: underline;
+      outline: none;
+    }
+  }
+}
+.sb-campaign-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  li {
+    padding: 0.6rem 0.8rem;
+    border-radius: $border-radius-sm;
+    background: $bg-card;
+    border-left: 2px solid rgba(94, 153, 255, 0.5);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+}
+.sb-campaign-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: $text-secondary;
+}
+.sb-campaign-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: $border-radius-pill;
+  background: rgba(94, 153, 255, 0.15);
+  color: $glow-color;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+  margin-right: 4px;
+}
+.sb-campaign-muted {
+  color: $text-secondary;
+  font-size: 12px;
+  b {
+    color: #e3e3e3;
+    font-weight: 600;
+  }
+}
+.sb-campaign-section-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: $border-radius-pill;
+  background: rgba(94, 153, 255, 0.15);
+  color: $glow-color;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+// --- Reference assets -------------------------------------------------------
+.sb-campaign-assets {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0.25rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 0.75rem;
+}
+.sb-campaign-asset {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  animation: sb-campaign-card-enter 0.3s ease-out both;
+
+  &.is-creator .sb-campaign-asset-tile {
+    box-shadow: inset 0 0 0 1px rgba(94, 153, 255, 0.55);
+  }
+  &.is-unavailable .sb-campaign-asset-tile {
+    cursor: not-allowed;
+    opacity: 0.7;
+  }
+}
+.sb-campaign-asset-tile {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  padding: 0;
+  border: 1px solid $border-color;
+  border-radius: $border-radius-md;
+  background: $bg-card;
+  overflow: hidden;
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+
+  img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  &:hover,
+  &:focus-visible {
+    border-color: $border-light;
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+    outline: none;
+  }
+}
+.sb-campaign-asset-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  height: 100%;
+  color: $text-secondary;
+  mat-icon {
+    font-size: 28px;
+    width: 28px;
+    height: 28px;
+  }
+  small {
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  &.is-loading mat-icon {
+    animation: sb-campaign-asset-pulse 1.4s ease-in-out infinite;
+  }
+}
+.sb-campaign-asset-badge {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px 2px 5px;
+  border-radius: $border-radius-pill;
+  background: rgba(15, 17, 22, 0.78);
+  backdrop-filter: blur(4px);
+  color: #e3e3e3;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  pointer-events: none;
+  mat-icon {
+    color: $glow-color;
+  }
+}
+.sb-campaign-asset-caption {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: $text-secondary;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+@keyframes sb-campaign-asset-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+// --- Scenes / planned beats ------------------------------------------------
+.sb-campaign-scenes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  gap: 0.75rem;
+  padding-bottom: 0.5rem;
+}
+.sb-campaign-scene {
+  header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid $border-color;
+    h4 {
+      flex: 1;
+      font-size: 15px;
+      font-weight: 600;
+      color: $text-primary;
+    }
+  }
+  dl {
+    margin: 0;
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    column-gap: 0.9rem;
+    row-gap: 0.45rem;
+    font-size: 13px;
+  }
+  dt {
+    color: $text-secondary;
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding-top: 2px;
+  }
+  dd {
+    margin: 0;
+    color: #e3e3e3;
+    line-height: 1.5;
+  }
+}
+.sb-campaign-scene-index {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: $cs-brand-gradient;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(49, 134, 255, 0.35);
+}
+.sb-campaign-inline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  b {
+    color: $text-secondary;
+    font-weight: 600;
+  }
 }

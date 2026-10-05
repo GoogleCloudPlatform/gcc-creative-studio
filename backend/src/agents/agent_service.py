@@ -17,6 +17,7 @@ from fastapi import status
 import asyncio
 import json
 import logging
+import time
 from typing import Any, List
 
 from fastapi import Depends, HTTPException, Request
@@ -31,12 +32,30 @@ from src.projects.project_repository import StoryboardRepository
 from src.projects.project_service import ProjectService
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
 from src.agents.agent_repository import AgentRepository
+from src.agents.local_adk_client import LocalAdkAgentClient
 from src.agents.agent_dtos import (
     ChatRequestDto,
+    CharacterStateResponseDto,
     SessionResponseDto,
     SessionDetailResponseDto,
     PollEventsResponseDto,
+    UpdateCharacterRequestDto,
 )
+from src.agents.character_state import (
+    CharacterStateError,
+    build_character_delta,
+    build_character_removal_delta,
+)
+from src.agents.gate_state import (
+    find_pending_gate,
+    fold_text_into_gate,
+    plain_text_of,
+)
+from src.agents.storyboard_state import (
+    StoryboardStateError,
+    build_storyboard_delta,
+)
+from src.projects.dto.project_dto import StoryboardResponse
 from src.database import async_session_local
 
 logger = logging.getLogger(__name__)
@@ -56,6 +75,63 @@ AGENT_REASONING_ENGINES = {
 }
 
 APP_NAME = "ads_x"
+
+# One agent run per session at a time. The Izumi session service uses
+# optimistic concurrency: a second ``/run_sse`` on a session whose previous
+# run is still executing makes the older run's next ``append_event`` fail with
+# "The last_update_time provided in the session object is stale", and the root
+# router treats the new message as a fresh brief (re-extracts parameters,
+# re-casts the virtual creator, re-opens the strategy gate). The run is an
+# asyncio task of this process, so the registry is per process; a run living
+# on another instance still surfaces through ``is_concurrent_run_error``.
+ACTIVE_RUN_TTL_SECONDS = 30 * 60
+AGENT_BUSY_DETAIL = (
+    "Izumi is still working on the previous step in this conversation. "
+    "Wait for it to finish before sending another message."
+)
+_active_runs: dict[str, float] = {}
+
+
+def _is_run_active(session_id: str) -> bool:
+    """True while a run started by this process is still executing.
+
+    The TTL only guards against a task that vanished without reaching its
+    ``finally`` (e.g. event loop teardown); normal completion always clears
+    the entry.
+    """
+    started = _active_runs.get(session_id)
+    if started is None:
+        return False
+    if time.monotonic() - started > ACTIVE_RUN_TTL_SECONDS:
+        _active_runs.pop(session_id, None)
+        return False
+    return True
+
+
+def _mark_run_started(session_id: str) -> None:
+    _active_runs[session_id] = time.monotonic()
+
+
+def _mark_run_finished(session_id: str) -> None:
+    _active_runs.pop(session_id, None)
+
+
+def is_concurrent_run_error(message: str) -> bool:
+    """Recognises the ADK session-service optimistic-concurrency failure.
+
+    Local Izumi (``FirestoreSessionService``) and Agent Engine both reject an
+    ``append_event`` whose session snapshot is older than the stored one with
+    a "stale" ``last_update_time`` message.
+    """
+    lowered = (message or "").lower()
+    return "stale" in lowered and (
+        "last_update_time" in lowered or "session" in lowered
+    )
+
+
+# Pseudo resource name used for sessions when the agent runs in the local
+# Izumi container (there is no Agent Engine resource to point at).
+LOCAL_AGENT_NAME_PREFIX = "local-izumi-agent"
 
 APPROVAL_FUNCTIONS = {
     "await_strategy_approval",
@@ -107,6 +183,19 @@ class AgentService:
         self.storyboard_repo = storyboard_repo
         self.workspace_auth = workspace_auth
         self.project_service = project_service
+        # ENVIRONMENT=local (or USE_LOCAL_IZUMI_AGENT=true) routes the agent
+        # chat to the Izumi container started from
+        # genmedia-izumi-agent/demos/backend/ads_x/docker-compose.yml.
+        self.use_local_agent = config_service.IS_LOCAL_IZUMI_AGENT
+        self.local_client: LocalAdkAgentClient | None = None
+        if self.use_local_agent:
+            self.local_client = LocalAdkAgentClient(
+                config_service.IZUMI_AGENT_URL
+            )
+            logger.info(
+                "AgentService using local Izumi agent at %s",
+                config_service.IZUMI_AGENT_URL,
+            )
         self.client = vertexai.Client(
             project=config_service.PROJECT_ID,
             location=config_service.AGENT_LOCATION,
@@ -203,6 +292,10 @@ class AgentService:
         agent_config = self._get_agent_config(appName)
         agent_name = agent_config.get("resource_name")
         if not agent_name:
+            if self.use_local_agent:
+                # No Agent Engine resource exists for the local container; the
+                # name is only used to label sessions in logs.
+                return f"{LOCAL_AGENT_NAME_PREFIX}/{appName}"
             logger.error(
                 "Agent resource name is not configured for app %s.", appName
             )
@@ -213,6 +306,8 @@ class AgentService:
         return agent_name
 
     def _get_remote_agent(self, appName: str = APP_NAME) -> Any:
+        if self.use_local_agent:
+            return self.local_client.remote_agent(appName)
         vertexai.init(
             project=config_service.PROJECT_ID,
             location=config_service.AGENT_LOCATION,
@@ -220,6 +315,102 @@ class AgentService:
         )
         agent_name = self._get_validated_agent_name(appName)
         return agent_engines.get(agent_name)
+
+    # --- Session backend helpers -------------------------------------------
+    # Each helper hides whether sessions live in Vertex AI Agent Engine (the
+    # default) or in the local Izumi container (ENVIRONMENT=local). The Vertex
+    # branches are the original inline calls, kept verbatim.
+
+    async def _sessions_list(
+        self, agent_name: str, app_name: str, user_id: str
+    ) -> Any:
+        if self.use_local_agent:
+            return await self.local_client.list_sessions(app_name, user_id)
+        return self.client.agent_engines.sessions.list(
+            name=agent_name, config={"filter": f'user_id="{user_id}"'}
+        )
+
+    async def _sessions_create(
+        self, agent_name: str, app_name: str, user_id: str, state: dict
+    ) -> Any:
+        if self.use_local_agent:
+            return await self.local_client.create_session(
+                app_name, user_id, state
+            )
+        return self.client.agent_engines.sessions.create(
+            name=agent_name,
+            user_id=user_id,
+            config={"session_state": state},
+        )
+
+    async def _sessions_get(
+        self, agent_name: str, app_name: str, user_id: str, session_id: str
+    ) -> Any:
+        if self.use_local_agent:
+            return await self.local_client.get_session(
+                app_name, user_id, session_id
+            )
+        return self.client.agent_engines.sessions.get(
+            name=f"{agent_name}/sessions/{session_id}"
+        )
+
+    async def _sessions_delete(
+        self, agent_name: str, app_name: str, user_id: str, session_id: str
+    ) -> None:
+        if self.use_local_agent:
+            await self.local_client.delete_session(
+                app_name, user_id, session_id
+            )
+            return
+        self.client.agent_engines.sessions.delete(
+            name=f"{agent_name}/sessions/{session_id}"
+        )
+
+    async def _events_list(
+        self,
+        agent_name: str,
+        app_name: str,
+        user_id: str,
+        session_id: str,
+        session: Any = None,
+    ) -> list:
+        if self.use_local_agent:
+            # The ADK session payload already embeds its events; only refetch
+            # when the caller did not hand us a session dict.
+            if isinstance(session, dict) and "events" in session:
+                return list(session.get("events") or [])
+            fetched = await self.local_client.get_session(
+                app_name, user_id, session_id
+            )
+            return list((fetched or {}).get("events") or [])
+        return list(
+            self.client.agent_engines.sessions.events.list(
+                name=f"{agent_name}/sessions/{session_id}"
+            )
+        )
+
+    async def _append_state_delta(
+        self,
+        agent_name: str,
+        app_name: str,
+        user_id: str,
+        session_id: str,
+        state_delta: dict,
+    ) -> None:
+        if self.use_local_agent:
+            await self.local_client.update_session_state(
+                app_name, user_id, session_id, state_delta
+            )
+            return
+        import datetime
+
+        self.client.agent_engines.sessions.events.append(
+            name=f"{agent_name}/sessions/{session_id}",
+            author="system",
+            invocation_id="token_propagation",
+            timestamp=datetime.datetime.now(datetime.timezone.utc),
+            config={"actions": {"state_delta": state_delta}},
+        )
 
     def _map_session_to_dto(
         self,
@@ -355,8 +546,8 @@ class AgentService:
 
             agent_name = self._get_validated_agent_name(appName)
 
-            raw_sessions = self.client.agent_engines.sessions.list(
-                name=agent_name, config={"filter": f'user_id="{user_id}"'}
+            raw_sessions = await self._sessions_list(
+                agent_name, appName, user_id
             )
 
             mapped_sessions = []
@@ -414,10 +605,8 @@ class AgentService:
                 "workspace_id": workspace_id,
                 auth_key: auth_header,
             }
-            op = self.client.agent_engines.sessions.create(
-                name=agent_name,
-                user_id=user_id,
-                config={"session_state": state_data},
+            op = await self._sessions_create(
+                agent_name, appName, user_id, state_data
             )
             session = getattr(op, "response", None) or op
             return self._map_session_to_dto(session, appName, user_id)
@@ -483,12 +672,9 @@ class AgentService:
         if resolved_session_id is not None:
             try:
                 agent_name = self._get_validated_agent_name(appName)
-                full_session_name = (
-                    f"{agent_name}/sessions/{resolved_session_id}"
-                )
                 try:
-                    session = self.client.agent_engines.sessions.get(
-                        name=full_session_name
+                    session = await self._sessions_get(
+                        agent_name, appName, user_id, resolved_session_id
                     )
 
                     if session is None:
@@ -509,10 +695,8 @@ class AgentService:
                             "workspace_id": workspace_id,
                             auth_key: auth_header,
                         }
-                        op = self.client.agent_engines.sessions.create(
-                            name=agent_name,
-                            user_id=user_id,
-                            config={"session_state": state_data},
+                        op = await self._sessions_create(
+                            agent_name, appName, user_id, state_data
                         )
                         session = getattr(op, "response", None) or op
                         new_session_id = (
@@ -525,15 +709,19 @@ class AgentService:
                                 storyboard.id, {"session_id": new_session_id}
                             )
                             storyboard.session_id = new_session_id
+                        if new_session_id:
+                            resolved_session_id = new_session_id
                     else:
                         raise inner_e
 
                 events_list = []
                 try:
-                    events_list = list(
-                        self.client.agent_engines.sessions.events.list(
-                            name=full_session_name
-                        )
+                    events_list = await self._events_list(
+                        agent_name,
+                        appName,
+                        user_id,
+                        resolved_session_id,
+                        session,
                     )
                 except Exception as e_err:
                     logger.warning(
@@ -549,6 +737,11 @@ class AgentService:
                     exc_info=True,
                 )
 
+        if storyboard_id is None and session_dto is not None:
+            storyboard = await self._prefer_session_storyboard(
+                session_dto.state, storyboard, current_user
+            )
+
         if storyboard is None and resolved_session_id is None:
             raise HTTPException(
                 status_code=400,
@@ -558,6 +751,35 @@ class AgentService:
         return SessionDetailResponseDto(
             session=session_dto, storyboard=storyboard
         )
+
+    async def _prefer_session_storyboard(
+        self,
+        state: Any,
+        storyboard: StoryboardResponse | None,
+        current_user: UserModel,
+    ) -> StoryboardResponse | None:
+        """Swaps in the storyboard the agent's state calls current.
+
+        A session that restarted its pipeline before the create-or-reuse path
+        existed owns several records; the newest row is a good guess, but
+        ``current_storyboard_id`` is the one the agent renders and saves to.
+        Falls back to ``storyboard`` on any problem.
+        """
+        if not isinstance(state, dict):
+            return storyboard
+        current_id = safe_cast(state.get("current_storyboard_id"), int)
+        if current_id is None or (storyboard and storyboard.id == current_id):
+            return storyboard
+        try:
+            candidate = await self.project_service.get_storyboard(current_id)
+        except Exception as e:
+            logger.warning(
+                f"Could not load current_storyboard_id={current_id}: {e}"
+            )
+            return storyboard
+        if candidate is None or candidate.user_id != current_user.id:
+            return storyboard
+        return candidate
 
     async def get_session_messages(
         self,
@@ -576,9 +798,8 @@ class AgentService:
                 )
 
             agent_name = self._get_validated_agent_name(appName)
-            full_session_name = f"{agent_name}/sessions/{session_id}"
-            session = self.client.agent_engines.sessions.get(
-                name=full_session_name
+            session = await self._sessions_get(
+                agent_name, appName, user_id, session_id
             )
             if session is None:
                 raise HTTPException(status_code=404, detail="Session not found")
@@ -600,10 +821,8 @@ class AgentService:
 
             events_list = []
             try:
-                events_list = list(
-                    self.client.agent_engines.sessions.events.list(
-                        name=full_session_name
-                    )
+                events_list = await self._events_list(
+                    agent_name, appName, user_id, session_id, session
                 )
             except Exception as e_err:
                 logger.warning(
@@ -638,12 +857,11 @@ class AgentService:
                 )
 
             agent_name = self._get_validated_agent_name(appName)
-            full_session_name = f"{agent_name}/sessions/{session_id}"
 
             # Fetch session to extract workspace_id and authorize
             try:
-                session = self.client.agent_engines.sessions.get(
-                    name=full_session_name
+                session = await self._sessions_get(
+                    agent_name, appName, user_id, session_id
                 )
                 if session:
                     s_state = getattr(session, "session_state", None)
@@ -664,7 +882,9 @@ class AgentService:
                     f"Could not retrieve session for delete authorization: {e_err}"
                 )
 
-            self.client.agent_engines.sessions.delete(name=full_session_name)
+            await self._sessions_delete(
+                agent_name, appName, user_id, session_id
+            )
             return {"status": "success"}
         except HTTPException:
             raise
@@ -673,6 +893,253 @@ class AgentService:
                 f"Unexpected error deleting session: {e}", exc_info=True
             )
             raise HTTPException(status_code=500, detail=str(e))
+
+    # --- Characters tab -----------------------------------------------------
+
+    def _ensure_session_idle(self, session_id: str) -> None:
+        """Refuses a session-state write while a run is executing.
+
+        Same registry as ``chat()``: the agent's session service keeps an
+        optimistic lock on ``last_update_time``, so a write from here would
+        make the live run's next ``append_event`` fail with the "stale"
+        error and lose its work.
+        """
+        if _is_run_active(session_id):
+            logger.warning(
+                f"[Characters] Rejecting state write for session_id={session_id}: a run is still active"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=AGENT_BUSY_DETAIL,
+            )
+
+    async def _load_session_state(
+        self,
+        current_user: UserModel,
+        agent_name: str,
+        app_name: str,
+        user_id: str,
+        session_id: str,
+    ) -> dict:
+        """Fetches a session's state dict, authorising its workspace."""
+        session = await self._sessions_get(
+            agent_name, app_name, user_id, session_id
+        )
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if isinstance(session, dict):
+            s_state = session.get("session_state") or session.get("state")
+        else:
+            s_state = getattr(session, "session_state", None) or getattr(
+                session, "state", None
+            )
+        s_state = dict(s_state) if isinstance(s_state, dict) else {}
+        s_workspace_id = s_state.get("workspace_id")
+        if s_workspace_id is not None:
+            await self.workspace_auth.authorize(
+                workspace_id=int(s_workspace_id),
+                user=current_user,
+            )
+        return s_state
+
+    async def update_session_character(
+        self,
+        current_user: UserModel,
+        user_id: str,
+        session_id: str,
+        payload: UpdateCharacterRequestDto,
+    ) -> CharacterStateResponseDto:
+        """Creates/edits the campaign's on-screen character in session state.
+
+        Rewrites ``asset_refs`` / ``user_assets`` / ``virtual_creator_metadata``
+        / ``parameters`` together (see ``character_state.py``) and returns the
+        new values so the UI can merge them without a session reload.
+        """
+        try:
+            app_name = payload.appName or APP_NAME
+            await self.workspace_auth.authorize(
+                workspace_id=payload.workspaceId, user=current_user
+            )
+            self._ensure_session_idle(session_id)
+            agent_name = self._get_validated_agent_name(app_name)
+            state = await self._load_session_state(
+                current_user, agent_name, app_name, user_id, session_id
+            )
+            asset_ref = (
+                {
+                    "id": payload.assetRef.id,
+                    "asset_type": payload.assetRef.assetType,
+                }
+                if payload.assetRef
+                else None
+            )
+            try:
+                delta = build_character_delta(
+                    state,
+                    profile=payload.profile.to_state(),
+                    workspace_id=payload.workspaceId,
+                    asset_ref=asset_ref,
+                    prompt=payload.prompt,
+                )
+            except CharacterStateError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            await self._append_state_delta(
+                agent_name, app_name, user_id, session_id, delta
+            )
+            logger.info(
+                f"[Characters] Updated character for session_id={session_id} "
+                f"(key={delta['virtual_creator_metadata'].get('file_name')}, "
+                f"headshot_replaced={asset_ref is not None})"
+            )
+            return CharacterStateResponseDto(state=delta)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(
+                f"Unexpected error updating session character: {e}",
+                exc_info=True,
+            )
+            raise HTTPException(status_code=500, detail=str(e))
+
+    async def remove_session_character(
+        self,
+        current_user: UserModel,
+        user_id: str,
+        session_id: str,
+        workspace_id: int,
+        app_name: str = APP_NAME,
+    ) -> CharacterStateResponseDto:
+        """Drops the character: the campaign becomes a product-only ad."""
+        try:
+            await self.workspace_auth.authorize(
+                workspace_id=workspace_id, user=current_user
+            )
+            self._ensure_session_idle(session_id)
+            agent_name = self._get_validated_agent_name(app_name)
+            state = await self._load_session_state(
+                current_user, agent_name, app_name, user_id, session_id
+            )
+            delta = build_character_removal_delta(state)
+            await self._append_state_delta(
+                agent_name, app_name, user_id, session_id, delta
+            )
+            logger.info(
+                f"[Characters] Removed character for session_id={session_id}"
+            )
+            return CharacterStateResponseDto(state=delta)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(
+                f"Unexpected error removing session character: {e}",
+                exc_info=True,
+            )
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # --- Storyboard -> session sync ------------------------------------------
+
+    async def sync_storyboard_to_session(
+        self,
+        current_user: UserModel,
+        storyboard: StoryboardResponse,
+        app_name: str = APP_NAME,
+    ) -> dict:
+        """Mirrors a human storyboard edit into the Izumi session state.
+
+        Called after ``PUT /api/storyboards/{id}`` has persisted the record.
+        Never raises: the record is already saved, so a busy agent or a
+        missing session is reported in the returned ``status`` rather than
+        failing the request. Statuses: ``synced``, ``skipped`` (no session or
+        no storyboard in state yet), ``busy`` (a run is executing),
+        ``rejected`` (the edit cannot be mirrored, e.g. no scenes) and
+        ``failed``.
+        """
+        session_id = storyboard.session_id
+        if not session_id:
+            return {"status": "skipped", "detail": "Storyboard has no session."}
+        user_id = str(current_user.id)
+        try:
+            if _is_run_active(session_id):
+                return {"status": "busy", "detail": AGENT_BUSY_DETAIL}
+            agent_name = self._get_validated_agent_name(app_name)
+            state = await self._load_session_state(
+                current_user, agent_name, app_name, user_id, session_id
+            )
+            try:
+                result = build_storyboard_delta(
+                    state, storyboard, storyboard.workspace_id
+                )
+            except StoryboardStateError as e:
+                return {"status": "rejected", "detail": str(e)}
+            if result is None:
+                return {
+                    "status": "skipped",
+                    "detail": "The agent has not written a storyboard yet.",
+                }
+            delta, summary = result
+            await self._append_state_delta(
+                agent_name, app_name, user_id, session_id, delta
+            )
+            logger.info(
+                f"[Storyboard sync] session_id={session_id} storyboard_id={storyboard.id} "
+                f"summary={summary.as_dict()}"
+            )
+            return {"status": "synced", **summary.as_dict()}
+        except HTTPException as e:
+            if e.status_code == status.HTTP_404_NOT_FOUND:
+                return {"status": "skipped", "detail": "Session not found."}
+            logger.warning(
+                f"[Storyboard sync] session_id={session_id} rejected: {e.detail}"
+            )
+            return {"status": "failed", "detail": str(e.detail)}
+        except Exception as e:
+            logger.error(
+                f"[Storyboard sync] session_id={session_id} failed: {e}",
+                exc_info=True,
+            )
+            return {"status": "failed", "detail": str(e)}
+
+    async def _fold_into_pending_gate(
+        self,
+        app_name: str,
+        user_id: str,
+        session_id: str,
+        parts: list,
+    ) -> dict | None:
+        """Rewrites a plain-text turn as the reply to a suspended checkpoint.
+
+        Returns the replacement message part, or ``None`` when the message
+        should go through unchanged (not plain text, no pending gate, or the
+        session could not be read -- never block the chat on this).
+        """
+        text = plain_text_of(parts)
+        if not text:
+            return None
+        try:
+            agent_name = self._get_validated_agent_name(app_name)
+            session = await self._sessions_get(
+                agent_name, app_name, user_id, session_id
+            )
+            if session is None:
+                return None
+            events = await self._events_list(
+                agent_name, app_name, user_id, session_id, session
+            )
+            gate = find_pending_gate(events)
+            if gate is None:
+                return None
+            part = fold_text_into_gate(text, gate)
+            logger.info(
+                f"[Gate] session_id={session_id}: typed reply folded into pending "
+                f"{gate.tool_name} (call_id={gate.call_id}, "
+                f"decision={part['function_response']['response']['decision']})"
+            )
+            return part
+        except Exception as e:
+            logger.warning(
+                f"[Gate] session_id={session_id}: could not check pending gate: {e}"
+            )
+            return None
 
     async def chat(
         self,
@@ -699,9 +1166,8 @@ class AgentService:
             try:
                 agent_config = self._get_agent_config(body["appName"])
                 agent_name = agent_config.get("resource_name")
-                full_session_name = f"{agent_name}/sessions/{session_id}"
-                session = self.client.agent_engines.sessions.get(
-                    name=full_session_name
+                session = await self._sessions_get(
+                    agent_name, body["appName"], user_id, session_id
                 )
                 if session:
                     s_state = getattr(session, "session_state", None)
@@ -735,6 +1201,16 @@ class AgentService:
                     and ("function_response" in p or "functionResponse" in p)
                     for p in new_msg["parts"]
                 )
+                if not is_function_response and session_id:
+                    # A typed reply while a checkpoint is pending must answer
+                    # that checkpoint; sent as text it reaches the root agent,
+                    # which restarts the whole pipeline from the brief.
+                    folded = await self._fold_into_pending_gate(
+                        body["appName"], user_id, session_id, new_msg["parts"]
+                    )
+                    if folded is not None:
+                        new_msg["parts"] = [folded]
+                        is_function_response = True
                 if not is_function_response:
                     sanitized_parts = []
                     attached_assets = []
@@ -788,7 +1264,6 @@ class AgentService:
         # Internal background task function
         async def process_stream():
             try:
-                import datetime
                 import json
 
                 app_name = body.get("appName") or APP_NAME
@@ -801,23 +1276,16 @@ class AgentService:
 
                 if session_id and auth_header:
                     agent_name = self._get_validated_agent_name(app_name)
-                    full_session_name = f"{agent_name}/sessions/{session_id}"
                     try:
                         logger.info(
                             f"[Agent Stream] Appending state delta token propagation for session_id={session_id}"
                         )
-                        self.client.agent_engines.sessions.events.append(
-                            name=full_session_name,
-                            author="system",
-                            invocation_id="token_propagation",
-                            timestamp=datetime.datetime.now(
-                                datetime.timezone.utc
-                            ),
-                            config={
-                                "actions": {
-                                    "state_delta": {auth_key: auth_header}
-                                }
-                            },
+                        await self._append_state_delta(
+                            agent_name,
+                            app_name,
+                            user_id,
+                            session_id,
+                            {auth_key: auth_header},
                         )
                         logger.info(
                             f"[Agent Stream] State delta token propagation appended successfully for session_id={session_id}"
@@ -993,10 +1461,33 @@ class AgentService:
                     error_type = "unknown"
                     code = 500
                     err_str = str(e)
-                    if (
+                    err_lower = err_str.lower()
+                    # Two runs on one session: the run holding the older
+                    # session snapshot dies at its next append_event. Another
+                    # run is still live, so a Retry would only kill that one.
+                    if is_concurrent_run_error(err_str):
+                        error_type = "concurrent_run"
+                        code = 409
+                    # The agent reuses the user's X-User-Authorization token
+                    # for the whole run; when it expires mid-run its tool
+                    # calls back into Creative Studio fail with 401. Check
+                    # this first: such messages often also mention other
+                    # codes/words that would match the branches below.
+                    elif (
+                        "401" in err_str
+                        or "unauthorized" in err_lower
+                        or "unauthenticated" in err_lower
+                        or "token expired" in err_lower
+                        or "token has expired" in err_lower
+                        or "invalid token" in err_lower
+                        or "expired token" in err_lower
+                    ):
+                        error_type = "auth_expired"
+                        code = 401
+                    elif (
                         "429" in err_str
                         or "ResourceExhausted" in err_str
-                        or "quota" in err_str.lower()
+                        or "quota" in err_lower
                     ):
                         error_type = "quota_exceeded"
                         code = 429
@@ -1044,6 +1535,24 @@ class AgentService:
                         f"[Agent Stream] Failed to save error event: {save_err}",
                         exc_info=True,
                     )
+            finally:
+                if session_id:
+                    _mark_run_finished(session_id)
+
+        # Refuse to start a second run on a session that is still executing:
+        # it would corrupt the agent's session (see the registry docstring).
+        # Check and mark without awaiting in between so that two simultaneous
+        # requests cannot both pass.
+        if session_id:
+            if _is_run_active(session_id):
+                logger.warning(
+                    f"[Agent Stream] Rejecting chat for session_id={session_id}: a run is still active"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=AGENT_BUSY_DETAIL,
+                )
+            _mark_run_started(session_id)
 
         asyncio.create_task(process_stream())
 

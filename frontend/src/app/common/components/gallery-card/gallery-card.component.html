@@ -163,8 +163,9 @@
   
   </a>
 
-  <!-- Carousel Controls: Only show if there's more than one image -->
-  <ng-container *ngIf="displayUrls && displayUrls.length > 1">
+  <!-- Carousel Controls: Only show if there's more than one image and the
+       consumer can address more than the first index -->
+  <ng-container *ngIf="!firstIndexOnly && displayUrls && displayUrls.length > 1">
     <!-- Previous Button -->
     <button (click)="prevImageItem($event)" class="carousel-control prev">
       <svg

@@ -29,6 +29,9 @@ os.environ["ENVIRONMENT"] = "local"
 os.environ["AGENT_ENGINE_RESOURCE_NAME"] = (
     "projects/mock/locations/mock/reasoningEngines/mock"
 )
+# ENVIRONMENT=local would route AgentService to the local Izumi container;
+# keep the suite on the Vertex path (local-mode tests patch this explicitly).
+os.environ["USE_LOCAL_IZUMI_AGENT"] = "false"
 
 import google.auth
 

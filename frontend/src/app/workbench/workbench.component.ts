@@ -57,6 +57,8 @@ import {
   TimelineClip,
   MediaAsset,
 } from '../common/models/workbench.model';
+import {clampFade, clampGain} from './utils/audio-gain';
+import {AudioClipAdjustment} from './components/audio-clip-inspector/audio-clip-inspector.component';
 import {ActivatedRoute, Router} from '@angular/router';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {
@@ -130,6 +132,14 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     const id = this.timelineState.selectedClipId();
     if (!id) return -1;
     return this.timelineState.videoClips().findIndex(c => c.id === id);
+  });
+
+  /** The selected clip when it sits on an audio track, else null. */
+  selectedAudioClip = computed<TimelineClip | null>(() => {
+    const id = this.timelineState.selectedClipId();
+    if (!id) return null;
+    const clip = this.timelineState.timelineClips().find(c => c.id === id);
+    return clip && clip.trackIndex > 0 ? clip : null;
   });
 
   activeVideoSrc = computed(() => {
@@ -221,6 +231,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   private activeSaveSubscription?: Subscription;
   private hasPendingSave = false;
   private isSaving = false;
+  /** Monotonic id of the latest timeline fetch (see the timeline effect). */
+  private timelineLoadSeq = 0;
 
   constructor(
     public matIconRegistry: MatIconRegistry,
@@ -258,21 +270,28 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           return;
         }
         if (timelineId) {
+          // Publish the in-flight state so the chat can lock session switching
+          // until the timeline for this storyboard has actually landed. The
+          // sequence guards against a superseded fetch clearing the flag that
+          // a newer fetch still owns.
+          const requestSeq = ++this.timelineLoadSeq;
+          this.timelineState.isLoadingTimeline.set(true);
           this.workbenchService.getTimeline(timelineId).subscribe({
             next: (timeline: TimelineDTO) => {
+              if (requestSeq === this.timelineLoadSeq) {
+                this.timelineState.isLoadingTimeline.set(false);
+              }
               this.processGeneratedData(timeline);
               this.lastSavedText.set('Saved');
 
-              // If the timeline is associated with a session/storyboard, update URL and show agent panel
+              // If the timeline is associated with a session/storyboard, show
+              // the agent panel. Do NOT write sessionId/storyboardId into the
+              // URL here: the chat (`loadChatMessages`) is the single owner of
+              // those query params. Navigating from here wrote the *timeline's*
+              // session back into the URL after the user had already switched
+              // chats, and the queryParams subscription below then flipped
+              // `selectedSessionId` back — an endless session ping-pong.
               if (timeline.storyboard_id || timeline.session_id) {
-                void this.router.navigate([], {
-                  relativeTo: this.route,
-                  queryParams: {
-                    sessionId: timeline.session_id || null,
-                    storyboardId: timeline.storyboard_id || null,
-                  },
-                  queryParamsHandling: 'merge',
-                });
                 this.activeToolButton.set('agent');
               } else {
                 // Manual timeline: clear agent chat state
@@ -285,11 +304,17 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
               }
             },
             error: err => {
+              if (requestSeq === this.timelineLoadSeq) {
+                this.timelineState.isLoadingTimeline.set(false);
+              }
               console.error('Failed to fetch timeline:', err);
               this.lastSavedText.set('Failed to load timeline');
             },
           });
         } else {
+          // No timeline to load: invalidate any in-flight fetch and unlock.
+          this.timelineLoadSeq++;
+          this.timelineState.isLoadingTimeline.set(false);
           this.timelineState.timelineClips.set([]);
           this.timelineState.selectedClipId.set(null);
           this.timelineState.assets.set([]);
@@ -602,8 +627,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       }
     };
     video.onerror = () => {
-      // If video fails to load metadata, set a default duration
-      this.updateAssetDuration(asset.id, 10);
+      // Metadata failed: 10 s is a display estimate only, never a trim.
+      this.updateAssetDuration(asset.id, 10, false);
     };
   }
 
@@ -618,8 +643,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       this.updateAssetDuration(asset.id, audio.duration);
     };
     audio.onerror = e => {
-      // If audio fails to load metadata, set a default duration
-      this.updateAssetDuration(asset.id, 10);
+      // Metadata failed: 10 s is a display estimate only, never a trim.
+      this.updateAssetDuration(asset.id, 10, false);
     };
   }
 
@@ -661,9 +686,22 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     };
   }
 
-  updateAssetDuration(id: string, duration: number) {
+  /**
+   * Applies a media duration learned from the browser. `resolved=false`
+   * marks it as a display estimate (metadata failed): the asset and its
+   * clips keep `isDurationPlaceholder` so saveTimeline() never persists the
+   * guess as a trim, and a duration that is already known is left alone.
+   */
+  updateAssetDuration(id: string, duration: number, resolved = true) {
     this.timelineState.assets.update(items =>
-      items.map(i => (i.id === id ? {...i, duration} : i)),
+      items.map(i => {
+        if (i.id !== id) return i;
+        if (!resolved && i.duration > 0 && !i.isDurationPlaceholder) return i;
+        const updatedAsset: MediaAsset = {...i, duration};
+        if (resolved) delete updatedAsset.isDurationPlaceholder;
+        else updatedAsset.isDurationPlaceholder = true;
+        return updatedAsset;
+      }),
     );
     this.timelineState.timelineClips.update(clips => {
       const updated = clips.map(clip => {
@@ -671,8 +709,12 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           if (clip.duration === 0 || clip.isDurationPlaceholder) {
             const clipSpeed = clip.speed !== undefined ? clip.speed : 1.0;
             const targetDuration = duration / clipSpeed;
-            const updatedClip = {...clip, duration: targetDuration};
-            delete updatedClip.isDurationPlaceholder;
+            const updatedClip: TimelineClip = {
+              ...clip,
+              duration: targetDuration,
+            };
+            if (resolved) delete updatedClip.isDurationPlaceholder;
+            else updatedClip.isDurationPlaceholder = true;
             return updatedClip;
           }
         }
@@ -741,21 +783,30 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     );
   }
 
+  /**
+   * Re-lays the video track from t=0 back-to-back: `start(N+1) = end(N)`.
+   * Transitions never move clips — the backend ffmpeg graph centres each
+   * cross-fade on the cut using frozen-frame handles (and the preview does
+   * the same), so the render keeps Σ(clip durations) and absolute audio
+   * placements stay aligned with their scene. Every site that relayouts the
+   * video track (delete, trim, metadata extraction, drag) MUST go through
+   * this helper so the UI never drifts from what the render produces.
+   */
+  private layoutVideoTrack(videoClips: TimelineClip[]): TimelineClip[] {
+    const ordered = [...videoClips].sort((a, b) => a.startTime - b.startTime);
+    let currentTime = 0;
+    return ordered.map(clip => {
+      const newClip = {...clip, startTime: currentTime};
+      currentTime += clip.duration;
+      return newClip;
+    });
+  }
+
   refreshTimelineLayout() {
     this.timelineState.timelineClips.update(clips => {
       const vClips = clips.filter(c => c.trackIndex === 0);
       const otherClips = clips.filter(c => c.trackIndex !== 0);
-
-      const layoutTrack = (trackClips: TimelineClip[]) => {
-        let currentTime = 0;
-        return trackClips.map(clip => {
-          const newClip = {...clip, startTime: currentTime};
-          currentTime += clip.duration;
-          return newClip;
-        });
-      };
-
-      return [...layoutTrack(vClips), ...otherClips];
+      return [...this.layoutVideoTrack(vClips), ...otherClips];
     });
   }
 
@@ -802,6 +853,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
             url: clip.presigned_url!,
             safeUrl: this.sanitizer.bypassSecurityTrustUrl(clip.presigned_url!),
             duration: trimDuration,
+            ...(isPlaceholder ? {isDurationPlaceholder: true} : {}),
             thumbnail: clip.presigned_thumbnail_url || undefined,
             mediaItemId: mediaItemId,
             sourceAssetId: sourceAssetId,
@@ -847,7 +899,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           transition_to_next_duration: transitionDuration,
         });
         videoStartTimes.push(currentVideoTime);
-        currentVideoTime += trimDuration - transitionDuration / 2;
+        // Back-to-back, same as layoutVideoTrack(): transitions are centred
+        // on the cut by the render and never shift the next clip.
+        currentVideoTime += trimDuration;
       });
     }
 
@@ -894,13 +948,18 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
             url: clip.presigned_url!,
             safeUrl: this.sanitizer.bypassSecurityTrustUrl(clip.presigned_url!),
             duration: trimDuration,
+            ...(isPlaceholder ? {isDurationPlaceholder: true} : {}),
             mediaItemId: mediaItemId,
             sourceAssetId: sourceAssetId,
           };
           this.timelineState.assets.update(prev => [...prev, existingAsset!]);
         }
 
-        if (isPlaceholder && existingAsset) {
+        // Probe every audio asset, not only placeholders: an asset created
+        // from a trimmed clip only knows the trim, so the trim handle (capped
+        // at asset.duration) could never extend the clip back to the full
+        // file. updateAssetDuration() leaves non-placeholder clips untouched.
+        if (existingAsset) {
           if (!assetsToExtract.some(a => a.id === existingAsset!.id)) {
             assetsToExtract.push(existingAsset);
           }
@@ -949,11 +1008,12 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
               : 1.0,
           speed:
             clip.speed !== undefined && clip.speed !== null ? clip.speed : 1.0,
+          fadeIn: clip.fade_in_duration_seconds ?? 0,
+          fadeOut: clip.fade_out_duration_seconds ?? 0,
         });
       });
     }
 
-    console.log('Setting timelineClips to:', newClips);
     this.timelineState.timelineClips.set(newClips);
     this.refreshTimelineLayout();
 
@@ -999,6 +1059,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         assetId: asset.id,
         startTime: vStartTime,
         duration: asset.duration,
+        ...(asset.isDurationPlaceholder ? {isDurationPlaceholder: true} : {}),
         offset: 0,
         trackIndex: 0,
         color: assetColor,
@@ -1016,6 +1077,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         assetId: asset.id,
         startTime: vStartTime,
         duration: asset.duration,
+        ...(asset.isDurationPlaceholder ? {isDurationPlaceholder: true} : {}),
         offset: 0,
         trackIndex: targetTrack,
         color: '#10b981',
@@ -1035,6 +1097,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         assetId: asset.id,
         startTime: playhead,
         duration: asset.duration,
+        ...(asset.isDurationPlaceholder ? {isDurationPlaceholder: true} : {}),
         offset: 0,
         trackIndex: targetTrack,
         color: '#10b981',
@@ -1545,27 +1608,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     if (!movedClip) return;
 
     if (movedClip.trackIndex === 0) {
-      // Video Track: Magnetic / Ripple Edit
-      // 1. Sort all video clips by startTime to determine order
-      // 2. Remove gaps
-      const videoClips = allClips
-        .filter(c => c.trackIndex === 0)
-        .sort((a, b) => a.startTime - b.startTime);
-
-      let currentTime = 0;
-      const newVideoClips = videoClips.map(clip => {
-        const newClip = {...clip, startTime: currentTime};
-        const transitionType =
-          clip.transition_to_next_type || TransitionType.NONE;
-        const transitionDuration =
-          transitionType !== TransitionType.NONE &&
-          clip.transition_to_next_duration !== undefined &&
-          clip.transition_to_next_duration !== null
-            ? clip.transition_to_next_duration
-            : 0;
-        currentTime += clip.duration - transitionDuration / 2;
-        return newClip;
-      });
+      // Video Track: Magnetic / Ripple Edit — sort by startTime and remove
+      // gaps using the shared overlap-aware layout.
+      const newVideoClips = this.layoutVideoTrack(
+        allClips.filter(c => c.trackIndex === 0),
+      );
 
       // Update state
       this.timelineState.timelineClips.update(prev => {
@@ -1631,6 +1678,54 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     return [...Array(Math.floor(length)).keys()].map(i => i + 1);
   }
 
+  // --- Audio clip gain & fades (inspector + on-clip visuals) ---
+
+  /**
+   * Waveform bar height scaled by the clip gain so a 20 % music bed visibly
+   * sits lower than a 100 % voiceover. Boosted clips stay capped at 100 %.
+   */
+  getAudioBarHeight(clip: TimelineClip, seed: number): number {
+    const gain = Math.min(1, clampGain(clip.volume));
+    return Math.max(6, this.getRandomHeight(seed) * gain);
+  }
+
+  /** Width in px of the fade ramp overlay drawn at either end of a clip. */
+  getFadeOverlayWidth(clip: TimelineClip, edge: 'in' | 'out'): number {
+    const seconds = edge === 'in' ? (clip.fadeIn ?? 0) : (clip.fadeOut ?? 0);
+    if (seconds <= 0) return 0;
+    const clipPx = clip.duration * this.timelineState.pixelsPerSecond() - 4;
+    return Math.min(clipPx, seconds * this.timelineState.pixelsPerSecond());
+  }
+
+  getAudioVolumeLabel(clip: TimelineClip): string {
+    return `${Math.round(clampGain(clip.volume) * 100)}%`;
+  }
+
+  /** Applies an inspector delta to the selected audio clip and autosaves. */
+  onAudioClipAdjust(clipId: string, change: AudioClipAdjustment): void {
+    let touched = false;
+    this.timelineState.timelineClips.update(prev =>
+      prev.map(c => {
+        if (c.id !== clipId || c.trackIndex === 0) return c;
+        const next: TimelineClip = {...c};
+        if (change.volume !== undefined) next.volume = clampGain(change.volume);
+        if (change.fadeIn !== undefined) {
+          next.fadeIn = clampFade(change.fadeIn, c.duration);
+        }
+        if (change.fadeOut !== undefined) {
+          next.fadeOut = clampFade(change.fadeOut, c.duration);
+        }
+        touched = true;
+        return next;
+      }),
+    );
+    if (touched) this.triggerAutoSave();
+  }
+
+  clearClipSelection(): void {
+    this.timelineState.selectedClipId.set(null);
+  }
+
   getThumbnailsSequence(duration: number): number[] {
     // add thumbnails dinamically
     const count = Math.ceil(
@@ -1649,6 +1744,18 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     this.hasPendingSave = true;
     this.lastSavedText.set('Saving...');
     this.saveSubject.next();
+  }
+
+  /**
+   * Trim length to persist for a clip. Placeholder durations (the 5 s default
+   * before metadata arrives, 10 s when it fails) are display estimates only:
+   * persisting them turns a guess into a hard `atrim` that cuts the real file
+   * (a 10.64 s voiceover saved as 10 s lost its last word, and the Workbench
+   * then treated the 10 s as a deliberate trim on every later save). `null`
+   * tells the renderer to use the file's full length.
+   */
+  private persistedTrimDuration(clip: TimelineClip): number | null {
+    return clip.isDurationPlaceholder ? null : clip.duration;
   }
 
   saveTimeline(): Observable<TimelineDTO | null> {
@@ -1693,7 +1800,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           asset_ref: assetRef,
           trim: {
             offset_seconds: c.offset,
-            duration_seconds: c.duration,
+            duration_seconds: this.persistedTrimDuration(c),
           },
           first_frame_asset_ref: c.first_frame_asset_ref || null,
           last_frame_asset_ref: c.last_frame_asset_ref || null,
@@ -1730,9 +1837,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           asset_ref: assetRef,
           trim: {
             offset_seconds: c.offset,
-            duration_seconds: c.duration,
+            duration_seconds: this.persistedTrimDuration(c),
           },
-          volume: 1.0,
+          volume: c.volume ?? 1.0,
+          fade_in_duration_seconds: c.fadeIn ?? 0,
+          fade_out_duration_seconds: c.fadeOut ?? 0,
         };
       });
 
@@ -1762,7 +1871,6 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       : this.workbenchService.createTimeline(timelineData);
     this.activeSaveSubscription = request$.subscribe({
       next: (res: TimelineDTO) => {
-        console.log('Timeline saved successfully', res);
         this.lastSavedText.set('Saved');
         if (res.timeline_id) {
           this.timelineState.loadedTimelineId.set(res.timeline_id);
@@ -1820,8 +1928,50 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         };
         return updated;
       });
+      // The playback engine reads in-between transitions from the clip itself
+      // (transition_to_next_*), which is only denormalised on timeline load.
+      // Mirror the change into the clips so it takes effect without a reload.
+      this.applyMiddleTransitionToClips(
+        event.index,
+        event.type,
+        event.duration_seconds,
+      );
     }
     this.saveTimeline().subscribe();
+  }
+
+  private applyMiddleTransitionToClips(
+    index: number,
+    type: TransitionType,
+    durationSeconds: number,
+  ) {
+    this.timelineState.timelineClips.update(prev => {
+      const videoClips = prev
+        .filter(c => c.trackIndex === 0)
+        .sort((a, b) => a.startTime - b.startTime);
+      if (index < 0 || index >= videoClips.length - 1) return prev;
+
+      const others = prev.filter(c => c.trackIndex !== 0);
+      let currentTime = 0;
+      const relaid = videoClips.map((clip, idx) => {
+        const newClip: TimelineClip =
+          idx === index
+            ? {
+                ...clip,
+                startTime: currentTime,
+                transition_to_next_type: type,
+                transition_to_next_duration:
+                  type === TransitionType.NONE ? 0 : durationSeconds,
+              }
+            : {...clip, startTime: currentTime};
+        // Back-to-back like layoutVideoTrack(): a transition annotates the
+        // clip but never moves the next one, so the timeline (and the
+        // absolute audio placed on it) keeps its total duration.
+        currentTime += clip.duration;
+        return newClip;
+      });
+      return [...others, ...relaid];
+    });
   }
 
   getLastVideoClipEndTime(): number {

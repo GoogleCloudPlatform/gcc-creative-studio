@@ -100,6 +100,17 @@ class ConfigService(BaseSettings):
     AGENT_ENGINE_RESOURCE_NAME: str = ""
     AGENT_LOCATION: str = "us-central1"
     AGENT_ENGINE_USER_AUTH_TOKEN_KEY: str = "user_auth_token"
+    # Talk to a local Izumi (ADK api_server) container at IZUMI_AGENT_URL
+    # instead of Vertex AI Agent Engine. Leave unset to derive it from
+    # ENVIRONMENT ("local" => local container); set explicitly to force it.
+    USE_LOCAL_IZUMI_AGENT: bool | None = None
+
+    @property
+    def IS_LOCAL_IZUMI_AGENT(self) -> bool:
+        """True when the agent chat should target the local Izumi container."""
+        if self.USE_LOCAL_IZUMI_AGENT is not None:
+            return self.USE_LOCAL_IZUMI_AGENT
+        return self.ENVIRONMENT.strip().lower() == "local"
 
     # --- Workflows ---
     WORKFLOWS_LOCATION: str = "us-central1"

@@ -16,7 +16,7 @@ import copy
 import re
 from datetime import datetime, timezone
 from fastapi import Depends
-from sqlalchemy import delete, func, insert, select, text, update
+from sqlalchemy import delete, func, insert, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.base_repository import BaseRepository
@@ -425,6 +425,98 @@ class FolderRepository(BaseRepository[Folder, FolderModel]):
         )
         result = await self.db.execute(cte_query, {"folder_ids": folder_ids})
         return [row.id for row in result.fetchall()]
+
+    async def subtree_has_foreign_content(
+        self, folder_id: int, user_id: int
+    ) -> bool:
+        """True if the folder tree rooted at ``folder_id`` (inclusive) holds any
+        active subfolder, media item or source asset not owned by ``user_id``.
+
+        Rows with a NULL owner count as foreign so that a regular user can never
+        cascade-delete system or legacy content they do not own.
+        """
+        descendant_ids = await self.get_descendant_ids(folder_id)
+        if not descendant_ids:
+            return False
+
+        probes = (
+            select(func.count())
+            .select_from(self.model)
+            .where(
+                self.model.id.in_(descendant_ids),
+                self.model.deleted_at.is_(None),
+                or_(
+                    self.model.user_id.is_(None),
+                    self.model.user_id != user_id,
+                ),
+            ),
+            select(func.count())
+            .select_from(MediaItem)
+            .where(
+                MediaItem.folder_id.in_(descendant_ids),
+                MediaItem.deleted_at.is_(None),
+                or_(MediaItem.user_id.is_(None), MediaItem.user_id != user_id),
+            ),
+            select(func.count())
+            .select_from(SourceAsset)
+            .where(
+                SourceAsset.folder_id.in_(descendant_ids),
+                SourceAsset.deleted_at.is_(None),
+                or_(
+                    SourceAsset.user_id.is_(None),
+                    SourceAsset.user_id != user_id,
+                ),
+            ),
+        )
+        for stmt in probes:
+            result = await self.db.execute(stmt)
+            if (result.scalar_one() or 0) > 0:
+                return True
+        return False
+
+    async def has_foreign_items(
+        self,
+        media_item_ids: list[int],
+        source_asset_ids: list[int],
+        workspace_id: int,
+        user_id: int,
+    ) -> bool:
+        """True if any of the given active items in ``workspace_id`` is not
+        owned by ``user_id`` (NULL owners count as foreign)."""
+        probes = []
+        if media_item_ids:
+            probes.append(
+                select(func.count())
+                .select_from(MediaItem)
+                .where(
+                    MediaItem.id.in_(media_item_ids),
+                    MediaItem.workspace_id == workspace_id,
+                    MediaItem.deleted_at.is_(None),
+                    or_(
+                        MediaItem.user_id.is_(None),
+                        MediaItem.user_id != user_id,
+                    ),
+                )
+            )
+        if source_asset_ids:
+            probes.append(
+                select(func.count())
+                .select_from(SourceAsset)
+                .where(
+                    SourceAsset.id.in_(source_asset_ids),
+                    SourceAsset.workspace_id == workspace_id,
+                    SourceAsset.deleted_at.is_(None),
+                    or_(
+                        SourceAsset.user_id.is_(None),
+                        SourceAsset.user_id != user_id,
+                    ),
+                )
+            )
+        for stmt in probes:
+            result = await self.db.execute(stmt)
+            if (result.scalar_one() or 0) > 0:
+                return True
+        return False
 
     async def get_folder_depth(self, folder_id: int) -> int:
         """Returns the depth of a folder from the workspace root (root folder = 1)."""

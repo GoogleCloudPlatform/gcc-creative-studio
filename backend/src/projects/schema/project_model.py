@@ -73,8 +73,12 @@ class Storyboard(Base):
     )
 
     # project: Mapped["Project"] = relationship(back_populates="storyboard")
+    # Ordered by the persisted position, then by id so legacy rows (all
+    # written with ``order = 0``) still come back in insertion order.
     scenes: Mapped[list["Scene"]] = relationship(
-        back_populates="storyboard", cascade="all, delete-orphan"
+        back_populates="storyboard",
+        cascade="all, delete-orphan",
+        order_by="[Scene.order, Scene.id]",
     )
     timeline: Mapped["Timeline"] = relationship(
         back_populates="storyboard", uselist=False, cascade="all, delete-orphan"
@@ -93,6 +97,9 @@ class Scene(Base):
         ForeignKey("storyboards.id"), nullable=False
     )
     order: Mapped[int] = mapped_column(default=0, nullable=False)
+    # Izumi's stable scene identity (survives reorder); nullable for rows
+    # written before the column existed or by clients that do not send it.
+    scene_id: Mapped[str | None] = mapped_column(String, nullable=True)
     topic: Mapped[str | None] = mapped_column(String, nullable=True)
     duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
 

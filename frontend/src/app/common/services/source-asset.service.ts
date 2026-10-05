@@ -220,8 +220,6 @@ export class SourceAssetService {
       )
       .pipe(
         tap(initialItem => {
-          console.log('Upscale job started successfully:', initialItem);
-
           this.activeUpscaleJob.next(initialItem);
           this.startUpscalePolling(String(initialItem.id));
         }),
@@ -277,8 +275,6 @@ export class SourceAssetService {
       )
       .pipe(
         tap(initialItem => {
-          console.log('Upscale job started successfully:', initialItem);
-
           this.activeUpscaleJob.next(initialItem);
           this.startUpscalePolling(String(initialItem.id));
         }),

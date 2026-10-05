@@ -17,6 +17,10 @@ import {SafeResourceUrl} from '@angular/platform-browser';
 
 export interface SceneDTO {
   id: number;
+  /** Agent-side identity (`state.storyboard.scenes[].scene_id`). */
+  scene_id?: string | null;
+  /** Persisted position; the backend sorts scenes by it. */
+  order?: number | null;
   topic?: string;
   duration_seconds?: number;
   first_frame_description?: string;
@@ -86,6 +90,8 @@ export interface AudioClipDTO {
   trim?: Trim | null;
   volume: number;
   speed?: number;
+  fade_in_duration_seconds?: number;
+  fade_out_duration_seconds?: number;
   placeholder?: string | null;
   presigned_url?: string | null;
 }
@@ -142,6 +148,26 @@ export interface StoryboardResponse {
   timeline_id?: number;
 }
 
+/** Outcome of mirroring a human storyboard edit into the Izumi session. */
+export interface StoryboardAgentSync {
+  status: 'synced' | 'skipped' | 'busy' | 'rejected' | 'failed';
+  detail?: string;
+  matched?: number;
+  added?: number;
+  removed?: number;
+  reordered?: boolean;
+  frames_replaced?: string[];
+  released?: string[];
+  /** Identity of every scene after the sync, in display order; the backend
+   * has already stamped them onto `scenes[i].scene_id` of the response. */
+  scene_ids?: string[];
+}
+
+/** `PUT /storyboards/{id}` answer: the record plus how the agent took it. */
+export interface StoryboardUpdateResponse extends StoryboardResponse {
+  agent_sync?: StoryboardAgentSync | null;
+}
+
 export interface ChatSession {
   id: string;
   appName?: string;
@@ -176,6 +202,10 @@ export interface TimelineClip {
   isDurationPlaceholder?: boolean;
   volume?: number;
   speed?: number;
+  /** Audio only: fade-in length in seconds (0 = none). */
+  fadeIn?: number;
+  /** Audio only: fade-out length in seconds (0 = none). */
+  fadeOut?: number;
   transition_to_next_type?: TransitionType | null;
   transition_to_next_duration?: number | null;
 }
@@ -187,6 +217,10 @@ export interface MediaAsset {
   url: string;
   safeUrl: SafeResourceUrl;
   duration: number;
+  /** True while `duration` is only a display estimate (metadata pending or
+   * failed). Clips created from such an asset stay placeholders, so the guess
+   * is never persisted as a trim. */
+  isDurationPlaceholder?: boolean;
   thumbnail?: string;
   mediaItemId?: number;
   sourceAssetId?: number;

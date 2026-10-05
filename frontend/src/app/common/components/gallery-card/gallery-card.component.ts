@@ -59,6 +59,19 @@ export class GalleryCardComponent implements OnDestroy {
   @Input() anyItemSelected = false;
   @Input() selectedItems: Set<string> = new Set();
   @Input() filteredTags: string[] = [];
+  /**
+   * When true the card shows only the first image of a multi-image item and
+   * hides the carousel, so any selection reports `selectedIndex: 0`. Used by
+   * pickers whose consumer can only address the first index of a media item.
+   */
+  @Input() set firstIndexOnly(value: boolean) {
+    this._firstIndexOnly = value;
+    if (value) this.currentImageIndex = 0;
+  }
+  get firstIndexOnly(): boolean {
+    return this._firstIndexOnly;
+  }
+  private _firstIndexOnly = false;
 
   @Output() mediaItemSelected = new EventEmitter<MediaItemSelection>();
   @Output() mediaSelected = new EventEmitter<GalleryItem>();

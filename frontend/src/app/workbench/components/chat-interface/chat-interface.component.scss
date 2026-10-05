@@ -114,3 +114,22 @@ textarea {
     color: #60a5fa !important;
   }
 }
+
+// Tile rendered in place of an attached image while its presigned URL is
+// being resolved (muted "image" icon) or once the asset is gone
+// ("broken_image"). Never render an <img> with an empty / guessed src.
+.chat-image-placeholder {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.45);
+
+  mat-icon {
+    font-size: 22px;
+    width: 22px;
+    height: 22px;
+  }
+
+  &.is-unavailable {
+    color: #fca5a5;
+    border-style: dashed;
+  }
+}

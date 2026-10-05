@@ -24,6 +24,7 @@ import {Event, NavigationEnd, NavigationStart, Router} from '@angular/router';
 import {NO_ERRORS_SCHEMA} from '@angular/core';
 import {of, Subject} from 'rxjs';
 import {BreakpointObserver} from '@angular/cdk/layout';
+import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {HeaderComponent} from './header.component';
 import {UserService} from '../common/services/user.service';
 import {AuthService} from '../common/services/auth.service';
@@ -46,10 +47,14 @@ describe('HeaderComponent', () => {
       },
     );
     routerSpy.isActive.and.returnValue(false);
-    authServiceSpy = jasmine.createSpyObj('AuthService', ['logout']);
+    authServiceSpy = jasmine.createSpyObj('AuthService', [
+      'logout',
+      'isUserAdmin',
+    ]);
 
     await TestBed.configureTestingModule({
       declarations: [HeaderComponent],
+      imports: [NoopAnimationsModule],
       schemas: [NO_ERRORS_SCHEMA],
       providers: [
         {provide: Router, useValue: routerSpy},
@@ -212,5 +217,125 @@ describe('HeaderComponent', () => {
       tick(200);
       expect(component.toolsMenuHovered).toBeTrue();
     }));
+
+    // Regression: a single exit used to emit two `mouseleave`s (wrapper +
+    // flyout). The first close timer was orphaned when the second overwrote
+    // the handle, so it fired after the user re-entered and closed the menu
+    // under the pointer.
+    it('should not let an orphaned close timer fire after re-entering (generation)', fakeAsync(() => {
+      component.onGenEnter();
+      component.onGenLeave();
+      component.onGenLeave(); // second leave for the same exit
+      component.onGenEnter(); // user comes back within the grace period
+      tick(500);
+      expect(component.generationMenuHovered).toBeTrue();
+    }));
+
+    it('should not let an orphaned close timer fire after re-entering (tools)', fakeAsync(() => {
+      component.onToolsEnter();
+      component.onToolsLeave();
+      component.onToolsLeave();
+      component.onToolsEnter();
+      tick(500);
+      expect(component.toolsMenuHovered).toBeTrue();
+    }));
+
+    it('should survive rapid enter/leave jitter and settle on the last event', fakeAsync(() => {
+      for (let i = 0; i < 5; i++) {
+        component.onGenEnter();
+        component.onGenLeave();
+        component.onToolsEnter();
+        component.onToolsLeave();
+      }
+      component.onGenEnter();
+      component.onToolsEnter();
+      tick(500);
+      expect(component.generationMenuHovered).toBeTrue();
+      expect(component.toolsMenuHovered).toBeTrue();
+
+      component.onGenLeave();
+      component.onToolsLeave();
+      tick(500);
+      expect(component.generationMenuHovered).toBeFalse();
+      expect(component.toolsMenuHovered).toBeFalse();
+    }));
+
+    it('should cancel pending close timers on destroy', fakeAsync(() => {
+      component.onGenEnter();
+      component.onToolsEnter();
+      component.onGenLeave();
+      component.onToolsLeave();
+      component.ngOnDestroy();
+      tick(500); // would throw / flip the flags if the timers were still queued
+      expect(component.generationMenuHovered).toBeTrue();
+      expect(component.toolsMenuHovered).toBeTrue();
+    }));
+
+    it('should let the wrapper own hover: mouseleave on the open flyout must not close it', fakeAsync(() => {
+      component.isDesktop = false; // render .menu-items without hovering
+      component.onGenEnter();
+      component.onToolsEnter();
+      fixture.detectChanges();
+
+      const host: HTMLElement = fixture.nativeElement;
+      const flyouts = host.querySelectorAll(
+        '.menu-items .absolute.left-\\[70px\\]',
+      );
+      expect(flyouts.length).toBe(2);
+
+      flyouts.forEach(panel =>
+        panel.dispatchEvent(new MouseEvent('mouseleave', {bubbles: false})),
+      );
+      tick(500);
+      expect(component.generationMenuHovered).toBeTrue();
+      expect(component.toolsMenuHovered).toBeTrue();
+    }));
+  });
+
+  describe('desktop menu geometry (expanded)', () => {
+    // Matches the `@media (min-width: 768px)` block in header.component.scss.
+    const DESKTOP_MIN_WIDTH = 768;
+    const rect = (el: Element) => el.getBoundingClientRect();
+
+    it('insets the avatar and the last tab equally and spaces every pill evenly', () => {
+      if (window.innerWidth < DESKTOP_MIN_WIDTH) {
+        pending(
+          `viewport is ${window.innerWidth}px (< ${DESKTOP_MIN_WIDTH}px); desktop column layout not active`,
+        );
+        return;
+      }
+
+      component.menuFixed = true; // keep the tab list open without hovering
+      fixture.detectChanges();
+
+      const host: HTMLElement = fixture.nativeElement;
+      const menu = host.querySelector('.mat-menu-floating')!;
+      const avatar = host.querySelector('.user-profile-button')!;
+      const tabs = Array.from(host.querySelectorAll('.menu-items > div'));
+      expect(tabs.length).toBeGreaterThan(1);
+
+      const box = rect(menu);
+      const pills = [avatar, ...tabs].map(rect);
+      const first = pills[0];
+      const last = pills[pills.length - 1];
+
+      // Avatar (first) and Logout (last) sit the same distance from the
+      // menu's top and bottom edges; the avatar is centred horizontally too.
+      expect(first.top - box.top).toBeCloseTo(box.bottom - last.bottom, 0);
+      expect(first.left - box.left).toBeCloseTo(box.right - first.right, 0);
+
+      // Every pill is the same size as the avatar (dropdown wrappers must not
+      // add inline-box descender height).
+      for (const p of pills) {
+        expect(p.width).toBeCloseTo(first.width, 0);
+        expect(p.height).toBeCloseTo(first.height, 0);
+      }
+
+      // Uniform vertical rhythm: avatar→tab and tab→tab gaps are identical.
+      const gaps = pills.slice(1).map((p, i) => p.top - pills[i].bottom);
+      for (const g of gaps) {
+        expect(g).toBeCloseTo(gaps[0], 0);
+      }
+    });
   });
 });

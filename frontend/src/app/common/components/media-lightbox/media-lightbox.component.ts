@@ -100,6 +100,8 @@ export class MediaLightboxComponent
   @Output() deleteClicked = new EventEmitter<number>();
   @Output() tagsChanged = new EventEmitter<any>();
   @Output() slideChanged = new EventEmitter<number>();
+  /** Emits the destination folder id (null = All Media) after a successful move. */
+  @Output() moved = new EventEmitter<number | null>();
 
   selectedIndex = 0;
   selectedUrl: string | undefined;
@@ -295,6 +297,7 @@ export class MediaLightboxComponent
             {duration: 3000},
           );
           this.mediaItem!.folderId = destinationFolderId;
+          this.moved.emit(destinationFolderId);
         },
         error: err => {
           console.error('Error moving items via drag and drop:', err);
@@ -436,7 +439,6 @@ export class MediaLightboxComponent
     // This component is used on multiple pages (VTO, Home, Gallery).
     // We should ONLY manipulate the URL when on the gallery detail page.
     // Otherwise, it can cause unintended navigations and state loss.
-    console.log('this.router.url', this.router.url);
     if (!this.router.url.startsWith('/gallery/')) {
       // MediaLightbox: Skipping URL update because we are not on a gallery detail page.
       return;

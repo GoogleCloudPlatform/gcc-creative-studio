@@ -24,9 +24,11 @@ from src.agents.agent_service import AgentService
 from src.agents.agent_dtos import (
     ChatRequestDto,
     ChatResponseDto,
+    CharacterStateResponseDto,
     PollEventsResponseDto,
     SessionResponseDto,
     SessionDetailResponseDto,
+    UpdateCharacterRequestDto,
 )
 
 router = APIRouter(
@@ -174,4 +176,50 @@ async def poll_session_events(
     """Retrieve all pending stream chunks for a chat session queue and mark them as consumed."""
     return await agent_service.poll_session_events(
         session_id=session_id, current_user=current_user
+    )
+
+
+@router.put(
+    "/sessions/{session_id}/character",
+    response_model=CharacterStateResponseDto,
+)
+async def update_session_character(
+    session_id: str,
+    payload: UpdateCharacterRequestDto,
+    current_user: UserModel = Depends(get_current_user),
+    agent_service: AgentService = Depends(),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    """Create or edit the campaign's on-screen character (Workbench Characters tab).
+
+    Returns 409 while the agent is still running on the session: writing
+    state mid-run would invalidate that run.
+    """
+    return await agent_service.update_session_character(
+        current_user=current_user,
+        user_id=str(current_user.id),
+        session_id=session_id,
+        payload=payload,
+    )
+
+
+@router.delete(
+    "/sessions/{session_id}/character",
+    response_model=CharacterStateResponseDto,
+)
+async def remove_session_character(
+    session_id: str,
+    workspace_id: int,
+    appName: str = APP_NAME,
+    current_user: UserModel = Depends(get_current_user),
+    agent_service: AgentService = Depends(),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    """Remove the campaign's on-screen character (the ad becomes product-only)."""
+    return await agent_service.remove_session_character(
+        current_user=current_user,
+        user_id=str(current_user.id),
+        session_id=session_id,
+        workspace_id=workspace_id,
+        app_name=appName,
     )

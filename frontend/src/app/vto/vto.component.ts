@@ -492,8 +492,7 @@ export class VtoComponent implements OnInit, AfterViewInit {
       .startVtoGeneration(payload)
       .pipe(finalize(() => (this.isLoading = false)))
       .subscribe({
-        next: (initialResponse: MediaItem) => {
-          console.log('VTO job started successfully:', initialResponse);
+        next: () => {
           // UI will update via activeVtoJob$ observable
         },
         error: err => {

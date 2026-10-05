@@ -110,6 +110,44 @@ class TestWorkbenchController:
             response.json().get("storyboard_id") == 5
             or response.json().get("storyboardId") == 5
         )
+        # A human request never replaces an existing cut in place.
+        assert (
+            mock_workbench_service.create_timeline.await_args.kwargs[
+                "reuse_for_storyboard"
+            ]
+            is False
+        )
+
+    def test_create_timeline_from_agent_reuses_storyboard_cut(
+        self, api_client, mock_workbench_service
+    ):
+        from src.common.request_context import is_agent_request
+
+        mock_workbench_service.create_timeline.return_value = TimelineResponse(
+            timeline_id=9, storyboard_id=5, workspace_id="ws1", title="Cut"
+        )
+        payload = {
+            "storyboardId": 5,
+            "workspace_id": "ws1",
+            "title": "Cut",
+            "video_clips": [],
+            "audio_clips": [],
+            "transitions": [],
+        }
+        # The auth guard sets this for X-User-Authorization requests; the
+        # TestClient runs the app in the same context, so set it directly.
+        token = is_agent_request.set(True)
+        try:
+            response = api_client.post("/api/workbench/timelines", json=payload)
+        finally:
+            is_agent_request.reset(token)
+        assert response.status_code == status.HTTP_201_CREATED
+        assert (
+            mock_workbench_service.create_timeline.await_args.kwargs[
+                "reuse_for_storyboard"
+            ]
+            is True
+        )
 
     def test_get_timeline_found(self, api_client, mock_workbench_service):
         mock_res = TimelineResponse(
