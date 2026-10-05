@@ -180,6 +180,7 @@ export class ChatInterfaceComponent
         this.currentSessionId = sessionId;
         this.submittedGateCallIds.clear();
         this.lastExecutedAction = null;
+        this.streamedStoryboardId = null;
         untracked(() => this.loadChatMessages(sessionId));
       }
     },
@@ -663,7 +664,7 @@ export class ChatInterfaceComponent
                         );
                         this.activeApprovalGate.set(pendingGate);
                         this.shouldScrollToBottom = true;
-                        this.checkAndResumePolling(res);
+                        this.checkAndResumePolling(res, pendingGate);
 
                         // Synchronize URL: retain both sessionId and storyboardId
                         const targetSessionId = res.session.id;
@@ -786,6 +787,7 @@ export class ChatInterfaceComponent
               res.session?.events,
             );
             this.syncFinalVideoReady(res.session?.state);
+            this.trackStreamedStoryboardId(res.session?.state);
 
             const messages = (res.session && res.session.events) || [];
             const mappedMessages = this.mapEventsToMessages(messages);
@@ -795,7 +797,7 @@ export class ChatInterfaceComponent
               res.session?.state,
             );
             this.activeApprovalGate.set(pendingGate);
-            this.checkAndResumePolling(res);
+            this.checkAndResumePolling(res, pendingGate);
             if (mappedMessages.length === 0) {
               this.addWelcomeMessage();
             }
@@ -890,12 +892,24 @@ export class ChatInterfaceComponent
       };
     }
 
-    if (s === 'storyboard' || t.includes('storyboard') || storyboard) {
-      const sceneCount = storyboard?.scenes?.length || 4;
+    if (
+      s === 'storyboard' ||
+      t.includes('storyboard') ||
+      (!s && !t && storyboard)
+    ) {
+      const sceneCount = Array.isArray(storyboard?.scenes)
+        ? storyboard.scenes.length
+        : 0;
       return {
         stage: 'storyboard',
         title: 'Storyboard Ready',
-        subtitle: `Generated ${sceneCount} scenes`,
+        // Never invent a number: the count is shown only when it comes from
+        // the agent's own storyboard data (state delta or tool result). A
+        // placeholder here once reported "4 scenes" for a 2-scene storyboard.
+        subtitle:
+          sceneCount > 0
+            ? `Generated ${sceneCount} scene${sceneCount === 1 ? '' : 's'}`
+            : 'Ready for review',
         icon: 'auto_awesome_motion',
       };
     }
@@ -930,6 +944,10 @@ export class ChatInterfaceComponent
     ]);
 
     const resultMessages: any[] = [];
+    // The storyboard the agent currently holds, as republished in the events'
+    // state deltas. Gate cards use it for a truthful scene count (a gate call
+    // event itself carries no storyboard).
+    let lastKnownStoryboard: StoryboardResponse | null = null;
 
     for (const m of messages) {
       const content = m.content || {};
@@ -941,6 +959,8 @@ export class ChatInterfaceComponent
       let isUserDecision = false;
       let milestone: StageMilestone | undefined = undefined;
       const extractedImages: any[] = [];
+      lastKnownStoryboard =
+        this.storyboardFromStateDelta(m) || lastKnownStoryboard;
       if (m.actions?.storyboard) {
         const extracted = this.extractStoryboardData(m.actions.storyboard);
         if (extracted) {
@@ -984,7 +1004,7 @@ export class ChatInterfaceComponent
           milestone = this.getMilestoneForStage(
             undefined,
             fc.name,
-            storyboardMetadata,
+            storyboardMetadata || lastKnownStoryboard,
           );
         }
 
@@ -1019,7 +1039,7 @@ export class ChatInterfaceComponent
             milestone = this.getMilestoneForStage(
               undefined,
               fr.name,
-              storyboardMetadata,
+              storyboardMetadata || lastKnownStoryboard,
             );
           }
 
@@ -1157,6 +1177,7 @@ export class ChatInterfaceComponent
     this.chatMessages.set([]);
     this.activeApprovalGate.set(null);
     this.agentChatService.currentStoryboard.set(null);
+    this.streamedStoryboardId = null;
     this.clearCampaignDetails();
     this.addWelcomeMessage();
     this.shouldScrollToBottom = true;
@@ -1747,11 +1768,12 @@ export class ChatInterfaceComponent
       if (candidateGate.stage === 'frames' && state.frame_decision) return null;
       if (candidateGate.stage === 'final_cut' && state.final_cut_decision)
         return null;
-      if (
-        state.stage_completed === 'generation' ||
-        state.stage_completed === 'complete'
-      )
-        return null;
+      // NOTE: `stage_completed` is monotonic — it stays `generation` for the
+      // rest of the session, including while a *re-opened* gate (after a
+      // `regenerate` decision) is pending. Only the per-stage `*_decision`
+      // keys above say whether the current gate is decided; the agent nulls
+      // them when it re-opens a gate.
+      if (state.stage_completed === 'complete') return null;
     }
 
     return candidateGate;
@@ -1830,7 +1852,27 @@ export class ChatInterfaceComponent
     return false;
   }
 
-  checkAndResumePolling(res: SessionDetailResponse) {
+  /**
+   * Decides on session load whether a run is still in flight and the poll
+   * loop must be re-attached. Getting this wrong in the "resume" direction
+   * is a dead end: `resumePolling` locks the composer and the gate card
+   * behind `isBusy`, and the loop only ends on a `[DONE]`/error event that
+   * a finished run has already delivered (the queue is drained on read).
+   *
+   * Two things therefore must NOT count as "in flight":
+   * - A pending approval gate. The run ended at `await_*_approval` and is
+   *   waiting for the user; `checkUnresolvedGate` already proved nobody has
+   *   answered it yet.
+   * - Content-less events. Every state write that bypasses the runner
+   *   (`PATCH …/sessions/{id}` with a `stateDelta`: token propagation,
+   *   character edits, storyboard sync) is appended by ADK as an
+   *   `author: "user"` event with no `content.parts`. It is not a user turn,
+   *   so the decision is based on the last event that carries parts.
+   */
+  checkAndResumePolling(
+    res: SessionDetailResponse,
+    pendingGate: ApprovalGateInfo | null = null,
+  ) {
     if (res.session) {
       // If the session hasn't been updated in over 20 minutes, do not poll
       const nowSeconds = Date.now() / 1000;
@@ -1840,9 +1882,13 @@ export class ChatInterfaceComponent
         return;
       }
 
-      if (res.session.events && res.session.events.length > 0) {
-        const events = res.session.events;
-        const lastEvent = events[events.length - 1];
+      if (pendingGate) {
+        this.clearGeneratingState();
+        return;
+      }
+
+      const lastEvent = this.lastEventWithParts(res.session.events);
+      if (lastEvent) {
         const role = lastEvent.content?.role || lastEvent.author;
 
         const isLastEventUser = role === 'user';
@@ -1863,6 +1909,27 @@ export class ChatInterfaceComponent
     this.clearGeneratingState();
   }
 
+  /**
+   * Last event that carries `content.parts` (or `raw_event.content.parts`).
+   * State-delta-only events are skipped: they say nothing about whose turn
+   * it is.
+   */
+  private lastEventWithParts(events: any[] | undefined | null): any | null {
+    if (!events) return null;
+    const hasParts = (parts: unknown) =>
+      Array.isArray(parts) && parts.length > 0;
+    for (let i = events.length - 1; i >= 0; i--) {
+      const ev = events[i];
+      if (
+        hasParts(ev?.content?.parts) ||
+        hasParts(ev?.raw_event?.content?.parts)
+      ) {
+        return ev;
+      }
+    }
+    return null;
+  }
+
   private clearGeneratingState() {
     this.isTyping.set(false);
     this.isSubmittingGate.set(false);
@@ -1874,9 +1941,14 @@ export class ChatInterfaceComponent
     let agentMessageIndex = -1;
     let lastInvocationId = '';
     const isInJsonBlock = false;
+    // Storyboard the agent published in this run's state deltas; the gate
+    // event itself carries none, so the milestone count comes from here.
+    let lastStreamedStoryboard: StoryboardResponse | null = null;
 
     return {
       onMessage: (data: any) => {
+        lastStreamedStoryboard =
+          this.storyboardFromStateDelta(data) || lastStreamedStoryboard;
         const gate = this.extractGateFromEvent(data);
         if (gate) {
           this.activeApprovalGate.update(existing => {
@@ -1899,6 +1971,7 @@ export class ChatInterfaceComponent
           const milestone = this.getMilestoneForStage(
             gate.stage,
             gate.toolName,
+            gate.stage === 'storyboard' ? lastStreamedStoryboard : undefined,
           );
           if (milestone) {
             this.chatMessages.update(msgs => {
@@ -1973,6 +2046,7 @@ export class ChatInterfaceComponent
           data.raw_event?.actions?.state_delta;
         this.syncCampaignDetails(stateDelta, true);
         this.syncFinalVideoReady(stateDelta, true);
+        this.trackStreamedStoryboardId(stateDelta);
         if (data.actions?.storyboard) {
           this.isTyping.set(false);
           this.agentChatService.isGeneratingStoryboard.set(false);
@@ -2357,6 +2431,25 @@ export class ChatInterfaceComponent
   }
 
   /**
+   * Storyboard id the agent last announced for this session, taken from
+   * `current_storyboard_id` in the loaded state or a streamed delta. It is
+   * the authoritative record to show: the agent may rewrite it in place or,
+   * on legacy sessions, re-point to a fresh row.
+   */
+  private streamedStoryboardId: number | null = null;
+
+  private trackStreamedStoryboardId(state: any) {
+    if (!state || typeof state !== 'object') return;
+    let raw: unknown;
+    if ('current_storyboard_id' in state) raw = state.current_storyboard_id;
+    else if ('currentStoryboardId' in state) raw = state.currentStoryboardId;
+    else return; // not part of this delta
+    const id = Number(raw);
+    this.streamedStoryboardId =
+      raw !== null && raw !== '' && Number.isFinite(id) && id > 0 ? id : null;
+  }
+
+  /**
    * Re-reads the storyboard bound to the current session so `currentStoryboard`
    * reflects the latest scenes / `timeline_id`. With `videoReady` it also
    * notifies listeners that the final cut is available (the storyboard panel
@@ -2373,15 +2466,30 @@ export class ChatInterfaceComponent
       announce();
       return;
     }
+    const sessionId = this.currentSessionId;
     this.storyboardService
-      .getStoryboardForSession(workspaceId, this.currentSessionId)
+      .getStoryboardForSession(workspaceId, sessionId)
       .subscribe({
         next: storyboards => {
-          if (storyboards && storyboards.length > 0) {
-            if (storyboards[0].timeline_id) {
+          if (
+            storyboards &&
+            storyboards.length > 0 &&
+            this.currentSessionId === sessionId
+          ) {
+            // The backend lists newest first; prefer the record the agent
+            // says it is working on when we know it.
+            const preferred =
+              this.streamedStoryboardId !== null
+                ? storyboards.find(
+                    s => Number(s.id) === this.streamedStoryboardId,
+                  )
+                : undefined;
+            const storyboard = preferred ?? storyboards[0];
+            if (storyboard.timeline_id) {
               this.timelineState.loadedTimelineId.set(undefined);
             }
-            this.agentChatService.currentStoryboard.set(storyboards[0]);
+            this.agentChatService.currentStoryboard.set(storyboard);
+            this.syncStoryboardUrl(sessionId, storyboard.id);
           }
           announce();
         },
@@ -2393,6 +2501,20 @@ export class ChatInterfaceComponent
           announce();
         },
       });
+  }
+
+  /** Keeps `?storyboardId=` pointing at the storyboard actually shown. */
+  private syncStoryboardUrl(sessionId: string, storyboardId: number) {
+    const qp = this.route.snapshot?.queryParams ?? {};
+    const urlStoryboardId = qp['storyboardId']
+      ? Number(qp['storyboardId'])
+      : null;
+    if (urlStoryboardId === storyboardId) return;
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: {sessionId, storyboardId},
+      queryParamsHandling: 'merge',
+    });
   }
 
   private scrollToBottom(): void {
@@ -2427,6 +2549,22 @@ export class ChatInterfaceComponent
         window.open(url, '_blank');
       }
     }
+  }
+
+  /**
+   * The storyboard the agent republished in an event's state delta
+   * (`actions.state_delta.storyboard` / `actions.stateDelta.storyboard`), or
+   * `null` when the event carries none or an empty one. This is the agent's
+   * own record, so it is the only source a scene count may be quoted from.
+   */
+  private storyboardFromStateDelta(event: any): StoryboardResponse | null {
+    const actions = event?.actions || event?.raw_event?.actions || {};
+    const delta = actions.state_delta || actions.stateDelta || {};
+    const sb = delta.storyboard;
+    if (sb && Array.isArray(sb.scenes) && sb.scenes.length > 0) {
+      return sb as StoryboardResponse;
+    }
+    return null;
   }
 
   private extractStoryboardData(parsed: unknown): StoryboardResponse | null {

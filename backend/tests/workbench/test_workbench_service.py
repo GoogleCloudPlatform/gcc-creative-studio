@@ -144,6 +144,68 @@ async def test_create_get_list_update_delete_timeline(service):
 
 
 @pytest.mark.anyio
+async def test_create_timeline_reuse_replaces_newest_storyboard_cut(service):
+    older = VideoTimeline(
+        timeline_id=9, storyboard_id=5, workspace_id="1", title="v1"
+    )
+    newer = VideoTimeline(
+        timeline_id=10, storyboard_id=5, workspace_id="1", title="v1"
+    )
+    incoming = VideoTimeline(storyboard_id=5, workspace_id="1", title="Cut v2")
+    replaced = VideoTimeline(
+        timeline_id=10, storyboard_id=5, workspace_id="1", title="Cut v2"
+    )
+    service.mock_timeline_repo.find_by_storyboard.return_value = [older, newer]
+    service.mock_timeline_repo.update_timeline.return_value = replaced
+
+    res = await service.create_timeline(incoming, reuse_for_storyboard=True)
+
+    assert res.timeline_id == 10
+    service.mock_timeline_repo.update_timeline.assert_awaited_once_with(
+        10, incoming
+    )
+    service.mock_timeline_repo.create_timeline.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_create_timeline_reuse_falls_back_to_create(service):
+    incoming = VideoTimeline(storyboard_id=5, workspace_id="1", title="First")
+    created = VideoTimeline(
+        timeline_id=1, storyboard_id=5, workspace_id="1", title="First"
+    )
+    service.mock_timeline_repo.create_timeline.return_value = created
+
+    # No cut yet for this storyboard.
+    service.mock_timeline_repo.find_by_storyboard.return_value = []
+    res = await service.create_timeline(incoming, reuse_for_storyboard=True)
+    assert res.timeline_id == 1
+    service.mock_timeline_repo.update_timeline.assert_not_called()
+
+    # An existing cut whose in-place update yields nothing.
+    service.mock_timeline_repo.find_by_storyboard.return_value = [
+        VideoTimeline(
+            timeline_id=3, storyboard_id=5, workspace_id="1", title="old"
+        )
+    ]
+    service.mock_timeline_repo.update_timeline.return_value = None
+    res = await service.create_timeline(incoming, reuse_for_storyboard=True)
+    assert res.timeline_id == 1
+
+    # A human request never looks for an existing cut.
+    service.mock_timeline_repo.find_by_storyboard.reset_mock()
+    await service.create_timeline(incoming)
+    service.mock_timeline_repo.find_by_storyboard.assert_not_called()
+
+    # No storyboard on the payload: nothing to reuse.
+    await service.create_timeline(
+        VideoTimeline(workspace_id="1", title="loose"),
+        reuse_for_storyboard=True,
+    )
+    service.mock_timeline_repo.find_by_storyboard.assert_not_called()
+    assert service.mock_timeline_repo.create_timeline.await_count == 4
+
+
+@pytest.mark.anyio
 async def test_render_timeline_by_id_not_found(service):
     service.get_timeline = AsyncMock(return_value=None)
     mock_user = MagicMock()

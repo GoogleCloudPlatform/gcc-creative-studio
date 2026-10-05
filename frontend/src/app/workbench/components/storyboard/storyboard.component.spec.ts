@@ -19,9 +19,10 @@ import {signal, WritableSignal} from '@angular/core';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {MatDialog} from '@angular/material/dialog';
 import {MatSnackBar} from '@angular/material/snack-bar';
-import {Subject} from 'rxjs';
+import {CdkDragDrop} from '@angular/cdk/drag-drop';
+import {of, Subject, throwError} from 'rxjs';
 
-import {StoryboardComponent} from './storyboard.component';
+import {Scene, StoryboardComponent} from './storyboard.component';
 import {AgentChatService} from '../../services/agent-chat.service';
 import {StoryboardService} from '../../../services/storyboard/storyboard.service';
 import {
@@ -461,6 +462,441 @@ describe('StoryboardComponent – Campaign tab reveal', () => {
       expect(component.referenceRoleIcon('creator')).toBe('person');
       expect(component.referenceRoleIcon('logo')).toBe('branding_watermark');
       expect(component.referenceRoleIcon('reference')).toBe('image');
+    });
+  });
+
+  describe('scene frames open in the gallery', () => {
+    const el = (): HTMLElement => fixture.nativeElement;
+    const shot = (overrides: Partial<Scene['shots'][number]>) => ({
+      id: 'shot-1-1',
+      imageUrl: 'https://signed/frame.png',
+      characters: [],
+      description: '',
+      ...overrides,
+    });
+
+    it('resolves the detail route for every id shape the Workbench sees', () => {
+      // The backend sends `first_frame_media_item_id` as a number; this
+      // shape used to throw (`indexOf is not a function`) so clicks did nothing.
+      expect(component.shotDetailUrl(shot({assetId: 476}))).toBe(
+        '/gallery/476',
+      );
+      expect(component.shotDetailUrl(shot({assetId: '99'}))).toBe(
+        '/gallery/99',
+      );
+      expect(component.shotDetailUrl(shot({assetId: 'media_item:12'}))).toBe(
+        '/gallery/12',
+      );
+      expect(component.shotDetailUrl(shot({assetId: 'source_asset:7'}))).toBe(
+        '/asset-detail/7',
+      );
+    });
+
+    it('falls back to the image itself and never opens the placeholder', () => {
+      expect(component.shotDetailUrl(shot({}))).toBe(
+        'https://signed/frame.png',
+      );
+      expect(
+        component.shotDetailUrl(
+          shot({assetId: '', imageUrl: 'assets/images/storyboard-default.png'}),
+        ),
+      ).toBeNull();
+      expect(
+        component.shotDetailUrl(
+          shot({imageUrl: 'assets/images/storyboard-default.png'}),
+        ),
+      ).toBeNull();
+    });
+
+    it('opens an agent-generated frame (numeric media item id) in a new tab', () => {
+      const open = spyOn(window, 'open');
+      component.onOpenAssetDetail(shot({assetId: 476}));
+      expect(open).toHaveBeenCalledOnceWith('/gallery/476', '_blank');
+    });
+
+    it('does nothing for the welcome placeholder', () => {
+      const open = spyOn(window, 'open');
+      component.onOpenAssetDetail(
+        shot({imageUrl: 'assets/images/storyboard-default.png'}),
+      );
+      expect(open).not.toHaveBeenCalled();
+      expect(el().querySelector('.sb-open-shot-btn')).toBeNull();
+    });
+
+    it('renders an "Open in Gallery" button that opens the tab exactly once', () => {
+      currentStoryboard.set({
+        id: 16,
+        scenes: [
+          {
+            topic: 'Full Reveal',
+            first_frame_media_item_id: 476,
+            first_frame_generated_url: 'https://signed/476.png',
+          },
+        ],
+      });
+      fixture.detectChanges();
+
+      const open = spyOn(window, 'open');
+      const button = el().querySelector<HTMLButtonElement>('.sb-open-shot-btn');
+      expect(button).withContext('overlay button').not.toBeNull();
+      expect(button?.getAttribute('title')).toBe('Open in Gallery');
+      expect(el().querySelector('.sb-shot-thumb')?.getAttribute('title')).toBe(
+        'Open in Gallery',
+      );
+
+      // The button lives inside the clickable thumbnail: no double open.
+      button!.click();
+      expect(open).toHaveBeenCalledOnceWith('/gallery/476', '_blank');
+
+      open.calls.reset();
+      el().querySelector<HTMLElement>('.sb-shot-thumb')!.click();
+      expect(open).toHaveBeenCalledOnceWith('/gallery/476', '_blank');
+    });
+  });
+});
+
+describe('StoryboardComponent – edits round-trip to the backend and the agent', () => {
+  let fixture: ComponentFixture<StoryboardComponent>;
+  let component: StoryboardComponent;
+  let currentStoryboard: WritableSignal<any>;
+  let streamActive: WritableSignal<boolean>;
+  let storyboardService: {updateStoryboard: jasmine.Spy};
+  let snackBar: {open: jasmine.Spy};
+
+  const sceneA = {
+    id: 101,
+    scene_id: 'sc-a',
+    topic: 'Opening',
+    duration_seconds: 5,
+    first_frame_description: 'A bottle on velvet',
+    first_frame_media_item_id: 11,
+    video_description: 'Slow push-in on the bottle',
+    video_duration_seconds: 5,
+    voiceover_text: 'Meet Aurora.',
+    voiceover_gender: 'female',
+    transition_type: 'fade',
+    transition_duration: 0.5,
+    audio_ambient_description: 'soft wind',
+    audio_sfx_description: 'glass clink',
+  };
+  const sceneB = {
+    id: 102,
+    scene_id: 'sc-b',
+    topic: 'Reveal',
+    first_frame_description: 'Logo on black',
+    first_frame_source_asset_id: 7,
+    video_description: 'Logo spins',
+  };
+  const storyboard = (scenes: any[] = [sceneA, sceneB]) => ({
+    id: 14,
+    user_id: 1,
+    workspace_id: 1,
+    session_id: 's-1',
+    scenes,
+  });
+  const sentScenes = () =>
+    storyboardService.updateStoryboard.calls.mostRecent().args[1].scenes;
+  const drop = (previousIndex: number, currentIndex: number) =>
+    component.onDrop({previousIndex, currentIndex} as unknown as CdkDragDrop<
+      Scene[]
+    >);
+
+  beforeEach(async () => {
+    currentStoryboard = signal<any>(null);
+    streamActive = signal(false);
+    storyboardService = {
+      updateStoryboard: jasmine
+        .createSpy('updateStoryboard')
+        .and.returnValue(of({...storyboard(), agent_sync: {status: 'synced'}})),
+    };
+    snackBar = {open: jasmine.createSpy('open')};
+    const mockAgentChatService = {
+      campaignDetails: signal<CampaignDetails | null>(null),
+      currentStoryboard,
+      finalVideoReady: signal(false),
+      isGeneratingStoryboard: signal(false),
+      isGeneratingVideo: signal(false),
+      videoGenerated$: new Subject<void>(),
+      generateVideoRequest$: new Subject<void>(),
+      campaignSession: signal(null),
+      campaignStateUpdated$: new Subject<Record<string, unknown>>(),
+      streamActive,
+    };
+
+    await TestBed.configureTestingModule({
+      imports: [StoryboardComponent, NoopAnimationsModule],
+      providers: [
+        {provide: AgentChatService, useValue: mockAgentChatService},
+        {provide: StoryboardService, useValue: storyboardService},
+        {provide: MatDialog, useValue: {open: () => ({})}},
+        {
+          provide: ReferenceAssetPreviewService,
+          useValue: {ensure: () => undefined, snapshot: () => undefined},
+        },
+        {provide: SearchService, useValue: {}},
+        {provide: MatSnackBar, useValue: snackBar},
+      ],
+    }).compileComponents();
+
+    fixture = TestBed.createComponent(StoryboardComponent);
+    component = fixture.componentInstance;
+    currentStoryboard.set(storyboard());
+    fixture.detectChanges();
+  });
+
+  it('carries the agent scene_id and the row id onto every card', () => {
+    expect(component.scenes().map(s => [s.sceneId, s.rowId])).toEqual([
+      ['sc-a', 101],
+      ['sc-b', 102],
+    ]);
+  });
+
+  it('a title edit keeps every prompt field intact and sends the identity', () => {
+    const first = component.scenes()[0];
+    first.title = 'Opening shot';
+    component.stopEditTitle(first);
+
+    expect(storyboardService.updateStoryboard).toHaveBeenCalledWith(
+      14,
+      jasmine.anything(),
+    );
+    const [a, b] = sentScenes();
+    expect(a.scene_id).toBe('sc-a');
+    expect(a.topic).toBe('Opening shot');
+    expect(a.duration_seconds).toBe(5);
+    // The card shows the video description; the frame prompt is untouched,
+    // otherwise the agent would release the rendered frame on a rename.
+    expect(a.first_frame_prompt.description).toBe('A bottle on velvet');
+    expect(a.video_prompt.description).toBe('Slow push-in on the bottle');
+    expect(a.first_frame_prompt.media_item_id).toBe(11);
+    expect(a.first_frame_prompt.source_asset_id).toBeNull();
+    expect(a.voiceover_prompt.text).toBe('Meet Aurora.');
+    expect(a.transition_hints).toEqual({type: 'fade', duration: 0.5});
+    expect(a.audio_hints).toEqual({
+      ambient_sound: 'soft wind',
+      sfx: 'glass clink',
+    });
+    // Uploaded frame survives as a source asset, not a media item.
+    expect(b.scene_id).toBe('sc-b');
+    expect(b.first_frame_prompt.source_asset_id).toBe(7);
+    expect(b.first_frame_prompt.media_item_id).toBeUndefined();
+  });
+
+  it('writes an edited description back only to the prompt it was read from', () => {
+    component.scenes()[0].shots[0].description = 'Fast whip-pan';
+    component.updateStoryboard();
+    let [a] = sentScenes();
+    expect(a.video_prompt.description).toBe('Fast whip-pan');
+    expect(a.first_frame_prompt.description).toBe('A bottle on velvet');
+
+    // A scene that only has a frame prompt gets the edit on the frame.
+    const sceneC = {
+      id: 103,
+      scene_id: 'sc-c',
+      topic: 'C',
+      first_frame_description: 'F',
+    };
+    storyboardService.updateStoryboard.and.returnValue(
+      of({...storyboard([sceneC]), agent_sync: {status: 'synced'}}),
+    );
+    currentStoryboard.set(storyboard([sceneC]));
+    fixture.detectChanges();
+    component.scenes()[0].shots[0].description = 'New frame';
+    component.updateStoryboard();
+    [a] = sentScenes();
+    expect(a.first_frame_prompt.description).toBe('New frame');
+    expect(a.video_prompt.description).toBeUndefined();
+
+    // A cleared textarea keeps the original instead of wiping it.
+    component.scenes()[0].shots[0].description = '   ';
+    component.updateStoryboard();
+    [a] = sentScenes();
+    expect(a.first_frame_prompt.description).toBe('F');
+  });
+
+  it('persists a reorder and still matches each card to its own row', () => {
+    drop(0, 1);
+    const [first, second] = sentScenes();
+    expect([first.scene_id, second.scene_id]).toEqual(['sc-b', 'sc-a']);
+    expect(first.video_prompt.description).toBe('Logo spins');
+    expect(second.first_frame_prompt.media_item_id).toBe(11);
+  });
+
+  it('ignores a drop that does not move anything', () => {
+    drop(1, 1);
+    expect(storyboardService.updateStoryboard).not.toHaveBeenCalled();
+  });
+
+  it('persists a delete and refuses to delete the last scene', () => {
+    storyboardService.updateStoryboard.and.returnValue(
+      of({...storyboard([sceneB]), agent_sync: {status: 'synced'}}),
+    );
+    component.onDeleteScene(component.scenes()[0]);
+    fixture.detectChanges();
+    expect(sentScenes().map((s: any) => s.scene_id)).toEqual(['sc-b']);
+    expect(component.scenes().length).toBe(1);
+
+    component.onDeleteScene(component.scenes()[0]);
+    expect(storyboardService.updateStoryboard).toHaveBeenCalledTimes(1);
+    expect(component.scenes().length).toBe(1);
+    expect(snackBar.open).toHaveBeenCalledWith(
+      'A storyboard needs at least one scene.',
+      'OK',
+      jasmine.anything(),
+    );
+  });
+
+  it('adds a scene with a client-minted identity and persists it', () => {
+    component.onAddScene();
+    const sent = sentScenes();
+    expect(sent.length).toBe(3);
+    expect(sent[2].scene_id).toMatch(/^cs-[0-9a-f]{8}$/);
+    expect(sent[2].topic).toBe('New Scene 3');
+    expect(sent[2].first_frame_prompt.description).toBe(
+      'New scene description',
+    );
+    expect(sent[2].video_prompt.description).toBe('New scene description');
+    expect(component.scenes()[2].sceneId).toBe(sent[2].scene_id);
+  });
+
+  it('never persists the Welcome placeholder', () => {
+    currentStoryboard.set(storyboard([]));
+    fixture.detectChanges();
+    expect(component.scenes()[0].id).toBe(StoryboardComponent.WELCOME_SCENE_ID);
+
+    component.onDeleteScene(component.scenes()[0]);
+    component.updateStoryboard();
+    expect(storyboardService.updateStoryboard).not.toHaveBeenCalled();
+
+    component.onAddScene();
+    const sent = sentScenes();
+    expect(sent.length).toBe(1);
+    expect(sent[0].topic).toBe('New Scene 1');
+  });
+
+  it('adopts the saved record so the cards learn the new row ids', () => {
+    storyboardService.updateStoryboard.and.returnValue(
+      of({
+        ...storyboard([
+          {...sceneA, id: 201},
+          {...sceneB, id: 202},
+        ]),
+        agent_sync: {status: 'synced', matched: 2},
+      }),
+    );
+    component.updateStoryboard();
+    fixture.detectChanges();
+    expect(currentStoryboard().id).toBe(14);
+    expect(component.scenes().map(s => s.rowId)).toEqual([201, 202]);
+    expect(snackBar.open).not.toHaveBeenCalled();
+  });
+
+  it('lets the newest in-flight edit win over a slower, older one', () => {
+    const first = new Subject<any>();
+    const second = new Subject<any>();
+    storyboardService.updateStoryboard.and.returnValues(first, second);
+
+    component.stopEditTitle(component.scenes()[0]);
+    drop(0, 1);
+    second.next({...storyboard([sceneB, sceneA]), agent_sync: null});
+    second.complete();
+    first.next({...storyboard(), agent_sync: null});
+    first.complete();
+
+    expect(currentStoryboard().scenes.map((s: any) => s.scene_id)).toEqual([
+      'sc-b',
+      'sc-a',
+    ]);
+  });
+
+  it('surfaces a rejected or failed agent sync with the backend detail', () => {
+    storyboardService.updateStoryboard.and.returnValue(
+      of({
+        ...storyboard(),
+        agent_sync: {status: 'rejected', detail: 'No scenes, edit not sent.'},
+      }),
+    );
+    component.updateStoryboard();
+    expect(snackBar.open).toHaveBeenCalledWith(
+      'No scenes, edit not sent.',
+      'OK',
+      jasmine.anything(),
+    );
+
+    snackBar.open.calls.reset();
+    storyboardService.updateStoryboard.and.returnValue(
+      of({...storyboard(), agent_sync: {status: 'failed'}}),
+    );
+    component.updateStoryboard();
+    expect(snackBar.open.calls.mostRecent().args[0]).toContain(
+      'could not take the change',
+    );
+  });
+
+  it('reports a failed save with the HTTP detail', () => {
+    spyOn(console, 'error');
+    storyboardService.updateStoryboard.and.returnValue(
+      throwError(() => ({status: 403, error: {detail: 'Not yours.'}})),
+    );
+    component.updateStoryboard();
+    expect(snackBar.open).toHaveBeenCalledWith(
+      'Not yours.',
+      'OK',
+      jasmine.anything(),
+    );
+  });
+
+  describe('busy agent', () => {
+    const busy = () =>
+      of({
+        ...storyboard(),
+        agent_sync: {status: 'busy', detail: 'Izumi is still working.'},
+      });
+
+    it('retries once the run this tab is watching ends', () => {
+      streamActive.set(true);
+      fixture.detectChanges();
+      storyboardService.updateStoryboard.and.returnValue(busy());
+      component.stopEditTitle(component.scenes()[0]);
+      fixture.detectChanges();
+      expect(component.pendingAgentSync()).toBeTrue();
+      expect(snackBar.open.calls.mostRecent().args[0]).toContain(
+        'agent is busy',
+      );
+      expect(storyboardService.updateStoryboard).toHaveBeenCalledTimes(1);
+
+      storyboardService.updateStoryboard.and.returnValue(
+        of({...storyboard(), agent_sync: {status: 'synced'}}),
+      );
+      streamActive.set(false);
+      fixture.detectChanges();
+      expect(storyboardService.updateStoryboard).toHaveBeenCalledTimes(2);
+      expect(component.pendingAgentSync()).toBeFalse();
+    });
+
+    it('does not retry at once when no stream is visible to this tab', () => {
+      storyboardService.updateStoryboard.and.returnValue(busy());
+      component.stopEditTitle(component.scenes()[0]);
+      fixture.detectChanges();
+      fixture.detectChanges();
+      expect(storyboardService.updateStoryboard).toHaveBeenCalledTimes(1);
+      expect(component.pendingAgentSync()).toBeTrue();
+    });
+
+    it('drops a pending retry when the panel switches to another record', () => {
+      streamActive.set(true);
+      fixture.detectChanges();
+      storyboardService.updateStoryboard.and.returnValue(busy());
+      component.updateStoryboard();
+      fixture.detectChanges();
+      expect(component.pendingAgentSync()).toBeTrue();
+
+      currentStoryboard.set({...storyboard(), id: 15});
+      fixture.detectChanges();
+      expect(component.pendingAgentSync()).toBeFalse();
+      streamActive.set(false);
+      fixture.detectChanges();
+      expect(storyboardService.updateStoryboard).toHaveBeenCalledTimes(1);
     });
   });
 });

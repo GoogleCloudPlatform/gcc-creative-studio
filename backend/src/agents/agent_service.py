@@ -46,6 +46,16 @@ from src.agents.character_state import (
     build_character_delta,
     build_character_removal_delta,
 )
+from src.agents.gate_state import (
+    find_pending_gate,
+    fold_text_into_gate,
+    plain_text_of,
+)
+from src.agents.storyboard_state import (
+    StoryboardStateError,
+    build_storyboard_delta,
+)
+from src.projects.dto.project_dto import StoryboardResponse
 from src.database import async_session_local
 
 logger = logging.getLogger(__name__)
@@ -727,6 +737,11 @@ class AgentService:
                     exc_info=True,
                 )
 
+        if storyboard_id is None and session_dto is not None:
+            storyboard = await self._prefer_session_storyboard(
+                session_dto.state, storyboard, current_user
+            )
+
         if storyboard is None and resolved_session_id is None:
             raise HTTPException(
                 status_code=400,
@@ -736,6 +751,35 @@ class AgentService:
         return SessionDetailResponseDto(
             session=session_dto, storyboard=storyboard
         )
+
+    async def _prefer_session_storyboard(
+        self,
+        state: Any,
+        storyboard: StoryboardResponse | None,
+        current_user: UserModel,
+    ) -> StoryboardResponse | None:
+        """Swaps in the storyboard the agent's state calls current.
+
+        A session that restarted its pipeline before the create-or-reuse path
+        existed owns several records; the newest row is a good guess, but
+        ``current_storyboard_id`` is the one the agent renders and saves to.
+        Falls back to ``storyboard`` on any problem.
+        """
+        if not isinstance(state, dict):
+            return storyboard
+        current_id = safe_cast(state.get("current_storyboard_id"), int)
+        if current_id is None or (storyboard and storyboard.id == current_id):
+            return storyboard
+        try:
+            candidate = await self.project_service.get_storyboard(current_id)
+        except Exception as e:
+            logger.warning(
+                f"Could not load current_storyboard_id={current_id}: {e}"
+            )
+            return storyboard
+        if candidate is None or candidate.user_id != current_user.id:
+            return storyboard
+        return candidate
 
     async def get_session_messages(
         self,
@@ -992,6 +1036,111 @@ class AgentService:
             )
             raise HTTPException(status_code=500, detail=str(e))
 
+    # --- Storyboard -> session sync ------------------------------------------
+
+    async def sync_storyboard_to_session(
+        self,
+        current_user: UserModel,
+        storyboard: StoryboardResponse,
+        app_name: str = APP_NAME,
+    ) -> dict:
+        """Mirrors a human storyboard edit into the Izumi session state.
+
+        Called after ``PUT /api/storyboards/{id}`` has persisted the record.
+        Never raises: the record is already saved, so a busy agent or a
+        missing session is reported in the returned ``status`` rather than
+        failing the request. Statuses: ``synced``, ``skipped`` (no session or
+        no storyboard in state yet), ``busy`` (a run is executing),
+        ``rejected`` (the edit cannot be mirrored, e.g. no scenes) and
+        ``failed``.
+        """
+        session_id = storyboard.session_id
+        if not session_id:
+            return {"status": "skipped", "detail": "Storyboard has no session."}
+        user_id = str(current_user.id)
+        try:
+            if _is_run_active(session_id):
+                return {"status": "busy", "detail": AGENT_BUSY_DETAIL}
+            agent_name = self._get_validated_agent_name(app_name)
+            state = await self._load_session_state(
+                current_user, agent_name, app_name, user_id, session_id
+            )
+            try:
+                result = build_storyboard_delta(
+                    state, storyboard, storyboard.workspace_id
+                )
+            except StoryboardStateError as e:
+                return {"status": "rejected", "detail": str(e)}
+            if result is None:
+                return {
+                    "status": "skipped",
+                    "detail": "The agent has not written a storyboard yet.",
+                }
+            delta, summary = result
+            await self._append_state_delta(
+                agent_name, app_name, user_id, session_id, delta
+            )
+            logger.info(
+                f"[Storyboard sync] session_id={session_id} storyboard_id={storyboard.id} "
+                f"summary={summary.as_dict()}"
+            )
+            return {"status": "synced", **summary.as_dict()}
+        except HTTPException as e:
+            if e.status_code == status.HTTP_404_NOT_FOUND:
+                return {"status": "skipped", "detail": "Session not found."}
+            logger.warning(
+                f"[Storyboard sync] session_id={session_id} rejected: {e.detail}"
+            )
+            return {"status": "failed", "detail": str(e.detail)}
+        except Exception as e:
+            logger.error(
+                f"[Storyboard sync] session_id={session_id} failed: {e}",
+                exc_info=True,
+            )
+            return {"status": "failed", "detail": str(e)}
+
+    async def _fold_into_pending_gate(
+        self,
+        app_name: str,
+        user_id: str,
+        session_id: str,
+        parts: list,
+    ) -> dict | None:
+        """Rewrites a plain-text turn as the reply to a suspended checkpoint.
+
+        Returns the replacement message part, or ``None`` when the message
+        should go through unchanged (not plain text, no pending gate, or the
+        session could not be read -- never block the chat on this).
+        """
+        text = plain_text_of(parts)
+        if not text:
+            return None
+        try:
+            agent_name = self._get_validated_agent_name(app_name)
+            session = await self._sessions_get(
+                agent_name, app_name, user_id, session_id
+            )
+            if session is None:
+                return None
+            events = await self._events_list(
+                agent_name, app_name, user_id, session_id, session
+            )
+            gate = find_pending_gate(events)
+            if gate is None:
+                return None
+            part = fold_text_into_gate(text, gate)
+            logger.info(
+                f"[Gate] session_id={session_id}: typed reply folded into pending "
+                f"{gate.tool_name} (call_id={gate.call_id}, "
+                f"decision={part['function_response']['response']['decision']})"
+            )
+            return part
+        except Exception as e:
+            logger.warning(
+                f"[Gate] session_id={session_id}: could not check pending gate: {e}"
+            )
+            return None
+
     async def chat(
         self,
         current_user: UserModel,
@@ -1052,6 +1201,16 @@ class AgentService:
                     and ("function_response" in p or "functionResponse" in p)
                     for p in new_msg["parts"]
                 )
+                if not is_function_response and session_id:
+                    # A typed reply while a checkpoint is pending must answer
+                    # that checkpoint; sent as text it reaches the root agent,
+                    # which restarts the whole pipeline from the brief.
+                    folded = await self._fold_into_pending_gate(
+                        body["appName"], user_id, session_id, new_msg["parts"]
+                    )
+                    if folded is not None:
+                        new_msg["parts"] = [folded]
+                        is_function_response = True
                 if not is_function_response:
                     sanitized_parts = []
                     attached_assets = []

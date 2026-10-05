@@ -159,11 +159,27 @@
                 <div
                   class="sb-shot-thumb cursor-pointer"
                   [style.background-image]="'url(' + shot.imageUrl + ')'"
+                  [title]="shotDetailUrl(shot) ? 'Open in Gallery' : ''"
                   (click)="onOpenAssetDetail(shot)"
                 >
                   <div class="sb-shot-badge">
                     <span>{{ i + 1 }}</span>
                   </div>
+                  <!-- Open in Gallery Overlay -->
+                  @if (shotDetailUrl(shot)) {
+                    <button
+                      class="sb-open-shot-btn"
+                      (click)="onOpenAssetDetail(shot, $event)"
+                      title="Open in Gallery"
+                      aria-label="Open in Gallery"
+                    >
+                      <mat-icon
+                        class="text-white"
+                        style="font-size: 22px; height: 22px; width: 22px"
+                        >open_in_new</mat-icon
+                      >
+                    </button>
+                  }
                   <!-- Edit Icon Overlay -->
                   <button
                     class="sb-edit-shot-btn"

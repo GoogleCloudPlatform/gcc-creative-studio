@@ -22,6 +22,9 @@ class SceneDTO(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: Optional[int] = None
+    # Izumi's stable scene identity and persisted position (see Scene model).
+    scene_id: Optional[str] = None
+    order: Optional[int] = None
     topic: Optional[str] = None
     duration_seconds: Optional[float] = None
     first_frame_description: Optional[str] = None
@@ -114,3 +117,15 @@ class StoryboardResponse(BaseModel):
 
     scenes: List[SceneDTO] = []
     timeline_id: Optional[int] = None
+
+
+class StoryboardUpdateResponse(StoryboardResponse):
+    """``PUT /storyboards/{id}`` answer: the record plus the agent sync outcome.
+
+    ``agent_sync`` reports how the human edit was mirrored into the Izumi
+    session: ``{"status": "synced"|"skipped"|"busy"|"rejected"|"failed", ...}``.
+    Kept off ``StoryboardResponse`` so the shared model (also embedded in the
+    session detail) does not change shape.
+    """
+
+    agent_sync: Optional[dict] = None

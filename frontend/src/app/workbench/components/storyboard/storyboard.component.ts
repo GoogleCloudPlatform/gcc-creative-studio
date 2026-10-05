@@ -36,11 +36,17 @@ import {
 import {AgentChatService} from '../../services/agent-chat.service';
 import {StoryboardService} from '../../../services/storyboard/storyboard.service';
 import {MatDialog} from '@angular/material/dialog';
+import {MatSnackBar} from '@angular/material/snack-bar';
 import {trigger, style, animate, transition} from '@angular/animations';
 import {
   ImageSelectorComponent,
   MediaItemSelection,
 } from '../../../common/components/image-selector/image-selector.component';
+import {
+  SceneDTO,
+  StoryboardAgentSync,
+  StoryboardUpdateResponse,
+} from '../../../common/models/workbench.model';
 import {CampaignReferenceAsset} from '../../utils/campaign-details';
 import {
   ReferenceAssetPreview,
@@ -60,7 +66,12 @@ export interface Shot {
   imageUrl: string;
   characters: Character[];
   description: string;
-  assetId?: string;
+  /**
+   * `media_item:<id>` / `source_asset:<id>` when picked in the Workbench, or
+   * the bare numeric `first_frame_media_item_id` the backend sends for frames
+   * the agent generated.
+   */
+  assetId?: string | number;
 }
 
 export interface Scene {
@@ -68,6 +79,10 @@ export interface Scene {
   title: string;
   shots: Shot[];
   isEditingTitle?: boolean;
+  /** Agent-side identity (`scene_id`), shared with the Izumi session state. */
+  sceneId?: string | null;
+  /** Creative Studio row the card was parsed from; matches edits back to it. */
+  rowId?: number | null;
 }
 
 @Component({
@@ -100,6 +115,40 @@ export class StoryboardComponent {
   private dialog = inject(MatDialog);
   private storyboardService = inject(StoryboardService);
   private referencePreviews = inject(ReferenceAssetPreviewService);
+  private snackBar = inject(MatSnackBar);
+
+  /** Placeholder card shown when the session has no storyboard yet. */
+  static readonly WELCOME_SCENE_ID = 'scene-welcome';
+  private static readonly NO_DESCRIPTION = 'No description provided';
+
+  /** Monotonic counter so a slow, superseded PUT cannot clobber the UI. */
+  private updateSeq = 0;
+  /**
+   * Set when the backend saved an edit but could not mirror it into the
+   * Izumi session because a run was executing (`agent_sync.status: busy`).
+   * The sync is a full snapshot, so one retry once the run ends is enough.
+   */
+  readonly pendingAgentSync = signal(false);
+  /** Id of the record the cards were last parsed from (record-change edge). */
+  private parsedStoryboardId: number | null = null;
+  private wasStreaming = false;
+  private retryPendingSyncEffect = effect(
+    () => {
+      const streaming = this.agentChatService.streamActive();
+      const pending = this.pendingAgentSync();
+      // Edge-triggered on purpose: a `busy` answer while no stream is visible
+      // to this tab (run from another tab, stale server registry) must not
+      // retry at once, or it would loop busy → retry → busy.
+      const runEnded = this.wasStreaming && !streaming;
+      this.wasStreaming = streaming;
+      if (!runEnded || !pending) return;
+      untracked(() => {
+        this.pendingAgentSync.set(false);
+        this.updateStoryboard();
+      });
+    },
+    {allowSignalWrites: true},
+  );
 
   // Navigation State
   activeTab = signal<'characters' | 'scenes' | 'campaign'>('scenes');
@@ -342,11 +391,19 @@ export class StoryboardComponent {
     effect(
       () => {
         const sb = this.agentChatService.currentStoryboard();
+        const sbId = sb?.id ?? null;
+        if (sbId !== this.parsedStoryboardId) {
+          // A pending retry belongs to the previous record.
+          this.parsedStoryboardId = sbId;
+          this.pendingAgentSync.set(false);
+        }
         if (sb) {
           if (sb.scenes && sb.scenes.length > 0) {
             const parsedScenes = sb.scenes.map((s: any, idx: number) => {
               return {
                 id: `scene-${idx + 1}`,
+                sceneId: s.scene_id ?? null,
+                rowId: typeof s.id === 'number' ? s.id : null,
                 title: s.topic || `Scene ${idx + 1}`,
                 shots: [
                   {
@@ -484,14 +541,18 @@ export class StoryboardComponent {
   }
 
   onAddScene() {
-    const currentScenes = this.scenes();
+    // Never persist the Welcome placeholder as a real scene.
+    const currentScenes = this.scenes().filter(s => !this.isWelcomeScene(s));
     const newIdx = currentScenes.length + 1;
+    const sceneId = this.mintSceneId(currentScenes);
     const newScene: Scene = {
-      id: `scene-${newIdx}`,
+      id: `scene-${sceneId}`,
+      sceneId,
+      rowId: null,
       title: `New Scene ${newIdx}`,
       shots: [
         {
-          id: `shot-${newIdx}-1`,
+          id: `shot-${sceneId}-1`,
           imageUrl: 'assets/images/storyboard-default.png',
           characters: [],
           description: 'New scene description',
@@ -499,6 +560,7 @@ export class StoryboardComponent {
       ],
     };
     this.scenes.set([...currentScenes, newScene]);
+    this.updateStoryboard();
   }
   toggleEditTitle(scene: Scene) {
     scene.isEditingTitle = !scene.isEditingTitle;
@@ -510,33 +572,46 @@ export class StoryboardComponent {
     this.updateStoryboard();
   }
   onDeleteScene(scene: Scene) {
+    if (this.isWelcomeScene(scene)) return;
     const currentScenes = this.scenes();
     const updatedScenes = currentScenes.filter(s => s.id !== scene.id);
     if (updatedScenes.length === 0) {
-      this.scenes.set([
-        {
-          id: 'scene-welcome',
-          title: 'Welcome to Ads X Storyboarding',
-          shots: [
-            {
-              id: 'shot-welcome-1',
-              imageUrl: 'assets/images/storyboard-default.png',
-              characters: [],
-              description:
-                'Ask the Ads X Agent to generate a storyboard template for you, and it will build out scenes here dynamically!',
-            },
-          ],
-        },
-      ]);
-    } else {
-      this.scenes.set(updatedScenes);
+      // The agent cannot work from an empty storyboard (the backend rejects
+      // the sync), so keep the last scene instead of showing a stale card.
+      this.snackBar.open('A storyboard needs at least one scene.', 'OK', {
+        duration: 4000,
+      });
+      return;
     }
+    this.scenes.set(updatedScenes);
+    this.updateStoryboard();
   }
   onDrop(event: CdkDragDrop<Scene[]>) {
+    if (event.previousIndex === event.currentIndex) return;
     const currentScenes = this.scenes();
     const updatedScenes = [...currentScenes];
     moveItemInArray(updatedScenes, event.previousIndex, event.currentIndex);
     this.scenes.set(updatedScenes);
+    this.updateStoryboard();
+  }
+
+  isWelcomeScene(scene: Scene): boolean {
+    return scene.id === StoryboardComponent.WELCOME_SCENE_ID;
+  }
+
+  /**
+   * Identity for a scene created in the Workbench. The backend keeps a
+   * client-supplied id, so the agent's copy and ours match from the first
+   * sync on; without one the agent would mint its own and later edits
+   * would fall back to positional matching.
+   */
+  private mintSceneId(existing: Scene[]): string {
+    const used = new Set(existing.map(s => s.sceneId).filter(Boolean));
+    let candidate = '';
+    do {
+      candidate = `cs-${Math.random().toString(16).slice(2, 10)}`;
+    } while (used.has(candidate));
+    return candidate;
   }
   onGenerateVideo() {
     this.isGeneratingVideo.set(true);
@@ -546,25 +621,45 @@ export class StoryboardComponent {
   onSeeVideoGenerated() {
     this.closeAgentView.emit();
   }
-  onOpenAssetDetail(shot: any) {
-    if (shot.assetId) {
-      let route = `/gallery/${shot.assetId}`;
-      if (shot.assetId.indexOf(':') !== -1) {
-        const parts = shot.assetId.split(':');
-        const type = parts[0];
-        const id = parts[1];
-        if (type === 'source_asset') {
-          route = `/asset-detail/${id}`;
-        } else if (type === 'media_item') {
-          route = `/gallery/${id}`;
-        }
+  /** Placeholder frame shown before a scene has an image; nothing to open. */
+  private static readonly PLACEHOLDER_FRAME =
+    'assets/images/storyboard-default.png';
+
+  /**
+   * Where a scene frame opens: the gallery for generated media
+   * (`media_item:<id>`, or a bare id — the backend sends
+   * `first_frame_media_item_id` as a number), asset-detail for uploads
+   * (`source_asset:<id>`), the image itself when only a URL is known, or
+   * `null` while the scene still shows the placeholder.
+   */
+  shotDetailUrl(shot: Shot): string | null {
+    if (shot.assetId !== undefined && shot.assetId !== null) {
+      const raw = String(shot.assetId).trim();
+      if (raw) {
+        const [type, id] = raw.includes(':')
+          ? raw.split(':', 2)
+          : ['media_item', raw];
+        return type === 'source_asset'
+          ? `/asset-detail/${id}`
+          : `/gallery/${id}`;
       }
-      window.open(route, '_blank');
-    } else if (
+    }
+    if (
       shot.imageUrl &&
-      shot.imageUrl !== 'assets/images/storyboard-default.png'
+      shot.imageUrl !== StoryboardComponent.PLACEHOLDER_FRAME
     ) {
-      window.open(shot.imageUrl, '_blank');
+      return shot.imageUrl;
+    }
+    return null;
+  }
+
+  /** Opens the frame in a new tab (thumbnail click or the overlay button). */
+  onOpenAssetDetail(shot: Shot, event?: Event) {
+    // The overlay button sits inside the clickable thumbnail: open once.
+    event?.stopPropagation();
+    const url = this.shotDetailUrl(shot);
+    if (url && typeof window !== 'undefined') {
+      window.open(url, '_blank');
     }
   }
   onEditImage(scene: any, shot: any, event: MouseEvent) {
@@ -611,46 +706,56 @@ export class StoryboardComponent {
       return;
     }
 
-    const currentScenes = this.scenes();
+    const currentScenes = this.scenes().filter(s => !this.isWelcomeScene(s));
+    if (currentScenes.length === 0) return;
+    const originals: SceneDTO[] = Array.isArray(sb.scenes) ? sb.scenes : [];
+
     const scenesForBackend = currentScenes.map((scene, idx) => {
       const shot = scene.shots[0]; // We only support 1 shot per scene for now
-
-      // Try to keep existing data from the original scene if available
-      const originalScene = sb.scenes && sb.scenes[idx] ? sb.scenes[idx] : {};
+      const originalScene = this.findOriginalScene(scene, idx, originals);
+      const description = this.splitDescription(
+        originalScene,
+        shot.description,
+      );
 
       return {
+        scene_id: scene.sceneId ?? originalScene?.scene_id ?? undefined,
         topic: scene.title,
-        duration_seconds: originalScene.duration_seconds || 4.0,
+        duration_seconds: originalScene?.duration_seconds || 4.0,
         first_frame_prompt: {
-          description: shot.description,
+          description: description.firstFrame,
           generated_url: shot.imageUrl,
           media_item_id: shot.assetId
             ? this.parseAssetId(shot.assetId, 'media_item')
-            : originalScene.first_frame_media_item_id,
+            : originalScene?.first_frame_media_item_id,
           source_asset_id: shot.assetId
             ? this.parseAssetId(shot.assetId, 'source_asset')
-            : originalScene.first_frame_source_asset_id,
+            : originalScene?.first_frame_source_asset_id,
         },
         video_prompt: {
-          description: shot.description,
-          duration_seconds: originalScene.video_duration_seconds || 4.0,
-          generated_url: originalScene.video_generated_url,
-          media_item_id: originalScene.video_media_item_id,
-          source_asset_id: originalScene.video_source_asset_id,
+          description: description.video,
+          duration_seconds: originalScene?.video_duration_seconds || 4.0,
+          generated_url: originalScene?.video_generated_url,
+          media_item_id: originalScene?.video_media_item_id,
+          source_asset_id: originalScene?.video_source_asset_id,
         },
         voiceover_prompt: {
-          text: originalScene.voiceover_text,
-          gender: originalScene.voiceover_gender,
-          description: originalScene.voiceover_description,
-          media_item_id: originalScene.voiceover_media_item_id,
-          source_asset_id: originalScene.voiceover_source_asset_id,
+          text: originalScene?.voiceover_text,
+          gender: originalScene?.voiceover_gender,
+          description: originalScene?.voiceover_description,
+          media_item_id: originalScene?.voiceover_media_item_id,
+          source_asset_id: originalScene?.voiceover_source_asset_id,
         },
         transition_hints: {
-          type: originalScene.transition_type,
-          duration: originalScene.transition_duration,
+          type: originalScene?.transition_type,
+          duration: originalScene?.transition_duration,
         },
-        audio_ambient_description: originalScene.audio_ambient_description,
-        audio_sfx_description: originalScene.audio_sfx_description,
+        // The backend reads the agent-shaped `audio_hints`; the flat keys it
+        // returns were silently dropped on every edit before.
+        audio_hints: {
+          ambient_sound: originalScene?.audio_ambient_description,
+          sfx: originalScene?.audio_sfx_description,
+        },
       };
     });
 
@@ -658,9 +763,105 @@ export class StoryboardComponent {
       scenes: scenesForBackend,
     };
 
+    const seq = ++this.updateSeq;
     this.storyboardService.updateStoryboard(sb.id, updateData).subscribe({
-      error: (err: any) => console.error('Error updating storyboard', err),
+      next: (res: StoryboardUpdateResponse) => {
+        // A newer edit is in flight; let its answer win.
+        if (seq !== this.updateSeq) return;
+        // Adopt the persisted record: the parse effect re-reads it, so the
+        // cards pick up the row ids / scene ids the next edit must send.
+        this.agentChatService.currentStoryboard.set(res);
+        this.reportAgentSync(res.agent_sync ?? null);
+      },
+      error: (err: any) => {
+        console.error('Error updating storyboard', err);
+        if (seq !== this.updateSeq) return;
+        const detail =
+          typeof err?.error?.detail === 'string' ? err.error.detail : '';
+        this.snackBar.open(
+          detail || 'Could not save the storyboard. Please try again.',
+          'OK',
+          {duration: 6000},
+        );
+      },
     });
+  }
+
+  /**
+   * The row an edited card came from. Identity first (`scene_id`, then the
+   * Creative Studio row id); the index fallback only serves rows that predate
+   * both and is wrong after a reorder, which is exactly why ids are carried.
+   */
+  private findOriginalScene(
+    scene: Scene,
+    idx: number,
+    originals: SceneDTO[],
+  ): SceneDTO | undefined {
+    if (scene.sceneId) {
+      const byId = originals.find(o => o.scene_id === scene.sceneId);
+      if (byId) return byId;
+    }
+    if (scene.rowId !== null && scene.rowId !== undefined) {
+      const byRow = originals.find(o => o.id === scene.rowId);
+      if (byRow) return byRow;
+    }
+    if (scene.sceneId || scene.rowId) {
+      // A scene created in the Workbench: nothing to inherit.
+      return undefined;
+    }
+    return originals[idx];
+  }
+
+  /**
+   * The card shows a single description, seeded from the video prompt and
+   * falling back to the first-frame prompt. Writing it back to *both*
+   * prompts made every title edit look like a prompt change to the agent
+   * (which releases the rendered frame), so an edit only goes to the field
+   * it was read from; an untouched or cleared card keeps the originals.
+   */
+  private splitDescription(
+    original: SceneDTO | undefined,
+    shown: string,
+  ): {firstFrame?: string; video?: string} {
+    const o = original as any;
+    const text =
+      shown === StoryboardComponent.NO_DESCRIPTION ? '' : (shown ?? '').trim();
+    const video: string | undefined =
+      o?.video_description || o?.video_prompt?.description || undefined;
+    const firstFrame: string | undefined =
+      o?.first_frame_description ||
+      o?.first_frame_prompt?.description ||
+      undefined;
+    if (video) return {firstFrame, video: text || video};
+    if (firstFrame) return {firstFrame: text || firstFrame, video};
+    return text ? {firstFrame: text, video: text} : {};
+  }
+
+  /** Tells the user how the Izumi session took the edit. */
+  private reportAgentSync(sync: StoryboardAgentSync | null) {
+    if (!sync) return;
+    switch (sync.status) {
+      case 'busy':
+        this.pendingAgentSync.set(true);
+        this.snackBar.open(
+          'Saved. The agent is busy; your change will be sent to it as soon as it finishes.',
+          'OK',
+          {duration: 5000},
+        );
+        return;
+      case 'rejected':
+      case 'failed':
+        this.snackBar.open(
+          sync.detail ||
+            'Saved, but the agent could not take the change. Try again when it is idle.',
+          'OK',
+          {duration: 8000},
+        );
+        return;
+      default:
+        // `synced` / `skipped` need no interruption.
+        return;
+    }
   }
 
   private parseAssetId(

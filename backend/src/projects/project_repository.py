@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from fastapi import Depends
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.common.base_repository import BaseRepository
@@ -87,7 +87,12 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
     async def find_by_workspace(
         self, workspace_id: int, session_id: str | None = None
     ) -> list[StoryboardResponse]:
-        """Finds storyboards for a given workspace, optionally filtered by session."""
+        """Finds storyboards for a given workspace, optionally filtered by session.
+
+        Newest first: callers that take ``[0]`` as "the" storyboard of a
+        session must get the live one, not whichever row the planner
+        happened to return first.
+        """
         query = (
             select(self.model)
             .where(self.model.workspace_id == workspace_id)
@@ -95,12 +100,33 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
                 selectinload(self.model.scenes),
                 selectinload(self.model.timeline),
             )
+            .order_by(self.model.id.desc())
         )
         if session_id:
             query = query.where(self.model.session_id == session_id)
         result = await self.db.execute(query)
         items = result.scalars().all()
         return [self.schema.model_validate(item) for item in items]
+
+    async def find_latest_by_session(
+        self, workspace_id: int, session_id: str, user_id: int
+    ) -> StoryboardCreateResponse | None:
+        """The newest storyboard record a user's agent session already owns."""
+        query = (
+            select(self.model)
+            .where(
+                self.model.workspace_id == workspace_id,
+                self.model.session_id == session_id,
+                self.model.user_id == user_id,
+            )
+            .order_by(self.model.id.desc())
+            .limit(1)
+        )
+        result = await self.db.execute(query)
+        item = result.scalar_one_or_none()
+        if not item:
+            return None
+        return StoryboardCreateResponse.model_validate(item)
 
     async def update_storyboard_data(
         self,
@@ -137,3 +163,22 @@ class StoryboardRepository(BaseRepository[Storyboard, StoryboardResponse]):
 
         await self.db.commit()
         return await self.get_by_id_with_details(storyboard_id)
+
+    async def set_scene_ids(
+        self, storyboard_id: int, assignments: dict[int, str]
+    ) -> None:
+        """Writes the agent's stable ``scene_id`` onto existing scene rows.
+
+        ``assignments`` maps a scene row id to its identity. The rows are
+        pinned to ``storyboard_id`` so a stale client cannot relabel another
+        storyboard's scenes.
+        """
+        if not assignments:
+            return
+        for row_id, scene_id in assignments.items():
+            await self.db.execute(
+                update(Scene)
+                .where(Scene.id == row_id, Scene.storyboard_id == storyboard_id)
+                .values(scene_id=scene_id)
+            )
+        await self.db.commit()

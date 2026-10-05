@@ -17,6 +17,10 @@ import {SafeResourceUrl} from '@angular/platform-browser';
 
 export interface SceneDTO {
   id: number;
+  /** Agent-side identity (`state.storyboard.scenes[].scene_id`). */
+  scene_id?: string | null;
+  /** Persisted position; the backend sorts scenes by it. */
+  order?: number | null;
   topic?: string;
   duration_seconds?: number;
   first_frame_description?: string;
@@ -142,6 +146,26 @@ export interface StoryboardResponse {
   bg_music_asset_id?: number;
   scenes: SceneDTO[];
   timeline_id?: number;
+}
+
+/** Outcome of mirroring a human storyboard edit into the Izumi session. */
+export interface StoryboardAgentSync {
+  status: 'synced' | 'skipped' | 'busy' | 'rejected' | 'failed';
+  detail?: string;
+  matched?: number;
+  added?: number;
+  removed?: number;
+  reordered?: boolean;
+  frames_replaced?: string[];
+  released?: string[];
+  /** Identity of every scene after the sync, in display order; the backend
+   * has already stamped them onto `scenes[i].scene_id` of the response. */
+  scene_ids?: string[];
+}
+
+/** `PUT /storyboards/{id}` answer: the record plus how the agent took it. */
+export interface StoryboardUpdateResponse extends StoryboardResponse {
+  agent_sync?: StoryboardAgentSync | null;
 }
 
 export interface ChatSession {

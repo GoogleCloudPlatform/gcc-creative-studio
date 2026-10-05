@@ -631,6 +631,59 @@ describe('ChatInterfaceComponent', () => {
     });
   });
 
+  describe("storyboard refresh follows the agent's current_storyboard_id", () => {
+    const records = [
+      {id: 14, session_id: 'session-123', timeline_id: 10, scenes: []},
+      {id: 13, session_id: 'session-123', timeline_id: 9, scenes: []},
+    ];
+
+    beforeEach(() => {
+      storyboardService.getStoryboardForSession.and.returnValue(of(records));
+      spyOn(router, 'navigate').and.resolveTo(true);
+      component.currentSessionId = 'session-123';
+    });
+
+    it('binds to the record the streamed state announced, not the newest', () => {
+      component.sendChatMessage('hello');
+      sseCallbacks.onMessage({
+        actions: {state_delta: {current_storyboard_id: '13'}},
+      });
+      sseCallbacks.onClose();
+
+      expect(agentChatService.currentStoryboard()?.id).toBe(13);
+      expect(router.navigate).toHaveBeenCalledWith([], {
+        relativeTo: jasmine.anything(),
+        queryParams: {sessionId: 'session-123', storyboardId: 13},
+        queryParamsHandling: 'merge',
+      });
+    });
+
+    it('falls back to the newest record when the agent has not named one', () => {
+      component['refreshStoryboardForSession']();
+      expect(agentChatService.currentStoryboard()?.id).toBe(14);
+    });
+
+    it('falls back to the newest record when the named one is not in the list', () => {
+      component['trackStreamedStoryboardId']({current_storyboard_id: '99'});
+      component['refreshStoryboardForSession']();
+      expect(agentChatService.currentStoryboard()?.id).toBe(14);
+    });
+
+    it('ignores deltas without the key and clears it on null', () => {
+      component['trackStreamedStoryboardId']({current_storyboard_id: 13});
+      component['trackStreamedStoryboardId']({parameters: {}});
+      expect(component['streamedStoryboardId']).toBe(13);
+      component['trackStreamedStoryboardId']({current_storyboard_id: null});
+      expect(component['streamedStoryboardId']).toBeNull();
+    });
+
+    it('forgets the id when a new chat starts', () => {
+      component['trackStreamedStoryboardId']({current_storyboard_id: '13'});
+      component.startNewChat();
+      expect(component['streamedStoryboardId']).toBeNull();
+    });
+  });
+
   describe('planned beats survive the templated-mode sanitisation', () => {
     const storyline = {
       narrative_arc: 'Bottle → protagonist → tagline.',
@@ -1378,6 +1431,144 @@ describe('ChatInterfaceComponent', () => {
     });
   });
 
+  describe('checkAndResumePolling (session reload)', () => {
+    const nowSeconds = () => Date.now() / 1000;
+    const gateCall = {
+      author: 'strategy_gate_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {text: 'Review the strategy.'},
+          {
+            functionCall: {
+              id: 'call_1',
+              name: 'await_strategy_approval',
+              args: {},
+            },
+          },
+        ],
+      },
+      longRunningToolIds: ['call_1'],
+    };
+    // ADK's placeholder response for a long-running tool: role "user", but
+    // authored by the gate agent.
+    const gatePlaceholder = {
+      author: 'strategy_gate_agent',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'call_1',
+              name: 'await_strategy_approval',
+              response: {status: 'pending'},
+            },
+          },
+        ],
+      },
+    };
+    // What `PATCH …/sessions/{id}` (character edit, storyboard sync, token
+    // propagation) appends: author "user", no content at all.
+    const statePatch = {
+      author: 'user',
+      actions: {stateDelta: {virtual_creator_metadata: {}}},
+    };
+    const pendingGate = {
+      callId: 'call_1',
+      toolName: 'await_strategy_approval',
+      stage: 'strategy',
+      options: [],
+      payload: {},
+    } as any;
+
+    const detail = (events: any[]) =>
+      ({
+        session: {id: 's-stuck', lastUpdateTime: nowSeconds(), events},
+        storyboard: null,
+      }) as any;
+
+    beforeEach(() => {
+      agentChatService.activeAgent.set('ads_x');
+      agentChatService.startPolling.calls.reset();
+      component.isTyping.set(true);
+      agentChatService.isGeneratingStoryboard.set(true);
+    });
+
+    it('does not resume when a gate is pending, even if the tail is a content-less user event', () => {
+      component.checkAndResumePolling(
+        detail([gateCall, gatePlaceholder, statePatch]),
+        pendingGate,
+      );
+
+      expect(agentChatService.startPolling).not.toHaveBeenCalled();
+      expect(component.isTyping()).toBeFalse();
+      expect(agentChatService.isGeneratingStoryboard()).toBeFalse();
+    });
+
+    it('skips trailing content-less events and judges the last event that has parts', () => {
+      // No gate passed (e.g. a session past the final cut): the placeholder
+      // tool response is the last real event, so nothing is in flight.
+      component.checkAndResumePolling(
+        detail([gateCall, gatePlaceholder, statePatch, statePatch]),
+      );
+
+      expect(agentChatService.startPolling).not.toHaveBeenCalled();
+      expect(component.isTyping()).toBeFalse();
+      expect(agentChatService.isGeneratingStoryboard()).toBeFalse();
+    });
+
+    it('clears the generating state when every event is content-less', () => {
+      component.checkAndResumePolling(detail([statePatch]));
+
+      expect(agentChatService.startPolling).not.toHaveBeenCalled();
+      expect(component.isTyping()).toBeFalse();
+    });
+
+    it('still resumes when the last real event is an unanswered user message', () => {
+      const userTurn = {
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'Make it punchier'}]},
+      };
+
+      component.checkAndResumePolling(
+        detail([gateCall, gatePlaceholder, userTurn, statePatch]),
+      );
+
+      expect(agentChatService.startPolling).toHaveBeenCalledWith(
+        's-stuck',
+        jasmine.any(Object),
+      );
+      expect(component.isTyping()).toBeTrue();
+      expect(agentChatService.isGeneratingStoryboard()).toBeTrue();
+    });
+
+    it('still resumes when the last real event is a pending (non-gate) tool call', () => {
+      const toolCall = {
+        author: 'media_agent',
+        content: {
+          role: 'model',
+          parts: [{functionCall: {id: 'c9', name: 'generate_all_media'}}],
+        },
+      };
+
+      component.checkAndResumePolling(detail([toolCall, statePatch]));
+
+      expect(agentChatService.startPolling).toHaveBeenCalled();
+    });
+
+    it('never resumes a session idle for more than 20 minutes', () => {
+      const res = detail([
+        {author: 'user', content: {role: 'user', parts: [{text: 'hi'}]}},
+      ]);
+      res.session.lastUpdateTime = nowSeconds() - 1300;
+
+      component.checkAndResumePolling(res);
+
+      expect(agentChatService.startPolling).not.toHaveBeenCalled();
+      expect(component.isTyping()).toBeFalse();
+    });
+  });
+
   describe('Rapid session switching (latest click wins)', () => {
     const detailFor = (sessionId: string, storyboardId: number | null) => ({
       session: {id: sessionId, events: [], state: {}},
@@ -1739,6 +1930,46 @@ describe('ChatInterfaceComponent', () => {
       expect(gate).toBeTruthy();
       expect(gate?.callId).toBe('call_sb_1');
       expect(gate?.stage).toBe('storyboard');
+    });
+
+    it('keeps a re-opened gate visible after a regeneration (stage_completed stays "generation")', () => {
+      // After a `regenerate` decision the agent re-runs and opens the
+      // final-cut gate again; `stage_completed` is monotonic and still says
+      // `generation`, while the agent nulls `final_cut_decision`.
+      const events = [
+        {
+          author: 'final_cut_gate_agent',
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  id: 'call_final_2',
+                  name: 'await_final_cut_approval',
+                },
+              },
+            ],
+          },
+        },
+      ];
+      const reopened = component['checkUnresolvedGate'](events, {
+        stage_completed: 'generation',
+        frame_decision: {decision: 'accept', guidance: ''},
+        final_cut_decision: null,
+      });
+      expect(reopened?.callId).toBe('call_final_2');
+      expect(reopened?.stage).toBe('final_cut');
+
+      // The per-stage decision is still authoritative.
+      expect(
+        component['checkUnresolvedGate'](events, {
+          stage_completed: 'generation',
+          final_cut_decision: {decision: 'accept', guidance: ''},
+        }),
+      ).toBeNull();
+      expect(
+        component['checkUnresolvedGate'](events, {stage_completed: 'complete'}),
+      ).toBeNull();
     });
 
     it('should ignore gate if already resolved by user function response', () => {
@@ -3096,6 +3327,208 @@ describe('ChatInterfaceComponent', () => {
         );
         const icon = card.querySelector('mat-icon');
         expect(icon?.textContent?.trim()).toBe('psychology');
+      });
+
+      describe('storyboard card scene count is never fabricated', () => {
+        // Event tail captured from session 7d968d1a (Feature Spotlight run
+        // whose storyboard really had 2 scenes): the chat used to announce
+        // "Generated 4 scenes" from a hardcoded placeholder.
+        const agentStoryboard = {
+          campaign_title: 'Cymbal: The Lasting Note',
+          template_name: 'Feature Spotlight',
+          scenes: [
+            {
+              scene_id: 'full_reveal',
+              topic: 'Full Reveal',
+              duration_seconds: 6,
+            },
+            {scene_id: 'cta', topic: 'Brand Anchor.', duration_seconds: 4},
+          ],
+        };
+        const routerEvent = {
+          id: 'ev-router',
+          author: 'storyboard_router',
+          content: {
+            role: 'model',
+            parts: [
+              {
+                text: '🎬 **Creative Perspective Synced!** Storyboard generated and ready for media production.',
+              },
+            ],
+          },
+          actions: {
+            stateDelta: {
+              storyboard: agentStoryboard,
+              stage_completed: 'storyboard',
+            },
+          },
+        };
+        const gateCallEvent = {
+          id: 'ev-gate-call',
+          author: 'storyboard_gate_agent',
+          content: {
+            role: 'model',
+            parts: [
+              {
+                text: 'Here is the generated storyboard for "Cymbal: The Lasting Note" for your review before media generation begins.',
+              },
+              {
+                functionCall: {
+                  id: 'call_1744888',
+                  name: 'await_storyboard_approval',
+                  args: {},
+                },
+              },
+            ],
+          },
+          longRunningToolIds: ['call_1744888'],
+        };
+        const gatePlaceholderEvent = {
+          id: 'ev-gate-resp',
+          author: 'storyboard_gate_agent',
+          content: {
+            role: 'user',
+            parts: [
+              {
+                functionResponse: {
+                  id: 'call_1744888',
+                  name: 'await_storyboard_approval',
+                  response: {
+                    status: 'succeeded',
+                    result: {
+                      stage: 'storyboard',
+                      message:
+                        '2 scenes, 10 seconds in total. Accept to continue, or tell me what to change.',
+                      storyboard_id: '16',
+                    },
+                  },
+                },
+              },
+            ],
+          },
+          actions: {
+            stateDelta: {
+              storyboard: agentStoryboard,
+              current_storyboard_id: 16,
+              storyboard_decision: null,
+            },
+          },
+        };
+        const withoutStoryboardDelta = (ev: any) => {
+          const copy = JSON.parse(JSON.stringify(ev));
+          delete copy.actions;
+          return copy;
+        };
+        const storyboardSubtitles = (msgs: any[]) =>
+          msgs
+            .filter(m => m.milestone?.title === 'Storyboard Ready')
+            .map(m => m.milestone.subtitle as string);
+
+        it('history: every "Storyboard Ready" card quotes the scene count of the agent storyboard', () => {
+          const msgs = component['mapEventsToMessages']([
+            routerEvent,
+            gateCallEvent,
+            gatePlaceholderEvent,
+          ]);
+
+          const subtitles = storyboardSubtitles(msgs);
+          expect(subtitles.length).toBeGreaterThan(0);
+          for (const subtitle of subtitles) {
+            expect(subtitle).toBe('Generated 2 scenes');
+          }
+        });
+
+        it('history: shows no number at all when no storyboard data was published', () => {
+          const msgs = component['mapEventsToMessages']([
+            withoutStoryboardDelta(routerEvent),
+            withoutStoryboardDelta(gateCallEvent),
+            withoutStoryboardDelta(gatePlaceholderEvent),
+          ]);
+
+          const subtitles = storyboardSubtitles(msgs);
+          expect(subtitles.length).toBeGreaterThan(0);
+          for (const subtitle of subtitles) {
+            expect(subtitle).toBe('Ready for review');
+            expect(subtitle).not.toMatch(/\d/);
+          }
+        });
+
+        it('stream: the gate card quotes the count from the storyboard delta streamed in the same run', () => {
+          component.currentSessionId = 'session-123';
+          component.sendChatMessage('accept');
+
+          sseCallbacks.onMessage(routerEvent);
+          sseCallbacks.onMessage(gateCallEvent);
+          sseCallbacks.onMessage(gatePlaceholderEvent);
+
+          const subtitles = storyboardSubtitles(component.chatMessages());
+          expect(subtitles.length).toBeGreaterThan(0);
+          for (const subtitle of subtitles) {
+            expect(subtitle).toBe('Generated 2 scenes');
+          }
+        });
+
+        it('stream: a gate that arrives without any storyboard delta shows no number', () => {
+          component.currentSessionId = 'session-123';
+          component.sendChatMessage('accept');
+
+          // Same order as the real run (router text first, then the gate);
+          // the gate milestone attaches to the preceding agent bubble.
+          sseCallbacks.onMessage(withoutStoryboardDelta(routerEvent));
+          sseCallbacks.onMessage(withoutStoryboardDelta(gateCallEvent));
+
+          const subtitles = storyboardSubtitles(component.chatMessages());
+          expect(subtitles.length).toBeGreaterThan(0);
+          for (const subtitle of subtitles) {
+            expect(subtitle).toBe('Ready for review');
+            expect(subtitle).not.toMatch(/\d/);
+          }
+        });
+
+        it('getMilestoneForStage never invents a count and pluralises correctly', () => {
+          expect(component.getMilestoneForStage('storyboard')?.subtitle).toBe(
+            'Ready for review',
+          );
+          expect(
+            component.getMilestoneForStage('storyboard', undefined, {
+              scenes: [],
+            })?.subtitle,
+          ).toBe('Ready for review');
+          for (let n = 1; n <= 6; n++) {
+            const subtitle = component.getMilestoneForStage(
+              'storyboard',
+              undefined,
+              {scenes: new Array(n).fill({})},
+            )?.subtitle;
+            expect(subtitle).toBe(`Generated ${n} scene${n === 1 ? '' : 's'}`);
+          }
+        });
+
+        it('a storyboard passed for another gate does not relabel it as "Storyboard Ready"', () => {
+          const frames = component.getMilestoneForStage(
+            undefined,
+            'await_frame_approval',
+            agentStoryboard,
+          );
+          expect(frames?.title).toBe('Scene Frames & Audio Ready');
+
+          const finalCut = component.getMilestoneForStage(
+            'final_cut',
+            undefined,
+            agentStoryboard,
+          );
+          expect(finalCut?.title).toBe('Final Cut Ready');
+
+          // Stage-less, tool-less calls that only carry a storyboard still map
+          // to the storyboard milestone (tool-result path).
+          expect(
+            component.getMilestoneForStage(
+              undefined,
+              undefined,
+              agentStoryboard,
+            )?.subtitle,
+          ).toBe('Generated 2 scenes');
+        });
       });
 
       it('should not create duplicate milestone cards or user bubbles when intermediate tool suspension event is present in history', () => {

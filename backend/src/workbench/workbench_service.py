@@ -311,8 +311,49 @@ class WorkbenchService:
                     clip.presigned_url = presigned_url
 
     async def create_timeline(
-        self, timeline_create: TimelineCreate
+        self,
+        timeline_create: TimelineCreate,
+        reuse_for_storyboard: bool = False,
     ) -> TimelineResponse:
+        """Creates a timeline.
+
+        With ``reuse_for_storyboard`` (the agent's path) a storyboard that
+        already has a timeline gets that timeline replaced in place instead
+        of a second record: Izumi re-creates the timeline on every stitch, and
+        the Workbench follows ``storyboard.timeline_id``, which would otherwise
+        keep pointing at the first, stale cut.
+        """
+        storyboard_id = getattr(timeline_create, "storyboard_id", None)
+        if reuse_for_storyboard and storyboard_id is not None:
+            try:
+                existing = await self.timeline_repo.find_by_storyboard(
+                    int(storyboard_id)
+                )
+            except (ValueError, TypeError):
+                existing = []
+            if existing:
+                # The repo returns ``VideoTimeline`` DTOs: the id is
+                # ``timeline_id`` (a str or int), not ``id``.
+                def _tid(t: TimelineResponse) -> int:
+                    try:
+                        return int(t.timeline_id) if t.timeline_id else 0
+                    except (ValueError, TypeError):
+                        return 0
+
+                target_id = max(_tid(t) for t in existing)
+                updated = None
+                if target_id:
+                    updated = await self.timeline_repo.update_timeline(
+                        target_id, timeline_create
+                    )
+                if updated:
+                    logger.info(
+                        "Timeline %s replaced in place for storyboard %s",
+                        target_id,
+                        storyboard_id,
+                    )
+                    await self._enrich_timeline(updated)
+                    return updated
         timeline = await self.timeline_repo.create_timeline(timeline_create)
         await self._enrich_timeline(timeline)
         return timeline

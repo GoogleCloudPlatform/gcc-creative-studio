@@ -22,6 +22,7 @@ from starlette.background import BackgroundTask
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from src.auth.auth_guard import get_current_user
+from src.common.request_context import is_agent_request
 from src.users.user_model import UserModel
 from src.workbench.dto.workbench_dto import (
     TimelineRequest,
@@ -92,7 +93,11 @@ async def create_timeline(
     service: WorkbenchService = Depends(),
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
-    return await service.create_timeline(timeline_create)
+    # The agent re-creates the timeline on every stitch; replace the
+    # storyboard's existing cut in place so the Workbench follows the live one.
+    return await service.create_timeline(
+        timeline_create, reuse_for_storyboard=is_agent_request.get()
+    )
 
 
 @router.get("/timelines/{timeline_id}", response_model=TimelineResponse)
