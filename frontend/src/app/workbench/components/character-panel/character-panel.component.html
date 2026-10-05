@@ -151,6 +151,12 @@
             </p>
           }
 
+          @if (headshotPrompt(); as prompt) {
+            <p class="cp-muted cp-demographics cp-prompt">
+              <b>Headshot prompt:</b> {{ prompt }}
+            </p>
+          }
+
           <!-- Outfit / garment images the headshot was generated from -->
           @if (headshot()?.sources?.length) {
             <div class="cp-sources">

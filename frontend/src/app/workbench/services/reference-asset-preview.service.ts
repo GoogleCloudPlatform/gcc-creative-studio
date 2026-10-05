@@ -36,6 +36,8 @@ export interface ReferenceAssetPreview {
    * uploads and for items generated from a prompt alone.
    */
   sources: ReferenceAssetSource[];
+  /** For a generated media item: the prompt the image was generated from. */
+  prompt?: string;
 }
 
 /**
@@ -103,10 +105,17 @@ export class ReferenceAssetPreviewService {
         next: item => {
           const url =
             item?.presignedThumbnailUrls?.[0] || item?.presignedUrls?.[0] || '';
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const rawPrompt = (item as any)?.prompt;
+          const prompt =
+            typeof rawPrompt === 'string' && rawPrompt.trim()
+              ? rawPrompt.trim()
+              : undefined;
           this.set(key, {
             url,
             unavailable: !url,
             sources: ReferenceAssetPreviewService.sourcesOf(item),
+            ...(prompt ? {prompt} : {}),
           });
         },
         error: err => {

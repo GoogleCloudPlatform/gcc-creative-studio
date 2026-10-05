@@ -550,9 +550,9 @@ async def test_update_and_remove_session_character_routes(
     keys = [k for k in state["asset_refs"] if k.startswith("virtual_creator_")]
     assert len(keys) == 1
     assert state["asset_refs"][keys[0]] == {
-        "id": 42,
+        "id": "42",
         "asset_type": "generated",
-        "workspace_id": 1,
+        "workspace_id": "1",
     }
     assert (
         state["virtual_creator_metadata"]["profile"]["role"] == "spokesperson"

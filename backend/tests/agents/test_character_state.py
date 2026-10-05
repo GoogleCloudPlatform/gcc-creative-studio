@@ -181,18 +181,18 @@ def test_build_character_delta_edit_profile_keeps_headshot():
         "virtual_creator_metadata",
         "parameters",
     }
-    # Headshot untouched, other assets preserved.
+    # Headshot untouched (coerced to strings for Izumi AssetRef), other assets preserved.
     assert delta["asset_refs"][key] == {
-        "id": 285,
+        "id": "285",
         "asset_type": "generated",
-        "workspace_id": 7,
+        "workspace_id": "7",
     }
     assert delta["asset_refs"]["generated_158"]["id"] == 158
     assert "generated_158" in delta["user_assets"]
 
     meta = delta["virtual_creator_metadata"]
     assert meta["file_name"] == key
-    assert meta["asset_ref"]["id"] == 285
+    assert meta["asset_ref"]["id"] == "285"
     assert meta["prompt"] == "old prompt"
     assert meta["generated_at"] == "2026-01-01T00:00:00+00:00"
     assert meta["profile"] == FULL_PROFILE
@@ -221,12 +221,12 @@ def test_build_character_delta_replace_headshot_keeps_key():
     )
     key = "virtual_creator_4c53.png"
     assert delta["asset_refs"][key] == {
-        "id": 302,
+        "id": "302",
         "asset_type": "generated",
-        "workspace_id": 7,
+        "workspace_id": "7",
     }
     meta = delta["virtual_creator_metadata"]
-    assert meta["asset_ref"]["id"] == 302
+    assert meta["asset_ref"]["id"] == "302"
     assert meta["prompt"] == "new headshot prompt"
     assert meta["generated_at"] != "2026-01-01T00:00:00+00:00"
     # No visual fields given → the previous demographics survive.
@@ -307,3 +307,52 @@ def test_build_character_removal_delta_without_character_is_a_noop_shape():
         "user_assets": {},
         "virtual_creator_metadata": None,
     }
+
+
+def test_build_character_delta_prunes_stale_creator_keys_and_clears_old_prompt():
+    state = _state_with_creator(key="virtual_creator_d34d.png", asset_id=347)
+    state["asset_refs"]["virtual_creator_4c53.png"] = {
+        "id": 285,
+        "asset_type": "generated",
+        "workspace_id": 7,
+    }
+    state["asset_refs"]["virtual_creator_908b.png"] = {
+        "id": 302,
+        "asset_type": "generated",
+        "workspace_id": 7,
+    }
+    state["user_assets"]["virtual_creator_4c53.png"] = "Old creator 1."
+    state["user_assets"]["virtual_creator_908b.png"] = "Old creator 2."
+
+    # Replacing from gallery (no prompt passed) drops the old prompt and prunes
+    # the two stale virtual_creator_* keys while keeping generated_158.
+    delta = build_character_delta(
+        state,
+        {"name": "John"},
+        workspace_id=7,
+        asset_ref={"id": 400, "asset_type": "generated"},
+    )
+    assert set(delta["asset_refs"]) == {
+        "generated_158",
+        "virtual_creator_d34d.png",
+    }
+    assert set(delta["user_assets"]) == {
+        "generated_158",
+        "virtual_creator_d34d.png",
+    }
+    assert "prompt" not in delta["virtual_creator_metadata"]
+
+
+def test_build_character_removal_delta_prunes_all_creator_keys():
+    state = _state_with_creator(key="virtual_creator_d34d.png", asset_id=347)
+    state["asset_refs"]["virtual_creator_4c53.png"] = {
+        "id": 285,
+        "asset_type": "generated",
+        "workspace_id": 7,
+    }
+    state["user_assets"]["virtual_creator_4c53.png"] = "Old creator 1."
+
+    delta = build_character_removal_delta(state)
+    assert set(delta["asset_refs"]) == {"generated_158"}
+    assert set(delta["user_assets"]) == {"generated_158"}
+    assert delta["virtual_creator_metadata"] is None

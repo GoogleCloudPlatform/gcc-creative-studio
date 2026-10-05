@@ -488,13 +488,14 @@ export function parseReferenceAssets(
       : {};
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const meta = (creatorMeta ?? {}) as any;
-  const creatorKey = str(meta.file_name);
+  const refsRecord = assetRefs as Record<string, unknown>;
+  const creatorKey =
+    str(meta.file_name) ||
+    Object.keys(refsRecord).find(k => k.startsWith('virtual_creator_'));
   const creatorDemographics = str(meta.demographics);
 
   const assets: CampaignReferenceAsset[] = [];
-  for (const [key, raw] of Object.entries(
-    assetRefs as Record<string, unknown>,
-  )) {
+  for (const [key, raw] of Object.entries(refsRecord)) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const ref = raw as any;
@@ -506,6 +507,11 @@ export function parseReferenceAssets(
     const isCreator =
       (!!creatorKey && key === creatorKey) ||
       key.startsWith('virtual_creator_');
+    if (isCreator && key !== creatorKey) {
+      // Stale virtual_creator_* key from an earlier cast — keep only the
+      // active character so Campaign and Characters tabs always agree.
+      continue;
+    }
     const role: CampaignReferenceAsset['role'] = isCreator
       ? 'creator'
       : key.toLowerCase().includes('logo')

@@ -157,6 +157,19 @@ def resolve_creator_key(state: dict) -> str | None:
     return None
 
 
+def _prune_stale_creators(mapping: dict, keep_key: str | None) -> None:
+    """Removes any ``virtual_creator_*`` keys other than ``keep_key``."""
+    stale = [
+        k
+        for k in mapping
+        if isinstance(k, str)
+        and k.startswith(CREATOR_KEY_PREFIX)
+        and k != keep_key
+    ]
+    for k in stale:
+        mapping.pop(k, None)
+
+
 def _parameters_delta(state: dict, enabled: bool, description: str) -> dict:
     """``parameters`` with the creator flags updated — only when it exists.
 
@@ -192,6 +205,8 @@ def build_character_delta(
     meta = _as_dict(state.get(VIRTUAL_CREATOR_KEY))
 
     key = resolve_creator_key(state) or mint_creator_key()
+    _prune_stale_creators(asset_refs, key)
+    _prune_stale_creators(user_assets, key)
 
     if asset_ref is not None:
         ref = _as_dict(asset_ref)
@@ -206,9 +221,9 @@ def build_character_delta(
                 "'generated' or 'uploaded'."
             )
         new_ref = {
-            "id": asset_id,
+            "id": str(asset_id),
             "asset_type": asset_type,
-            "workspace_id": workspace_id,
+            "workspace_id": str(workspace_id),
         }
         asset_refs[key] = new_ref
         meta["asset_ref"] = new_ref
@@ -217,11 +232,26 @@ def build_character_delta(
         ).isoformat()
         if _clean(prompt):
             meta["prompt"] = prompt.strip()
+        else:
+            meta.pop("prompt", None)
     elif key not in asset_refs:
         raise CharacterStateError(
             "This campaign has no character headshot yet. Pick an image "
             "from the gallery or cast a new one first."
         )
+    else:
+        existing_ref = _as_dict(asset_refs.get(key))
+        if existing_ref:
+            coerced_ref = {
+                "id": str(existing_ref.get("id", "")),
+                "asset_type": _clean(existing_ref.get("asset_type"))
+                or "generated",
+                "workspace_id": str(
+                    existing_ref.get("workspace_id", workspace_id)
+                ),
+            }
+            asset_refs[key] = coerced_ref
+            meta["asset_ref"] = coerced_ref
 
     demographics = compile_demographics(clean_profile) or _clean(
         meta.get("demographics")
@@ -249,6 +279,8 @@ def build_character_removal_delta(state: dict) -> dict:
     if key:
         asset_refs.pop(key, None)
         user_assets.pop(key, None)
+    _prune_stale_creators(asset_refs, None)
+    _prune_stale_creators(user_assets, None)
     delta: dict[str, Any] = {
         ASSET_REFS_KEY: asset_refs,
         USER_ASSETS_KEY: user_assets,

@@ -582,6 +582,21 @@ describe('parseReferenceAssets', () => {
     expect(assets[0].description).toBeUndefined();
   });
 
+  it('keeps only the active virtual_creator_* key when stale ones exist', () => {
+    const assets = parseReferenceAssets(
+      {
+        ...ASSET_REFS,
+        'virtual_creator_908b.png': {id: '302', asset_type: 'generated'},
+        'virtual_creator_d34d.png': {id: '347', asset_type: 'generated'},
+      },
+      USER_ASSETS,
+      {file_name: 'virtual_creator_d34d.png', demographics: 'Male, 30.'},
+    );
+    expect(assets.filter(a => a.role === 'creator').map(a => a.key)).toEqual([
+      'virtual_creator_d34d.png',
+    ]);
+  });
+
   it('drops entries without a usable id or with an unknown type', () => {
     const assets = parseReferenceAssets(
       {

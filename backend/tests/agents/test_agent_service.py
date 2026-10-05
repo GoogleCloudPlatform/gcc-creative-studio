@@ -962,7 +962,7 @@ async def test_update_session_character_writes_delta_and_returns_it():
 
         delta = result.state
         key = "virtual_creator_4c53.png"
-        assert delta["asset_refs"][key]["id"] == 302
+        assert delta["asset_refs"][key]["id"] == "302"
         assert delta["virtual_creator_metadata"]["prompt"] == "headshot prompt"
         assert delta["virtual_creator_metadata"]["profile"] == {
             "name": "Maya",

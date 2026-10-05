@@ -145,10 +145,11 @@ describe('ReferenceAssetPreviewService', () => {
     });
   });
 
-  it('exposes the images a generated item was produced from as sources', () => {
+  it('exposes the images and prompt a generated item was produced from', () => {
     gallery.getMedia.and.returnValue(
       of({
         presignedThumbnailUrls: ['https://thumb/158'],
+        prompt: '  Studio headshot, warm key light.  ',
         enrichedSourceAssets: [
           {sourceAssetId: 7, presignedThumbnailUrl: 'https://thumb/7'},
           {sourceAssetId: 8, presignedUrl: 'https://full/8'},
@@ -162,6 +163,9 @@ describe('ReferenceAssetPreviewService', () => {
 
     service.ensure([generated]);
 
+    expect(service.snapshot(generated)?.prompt).toBe(
+      'Studio headshot, warm key light.',
+    );
     expect(service.snapshot(generated)?.sources).toEqual([
       {url: 'https://thumb/7', label: 'Upload 7'},
       {url: 'https://full/8', label: 'Upload 8'},

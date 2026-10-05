@@ -205,6 +205,7 @@ describe('CharacterPanelComponent', () => {
         'generated:201': {
           url: 'https://signed/201',
           unavailable: false,
+          prompt: 'Photorealistic headshot, soft studio lighting.',
           sources: [
             {url: 'https://thumb/7', label: 'Upload 7'},
             {url: 'https://full/300', label: 'Gallery 300'},
@@ -217,6 +218,9 @@ describe('CharacterPanelComponent', () => {
           .querySelector<HTMLImageElement>('.cp-headshot img')
           ?.getAttribute('src'),
       ).toBe('https://signed/201');
+      expect(text('.cp-prompt')).toContain(
+        'Photorealistic headshot, soft studio lighting.',
+      );
       const refs = Array.from(
         el().querySelectorAll<HTMLImageElement>('.cp-sources-list img'),
       );
@@ -353,6 +357,22 @@ describe('CharacterPanelComponent', () => {
       expect(component.mode()).toBe('view');
       expect(component.saving()).toBeFalse();
     }));
+
+    it('seeds appearance with agent demographics so partial edits keep the original description', () => {
+      campaignDetails.set(
+        details(
+          character({
+            profile: {},
+            agentCast: true,
+            demographics: 'Female, early 30s, warm smile',
+          }),
+        ),
+      );
+      component.startEdit();
+      expect(component.draft()).toEqual({
+        appearance: 'Female, early 30s, warm smile',
+      });
+    });
 
     it('cancel drops the draft without writing', () => {
       component.startEdit();

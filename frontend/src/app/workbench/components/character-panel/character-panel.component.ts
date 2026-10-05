@@ -154,6 +154,13 @@ export class CharacterPanelComponent {
       : undefined;
   });
 
+  /** The prompt that produced the current headshot (from state or the media item). */
+  headshotPrompt = computed<string>(() => {
+    const c = this.character();
+    if (!c) return '';
+    return c.prompt || this.headshot()?.prompt || '';
+  });
+
   constructor() {
     // Resolve the headshot thumbnail whenever the character (or its id) changes.
     effect(
@@ -240,7 +247,7 @@ export class CharacterPanelComponent {
   startEdit(): void {
     if (!this.canAct()) return;
     this.error.set(null);
-    this.draft.set({...(this.character()?.profile ?? {})});
+    this.draft.set(this.initialDraft(this.character()));
     this.mode.set('edit');
   }
 
@@ -278,9 +285,10 @@ export class CharacterPanelComponent {
     if (!this.canAct()) return;
     this.error.set(null);
     const existing = this.character();
-    this.draft.set({...(existing?.profile ?? {})});
+    this.draft.set(this.initialDraft(existing));
     this.castPrompt.set(
-      buildHeadshotPrompt(this.draft(), existing?.demographics),
+      this.headshotPrompt() ||
+        buildHeadshotPrompt(this.draft(), existing?.demographics),
     );
     this.castReferences.set([]);
     this.mode.set('cast');
@@ -291,6 +299,24 @@ export class CharacterPanelComponent {
     this.castPrompt.set(
       buildHeadshotPrompt(this.draft(), this.character()?.demographics),
     );
+  }
+
+  /**
+   * Seeds the edit/cast form from the character. When the character has no
+   * structured visual fields yet (e.g. an Izumi-cast creator), pre-fills
+   * `appearance` with `demographics` so editing a single field like `clothing`
+   * combines with the existing description instead of overwriting it.
+   */
+  private initialDraft(c: SessionCharacter | null): CharacterProfile {
+    if (!c) return {};
+    const p: CharacterProfile = {...c.profile};
+    const hasVisualFields = Boolean(
+      p.gender || p.ageRange || p.appearance || p.clothing || p.personality,
+    );
+    if (!hasVisualFields && c.demographics) {
+      p.appearance = c.demographics;
+    }
+    return p;
   }
 
   addCastReference(): void {
