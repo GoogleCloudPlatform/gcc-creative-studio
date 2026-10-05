@@ -12,15 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import AsyncMock, MagicMock, patch
+import logging
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
+import httpx
 import pytest
 from fastapi import HTTPException
+from google.genai import errors as genai_errors
+from google.genai import types
 from httpx import Response
 
+from src.common import retry as retry_module
 from src.common.schema.media_item_model import AssetRoleEnum
+from src.config.config_service import ConfigService, config_service
+from src.workflows.queue.failure_classifier import ErrorCategory
 from src.workflows.schema.workflow_model import ReferenceMediaOrAsset
+from src.workflows_executor.step_errors import StepError
 from src.workflows_executor.workflows_executor_service import (
+    POLL_INITIAL_DELAY_SECONDS,
+    POLL_INTERVAL_SECONDS,
+    REST_CLIENT_TIMEOUT_SECONDS,
     WorkflowsExecutorService,
 )
 
@@ -699,6 +710,7 @@ async def test_execute_image_generate_mode_auto_aspect_ratio_fallback(service):
             brand_guidelines=False,
             resolution="2K",
             authorization=None,
+            guard=None,
         )
 
 
@@ -730,6 +742,7 @@ async def test_execute_image_edit_mode_auto_aspect_ratio_preserved(service):
             brand_guidelines=False,
             resolution="4K",
             authorization=None,
+            guard=None,
         )
 
 
@@ -960,3 +973,369 @@ async def test_generate_text_prompt_variable_substitution_case_insensitive(
     contents = kwargs["contents"]
     assert len(contents) == 1
     assert contents[0].text == "Story of a tiger with a beanie."
+
+
+# --- Phase 1 hardening -------------------------
+# The poll-budget tests drive _poll_job_status directly.
+# pylint: disable=protected-access
+
+JWT = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMjMifQ.c2lnbmF0dXJl"
+USER_AUTH = f"Bearer {JWT}"
+
+
+def _image_request() -> MagicMock:
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "A cat"
+    request.config.mode = "generate_image"
+    request.config.model = "gemini-3.1-flash-image"
+    request.config.aspect_ratio = "1:1"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+    return request
+
+
+def _text_request() -> MagicMock:
+    request = MagicMock()
+    request.config.temperature = 0.2
+    request.config.model = "gemini-3-flash-preview"
+    request.inputs.prompt = "Write a haiku"
+    request.inputs.input_images = None
+    request.inputs.input_videos = None
+    request.inputs.model_dump.return_value = {"prompt": "Write a haiku"}
+    return request
+
+
+def test_rest_client_timeout_stays_below_the_step_timeout():
+    with (
+        patch(
+            "src.workflows_executor.workflows_executor_service.RestClient"
+        ) as rest_client_class,
+        patch(
+            "src.workflows_executor.workflows_executor_service"
+            ".GenAIModelSetup.init"
+        ),
+    ):
+        WorkflowsExecutorService()
+
+    rest_client_class.assert_called_once_with(
+        timeout=REST_CLIENT_TIMEOUT_SECONDS
+    )
+    assert REST_CLIENT_TIMEOUT_SECONDS <= 280
+
+
+def test_poll_budget_defaults_to_270_seconds():
+    field = ConfigService.model_fields["WORKFLOW_GEN_POLL_TIMEOUT_SECONDS"]
+    assert field.default == 270
+
+
+@pytest.mark.anyio
+async def test_poll_budget_ends_with_step_in_progress(service):
+    service.mock_rest_client.get.return_value = Response(
+        200, json={"status": "processing"}
+    )
+
+    with (
+        patch("asyncio.sleep", AsyncMock()) as sleep,
+        patch("asyncio.get_event_loop") as get_loop,
+        patch.object(config_service, "WORKFLOW_GEN_POLL_TIMEOUT_SECONDS", 270),
+    ):
+        # Another poll fits at 264 s (264 + 5 <= 270) but not at 266 s.
+        get_loop.return_value.time.side_effect = [0, 264, 266]
+        with pytest.raises(StepError) as exc:
+            await service._poll_job_status(123, USER_AUTH)
+
+    assert exc.value.status_code == 504
+    assert exc.value.error_category is ErrorCategory.STEP_IN_PROGRESS
+    assert exc.value.job_terminal is False
+    assert exc.value.to_body()["error_category"] == "STEP_IN_PROGRESS"
+    assert service.mock_rest_client.get.await_count == 2
+    assert sleep.await_args_list == [
+        call(POLL_INITIAL_DELAY_SECONDS),
+        call(POLL_INTERVAL_SECONDS),
+    ]
+
+
+@pytest.mark.anyio
+async def test_single_check_poll_does_not_wait(service):
+    service.mock_rest_client.get.return_value = Response(
+        200, json={"status": "processing"}
+    )
+
+    with patch("asyncio.sleep", AsyncMock()) as sleep:
+        with pytest.raises(StepError) as exc:
+            await service._poll_job_status(123, budget_seconds=0)
+
+    assert exc.value.error_category is ErrorCategory.STEP_IN_PROGRESS
+    sleep.assert_not_awaited()
+    service.mock_rest_client.get.assert_awaited_once()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "first_answer",
+    [
+        Response(503, text="Service Unavailable"),
+        Response(429, text="Too Many Requests"),
+        Response(200, content=b"not json"),
+        Response(200, json=["not", "a", "dict"]),
+        httpx.ConnectError("connection refused"),
+    ],
+    ids=["503", "429", "invalid-json", "not-a-dict", "network"],
+)
+async def test_poll_keeps_polling_while_the_status_is_unknown(
+    service, first_answer
+):
+    service.mock_rest_client.get.side_effect = [
+        first_answer,
+        Response(200, json={"status": "completed"}),
+    ]
+
+    with patch("asyncio.sleep", AsyncMock()):
+        assert await service._poll_job_status(123) is True
+
+    assert service.mock_rest_client.get.await_count == 2
+
+
+@pytest.mark.anyio
+async def test_poll_error_answers_are_structured(service):
+    service.mock_rest_client.get.return_value = Response(
+        404, text="Media item not found"
+    )
+
+    with patch("asyncio.sleep", AsyncMock()):
+        with pytest.raises(StepError) as exc:
+            await service._poll_job_status(123)
+
+    assert exc.value.status_code == 404
+    assert exc.value.error_category is ErrorCategory.MISSING_RESOURCE
+    assert exc.value.detail == "Polling error: Media item not found"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("key", ["error_message", "errorMessage"])
+async def test_failed_job_blocked_by_safety_is_422(service, key):
+    service.mock_rest_client.get.return_value = Response(
+        200,
+        json={
+            "status": "failed",
+            key: "Image blocked by Responsible AI filters",
+        },
+    )
+
+    with patch("asyncio.sleep", AsyncMock()):
+        with pytest.raises(StepError) as exc:
+            await service._poll_job_status(123)
+
+    assert exc.value.status_code == 422
+    assert exc.value.error_category is ErrorCategory.SAFETY_BLOCK
+    assert exc.value.job_terminal is True
+
+
+@pytest.mark.anyio
+async def test_failed_job_without_a_known_cause_is_500(service):
+    service.mock_rest_client.get.return_value = Response(
+        200, json={"status": "failed"}
+    )
+
+    with patch("asyncio.sleep", AsyncMock()):
+        with pytest.raises(StepError) as exc:
+            await service._poll_job_status(123)
+
+    assert exc.value.status_code == 500
+    assert exc.value.error_category is ErrorCategory.UNKNOWN
+    assert exc.value.detail == "Generation job failed: Unknown error"
+
+
+@pytest.mark.anyio
+async def test_backend_safety_rejection_is_422(service):
+    service.mock_rest_client.post.return_value = Response(
+        400, text="Prompt blocked by safety filters"
+    )
+
+    with pytest.raises(StepError) as exc:
+        await service.execute_image(_image_request(), USER_AUTH)
+
+    assert exc.value.status_code == 422
+    assert exc.value.to_body() == {
+        "error_category": "SAFETY_BLOCK",
+        "detail": "Backend error: Prompt blocked by safety filters",
+    }
+
+
+@pytest.mark.anyio
+async def test_missing_job_id_is_an_internal_error(service):
+    service.mock_rest_client.post.return_value = Response(200, json={})
+
+    with pytest.raises(StepError) as exc:
+        await service.execute_image(_image_request(), USER_AUTH)
+
+    assert exc.value.status_code == 500
+    assert exc.value.error_category is ErrorCategory.INTERNAL
+    assert exc.value.detail == "Couldn't create image"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "chunk",
+    [
+        MagicMock(
+            text=None,
+            prompt_feedback=MagicMock(block_reason=types.BlockedReason.SAFETY),
+            candidates=[],
+        ),
+        MagicMock(
+            text="partial",
+            prompt_feedback=None,
+            candidates=[MagicMock(finish_reason=types.FinishReason.SAFETY)],
+        ),
+        MagicMock(
+            text="",
+            prompt_feedback=MagicMock(block_reason="PROHIBITED_CONTENT"),
+            candidates=None,
+        ),
+    ],
+    ids=["prompt-blocked", "finish-reason", "string-reason"],
+)
+async def test_text_blocked_by_safety_is_422_and_not_retried(service, chunk):
+    stream = service.mock_genai_client.models.generate_content_stream
+    stream.return_value = [chunk]
+
+    with pytest.raises(StepError) as exc:
+        await service.generate_text(_text_request())
+
+    assert exc.value.status_code == 422
+    assert exc.value.error_category is ErrorCategory.SAFETY_BLOCK
+    stream.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_text_ignores_non_safety_reasons(service):
+    chunk = MagicMock(
+        text="An old pond",
+        prompt_feedback=MagicMock(
+            block_reason=types.BlockedReason.BLOCKED_REASON_UNSPECIFIED
+        ),
+        candidates=[MagicMock(finish_reason=types.FinishReason.STOP)],
+    )
+    service.mock_genai_client.models.generate_content_stream.return_value = [
+        chunk
+    ]
+
+    result = await service.generate_text(_text_request())
+
+    assert result == {"generated_text": "An old pond"}
+
+
+@pytest.mark.anyio
+async def test_text_generation_retries_transient_errors(service):
+    stream = service.mock_genai_client.models.generate_content_stream
+    stream.side_effect = [
+        genai_errors.ServerError(
+            503, {"error": {"code": 503, "status": "UNAVAILABLE"}}
+        ),
+        [MagicMock(text="An old pond", prompt_feedback=None, candidates=[])],
+    ]
+    real_retrying = retry_module.l1_async_retrying
+    sleep = AsyncMock()
+
+    with patch(
+        "src.common.retry.l1_async_retrying",
+        lambda: real_retrying(sleep=sleep),
+    ):
+        result = await service.generate_text(_text_request())
+
+    assert result == {"generated_text": "An old pond"}
+    assert stream.call_count == 2
+    sleep.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_successful_step_logs_no_token(service, caplog):
+    service.mock_rest_client.post.return_value = Response(200, json={"id": 9})
+    service.mock_rest_client.get.return_value = Response(
+        200, json={"status": "completed"}
+    )
+
+    with caplog.at_level(logging.DEBUG), patch("asyncio.sleep", AsyncMock()):
+        result = await service.execute_image(_image_request(), USER_AUTH)
+
+    assert result == {"generated_image": 9}
+    assert caplog.records
+    assert JWT not in caplog.text
+    assert "Authorization" not in caplog.text
+    # The header is still forwarded to the backend endpoints.
+    _, post_kwargs = service.mock_rest_client.post.call_args
+    assert post_kwargs["headers"] == {"Authorization": USER_AUTH}
+    _, get_kwargs = service.mock_rest_client.get.call_args
+    assert get_kwargs["headers"] == {"Authorization": USER_AUTH}
+
+
+@pytest.mark.anyio
+async def test_backend_error_echoing_the_token_is_redacted(service, caplog):
+    service.mock_rest_client.post.return_value = Response(
+        500, text=f"upstream echoed Authorization: {USER_AUTH}"
+    )
+
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(StepError) as exc:
+            await service.execute_image(_image_request(), USER_AUTH)
+
+    assert "Backend error 500" in caplog.text
+    assert JWT not in caplog.text
+    assert JWT not in exc.value.detail
+    assert exc.value.error_category is ErrorCategory.INTERNAL
+    assert exc.value.retry_safe is False
+    assert exc.value.to_body()["retry_safe"] is False
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "first_error",
+    [
+        Response(429, text="Rate limited"),
+        Response(503, text="Service unavailable"),
+        httpx.ConnectError("connection refused"),
+    ],
+    ids=["429", "503", "connect-error"],
+)
+async def test_create_job_post_retries_never_processed_errors(
+    service, first_error
+):
+    service.mock_rest_client.post.side_effect = [
+        first_error,
+        Response(200, json={"id": 42}),
+    ]
+    service.mock_rest_client.get.return_value = Response(
+        200, json={"status": "completed"}
+    )
+    real_retrying = retry_module.l1_async_retrying
+    sleep = AsyncMock()
+
+    with (
+        patch(
+            "src.workflows_executor.workflows_executor_service"
+            ".l1_async_retrying",
+            lambda **kw: real_retrying(sleep=sleep, **kw),
+        ),
+        patch("asyncio.sleep", AsyncMock()),
+    ):
+        result = await service.execute_image(_image_request(), USER_AUTH)
+
+    assert result == {"generated_image": 42}
+    assert service.mock_rest_client.post.await_count == 2
+    sleep.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_create_job_post_does_not_retry_read_timeout(service):
+    service.mock_rest_client.post.side_effect = httpx.ReadTimeout(
+        "timed out after sending request"
+    )
+
+    with pytest.raises(StepError) as exc:
+        await service.execute_image(_image_request(), USER_AUTH)
+
+    assert service.mock_rest_client.post.await_count == 1
+    assert exc.value.error_category is ErrorCategory.TIMEOUT
+    assert exc.value.retry_safe is False

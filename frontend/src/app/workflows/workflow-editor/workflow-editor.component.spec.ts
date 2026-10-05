@@ -84,6 +84,10 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
       executeWorkflow: jasmine
         .createSpy('executeWorkflow')
         .and.returnValue(of({})),
+      getRunDetails: jasmine.createSpy('getRunDetails').and.returnValue(of({})),
+      pollRunDetails: jasmine
+        .createSpy('pollRunDetails')
+        .and.returnValue(of({})),
       createTemplate: jasmine
         .createSpy('createTemplate')
         .and.returnValue(of({id: 'tpl-1', name: 'Saved Template', steps: []})),
@@ -1385,6 +1389,136 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
 
       expect(inputPos).toEqual({x: 300, y: 227});
       expect(outputPos).toEqual({x: 700, y: 227});
+    });
+  });
+
+  describe('Runs in Flight (HTTP 409) & Workflow Run Polling', () => {
+    it('should surface runs-in-flight conflict banner on HTTP 409 when saving workflow and navigate to Execution History', () => {
+      const workflowService = TestBed.inject(WorkflowService);
+      const router = TestBed.inject(Router);
+      (workflowService.updateWorkflow as jasmine.Spy).and.returnValue(
+        throwError(() => ({
+          status: 409,
+          error: {detail: 'Active runs in flight'},
+        })),
+      );
+
+      component.mode = EditorMode.Edit;
+      component.workflowId = 'wf-conflict-1';
+      component.workflowForm.patchValue({
+        id: 'wf-conflict-1',
+        name: 'Updated Name',
+      });
+      component.workflowForm.markAsDirty();
+
+      component.save();
+      fixture.detectChanges();
+
+      expect(component.conflictBannerMessage()).toContain('runs in flight');
+      expect(component.conflictBannerMessage()).toContain('Execution History');
+      expect(component.errorMessage).toContain('runs in flight');
+
+      const bannerEl = fixture.nativeElement.querySelector(
+        '#runs-in-flight-conflict-banner',
+      );
+      expect(bannerEl).not.toBeNull();
+
+      component.navigateToExecutionHistory();
+      expect(component.conflictBannerMessage()).toBeNull();
+      expect(router.navigate).toHaveBeenCalledWith([
+        '/workflows',
+        'wf-conflict-1',
+        'executions',
+      ]);
+    });
+
+    it('should map step_states from getRunDetails onto step form controls and start polling while run is non-terminal', () => {
+      const workflowService = TestBed.inject(WorkflowService);
+      component.workflowId = 'wf-run-1';
+      formService.addStep(NodeTypes.GENERATE_TEXT, {
+        stepId: 'step_text_1',
+        type: NodeTypes.GENERATE_TEXT,
+        status: StepStatusEnum.IDLE,
+        inputs: {},
+        outputs: {},
+        settings: {},
+      });
+      formService.addStep(NodeTypes.IMAGE, {
+        stepId: 'step_img_1',
+        type: NodeTypes.IMAGE,
+        status: StepStatusEnum.IDLE,
+        inputs: {},
+        outputs: {},
+        settings: {},
+      });
+
+      const runDetail = {
+        id: 'run-101',
+        workflow_id: 'wf-run-1',
+        status: 'step_failed',
+        step_states: {
+          step_text_1: {
+            status: 'COMPLETED',
+            attempts: 1,
+            outputs: {generated_text: 'Cached text output'},
+            last_error: null,
+          },
+          step_img_1: {
+            status: 'RUNNING',
+            attempts: 2,
+            outputs: {},
+            last_error: {
+              category: 'TRANSIENT',
+              detail: '503 Service Unavailable',
+            },
+          },
+        },
+      };
+
+      (workflowService.getRunDetails as jasmine.Spy).and.returnValue(
+        of(runDetail),
+      );
+      (workflowService.pollRunDetails as jasmine.Spy).and.returnValue(
+        of({
+          ...runDetail,
+          status: 'completed',
+          step_states: {
+            ...runDetail.step_states,
+            step_img_1: {
+              status: 'COMPLETED',
+              attempts: 2,
+              outputs: {generated_image: 999},
+              last_error: null,
+            },
+          },
+        }),
+      );
+
+      component.onExecutionSelected('run-101');
+
+      expect(workflowService.getRunDetails).toHaveBeenCalledWith(
+        'wf-run-1',
+        'run-101',
+      );
+      expect(workflowService.pollRunDetails).toHaveBeenCalledWith(
+        'wf-run-1',
+        'run-101',
+      );
+
+      const textStepCtrl = component.stepsArray.controls.find(
+        c => c.get('stepId')?.value === 'step_text_1',
+      );
+      const imgStepCtrl = component.stepsArray.controls.find(
+        c => c.get('stepId')?.value === 'step_img_1',
+      );
+      expect(textStepCtrl?.get('status')?.value).toBe(StepStatusEnum.COMPLETED);
+      expect(textStepCtrl?.get('outputs')?.value).toEqual({
+        generated_text: 'Cached text output',
+      });
+      expect(imgStepCtrl?.get('status')?.value).toBe(StepStatusEnum.COMPLETED);
+      expect(imgStepCtrl?.get('outputs')?.value).toEqual({
+        generated_image: 999,
+      });
     });
   });
 });

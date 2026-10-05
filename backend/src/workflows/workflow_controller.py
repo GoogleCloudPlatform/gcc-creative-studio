@@ -12,7 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    Header,
+    HTTPException,
+    Path,
+    Query,
+    Response,
+    status,
+)
+from fastapi.responses import JSONResponse
 
 from src.auth.auth_guard import RoleChecker, get_current_user
 from src.common.dto.pagination_response_dto import PaginationResponseDto
@@ -21,19 +32,33 @@ from src.workflows.dto.batch_execution_dto import (
     BatchExecutionRequestDto,
     BatchExecutionResponseDto,
 )
+from src.workflows.dto.workflow_run_dto import (
+    KEY_MAX_LENGTH,
+    RUN_KEY_PATTERN,
+    ResumeRunRequestDto,
+    WorkflowRunDetailDto,
+    WorkflowRunSummaryDto,
+)
 from src.workflows.dto.workflow_search_dto import WorkflowSearchDto
+from src.workflows.queue.run_state_service import MissingResumeInputsError
 from src.workflows.schema.workflow_model import (
     WorkflowCreateDto,
     WorkflowExecuteDto,
     WorkflowModel,
+    WorkflowRunStatusEnum,
     WorkflowValidateDto,
     WorkflowValidationResponseDto,
 )
+from src.workflows.schema.workflow_run_model import QueueReasonEnum
 from src.workflows.schema.workflow_template_model import (
     WorkflowTemplateCreateDto,
     WorkflowTemplateModel,
 )
-from src.workflows.workflow_service import WorkflowService
+from src.workflows.workflow_service import (
+    WorkflowConflictError,
+    WorkflowService,
+)
+from src.workflows_executor.step_errors import StepError
 
 router = APIRouter(
     prefix="/api/workflows",
@@ -180,7 +205,6 @@ async def update_workflow(
     workflow_service: WorkflowService = Depends(),
 ):
     """Updates an existing workflow definition."""
-    # 1. Fetch the existing workflow first to ensure it exists.
     existing_workflow = await workflow_service.get_by_id(workflow_id)
     if not existing_workflow:
         raise HTTPException(
@@ -188,26 +212,26 @@ async def update_workflow(
             detail=f"Workflow with ID '{workflow_id}' not found.",
         )
 
-    # 2. Verify that the workflow belongs to the user or handle auth as needed.
-    # (Since it's shared across workspaces, we use user-level auth)
     if existing_workflow.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to update this workflow.",
         )
 
-    # 4. Pass the DTO to the service to handle the update logic.
-    # Service update_workflow returns the coroutine from repo.update_workflow, so we await it.
     try:
         return await workflow_service.update_workflow(
             workflow_id,
             workflow_data,
             current_user,
         )
+    except WorkflowConflictError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(e)
+        ) from e
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
-        )
+        ) from e
 
 
 @router.get("/{workflow_id}", response_model=WorkflowModel)
@@ -251,7 +275,14 @@ async def delete_workflow(
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
 
-    if not await workflow_service.delete_by_id(workflow_id):
+    try:
+        deleted = await workflow_service.delete_by_id(workflow_id)
+    except WorkflowConflictError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(e)
+        ) from e
+
+    if not deleted:
         raise HTTPException(status_code=404, detail="Workflow not found")
 
 
@@ -263,20 +294,44 @@ async def execute_workflow(
     current_user: UserModel = Depends(get_current_user),
     workflow_service: WorkflowService = Depends(),
 ):
-    """This function is the controller that calls the service to generate the workflow."""
+    """Submits a workflow run to the queue without persisting user_auth_header."""
+    del authorization  # Token is stored via post-auth hook, never persisted in args.
     workflow = await workflow_service.get_workflow(current_user.id, workflow_id)
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
 
-    workflow_execute_dto.args["user_auth_header"] = authorization
+    cleaned_args = dict(workflow_execute_dto.args or {})
+    cleaned_args.pop("user_auth_header", None)
 
     response = await workflow_service.execute_workflow(
         workflow_id=workflow_id,
-        args=workflow_execute_dto.args,
+        args=cleaned_args,
         user=current_user,
     )
-    print(f"Created execution: {response}")
-    return {"execution_id": response}
+    if isinstance(response, str):
+        return {
+            "run_id": response,
+            "execution_id": response,
+            "status": WorkflowRunStatusEnum.QUEUED.value,
+            "queue_reason": QueueReasonEnum.WAITING_FOR_SLOT.value,
+        }
+    run_id = getattr(response, "id", None) or str(response)
+    run_status = getattr(response, "status", WorkflowRunStatusEnum.QUEUED)
+    status_val = (
+        run_status.value if hasattr(run_status, "value") else str(run_status)
+    )
+    q_reason = getattr(response, "queue_reason", None)
+    reason_val = (
+        q_reason.value
+        if hasattr(q_reason, "value")
+        else (str(q_reason) if q_reason is not None else None)
+    )
+    return {
+        "run_id": run_id,
+        "execution_id": run_id,
+        "status": status_val,
+        "queue_reason": reason_val,
+    }
 
 
 @router.post(
@@ -292,15 +347,14 @@ async def batch_execute_workflow(
         RoleChecker([UserRoleEnum.WORKFLOWS, UserRoleEnum.ADMIN])
     ),
 ):
-    """Executes a batch of workflow runs based on the provided items."""
+    """Queues a batch of workflow runs without persisting user_auth_header."""
+    del authorization  # Token is stored via post-auth hook, never persisted in args.
     workflow = await workflow_service.get_workflow(current_user.id, workflow_id)
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
 
-    # Inject user_auth_header into each item's args
-    if authorization:
-        for item in batch_dto.items:
-            item.args["user_auth_header"] = authorization
+    for item in batch_dto.items:
+        item.args.pop("user_auth_header", None)
 
     return await workflow_service.batch_execute_workflow(
         workflow_id=workflow_id,
@@ -309,51 +363,150 @@ async def batch_execute_workflow(
     )
 
 
-@router.get("/{workflow_id}/executions/{execution_id}")
-async def get_execution(
+@router.get(
+    "/{workflow_id}/runs",
+    response_model=PaginationResponseDto[WorkflowRunSummaryDto],
+)
+async def list_runs(
     workflow_id: str,
-    execution_id: str,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    status_filter: WorkflowRunStatusEnum | None = Query(
+        default=None, alias="status"
+    ),
     current_user: UserModel = Depends(get_current_user),
     workflow_service: WorkflowService = Depends(),
 ):
-    """Retrieves the details of a workflow execution."""
-    # We might want to authorize against the workspace of the workflow here
-    # But for now let's just check if the user has access to the workflow
+    """Lists workflow runs for ``workflow_id`` from PostgreSQL (DB-only)."""
     workflow = await workflow_service.get_workflow(current_user.id, workflow_id)
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
 
-    execution = await workflow_service.get_execution_details(
-        workflow_id, execution_id
-    )
-    if not execution:
-        raise HTTPException(status_code=404, detail="Execution not found")
-
-    return execution
-
-
-@router.get("/{workflow_id}/executions")
-async def list_executions(
-    workflow_id: str,
-    limit: int = 10,
-    page_token: str = None,
-    status: str = None,
-    current_user: UserModel = Depends(get_current_user),
-    workflow_service: WorkflowService = Depends(),
-):
-    """Lists executions for a workflow."""
-    # Check access
-    workflow = await workflow_service.get_workflow(current_user.id, workflow_id)
-    if not workflow:
-        raise HTTPException(status_code=404, detail="Workflow not found")
-
-    filter_str = None
-    if status and status != "ALL":
-        filter_str = f'state="{status}"'
-
-    return workflow_service.list_executions(
+    return await workflow_service.list_runs(
         workflow_id=workflow_id,
+        user_id=current_user.id,
+        status=status_filter,
         limit=limit,
-        page_token=page_token,
-        filter_str=filter_str,
+        offset=offset,
     )
+
+
+@router.get(
+    "/{workflow_id}/runs/{run_id}",
+    response_model=WorkflowRunDetailDto,
+)
+async def get_run(
+    workflow_id: str,
+    run_id: str = Path(
+        min_length=1, max_length=KEY_MAX_LENGTH, pattern=RUN_KEY_PATTERN
+    ),
+    current_user: UserModel = Depends(get_current_user),
+    workflow_service: WorkflowService = Depends(),
+):
+    """Retrieves full DB-backed details of a workflow run (no GCP calls)."""
+    workflow = await workflow_service.get_workflow(current_user.id, workflow_id)
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    run_details = await workflow_service.get_run_details(
+        workflow_id=workflow_id,
+        run_id=run_id,
+        user_id=current_user.id,
+    )
+    if not run_details:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
+    return run_details
+
+
+@router.post("/{workflow_id}/runs/{run_id}/resume")
+async def resume_run(
+    workflow_id: str,
+    run_id: str = Path(
+        min_length=1, max_length=KEY_MAX_LENGTH, pattern=RUN_KEY_PATTERN
+    ),
+    payload: ResumeRunRequestDto | None = Body(default=None),
+    current_user: UserModel = Depends(get_current_user),
+    workflow_service: WorkflowService = Depends(),
+):
+    """Resumes a paused or session-waiting workflow run (owner-only)."""
+    workflow = await workflow_service.get_workflow(current_user.id, workflow_id)
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    try:
+        resumed = await workflow_service.resume_run(
+            workflow_id=workflow_id,
+            run_id=run_id,
+            user=current_user,
+            args_override=payload.args_override if payload else None,
+        )
+    except MissingResumeInputsError as e:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={
+                "detail": {
+                    "message": str(e.detail),
+                    "missing_inputs": e.missing_inputs,
+                },
+                "missing_inputs": e.missing_inputs,
+            },
+        )
+    except StepError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
+
+    run_status = getattr(resumed, "status", WorkflowRunStatusEnum.QUEUED)
+    q_reason = getattr(
+        resumed, "queue_reason", QueueReasonEnum.RESUME_REQUESTED
+    )
+    resolved_id = getattr(resumed, "id", run_id)
+    return {
+        "id": resolved_id,
+        "run_id": resolved_id,
+        "status": (
+            run_status.value
+            if hasattr(run_status, "value")
+            else str(run_status)
+        ),
+        "queue_reason": (
+            q_reason.value
+            if hasattr(q_reason, "value")
+            else (str(q_reason) if q_reason is not None else None)
+        ),
+    }
+
+
+@router.post("/{workflow_id}/runs/{run_id}/cancel")
+async def cancel_run(
+    workflow_id: str,
+    run_id: str = Path(
+        min_length=1, max_length=KEY_MAX_LENGTH, pattern=RUN_KEY_PATTERN
+    ),
+    current_user: UserModel = Depends(get_current_user),
+    workflow_service: WorkflowService = Depends(),
+):
+    """Cancels a queued, running, or paused workflow run (owner-only, §9.1, §10)."""
+    workflow = await workflow_service.get_workflow(current_user.id, workflow_id)
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    try:
+        canceled = await workflow_service.cancel_run(
+            workflow_id=workflow_id,
+            run_id=run_id,
+            user=current_user,
+        )
+    except StepError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
+
+    run_status = getattr(canceled, "status", WorkflowRunStatusEnum.CANCELED)
+    resolved_id = getattr(canceled, "id", run_id)
+    return {
+        "id": resolved_id,
+        "run_id": resolved_id,
+        "status": (
+            run_status.value
+            if hasattr(run_status, "value")
+            else str(run_status)
+        ),
+        "canceled_by_user": bool(getattr(canceled, "canceled_by_user", True)),
+    }

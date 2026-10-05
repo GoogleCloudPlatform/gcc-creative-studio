@@ -30,6 +30,7 @@ The standard development environment uses **Docker Compose**.
   - Set `ENVIRONMENT="local"`
   - Set `USE_CLOUD_SQL_AUTH_PROXY=false` (uses local Postgres container).
   - Set `isLocal = True` (critical for local auth).
+  - Set `WORKFLOW_TOKEN_ENCRYPTION_KEY` (generate with `openssl rand -base64 32 | tr '+/' '-_'`). Optional workflow queue/retry tunables (with defaults in `ConfigService`): `MAX_RUNNING_WORKFLOWS=20`, `WORKFLOW_MAX_STEP_ATTEMPTS=5`, `WORKFLOW_MAX_STEP_DURATION_SECONDS=1800`, `WORKFLOW_MAX_RUN_EXECUTIONS=10`, `WORKFLOW_MAX_RUN_AGE_HOURS=24`, `WORKFLOW_MAX_SESSION_WAIT_DAYS=7`, `WORKFLOW_RETRY_BASE_SECONDS=30`, `WORKFLOW_RETRY_MAX_SECONDS=900`, `WORKFLOW_STEP_HTTP_TIMEOUT_SECONDS=300`, `WORKFLOW_GEN_POLL_TIMEOUT_SECONDS=270`, `WORKFLOW_DISPATCH_TICK_MIN_INTERVAL_SECONDS=10`.
 - **Frontend (`frontend/src/environments/environment.development.ts`)**:
   - Set `isLocal: true`
   - Configure Firebase credentials.

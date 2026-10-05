@@ -141,7 +141,14 @@ export class WorkflowListComponent implements OnInit, OnDestroy, AfterViewInit {
           // The service handles list updates automatically
           error: err => {
             console.error('Failed to delete workflow', err);
-            this.errorMessage = 'Failed to delete workflow. Please try again.';
+            if (err?.status === 409) {
+              this.errorMessage =
+                err.error?.detail ||
+                'Cannot delete workflow while runs are in flight — wait for active/queued runs to finish or cancel them in Execution History.';
+            } else {
+              this.errorMessage =
+                'Failed to delete workflow. Please try again.';
+            }
           },
         });
       }
@@ -163,9 +170,12 @@ export class WorkflowListComponent implements OnInit, OnDestroy, AfterViewInit {
         return '!bg-blue-500/20 !text-blue-300';
       case WorkflowRunStatusEnum.COMPLETED.toLowerCase():
         return '!bg-green-500/20 !text-green-300';
-      case WorkflowRunStatusEnum.SCHEDULED.toLowerCase():
+      case WorkflowRunStatusEnum.QUEUED.toLowerCase():
         return '!bg-amber-500/20 !text-amber-300';
-      case WorkflowRunStatusEnum.FAILED.toLowerCase():
+      case WorkflowRunStatusEnum.STEP_FAILED.toLowerCase():
+        return '!bg-orange-500/20 !text-orange-300';
+      case WorkflowRunStatusEnum.NEEDS_ATTENTION.toLowerCase():
+        return '!bg-amber-500/20 !text-amber-300';
       case WorkflowRunStatusEnum.CANCELED.toLowerCase():
         return '!bg-red-500/20 !text-red-300';
       default:
@@ -181,9 +191,12 @@ export class WorkflowListComponent implements OnInit, OnDestroy, AfterViewInit {
         return 'directions_run';
       case WorkflowRunStatusEnum.COMPLETED.toLowerCase():
         return 'check_circle';
-      case WorkflowRunStatusEnum.SCHEDULED.toLowerCase():
+      case WorkflowRunStatusEnum.QUEUED.toLowerCase():
         return 'schedule';
-      case WorkflowRunStatusEnum.FAILED.toLowerCase():
+      case WorkflowRunStatusEnum.STEP_FAILED.toLowerCase():
+        return 'sync_problem';
+      case WorkflowRunStatusEnum.NEEDS_ATTENTION.toLowerCase():
+        return 'warning';
       case WorkflowRunStatusEnum.CANCELED.toLowerCase():
         return 'cancel';
       default:

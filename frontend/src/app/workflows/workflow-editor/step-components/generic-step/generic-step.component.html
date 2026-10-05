@@ -206,8 +206,12 @@
                   <div
                     class="port input-port"
                     [class.magnetic-hover]="isMagneticTarget(variable.name)"
-                    [class.port-compatible]="isCompatibleWithActiveDrag(variable)"
-                    [class.port-incompatible]="isIncompatibleWithActiveDrag(variable)"
+                    [class.port-compatible]="
+                      isCompatibleWithActiveDrag(variable)
+                    "
+                    [class.port-incompatible]="
+                      isIncompatibleWithActiveDrag(variable)
+                    "
                     [class.port-disabled]="isInputDisabled(variable.name)"
                     [style.background-color]="getTypeColor('text')"
                     [style.border-color]="getTypeColor('text')"
@@ -217,11 +221,15 @@
                     [attr.data-data-type]="'text'"
                     (mouseup)="onInputPortMouseUp($event, variable.name)"
                   ></div>
-                  <span class="port-type-chip input-chip" data-type="text">TXT</span>
+                  <span class="port-type-chip input-chip" data-type="text"
+                    >TXT</span
+                  >
 
                   <div class="flex-grow">
                     <app-step-input-field
-                      [control]="$any(stepForm.get('inputs')?.get(variable.name))"
+                      [control]="
+                        $any(stepForm.get('inputs')?.get(variable.name))
+                      "
                       [config]="variable"
                       [mode]="inputModes[variable.name]"
                       [compatibleOutputs]="compatibleOutputs[variable.name]"
@@ -233,23 +241,32 @@
                       <!-- Warning below variable label with embedded add to prompt and remove actions -->
                       <div
                         warning
-                        *ngIf="inputModes['prompt'] === 'fixed' && !isVariableUsedInPrompt(variable.name)"
+                        *ngIf="
+                          inputModes['prompt'] === 'fixed' &&
+                          !isVariableUsedInPrompt(variable.name)
+                        "
                         class="variable-warning flex items-center gap-1 text-xs text-amber-400 mt-0.5"
                       >
-                        <mat-icon class="!text-xs !w-3.5 !h-3.5">warning</mat-icon>
+                        <mat-icon class="!text-xs !w-3.5 !h-3.5"
+                          >warning</mat-icon
+                        >
                         <span>
                           Variable is not used,
                           <button
                             type="button"
                             class="action-var-link underline hover:text-amber-200 cursor-pointer bg-transparent border-0 p-0 text-xs text-amber-400 font-medium"
                             (click)="appendToPrompt(variable.name)"
-                          >add to prompt</button>
+                          >
+                            add to prompt
+                          </button>
                           or
                           <button
                             type="button"
                             class="action-var-link underline hover:text-amber-200 cursor-pointer bg-transparent border-0 p-0 text-xs text-amber-400 font-medium"
                             (click)="removeVariable(variable.name)"
-                          >remove</button>
+                          >
+                            remove
+                          </button>
                         </span>
                       </div>
                     </app-step-input-field>
@@ -371,6 +388,8 @@
         [inputs]="stepExecution.step_inputs"
         [outputs]="stepExecution.step_outputs"
         [mediaUrlMap]="mediaUrlMap"
+        [attempts]="stepExecution.attempts ?? null"
+        [lastError]="stepExecution.last_error ?? stepExecution.error ?? null"
         [mode]="
           stepForm.get('settings.mode')?.value || stepForm.value?.settings?.mode
         "

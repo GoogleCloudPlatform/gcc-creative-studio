@@ -16,7 +16,7 @@
 
 import {Component, Input, OnInit} from '@angular/core';
 import {Router} from '@angular/router';
-import {NodeTypes} from '../../workflow.models';
+import {NodeTypes, StepErrorInfo} from '../../workflow.models';
 import {IMAGE_MODE_ALLOWED_INPUTS} from '../../workflow-editor/step-components/step-configs/image-step.config';
 import {isVideoUrl} from '../../utils/workflow-step.util';
 import {STEP_CONFIGS_MAP} from '../step-configs.map';
@@ -33,6 +33,9 @@ export class StepExecutionDetailsComponent implements OnInit {
   @Input() outputs: any = {};
   @Input() mediaUrlMap: Map<string, string> = new Map();
   @Input() mode?: string;
+  @Input() attempts: number | null = null;
+  @Input() lastError: StepErrorInfo | null = null;
+  @Input() error: StepErrorInfo | string | null = null;
 
   loadedMedia = new Set<string>();
   NodeTypes = NodeTypes;
@@ -40,6 +43,35 @@ export class StepExecutionDetailsComponent implements OnInit {
   constructor(private router: Router) {}
 
   ngOnInit(): void {}
+
+  get resolvedAttempts(): number | null {
+    if (
+      this.attempts !== null &&
+      this.attempts !== undefined &&
+      this.attempts > 0
+    ) {
+      return this.attempts;
+    }
+    return null;
+  }
+
+  get resolvedError(): StepErrorInfo | null {
+    const candidate = this.lastError ?? this.error;
+    if (!candidate) return null;
+    if (typeof candidate === 'string') {
+      return candidate.trim() ? {category: 'ERROR', detail: candidate} : null;
+    }
+    if (
+      typeof candidate === 'object' &&
+      (candidate.category || candidate.detail)
+    ) {
+      return {
+        category: candidate.category || 'UNKNOWN',
+        detail: candidate.detail || '',
+      };
+    }
+    return null;
+  }
 
   private isImageStep(): boolean {
     return this.stepType === NodeTypes.IMAGE;

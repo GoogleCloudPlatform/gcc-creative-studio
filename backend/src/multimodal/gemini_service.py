@@ -25,7 +25,7 @@ from google.genai import Client, types
 from pydantic import BaseModel
 from tenacity import (
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
@@ -39,6 +39,7 @@ from src.brand_guidelines.repository.brand_guideline_repository import (
 from src.brand_guidelines.schema.brand_guideline_model import (
     BrandGuidelineModel,
 )
+from src.common.retry import is_transient_or_quota
 from src.config.config_service import config_service
 from src.images.dto.create_imagen_dto import CreateImagenDto
 from src.multimodal.dto.create_prompt_imagen_dto import CreatePromptImageDto
@@ -105,7 +106,8 @@ class GeminiService:
     @retry(
         wait=wait_exponential(multiplier=1, min=2, max=10),
         stop=stop_after_attempt(3),
-        retry=retry_if_exception_type(Exception),
+        # Only quota / 503 / network errors (Q10); never safety or 4xx.
+        retry=retry_if_exception(is_transient_or_quota),
         reraise=True,
     )
     def generate_structured_prompt(
@@ -373,7 +375,8 @@ class GeminiService:
     @retry(
         wait=wait_exponential(multiplier=1, min=2, max=10),
         stop=stop_after_attempt(3),
-        retry=retry_if_exception_type(Exception),
+        # Only quota / 503 / network errors (Q10); never safety or 4xx.
+        retry=retry_if_exception(is_transient_or_quota),
         reraise=True,
     )
     def generate_text(self, prompt: str, model_id: str | None = None) -> str:

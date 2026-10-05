@@ -217,11 +217,18 @@ describe('WorkflowListComponent', () => {
       component.getWorkflowRunStatusChipClass(WorkflowRunStatusEnum.COMPLETED),
     ).toContain('text-green-300');
     expect(
-      component.getWorkflowRunStatusChipClass(WorkflowRunStatusEnum.SCHEDULED),
+      component.getWorkflowRunStatusChipClass(WorkflowRunStatusEnum.QUEUED),
     ).toContain('text-amber-300');
     expect(
-      component.getWorkflowRunStatusChipClass(WorkflowRunStatusEnum.FAILED),
-    ).toContain('text-red-300');
+      component.getWorkflowRunStatusChipClass(
+        WorkflowRunStatusEnum.STEP_FAILED,
+      ),
+    ).toContain('text-orange-300');
+    expect(
+      component.getWorkflowRunStatusChipClass(
+        WorkflowRunStatusEnum.NEEDS_ATTENTION,
+      ),
+    ).toContain('text-amber-300');
     expect(
       component.getWorkflowRunStatusChipClass(WorkflowRunStatusEnum.CANCELED),
     ).toContain('text-red-300');
@@ -244,11 +251,14 @@ describe('WorkflowListComponent', () => {
       component.getWorkflowRunStatusIcon(WorkflowRunStatusEnum.COMPLETED),
     ).toBe('check_circle');
     expect(
-      component.getWorkflowRunStatusIcon(WorkflowRunStatusEnum.SCHEDULED),
+      component.getWorkflowRunStatusIcon(WorkflowRunStatusEnum.QUEUED),
     ).toBe('schedule');
     expect(
-      component.getWorkflowRunStatusIcon(WorkflowRunStatusEnum.FAILED),
-    ).toBe('cancel');
+      component.getWorkflowRunStatusIcon(WorkflowRunStatusEnum.STEP_FAILED),
+    ).toBe('sync_problem');
+    expect(
+      component.getWorkflowRunStatusIcon(WorkflowRunStatusEnum.NEEDS_ATTENTION),
+    ).toBe('warning');
     expect(
       component.getWorkflowRunStatusIcon(WorkflowRunStatusEnum.CANCELED),
     ).toBe('cancel');
