@@ -33,6 +33,8 @@
  * session is (re)loaded.
  */
 
+import {SessionCharacter, parseSessionCharacter} from './character-profile';
+
 export interface CampaignVoiceoverGroup {
   narrativeBlock?: string;
   script?: string;
@@ -151,6 +153,8 @@ export interface CampaignDetails {
   look?: {name?: string; archetype?: string};
   /** Reference images registered for the campaign (user-provided first, creator last). */
   referenceAssets: CampaignReferenceAsset[];
+  /** The campaign's on-screen character (virtual creator), if any. */
+  character: SessionCharacter | null;
 }
 
 /** Session-state keys that feed the Campaign tab (see module doc). */
@@ -319,6 +323,7 @@ export function parseCampaignDetails(raw: unknown): CampaignDetails | null {
     stage: 'storyboard',
     plannedBeats: [],
     referenceAssets: [],
+    character: null,
   };
 }
 
@@ -543,6 +548,10 @@ export function parseCampaignState(state: unknown): CampaignDetails | null {
     s.user_assets,
     s.virtual_creator_metadata,
   );
+  const character = parseSessionCharacter(
+    s.asset_refs,
+    s.virtual_creator_metadata,
+  );
   if (
     !params &&
     !forced &&
@@ -558,11 +567,14 @@ export function parseCampaignState(state: unknown): CampaignDetails | null {
     scenes: [],
     plannedBeats: [],
     referenceAssets,
+    character: null,
   };
   overlay(merged, params);
   overlay(merged, forced);
   if (look) merged.look = look;
   overlay(merged, storyboard);
+  // After the overlays: `parseCampaignDetails` carries `character: null`.
+  merged.character = character;
 
   // Stage: trust the agent's cursor, but never report less than what the
   // present keys prove (a storyboard means the storyboard stage is done).

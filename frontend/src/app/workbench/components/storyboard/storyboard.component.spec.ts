@@ -18,6 +18,7 @@ import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {signal, WritableSignal} from '@angular/core';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {MatDialog} from '@angular/material/dialog';
+import {MatSnackBar} from '@angular/material/snack-bar';
 import {Subject} from 'rxjs';
 
 import {StoryboardComponent} from './storyboard.component';
@@ -31,6 +32,7 @@ import {
   ReferenceAssetPreview,
   ReferenceAssetPreviewService,
 } from '../../services/reference-asset-preview.service';
+import {SearchService} from '../../../services/search/search.service';
 
 function brief(overrides: Partial<CampaignDetails> = {}): CampaignDetails {
   return {
@@ -39,6 +41,7 @@ function brief(overrides: Partial<CampaignDetails> = {}): CampaignDetails {
     scenes: [],
     plannedBeats: [],
     referenceAssets: [],
+    character: null,
     stage: 'brief',
     ...overrides,
   };
@@ -74,6 +77,10 @@ describe('StoryboardComponent – Campaign tab reveal', () => {
       isGeneratingVideo: signal(false),
       videoGenerated$: new Subject<void>(),
       generateVideoRequest: new Subject<void>(),
+      // Read by the embedded CharacterPanelComponent (Characters tab)
+      campaignSession: signal(null),
+      campaignStateUpdated$: new Subject<Record<string, unknown>>(),
+      streamActive: signal(false),
     };
 
     await TestBed.configureTestingModule({
@@ -83,6 +90,8 @@ describe('StoryboardComponent – Campaign tab reveal', () => {
         {provide: StoryboardService, useValue: {}},
         {provide: MatDialog, useValue: {open: () => ({})}},
         {provide: ReferenceAssetPreviewService, useValue: previewService},
+        {provide: SearchService, useValue: {}},
+        {provide: MatSnackBar, useValue: {open: () => undefined}},
       ],
     }).compileComponents();
 
@@ -152,6 +161,52 @@ describe('StoryboardComponent – Campaign tab reveal', () => {
   it('ignores setActiveTab("campaign") without a brief', () => {
     component.setActiveTab('campaign');
     expect(component.activeTab()).toBe('scenes');
+  });
+
+  describe('Characters tab', () => {
+    const el = (): HTMLElement => fixture.nativeElement;
+    const tabButtons = () =>
+      Array.from(el().querySelectorAll<HTMLButtonElement>('.sb-tab')).map(b =>
+        b.textContent?.replace(/\s+/g, ' ').trim(),
+      );
+
+    it('is hidden until a brief exists and ignores setActiveTab("characters")', () => {
+      expect(tabButtons()).toEqual(['movie Scenes']);
+      component.setActiveTab('characters');
+      expect(component.activeTab()).toBe('scenes');
+      expect(el().querySelector('app-character-panel')).toBeNull();
+    });
+
+    it('appears next to Campaign once the brief lands and mounts the panel', () => {
+      // Real scenes → no auto-reveal, so the Campaign tab keeps its "new" dot
+      currentStoryboard.set({scenes: [{topic: 'A'}]});
+      campaignDetails.set(brief({stage: 'storyboard'}));
+      fixture.detectChanges();
+      expect(tabButtons()).toEqual([
+        'movie Scenes',
+        'campaign Campaign',
+        'face Characters',
+      ]);
+
+      component.setActiveTab('characters');
+      fixture.detectChanges();
+      expect(component.activeTab()).toBe('characters');
+      expect(el().querySelector('app-character-panel')).not.toBeNull();
+      // Opening Characters must not count as having seen the Campaign tab
+      expect(component.campaignTabSeen()).toBeFalse();
+    });
+
+    it('falls back to Scenes if the brief disappears while Characters is open', () => {
+      campaignDetails.set(brief());
+      fixture.detectChanges();
+      component.setActiveTab('characters');
+      fixture.detectChanges();
+
+      campaignDetails.set(null);
+      fixture.detectChanges();
+      expect(component.activeTab()).toBe('scenes');
+      expect(el().querySelector('app-character-panel')).toBeNull();
+    });
   });
 
   it('derives the stepper and progress flag from the stage', () => {
@@ -355,7 +410,11 @@ describe('StoryboardComponent – Campaign tab reveal', () => {
       expect(el().querySelector('.sb-campaign-asset-tile img')).toBeNull();
 
       previews.set({
-        'generated:158': {url: 'https://signed/158', unavailable: false},
+        'generated:158': {
+          url: 'https://signed/158',
+          unavailable: false,
+          sources: [],
+        },
       });
       fixture.detectChanges();
       const img = el().querySelector<HTMLImageElement>(
@@ -363,7 +422,9 @@ describe('StoryboardComponent – Campaign tab reveal', () => {
       );
       expect(img?.getAttribute('src')).toBe('https://signed/158');
 
-      previews.set({'generated:158': {url: '', unavailable: true}});
+      previews.set({
+        'generated:158': {url: '', unavailable: true, sources: []},
+      });
       fixture.detectChanges();
       expect(el().querySelector('.sb-campaign-asset-tile img')).toBeNull();
       expect(

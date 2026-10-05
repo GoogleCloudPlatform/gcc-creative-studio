@@ -83,7 +83,7 @@
           <mat-icon class="!text-[18px] !w-[18px] !h-[18px]"
             >error_outline</mat-icon
           >
-          <span>Agent Execution Failed</span>
+          <span>{{ errorCardTitle(msg) }}</span>
           <span
             *ngIf="msg.errorCode"
             class="ml-auto px-2 py-0.5 rounded text-[10px] bg-red-500/20 text-red-300 font-mono font-bold"
@@ -92,7 +92,7 @@
           </span>
         </div>
         <p class="text-xs text-neutral-200 leading-relaxed">{{ msg.text }}</p>
-        <div class="flex justify-end pt-1">
+        <div class="flex justify-end pt-1" *ngIf="isRetryableError(msg)">
           <span
             [matTooltip]="
               canRetry()
@@ -297,8 +297,13 @@
 
       <textarea
         #chatInput
+        data-chat-input
         [placeholder]="
-          isSessionLocked() ? 'Loading conversation…' : 'Ask Izumi...'
+          isSessionLocked()
+            ? 'Loading conversation…'
+            : isBusy()
+              ? 'Izumi is working on your request…'
+              : 'Ask Izumi...'
         "
         [disabled]="isBusy() || isSessionLocked()"
         class="flex-1 bg-transparent text-sm text-white focus:outline-none resize-none max-h-48 overflow-y-auto py-1 px-1 leading-relaxed disabled:opacity-50 disabled:cursor-not-allowed"

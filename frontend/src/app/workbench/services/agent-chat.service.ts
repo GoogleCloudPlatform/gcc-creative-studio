@@ -25,6 +25,7 @@ import {
   SessionDetailResponse,
 } from '../../common/models/workbench.model';
 import {CampaignDetails} from '../utils/campaign-details';
+import {CharacterProfile} from '../utils/character-profile';
 
 export interface SSECallbacks<T> {
   onClose?: () => void;
@@ -88,6 +89,21 @@ export interface ChatRequestDto {
   streaming?: boolean;
 }
 
+/** Body of `PUT /api/agent/sessions/{id}/character` (see backend DTO). */
+export interface UpdateCharacterRequest {
+  workspaceId: number;
+  profile: CharacterProfile;
+  /** Replaces the headshot when present; otherwise the current one is kept. */
+  assetRef?: {id: number; assetType: 'generated' | 'uploaded'};
+  /** Prompt the headshot was generated from (provenance only). */
+  prompt?: string;
+}
+
+/** The session-state keys rewritten by a character update/removal. */
+export interface CharacterStateResponse {
+  state: Record<string, unknown>;
+}
+
 @Injectable({
   providedIn: 'root',
 })
@@ -128,9 +144,31 @@ export class AgentChatService {
   // Broadcasts a fully generated video asset from the chat processor
   videoGenerated$ = new Subject<any>();
 
+  // Session + workspace the current `campaignDetails` belong to. Published by
+  // the chat component (the owner of `currentSessionId`) whenever it syncs the
+  // campaign brief, so side panels (Characters tab) can write to the right
+  // session without duplicating the session-switch logic.
+  campaignSession = signal<{sessionId: string; workspaceId: number} | null>(
+    null,
+  );
+
+  // A session-state slice rewritten outside the agent run (e.g. the
+  // Characters tab's PUT/DELETE). The chat component merges it into its
+  // campaign state exactly like a streamed `state_delta`.
+  campaignStateUpdated$ = new Subject<Record<string, unknown>>();
+
   isPolling(): boolean {
     return this.activePollInterval !== null;
   }
+
+  // True from the moment a message is posted to `/chat` until the poll loop
+  // sees `[DONE]` / an error event or is torn down. The composer locks on
+  // this for the whole run: the typing indicator alone drops on the first
+  // text chunk ("Storyboard approved. Proceeding…") while the agent still has
+  // minutes of media generation ahead, and a message sent in that window
+  // starts a second run on the same session (ADK rejects the older run with
+  // "last_update_time … is stale" and the router restarts the pipeline).
+  streamActive = signal<boolean>(false);
 
   // Shared sessions state & caching
   sessions = signal<ChatSession[]>([]);
@@ -218,6 +256,31 @@ export class AgentChatService {
     );
   }
 
+  /**
+   * Creates/edits the campaign's on-screen character in the agent's session
+   * state. Resolves to the rewritten state keys (`asset_refs`, `user_assets`,
+   * `virtual_creator_metadata`, `parameters`); 409 while a run is active.
+   */
+  updateSessionCharacter(
+    sessionId: string,
+    request: UpdateCharacterRequest,
+  ): Observable<CharacterStateResponse> {
+    return this.http.put<CharacterStateResponse>(
+      `${this.apiUrl}/sessions/${sessionId}/character`,
+      {appName: this.activeAgent(), ...request},
+    );
+  }
+
+  /** Removes the character; the campaign becomes a product-only ad. */
+  removeSessionCharacter(
+    sessionId: string,
+    workspaceId: number,
+  ): Observable<CharacterStateResponse> {
+    return this.http.delete<CharacterStateResponse>(
+      `${this.apiUrl}/sessions/${sessionId}/character?workspace_id=${workspaceId}&appName=${this.activeAgent()}`,
+    );
+  }
+
   async sendMessage(
     sessionId: string,
     message: string | ChatMessagePart[],
@@ -238,6 +301,7 @@ export class AgentChatService {
       workspaceId: workspaceId,
     };
 
+    this.streamActive.set(true);
     try {
       // Get valid token from AuthService
       const token = await firstValueFrom(
@@ -274,7 +338,10 @@ export class AgentChatService {
         const errObj = new Error(errorMsg);
         (errObj as any).status = response.status;
         (errObj as any).code = response.status;
-        if (response.status === 429) {
+        if (response.status === 409) {
+          // The backend refused to start a second run on this session.
+          (errObj as any).type = 'agent_busy';
+        } else if (response.status === 429) {
           (errObj as any).type = 'quota_exceeded';
         } else if (response.status === 503) {
           (errObj as any).type = 'service_unavailable';
@@ -283,6 +350,7 @@ export class AgentChatService {
         } else if (response.status === 400) {
           (errObj as any).type = 'invalid_argument';
         }
+        this.streamActive.set(false);
         if (callbacks.onError) {
           callbacks.onError(errObj);
         }
@@ -292,12 +360,14 @@ export class AgentChatService {
       // Start Event Polling Loop
       this.startPolling(sessionId, callbacks);
     } catch (error) {
+      this.streamActive.set(false);
       if (callbacks.onError) callbacks.onError(error);
     }
   }
 
   startPolling(sessionId: string, callbacks: SSECallbacks<any>): any {
     this.stopPolling();
+    this.streamActive.set(true);
     const abortController = new AbortController();
     this.activePollAbortController = abortController;
     const pollUrl = `${this.apiUrl}/sessions/${sessionId}/poll`;
@@ -338,11 +408,14 @@ export class AgentChatService {
             if (line.startsWith('data: ')) {
               const data = line.substring(6);
               if (data.trim() === '[DONE]') {
-                if (callbacks.onClose) callbacks.onClose();
+                // Release the lock before the callback: a handler may start
+                // a new poll loop and must not be clobbered afterwards.
                 clearInterval(pollInterval);
                 if (this.activePollInterval === pollInterval) {
                   this.activePollInterval = null;
                 }
+                this.streamActive.set(false);
+                if (callbacks.onClose) callbacks.onClose();
                 return;
               }
               try {
@@ -351,11 +424,12 @@ export class AgentChatService {
                   const errObj = new Error(parsed.error);
                   if (parsed.code) (errObj as any).code = parsed.code;
                   if (parsed.type) (errObj as any).type = parsed.type;
-                  if (callbacks.onError) callbacks.onError(errObj);
                   clearInterval(pollInterval);
                   if (this.activePollInterval === pollInterval) {
                     this.activePollInterval = null;
                   }
+                  this.streamActive.set(false);
+                  if (callbacks.onError) callbacks.onError(errObj);
                   return;
                 }
                 if (callbacks.onMessage) callbacks.onMessage(parsed);
@@ -396,5 +470,6 @@ export class AgentChatService {
       clearInterval(this.activePollInterval);
       this.activePollInterval = null;
     }
+    this.streamActive.set(false);
   }
 }

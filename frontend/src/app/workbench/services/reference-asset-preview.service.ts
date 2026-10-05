@@ -18,12 +18,24 @@ import {Injectable, Signal, computed, inject, signal} from '@angular/core';
 import {GalleryService} from '../../gallery/gallery.service';
 import {CampaignReferenceAsset} from '../utils/campaign-details';
 
+/** One image a generated asset was produced from (its "ingredient"). */
+export interface ReferenceAssetSource {
+  url: string;
+  label: string;
+}
+
 /** Resolution state of one reference asset thumbnail. */
 export interface ReferenceAssetPreview {
   /** Presigned (thumbnail, falling back to full) URL; empty while loading. */
   url: string;
   /** True when the backend refused or no longer has the asset. */
   unavailable: boolean;
+  /**
+   * For a generated media item: the reference images it was generated from
+   * (e.g. the outfit/garment pictures a character headshot used). Empty for
+   * uploads and for items generated from a prompt alone.
+   */
+  sources: ReferenceAssetSource[];
 }
 
 /**
@@ -77,10 +89,10 @@ export class ReferenceAssetPreviewService {
 
       const numericId = Number(asset.id);
       if (!Number.isFinite(numericId)) {
-        this.set(key, {url: '', unavailable: true});
+        this.set(key, {url: '', unavailable: true, sources: []});
         continue;
       }
-      this.set(key, {url: '', unavailable: false});
+      this.set(key, {url: '', unavailable: false, sources: []});
 
       const request$ =
         asset.assetType === 'generated'
@@ -91,17 +103,39 @@ export class ReferenceAssetPreviewService {
         next: item => {
           const url =
             item?.presignedThumbnailUrls?.[0] || item?.presignedUrls?.[0] || '';
-          this.set(key, {url, unavailable: !url});
+          this.set(key, {
+            url,
+            unavailable: !url,
+            sources: ReferenceAssetPreviewService.sourcesOf(item),
+          });
         },
         error: err => {
           console.error(
             `Failed to resolve reference asset ${key} for the Campaign tab:`,
             err,
           );
-          this.set(key, {url: '', unavailable: true});
+          this.set(key, {url: '', unavailable: true, sources: []});
         },
       });
     }
+  }
+
+  /**
+   * The images a generated media item was produced from, as the backend
+   * enriches them (`enrichedSourceAssets` / `enrichedSourceMediaItems`).
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  static sourcesOf(item: any): ReferenceAssetSource[] {
+    const sources: ReferenceAssetSource[] = [];
+    for (const s of item?.enrichedSourceAssets ?? []) {
+      const url = s?.presignedThumbnailUrl || s?.presignedUrl;
+      if (url) sources.push({url, label: `Upload ${s.sourceAssetId ?? ''}`});
+    }
+    for (const s of item?.enrichedSourceMediaItems ?? []) {
+      const url = s?.presignedThumbnailUrl || s?.presignedUrl;
+      if (url) sources.push({url, label: `Gallery ${s.mediaItemId ?? ''}`});
+    }
+    return sources;
   }
 
   private set(key: string, value: ReferenceAssetPreview) {

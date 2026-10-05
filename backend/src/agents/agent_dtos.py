@@ -14,7 +14,7 @@
 
 """Data Transfer Objects for Agent Controller Endpoints."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel
 from src.projects.dto.project_dto import StoryboardResponse
 
@@ -100,3 +100,58 @@ class ProxyResponseDto(BaseModel):
 class SessionDetailResponseDto(BaseModel):
     session: Optional[SessionResponseDto] = None
     storyboard: Optional[StoryboardResponse] = None
+
+
+# --- PUT / DELETE /sessions/{session_id}/character ---
+class CharacterProfileDto(BaseModel):
+    """Structured description of the campaign's on-screen character.
+
+    Stored verbatim under ``virtual_creator_metadata.profile`` and compiled
+    into the free-text fields the agent reads (see ``character_state.py``).
+    """
+
+    name: Optional[str] = None
+    role: Optional[
+        Literal["creator", "reviewer", "spokesperson", "product_user"]
+    ] = None
+    gender: Optional[str] = None
+    ageRange: Optional[str] = None
+    appearance: Optional[str] = None
+    clothing: Optional[str] = None
+    personality: Optional[str] = None
+
+    def to_state(self) -> Dict[str, Any]:
+        """snake_case keys, matching the rest of the agent's session state."""
+        return {
+            "name": self.name,
+            "role": self.role,
+            "gender": self.gender,
+            "age_range": self.ageRange,
+            "appearance": self.appearance,
+            "clothing": self.clothing,
+            "personality": self.personality,
+        }
+
+
+class CharacterAssetRefDto(BaseModel):
+    """A Creative Studio image to use as the character's headshot."""
+
+    id: int
+    assetType: Literal["generated", "uploaded"]
+
+
+class UpdateCharacterRequestDto(BaseModel):
+    workspaceId: int
+    appName: Optional[str] = "ads_x"
+    profile: CharacterProfileDto = CharacterProfileDto()
+    # Replaces the headshot when present; otherwise the current one is kept.
+    assetRef: Optional[CharacterAssetRefDto] = None
+    # The prompt the headshot was generated from (kept for provenance only).
+    prompt: Optional[str] = None
+
+
+class CharacterStateResponseDto(BaseModel):
+    """The session-state keys rewritten by the request (a full replacement
+    of each key, ready to be merged into the UI's campaign state)."""
+
+    state: Dict[str, Any]

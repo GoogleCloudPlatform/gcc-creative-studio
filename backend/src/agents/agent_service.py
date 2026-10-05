@@ -17,6 +17,7 @@ from fastapi import status
 import asyncio
 import json
 import logging
+import time
 from typing import Any, List
 
 from fastapi import Depends, HTTPException, Request
@@ -34,9 +35,16 @@ from src.agents.agent_repository import AgentRepository
 from src.agents.local_adk_client import LocalAdkAgentClient
 from src.agents.agent_dtos import (
     ChatRequestDto,
+    CharacterStateResponseDto,
     SessionResponseDto,
     SessionDetailResponseDto,
     PollEventsResponseDto,
+    UpdateCharacterRequestDto,
+)
+from src.agents.character_state import (
+    CharacterStateError,
+    build_character_delta,
+    build_character_removal_delta,
 )
 from src.database import async_session_local
 
@@ -57,6 +65,59 @@ AGENT_REASONING_ENGINES = {
 }
 
 APP_NAME = "ads_x"
+
+# One agent run per session at a time. The Izumi session service uses
+# optimistic concurrency: a second ``/run_sse`` on a session whose previous
+# run is still executing makes the older run's next ``append_event`` fail with
+# "The last_update_time provided in the session object is stale", and the root
+# router treats the new message as a fresh brief (re-extracts parameters,
+# re-casts the virtual creator, re-opens the strategy gate). The run is an
+# asyncio task of this process, so the registry is per process; a run living
+# on another instance still surfaces through ``is_concurrent_run_error``.
+ACTIVE_RUN_TTL_SECONDS = 30 * 60
+AGENT_BUSY_DETAIL = (
+    "Izumi is still working on the previous step in this conversation. "
+    "Wait for it to finish before sending another message."
+)
+_active_runs: dict[str, float] = {}
+
+
+def _is_run_active(session_id: str) -> bool:
+    """True while a run started by this process is still executing.
+
+    The TTL only guards against a task that vanished without reaching its
+    ``finally`` (e.g. event loop teardown); normal completion always clears
+    the entry.
+    """
+    started = _active_runs.get(session_id)
+    if started is None:
+        return False
+    if time.monotonic() - started > ACTIVE_RUN_TTL_SECONDS:
+        _active_runs.pop(session_id, None)
+        return False
+    return True
+
+
+def _mark_run_started(session_id: str) -> None:
+    _active_runs[session_id] = time.monotonic()
+
+
+def _mark_run_finished(session_id: str) -> None:
+    _active_runs.pop(session_id, None)
+
+
+def is_concurrent_run_error(message: str) -> bool:
+    """Recognises the ADK session-service optimistic-concurrency failure.
+
+    Local Izumi (``FirestoreSessionService``) and Agent Engine both reject an
+    ``append_event`` whose session snapshot is older than the stored one with
+    a "stale" ``last_update_time`` message.
+    """
+    lowered = (message or "").lower()
+    return "stale" in lowered and (
+        "last_update_time" in lowered or "session" in lowered
+    )
+
 
 # Pseudo resource name used for sessions when the agent runs in the local
 # Izumi container (there is no Agent Engine resource to point at).
@@ -789,6 +850,148 @@ class AgentService:
             )
             raise HTTPException(status_code=500, detail=str(e))
 
+    # --- Characters tab -----------------------------------------------------
+
+    def _ensure_session_idle(self, session_id: str) -> None:
+        """Refuses a session-state write while a run is executing.
+
+        Same registry as ``chat()``: the agent's session service keeps an
+        optimistic lock on ``last_update_time``, so a write from here would
+        make the live run's next ``append_event`` fail with the "stale"
+        error and lose its work.
+        """
+        if _is_run_active(session_id):
+            logger.warning(
+                f"[Characters] Rejecting state write for session_id={session_id}: a run is still active"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=AGENT_BUSY_DETAIL,
+            )
+
+    async def _load_session_state(
+        self,
+        current_user: UserModel,
+        agent_name: str,
+        app_name: str,
+        user_id: str,
+        session_id: str,
+    ) -> dict:
+        """Fetches a session's state dict, authorising its workspace."""
+        session = await self._sessions_get(
+            agent_name, app_name, user_id, session_id
+        )
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if isinstance(session, dict):
+            s_state = session.get("session_state") or session.get("state")
+        else:
+            s_state = getattr(session, "session_state", None) or getattr(
+                session, "state", None
+            )
+        s_state = dict(s_state) if isinstance(s_state, dict) else {}
+        s_workspace_id = s_state.get("workspace_id")
+        if s_workspace_id is not None:
+            await self.workspace_auth.authorize(
+                workspace_id=int(s_workspace_id),
+                user=current_user,
+            )
+        return s_state
+
+    async def update_session_character(
+        self,
+        current_user: UserModel,
+        user_id: str,
+        session_id: str,
+        payload: UpdateCharacterRequestDto,
+    ) -> CharacterStateResponseDto:
+        """Creates/edits the campaign's on-screen character in session state.
+
+        Rewrites ``asset_refs`` / ``user_assets`` / ``virtual_creator_metadata``
+        / ``parameters`` together (see ``character_state.py``) and returns the
+        new values so the UI can merge them without a session reload.
+        """
+        try:
+            app_name = payload.appName or APP_NAME
+            await self.workspace_auth.authorize(
+                workspace_id=payload.workspaceId, user=current_user
+            )
+            self._ensure_session_idle(session_id)
+            agent_name = self._get_validated_agent_name(app_name)
+            state = await self._load_session_state(
+                current_user, agent_name, app_name, user_id, session_id
+            )
+            asset_ref = (
+                {
+                    "id": payload.assetRef.id,
+                    "asset_type": payload.assetRef.assetType,
+                }
+                if payload.assetRef
+                else None
+            )
+            try:
+                delta = build_character_delta(
+                    state,
+                    profile=payload.profile.to_state(),
+                    workspace_id=payload.workspaceId,
+                    asset_ref=asset_ref,
+                    prompt=payload.prompt,
+                )
+            except CharacterStateError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            await self._append_state_delta(
+                agent_name, app_name, user_id, session_id, delta
+            )
+            logger.info(
+                f"[Characters] Updated character for session_id={session_id} "
+                f"(key={delta['virtual_creator_metadata'].get('file_name')}, "
+                f"headshot_replaced={asset_ref is not None})"
+            )
+            return CharacterStateResponseDto(state=delta)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(
+                f"Unexpected error updating session character: {e}",
+                exc_info=True,
+            )
+            raise HTTPException(status_code=500, detail=str(e))
+
+    async def remove_session_character(
+        self,
+        current_user: UserModel,
+        user_id: str,
+        session_id: str,
+        workspace_id: int,
+        app_name: str = APP_NAME,
+    ) -> CharacterStateResponseDto:
+        """Drops the character: the campaign becomes a product-only ad."""
+        try:
+            await self.workspace_auth.authorize(
+                workspace_id=workspace_id, user=current_user
+            )
+            self._ensure_session_idle(session_id)
+            agent_name = self._get_validated_agent_name(app_name)
+            state = await self._load_session_state(
+                current_user, agent_name, app_name, user_id, session_id
+            )
+            delta = build_character_removal_delta(state)
+            await self._append_state_delta(
+                agent_name, app_name, user_id, session_id, delta
+            )
+            logger.info(
+                f"[Characters] Removed character for session_id={session_id}"
+            )
+            return CharacterStateResponseDto(state=delta)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(
+                f"Unexpected error removing session character: {e}",
+                exc_info=True,
+            )
+            raise HTTPException(status_code=500, detail=str(e))
+
     async def chat(
         self,
         current_user: UserModel,
@@ -1100,12 +1303,18 @@ class AgentService:
                     code = 500
                     err_str = str(e)
                     err_lower = err_str.lower()
+                    # Two runs on one session: the run holding the older
+                    # session snapshot dies at its next append_event. Another
+                    # run is still live, so a Retry would only kill that one.
+                    if is_concurrent_run_error(err_str):
+                        error_type = "concurrent_run"
+                        code = 409
                     # The agent reuses the user's X-User-Authorization token
                     # for the whole run; when it expires mid-run its tool
                     # calls back into Creative Studio fail with 401. Check
                     # this first: such messages often also mention other
                     # codes/words that would match the branches below.
-                    if (
+                    elif (
                         "401" in err_str
                         or "unauthorized" in err_lower
                         or "unauthenticated" in err_lower
@@ -1167,6 +1376,24 @@ class AgentService:
                         f"[Agent Stream] Failed to save error event: {save_err}",
                         exc_info=True,
                     )
+            finally:
+                if session_id:
+                    _mark_run_finished(session_id)
+
+        # Refuse to start a second run on a session that is still executing:
+        # it would corrupt the agent's session (see the registry docstring).
+        # Check and mark without awaiting in between so that two simultaneous
+        # requests cannot both pass.
+        if session_id:
+            if _is_run_active(session_id):
+                logger.warning(
+                    f"[Agent Stream] Rejecting chat for session_id={session_id}: a run is still active"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=AGENT_BUSY_DETAIL,
+                )
+            _mark_run_started(session_id)
 
         asyncio.create_task(process_stream())
 

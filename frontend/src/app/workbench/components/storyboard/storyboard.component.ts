@@ -46,6 +46,7 @@ import {
   ReferenceAssetPreview,
   ReferenceAssetPreviewService,
 } from '../../services/reference-asset-preview.service';
+import {CharacterPanelComponent} from '../character-panel/character-panel.component';
 
 // --- Data Models ---
 export interface Character {
@@ -72,7 +73,13 @@ export interface Scene {
 @Component({
   selector: 'app-storyboard',
   standalone: true,
-  imports: [CommonModule, FormsModule, MatIconModule, DragDropModule],
+  imports: [
+    CommonModule,
+    FormsModule,
+    MatIconModule,
+    DragDropModule,
+    CharacterPanelComponent,
+  ],
   templateUrl: './storyboard.component.html',
   styleUrls: ['./storyboard.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -406,8 +413,15 @@ export class StoryboardComponent {
     );
   }
 
+  /** Tabs that only make sense once the agent has a campaign brief in state. */
+  private readonly campaignBackedTabs: ReadonlyArray<
+    'characters' | 'scenes' | 'campaign'
+  > = ['campaign', 'characters'];
+
   setActiveTab(tab: 'characters' | 'scenes' | 'campaign') {
-    if (tab === 'campaign' && !this.hasCampaignDetails()) return;
+    if (this.campaignBackedTabs.includes(tab) && !this.hasCampaignDetails()) {
+      return;
+    }
     if (tab === 'campaign') this.campaignTabSeen.set(true);
     this.activeTab.set(tab);
   }
@@ -453,8 +467,11 @@ export class StoryboardComponent {
   private campaignTabGuard = effect(
     () => {
       // The brief is cleared on new chat / session switch; never strand the
-      // user on an empty tab.
-      if (!this.hasCampaignDetails() && this.activeTab() === 'campaign') {
+      // user on an empty tab (Campaign or Characters).
+      if (
+        !this.hasCampaignDetails() &&
+        this.campaignBackedTabs.includes(this.activeTab())
+      ) {
         this.activeTab.set('scenes');
       }
     },

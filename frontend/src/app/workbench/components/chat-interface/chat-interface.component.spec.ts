@@ -61,7 +61,11 @@ describe('ChatInterfaceComponent', () => {
       chatMessages: signal([]),
       generateVideoRequest$: new Subject<void>(),
       videoGenerated$: new Subject<any>(),
+      // Characters tab bridge
+      campaignSession: signal<any>(null),
+      campaignStateUpdated$: new Subject<Record<string, unknown>>(),
       isPolling: jasmine.createSpy('isPolling').and.returnValue(false),
+      streamActive: signal(false),
       startPolling: jasmine.createSpy('startPolling'),
       getSessions: jasmine.createSpy('getSessions').and.returnValue(of([])),
       getSessionDetail: jasmine
@@ -676,6 +680,81 @@ describe('ChatInterfaceComponent', () => {
 
       component['syncCampaignDetails']({parameters: sanitised});
       expect(agentChatService.campaignDetails()?.plannedBeats).toEqual([]);
+    });
+  });
+
+  describe('Characters tab bridge (campaignSession / campaignStateUpdated$)', () => {
+    const creatorState = {
+      parameters: {campaign_name: 'Cymbal', generate_virtual_creator: true},
+      asset_refs: {
+        'virtual_creator_4c53.png': {
+          id: 201,
+          asset_type: 'generated',
+          workspace_id: 1,
+        },
+      },
+      virtual_creator_metadata: {
+        file_name: 'virtual_creator_4c53.png',
+        demographics: 'Female, 30-35',
+        profile: {name: 'Maya', role: 'reviewer', clothing: 'linen shirt'},
+      },
+    };
+
+    it('publishes the session the brief belongs to and clears it with the brief', () => {
+      component.currentSessionId = 'session-abc';
+      component['syncCampaignDetails'](creatorState);
+      expect(agentChatService.campaignSession()).toEqual({
+        sessionId: 'session-abc',
+        workspaceId: 1,
+      });
+      expect(agentChatService.campaignDetails()?.character).toEqual(
+        jasmine.objectContaining({
+          key: 'virtual_creator_4c53.png',
+          assetId: '201',
+          assetType: 'generated',
+          agentCast: false,
+          profile: {name: 'Maya', role: 'reviewer', clothing: 'linen shirt'},
+        }),
+      );
+
+      component['clearCampaignDetails']();
+      expect(agentChatService.campaignSession()).toBeNull();
+      expect(agentChatService.campaignDetails()).toBeNull();
+    });
+
+    it('does not publish a session when no brief is present', () => {
+      component.currentSessionId = 'session-abc';
+      component['syncCampaignDetails']({unrelated: 1});
+      expect(agentChatService.campaignDetails()).toBeNull();
+      expect(agentChatService.campaignSession()).toBeNull();
+    });
+
+    it('merges a Characters-tab state slice like a streamed delta', () => {
+      component.currentSessionId = 'session-abc';
+      component['syncCampaignDetails'](creatorState);
+
+      // Removal: the backend echoes the rewritten slice
+      agentChatService.campaignStateUpdated$.next({
+        parameters: {campaign_name: 'Cymbal', generate_virtual_creator: false},
+        asset_refs: {},
+        virtual_creator_metadata: null,
+      });
+      const details = agentChatService.campaignDetails()!;
+      expect(details.character).toBeNull();
+      expect(details.title).toBe('Cymbal');
+      expect(details.virtualCreator?.enabled).toBeFalse();
+    });
+
+    it('stops listening once destroyed', () => {
+      component.currentSessionId = 'session-abc';
+      component['syncCampaignDetails'](creatorState);
+      fixture.destroy();
+
+      agentChatService.campaignStateUpdated$.next({
+        virtual_creator_metadata: null,
+        asset_refs: {},
+      });
+      expect(agentChatService.campaignDetails()?.character).not.toBeNull();
     });
   });
 
@@ -2418,6 +2497,154 @@ describe('ChatInterfaceComponent', () => {
         );
         expect(byText.code).toBe(401);
         expect(byText.type).toBe('auth_expired');
+      });
+
+      describe('one run per session (stale last_update_time)', () => {
+        it('keeps isBusy true for the whole run via streamActive, not just the typing dots', () => {
+          component.isTyping.set(false);
+          component.isSubmittingGate.set(false);
+          expect(component.isBusy()).toBeFalse();
+
+          agentChatService.streamActive.set(true);
+          expect(component.isBusy()).toBeTrue();
+          expect(component.canRetry()).toBeFalse();
+
+          agentChatService.streamActive.set(false);
+          expect(component.isBusy()).toBeFalse();
+        });
+
+        it('maps agent_busy and concurrent_run to non-retryable 409 messages', () => {
+          const busy = component.getFriendlyErrorMessage({
+            status: 409,
+            type: 'agent_busy',
+            message: 'Izumi is still working',
+          });
+          expect(busy.code).toBe(409);
+          expect(busy.type).toBe('agent_busy');
+          expect(busy.text).toContain('was not sent');
+
+          const stale = component.getFriendlyErrorMessage({
+            code: 409,
+            type: 'concurrent_run',
+            message:
+              'The last_update_time provided in the session object is stale.',
+          });
+          expect(stale.code).toBe(409);
+          expect(stale.type).toBe('concurrent_run');
+          expect(stale.text).toContain('still running');
+
+          expect(
+            component.isRetryableError({errorType: 'agent_busy'} as any),
+          ).toBeFalse();
+          expect(
+            component.isRetryableError({errorType: 'concurrent_run'} as any),
+          ).toBeFalse();
+          expect(
+            component.isRetryableError({errorType: 'quota_exceeded'} as any),
+          ).toBeTrue();
+          expect(
+            component.errorCardTitle({errorType: 'concurrent_run'} as any),
+          ).toBe('Agent Busy');
+          expect(component.errorCardTitle({errorType: 'timeout'} as any)).toBe(
+            'Agent Execution Failed',
+          );
+        });
+
+        it('rolls back an unsent chat turn on 409 and re-attaches to the live run', () => {
+          component.currentSessionId = 's_busy_chat';
+          agentChatService.sendMessage = jasmine
+            .createSpy('sendMessage')
+            .and.returnValue(Promise.resolve());
+          agentChatService.startPolling.calls.reset();
+          // The TestBed has no animations provider; a real toast would throw.
+          const snackSpy = spyOn(component['snackBar'], 'open').and.stub();
+
+          component['executeSendMessage']('Proceed');
+          expect(
+            component.chatMessages().some(m => m.text === 'Proceed'),
+          ).toBeTrue();
+
+          const callbacks = component['setupCallbacks']();
+          callbacks.onError!({
+            status: 409,
+            type: 'agent_busy',
+            message: 'Izumi is still working on the previous step',
+          });
+
+          // No error card, user bubble removed, text back in the composer.
+          expect(component.chatMessages().some(m => m.isError)).toBeFalse();
+          expect(
+            component.chatMessages().some(m => m.text === 'Proceed'),
+          ).toBeFalse();
+          expect(component.chatInputValue()).toBe('Proceed');
+          expect(component['lastExecutedAction']).toBeNull();
+          expect(snackSpy).toHaveBeenCalledWith(
+            jasmine.stringContaining('was not sent'),
+            'OK',
+            jasmine.anything(),
+          );
+          // Re-attached to the run that is actually executing.
+          expect(agentChatService.startPolling).toHaveBeenCalledWith(
+            's_busy_chat',
+            jasmine.anything(),
+          );
+        });
+
+        it('re-opens the gate card when a gate decision is refused with 409', () => {
+          component.currentSessionId = 's_busy_gate';
+          agentChatService.sendMessage = jasmine
+            .createSpy('sendMessage')
+            .and.returnValue(Promise.resolve());
+          const snackSpy = spyOn(component['snackBar'], 'open').and.stub();
+
+          const gate = {
+            callId: 'call_busy_gate',
+            toolName: 'await_storyboard_approval',
+            stage: 'storyboard',
+            options: ['accept', 'modify', 'regenerate'],
+          };
+          component.activeApprovalGate.set(gate as any);
+          component.handleGateDecision({decision: 'accept', guidance: ''});
+          expect(component.activeApprovalGate()).toBeNull();
+
+          const callbacks = component['setupCallbacks']();
+          callbacks.onError!({
+            status: 409,
+            type: 'agent_busy',
+            message: 'busy',
+          });
+
+          expect(component.activeApprovalGate()?.callId).toBe('call_busy_gate');
+          expect(component['submittedGateCallIds'].has('call_busy_gate')).toBe(
+            false,
+          );
+          expect(component.isSubmittingGate()).toBeFalse();
+          expect(component.chatMessages().some(m => m.isError)).toBeFalse();
+          expect(snackSpy).toHaveBeenCalled();
+        });
+
+        it('shows a non-retryable card and re-attaches on concurrent_run', () => {
+          component.currentSessionId = 's_stale';
+          agentChatService.startPolling.calls.reset();
+
+          const callbacks = component['setupCallbacks']();
+          callbacks.onError!({
+            code: 409,
+            type: 'concurrent_run',
+            message:
+              'Local Izumi agent error: The last_update_time provided in the session object is stale.',
+          });
+
+          const messages = component.chatMessages();
+          const last = messages[messages.length - 1];
+          expect(last.isError).toBeTrue();
+          expect(last.errorType).toBe('concurrent_run');
+          expect(component.isRetryableError(last)).toBeFalse();
+          expect(agentChatService.startPolling).toHaveBeenCalledWith(
+            's_stale',
+            jasmine.anything(),
+          );
+        });
       });
 
       it('should recover the last user message from history when lastExecutedAction is null (new component after re-login)', () => {

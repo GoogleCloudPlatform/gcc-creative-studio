@@ -502,3 +502,102 @@ async def test_agent_service_exceptions(mock_remote_agent):
     service.client.agent_engines.sessions.delete.side_effect = Exception("err")
     with pytest.raises(HTTPException):
         await service.delete_session(MagicMock(), "s1", "u", MagicMock())
+
+
+@pytest.mark.anyio
+async def test_update_and_remove_session_character_routes(
+    mock_remote_agent, client
+):
+    """PUT/DELETE /sessions/{id}/character parse the DTOs, go through the
+    run guard and return the rewritten state slice."""
+    from src.agents import agent_service as module
+
+    module._active_runs.clear()
+    sessions = mock_remote_agent.vclient.agent_engines.sessions
+    sessions.get.return_value = {
+        "id": "session_1",
+        "session_state": {
+            "workspace_id": 1,
+            "parameters": {"campaign_name": "Launch"},
+            "asset_refs": {},
+            "user_assets": {},
+        },
+    }
+
+    # No headshot yet and none provided → 400 from the state helper.
+    response = client.put(
+        "/api/agent/sessions/session_1/character",
+        json={"workspaceId": 1, "profile": {"name": "Maya"}},
+    )
+    assert response.status_code == 400
+    assert "headshot" in response.json()["detail"]
+
+    # Creating with a headshot registers a minted virtual_creator_* key.
+    response = client.put(
+        "/api/agent/sessions/session_1/character",
+        json={
+            "workspaceId": 1,
+            "profile": {
+                "name": "Maya",
+                "role": "spokesperson",
+                "gender": "Female",
+            },
+            "assetRef": {"id": 42, "assetType": "generated"},
+        },
+    )
+    assert response.status_code == 200, response.text
+    state = response.json()["state"]
+    keys = [k for k in state["asset_refs"] if k.startswith("virtual_creator_")]
+    assert len(keys) == 1
+    assert state["asset_refs"][keys[0]] == {
+        "id": 42,
+        "asset_type": "generated",
+        "workspace_id": 1,
+    }
+    assert (
+        state["virtual_creator_metadata"]["profile"]["role"] == "spokesperson"
+    )
+    assert state["parameters"]["generate_virtual_creator"] is True
+    sessions.events.append.assert_called_once()
+
+    # Unknown role values are rejected by the DTO.
+    response = client.put(
+        "/api/agent/sessions/session_1/character",
+        json={"workspaceId": 1, "profile": {"role": "villain"}},
+    )
+    assert response.status_code == 422
+
+    # While a run is active both verbs are refused with 409.
+    module._mark_run_started("session_1")
+    try:
+        response = client.put(
+            "/api/agent/sessions/session_1/character",
+            json={"workspaceId": 1, "profile": {}},
+        )
+        assert response.status_code == 409
+        response = client.delete(
+            "/api/agent/sessions/session_1/character?workspace_id=1"
+        )
+        assert response.status_code == 409
+    finally:
+        module._mark_run_finished("session_1")
+
+    # Removal clears the creator and flips the campaign to product-only.
+    sessions.get.return_value["session_state"].update(
+        {
+            "asset_refs": {"virtual_creator_ab12.png": {"id": 42}},
+            "user_assets": {"virtual_creator_ab12.png": "cap"},
+            "virtual_creator_metadata": {
+                "file_name": "virtual_creator_ab12.png"
+            },
+        }
+    )
+    response = client.delete(
+        "/api/agent/sessions/session_1/character?workspace_id=1"
+    )
+    assert response.status_code == 200, response.text
+    state = response.json()["state"]
+    assert state["virtual_creator_metadata"] is None
+    assert state["asset_refs"] == {}
+    assert state["parameters"]["generate_virtual_creator"] is False
+    assert sessions.events.append.call_count == 2

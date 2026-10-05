@@ -682,3 +682,461 @@ def test_detect_approval_function():
     assert AgentService.detect_approval_function("just text") is None
     assert AgentService.detect_approval_function(12345) is None
     assert AgentService.detect_approval_function({}) is None
+
+
+# --- One run per session -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "message, expected",
+    [
+        (
+            "Local Izumi agent error: The last_update_time provided in the "
+            "session object is stale.",
+            True,
+        ),
+        ("FAILED_PRECONDITION: session snapshot is stale", True),
+        ("ResourceExhausted: 429 Quota exceeded", False),
+        ("stale bread", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_is_concurrent_run_error(message, expected):
+    from src.agents.agent_service import is_concurrent_run_error
+
+    assert is_concurrent_run_error(message) is expected
+
+
+def test_run_registry_ttl_expires_stuck_entries():
+    import time
+
+    from src.agents import agent_service as module
+
+    module._active_runs.clear()
+    module._mark_run_started("s-ttl")
+    assert module._is_run_active("s-ttl") is True
+
+    module._active_runs["s-ttl"] = (
+        time.monotonic() - module.ACTIVE_RUN_TTL_SECONDS - 1
+    )
+    assert module._is_run_active("s-ttl") is False
+    assert "s-ttl" not in module._active_runs
+
+    module._mark_run_finished("never-started")  # must not raise
+
+
+@pytest.mark.anyio
+async def test_chat_process_stream_classifies_concurrent_run():
+    """The ADK stale-session error means another run is still live: it must
+    surface as 409/concurrent_run so the UI does not offer a Retry."""
+    import asyncio
+    import json
+
+    with patch("vertexai.Client"):
+        service = AgentService(
+            agent_repo=MagicMock(),
+            workspace_service=MagicMock(),
+            storyboard_repo=MagicMock(),
+            workspace_auth=AsyncMock(),
+            project_service=MagicMock(),
+        )
+
+        user = MagicMock(spec=UserModel)
+        payload = MagicMock()
+        payload.model_dump.return_value = {
+            "sessionId": "s-stale-1",
+            "workspaceId": 10,
+            "newMessage": {"role": "user", "parts": [{"text": "hello"}]},
+        }
+        request = MagicMock(spec=Request)
+
+        with patch("src.agents.agent_service.agent_engines") as mock_engines:
+            mock_remote = MagicMock()
+            mock_remote.async_stream_query.side_effect = Exception(
+                "Local Izumi agent error: The last_update_time provided in "
+                "the session object is stale."
+            )
+            mock_engines.get.return_value = mock_remote
+
+            mock_repo_instance = AsyncMock()
+            with patch(
+                "src.agents.agent_service.async_session_local"
+            ) as mock_db_ctx:
+                mock_db_ctx.return_value.__aenter__.return_value = AsyncMock()
+                with patch(
+                    "src.agents.agent_service.AgentRepository"
+                ) as mock_repo_cls:
+                    mock_repo_cls.return_value = mock_repo_instance
+
+                    await service.chat(
+                        current_user=user,
+                        user_id="999",
+                        payload=payload,
+                        request=request,
+                    )
+                    await asyncio.sleep(0.1)
+
+            calls = mock_repo_instance.add_chat_event.call_args_list
+            assert len(calls) == 2
+            err_payload = json.loads(
+                calls[0].kwargs["payload"]["raw"].strip().split("data: ")[1]
+            )
+            assert err_payload["code"] == 409
+            assert err_payload["type"] == "concurrent_run"
+            assert calls[1].kwargs["payload"]["raw"] == "data: [DONE]\n\n"
+
+    from src.agents import agent_service as module
+
+    assert module._is_run_active("s-stale-1") is False
+
+
+@pytest.mark.anyio
+async def test_chat_rejects_second_run_while_first_is_active():
+    """A second /chat on a session whose run is still executing must be
+    refused with 409 (it would corrupt the agent session) and the registry
+    must be released once the run ends."""
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from src.agents import agent_service as module
+
+    module._active_runs.clear()
+    release = asyncio.Event()
+
+    async def slow_stream(**_kwargs):
+        await release.wait()
+        if False:  # pragma: no cover - makes this an async generator
+            yield None
+
+    with patch("vertexai.Client"):
+        service = AgentService(
+            agent_repo=MagicMock(),
+            workspace_service=MagicMock(),
+            storyboard_repo=MagicMock(),
+            workspace_auth=AsyncMock(),
+            project_service=MagicMock(),
+        )
+
+        user = MagicMock(spec=UserModel)
+        payload = MagicMock()
+        payload.model_dump.return_value = {
+            "sessionId": "s-busy-1",
+            "workspaceId": 10,
+            "newMessage": {"role": "user", "parts": [{"text": "hello"}]},
+        }
+        request = MagicMock(spec=Request)
+
+        with patch("src.agents.agent_service.agent_engines") as mock_engines:
+            mock_remote = MagicMock()
+            mock_remote.async_stream_query.side_effect = slow_stream
+            mock_engines.get.return_value = mock_remote
+
+            mock_repo_instance = AsyncMock()
+            with patch(
+                "src.agents.agent_service.async_session_local"
+            ) as mock_db_ctx:
+                mock_db_ctx.return_value.__aenter__.return_value = AsyncMock()
+                with patch(
+                    "src.agents.agent_service.AgentRepository"
+                ) as mock_repo_cls:
+                    mock_repo_cls.return_value = mock_repo_instance
+
+                    first = await service.chat(
+                        current_user=user,
+                        user_id="999",
+                        payload=payload,
+                        request=request,
+                    )
+                    assert first == {"status": "processing"}
+                    await asyncio.sleep(0.05)
+                    assert module._is_run_active("s-busy-1") is True
+
+                    with pytest.raises(HTTPException) as exc_info:
+                        await service.chat(
+                            current_user=user,
+                            user_id="999",
+                            payload=payload,
+                            request=request,
+                        )
+                    assert exc_info.value.status_code == 409
+                    assert "still working" in exc_info.value.detail
+                    # The rejected request must not have started a run.
+                    assert mock_remote.async_stream_query.call_count == 1
+
+                    release.set()
+                    await asyncio.sleep(0.1)
+                    assert module._is_run_active("s-busy-1") is False
+
+                    # A new run is accepted once the previous one finished.
+                    again = await service.chat(
+                        current_user=user,
+                        user_id="999",
+                        payload=payload,
+                        request=request,
+                    )
+                    assert again == {"status": "processing"}
+                    await asyncio.sleep(0.1)
+                    assert module._is_run_active("s-busy-1") is False
+
+
+# --- Characters tab (PUT/DELETE /sessions/{id}/character) --------------------
+
+
+def _character_service():
+    service = AgentService(
+        agent_repo=MagicMock(),
+        workspace_service=MagicMock(),
+        storyboard_repo=MagicMock(),
+        workspace_auth=MagicMock(),
+        project_service=MagicMock(),
+    )
+    service.workspace_auth.authorize = AsyncMock()
+    service._get_validated_agent_name = MagicMock(return_value="agent")
+    service._append_state_delta = AsyncMock()
+    return service
+
+
+def _character_state():
+    return {
+        "workspace_id": 7,
+        "parameters": {"campaign_name": "Launch"},
+        "asset_refs": {
+            "virtual_creator_4c53.png": {
+                "id": 285,
+                "asset_type": "generated",
+                "workspace_id": 7,
+            }
+        },
+        "user_assets": {"virtual_creator_4c53.png": "old"},
+        "virtual_creator_metadata": {
+            "file_name": "virtual_creator_4c53.png",
+            "asset_ref": {"id": 285, "asset_type": "generated"},
+            "demographics": "old",
+        },
+    }
+
+
+def _update_payload(**overrides):
+    from src.agents.agent_dtos import (
+        CharacterAssetRefDto,
+        CharacterProfileDto,
+        UpdateCharacterRequestDto,
+    )
+
+    payload = UpdateCharacterRequestDto(
+        workspaceId=7,
+        profile=CharacterProfileDto(
+            name="Maya", role="reviewer", ageRange="30s"
+        ),
+    )
+    if "asset_ref" in overrides:
+        payload.assetRef = CharacterAssetRefDto(**overrides["asset_ref"])
+    if "prompt" in overrides:
+        payload.prompt = overrides["prompt"]
+    return payload
+
+
+@pytest.mark.anyio
+async def test_update_session_character_writes_delta_and_returns_it():
+    from src.agents import agent_service as module
+
+    module._active_runs.clear()
+    with patch("vertexai.Client"):
+        service = _character_service()
+        service._sessions_get = AsyncMock(
+            return_value={"id": "s1", "state": _character_state()}
+        )
+        user = MagicMock(spec=UserModel)
+
+        result = await service.update_session_character(
+            current_user=user,
+            user_id="1",
+            session_id="s1",
+            payload=_update_payload(
+                asset_ref={"id": 302, "assetType": "generated"},
+                prompt="headshot prompt",
+            ),
+        )
+
+        delta = result.state
+        key = "virtual_creator_4c53.png"
+        assert delta["asset_refs"][key]["id"] == 302
+        assert delta["virtual_creator_metadata"]["prompt"] == "headshot prompt"
+        assert delta["virtual_creator_metadata"]["profile"] == {
+            "name": "Maya",
+            "role": "reviewer",
+            "age_range": "30s",
+        }
+        assert delta["parameters"]["generate_virtual_creator"] is True
+        service._append_state_delta.assert_awaited_once_with(
+            "agent", "ads_x", "1", "s1", delta
+        )
+        # Authorised against the payload workspace AND the session's own.
+        assert service.workspace_auth.authorize.await_count == 2
+
+
+@pytest.mark.anyio
+async def test_update_session_character_rejected_while_run_active():
+    from fastapi import HTTPException
+
+    from src.agents import agent_service as module
+
+    module._active_runs.clear()
+    module._mark_run_started("s-live")
+    try:
+        with patch("vertexai.Client"):
+            service = _character_service()
+            service._sessions_get = AsyncMock()
+            with pytest.raises(HTTPException) as exc_info:
+                await service.update_session_character(
+                    current_user=MagicMock(spec=UserModel),
+                    user_id="1",
+                    session_id="s-live",
+                    payload=_update_payload(),
+                )
+            assert exc_info.value.status_code == 409
+            assert "still working" in exc_info.value.detail
+            service._sessions_get.assert_not_called()
+            service._append_state_delta.assert_not_called()
+    finally:
+        module._mark_run_finished("s-live")
+
+
+@pytest.mark.anyio
+async def test_update_session_character_without_headshot_is_400():
+    from fastapi import HTTPException
+
+    from src.agents import agent_service as module
+
+    module._active_runs.clear()
+    with patch("vertexai.Client"):
+        service = _character_service()
+        service._sessions_get = AsyncMock(
+            return_value={"id": "s1", "session_state": {"parameters": {"a": 1}}}
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await service.update_session_character(
+                current_user=MagicMock(spec=UserModel),
+                user_id="1",
+                session_id="s1",
+                payload=_update_payload(),
+            )
+        assert exc_info.value.status_code == 400
+        assert "no character headshot" in exc_info.value.detail
+        service._append_state_delta.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_update_session_character_session_not_found_and_errors():
+    from fastapi import HTTPException
+
+    from src.agents import agent_service as module
+
+    module._active_runs.clear()
+    with patch("vertexai.Client"):
+        service = _character_service()
+        service._sessions_get = AsyncMock(return_value=None)
+        with pytest.raises(HTTPException) as exc_info:
+            await service.update_session_character(
+                current_user=MagicMock(spec=UserModel),
+                user_id="1",
+                session_id="missing",
+                payload=_update_payload(),
+            )
+        assert exc_info.value.status_code == 404
+
+        service._sessions_get = AsyncMock(side_effect=RuntimeError("boom"))
+        with pytest.raises(HTTPException) as exc_info:
+            await service.update_session_character(
+                current_user=MagicMock(spec=UserModel),
+                user_id="1",
+                session_id="s1",
+                payload=_update_payload(),
+            )
+        assert exc_info.value.status_code == 500
+        assert "boom" in exc_info.value.detail
+
+
+@pytest.mark.anyio
+async def test_load_session_state_reads_object_sessions():
+    with patch("vertexai.Client"):
+        service = _character_service()
+        session_obj = MagicMock()
+        session_obj.session_state = None
+        session_obj.state = {"workspace_id": 3, "x": 1}
+        service._sessions_get = AsyncMock(return_value=session_obj)
+        user = MagicMock(spec=UserModel)
+
+        state = await service._load_session_state(
+            user, "agent", "ads_x", "1", "s1"
+        )
+        assert state == {"workspace_id": 3, "x": 1}
+        service.workspace_auth.authorize.assert_awaited_once_with(
+            workspace_id=3, user=user
+        )
+
+
+@pytest.mark.anyio
+async def test_remove_session_character_writes_removal_delta():
+    from src.agents import agent_service as module
+
+    module._active_runs.clear()
+    with patch("vertexai.Client"):
+        service = _character_service()
+        service._sessions_get = AsyncMock(
+            return_value={"id": "s1", "state": _character_state()}
+        )
+        result = await service.remove_session_character(
+            current_user=MagicMock(spec=UserModel),
+            user_id="1",
+            session_id="s1",
+            workspace_id=7,
+        )
+        delta = result.state
+        assert delta["virtual_creator_metadata"] is None
+        assert delta["asset_refs"] == {}
+        assert delta["user_assets"] == {}
+        assert delta["parameters"]["generate_virtual_creator"] is False
+        service._append_state_delta.assert_awaited_once_with(
+            "agent", "ads_x", "1", "s1", delta
+        )
+
+
+@pytest.mark.anyio
+async def test_remove_session_character_guard_and_errors():
+    from fastapi import HTTPException
+
+    from src.agents import agent_service as module
+
+    module._active_runs.clear()
+    module._mark_run_started("s-live")
+    try:
+        with patch("vertexai.Client"):
+            service = _character_service()
+            with pytest.raises(HTTPException) as exc_info:
+                await service.remove_session_character(
+                    current_user=MagicMock(spec=UserModel),
+                    user_id="1",
+                    session_id="s-live",
+                    workspace_id=7,
+                )
+            assert exc_info.value.status_code == 409
+    finally:
+        module._mark_run_finished("s-live")
+
+    with patch("vertexai.Client"):
+        service = _character_service()
+        service._sessions_get = AsyncMock(
+            return_value={"id": "s1", "state": _character_state()}
+        )
+        service._append_state_delta = AsyncMock(side_effect=RuntimeError("io"))
+        with pytest.raises(HTTPException) as exc_info:
+            await service.remove_session_character(
+                current_user=MagicMock(spec=UserModel),
+                user_id="1",
+                session_id="s1",
+                workspace_id=7,
+            )
+        assert exc_info.value.status_code == 500

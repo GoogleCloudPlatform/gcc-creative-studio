@@ -118,7 +118,19 @@ export class ChatInterfaceComponent
   selectedImages = signal<(SourceAssetResponseDto | MediaItemSelection)[]>([]);
   isTyping = signal<boolean>(false);
   isSubmittingGate = signal<boolean>(false);
-  isBusy = computed<boolean>(() => this.isTyping() || this.isSubmittingGate());
+  /**
+   * Locks the composer, Send and Retry. `isTyping` only covers the typing
+   * dots (cleared on the first text chunk) and `isSubmittingGate` the gate
+   * round-trip; `streamActive` covers the whole run until `[DONE]` or an
+   * error event, so no second run can be started on the same session while
+   * e.g. `generate_all_media` is still executing.
+   */
+  isBusy = computed<boolean>(
+    () =>
+      this.isTyping() ||
+      this.isSubmittingGate() ||
+      this.agentChatService.streamActive(),
+  );
   isLoadingHistory = signal<boolean>(false);
   /**
    * True while a session switch is still settling: either the chat history
@@ -401,7 +413,16 @@ export class ChatInterfaceComponent
         );
       }
     });
+
+    // The Characters tab rewrites session state outside an agent run; merge
+    // the returned slice exactly like a streamed `state_delta`.
+    this.campaignStateSubscription =
+      this.agentChatService.campaignStateUpdated$.subscribe(state => {
+        this.syncCampaignDetails(state, true);
+      });
   }
+
+  private campaignStateSubscription: Subscription | null = null;
 
   ngOnDestroy() {
     // The chat is torn down whenever the user switches side panels. Remember an
@@ -415,6 +436,8 @@ export class ChatInterfaceComponent
     // signals from a component that no longer exists.
     this.loadSubscription?.unsubscribe();
     this.loadSubscription = null;
+    this.campaignStateSubscription?.unsubscribe();
+    this.campaignStateSubscription = null;
   }
 
   ngAfterViewChecked() {
@@ -2122,6 +2145,15 @@ export class ChatInterfaceComponent
       onError: err => {
         console.error('SSE Error:', err);
         const friendly = this.getFriendlyErrorMessage(err);
+        if (friendly.type === 'agent_busy') {
+          // The backend refused to start a second run on this session, so
+          // nothing reached the agent: roll back the optimistic user turn
+          // and follow the run that is actually executing.
+          this.rollbackUnsentAction();
+          this.snackBar.open(friendly.text, 'OK', {duration: 6000});
+          this.reattachToLiveRun();
+          return;
+        }
         if (friendly.code === 503) {
           console.warn(
             'Backend returned 503: Agent Engine is likely missing AGENT_ENGINE_RESOURCE_NAME in environment.',
@@ -2158,6 +2190,12 @@ export class ChatInterfaceComponent
         this.isSubmittingGate.set(false);
         this.agentChatService.isGeneratingStoryboard.set(false);
         this.agentChatService.isGeneratingVideo.set(false);
+
+        if (friendly.type === 'concurrent_run') {
+          // The run we were following lost the optimistic-concurrency race;
+          // the other run is still live, so keep showing its progress.
+          this.reattachToLiveRun();
+        }
       },
       onClose: () => {
         this.isTyping.set(false);
@@ -2269,16 +2307,30 @@ export class ChatInterfaceComponent
       if (parsed === null) return;
       this.campaignState = merged;
       this.agentChatService.campaignDetails.set(parsed);
+      this.publishCampaignSession();
       return;
     }
     this.campaignState = hasAny ? picked : null;
     this.agentChatService.campaignDetails.set(parseCampaignState(picked));
+    this.publishCampaignSession();
+  }
+
+  /** Tells side panels which session/workspace `campaignDetails` describe. */
+  private publishCampaignSession() {
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const sessionId = this.currentSessionId;
+    this.agentChatService.campaignSession.set(
+      sessionId && workspaceId && this.agentChatService.campaignDetails()
+        ? {sessionId, workspaceId}
+        : null,
+    );
   }
 
   /** Forgets the campaign brief and final-cut flag (new chat / session switch). */
   private clearCampaignDetails() {
     this.campaignState = null;
     this.agentChatService.campaignDetails.set(null);
+    this.agentChatService.campaignSession.set(null);
     this.agentChatService.finalVideoReady.set(false);
   }
 
@@ -2611,6 +2663,59 @@ export class ChatInterfaceComponent
     return (img as {unavailable?: boolean}).unavailable === true;
   }
 
+  /** Error types for which re-sending the last turn would make things worse. */
+  private static readonly NON_RETRYABLE_ERROR_TYPES = new Set([
+    'agent_busy',
+    'concurrent_run',
+  ]);
+
+  /** Whether an error card should offer the Retry button. */
+  isRetryableError(msg: ChatMessageUI): boolean {
+    return !ChatInterfaceComponent.NON_RETRYABLE_ERROR_TYPES.has(
+      msg.errorType || '',
+    );
+  }
+
+  errorCardTitle(msg: ChatMessageUI): string {
+    return this.isRetryableError(msg) ? 'Agent Execution Failed' : 'Agent Busy';
+  }
+
+  /**
+   * Undoes the optimistic UI of a turn the backend refused (409): drops the
+   * user bubble, puts the text back into the composer or re-opens the gate
+   * card so the decision can be submitted again once the run is over.
+   */
+  private rollbackUnsentAction() {
+    const action = this.lastExecutedAction;
+    this.lastExecutedAction = null;
+    this.chatMessages.update(msgs => {
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i].sender === 'user') {
+          return msgs.filter((_, idx) => idx !== i);
+        }
+      }
+      return msgs;
+    });
+    if (action?.type === 'chat' && action.text) {
+      this.chatInputValue.set(action.text);
+    } else if (action?.type === 'gate' && action.gate) {
+      if (action.gate.callId) {
+        this.submittedGateCallIds.delete(action.gate.callId);
+      }
+      this.activeApprovalGate.set(action.gate);
+    }
+    this.isTyping.set(false);
+    this.isSubmittingGate.set(false);
+    this.agentChatService.isGeneratingStoryboard.set(false);
+    this.agentChatService.isGeneratingVideo.set(false);
+  }
+
+  /** Follows the run that is still executing on the current session. */
+  private reattachToLiveRun() {
+    if (!this.currentSessionId) return;
+    this.resumePolling(this.currentSessionId);
+  }
+
   getFriendlyErrorMessage(err: any): {
     text: string;
     code?: number;
@@ -2651,6 +2756,22 @@ export class ChatInterfaceComponent
         code = 400;
         type = 'invalid_argument';
       }
+    }
+
+    if (type === 'agent_busy') {
+      return {
+        text: 'Izumi is still working on the previous step in this conversation. Your message was not sent — wait for the current step to finish, then send it again.',
+        code: 409,
+        type: 'agent_busy',
+      };
+    }
+
+    if (type === 'concurrent_run' || code === 409) {
+      return {
+        text: 'Two requests ran on this conversation at the same time and this one was dropped. The other request is still running — wait for it to finish before continuing.',
+        code: 409,
+        type: 'concurrent_run',
+      };
     }
 
     if (code === 401 || type === 'auth_expired') {
@@ -2850,7 +2971,7 @@ export class ChatInterfaceComponent
     // Reset height of textarea in base input area
     setTimeout(() => {
       const textarea = document.querySelector(
-        'textarea[placeholder="Ask Izumi..."]',
+        'textarea[data-chat-input]',
       ) as HTMLTextAreaElement;
       if (textarea) {
         textarea.style.height = 'auto';

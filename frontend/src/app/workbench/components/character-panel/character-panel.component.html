@@ -1,0 +1,470 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<section class="cp-panel" aria-label="Campaign characters">
+  <!-- Intro / status -->
+  <header class="cp-intro">
+    <div class="cp-intro-text">
+      <span class="cp-eyebrow">
+        <mat-icon class="cp-icon-sm">face</mat-icon>
+        Characters
+      </span>
+      <h2>On-screen talent</h2>
+      <p>
+        The person Izumi casts in your ad. Edit the profile, swap the headshot
+        for an image from your gallery, or cast a brand-new one.
+      </p>
+    </div>
+    @if (character()) {
+      <span class="cp-count-chip" title="Characters in this campaign">1 character</span>
+    }
+  </header>
+
+  @if (disabledReason(); as reason) {
+    <p class="cp-notice is-busy" role="status">
+      <mat-icon class="cp-icon-sm">hourglass_top</mat-icon>
+      <span>{{ reason }}</span>
+    </p>
+  }
+
+  @if (error(); as message) {
+    <p class="cp-notice is-error" role="alert">
+      <mat-icon class="cp-icon-sm">error_outline</mat-icon>
+      <span>{{ message }}</span>
+      <button type="button" class="cp-link" (click)="error.set(null)">Dismiss</button>
+    </p>
+  }
+
+  <!-- ====================================================================
+       Main character card
+       ==================================================================== -->
+  @if (mode() === 'view') {
+    @if (character(); as c) {
+      <article class="cp-card cp-character" [attr.data-character-key]="c.key">
+        <!-- Headshot -->
+        <button
+          type="button"
+          class="cp-headshot"
+          [class.is-unavailable]="headshot()?.unavailable"
+          [title]="'Open headshot in a new tab'"
+          [attr.aria-label]="'Open headshot of ' + displayName(c)"
+          (click)="openHeadshot(c)"
+        >
+          @if (headshot()?.url; as url) {
+            <img [src]="url" [alt]="displayName(c)" loading="lazy" />
+          } @else if (headshot()?.unavailable) {
+            <span class="cp-headshot-placeholder">
+              <mat-icon>broken_image</mat-icon>
+              <small>Not available</small>
+            </span>
+          } @else {
+            <span class="cp-headshot-placeholder is-loading">
+              <mat-icon>person</mat-icon>
+            </span>
+          }
+          <span class="cp-badge">
+            <mat-icon class="cp-icon-sm">{{ c.agentCast ? 'auto_awesome' : 'edit' }}</mat-icon>
+            {{ c.agentCast ? 'Cast by Izumi' : 'Edited by you' }}
+          </span>
+        </button>
+
+        <!-- Profile -->
+        <div class="cp-profile">
+          <header class="cp-profile-header">
+            <div class="cp-profile-title">
+              <h3>{{ displayName(c) }}</h3>
+              <span class="cp-role-chip">
+                <mat-icon class="cp-icon-sm">theater_comedy</mat-icon>
+                {{ roleLabel(c.profile.role) }}
+              </span>
+            </div>
+            <div class="cp-actions">
+              <button
+                type="button"
+                class="cp-btn"
+                [disabled]="!canAct()"
+                (click)="startEdit()"
+                title="Edit name, age, clothing, personality…"
+              >
+                <mat-icon class="cp-icon-sm">edit</mat-icon> Edit profile
+              </button>
+              <button
+                type="button"
+                class="cp-btn"
+                [disabled]="!canAct()"
+                (click)="pickHeadshot()"
+                title="Replace the headshot with an image from your gallery"
+              >
+                <mat-icon class="cp-icon-sm">photo_library</mat-icon> From gallery
+              </button>
+              <button
+                type="button"
+                class="cp-btn is-primary"
+                [disabled]="!canAct()"
+                (click)="startCast()"
+                title="Generate a new headshot from the profile and optional reference images"
+              >
+                <mat-icon class="cp-icon-sm">auto_awesome</mat-icon> Cast new
+              </button>
+              <button
+                type="button"
+                class="cp-btn is-danger"
+                [disabled]="!canAct()"
+                (click)="remove()"
+                title="Remove the character (product-only ad)"
+              >
+                <mat-icon class="cp-icon-sm">person_remove</mat-icon> Remove
+              </button>
+            </div>
+          </header>
+
+          @if (profileRows(c).length > 0) {
+            <dl class="cp-rows">
+              @for (row of profileRows(c); track row.label) {
+                <dt>{{ row.label }}</dt>
+                <dd>{{ row.value }}</dd>
+              }
+            </dl>
+          }
+
+          @if (c.demographics) {
+            <p class="cp-muted cp-demographics">
+              <b>What Izumi casts with:</b> {{ c.demographics }}
+            </p>
+          } @else if (profileRows(c).length === 0) {
+            <p class="cp-muted">
+              No profile yet — Izumi cast this character from the brief. Add a
+              name, age, clothing and personality so every scene stays on-brand.
+            </p>
+          }
+
+          <!-- Outfit / garment images the headshot was generated from -->
+          @if (headshot()?.sources?.length) {
+            <div class="cp-sources">
+              <span class="cp-sources-title">
+                <mat-icon class="cp-icon-sm">checkroom</mat-icon>
+                References used for this headshot
+              </span>
+              <ul class="cp-sources-list" aria-label="Headshot reference images">
+                @for (source of headshot()!.sources; track source.url) {
+                  <li>
+                    <img [src]="source.url" [alt]="source.label" [title]="source.label" loading="lazy" />
+                  </li>
+                }
+              </ul>
+            </div>
+          }
+        </div>
+      </article>
+    } @else {
+      <!-- Empty state: product-only campaign or not cast yet -->
+      <article class="cp-card cp-empty">
+        <span class="cp-empty-icon"><mat-icon>person_off</mat-icon></span>
+        <div class="cp-empty-text">
+          <h3>No on-screen character yet</h3>
+          <p>
+            This campaign is product-only right now. Add a presenter from your
+            gallery or let us generate one from a short description.
+          </p>
+        </div>
+        <div class="cp-actions">
+          <button
+            type="button"
+            class="cp-btn"
+            [disabled]="!canAct()"
+            (click)="pickHeadshot()"
+          >
+            <mat-icon class="cp-icon-sm">photo_library</mat-icon> From gallery
+          </button>
+          <button
+            type="button"
+            class="cp-btn is-primary"
+            [disabled]="!canAct()"
+            (click)="startCast()"
+          >
+            <mat-icon class="cp-icon-sm">auto_awesome</mat-icon> Cast a character
+          </button>
+        </div>
+      </article>
+    }
+  }
+
+  <!-- ====================================================================
+       Edit profile form
+       ==================================================================== -->
+  @if (mode() === 'edit') {
+    <form class="cp-card cp-form" (ngSubmit)="saveProfile()" aria-label="Edit character profile">
+      <header class="cp-form-header">
+        <h3><mat-icon class="cp-icon-sm">edit</mat-icon> Edit profile</h3>
+        <p class="cp-muted">
+          Izumi reads these as one sentence when it casts the character in each
+          scene. The headshot stays the same.
+        </p>
+      </header>
+      <ng-container *ngTemplateOutlet="profileFields"></ng-container>
+      <footer class="cp-form-footer">
+        <button type="button" class="cp-btn" (click)="cancel()" [disabled]="saving()">Cancel</button>
+        <button type="submit" class="cp-btn is-primary" [disabled]="!canAct()">
+          @if (saving()) {
+            <mat-icon class="cp-icon-sm cp-spin">autorenew</mat-icon> Saving…
+          } @else {
+            <mat-icon class="cp-icon-sm">save</mat-icon> Save profile
+          }
+        </button>
+      </footer>
+    </form>
+  }
+
+  <!-- ====================================================================
+       Cast a new headshot
+       ==================================================================== -->
+  @if (mode() === 'cast') {
+    <form class="cp-card cp-form" (ngSubmit)="runCast()" aria-label="Cast a new character">
+      <header class="cp-form-header">
+        <h3><mat-icon class="cp-icon-sm">auto_awesome</mat-icon> Cast a new character</h3>
+        <p class="cp-muted">
+          Describe the person; we generate a studio headshot (9:16, white
+          background — the same recipe Izumi uses) and register it as the
+          campaign's character. Attach outfit or garment photos so the clothing
+          carries over.
+        </p>
+      </header>
+
+      <ng-container *ngTemplateOutlet="profileFields"></ng-container>
+
+      <!-- Prompt -->
+      <label class="cp-field cp-field-wide">
+        <span class="cp-label">
+          Headshot prompt
+          <button
+            type="button"
+            class="cp-link"
+            (click)="refreshCastPrompt()"
+            [disabled]="castStatus() !== 'idle'"
+            title="Rebuild the prompt from the fields above"
+          >
+            Rebuild from profile
+          </button>
+        </span>
+        <textarea
+          rows="4"
+          [ngModel]="castPrompt()"
+          (ngModelChange)="castPrompt.set($event)"
+          name="castPrompt"
+          [disabled]="castStatus() !== 'idle'"
+          required
+        ></textarea>
+      </label>
+
+      <!-- Reference images -->
+      <div class="cp-field cp-field-wide">
+        <span class="cp-label">
+          Reference images
+          <small class="cp-muted">optional · up to 4 · outfits, garments, a face to match</small>
+        </span>
+        <ul class="cp-ref-list" aria-label="Reference images for the headshot">
+          @for (ref of castReferences(); track $index; let i = $index) {
+            <li class="cp-ref">
+              <img [src]="ref.previewUrl" alt="Reference image" />
+              <button
+                type="button"
+                class="cp-ref-remove"
+                (click)="removeCastReference(i)"
+                [disabled]="castStatus() !== 'idle'"
+                aria-label="Remove reference image"
+              >
+                <mat-icon>close</mat-icon>
+              </button>
+            </li>
+          }
+          @if (castReferences().length < 4) {
+            <li>
+              <button
+                type="button"
+                class="cp-ref-add"
+                (click)="addCastReference()"
+                [disabled]="castStatus() !== 'idle'"
+              >
+                <mat-icon>add_photo_alternate</mat-icon>
+                <small>Add</small>
+              </button>
+            </li>
+          }
+        </ul>
+      </div>
+
+      <footer class="cp-form-footer">
+        <button
+          type="button"
+          class="cp-btn"
+          (click)="cancel()"
+          [disabled]="castStatus() !== 'idle'"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          class="cp-btn is-primary"
+          [disabled]="!canAct() || !castPrompt().trim()"
+        >
+          @switch (castStatus()) {
+            @case ('generating') {
+              <mat-icon class="cp-icon-sm cp-spin">autorenew</mat-icon> Generating headshot…
+            }
+            @case ('registering') {
+              <mat-icon class="cp-icon-sm cp-spin">autorenew</mat-icon> Registering…
+            }
+            @default {
+              <mat-icon class="cp-icon-sm">auto_awesome</mat-icon>
+              {{ character() ? 'Generate & replace' : 'Generate & add' }}
+            }
+          }
+        </button>
+      </footer>
+      @if (castStatus() !== 'idle') {
+        <p class="cp-muted cp-cast-hint">
+          This usually takes under a minute. The image lands in your gallery
+          either way.
+        </p>
+      }
+    </form>
+  }
+
+  <!-- Shared profile fields (edit + cast) -->
+  <ng-template #profileFields>
+    <div class="cp-fields">
+      <label class="cp-field">
+        <span class="cp-label">Actor name</span>
+        <input
+          type="text"
+          name="name"
+          maxlength="80"
+          placeholder="e.g. Maya"
+          [ngModel]="draft().name ?? ''"
+          (ngModelChange)="updateDraft('name', $event)"
+          [disabled]="saving() || castStatus() !== 'idle'"
+        />
+      </label>
+      <label class="cp-field">
+        <span class="cp-label">Role in the ad</span>
+        <select
+          name="role"
+          [ngModel]="draft().role ?? 'creator'"
+          (ngModelChange)="updateDraft('role', $event)"
+          [disabled]="saving() || castStatus() !== 'idle'"
+        >
+          @for (role of roles; track role.value) {
+            <option [value]="role.value">{{ role.label }}</option>
+          }
+        </select>
+      </label>
+      <label class="cp-field">
+        <span class="cp-label">Gender</span>
+        <input
+          type="text"
+          name="gender"
+          maxlength="40"
+          placeholder="e.g. Female"
+          [ngModel]="draft().gender ?? ''"
+          (ngModelChange)="updateDraft('gender', $event)"
+          [disabled]="saving() || castStatus() !== 'idle'"
+        />
+      </label>
+      <label class="cp-field">
+        <span class="cp-label">Age range</span>
+        <input
+          type="text"
+          name="ageRange"
+          maxlength="40"
+          placeholder="e.g. 30-35"
+          [ngModel]="draft().ageRange ?? ''"
+          (ngModelChange)="updateDraft('ageRange', $event)"
+          [disabled]="saving() || castStatus() !== 'idle'"
+        />
+      </label>
+      <label class="cp-field cp-field-wide">
+        <span class="cp-label">Appearance</span>
+        <input
+          type="text"
+          name="appearance"
+          maxlength="200"
+          placeholder="e.g. Short curly dark hair, warm smile, light freckles"
+          [ngModel]="draft().appearance ?? ''"
+          (ngModelChange)="updateDraft('appearance', $event)"
+          [disabled]="saving() || castStatus() !== 'idle'"
+        />
+      </label>
+      <label class="cp-field cp-field-wide">
+        <span class="cp-label">Clothing</span>
+        <input
+          type="text"
+          name="clothing"
+          maxlength="200"
+          placeholder="e.g. Olive linen shirt, gold hoop earrings"
+          [ngModel]="draft().clothing ?? ''"
+          (ngModelChange)="updateDraft('clothing', $event)"
+          [disabled]="saving() || castStatus() !== 'idle'"
+        />
+      </label>
+      <label class="cp-field cp-field-wide">
+        <span class="cp-label">Personality</span>
+        <input
+          type="text"
+          name="personality"
+          maxlength="160"
+          placeholder="e.g. Upbeat, candid, a little nerdy"
+          [ngModel]="draft().personality ?? ''"
+          (ngModelChange)="updateDraft('personality', $event)"
+          [disabled]="saving() || castStatus() !== 'idle'"
+        />
+      </label>
+    </div>
+  </ng-template>
+
+  <!-- ====================================================================
+       How changes apply
+       ==================================================================== -->
+  <p class="cp-notice is-info">
+    <mat-icon class="cp-icon-sm">info</mat-icon>
+    <span>
+      <b>Changes apply to the next generation step.</b>
+      @if (hasStoryboard()) {
+        A storyboard already exists — ask Izumi in the chat to regenerate the
+        affected scenes (or the whole storyboard) so the new character shows up.
+      } @else {
+        Izumi picks them up when it generates the storyboard.
+      }
+    </span>
+  </p>
+
+  <!-- ====================================================================
+       Supporting characters (coming soon)
+       ==================================================================== -->
+  <article class="cp-card cp-soon" aria-label="Supporting characters (coming soon)">
+    <span class="cp-empty-icon"><mat-icon>groups</mat-icon></span>
+    <div class="cp-empty-text">
+      <h3>
+        Supporting characters
+        <span class="cp-soon-chip">Coming soon</span>
+      </h3>
+      <p>
+        We're working on identity consistency for additional characters, so a
+        second person looks the same in every scene. Until then, campaigns have
+        one on-screen character.
+      </p>
+    </div>
+  </article>
+</section>

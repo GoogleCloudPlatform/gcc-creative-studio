@@ -71,11 +71,13 @@ describe('ReferenceAssetPreviewService', () => {
     expect(service.snapshot(generated)).toEqual({
       url: 'https://full/158',
       unavailable: false,
+      sources: [],
     });
     // Prefers the thumbnail when present
     expect(service.snapshot(uploaded)).toEqual({
       url: 'https://thumb/42',
       unavailable: false,
+      sources: [],
     });
     expect(service.preview(uploaded)()).toEqual(service.snapshot(uploaded));
   });
@@ -85,7 +87,11 @@ describe('ReferenceAssetPreviewService', () => {
     gallery.getMedia.and.returnValue(pending);
 
     service.ensure([generated]);
-    expect(service.snapshot(generated)).toEqual({url: '', unavailable: false});
+    expect(service.snapshot(generated)).toEqual({
+      url: '',
+      unavailable: false,
+      sources: [],
+    });
 
     pending.next({presignedUrls: ['https://full/158']});
     expect(service.snapshot(generated)?.url).toBe('https://full/158');
@@ -103,7 +109,11 @@ describe('ReferenceAssetPreviewService', () => {
     gallery.getAsset.and.returnValue(throwError(() => ({status: 404})));
 
     service.ensure([uploaded]);
-    expect(service.snapshot(uploaded)).toEqual({url: '', unavailable: true});
+    expect(service.snapshot(uploaded)).toEqual({
+      url: '',
+      unavailable: true,
+      sources: [],
+    });
 
     service.ensure([uploaded]);
     expect(gallery.getAsset).toHaveBeenCalledTimes(1);
@@ -112,7 +122,11 @@ describe('ReferenceAssetPreviewService', () => {
   it('treats a response without any URL as unavailable', () => {
     gallery.getMedia.and.returnValue(of({}));
     service.ensure([generated]);
-    expect(service.snapshot(generated)).toEqual({url: '', unavailable: true});
+    expect(service.snapshot(generated)).toEqual({
+      url: '',
+      unavailable: true,
+      sources: [],
+    });
   });
 
   it('rejects non-numeric ids without hitting the backend', () => {
@@ -124,7 +138,38 @@ describe('ReferenceAssetPreviewService', () => {
     };
     service.ensure([odd]);
     expect(gallery.getAsset).not.toHaveBeenCalled();
-    expect(service.snapshot(odd)).toEqual({url: '', unavailable: true});
+    expect(service.snapshot(odd)).toEqual({
+      url: '',
+      unavailable: true,
+      sources: [],
+    });
+  });
+
+  it('exposes the images a generated item was produced from as sources', () => {
+    gallery.getMedia.and.returnValue(
+      of({
+        presignedThumbnailUrls: ['https://thumb/158'],
+        enrichedSourceAssets: [
+          {sourceAssetId: 7, presignedThumbnailUrl: 'https://thumb/7'},
+          {sourceAssetId: 8, presignedUrl: 'https://full/8'},
+          {sourceAssetId: 9}, // no URL → skipped
+        ],
+        enrichedSourceMediaItems: [
+          {mediaItemId: 300, presignedUrl: 'https://full/300'},
+        ],
+      }),
+    );
+
+    service.ensure([generated]);
+
+    expect(service.snapshot(generated)?.sources).toEqual([
+      {url: 'https://thumb/7', label: 'Upload 7'},
+      {url: 'https://full/8', label: 'Upload 8'},
+      {url: 'https://full/300', label: 'Gallery 300'},
+    ]);
+    // Uploads have no ingredients
+    expect(ReferenceAssetPreviewService.sourcesOf({})).toEqual([]);
+    expect(ReferenceAssetPreviewService.sourcesOf(undefined)).toEqual([]);
   });
 
   it('returns undefined for assets that were never requested', () => {
