@@ -231,6 +231,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   private activeSaveSubscription?: Subscription;
   private hasPendingSave = false;
   private isSaving = false;
+  /** Monotonic id of the latest timeline fetch (see the timeline effect). */
+  private timelineLoadSeq = 0;
 
   constructor(
     public matIconRegistry: MatIconRegistry,
@@ -268,21 +270,28 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           return;
         }
         if (timelineId) {
+          // Publish the in-flight state so the chat can lock session switching
+          // until the timeline for this storyboard has actually landed. The
+          // sequence guards against a superseded fetch clearing the flag that
+          // a newer fetch still owns.
+          const requestSeq = ++this.timelineLoadSeq;
+          this.timelineState.isLoadingTimeline.set(true);
           this.workbenchService.getTimeline(timelineId).subscribe({
             next: (timeline: TimelineDTO) => {
+              if (requestSeq === this.timelineLoadSeq) {
+                this.timelineState.isLoadingTimeline.set(false);
+              }
               this.processGeneratedData(timeline);
               this.lastSavedText.set('Saved');
 
-              // If the timeline is associated with a session/storyboard, update URL and show agent panel
+              // If the timeline is associated with a session/storyboard, show
+              // the agent panel. Do NOT write sessionId/storyboardId into the
+              // URL here: the chat (`loadChatMessages`) is the single owner of
+              // those query params. Navigating from here wrote the *timeline's*
+              // session back into the URL after the user had already switched
+              // chats, and the queryParams subscription below then flipped
+              // `selectedSessionId` back — an endless session ping-pong.
               if (timeline.storyboard_id || timeline.session_id) {
-                void this.router.navigate([], {
-                  relativeTo: this.route,
-                  queryParams: {
-                    sessionId: timeline.session_id || null,
-                    storyboardId: timeline.storyboard_id || null,
-                  },
-                  queryParamsHandling: 'merge',
-                });
                 this.activeToolButton.set('agent');
               } else {
                 // Manual timeline: clear agent chat state
@@ -295,11 +304,17 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
               }
             },
             error: err => {
+              if (requestSeq === this.timelineLoadSeq) {
+                this.timelineState.isLoadingTimeline.set(false);
+              }
               console.error('Failed to fetch timeline:', err);
               this.lastSavedText.set('Failed to load timeline');
             },
           });
         } else {
+          // No timeline to load: invalidate any in-flight fetch and unlock.
+          this.timelineLoadSeq++;
+          this.timelineState.isLoadingTimeline.set(false);
           this.timelineState.timelineClips.set([]);
           this.timelineState.selectedClipId.set(null);
           this.timelineState.assets.set([]);

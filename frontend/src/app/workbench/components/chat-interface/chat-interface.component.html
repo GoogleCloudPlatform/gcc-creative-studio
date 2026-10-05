@@ -34,9 +34,13 @@
   </div>
   -->
 
-  <!-- Session Selector -->
+  <!-- Session Selector (locked while a session switch is still loading) -->
   <div
-    class="mb-4 flex items-center gap-2 relative z-10"
+    class="mb-4 flex items-center gap-2 relative z-10 transition-opacity"
+    [class.pointer-events-none]="isSessionLocked()"
+    [class.opacity-60]="isSessionLocked()"
+    [attr.aria-busy]="isSessionLocked()"
+    [title]="isSessionLocked() ? 'Loading conversation…' : ''"
     *ngIf="sessions().length > 0"
   >
     <studio-dropdown
@@ -50,6 +54,7 @@
     <button
       mat-icon-button
       (click)="deleteChat()"
+      [disabled]="isSessionLocked()"
       class="text-red-500 hover:text-red-700"
       title="Delete Chat"
     >
@@ -276,11 +281,11 @@
   >
     <div
       class="flex gap-2 bg-gray-800 border border-gray-700 rounded-2xl px-3 py-2 focus-within:border-blue-500 flex items-center"
-      [class.opacity-60]="isBusy()"
+      [class.opacity-60]="isBusy() || isSessionLocked()"
     >
       <button
         (click)="openImageSelector()"
-        [disabled]="isBusy()"
+        [disabled]="isBusy() || isSessionLocked()"
         class="p-1.5 hover:bg-neutral-700 rounded-lg text-gray-400 hover:text-white flex items-center justify-center flex-shrink-0 h-8 w-8 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         matTooltip="Attach Reference Images"
       >
@@ -292,8 +297,10 @@
 
       <textarea
         #chatInput
-        placeholder="Ask Izumi..."
-        [disabled]="isBusy()"
+        [placeholder]="
+          isSessionLocked() ? 'Loading conversation…' : 'Ask Izumi...'
+        "
+        [disabled]="isBusy() || isSessionLocked()"
         class="flex-1 bg-transparent text-sm text-white focus:outline-none resize-none max-h-48 overflow-y-auto py-1 px-1 leading-relaxed disabled:opacity-50 disabled:cursor-not-allowed"
         rows="1"
         [ngModel]="chatInputValue()"
@@ -303,7 +310,7 @@
 
       <button
         (click)="toggleInputExpand()"
-        [disabled]="isBusy()"
+        [disabled]="isBusy() || isSessionLocked()"
         class="p-1.5 hover:bg-neutral-700 rounded-lg text-gray-400 hover:text-white flex items-center justify-center flex-shrink-0 h-8 w-8 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         matTooltip="Expand input"
       >
@@ -320,6 +327,7 @@
         class="flex-shrink-0 flex items-center justify-center"
         [disabled]="
           isBusy() ||
+          isSessionLocked() ||
           ((!chatInputValue() || !chatInputValue().trim()) &&
             selectedImages().length === 0)
         "

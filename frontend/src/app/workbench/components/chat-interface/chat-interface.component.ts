@@ -120,6 +120,17 @@ export class ChatInterfaceComponent
   isSubmittingGate = signal<boolean>(false);
   isBusy = computed<boolean>(() => this.isTyping() || this.isSubmittingGate());
   isLoadingHistory = signal<boolean>(false);
+  /**
+   * True while a session switch is still settling: either the chat history
+   * (`getSessionDetail`) or the storyboard's timeline (Workbench
+   * `getTimeline`) is in flight. The session picker, delete and composer are
+   * disabled while locked so a user cannot queue a second switch on top of
+   * one that has not finished yet. "New Chat" stays enabled as the escape
+   * hatch; it resets both loaders synchronously.
+   */
+  isSessionLocked = computed<boolean>(
+    () => this.isLoadingHistory() || this.timelineState.isLoadingTimeline(),
+  );
   agentUnavailable = signal<boolean>(false);
   activeApprovalGate = signal<ApprovalGateInfo | null>(null);
   visibleApprovalGate = computed<ApprovalGateInfo | null>(() => {
@@ -177,23 +188,13 @@ export class ChatInterfaceComponent
     {allowSignalWrites: true},
   );
 
-  private storyboardUrlSyncEffect = effect(() => {
-    const sb = this.agentChatService.currentStoryboard();
-    if (sb && sb.id) {
-      const currentStoryboardId =
-        this.route.snapshot.queryParams['storyboardId'];
-      if (Number(currentStoryboardId) !== Number(sb.id)) {
-        void this.router.navigate([], {
-          relativeTo: this.route,
-          queryParams: {
-            sessionId: null,
-            storyboardId: sb.id,
-          },
-          queryParamsHandling: 'merge',
-        });
-      }
-    }
-  });
+  // NOTE: there is deliberately no "storyboard → URL" effect here. The
+  // session-detail response handlers (`loadChatMessages`, `loadChatSessions`)
+  // are the single writers of `sessionId` / `storyboardId` in the URL. A
+  // previous effect navigated with `sessionId: null` whenever the storyboard
+  // changed while `route.snapshot` was still stale, stripping the session the
+  // response handler had just written and re-triggering every queryParams
+  // subscriber — one arc of the session ping-pong loop.
 
   private resolvingAssetIds = new Set<string>();
 
@@ -521,6 +522,19 @@ export class ChatInterfaceComponent
         return;
       }
 
+      // URL echo: the query params already describe the state we hold (this
+      // is how every navigate() we issue ourselves comes back to us). Doing
+      // nothing here is what keeps "session → URL → session" from looping.
+      const urlMatchesCurrentState =
+        this.lastWorkspaceId === workspaceId &&
+        this.sessions().length > 0 &&
+        (sessionId ?? null) === (this.currentSessionId ?? null) &&
+        (storyboardId ? Number(storyboardId) : null) ===
+          (this.agentChatService.currentStoryboard()?.id ?? null);
+      if (urlMatchesCurrentState) {
+        return;
+      }
+
       this.isLoadingHistory.set(true);
 
       // Always load sessions first to populate the sessions dropdown
@@ -562,10 +576,26 @@ export class ChatInterfaceComponent
 
               if (isDifferentSession || isDifferentWorkspace) {
                 this.lastWorkspaceId = workspaceId;
+
+                if (sessionId && sessionExistsInWorkspace) {
+                  // Session-first deep link: reuse the single hardened loader
+                  // (request cancellation, stale-response guard,
+                  // navigate-only-if-different) instead of a second copy.
+                  this.currentSessionId = sessionId;
+                  this.submittedGateCallIds.clear();
+                  this.lastExecutedAction = null;
+                  this.loadChatMessages(
+                    sessionId,
+                    storyboardId ? Number(storyboardId) : undefined,
+                  );
+                  return;
+                }
+
+                // Storyboard-first deep link (no session in the URL).
                 this.agentChatService
                   .getSessionDetail(
                     workspaceId,
-                    sessionId || undefined,
+                    undefined,
                     storyboardId ? Number(storyboardId) : undefined,
                   )
                   .subscribe({
@@ -1119,6 +1149,10 @@ export class ChatInterfaceComponent
     });
   }
   onSessionChange(sessionId: string) {
+    // The picker is disabled in the template while locked; this is the
+    // backstop for keyboard / programmatic calls. Dropping the click (instead
+    // of queueing it) is what keeps a rapid A→B→C from stacking requests.
+    if (this.isSessionLocked()) return;
     if (sessionId && sessionId !== this.currentSessionId) {
       this.activeApprovalGate.set(null);
       this.currentSessionId = sessionId;
@@ -1137,7 +1171,7 @@ export class ChatInterfaceComponent
     this.loadChatSessions();
   }
   deleteChat() {
-    if (!this.currentSessionId) return;
+    if (!this.currentSessionId || this.isSessionLocked()) return;
     const dialogRef = this.dialog.open(ConfirmationDialogComponent, {
       data: {
         title: 'Delete Chat',
@@ -1176,7 +1210,7 @@ export class ChatInterfaceComponent
     });
   }
   sendChatMessage(text: string) {
-    if (this.isBusy()) return;
+    if (this.isBusy() || this.isSessionLocked()) return;
     if ((!text || !text.trim()) && this.selectedImages().length === 0) return;
 
     if (!this.currentSessionId) {

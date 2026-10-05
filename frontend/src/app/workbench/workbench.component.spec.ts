@@ -27,7 +27,7 @@ import {RouterTestingModule} from '@angular/router/testing';
 import {MatDialogModule} from '@angular/material/dialog';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {signal, CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
-import {ActivatedRoute} from '@angular/router';
+import {ActivatedRoute, Router} from '@angular/router';
 import {Subject, of} from 'rxjs';
 import {AgentChatService} from './services/agent-chat.service';
 import {TimelineStateService} from './services/timeline-state.service';
@@ -1090,6 +1090,120 @@ describe('WorkbenchComponent', () => {
 
       expect(stateService.timelineClips()).toEqual([]);
       expect(stateService.loadedTimelineId()).toBeUndefined();
+    }));
+
+    it('must NOT write sessionId/storyboardId into the URL when a timeline loads', fakeAsync(() => {
+      // The chat (`loadChatMessages`) is the single owner of those query
+      // params. Navigating from here re-triggered every queryParams
+      // subscriber and ping-ponged the session (see GEMINI.md).
+      const router = TestBed.inject(Router);
+      const navigateSpy = spyOn(router, 'navigate').and.returnValue(
+        Promise.resolve(true),
+      );
+      spyOn(workbenchService, 'getTimeline').and.returnValue(
+        of({
+          timeline_id: 42,
+          storyboard_id: 7,
+          session_id: 'session-from-timeline',
+          workspace_id: 1,
+          title: 'T',
+          video_clips: [],
+          audio_clips: [],
+        } as TimelineDTO),
+      );
+
+      stateService.loadedTimelineId.set(undefined);
+      agentChatService.currentStoryboard.set({id: 7, timeline_id: 42} as any);
+      fixture.detectChanges();
+      tick();
+
+      expect(navigateSpy).not.toHaveBeenCalled();
+      expect(component.activeToolButton()).toBe('agent');
+    }));
+
+    it('publishes isLoadingTimeline while the fetch is in flight', fakeAsync(() => {
+      const pending = new Subject<TimelineDTO>();
+      spyOn(workbenchService, 'getTimeline').and.returnValue(pending);
+
+      stateService.loadedTimelineId.set(undefined);
+      fixture.detectChanges();
+      tick();
+      expect(stateService.isLoadingTimeline()).toBeFalse();
+
+      stateService.loadedTimelineId.set(42);
+      fixture.detectChanges();
+      tick();
+      expect(stateService.isLoadingTimeline()).toBeTrue();
+
+      pending.next({
+        timeline_id: 42,
+        workspace_id: 1,
+        title: 'T',
+        video_clips: [],
+        audio_clips: [],
+      } as TimelineDTO);
+      expect(stateService.isLoadingTimeline()).toBeFalse();
+    }));
+
+    it('keeps isLoadingTimeline true until the LATEST fetch settles', fakeAsync(() => {
+      const first = new Subject<TimelineDTO>();
+      const second = new Subject<TimelineDTO>();
+      spyOn(workbenchService, 'getTimeline').and.returnValues(first, second);
+      const dto = (id: number) =>
+        ({
+          timeline_id: id,
+          workspace_id: 1,
+          title: 'T',
+          video_clips: [],
+          audio_clips: [],
+        }) as TimelineDTO;
+
+      stateService.loadedTimelineId.set(undefined);
+      fixture.detectChanges();
+      tick();
+
+      stateService.loadedTimelineId.set(1);
+      fixture.detectChanges();
+      tick();
+      stateService.loadedTimelineId.set(2);
+      fixture.detectChanges();
+      tick();
+      expect(stateService.isLoadingTimeline()).toBeTrue();
+
+      // The superseded response must not unlock the chat.
+      first.next(dto(1));
+      expect(stateService.isLoadingTimeline()).toBeTrue();
+
+      second.next(dto(2));
+      expect(stateService.isLoadingTimeline()).toBeFalse();
+    }));
+
+    it('clears isLoadingTimeline on fetch error and when the timeline is unset', fakeAsync(() => {
+      const failing = new Subject<TimelineDTO>();
+      const hanging = new Subject<TimelineDTO>();
+      spyOn(workbenchService, 'getTimeline').and.returnValues(failing, hanging);
+      spyOn(console, 'error');
+
+      stateService.loadedTimelineId.set(undefined);
+      fixture.detectChanges();
+      tick();
+
+      stateService.loadedTimelineId.set(1);
+      fixture.detectChanges();
+      tick();
+      failing.error(new Error('boom'));
+      expect(stateService.isLoadingTimeline()).toBeFalse();
+      expect(component.lastSavedText()).toBe('Failed to load timeline');
+
+      stateService.loadedTimelineId.set(2);
+      fixture.detectChanges();
+      tick();
+      expect(stateService.isLoadingTimeline()).toBeTrue();
+
+      stateService.loadedTimelineId.set(undefined);
+      fixture.detectChanges();
+      tick();
+      expect(stateService.isLoadingTimeline()).toBeFalse();
     }));
   });
 

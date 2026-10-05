@@ -161,6 +161,7 @@ describe('ChatInterfaceComponent', () => {
 
     const mockTimelineStateService = {
       loadedTimelineId: signal<any>(undefined),
+      isLoadingTimeline: signal<boolean>(false),
       timelineClips: signal<any>([]),
       transitions: signal<any>([]),
       transitionIn: signal<any>(null),
@@ -1303,15 +1304,21 @@ describe('ChatInterfaceComponent', () => {
       session: {id: sessionId, events: [], state: {}},
       storyboard: storyboardId ? {id: storyboardId, timeline_id: 7} : null,
     });
+    // Programmatic switch (URL deep link / storyboard sync): these paths set
+    // currentSessionId and call the loader directly, bypassing the picker lock.
+    const switchProgrammatically = (sessionId: string) => {
+      component.currentSessionId = sessionId;
+      component.loadChatMessages(sessionId);
+    };
 
-    it('ignores a stale response that lands after the user switched again', () => {
+    it('ignores a stale response that lands after a programmatic switch', () => {
       const first = new Subject<any>();
       const second = new Subject<any>();
       agentChatService.getSessionDetail.and.returnValues(first, second);
       spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
 
-      component.onSessionChange('session-A');
-      component.onSessionChange('session-B');
+      switchProgrammatically('session-A');
+      switchProgrammatically('session-B');
 
       // A's response arrives last (out of order). It must not be applied.
       second.next(detailFor('session-B', 2));
@@ -1326,17 +1333,127 @@ describe('ChatInterfaceComponent', () => {
       expect(navigatedSessions).not.toContain('session-A');
     });
 
-    it('cancels the previous in-flight request when a new session is picked', () => {
+    it('cancels the previous in-flight request on a programmatic switch', () => {
       const first = new Subject<any>();
       const second = new Subject<any>();
       agentChatService.getSessionDetail.and.returnValues(first, second);
 
-      component.onSessionChange('session-A');
+      switchProgrammatically('session-A');
       expect(first.observers.length).toBe(1);
 
-      component.onSessionChange('session-B');
+      switchProgrammatically('session-B');
       expect(first.observers.length).toBe(0);
       expect(second.observers.length).toBe(1);
+    });
+
+    it('drops a picker click while the previous switch is still loading', () => {
+      const pending = new Subject<any>();
+      agentChatService.getSessionDetail.and.returnValue(pending);
+      agentChatService.getSessionDetail.calls.reset();
+
+      component.onSessionChange('session-A');
+      expect(component.isSessionLocked()).toBeTrue();
+
+      component.onSessionChange('session-B');
+
+      expect(component.currentSessionId).toBe('session-A');
+      expect(agentChatService.getSessionDetail).toHaveBeenCalledTimes(1);
+      expect(pending.observers.length).toBe(1);
+    });
+
+    it('drops a picker click while the Workbench timeline is still loading', () => {
+      const timelineState = TestBed.inject(TimelineStateService) as any;
+      agentChatService.getSessionDetail.calls.reset();
+      timelineState.isLoadingTimeline.set(true);
+
+      component.onSessionChange('session-A');
+
+      expect(component.isSessionLocked()).toBeTrue();
+      expect(component.currentSessionId).toBeNull();
+      expect(agentChatService.getSessionDetail).not.toHaveBeenCalled();
+      timelineState.isLoadingTimeline.set(false);
+    });
+
+    it('unlocks once both the history and the timeline have settled', () => {
+      const timelineState = TestBed.inject(TimelineStateService) as any;
+      const pending = new Subject<any>();
+      agentChatService.getSessionDetail.and.returnValue(pending);
+      timelineState.isLoadingTimeline.set(true);
+
+      component.onSessionChange('session-A');
+      pending.next(detailFor('session-A', 1));
+      pending.complete();
+      expect(component.isLoadingHistory()).toBeFalse();
+      expect(component.isSessionLocked()).toBeTrue();
+
+      timelineState.isLoadingTimeline.set(false);
+      expect(component.isSessionLocked()).toBeFalse();
+
+      agentChatService.getSessionDetail.and.returnValue(
+        of(detailFor('session-B', 2)),
+      );
+      component.onSessionChange('session-B');
+      expect(component.currentSessionId).toBe('session-B');
+    });
+
+    it('ignores delete and send while locked', () => {
+      const dialog = TestBed.inject(MatDialog);
+      spyOn(dialog, 'open');
+      agentChatService.getSessionDetail.and.returnValue(new Subject<any>());
+
+      component.onSessionChange('session-A');
+      expect(component.isSessionLocked()).toBeTrue();
+
+      component.deleteChat();
+      expect(dialog.open).not.toHaveBeenCalled();
+
+      component.sendChatMessage('hello while loading');
+      expect(agentChatService.sendMessage).not.toHaveBeenCalled();
+      expect(component.isTyping()).toBeFalse();
+    });
+
+    it('keeps "New Chat" available as the escape hatch while locked', () => {
+      agentChatService.getSessionDetail.and.returnValue(new Subject<any>());
+      spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
+
+      component.onSessionChange('session-A');
+      expect(component.isLoadingHistory()).toBeTrue();
+
+      component.startNewChat();
+
+      expect(component.isLoadingHistory()).toBeFalse();
+      expect(component.currentSessionId).toBeNull();
+    });
+
+    it('treats a URL that echoes the current session/storyboard as a no-op', () => {
+      component['lastWorkspaceId'] = 1;
+      component.currentSessionId = 'session-A';
+      agentChatService.sessions.set([{id: 'session-A'}] as any);
+      agentChatService.currentStoryboard.set({id: 1} as any);
+      agentChatService.getSessions.calls.reset();
+      agentChatService.getSessionDetail.calls.reset();
+
+      queryParamsSubject.next({sessionId: 'session-A', storyboardId: '1'});
+
+      expect(agentChatService.getSessions).not.toHaveBeenCalled();
+      expect(agentChatService.getSessionDetail).not.toHaveBeenCalled();
+      expect(component.isLoadingHistory()).toBeFalse();
+    });
+
+    it('routes a session-first deep link through loadChatMessages', () => {
+      const loadSpy = spyOn(component, 'loadChatMessages').and.callThrough();
+      agentChatService.getSessions.and.returnValue(
+        of([{id: 'session-X', lastUpdateTime: 1}]),
+      );
+      agentChatService.getSessionDetail.and.returnValue(
+        of(detailFor('session-X', 3)),
+      );
+
+      queryParamsSubject.next({sessionId: 'session-X', storyboardId: '3'});
+
+      expect(loadSpy).toHaveBeenCalledWith('session-X', 3);
+      expect(component.currentSessionId).toBe('session-X');
+      expect(agentChatService.currentStoryboard()?.id).toBe(3);
     });
 
     it('cancels the in-flight request on destroy', () => {
