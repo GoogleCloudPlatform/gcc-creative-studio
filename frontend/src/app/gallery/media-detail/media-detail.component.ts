@@ -262,7 +262,6 @@ export class MediaDetailComponent implements OnDestroy {
         this.readInitialIndexFromUrl();
         this.parsePrompt();
         this.loadFolderBreadcrumbs();
-        console.log('fetchMediaDetails - mediaItem', this.mediaItem);
       },
       error: err => {
         console.error('Failed to fetch media details', err);

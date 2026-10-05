@@ -968,7 +968,6 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       });
     }
 
-    console.log('Setting timelineClips to:', newClips);
     this.timelineState.timelineClips.set(newClips);
     this.refreshTimelineLayout();
 
@@ -1761,7 +1760,6 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       : this.workbenchService.createTimeline(timelineData);
     this.activeSaveSubscription = request$.subscribe({
       next: (res: TimelineDTO) => {
-        console.log('Timeline saved successfully', res);
         this.lastSavedText.set('Saved');
         if (res.timeline_id) {
           this.timelineState.loadedTimelineId.set(res.timeline_id);

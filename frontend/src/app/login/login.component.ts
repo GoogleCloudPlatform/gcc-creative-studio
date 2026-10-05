@@ -76,7 +76,7 @@ export class LoginComponent {
         },
         error: error => {
           this.loader = false;
-          console.log(error);
+          console.error('Login failed', error);
           // Handle specific errors from the auth service
           if (
             error.message?.includes('timed out') ||
@@ -107,7 +107,7 @@ export class LoginComponent {
         },
         error: error => {
           this.loader = false;
-          console.log(error);
+          console.error('Login failed', error);
           // Handle specific errors from the auth service
           if (
             error.message?.includes('timed out') ||

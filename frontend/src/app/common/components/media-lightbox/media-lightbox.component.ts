@@ -439,7 +439,6 @@ export class MediaLightboxComponent
     // This component is used on multiple pages (VTO, Home, Gallery).
     // We should ONLY manipulate the URL when on the gallery detail page.
     // Otherwise, it can cause unintended navigations and state loss.
-    console.log('this.router.url', this.router.url);
     if (!this.router.url.startsWith('/gallery/')) {
       // MediaLightbox: Skipping URL update because we are not on a gallery detail page.
       return;

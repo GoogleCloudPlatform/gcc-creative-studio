@@ -270,8 +270,7 @@ export class UpscaleComponent implements OnInit, OnDestroy {
         image_preservation_factor: this.imagePreservationFactor,
       })
       .subscribe({
-        next: job => {
-          console.log('Upscale job started:', job);
+        next: () => {
           // The subscription to activeUpscaleJob$ will handle the rest
         },
         error: err => {

@@ -520,14 +520,12 @@ export class StoryboardComponent {
 
   updateStoryboard() {
     const sb = this.agentChatService.currentStoryboard() as any;
-    console.log('updateStoryboard called. currentStoryboard:', sb);
     if (!sb || !sb.id) {
       console.warn('Cannot update storyboard: missing storyboard or id');
       return;
     }
 
     const currentScenes = this.scenes();
-    console.log('currentScenes in component:', currentScenes);
     const scenesForBackend = currentScenes.map((scene, idx) => {
       const shot = scene.shots[0]; // We only support 1 shot per scene for now
 
@@ -575,7 +573,6 @@ export class StoryboardComponent {
     };
 
     this.storyboardService.updateStoryboard(sb.id, updateData).subscribe({
-      next: (res: any) => console.log('Storyboard updated successfully', res),
       error: (err: any) => console.error('Error updating storyboard', err),
     });
   }

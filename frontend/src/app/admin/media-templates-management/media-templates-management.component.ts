@@ -124,9 +124,6 @@ export class MediaTemplatesManagementComponent
 
         saveObservable.subscribe({
           next: () => {
-            console.log(
-              `Template ${result.id ? 'updated' : 'created'} successfully`,
-            );
             this.fetchTemplates();
             // TODO: Add snackbar for user feedback
           },
