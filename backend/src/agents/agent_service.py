@@ -1099,10 +1099,27 @@ class AgentService:
                     error_type = "unknown"
                     code = 500
                     err_str = str(e)
+                    err_lower = err_str.lower()
+                    # The agent reuses the user's X-User-Authorization token
+                    # for the whole run; when it expires mid-run its tool
+                    # calls back into Creative Studio fail with 401. Check
+                    # this first: such messages often also mention other
+                    # codes/words that would match the branches below.
                     if (
+                        "401" in err_str
+                        or "unauthorized" in err_lower
+                        or "unauthenticated" in err_lower
+                        or "token expired" in err_lower
+                        or "token has expired" in err_lower
+                        or "invalid token" in err_lower
+                        or "expired token" in err_lower
+                    ):
+                        error_type = "auth_expired"
+                        code = 401
+                    elif (
                         "429" in err_str
                         or "ResourceExhausted" in err_str
-                        or "quota" in err_str.lower()
+                        or "quota" in err_lower
                     ):
                         error_type = "quota_exceeded"
                         code = 429

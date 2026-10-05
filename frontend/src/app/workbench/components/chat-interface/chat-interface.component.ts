@@ -79,6 +79,17 @@ interface DropdownOption {
   tooltip?: string;
 }
 
+/**
+ * Prefixes emitted by `formatGateDecisionText` for user gate decisions
+ * reconstructed from history. Used by `recoverLastActionFromHistory` to avoid
+ * replaying a consumed `function_response` on Retry.
+ */
+const GATE_DECISION_MARKERS: readonly string[] = [
+  '✅ Approved',
+  '✏️ Requested Modifications',
+  '🔄 Requested Regeneration',
+];
+
 @Component({
   selector: 'app-chat-interface',
   templateUrl: './chat-interface.component.html',
@@ -2520,6 +2531,14 @@ export class ChatInterfaceComponent
 
     if (!code) {
       if (
+        rawMsg.includes('401') ||
+        rawMsg.toLowerCase().includes('unauthorized') ||
+        rawMsg.toLowerCase().includes('unauthenticated') ||
+        rawMsg.toLowerCase().includes('token expired')
+      ) {
+        code = 401;
+        type = 'auth_expired';
+      } else if (
         rawMsg.includes('429') ||
         rawMsg.includes('ResourceExhausted') ||
         rawMsg.toLowerCase().includes('quota')
@@ -2540,6 +2559,14 @@ export class ChatInterfaceComponent
         code = 400;
         type = 'invalid_argument';
       }
+    }
+
+    if (code === 401 || type === 'auth_expired') {
+      return {
+        text: 'Your sign-in expired while the agent was working. Sign in again and press Retry to resume from your last message.',
+        code: 401,
+        type: 'auth_expired',
+      };
     }
 
     if (code === 429 || type === 'quota_exceeded') {
@@ -2581,15 +2608,33 @@ export class ChatInterfaceComponent
     };
   }
 
+  /**
+   * Whether the Retry button on an error card can do anything.
+   * `lastExecutedAction` only survives while this component instance lives;
+   * after a re-login (token expired mid-run) the component is re-created, so
+   * we also accept a user turn that can be recovered from the loaded history.
+   */
+  canRetry(): boolean {
+    if (this.isBusy() || !this.currentSessionId) return false;
+    return (
+      this.lastExecutedAction !== null ||
+      this.recoverLastActionFromHistory() !== null
+    );
+  }
+
   retryLastAction() {
-    if (this.isBusy() || !this.lastExecutedAction || !this.currentSessionId) {
+    if (this.isBusy() || !this.currentSessionId) {
+      return;
+    }
+    const action =
+      this.lastExecutedAction ?? this.recoverLastActionFromHistory();
+    if (!action) {
       return;
     }
 
     // Remove the error card from the chat
     this.chatMessages.update(msgs => msgs.filter(m => !m.isError));
 
-    const action = this.lastExecutedAction;
     this.isTyping.set(true);
     if (this.currentAgent === 'ads_x') {
       this.agentChatService.isGeneratingStoryboard.set(true);
@@ -2611,6 +2656,56 @@ export class ChatInterfaceComponent
       workspaceId,
       callbacks,
     );
+  }
+
+  /**
+   * Rebuilds a retryable action from the last user turn in `chatMessages`.
+   * Used when `lastExecutedAction` is null (new component instance after a
+   * login redirect or session switch). Gate decisions are NOT replayed as a
+   * `function_response`: their tool-call id was already consumed by the agent
+   * and the backend rejects it, so we ask the agent to continue in plain text.
+   */
+  private recoverLastActionFromHistory(): {
+    type: 'chat';
+    text: string;
+    partsParams: any[];
+  } | null {
+    const msgs = this.chatMessages();
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const msg = msgs[i];
+      if (msg.isError || msg.sender !== 'user') continue;
+      const text = (msg.text || '').trim();
+      const images: any[] = msg.images || [];
+      if (!text && images.length === 0) continue;
+
+      if (GATE_DECISION_MARKERS.some(marker => text.includes(marker))) {
+        const continuation = `Please continue from where you left off. My last decision was: ${text}`;
+        return {
+          type: 'chat',
+          text: continuation,
+          partsParams: [{text: continuation}],
+        };
+      }
+
+      const partsParams: any[] = [];
+      if (text) partsParams.push({text});
+      for (const img of images) {
+        if (img && 'mediaItem' in img && img.mediaItem?.id) {
+          partsParams.push({
+            sourceMediaItem: {
+              mediaItemId: img.mediaItem.id,
+              mediaIndex: img.selectedIndex || 0,
+              role: 'input',
+            },
+          });
+        } else if (img?.id) {
+          partsParams.push({sourceAssetId: img.id});
+        }
+      }
+      if (partsParams.length === 0) continue;
+      return {type: 'chat', text, partsParams};
+    }
+    return null;
   }
 
   toggleInputExpand() {

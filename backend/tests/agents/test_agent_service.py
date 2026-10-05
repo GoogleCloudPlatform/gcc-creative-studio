@@ -402,6 +402,72 @@ async def test_chat_process_stream_error_handling():
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "message",
+    [
+        "401 Client Error: Unauthorized for url: https://cs/api/images",
+        "Token has expired. Please re-authenticate. (status 503 fallback)",
+        "google.auth.exceptions.RefreshError: invalid token",
+    ],
+)
+async def test_chat_process_stream_classifies_expired_user_token(message):
+    """A user token that expires mid-run must surface as 401/auth_expired,
+    not as the generic 500, even when the message also mentions other codes."""
+    import asyncio
+    import json
+
+    with patch("vertexai.Client"):
+        service = AgentService(
+            agent_repo=MagicMock(),
+            workspace_service=MagicMock(),
+            storyboard_repo=MagicMock(),
+            workspace_auth=AsyncMock(),
+            project_service=MagicMock(),
+        )
+
+        user = MagicMock(spec=UserModel)
+        payload = MagicMock()
+        payload.model_dump.return_value = {
+            "sessionId": "s-auth-1",
+            "workspaceId": 10,
+            "newMessage": {"role": "user", "parts": [{"text": "hello"}]},
+        }
+        request = MagicMock(spec=Request)
+
+        with patch("src.agents.agent_service.agent_engines") as mock_engines:
+            mock_remote = MagicMock()
+            mock_remote.async_stream_query.side_effect = Exception(message)
+            mock_engines.get.return_value = mock_remote
+
+            mock_repo_instance = AsyncMock()
+            with patch(
+                "src.agents.agent_service.async_session_local"
+            ) as mock_db_ctx:
+                mock_db_ctx.return_value.__aenter__.return_value = AsyncMock()
+                with patch(
+                    "src.agents.agent_service.AgentRepository"
+                ) as mock_repo_cls:
+                    mock_repo_cls.return_value = mock_repo_instance
+
+                    await service.chat(
+                        current_user=user,
+                        user_id="999",
+                        payload=payload,
+                        request=request,
+                    )
+                    await asyncio.sleep(0.1)
+
+            calls = mock_repo_instance.add_chat_event.call_args_list
+            assert len(calls) == 2
+            err_payload = json.loads(
+                calls[0].kwargs["payload"]["raw"].strip().split("data: ")[1]
+            )
+            assert err_payload["code"] == 401
+            assert err_payload["type"] == "auth_expired"
+            assert calls[1].kwargs["payload"]["raw"] == "data: [DONE]\n\n"
+
+
+@pytest.mark.anyio
 async def test_chat_detects_frame_approval_gate():
     import asyncio
     import json

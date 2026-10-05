@@ -27,6 +27,7 @@ import {ActivatedRoute, Router} from '@angular/router';
 import {FormsModule} from '@angular/forms';
 import {MatDialogModule, MatDialog} from '@angular/material/dialog';
 import {MatSnackBarModule} from '@angular/material/snack-bar';
+import {MatTooltipModule} from '@angular/material/tooltip';
 import {MarkdownModule} from 'ngx-markdown';
 import {signal, CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
 import {of, Subject, BehaviorSubject, throwError} from 'rxjs';
@@ -175,6 +176,7 @@ describe('ChatInterfaceComponent', () => {
         FormsModule,
         MatDialogModule,
         MatSnackBarModule,
+        MatTooltipModule,
         MarkdownModule.forRoot(),
         ApprovalGateComponent,
       ],
@@ -2074,6 +2076,106 @@ describe('ChatInterfaceComponent', () => {
         expect(component.chatMessages().some(m => m.isError)).toBeFalse();
         expect(component.isSubmittingGate()).toBeTrue();
         expect(agentChatService.sendMessage).toHaveBeenCalled();
+      });
+
+      it('should map 401 / auth_expired errors to a sign-in-expired message', () => {
+        const byType = component.getFriendlyErrorMessage({
+          code: 401,
+          type: 'auth_expired',
+          message: 'boom',
+        });
+        expect(byType.code).toBe(401);
+        expect(byType.type).toBe('auth_expired');
+        expect(byType.text).toContain('sign-in expired');
+
+        const byText = component.getFriendlyErrorMessage(
+          new Error('401 Unauthorized: token expired'),
+        );
+        expect(byText.code).toBe(401);
+        expect(byText.type).toBe('auth_expired');
+      });
+
+      it('should recover the last user message from history when lastExecutedAction is null (new component after re-login)', () => {
+        component.currentSessionId = 's_retry_history';
+        component['lastExecutedAction'] = null;
+        agentChatService.sendMessage = jasmine
+          .createSpy('sendMessage')
+          .and.returnValue(Promise.resolve());
+
+        component.chatMessages.set([
+          {sender: 'agent', text: 'Hi!'},
+          {
+            sender: 'user',
+            text: 'Make an ad for my sneakers',
+            images: [{id: 11}, {mediaItem: {id: 22}}],
+          },
+          {sender: 'agent', text: 'Working on it...'},
+          {sender: 'agent', text: 'Agent Execution Failed', isError: true},
+        ] as any);
+
+        expect(component.canRetry()).toBeTrue();
+        component.retryLastAction();
+
+        expect(component.chatMessages().some(m => m.isError)).toBeFalse();
+        expect(component.isTyping()).toBeTrue();
+        expect(agentChatService.sendMessage).toHaveBeenCalledWith(
+          's_retry_history',
+          [
+            {text: 'Make an ad for my sneakers'},
+            {sourceAssetId: 11},
+            {
+              sourceMediaItem: {mediaItemId: 22, mediaIndex: 0, role: 'input'},
+            },
+          ],
+          jasmine.anything(),
+          jasmine.anything(),
+        );
+      });
+
+      it('should send a natural-language continuation instead of replaying a gate decision recovered from history', () => {
+        component.currentSessionId = 's_retry_history_gate';
+        component['lastExecutedAction'] = null;
+        agentChatService.sendMessage = jasmine
+          .createSpy('sendMessage')
+          .and.returnValue(Promise.resolve());
+
+        component.chatMessages.set([
+          {sender: 'user', text: 'Make an ad'},
+          {sender: 'agent', text: 'Here is the storyboard'},
+          {sender: 'user', text: '✅ Approved (Storyboard)'},
+          {sender: 'agent', text: 'Failed', isError: true},
+        ] as any);
+
+        component.retryLastAction();
+
+        const payload = (
+          agentChatService.sendMessage as jasmine.Spy
+        ).calls.mostRecent().args[1];
+        expect(payload.length).toBe(1);
+        expect(payload[0].text).toContain('continue from where you left off');
+        expect(payload[0].text).toContain('✅ Approved (Storyboard)');
+        expect(payload[0].function_response).toBeUndefined();
+        expect(component.isSubmittingGate()).toBeFalse();
+      });
+
+      it('should report canRetry() false and do nothing when there is no user turn to replay', () => {
+        component.currentSessionId = 's_retry_nothing';
+        component['lastExecutedAction'] = null;
+        agentChatService.sendMessage = jasmine
+          .createSpy('sendMessage')
+          .and.returnValue(Promise.resolve());
+
+        component.chatMessages.set([
+          {sender: 'agent', text: 'Welcome'},
+          {sender: 'agent', text: 'Failed', isError: true},
+        ] as any);
+
+        expect(component.canRetry()).toBeFalse();
+        component.retryLastAction();
+
+        expect(agentChatService.sendMessage).not.toHaveBeenCalled();
+        expect(component.chatMessages().some(m => m.isError)).toBeTrue();
+        expect(component.isTyping()).toBeFalse();
       });
 
       it('should detect Gate 4 even when content.role is "user" in extractGateFromEvent and checkUnresolvedGate', () => {
