@@ -147,6 +147,37 @@
     </div>
   </header>
 
+  <!-- HTTP 409 Runs-in-Flight Conflict Banner -->
+  <div
+    *ngIf="conflictBannerMessage() as conflictMsg"
+    id="runs-in-flight-conflict-banner"
+    class="mx-6 mt-2 px-4 py-3 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-200 flex items-center justify-between gap-4 z-30"
+  >
+    <div class="flex items-center gap-2 text-sm">
+      <mat-icon class="text-amber-400">warning_amber</mat-icon>
+      <span>{{ conflictMsg }}</span>
+    </div>
+    <div class="flex items-center gap-2 shrink-0">
+      <button
+        id="open-execution-history-link-btn"
+        type="button"
+        mat-stroked-button
+        color="accent"
+        (click)="navigateToExecutionHistory()"
+      >
+        Open Execution History
+      </button>
+      <button
+        id="dismiss-conflict-banner-btn"
+        type="button"
+        mat-icon-button
+        (click)="dismissConflictBanner()"
+      >
+        <mat-icon>close</mat-icon>
+      </button>
+    </div>
+  </div>
+
   <!-- Main Content Area (Canvas) -->
   <div
     class="flex-grow flex overflow-hidden relative bg-neutral-900"

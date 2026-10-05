@@ -18,7 +18,7 @@
   display: block;
   font-family: 'Google Sans', sans-serif;
   background-color: transparent;
-  color: #E3E3E3;
+  color: #e3e3e3;
 }
 
 .workflow-list-container {
@@ -28,7 +28,10 @@
   max-width: var(--max-container-width);
   margin: 0 auto;
   margin-top: calc(10vh + 0px);
-    margin-left: max(calc(5vw + 4.5rem), calc(50% - var(--max-container-width) / 2));
+  margin-left: max(
+    calc(5vw + 4.5rem),
+    calc(50% - var(--max-container-width) / 2)
+  );
 }
 
 /* Header Section */
@@ -38,7 +41,7 @@
   width: 100%; /* Ensures it spans the full width like the screenshot */
   gap: 10px;
   margin-bottom: 16px; /* Reduced bottom margin to bring list closer */
-/* --- ROW 1: Top Actions (LEFT) --- */
+  /* --- ROW 1: Top Actions (LEFT) --- */
 
   .in-line-wrapper {
     display: flex;
@@ -50,7 +53,7 @@
   .title-group {
     text-align: left; /* Ensures text sits on the left */
     width: 100%;
-    
+
     h1.page-title {
       font-family: 'Google Sans', sans-serif;
       font-weight: 400;
@@ -60,8 +63,6 @@
     }
   }
 }
-
-
 
 .workflows-filter {
   display: flex;
@@ -73,7 +74,11 @@
 .workflow-card {
   height: auto;
   /* Glassmorphism Gradient: Top-down linear gradient */
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.08) 0%,
+    rgba(255, 255, 255, 0.02) 100%
+  );
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
   display: flex;
@@ -87,7 +92,11 @@
 
   /* Hover Effect: Slightly lighter background */
   &:hover {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.06) 100%);
+    background: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.12) 0%,
+      rgba(255, 255, 255, 0.06) 100%
+    );
     border-color: rgba(255, 255, 255, 0.2);
   }
 
@@ -102,11 +111,11 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-    
+
     h2 {
-      font-size: 16px; 
+      font-size: 16px;
       font-weight: 500;
-      color: #F8F9FA;
+      color: #f8f9fa;
       margin: 0;
       margin-top: 8px;
       letter-spacing: 0.1px;
@@ -115,7 +124,7 @@
 
     .description {
       font-size: 12px;
-      color: #C4C7C5;
+      color: #c4c7c5;
       margin: 0;
       font-weight: 400;
       max-width: 600px;
@@ -129,7 +138,7 @@
       align-items: left;
       gap: 12px;
       font-size: 11px;
-      color: #8E918F;
+      color: #8e918f;
       font-family: 'Google Sans Text', sans-serif;
       margin-top: 4px;
 
@@ -155,8 +164,8 @@
     gap: 4px;
 
     button {
-      color: #C4C7C5;
-      
+      color: #c4c7c5;
+
       &:hover {
         color: white;
         background: rgba(255, 255, 255, 0.1);
@@ -180,7 +189,7 @@
     margin-bottom: 16px;
     opacity: 0.5;
   }
-  
+
   p {
     font-size: 16px;
   }
@@ -191,15 +200,15 @@
   background: transparent !important;
   color: rgba(255, 255, 255, 0.6) !important;
   font-family: 'Google Sans', sans-serif !important;
-  
+
   .mat-mdc-paginator-icon {
     fill: rgba(255, 255, 255, 0.6) !important;
   }
-  
+
   .mat-mdc-select-value {
     color: rgba(255, 255, 255, 0.8) !important;
   }
-  
+
   .mat-mdc-select-arrow {
     color: rgba(255, 255, 255, 0.6) !important;
   }
@@ -214,7 +223,11 @@
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #FFD700 0%, #FDB931 100%); /* Gold gradient example */
+  background: linear-gradient(
+    135deg,
+    #ffd700 0%,
+    #fdb931 100%
+  ); /* Gold gradient example */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -222,7 +235,3 @@
   font-weight: bold;
   color: #161616;
 }
-
-
-
-

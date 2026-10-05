@@ -42,11 +42,14 @@ class BatchExecutionRequestDto(BaseDto):
 
 
 class BatchItemResultDto(BaseModel):
-    """Result of a single batch item execution."""
+    """Result of a single batch item submission."""
 
     row_index: int
+    run_id: str | None = None
     execution_id: str | None = None
     status: str = Field(..., description="SUCCESS or FAILED")
+    run_status: str | None = None
+    queue_reason: str | None = None
     error: str | None = None
 
 

@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pydantic import BaseModel
+"""Request bodies of the workflows executor step routes."""
+
+from pydantic import BaseModel, Field, model_validator
 
 from src.workflows.schema.workflow_model import (
     GenerateAudioInputs,
@@ -25,25 +27,54 @@ from src.workflows.schema.workflow_model import (
     ImageSettings,
 )
 
+# Run ids are UUIDs or GCP execution ids; step ids are editor node ids.
+_KEY_PATTERN = r"^[A-Za-z0-9_-]*$"
+_KEY_MAX_LENGTH = 128
 
-class GenerateTextRequest(BaseModel):
+
+class StepCallContext(BaseModel):
+    """Optional checkpoint / idempotency key of a workflow step call.
+
+    Sent by the generated YAML. Calls without ``run_id`` (missing or empty,
+    e.g. executions started before the queue existed) run without
+    checkpoint or idempotency.
+    """
+
+    run_id: str | None = Field(
+        default=None, max_length=_KEY_MAX_LENGTH, pattern=_KEY_PATTERN
+    )
+    step_id: str | None = Field(
+        default=None, max_length=_KEY_MAX_LENGTH, pattern=_KEY_PATTERN
+    )
+    execution_id: str | None = Field(
+        default=None, max_length=_KEY_MAX_LENGTH, pattern=_KEY_PATTERN
+    )
+
+    @model_validator(mode="after")
+    def _require_step_id_with_run_id(self) -> "StepCallContext":
+        if self.run_id and not self.step_id:
+            raise ValueError("step_id is required when run_id is set")
+        return self
+
+
+class GenerateTextRequest(StepCallContext):
     inputs: GenerateTextInputs
     config: GenerateTextSettings
 
 
-class ImageStepRequest(BaseModel):
+class ImageStepRequest(StepCallContext):
     workspace_id: int
     inputs: ImageInputs
     config: ImageSettings
 
 
-class GenerateVideoRequest(BaseModel):
+class GenerateVideoRequest(StepCallContext):
     workspace_id: int
     inputs: GenerateVideoInputs
     config: GenerateVideoSettings
 
 
-class GenerateAudioRequest(BaseModel):
+class GenerateAudioRequest(StepCallContext):
     workspace_id: int
     inputs: GenerateAudioInputs
     config: GenerateAudioSettings

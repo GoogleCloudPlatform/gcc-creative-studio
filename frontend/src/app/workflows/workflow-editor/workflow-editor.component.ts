@@ -31,7 +31,12 @@ import {
 } from '@angular/core';
 import {isPlatformBrowser} from '@angular/common';
 import {takeUntilDestroyed} from '@angular/core/rxjs-interop';
-import {AbstractControl, FormArray, FormGroup} from '@angular/forms';
+import {
+  AbstractControl,
+  FormArray,
+  FormControl,
+  FormGroup,
+} from '@angular/forms';
 import {MatDialog} from '@angular/material/dialog';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {ActivatedRoute, Router} from '@angular/router';
@@ -43,15 +48,20 @@ import {
 } from '../../utils/handleMessageSnackbar';
 import {MediaResolutionService} from '../shared/media-resolution.service';
 import {
+  isNonTerminalRunStatus,
   NodeTypes,
   Point,
+  StepEntry,
   StepInputValue,
   StepOutputReference,
+  StepState,
   StepStatusEnum,
   WorkflowBase,
   WorkflowCreateDto,
   WorkflowModel,
+  WorkflowRunDetail,
   WorkflowRunModel,
+  WorkflowRunStatusEnum,
   WorkflowStep,
   WorkflowTemplate,
   WorkflowUpdateDto,
@@ -153,6 +163,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   selectedStepIndex: number | null = null;
   showWelcomeView = false;
   readonly isInitialWelcome = signal<boolean>(true);
+  readonly conflictBannerMessage = signal<string | null>(null);
   readonly highlightedNodeIds = signal<Set<string>>(new Set<string>());
   readonly highlightedDefinitionIds = signal<Set<string>>(new Set<string>());
   private highlightTimer: ReturnType<typeof setTimeout> | null = null;
@@ -387,6 +398,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         if (this.isReadOnly) return;
         if (
           this.currentExecutionState &&
+          !isNonTerminalRunStatus(this.currentExecutionState) &&
           this.currentExecutionState !== 'ACTIVE'
         ) {
           this.currentExecutionState = null;
@@ -403,11 +415,11 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(params => {
         this.returnUrl = params.get('returnUrl');
-        const executionId = params.get('executionId');
-        if (executionId) {
-          this.initialExecutionId = executionId;
+        const selectedRunId = params.get('runId') || params.get('executionId');
+        if (selectedRunId) {
+          this.initialExecutionId = selectedRunId;
           if (this.workflowId && this.displayedWorkflow) {
-            this.onExecutionSelected(executionId);
+            this.onExecutionSelected(selectedRunId);
           }
         } else {
           this.initialExecutionId = null;
@@ -1462,6 +1474,10 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         error: err => {
           this.isLoading = false;
           console.error('Failed to save workflow', err);
+          if (err?.status === 409) {
+            this.handleRunsInFlightConflict();
+            return;
+          }
           const errorMsg =
             err.error?.detail ||
             err.error?.message ||
@@ -1487,6 +1503,38 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         return resultWorkflow;
       }),
       catchError(() => of(null)),
+    );
+  }
+
+  navigateToExecutionHistory(): void {
+    const id = this.workflowId || this.workflowForm?.get('id')?.value;
+    this.conflictBannerMessage.set(null);
+    if (id) {
+      void this.router.navigate(['/workflows', id, 'executions']);
+    }
+  }
+
+  dismissConflictBanner(): void {
+    this.conflictBannerMessage.set(null);
+  }
+
+  private handleRunsInFlightConflict(): void {
+    const conflictMsg =
+      'Cannot save workflow: runs in flight — wait for active/queued runs to finish or cancel them in Execution History.';
+    this.errorMessage = conflictMsg;
+    this.conflictBannerMessage.set(conflictMsg);
+
+    const snackRef = this.snackBar.open(conflictMsg, 'Open Execution History', {
+      duration: 8000,
+      panelClass: ['error-snackbar'],
+    });
+    snackRef?.onAction?.()?.subscribe(() => {
+      this.navigateToExecutionHistory();
+    });
+    handleErrorSnackbar(
+      this.snackBar,
+      {message: conflictMsg},
+      'Workflow runs in flight',
     );
   }
 
@@ -1902,7 +1950,10 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       const pos = this.nodePositions[newStep.stepId] || newStep.position;
       if (pos && typeof pos.x === 'number' && typeof pos.y === 'number') {
         newStep.position = {x: pos.x, y: pos.y};
+      } else {
+        newStep.position = {x: 100, y: 100};
       }
+      newStep.collapsed = Boolean(newStep.collapsed);
       if (newStep.inputs) {
         const newInputs = {...newStep.inputs};
         Object.keys(newInputs).forEach(key => {
@@ -1957,6 +2008,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       stepId: `${NodeTypes.USER_INPUT}`,
       type: NodeTypes.USER_INPUT,
       status: StepStatusEnum.IDLE,
+      collapsed: Boolean(formValue.userInput?.collapsed),
     };
     if (
       userInputPos &&
@@ -1966,6 +2018,11 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       user_input_step.position = {
         x: userInputPos.x,
         y: userInputPos.y,
+      };
+    } else {
+      user_input_step.position = {
+        x: 100,
+        y: 100,
       };
     }
     return [user_input_step, ...steps];
@@ -2050,9 +2107,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
 
     dialogRef.afterClosed().subscribe(result => {
       if (result) {
-        // Immediately set status to give user feedback
-        this.currentExecutionState = 'ACTIVE';
-        // Set all steps to PENDING
+        this.currentExecutionState = WorkflowRunStatusEnum.RUNNING;
         this.stepsArray.controls.forEach(control => {
           control.patchValue({status: StepStatusEnum.PENDING});
         });
@@ -2060,13 +2115,24 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         this.isLoading = true;
         this.workflowService.executeWorkflow(workflowId, result).subscribe({
           next: res => {
-            console.log('Workflow execution started', res);
-            this.currentExecutionId = res.execution_id;
-            this.currentExecutionState = 'ACTIVE';
+            const createdRunId =
+              res.run_id ??
+              res.runId ??
+              res.execution_id ??
+              res.executionId ??
+              '';
+            this.currentExecutionId = createdRunId;
+            this.currentExecutionState =
+              res.status || WorkflowRunStatusEnum.RUNNING;
             this.isLoading = false;
-            handleSuccessSnackbar(this.snackBar, 'Workflow execution started!');
-            // Start polling for execution status
-            this.startPollingExecution(workflowId, res.execution_id);
+            const isQueued = res.status === WorkflowRunStatusEnum.QUEUED;
+            handleSuccessSnackbar(
+              this.snackBar,
+              isQueued ? 'Workflow run queued!' : 'Workflow execution started!',
+            );
+            if (createdRunId) {
+              this.startPollingExecution(workflowId, createdRunId);
+            }
           },
           error: err => {
             console.error('Failed to execute workflow', err);
@@ -2079,29 +2145,27 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     });
   }
 
-  onExecutionSelected(executionId: string): void {
+  onExecutionSelected(runOrExecutionId: string): void {
     if (!this.workflowId) return;
 
-    // No need to manually stop polling, new subscription will be isolated
-
-    this.currentExecutionId = executionId;
+    this.currentExecutionId = runOrExecutionId;
     this.isLoading = true;
 
-    // Fetch once immediately, then start polling (or just start polling, but this keeps UI snappy)
     this.workflowService
-      .getExecutionDetails(this.workflowId, executionId)
+      .getRunDetails(this.workflowId, runOrExecutionId)
       .subscribe({
         next: details => {
           this.handleExecutionUpdate(details);
           this.isLoading = false;
 
-          if (details.state === 'ACTIVE') {
-            this.startPollingExecution(this.workflowId!, executionId);
+          const status = details.status ?? details.state;
+          if (isNonTerminalRunStatus(status)) {
+            this.startPollingExecution(this.workflowId!, runOrExecutionId);
           }
         },
         error: err => {
-          console.error('Failed to load execution details', err);
-          handleErrorSnackbar(this.snackBar, err, 'Load execution details');
+          console.error('Failed to load run details', err);
+          handleErrorSnackbar(this.snackBar, err, 'Load run details');
           this.isLoading = false;
         },
       });
@@ -2114,11 +2178,11 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     }
   }
 
-  private startPollingExecution(workflowId: string, executionId: string): void {
+  private startPollingExecution(workflowId: string, runId: string): void {
     this.stopPollingExecution();
 
     this.pollingSubscription = this.workflowService
-      .pollExecutionDetails(workflowId, executionId)
+      .pollRunDetails(workflowId, runId)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: details => {
@@ -2130,78 +2194,157 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       });
   }
 
-  private handleExecutionUpdate(details: any): void {
-    console.log('Execution details:', details);
-    this.currentExecutionState = details.state;
-    this.executionStepEntries = details.step_entries || [];
+  private handleExecutionUpdate(details: WorkflowRunDetail): void {
+    const runStatus = details.status ?? details.state ?? '';
+    this.currentExecutionState = runStatus;
+    this.executionStepEntries = this.buildStepEntriesFromRunDetails(details);
     this.updateStepStatuses(details);
-    this.resolveMediaUrls(details);
+    this.resolveMediaUrls({step_entries: this.executionStepEntries});
 
-    if (details.state !== 'ACTIVE') {
-      if (details.state === 'SUCCEEDED') {
+    if (runStatus && !isNonTerminalRunStatus(runStatus)) {
+      if (
+        runStatus === WorkflowRunStatusEnum.COMPLETED ||
+        runStatus === 'SUCCEEDED'
+      ) {
         handleSuccessSnackbar(
           this.snackBar,
           'Workflow completed successfully!',
         );
+      } else if (runStatus === WorkflowRunStatusEnum.NEEDS_ATTENTION) {
+        const errDetail =
+          details.last_error_detail ??
+          details.lastErrorDetail ??
+          'Workflow run paused and needs attention.';
+        handleErrorSnackbar(
+          this.snackBar,
+          {message: errDetail},
+          'Workflow Run',
+        );
       } else {
         handleErrorSnackbar(
           this.snackBar,
-          {message: `Workflow ${details.state.toLowerCase()}`},
+          {message: `Workflow ${runStatus.toLowerCase()}`},
           'Workflow Execution',
         );
       }
     }
 
-    // Refresh edges to reflect new states (e.g. running highlights)
     setTimeout(() => this.updateEdges(), 0);
   }
 
-  private updateStepStatuses(details: any): void {
-    if (!details.step_entries || details.step_entries.length === 0) {
+  private buildStepEntriesFromRunDetails(
+    details: WorkflowRunDetail,
+  ): StepEntry[] {
+    const stepStates: Record<string, StepState> =
+      details.step_states ?? details.stepStates ?? {};
+    const existingEntries: StepEntry[] =
+      details.step_entries ?? details.stepEntries ?? [];
+    const stateKeys = Object.keys(stepStates);
+
+    if (stateKeys.length === 0) {
+      return existingEntries;
+    }
+
+    return stateKeys.map(stepId => {
+      const state = stepStates[stepId];
+      const existing = existingEntries.find(e => e.step_id === stepId);
+      return {
+        step_id: stepId,
+        state: (state?.status ??
+          existing?.state ??
+          'PENDING') as StepEntry['state'],
+        step_inputs: existing?.step_inputs ?? {},
+        step_outputs: state?.outputs ?? existing?.step_outputs ?? {},
+        attempts: state?.attempts ?? existing?.attempts ?? 0,
+        last_error: state?.last_error ?? existing?.last_error ?? null,
+        error: state?.last_error ?? existing?.error,
+      };
+    });
+  }
+
+  private updateStepStatuses(details: WorkflowRunDetail): void {
+    const stepStates: Record<string, StepState> =
+      details.step_states ?? details.stepStates ?? {};
+    const stepEntries: StepEntry[] =
+      details.step_entries ?? details.stepEntries ?? [];
+
+    const statusByStep = new Map<string, string>();
+    const outputsByStep = new Map<string, Record<string, unknown>>();
+
+    for (const [stepId, state] of Object.entries(stepStates)) {
+      if (state?.status) {
+        statusByStep.set(stepId, state.status);
+      }
+      if (state?.outputs && Object.keys(state.outputs).length > 0) {
+        outputsByStep.set(stepId, state.outputs);
+      }
+    }
+
+    for (const entry of stepEntries) {
+      if (!statusByStep.has(entry.step_id) && entry.state) {
+        statusByStep.set(entry.step_id, entry.state);
+      }
+      if (
+        !outputsByStep.has(entry.step_id) &&
+        entry.step_outputs &&
+        Object.keys(entry.step_outputs).length > 0
+      ) {
+        outputsByStep.set(entry.step_id, entry.step_outputs);
+      }
+    }
+
+    if (statusByStep.size === 0 && outputsByStep.size === 0) {
       return;
     }
 
-    // Create a map of step names to their latest status
-    const stepStatusMap = new Map<string, string>();
-    details.step_entries.forEach((entry: any) => {
-      stepStatusMap.set(entry.step_id, entry.state);
-    });
-
-    // Update form controls
     this.stepsArray.controls.forEach(control => {
       const stepId = control.get('stepId')?.value;
-      if (stepId && stepStatusMap.has(stepId)) {
-        const gcpState = stepStatusMap.get(stepId);
-        let uiStatus = StepStatusEnum.IDLE;
+      if (!stepId) return;
 
-        // Map GCP state to UI status
-        switch (gcpState) {
-          case 'STATE_IN_PROGRESS':
-            uiStatus = StepStatusEnum.RUNNING;
-            break;
-          case 'STATE_SUCCEEDED':
-            uiStatus = StepStatusEnum.COMPLETED;
-            break;
-          case 'STATE_FAILED':
-            uiStatus = StepStatusEnum.FAILED;
-            break;
+      const rawState = statusByStep.get(stepId);
+      if (rawState) {
+        control.patchValue({status: this.mapStepStateToUiStatus(rawState)});
+      }
+
+      const stepOutputs = outputsByStep.get(stepId);
+      if (stepOutputs) {
+        const outputsCtrl = control.get('outputs');
+        if (outputsCtrl instanceof FormGroup) {
+          for (const [key, val] of Object.entries(stepOutputs)) {
+            if (outputsCtrl.contains(key)) {
+              outputsCtrl.get(key)?.setValue(val);
+            } else {
+              outputsCtrl.addControl(key, new FormControl(val));
+            }
+          }
+        } else {
+          control.patchValue({outputs: stepOutputs});
         }
-
-        control.patchValue({status: uiStatus});
       }
     });
+  }
 
-    // Update outputs from step entries
-    details.step_entries.forEach((entry: any) => {
-      const control = this.stepsArray.controls.find(
-        c => c.get('stepId')?.value === entry.step_id,
-      );
-      if (control && entry.step_outputs) {
-        // We update the whole outputs object in the form control
-        // This ensures the UI sees the new outputs
-        control.patchValue({outputs: entry.step_outputs});
-      }
-    });
+  private mapStepStateToUiStatus(rawState: string): StepStatusEnum {
+    switch (rawState.toUpperCase()) {
+      case 'RUNNING':
+      case 'IN_PROGRESS':
+      case 'STATE_IN_PROGRESS':
+        return StepStatusEnum.RUNNING;
+      case 'COMPLETED':
+      case 'SUCCEEDED':
+      case 'STATE_SUCCEEDED':
+        return StepStatusEnum.COMPLETED;
+      case 'FAILED':
+      case 'STATE_FAILED':
+      case 'STEP_FAILED':
+      case 'NEEDS_ATTENTION':
+        return StepStatusEnum.FAILED;
+      case 'PENDING':
+      case 'QUEUED':
+        return StepStatusEnum.PENDING;
+      default:
+        return StepStatusEnum.IDLE;
+    }
   }
 
   // populateFormFromData and resetFormForNew removed, handled by service patchData and initForm

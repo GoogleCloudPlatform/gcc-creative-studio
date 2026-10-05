@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {HttpClient} from '@angular/common/http';
+import {HttpClient, HttpParams} from '@angular/common/http';
 import {Injectable, OnDestroy, PLATFORM_ID, inject} from '@angular/core';
 import {isPlatformBrowser} from '@angular/common';
 import {
@@ -24,17 +24,28 @@ import {
   throwError,
   timer,
 } from 'rxjs';
-import {shareReplay, switchMap, takeWhile, tap} from 'rxjs/operators';
+import {
+  exhaustMap,
+  finalize,
+  shareReplay,
+  takeWhile,
+  tap,
+} from 'rxjs/operators';
 import {environment} from '../../environments/environment';
 import {PaginationResponseDto} from '../common/services/source-asset.service';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
 import {PREDEFINED_WORKFLOW_TEMPLATES} from './templates/predefined-templates.constant';
 import {
+  BatchExecutionItemRequest,
   BatchExecutionResponse,
-  ExecutionDetails,
+  CancelRunResponse,
+  DynamicStepRecord,
   ExecutionResponse,
+  ResumeRunResponse,
   WorkflowCreateDto,
   WorkflowModel,
+  WorkflowRunDetail,
+  WorkflowRunListResponse,
   WorkflowRunModel,
   WorkflowSearchDto,
   WorkflowTemplate,
@@ -42,6 +53,7 @@ import {
   WorkflowUpdateDto,
   WorkflowValidateDto,
   WorkflowValidateResponse,
+  isNonTerminalRunStatus,
 } from './workflow.models';
 
 @Injectable({
@@ -72,6 +84,14 @@ export class WorkflowService implements OnDestroy {
   private pageSize = 12;
   private currentFilter = '';
   private dataLoadingSubscription!: Subscription;
+  private readonly inFlightGetRuns = new Map<
+    string,
+    Observable<WorkflowRunListResponse>
+  >();
+  private readonly inFlightGetRunDetails = new Map<
+    string,
+    Observable<WorkflowRunDetail>
+  >();
 
   private readonly API_BASE_URL = environment.backendURL;
 
@@ -79,16 +99,11 @@ export class WorkflowService implements OnDestroy {
     private http: HttpClient,
     private workspaceStateService: WorkspaceStateService,
   ) {
-    console.log(
-      'WorkflowService constructor: Initializing dataLoadingSubscription',
-    );
-
-    // Subscribe to the GLOBAL workspace state
     if (isPlatformBrowser(this.platformId)) {
       this.dataLoadingSubscription =
         this.workspaceStateService.activeWorkspaceId$.subscribe(workspaceId => {
           if (workspaceId) {
-            this.loadWorkflows(true); // Reset and load on workspace change
+            this.loadWorkflows(true);
           }
         });
     }
@@ -108,7 +123,6 @@ export class WorkflowService implements OnDestroy {
     return this.workflows$;
   }
 
-  // TODO: If we are selecting a workflow run we should query another endpoint
   getWorkflowById(
     workflowId: string,
   ): Observable<WorkflowModel | WorkflowRunModel> {
@@ -151,7 +165,6 @@ export class WorkflowService implements OnDestroy {
         const currentWorkflows = reset ? [] : this._workflows.getValue();
         this._workflows.next([...currentWorkflows, ...response.data]);
 
-        // Check if we have loaded all workflows
         if (response.data.length < this.pageSize) {
           this._allWorkflowsLoaded.next(true);
         } else {
@@ -160,7 +173,7 @@ export class WorkflowService implements OnDestroy {
 
         this._isLoading.next(false);
       },
-      error => {
+      () => {
         this._errorMessage.next('Failed to load workflows.');
         this._isLoading.next(false);
       },
@@ -189,7 +202,7 @@ export class WorkflowService implements OnDestroy {
       .pipe(tap(() => this.loadWorkflows(true)));
   }
 
-  deleteWorkflow(workflowId: string): Observable<any> {
+  deleteWorkflow(workflowId: string): Observable<unknown> {
     return this.http
       .delete(`${this.API_BASE_URL}/workflows/${workflowId}`)
       .pipe(
@@ -239,13 +252,12 @@ export class WorkflowService implements OnDestroy {
 
   executeWorkflow(
     workflowId: string,
-    args: any,
+    args: DynamicStepRecord,
   ): Observable<ExecutionResponse> {
     const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
     if (!workspaceId) {
       return throwError(() => new Error('No active workspace ID found.'));
     }
-    // Inject workspaceId into the arguments sent to the backend
     const payload = {
       args: {
         ...args,
@@ -260,14 +272,13 @@ export class WorkflowService implements OnDestroy {
 
   batchExecuteWorkflow(
     workflowId: string,
-    items: {row_index: number; args: any}[],
+    items: BatchExecutionItemRequest[],
   ): Observable<BatchExecutionResponse> {
     const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
     if (!workspaceId) {
       return throwError(() => new Error('No active workspace ID found.'));
     }
 
-    // Inject workspaceId into each item's args if not present
     const enrichedItems = items.map(item => ({
       ...item,
       args: {
@@ -282,56 +293,98 @@ export class WorkflowService implements OnDestroy {
     );
   }
 
-  getExecutionDetails(
+  getRuns(
     workflowId: string,
-    executionId: string,
-  ): Observable<ExecutionDetails> {
-    return this.http.get<ExecutionDetails>(
-      `${this.API_BASE_URL}/workflows/${workflowId}/executions/${encodeURIComponent(executionId)}`,
-    );
+    limit = 20,
+    offset = 0,
+    status?: string | null,
+  ): Observable<WorkflowRunListResponse> {
+    const normalizedStatus =
+      status && status !== 'ALL' ? status.toLowerCase() : '';
+    const requestKey = `${workflowId}:${limit}:${offset}:${normalizedStatus}`;
+    const existingRequest = this.inFlightGetRuns.get(requestKey);
+    if (existingRequest) {
+      return existingRequest;
+    }
+
+    let params = new HttpParams()
+      .set('limit', String(limit))
+      .set('offset', String(offset));
+    if (normalizedStatus) {
+      params = params.set('status', normalizedStatus);
+    }
+    const request$ = this.http
+      .get<WorkflowRunListResponse>(
+        `${this.API_BASE_URL}/workflows/${workflowId}/runs`,
+        {params},
+      )
+      .pipe(
+        finalize(() => {
+          this.inFlightGetRuns.delete(requestKey);
+        }),
+        shareReplay({bufferSize: 1, refCount: true}),
+      );
+    this.inFlightGetRuns.set(requestKey, request$);
+    return request$;
+  }
+
+  getRunDetails(
+    workflowId: string,
+    runId: string,
+  ): Observable<WorkflowRunDetail> {
+    const requestKey = `${workflowId}:${runId}`;
+    const existingRequest = this.inFlightGetRunDetails.get(requestKey);
+    if (existingRequest) {
+      return existingRequest;
+    }
+
+    const request$ = this.http
+      .get<WorkflowRunDetail>(
+        `${this.API_BASE_URL}/workflows/${workflowId}/runs/${encodeURIComponent(runId)}`,
+      )
+      .pipe(
+        finalize(() => {
+          this.inFlightGetRunDetails.delete(requestKey);
+        }),
+        shareReplay({bufferSize: 1, refCount: true}),
+      );
+    this.inFlightGetRunDetails.set(requestKey, request$);
+    return request$;
   }
 
   /**
-   * Polls execution details until the state is no longer 'ACTIVE'.
-   * @param workflowId The workflow ID
-   * @param executionId The execution ID
-   * @param intervalMs How often to poll (default 5000ms)
+   * Polls run details until the run reaches a terminal or paused status
+   * (completed, needs_attention, canceled). Uses `exhaustMap` so an in-flight
+   * request is kept alive and new timer ticks are ignored until it completes.
    */
-  pollExecutionDetails(
+  pollRunDetails(
     workflowId: string,
-    executionId: string,
+    runId: string,
     intervalMs = 5000,
-  ): Observable<ExecutionDetails> {
+  ): Observable<WorkflowRunDetail> {
     return timer(0, intervalMs).pipe(
-      // switchMap cancels the previous pending request if a new tick occurs
-      switchMap(() => this.getExecutionDetails(workflowId, executionId)),
-
-      // Continue polling ONLY while state is ACTIVE.
-      // The 'true' argument is vital: it ensures the *final* non-active value
-      // (SUCCEEDED/FAILED) is emitted before the stream completes.
-      takeWhile(details => details.state === 'ACTIVE', true),
-
-      // Optional: Share the stream if multiple UI components need to listen to the same poll
+      exhaustMap(() => this.getRunDetails(workflowId, runId)),
+      takeWhile(details => isNonTerminalRunStatus(details.status), true),
       shareReplay(1),
     );
   }
 
-  getExecutions(
+  resumeRun(
     workflowId: string,
-    limit = 10,
-    pageToken?: string,
-    status?: string,
-  ): Observable<{executions: any[]; next_page_token: string}> {
-    const params: any = {limit};
-    if (pageToken) {
-      params['page_token'] = pageToken;
-    }
-    if (status && status !== 'ALL') {
-      params['status'] = status;
-    }
-    return this.http.get<{executions: any[]; next_page_token: string}>(
-      `${this.API_BASE_URL}/workflows/${workflowId}/executions`,
-      {params},
+    runId: string,
+    argsOverride?: DynamicStepRecord | null,
+  ): Observable<ResumeRunResponse> {
+    const body = argsOverride ? {args_override: argsOverride} : {};
+    return this.http.post<ResumeRunResponse>(
+      `${this.API_BASE_URL}/workflows/${workflowId}/runs/${encodeURIComponent(runId)}/resume`,
+      body,
+    );
+  }
+
+  cancelRun(workflowId: string, runId: string): Observable<CancelRunResponse> {
+    return this.http.post<CancelRunResponse>(
+      `${this.API_BASE_URL}/workflows/${workflowId}/runs/${encodeURIComponent(runId)}/cancel`,
+      {},
     );
   }
 }

@@ -26,9 +26,15 @@
 </div>
 
 <div [class.controls-row]="mode !== 'mixed'" [class.mb-4]="mode === 'mixed'">
-
   <!-- Media Input (Fixed, Linked, or Mixed) -->
-  <ng-container *ngIf="config.type === 'image' || config.type === 'video' || config.type === 'audio' || mode === 'mixed'">
+  <ng-container
+    *ngIf="
+      config.type === 'image' ||
+      config.type === 'video' ||
+      config.type === 'audio' ||
+      mode === 'mixed'
+    "
+  >
     <app-step-media-input
       [control]="control"
       [inputName]="config.name"
@@ -36,34 +42,64 @@
       [maxItems]="maxMediaItems"
       [compatibleOutputs]="compatibleOutputs"
       [showValidationErrors]="showValidationErrors"
-      [disabledMessage]="disabledMessage">
+      [disabledMessage]="disabledMessage"
+    >
     </app-step-media-input>
   </ng-container>
 
   <!-- Mode Selector -->
   <!-- Only show switch if not in mixed mode AND not an image/video/audio input (since media input handles both) -->
   <mat-form-field
-    *ngIf="mode !== 'mixed' && config.type !== 'image' && config.type !== 'video' && config.type !== 'audio'"
+    *ngIf="
+      mode !== 'mixed' &&
+      config.type !== 'image' &&
+      config.type !== 'video' &&
+      config.type !== 'audio'
+    "
     appearance="outline"
     class="mode-select"
   >
-    <mat-select [value]="mode" (selectionChange)="toggleInputMode($event.value)">
+    <mat-select
+      [value]="mode"
+      (selectionChange)="toggleInputMode($event.value)"
+    >
       <mat-option value="fixed">Fixed</mat-option>
       <mat-option value="linked">Link</mat-option>
     </mat-select>
   </mat-form-field>
 
   <!-- Textarea Input (Fixed) -->
-  <mat-form-field *ngIf="mode === 'fixed' && config.type === 'textarea'" appearance="outline" class="value-input">
-    <textarea matInput [formControl]="control" [placeholder]="config.label" (blur)="onBlur()" cdkTextareaAutosize cdkAutosizeMinRows="2" cdkAutosizeMaxRows="8"></textarea>
+  <mat-form-field
+    *ngIf="mode === 'fixed' && config.type === 'textarea'"
+    appearance="outline"
+    class="value-input"
+  >
+    <textarea
+      matInput
+      [formControl]="control"
+      [placeholder]="config.label"
+      (blur)="onBlur()"
+      cdkTextareaAutosize
+      cdkAutosizeMinRows="2"
+      cdkAutosizeMaxRows="8"
+    ></textarea>
     <mat-error *ngIf="showValidationErrors && control.hasError('required')">
       {{ config.label }} is required
     </mat-error>
   </mat-form-field>
 
   <!-- Text Input (Fixed) -->
-  <mat-form-field *ngIf="mode === 'fixed' && config.type === 'text'" appearance="outline" class="value-input">
-    <input matInput [formControl]="control" [placeholder]="config.label" (blur)="onBlur()">
+  <mat-form-field
+    *ngIf="mode === 'fixed' && config.type === 'text'"
+    appearance="outline"
+    class="value-input"
+  >
+    <input
+      matInput
+      [formControl]="control"
+      [placeholder]="config.label"
+      (blur)="onBlur()"
+    />
     <mat-error *ngIf="showValidationErrors && control.hasError('required')">
       {{ config.label }} is required
     </mat-error>
@@ -72,7 +108,12 @@
   <!-- Linked Input (Select) -->
   <!-- Also hide this for image/video/audio as step-media-input handles linked outputs too -->
   <mat-form-field
-    *ngIf="mode === 'linked' && config.type !== 'image' && config.type !== 'video' && config.type !== 'audio'"
+    *ngIf="
+      mode === 'linked' &&
+      config.type !== 'image' &&
+      config.type !== 'video' &&
+      config.type !== 'audio'
+    "
     appearance="outline"
     class="value-input"
   >
@@ -85,5 +126,4 @@
       Input is required
     </mat-error>
   </mat-form-field>
-
 </div>

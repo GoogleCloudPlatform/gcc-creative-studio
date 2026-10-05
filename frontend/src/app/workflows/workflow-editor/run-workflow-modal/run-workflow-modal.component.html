@@ -16,26 +16,45 @@
 
 <h2 mat-dialog-title>Run Workflow</h2>
 <mat-dialog-content>
-  <p class="mb-4 text-neutral-400">Please provide the required inputs to run this workflow.</p>
-  
+  <p class="mb-4 text-neutral-400">
+    Please provide the required inputs to run this workflow.
+  </p>
+
   <form [formGroup]="runForm" class="flex flex-col gap-4">
     <div *ngFor="let input of inputDefinitions">
-      <div *ngIf="input.type === 'image' || input.type === 'video'; else textInput">
-        <label class="block text-sm font-medium text-neutral-300 mb-2">{{ input.label | titlecase }}</label>
+      <div
+        *ngIf="input.type === 'image' || input.type === 'video'; else textInput"
+      >
+        <label class="block text-sm font-medium text-neutral-300 mb-2">{{
+          input.label | titlecase
+        }}</label>
         <div class="flex items-center gap-3">
           <div
             class="relative h-16 w-16 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex items-center justify-center"
             [class.opacity-50]="referenceImages[input.name]"
-            (click)="!referenceImages[input.name] && openMediaSelectorForReference(input.name, input.type)"
+            (click)="
+              !referenceImages[input.name] &&
+                openMediaSelectorForReference(input.name, input.type)
+            "
             (dragover)="$event.preventDefault()"
-            (drop)="$event.preventDefault(); onReferenceMediaDrop($event, input.name, input.type)"
+            (drop)="
+              $event.preventDefault();
+              onReferenceMediaDrop($event, input.name, input.type)
+            "
+          >
+            <mat-icon class="text-neutral-500">{{
+              input.type === 'video' ? 'videocam' : 'add'
+            }}</mat-icon>
+            <span class="absolute bottom-0 text-[10px] text-neutral-500"
+              >{{ referenceImages[input.name] ? 1 : 0 }}/1</span
             >
-            <mat-icon class="text-neutral-500">{{ input.type === 'video' ? 'videocam' : 'add' }}</mat-icon>
-            <span class="absolute bottom-0 text-[10px] text-neutral-500">{{ referenceImages[input.name] ? 1 : 0 }}/1</span>
           </div>
           <!-- Show small previews of reference media -->
           <div class="flex gap-1">
-            <div *ngIf="referenceImages[input.name] as ref" class="relative h-12 w-12 rounded-lg overflow-hidden bg-neutral-800">
+            <div
+              *ngIf="referenceImages[input.name] as ref"
+              class="relative h-12 w-12 rounded-lg overflow-hidden bg-neutral-800"
+            >
               <video
                 *ngIf="isVideoUrl(ref.previewUrl)"
                 [src]="ref.previewUrl"
@@ -53,7 +72,9 @@
                 *ngIf="!ref.previewUrl"
                 class="h-full w-full flex items-center justify-center"
               >
-                <mat-icon class="text-neutral-500">{{ input.type === 'video' ? 'video_library' : 'image' }}</mat-icon>
+                <mat-icon class="text-neutral-500">{{
+                  input.type === 'video' ? 'video_library' : 'image'
+                }}</mat-icon>
               </div>
               <button
                 (click)="clearReferenceImage(input.name)"
@@ -69,21 +90,33 @@
       <ng-template #textInput>
         <mat-form-field appearance="outline" class="w-full">
           <mat-label>{{ input.label | titlecase }}</mat-label>
-          <input matInput [formControlName]="input.name" [placeholder]="'Enter ' + (input.label | titlecase)">
-          <mat-hint *ngIf="input.type !== 'text'">Type: {{ input.type }}</mat-hint>
+          <input
+            matInput
+            [formControlName]="input.name"
+            [placeholder]="'Enter ' + (input.label | titlecase)"
+          />
+          <mat-hint *ngIf="input.type !== 'text'"
+            >Type: {{ input.type }}</mat-hint
+          >
         </mat-form-field>
       </ng-template>
     </div>
 
     <div *ngIf="inputDefinitions.length === 0" class="text-yellow-500">
-      No user inputs defined for this workflow. You can proceed to run it directly.
+      No user inputs defined for this workflow. You can proceed to run it
+      directly.
     </div>
   </form>
 </mat-dialog-content>
 
 <mat-dialog-actions align="end" class="gap-2">
   <button mat-button (click)="onCancel()">Cancel</button>
-  <button mat-flat-button color="primary" (click)="onRun()" [disabled]="runForm.invalid">
+  <button
+    mat-flat-button
+    color="primary"
+    (click)="onRun()"
+    [disabled]="runForm.invalid"
+  >
     <mat-icon class="mr-2">play_arrow</mat-icon>
     Run
   </button>
