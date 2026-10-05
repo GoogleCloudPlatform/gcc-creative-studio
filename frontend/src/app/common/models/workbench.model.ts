@@ -217,6 +217,10 @@ export interface MediaAsset {
   url: string;
   safeUrl: SafeResourceUrl;
   duration: number;
+  /** True while `duration` is only a display estimate (metadata pending or
+   * failed). Clips created from such an asset stay placeholders, so the guess
+   * is never persisted as a trim. */
+  isDurationPlaceholder?: boolean;
   thumbnail?: string;
   mediaItemId?: number;
   sourceAssetId?: number;

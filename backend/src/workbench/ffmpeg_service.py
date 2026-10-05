@@ -482,43 +482,73 @@ class FFmpegService:
                     dur = dur / speed
                 clip_durations.append(dur)
 
+            # In-between transitions are centred on the cut and never eat
+            # runtime: each neighbour lends half the transition as a frozen
+            # frame ("handle", what NLEs do when clips have no spare media).
+            # Without the handles xfade aborts when the outgoing clip runs out
+            # (hard cut mid-fade) and every transition shortened the render by
+            # t/2 — so absolute audio placements overran the video and the
+            # final atrim chopped the last voiceover. Clip start times are
+            # therefore plain sums and the output lasts Σ(clip durations).
+            joint_transitions = [0.0] * num_video_files
+            for i in range(num_video_files - 1):
+                transition = (
+                    timeline.transitions[i]
+                    if i < len(timeline.transitions)
+                    else None
+                )
+                if (
+                    transition is not None
+                    and transition.type.value != "none"
+                    and transition.duration_seconds > 0
+                ):
+                    joint_transitions[i] = min(
+                        transition.duration_seconds,
+                        clip_durations[i],
+                        clip_durations[i + 1],
+                    )
+
             accumulated_duration = 0.0
             for i in range(num_video_files):
                 clip_start_times[i] = accumulated_duration
-                t_dur = 0.0
-                if (
-                    i < num_video_files - 1
-                    and i < len(timeline.transitions)
-                    and (transition := timeline.transitions[i]) is not None
-                    and transition.type.value != "none"
-                ):
-                    t_dur = transition.duration_seconds
-                accumulated_duration += clip_durations[i] - t_dur / 2
+                accumulated_duration += clip_durations[i]
+
+            for i in range(num_video_files):
+                head = joint_transitions[i - 1] / 2 if i > 0 else 0.0
+                tail = joint_transitions[i] / 2
+                if head <= 0 and tail <= 0:
+                    continue
+                pad_parts = []
+                if head > 0:
+                    pad_parts.append(f"start_mode=clone:start_duration={head}")
+                if tail > 0:
+                    pad_parts.append(f"stop_mode=clone:stop_duration={tail}")
+                padded_stream = f"[pad_v{i}]"
+                video_filters.append(
+                    f"{normalized_streams[i]}tpad={':'.join(pad_parts)}"
+                    f"{padded_stream}"
+                )
+                normalized_streams[i] = padded_stream
 
             if num_video_files > 1:
                 last_v_stream = normalized_streams[0]
                 for i in range(num_video_files - 1):
-                    transition = (
-                        timeline.transitions[i]
-                        if i < len(timeline.transitions)
-                        else None
-                    )
                     next_v_stream = normalized_streams[i + 1]
                     output_v_stream = f"[v{i + 1}]"
+                    t_dur = joint_transitions[i]
 
-                    if (
-                        transition
-                        and transition.type.value != "none"
-                        and transition.duration_seconds > 0
-                    ):
-                        offset = clip_start_times[i + 1]
+                    if t_dur > 0:
+                        transition = timeline.transitions[i]
+                        # The handles make the crossfade straddle the cut:
+                        # it starts t/2 before end(i) and ends t/2 after it.
+                        offset = clip_start_times[i + 1] - t_dur / 2
                         t_type = TRANSITION_MAP.get(
                             transition.type.value, transition.type.value
                         )
                         video_filters.append(
                             f"{last_v_stream}{next_v_stream}xfade="
                             f"transition={t_type}:"
-                            f"duration={transition.duration_seconds}:"
+                            f"duration={t_dur}:"
                             f"offset={offset}{output_v_stream}"
                         )
                     else:

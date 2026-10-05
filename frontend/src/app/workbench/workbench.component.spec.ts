@@ -134,11 +134,12 @@ describe('WorkbenchComponent', () => {
     expect(stateService.selectedClipId()).toBeNull();
   });
 
-  describe('Video track layout (cross-fade overlap)', () => {
+  describe('Video track layout (transitions never shift clips)', () => {
     let stateService: TimelineStateService;
 
-    // Three 5 s clips joined by 1 s fades, laid out exactly as the backend
-    // ffmpeg graph does it: clip N+1 starts at end(N) - transition/2.
+    // Three 5 s clips joined by 1 s fades. Clips sit back-to-back: the render
+    // centres each cross-fade on the cut with frozen-frame handles, so a
+    // transition never moves the next clip nor shortens the timeline.
     const makeVideoClip = (
       id: string,
       startTime: number,
@@ -171,16 +172,13 @@ describe('WorkbenchComponent', () => {
       spyOn(component, 'triggerAutoSave');
       stateService.timelineClips.set([
         makeVideoClip('v1', 0, 1),
-        makeVideoClip('v2', 4.5, 1),
-        makeVideoClip('v3', 9, null),
+        makeVideoClip('v2', 5, 1),
+        makeVideoClip('v3', 10, null),
         voiceover,
       ]);
     });
 
-    it('keeps the overlap-aware layout when a clip is deleted (regression: moved voiceover rendered at old spot)', () => {
-      // Deleting an *audio* clip must not shift the video track at all —
-      // before the fix refreshTimelineLayout dropped the transition overlap
-      // and every video clip after the first slid later by Σ(transition/2).
+    it('keeps the video track in place when an audio clip is deleted (regression: moved voiceover rendered at old spot)', () => {
       stateService.selectedClipId.set('vo');
       component.deleteSelectedClip();
 
@@ -188,11 +186,11 @@ describe('WorkbenchComponent', () => {
         .timelineClips()
         .filter(c => c.trackIndex === 0)
         .sort((a, b) => a.startTime - b.startTime);
-      expect(vClips.map(c => c.startTime)).toEqual([0, 4.5, 9]);
-      expect(component.getLastVideoClipEndTime()).toBe(14);
+      expect(vClips.map(c => c.startTime)).toEqual([0, 5, 10]);
+      expect(component.getLastVideoClipEndTime()).toBe(15);
     });
 
-    it('closes the gap with the overlap when a middle video clip is deleted and leaves audio untouched', () => {
+    it('closes the gap when a middle video clip is deleted and leaves audio untouched', () => {
       stateService.selectedClipId.set('v2');
       component.deleteSelectedClip();
 
@@ -200,9 +198,9 @@ describe('WorkbenchComponent', () => {
       const vClips = clips
         .filter(c => c.trackIndex === 0)
         .sort((a, b) => a.startTime - b.startTime);
-      // v1 keeps its 1 s fade, so v3 now starts at 5 - 0.5 = 4.5.
+      // v1 keeps its 1 s fade, which does not pull v3 earlier.
       expect(vClips.map(c => c.id)).toEqual(['v1', 'v3']);
-      expect(vClips.map(c => c.startTime)).toEqual([0, 4.5]);
+      expect(vClips.map(c => c.startTime)).toEqual([0, 5]);
 
       const audio = clips.find(c => c.id === 'vo');
       expect(audio?.startTime).toBe(11.5);
@@ -211,7 +209,7 @@ describe('WorkbenchComponent', () => {
     it('produces the same layout from a drag relayout as from a delete relayout', () => {
       // Simulate the user dragging v3 slightly out of place, then dropping.
       stateService.timelineClips.update(clips =>
-        clips.map(c => (c.id === 'v3' ? {...c, startTime: 9.7} : c)),
+        clips.map(c => (c.id === 'v3' ? {...c, startTime: 10.7} : c)),
       );
       component['resolveOverlaps']('v3');
 
@@ -219,11 +217,11 @@ describe('WorkbenchComponent', () => {
         .timelineClips()
         .filter(c => c.trackIndex === 0)
         .sort((a, b) => a.startTime - b.startTime);
-      expect(vClips.map(c => c.startTime)).toEqual([0, 4.5, 9]);
+      expect(vClips.map(c => c.startTime)).toEqual([0, 5, 10]);
       expect(component.triggerAutoSave).toHaveBeenCalled();
     });
 
-    it('falls back to butt-joined clips when there are no transitions', () => {
+    it('lays butt-joined clips identically with and without transitions', () => {
       stateService.timelineClips.set([
         makeVideoClip('v1', 0, null),
         makeVideoClip('v2', 5, null),
@@ -236,6 +234,39 @@ describe('WorkbenchComponent', () => {
         .timelineClips()
         .sort((a, b) => a.startTime - b.startTime);
       expect(vClips.map(c => c.startTime)).toEqual([0, 5, 10]);
+    });
+
+    it('adding transitions keeps every clip, the total duration and the voiceover where they are (regression: 20 s cut rendered as 18 s and clipped the last voiceover)', () => {
+      const lastVoiceover: TimelineClip = {
+        id: 'vo-last',
+        assetId: 'asset-vo-last',
+        startTime: 15,
+        duration: 5,
+        offset: 0,
+        trackIndex: 1,
+        color: 'green',
+      };
+      stateService.timelineClips.set([
+        makeVideoClip('v1', 0, null),
+        makeVideoClip('v2', 5, null),
+        makeVideoClip('v3', 10, null),
+        makeVideoClip('v4', 15, null),
+        lastVoiceover,
+      ]);
+
+      component['applyMiddleTransitionToClips'](1, TransitionType.FADE, 1);
+      component['applyMiddleTransitionToClips'](2, TransitionType.FADE, 1);
+
+      const clips = stateService.timelineClips();
+      const vClips = clips
+        .filter(c => c.trackIndex === 0)
+        .sort((a, b) => a.startTime - b.startTime);
+      expect(vClips.map(c => c.startTime)).toEqual([0, 5, 10, 15]);
+      expect(vClips[1].transition_to_next_type).toBe(TransitionType.FADE);
+      expect(vClips[1].transition_to_next_duration).toBe(1);
+      expect(vClips[2].transition_to_next_type).toBe(TransitionType.FADE);
+      expect(component.getLastVideoClipEndTime()).toBe(20);
+      expect(clips.find(c => c.id === 'vo-last')?.startTime).toBe(15);
     });
   });
 
@@ -465,7 +496,7 @@ describe('WorkbenchComponent', () => {
       expect(updatedAsset?.duration).toBe(15);
     });
 
-    it('should fallback duration on audio error', () => {
+    it('should fallback duration on audio error but keep it flagged as an estimate', () => {
       const asset: MediaAsset = {
         id: 'a1',
         name: 'Test',
@@ -475,12 +506,46 @@ describe('WorkbenchComponent', () => {
         duration: 0,
       };
       stateService.assets.set([asset]);
+      stateService.timelineClips.set([
+        {
+          id: 'c1',
+          assetId: 'a1',
+          startTime: 0,
+          duration: 5,
+          offset: 0,
+          trackIndex: 1,
+          color: 'green',
+          isDurationPlaceholder: true,
+        },
+      ]);
 
       component['extractAudioMetadataFromUrl'](asset);
       mockAudio.onerror({});
 
       const updatedAsset = stateService.assets().find(a => a.id === 'a1');
       expect(updatedAsset?.duration).toBe(10);
+      expect(updatedAsset?.isDurationPlaceholder).toBeTrue();
+      const clip = stateService.timelineClips().find(c => c.id === 'c1')!;
+      expect(clip.duration).toBe(10);
+      expect(clip.isDurationPlaceholder).toBeTrue();
+    });
+
+    it('should never let an error fallback shrink a length that is already known', () => {
+      const asset: MediaAsset = {
+        id: 'music',
+        name: 'Music',
+        type: 'audio',
+        url: 'music.mp3',
+        safeUrl: '',
+        duration: 18.533,
+      };
+      stateService.assets.set([asset]);
+
+      component.updateAssetDuration('music', 10, false);
+
+      const updatedAsset = stateService.assets().find(a => a.id === 'music');
+      expect(updatedAsset?.duration).toBe(18.533);
+      expect(updatedAsset?.isDurationPlaceholder).toBeUndefined();
     });
 
     it('should extract video metadata', () => {
@@ -818,6 +883,174 @@ describe('WorkbenchComponent', () => {
           'out',
         ),
       ).toBe(196);
+    });
+  });
+
+  describe('Audio trims are never invented from placeholder durations', () => {
+    // Regression for timeline 12 / storyboard 16: the agent sends voiceovers
+    // without a trim (play the whole file). The Workbench sized them with the
+    // 5 s load placeholder / 10 s metadata-error fallback and the next
+    // autosave persisted that guess as trim.duration_seconds (10 for a
+    // 10.64 s voiceover, 5 for a 5.32 s one). The renderer then honoured the
+    // trim with atrim and cut the last word, and every later save repeated it.
+    let agentChatService: AgentChatService;
+    let stateService: TimelineStateService;
+    let workbenchService: WorkbenchService;
+    let audioEls: any[];
+    let updateSpy: jasmine.Spy;
+
+    const realCreateElement = document.createElement.bind(document);
+
+    const agentTimeline = (): TimelineDTO =>
+      ({
+        timeline_id: 12,
+        workspace_id: 1,
+        title: 'Timeline',
+        video_clips: [484, 483, 486, 485].map(id => ({
+          asset_ref: {id, type: 'media_item'},
+          trim: {offset_seconds: 0, duration_seconds: 5},
+          presigned_url: `video${id}.mp4`,
+          volume: 1.0,
+          speed: 1.0,
+        })),
+        audio_clips: [
+          {
+            asset_ref: {id: 479, type: 'media_item'},
+            start_at: {video_clip_index: 0, offset_seconds: 0},
+            trim: null,
+            presigned_url: 'vo479.wav',
+            volume: 1.0,
+          },
+          {
+            asset_ref: {id: 471, type: 'media_item'},
+            start_at: {video_clip_index: 0, offset_seconds: 0},
+            trim: {offset_seconds: 0, duration_seconds: 18.533},
+            presigned_url: 'music471.mp3',
+            volume: 0.2,
+            fade_out_duration_seconds: 1.5,
+          },
+          {
+            asset_ref: {id: 472, type: 'media_item'},
+            start_at: {video_clip_index: 2, offset_seconds: 0},
+            trim: null,
+            presigned_url: 'vo472.wav',
+            volume: 1.0,
+          },
+        ],
+        transitions: [],
+      }) as TimelineDTO;
+
+    const savedAudio = (mediaItemId: number) => {
+      component.saveTimeline();
+      const payload = updateSpy.calls.mostRecent().args[1] as TimelineDTO;
+      return payload.audio_clips.find(
+        c => Number(c.asset_ref?.id) === mediaItemId,
+      )!;
+    };
+
+    const audioElFor = (src: string) => audioEls.find(a => a.src === src);
+
+    beforeEach(() => {
+      agentChatService = TestBed.inject(AgentChatService);
+      stateService = TestBed.inject(TimelineStateService);
+      workbenchService = TestBed.inject(WorkbenchService);
+      agentChatService.currentStoryboard.set({id: 16, timeline_id: 12} as any);
+      updateSpy = spyOn(workbenchService, 'updateTimeline').and.returnValue(
+        of({timeline_id: 12, video_clips: [], audio_clips: []} as any),
+      );
+      audioEls = [];
+      spyOn(document, 'createElement').and.callFake((tagName: string) => {
+        if (tagName === 'audio') {
+          const el: any = {
+            crossOrigin: '',
+            muted: false,
+            volume: 1,
+            autoplay: true,
+            src: '',
+            onloadedmetadata: null,
+            onerror: null,
+            duration: 0,
+          };
+          audioEls.push(el);
+          return el;
+        }
+        return realCreateElement(tagName);
+      });
+    });
+
+    it('persists no trim for a voiceover whose length is still the 5 s placeholder', () => {
+      component.processGeneratedData(agentTimeline());
+
+      const vo = stateService.timelineClips().find(c => c.mediaItemId === 479)!;
+      expect(vo.duration).toBe(5);
+      expect(vo.isDurationPlaceholder).toBeTrue();
+
+      expect(savedAudio(479).trim?.duration_seconds).toBeNull();
+      expect(savedAudio(472).trim?.duration_seconds).toBeNull();
+      // An explicit trim (the agent's music bed) is still round-tripped.
+      expect(savedAudio(471).trim?.duration_seconds).toBe(18.533);
+    });
+
+    it('persists no trim when metadata fails and the 10 s fallback is shown', () => {
+      component.processGeneratedData(agentTimeline());
+      audioElFor('vo479.wav').onerror({});
+
+      const vo = stateService.timelineClips().find(c => c.mediaItemId === 479)!;
+      expect(vo.duration).toBe(10);
+      expect(vo.isDurationPlaceholder).toBeTrue();
+      expect(savedAudio(479).trim?.duration_seconds).toBeNull();
+    });
+
+    it('persists the real length once metadata resolves', () => {
+      component.processGeneratedData(agentTimeline());
+      const el = audioElFor('vo479.wav');
+      el.duration = 10.64;
+      el.onloadedmetadata();
+
+      const vo = stateService.timelineClips().find(c => c.mediaItemId === 479)!;
+      expect(vo.duration).toBe(10.64);
+      expect(vo.isDurationPlaceholder).toBeUndefined();
+      expect(savedAudio(479).trim?.duration_seconds).toBe(10.64);
+    });
+
+    it('learns the real file length of a trimmed clip without touching its trim', () => {
+      component.processGeneratedData(agentTimeline());
+      const el = audioElFor('music471.mp3');
+      expect(el).toBeDefined();
+      el.duration = 28.525;
+      el.onloadedmetadata();
+
+      const music = stateService
+        .timelineClips()
+        .find(c => c.mediaItemId === 471)!;
+      expect(music.duration).toBe(18.533);
+      const asset = stateService.assets().find(a => a.id === music.assetId)!;
+      // The trim handle is capped at asset.duration: it can now extend the
+      // music back up to the full file instead of being stuck at the trim.
+      expect(asset.duration).toBe(28.525);
+      expect(savedAudio(471).trim?.duration_seconds).toBe(18.533);
+    });
+
+    it('keeps clips added from an estimated asset as placeholders', () => {
+      const asset: MediaAsset = {
+        id: 'guess',
+        name: 'Voiceover',
+        type: 'audio',
+        url: 'vo.wav',
+        safeUrl: '',
+        duration: 10,
+        isDurationPlaceholder: true,
+        mediaItemId: 900,
+      };
+      stateService.assets.set([asset]);
+
+      component.addToTimeline(asset);
+
+      const clip = stateService
+        .timelineClips()
+        .find(c => c.mediaItemId === 900)!;
+      expect(clip.isDurationPlaceholder).toBeTrue();
+      expect(savedAudio(900).trim?.duration_seconds).toBeNull();
     });
   });
 
