@@ -36,6 +36,7 @@ import {WorkspaceStateService} from '../../../services/workspace/workspace-state
 import {StoryboardService} from '../../../services/storyboard/storyboard.service';
 import {TimelineStateService} from '../../services/timeline-state.service';
 import {ApprovalGateComponent} from '../approval-gate/approval-gate.component';
+import {GalleryService} from '../../../gallery/gallery.service';
 
 describe('ChatInterfaceComponent', () => {
   let component: ChatInterfaceComponent;
@@ -719,12 +720,15 @@ describe('ChatInterfaceComponent', () => {
     expect(url).toBe('http://asset-thumb.png');
   });
 
-  it('should fallback to backend download URL for SourceAssetResponseDto', () => {
+  it('must NOT guess a backend download URL for an unresolved SourceAssetResponseDto', () => {
+    // `/assets/source-assets/{id}/download` never existed on the backend; the
+    // resolver effect fills in the presigned URL and the template shows a
+    // placeholder tile until then.
     const asset = {
       id: 'a1',
     };
     const url = component.getAssetUrl(asset as any);
-    expect(url).toContain('/assets/source-assets/a1/download');
+    expect(url).toBe('');
   });
 
   it('should scroll to bottom in scrollToBottom if chatContainer exists', fakeAsync(() => {
@@ -1291,6 +1295,210 @@ describe('ChatInterfaceComponent', () => {
     it('should call stopPolling on onAgentChange', () => {
       component.onAgentChange('script_writer');
       expect(agentChatService.stopPolling).toHaveBeenCalled();
+    });
+  });
+
+  describe('Rapid session switching (latest click wins)', () => {
+    const detailFor = (sessionId: string, storyboardId: number | null) => ({
+      session: {id: sessionId, events: [], state: {}},
+      storyboard: storyboardId ? {id: storyboardId, timeline_id: 7} : null,
+    });
+
+    it('ignores a stale response that lands after the user switched again', () => {
+      const first = new Subject<any>();
+      const second = new Subject<any>();
+      agentChatService.getSessionDetail.and.returnValues(first, second);
+      spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
+
+      component.onSessionChange('session-A');
+      component.onSessionChange('session-B');
+
+      // A's response arrives last (out of order). It must not be applied.
+      second.next(detailFor('session-B', 2));
+      first.next(detailFor('session-A', 1));
+
+      expect(component.currentSessionId).toBe('session-B');
+      expect(agentChatService.selectedSessionId()).toBe('session-B');
+      expect(agentChatService.currentStoryboard()?.id).toBe(2);
+      const navigatedSessions = (router.navigate as jasmine.Spy).calls
+        .allArgs()
+        .map(args => args[1]?.queryParams?.sessionId);
+      expect(navigatedSessions).not.toContain('session-A');
+    });
+
+    it('cancels the previous in-flight request when a new session is picked', () => {
+      const first = new Subject<any>();
+      const second = new Subject<any>();
+      agentChatService.getSessionDetail.and.returnValues(first, second);
+
+      component.onSessionChange('session-A');
+      expect(first.observers.length).toBe(1);
+
+      component.onSessionChange('session-B');
+      expect(first.observers.length).toBe(0);
+      expect(second.observers.length).toBe(1);
+    });
+
+    it('cancels the in-flight request on destroy', () => {
+      const pending = new Subject<any>();
+      agentChatService.getSessionDetail.and.returnValue(pending);
+
+      component.onSessionChange('session-A');
+      expect(pending.observers.length).toBe(1);
+
+      component.ngOnDestroy();
+      expect(pending.observers.length).toBe(0);
+    });
+
+    it('does not navigate when the URL already carries the loaded session and storyboard', () => {
+      const route = TestBed.inject(ActivatedRoute) as any;
+      route.snapshot = {
+        queryParams: {sessionId: 'session-A', storyboardId: '1'},
+      };
+      agentChatService.getSessionDetail.and.returnValue(
+        of(detailFor('session-A', 1)),
+      );
+      spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
+
+      component.onSessionChange('session-A');
+
+      expect(router.navigate).not.toHaveBeenCalled();
+      delete route.snapshot;
+    });
+
+    it('navigates when the URL differs from the loaded session', () => {
+      const route = TestBed.inject(ActivatedRoute) as any;
+      route.snapshot = {queryParams: {sessionId: 'session-old'}};
+      agentChatService.getSessionDetail.and.returnValue(
+        of(detailFor('session-A', 1)),
+      );
+      spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
+
+      component.onSessionChange('session-A');
+
+      expect(router.navigate).toHaveBeenCalledWith([], {
+        relativeTo: route,
+        queryParams: {sessionId: 'session-A', storyboardId: 1},
+        queryParamsHandling: 'merge',
+      });
+      delete route.snapshot;
+    });
+
+    it('loads a session set from outside (URL / storyboard) without NG0600', () => {
+      // Writing signals inside the selector effect used to throw NG0600
+      // *after* currentSessionId was overwritten, leaving the chat stuck.
+      agentChatService.getSessionDetail.calls.reset();
+      agentChatService.getSessionDetail.and.returnValue(
+        of(detailFor('session-ext', null)),
+      );
+
+      expect(() => {
+        agentChatService.selectedSessionId.set('session-ext');
+        fixture.detectChanges();
+      }).not.toThrow();
+
+      expect(agentChatService.getSessionDetail).toHaveBeenCalledWith(
+        1,
+        'session-ext',
+        undefined,
+      );
+      expect(component.currentSessionId).toBe('session-ext');
+      expect(component.isLoadingHistory()).toBeFalse();
+    });
+
+    it('syncs selectedSessionId from a storyboard without NG0600', () => {
+      agentChatService.getSessionDetail.and.returnValue(
+        of(detailFor('session-from-sb', 9)),
+      );
+
+      expect(() => {
+        agentChatService.currentStoryboard.set({
+          id: 9,
+          session_id: 'session-from-sb',
+        } as any);
+        fixture.detectChanges();
+      }).not.toThrow();
+
+      expect(agentChatService.selectedSessionId()).toBe('session-from-sb');
+      expect(component.currentSessionId).toBe('session-from-sb');
+    });
+  });
+
+  describe('Attached image resolution (no phantom download URL)', () => {
+    const userMessageWithAsset = (id: number) => ({
+      sender: 'user' as const,
+      text: 'look at this',
+      images: [{id}] as any,
+      timestamp: new Date(),
+    });
+
+    it('getAssetUrl returns an empty string instead of guessing a backend URL', () => {
+      expect(component.getAssetUrl({id: 107} as any)).toBe('');
+      expect(
+        component.getAssetUrl({id: 107, presignedUrl: 'https://p/full'} as any),
+      ).toBe('https://p/full');
+      expect(
+        component.getAssetUrl({
+          id: 107,
+          presignedUrl: 'https://p/full',
+          presignedThumbnailUrl: 'https://p/thumb',
+        } as any),
+      ).toBe('https://p/thumb');
+    });
+
+    it('renders a loading tile (no <img>) until the presigned URL is resolved, then swaps to the image', () => {
+      const gallery = TestBed.inject(GalleryService);
+      const pending = new Subject<any>();
+      spyOn(gallery, 'getAsset').and.returnValue(pending);
+
+      component.chatMessages.set([userMessageWithAsset(107)] as any);
+      fixture.detectChanges();
+
+      const host: HTMLElement = fixture.nativeElement;
+      expect(
+        host.querySelector('[data-testid="chat-image-loading"]'),
+      ).not.toBeNull();
+      expect(host.querySelector('img[src*="download"]')).toBeNull();
+      expect(host.querySelector('img[src=""]')).toBeNull();
+
+      pending.next({
+        presignedUrls: ['https://p/107'],
+        presignedThumbnailUrls: ['https://p/107-thumb'],
+      });
+      fixture.detectChanges();
+
+      expect(
+        host.querySelector('[data-testid="chat-image-loading"]'),
+      ).toBeNull();
+      const img = host.querySelector(
+        'img[src="https://p/107-thumb"]',
+      ) as HTMLImageElement | null;
+      expect(img).not.toBeNull();
+    });
+
+    it('shows an unavailable tile for a deleted asset and does not re-fetch it', () => {
+      const gallery = TestBed.inject(GalleryService);
+      const getAsset = spyOn(gallery, 'getAsset').and.returnValue(
+        throwError(() => ({status: 404})),
+      );
+      spyOn(console, 'error');
+
+      component.chatMessages.set([userMessageWithAsset(999)] as any);
+      fixture.detectChanges();
+
+      const host: HTMLElement = fixture.nativeElement;
+      const tile = host.querySelector('[data-testid="chat-image-unavailable"]');
+      expect(tile).not.toBeNull();
+      expect(tile?.textContent).toContain('broken_image');
+      expect(host.querySelector('img')).toBeNull();
+      expect(
+        component.isAssetUnavailable({id: 999, unavailable: true} as any),
+      ).toBeTrue();
+
+      // Any later re-render must not trigger another lookup.
+      component.chatMessages.update(msgs => [...msgs]);
+      fixture.detectChanges();
+      expect(getAsset).toHaveBeenCalledTimes(1);
     });
   });
 

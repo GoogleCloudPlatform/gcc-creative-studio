@@ -117,11 +117,35 @@
           *ngIf="msg.sender === 'user' && msg.images?.length > 0"
           class="flex gap-2 mb-2 flex-wrap"
         >
-          <img
-            *ngFor="let img of msg.images"
-            [src]="getAssetUrl(img)"
-            class="w-20 h-20 object-cover rounded-md border border-gray-600 shadow"
-          />
+          <ng-container *ngFor="let img of msg.images">
+            <img
+              *ngIf="getAssetUrl(img) as src; else chatImagePlaceholder"
+              [src]="src"
+              class="w-20 h-20 object-cover rounded-md border border-gray-600 shadow"
+            />
+            <!-- Shown while the presigned URL is being resolved, or for good
+                 once the asset turned out to be deleted / inaccessible. -->
+            <ng-template #chatImagePlaceholder>
+              <div
+                class="chat-image-placeholder w-20 h-20 rounded-md border border-gray-600 shadow flex items-center justify-center"
+                [class.is-unavailable]="isAssetUnavailable(img)"
+                [matTooltip]="
+                  isAssetUnavailable(img)
+                    ? 'Image no longer available'
+                    : 'Loading image…'
+                "
+                [attr.data-testid]="
+                  isAssetUnavailable(img)
+                    ? 'chat-image-unavailable'
+                    : 'chat-image-loading'
+                "
+              >
+                <mat-icon>{{
+                  isAssetUnavailable(img) ? 'broken_image' : 'image'
+                }}</mat-icon>
+              </div>
+            </ng-template>
+          </ng-container>
         </div>
         <div class="chat-text text-sm" (click)="onMessageClick($event)">
           <!-- Text or Markdown -->
@@ -215,9 +239,18 @@
       class="relative group shrink-0"
     >
       <img
-        [src]="getAssetUrl(img)"
+        *ngIf="getAssetUrl(img) as src; else selectedImagePlaceholder"
+        [src]="src"
         class="w-16 h-16 object-cover rounded-lg !border !border-gray-600"
       />
+      <ng-template #selectedImagePlaceholder>
+        <div
+          class="chat-image-placeholder w-16 h-16 rounded-lg !border !border-gray-600 flex items-center justify-center"
+          data-testid="selected-image-loading"
+        >
+          <mat-icon>image</mat-icon>
+        </div>
+      </ng-template>
       <button
         class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center shadow-lg hover:bg-red-600"
         (click)="removeSelectedImage(i)"

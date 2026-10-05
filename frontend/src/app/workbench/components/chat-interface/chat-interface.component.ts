@@ -26,6 +26,7 @@ import {
   AfterViewChecked,
   TemplateRef,
   OnDestroy,
+  untracked,
 } from '@angular/core';
 import {
   AgentChatService,
@@ -37,7 +38,7 @@ import {WorkspaceStateService} from '../../../services/workspace/workspace-state
 import {StoryboardService} from '../../../services/storyboard/storyboard.service';
 import {TimelineStateService} from '../../services/timeline-state.service';
 import {ActivatedRoute, Router} from '@angular/router';
-import {combineLatest} from 'rxjs';
+import {combineLatest, Subscription} from 'rxjs';
 import {CommonModule} from '@angular/common';
 import {FormsModule} from '@angular/forms';
 import {MatIconModule} from '@angular/material/icon';
@@ -52,7 +53,6 @@ import {
 } from '../../../common/components/image-selector/image-selector.component';
 import {GalleryService} from '../../../gallery/gallery.service';
 import {SourceAssetResponseDto} from '../../../common/services/source-asset.service';
-import {environment} from '../../../../environments/environment';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {handleErrorSnackbar} from '../../../utils/handleMessageSnackbar';
 
@@ -137,27 +137,45 @@ export class ChatInterfaceComponent
     submission?: ApprovalGateSubmission;
     gate?: ApprovalGateInfo;
   } | null = null;
+  /** In-flight `getSessionDetail` request; replaced on every session switch. */
+  private loadSubscription: Subscription | null = null;
 
-  private sessionSelectorEffect = effect(() => {
-    const sessionId = this.agentChatService.selectedSessionId();
-    if (sessionId && sessionId !== this.currentSessionId) {
-      this.currentSessionId = sessionId;
-      this.submittedGateCallIds.clear();
-      this.lastExecutedAction = null;
-      this.loadChatMessages(sessionId);
-    }
-  });
+  /**
+   * Reacts to `selectedSessionId` being changed by someone other than this
+   * component (URL query params, a storyboard pick, ...). The picker calls
+   * `loadChatMessages` directly and sets `currentSessionId` first, so it never
+   * re-enters here. `allowSignalWrites` is required: without it Angular 18
+   * throws NG0600 at the first `.set()` inside `loadChatMessages`, *after*
+   * `currentSessionId` was already overwritten — the chat then shows the old
+   * history under the new session id. `untracked` keeps the dozens of signal
+   * reads inside the load from becoming dependencies of this effect.
+   */
+  private sessionSelectorEffect = effect(
+    () => {
+      const sessionId = this.agentChatService.selectedSessionId();
+      if (sessionId && sessionId !== this.currentSessionId) {
+        this.currentSessionId = sessionId;
+        this.submittedGateCallIds.clear();
+        this.lastExecutedAction = null;
+        untracked(() => this.loadChatMessages(sessionId));
+      }
+    },
+    {allowSignalWrites: true},
+  );
 
-  private storyboardSessionSyncEffect = effect(() => {
-    const sb = this.agentChatService.currentStoryboard();
-    if (
-      sb &&
-      sb.session_id &&
-      sb.session_id !== this.agentChatService.selectedSessionId()
-    ) {
-      this.agentChatService.selectedSessionId.set(sb.session_id);
-    }
-  });
+  private storyboardSessionSyncEffect = effect(
+    () => {
+      const sb = this.agentChatService.currentStoryboard();
+      if (
+        sb &&
+        sb.session_id &&
+        sb.session_id !== this.agentChatService.selectedSessionId()
+      ) {
+        this.agentChatService.selectedSessionId.set(sb.session_id);
+      }
+    },
+    {allowSignalWrites: true},
+  );
 
   private storyboardUrlSyncEffect = effect(() => {
     const sb = this.agentChatService.currentStoryboard();
@@ -207,7 +225,11 @@ export class ChatInterfaceComponent
                   },
                   error: err => {
                     console.error('Failed to resolve media item:', id, err);
-                    this.resolvingAssetIds.delete(assetId);
+                    // Keep the id in `resolvingAssetIds`: a deleted or
+                    // inaccessible item must not be re-fetched on every
+                    // render. The template shows a "no longer available" tile.
+                    img.unavailable = true;
+                    this.chatMessages.update(msgs => [...msgs]);
                   },
                 });
               }
@@ -224,7 +246,8 @@ export class ChatInterfaceComponent
                   },
                   error: err => {
                     console.error('Failed to resolve source asset:', id, err);
-                    this.resolvingAssetIds.delete(assetId);
+                    img.unavailable = true;
+                    this.chatMessages.update(msgs => [...msgs]);
                   },
                 });
               }
@@ -387,6 +410,10 @@ export class ChatInterfaceComponent
       this.agentChatService.isPolling() ? this.currentSessionId : null,
     );
     this.agentChatService.stopPolling();
+    // A late session-detail response must not write into the shared service
+    // signals from a component that no longer exists.
+    this.loadSubscription?.unsubscribe();
+    this.loadSubscription = null;
   }
 
   ngAfterViewChecked() {
@@ -669,15 +696,24 @@ export class ChatInterfaceComponent
 
   loadChatMessages(sessionId: string, storyboardId?: number) {
     this.agentChatService.stopPolling();
+    // Latest click wins: a session-detail response for a session the user has
+    // already left must never be applied — it would write the stale session
+    // back into `selectedSessionId`, the storyboard and the URL, and each of
+    // those re-triggers a load (the "ping-pong" when switching chats quickly).
+    this.loadSubscription?.unsubscribe();
     this.isLoadingHistory.set(true);
 
     const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
 
     if (workspaceId) {
-      this.agentChatService
+      this.loadSubscription = this.agentChatService
         .getSessionDetail(workspaceId, sessionId, storyboardId)
         .subscribe({
           next: (res: SessionDetailResponse) => {
+            if (this.currentSessionId !== sessionId) {
+              // The user switched again while this request was in flight.
+              return;
+            }
             const activeSessionId =
               (res.session && res.session.id) || sessionId;
             this.currentSessionId = activeSessionId;
@@ -713,17 +749,29 @@ export class ChatInterfaceComponent
             this.isLoadingHistory.set(false);
             this.shouldScrollToBottom = true;
 
-            // Sync URL query parameters
+            // Sync URL query parameters — only when they actually differ, so
+            // the `queryParams` subscription in the Workbench is not re-fed
+            // with the session it already knows about.
             const targetSessionId = activeSessionId;
             const targetStoryboardId = res.storyboard?.id || null;
-            void this.router.navigate([], {
-              relativeTo: this.route,
-              queryParams: {
-                sessionId: targetSessionId,
-                storyboardId: targetStoryboardId,
-              },
-              queryParamsHandling: 'merge',
-            });
+            const qp = this.route.snapshot?.queryParams ?? {};
+            const urlSessionId = qp['sessionId'] || null;
+            const urlStoryboardId = qp['storyboardId']
+              ? Number(qp['storyboardId'])
+              : null;
+            if (
+              urlSessionId !== targetSessionId ||
+              urlStoryboardId !== targetStoryboardId
+            ) {
+              void this.router.navigate([], {
+                relativeTo: this.route,
+                queryParams: {
+                  sessionId: targetSessionId,
+                  storyboardId: targetStoryboardId,
+                },
+                queryParamsHandling: 'merge',
+              });
+            }
           },
           error: err => {
             console.error('Error loading session details:', err);
@@ -2515,8 +2563,18 @@ export class ChatInterfaceComponent
       const asset = img as SourceAssetResponseDto;
       if (asset.presignedThumbnailUrl) return asset.presignedThumbnailUrl;
       if (asset.presignedUrl) return asset.presignedUrl;
-      return `${environment.backendURL}/assets/source-assets/${asset.id}/download`;
+      // No presigned URL yet: `resolveMessageImagesEffect` is fetching it.
+      // Never guess a backend URL here — all media is served through
+      // presigned GCS URLs; there is no "download" route.
+      return '';
     }
+  }
+
+  /** True once the resolver gave up on this image (deleted / not accessible). */
+  isAssetUnavailable(
+    img: SourceAssetResponseDto | MediaItemSelection,
+  ): boolean {
+    return (img as {unavailable?: boolean}).unavailable === true;
   }
 
   getFriendlyErrorMessage(err: any): {
