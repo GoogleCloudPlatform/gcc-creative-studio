@@ -57,6 +57,8 @@ import {
   TimelineClip,
   MediaAsset,
 } from '../common/models/workbench.model';
+import {clampFade, clampGain} from './utils/audio-gain';
+import {AudioClipAdjustment} from './components/audio-clip-inspector/audio-clip-inspector.component';
 import {ActivatedRoute, Router} from '@angular/router';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {
@@ -130,6 +132,14 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     const id = this.timelineState.selectedClipId();
     if (!id) return -1;
     return this.timelineState.videoClips().findIndex(c => c.id === id);
+  });
+
+  /** The selected clip when it sits on an audio track, else null. */
+  selectedAudioClip = computed<TimelineClip | null>(() => {
+    const id = this.timelineState.selectedClipId();
+    if (!id) return null;
+    const clip = this.timelineState.timelineClips().find(c => c.id === id);
+    return clip && clip.trackIndex > 0 ? clip : null;
   });
 
   activeVideoSrc = computed(() => {
@@ -964,6 +974,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
               : 1.0,
           speed:
             clip.speed !== undefined && clip.speed !== null ? clip.speed : 1.0,
+          fadeIn: clip.fade_in_duration_seconds ?? 0,
+          fadeOut: clip.fade_out_duration_seconds ?? 0,
         });
       });
     }
@@ -1629,6 +1641,54 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     return [...Array(Math.floor(length)).keys()].map(i => i + 1);
   }
 
+  // --- Audio clip gain & fades (inspector + on-clip visuals) ---
+
+  /**
+   * Waveform bar height scaled by the clip gain so a 20 % music bed visibly
+   * sits lower than a 100 % voiceover. Boosted clips stay capped at 100 %.
+   */
+  getAudioBarHeight(clip: TimelineClip, seed: number): number {
+    const gain = Math.min(1, clampGain(clip.volume));
+    return Math.max(6, this.getRandomHeight(seed) * gain);
+  }
+
+  /** Width in px of the fade ramp overlay drawn at either end of a clip. */
+  getFadeOverlayWidth(clip: TimelineClip, edge: 'in' | 'out'): number {
+    const seconds = edge === 'in' ? (clip.fadeIn ?? 0) : (clip.fadeOut ?? 0);
+    if (seconds <= 0) return 0;
+    const clipPx = clip.duration * this.timelineState.pixelsPerSecond() - 4;
+    return Math.min(clipPx, seconds * this.timelineState.pixelsPerSecond());
+  }
+
+  getAudioVolumeLabel(clip: TimelineClip): string {
+    return `${Math.round(clampGain(clip.volume) * 100)}%`;
+  }
+
+  /** Applies an inspector delta to the selected audio clip and autosaves. */
+  onAudioClipAdjust(clipId: string, change: AudioClipAdjustment): void {
+    let touched = false;
+    this.timelineState.timelineClips.update(prev =>
+      prev.map(c => {
+        if (c.id !== clipId || c.trackIndex === 0) return c;
+        const next: TimelineClip = {...c};
+        if (change.volume !== undefined) next.volume = clampGain(change.volume);
+        if (change.fadeIn !== undefined) {
+          next.fadeIn = clampFade(change.fadeIn, c.duration);
+        }
+        if (change.fadeOut !== undefined) {
+          next.fadeOut = clampFade(change.fadeOut, c.duration);
+        }
+        touched = true;
+        return next;
+      }),
+    );
+    if (touched) this.triggerAutoSave();
+  }
+
+  clearClipSelection(): void {
+    this.timelineState.selectedClipId.set(null);
+  }
+
   getThumbnailsSequence(duration: number): number[] {
     // add thumbnails dinamically
     const count = Math.ceil(
@@ -1730,7 +1790,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
             offset_seconds: c.offset,
             duration_seconds: c.duration,
           },
-          volume: 1.0,
+          volume: c.volume ?? 1.0,
+          fade_in_duration_seconds: c.fadeIn ?? 0,
+          fade_out_duration_seconds: c.fadeOut ?? 0,
         };
       });
 

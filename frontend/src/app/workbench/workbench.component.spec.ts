@@ -645,6 +645,182 @@ describe('WorkbenchComponent', () => {
     });
   });
 
+  describe('Audio clip gain & fades', () => {
+    let agentChatService: AgentChatService;
+    let stateService: TimelineStateService;
+    let workbenchService: WorkbenchService;
+
+    const audioClip = (overrides: Partial<TimelineClip> = {}): TimelineClip =>
+      ({
+        id: 'music',
+        assetId: 'asset-music',
+        startTime: 0,
+        duration: 10,
+        offset: 0,
+        trackIndex: 1,
+        color: 'green',
+        mediaItemId: 77,
+        volume: 0.2,
+        fadeIn: 0.5,
+        fadeOut: 1,
+        ...overrides,
+      }) as TimelineClip;
+
+    beforeEach(() => {
+      agentChatService = TestBed.inject(AgentChatService);
+      stateService = TestBed.inject(TimelineStateService);
+      workbenchService = TestBed.inject(WorkbenchService);
+    });
+
+    it('round-trips volume and fades on save (regression: music bed reset to 1.0)', () => {
+      agentChatService.currentStoryboard.set({id: 1, timeline_id: 2} as any);
+      stateService.timelineClips.set([audioClip()]);
+      const updateSpy = spyOn(
+        workbenchService,
+        'updateTimeline',
+      ).and.returnValue(
+        of({timeline_id: 2, video_clips: [], audio_clips: []} as any),
+      );
+
+      component.saveTimeline();
+
+      const payload = updateSpy.calls.mostRecent().args[1] as any;
+      expect(payload.audio_clips.length).toBe(1);
+      expect(payload.audio_clips[0]).toEqual(
+        jasmine.objectContaining({
+          volume: 0.2,
+          fade_in_duration_seconds: 0.5,
+          fade_out_duration_seconds: 1,
+        }),
+      );
+    });
+
+    it('defaults volume to 1 and fades to 0 when the clip has none', () => {
+      agentChatService.currentStoryboard.set({id: 1, timeline_id: 2} as any);
+      stateService.timelineClips.set([
+        audioClip({volume: undefined, fadeIn: undefined, fadeOut: undefined}),
+      ]);
+      const updateSpy = spyOn(
+        workbenchService,
+        'updateTimeline',
+      ).and.returnValue(
+        of({timeline_id: 2, video_clips: [], audio_clips: []} as any),
+      );
+
+      component.saveTimeline();
+
+      const payload = updateSpy.calls.mostRecent().args[1] as any;
+      expect(payload.audio_clips[0]).toEqual(
+        jasmine.objectContaining({
+          volume: 1,
+          fade_in_duration_seconds: 0,
+          fade_out_duration_seconds: 0,
+        }),
+      );
+    });
+
+    it('maps fade_in/fade_out from the API into the timeline clip on load', () => {
+      component.processGeneratedData({
+        timeline_id: 2,
+        workspace_id: 1,
+        title: 'Timeline',
+        video_clips: [
+          {
+            asset_ref: {id: 1, type: 'media_item'},
+            trim: {offset_seconds: 0, duration_seconds: 5},
+            presigned_url: 'video1.mp4',
+            volume: 1.0,
+            speed: 1.0,
+          },
+        ],
+        audio_clips: [
+          {
+            asset_ref: {id: 2, type: 'media_item'},
+            start_at: {video_clip_index: -1, offset_seconds: 0},
+            trim: {offset_seconds: 0, duration_seconds: 5},
+            presigned_url: 'music.mp3',
+            volume: 0.2,
+            fade_in_duration_seconds: 0.5,
+            fade_out_duration_seconds: 1.5,
+          },
+        ],
+      } as TimelineDTO);
+
+      const loaded = stateService.timelineClips().find(c => c.trackIndex > 0)!;
+      expect(loaded.volume).toBe(0.2);
+      expect(loaded.fadeIn).toBe(0.5);
+      expect(loaded.fadeOut).toBe(1.5);
+    });
+
+    it('exposes the selected clip only when it is on an audio track', () => {
+      const video = audioClip({id: 'v', trackIndex: 0});
+      stateService.timelineClips.set([video, audioClip()]);
+
+      stateService.selectedClipId.set('v');
+      expect(component.selectedAudioClip()).toBeNull();
+
+      stateService.selectedClipId.set('music');
+      expect(component.selectedAudioClip()?.id).toBe('music');
+
+      component.clearClipSelection();
+      expect(stateService.selectedClipId()).toBeNull();
+      expect(component.selectedAudioClip()).toBeNull();
+    });
+
+    it('applies inspector deltas with clamping and autosaves', () => {
+      stateService.timelineClips.set([audioClip({duration: 4})]);
+      spyOn(component, 'triggerAutoSave');
+
+      component.onAudioClipAdjust('music', {volume: 5});
+      component.onAudioClipAdjust('music', {fadeIn: 9});
+      component.onAudioClipAdjust('music', {fadeOut: -1});
+
+      const clip = stateService.timelineClips()[0];
+      expect(clip.volume).toBe(2);
+      expect(clip.fadeIn).toBe(2); // half of the 4 s clip
+      expect(clip.fadeOut).toBe(0);
+      expect(component.triggerAutoSave).toHaveBeenCalledTimes(3);
+    });
+
+    it('ignores adjustments aimed at video clips or unknown ids', () => {
+      const video = audioClip({id: 'v', trackIndex: 0, volume: 1});
+      stateService.timelineClips.set([video]);
+      spyOn(component, 'triggerAutoSave');
+
+      component.onAudioClipAdjust('v', {volume: 0.3});
+      component.onAudioClipAdjust('nope', {volume: 0.3});
+
+      expect(stateService.timelineClips()[0].volume).toBe(1);
+      expect(component.triggerAutoSave).not.toHaveBeenCalled();
+    });
+
+    it('scales the waveform bars with the gain and labels the badge', () => {
+      spyOn(component, 'getRandomHeight').and.returnValue(80);
+      expect(component.getAudioBarHeight(audioClip({volume: 0.5}), 0)).toBe(40);
+      // Boosted clips stay capped at the full bar height.
+      expect(component.getAudioBarHeight(audioClip({volume: 2}), 0)).toBe(80);
+      // Muted clips keep a visible floor.
+      expect(component.getAudioBarHeight(audioClip({volume: 0}), 0)).toBe(6);
+      expect(component.getAudioVolumeLabel(audioClip({volume: 0.2}))).toBe(
+        '20%',
+      );
+    });
+
+    it('sizes fade ramps on the timeline scale and caps them to the clip', () => {
+      stateService.pixelsPerSecond.set(20);
+      const clip = audioClip({duration: 10, fadeIn: 0.5, fadeOut: 0});
+      expect(component.getFadeOverlayWidth(clip, 'in')).toBe(10);
+      expect(component.getFadeOverlayWidth(clip, 'out')).toBe(0);
+      // 50 s fade on a 10 s clip cannot exceed the clip width (200 − 4 px).
+      expect(
+        component.getFadeOverlayWidth(
+          audioClip({duration: 10, fadeOut: 50}),
+          'out',
+        ),
+      ).toBe(196);
+    });
+  });
+
   describe('downloadVideo', () => {
     let agentChatService: AgentChatService;
     let workbenchService: WorkbenchService;

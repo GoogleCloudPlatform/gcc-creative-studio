@@ -86,6 +86,8 @@ export interface AudioClipDTO {
   trim?: Trim | null;
   volume: number;
   speed?: number;
+  fade_in_duration_seconds?: number;
+  fade_out_duration_seconds?: number;
   placeholder?: string | null;
   presigned_url?: string | null;
 }
@@ -176,6 +178,10 @@ export interface TimelineClip {
   isDurationPlaceholder?: boolean;
   volume?: number;
   speed?: number;
+  /** Audio only: fade-in length in seconds (0 = none). */
+  fadeIn?: number;
+  /** Audio only: fade-out length in seconds (0 = none). */
+  fadeOut?: number;
   transition_to_next_type?: TransitionType | null;
   transition_to_next_duration?: number | null;
 }

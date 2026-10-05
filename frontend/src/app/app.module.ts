@@ -118,6 +118,7 @@ import {UpscaleComponent} from './upscale/upscale.component';
 import {StoryboardComponent} from './workbench/components/storyboard/storyboard.component';
 import {TimeRulerComponent} from './workbench/components/time-ruler/time-ruler.component';
 import {TransitionIndicatorComponent} from './workbench/components/transition-indicator/transition-indicator.component';
+import {AudioClipInspectorComponent} from './workbench/components/audio-clip-inspector/audio-clip-inspector.component';
 import {ApprovalGateComponent} from './workbench/components/approval-gate/approval-gate.component';
 import {FeedbackFabComponent} from './common/components/feedback-fab/feedback-fab.component';
 import {SafeUrlPipe} from './common/pipes/safe-url.pipe';
@@ -204,6 +205,7 @@ import {SafeUrlPipe} from './common/pipes/safe-url.pipe';
     StoryboardComponent,
     TimeRulerComponent,
     TransitionIndicatorComponent,
+    AudioClipInspectorComponent,
     ApprovalGateComponent,
     TextFieldModule,
     SafeUrlPipe,

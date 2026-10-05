@@ -646,6 +646,17 @@ class FFmpegService:
                         )
                         current_stream = fadeout_stream
 
+                # Apply the clip gain. Without this every track is mixed at
+                # unity by amix(normalize=0), so background music set to 0.2
+                # by the agent (or the Workbench) drowns the voiceover.
+                if audio_clip.volume is not None and audio_clip.volume != 1.0:
+                    volume_stream = f"[a{i}_volume]"
+                    chain.append(
+                        f"{current_stream}volume={max(0.0, audio_clip.volume)}"
+                        f"{volume_stream}"
+                    )
+                    current_stream = volume_stream
+
                 delayed_stream = f"[a{i}_delayed]"
                 delay_ms = max(0, int(start_time * 1000))
                 chain.append(

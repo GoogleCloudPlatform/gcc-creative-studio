@@ -20,6 +20,7 @@ import {
   TransitionType,
   TimelineClip,
 } from '../../common/models/workbench.model';
+import {previewGainAt} from '../utils/audio-gain';
 
 export interface TimeRulerInterface {
   setScrollLeft(left: number): void;
@@ -280,8 +281,9 @@ export class PlayheadSyncService {
           const aClip = activeAClips[index];
 
           if (aud && aClip) {
-            const targetVolume =
-              aClip.volume !== undefined ? aClip.volume : 1.0;
+            // Gain × fade envelope, capped at 1 (HTMLMediaElement.volume
+            // throws above 1; boosted clips preview at unity).
+            const targetVolume = previewGainAt(aClip, curTime);
             const targetSpeed = aClip.speed !== undefined ? aClip.speed : 1.0;
 
             const fileTime =
@@ -290,7 +292,7 @@ export class PlayheadSyncService {
               aud.currentTime = fileTime;
             }
 
-            if (aud.volume !== targetVolume) {
+            if (Math.abs(aud.volume - targetVolume) > 0.005) {
               aud.volume = targetVolume;
             }
             if (aud.playbackRate !== targetSpeed) {

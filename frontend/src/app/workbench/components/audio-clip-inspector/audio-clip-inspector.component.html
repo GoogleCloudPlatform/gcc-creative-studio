@@ -1,0 +1,129 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<div
+  class="audio-inspector glass-bg-effect flex flex-row items-center gap-4 px-4 py-2 rounded-2xl backdrop-blur-[50px]"
+  [class.opacity-60]="disabled"
+  data-testid="audio-clip-inspector"
+>
+  <!-- Mute / level icon -->
+  <button
+    type="button"
+    class="mute-toggle flex items-center justify-center w-8 h-8 rounded-full transition-colors"
+    [class.is-muted]="isMuted"
+    [disabled]="disabled"
+    (click)="toggleMute()"
+    [matTooltip]="isMuted ? 'Unmute clip' : 'Mute clip'"
+    data-testid="mute-toggle"
+  >
+    <mat-icon class="!w-5 !h-5 !text-[20px]">{{ volumeIcon }}</mat-icon>
+  </button>
+
+  <!-- Gain -->
+  <div class="flex flex-row items-center gap-3 min-w-[16rem]">
+    <span class="label">Volume</span>
+    <studio-slider
+      class="w-[10rem]"
+      [min]="0"
+      [max]="maxVolumePercent"
+      [step]="5"
+      [disabled]="disabled"
+      [value]="volumePercent"
+      (valueChange)="onVolumePercentChange($event)"
+      data-testid="volume-slider"
+    ></studio-slider>
+    <div
+      class="readout flex flex-col items-end leading-none select-none tabular-nums"
+      [matTooltip]="
+        isBoosted
+          ? 'Boosted above 100 %: the preview plays at 100 %, the rendered video uses the boost.'
+          : ''
+      "
+    >
+      <span class="percent" data-testid="volume-percent"
+        >{{ volumePercent }}%<mat-icon
+          *ngIf="isBoosted"
+          class="boost-flag !w-3 !h-3 !text-[12px] align-top"
+          >north_east</mat-icon
+        ></span
+      >
+      <span class="db" data-testid="volume-db">{{ volumeDb }}</span>
+    </div>
+  </div>
+
+  <!-- Presets -->
+  <div class="flex flex-row items-center gap-1">
+    <button
+      *ngFor="let preset of presets"
+      type="button"
+      class="preset-chip px-2.5 py-1 rounded-full text-xs font-medium transition-colors"
+      [class.is-active]="isPresetActive(preset)"
+      [disabled]="disabled"
+      [matTooltip]="preset.hint"
+      (click)="applyPreset(preset)"
+      [attr.data-testid]="'preset-' + preset.label"
+    >
+      {{ preset.label }}
+    </button>
+  </div>
+
+  <div class="divider h-6 w-px"></div>
+
+  <!-- Fades -->
+  <div class="flex flex-row items-center gap-3">
+    <span class="label">Fade in</span>
+    <studio-slider
+      class="w-[6rem]"
+      [min]="0"
+      [max]="maxFadeSeconds"
+      [step]="0.1"
+      [disabled]="disabled || maxFadeSeconds === 0"
+      [value]="fadeIn"
+      (valueChange)="onFadeInChange($event)"
+      data-testid="fade-in-slider"
+    ></studio-slider>
+    <span class="readout tabular-nums" data-testid="fade-in-value"
+      >{{ fadeIn | number: '1.1-1' }}s</span
+    >
+  </div>
+
+  <div class="flex flex-row items-center gap-3">
+    <span class="label">Fade out</span>
+    <studio-slider
+      class="w-[6rem]"
+      [min]="0"
+      [max]="maxFadeSeconds"
+      [step]="0.1"
+      [disabled]="disabled || maxFadeSeconds === 0"
+      [value]="fadeOut"
+      (valueChange)="onFadeOutChange($event)"
+      data-testid="fade-out-slider"
+    ></studio-slider>
+    <span class="readout tabular-nums" data-testid="fade-out-value"
+      >{{ fadeOut | number: '1.1-1' }}s</span
+    >
+  </div>
+
+  <button
+    type="button"
+    class="close-btn ml-auto flex items-center justify-center w-7 h-7 rounded-full transition-colors"
+    (click)="close()"
+    matTooltip="Deselect clip"
+    data-testid="inspector-close"
+  >
+    <mat-icon class="!w-4 !h-4 !text-[16px]">close</mat-icon>
+  </button>
+</div>
