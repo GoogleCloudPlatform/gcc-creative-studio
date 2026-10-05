@@ -425,6 +425,55 @@
           }
         </div>
 
+        <!-- Reference images the agent is working from: chat attachments (product, logo) and the generated virtual creator -->
+        @if (referenceAssets().length > 0) {
+          <h3 class="sb-campaign-section-title">
+            <mat-icon class="sb-icon-sm">collections</mat-icon>
+            Reference assets
+            <span class="sb-campaign-section-count">{{ referenceAssets().length }}</span>
+          </h3>
+          <p class="sb-campaign-muted sb-campaign-section-hint">
+            Images the agent uses as references when it generates frames. Click one to open it.
+          </p>
+          <ul class="sb-campaign-assets" aria-label="Reference assets">
+            @for (asset of referenceAssets(); track asset.key) {
+              <li
+                class="sb-campaign-asset"
+                [class.is-creator]="asset.role === 'creator'"
+                [class.is-unavailable]="referencePreview(asset)?.unavailable"
+              >
+                <button
+                  type="button"
+                  class="sb-campaign-asset-tile"
+                  [title]="referenceTooltip(asset)"
+                  [attr.aria-label]="referenceRoleLabel(asset.role) + ': ' + (asset.description || asset.key)"
+                  (click)="openReferenceAsset(asset)"
+                >
+                  @if (referencePreview(asset)?.url; as url) {
+                    <img [src]="url" [alt]="asset.description || asset.key" loading="lazy" />
+                  } @else if (referencePreview(asset)?.unavailable) {
+                    <span class="sb-campaign-asset-placeholder">
+                      <mat-icon>broken_image</mat-icon>
+                      <small>Not available</small>
+                    </span>
+                  } @else {
+                    <span class="sb-campaign-asset-placeholder is-loading">
+                      <mat-icon>image</mat-icon>
+                    </span>
+                  }
+                  <span class="sb-campaign-asset-badge">
+                    <mat-icon class="sb-icon-sm">{{ referenceRoleIcon(asset.role) }}</mat-icon>
+                    {{ referenceRoleLabel(asset.role) }}
+                  </span>
+                </button>
+                @if (asset.description) {
+                  <p class="sb-campaign-asset-caption">{{ asset.description }}</p>
+                }
+              </li>
+            }
+          </ul>
+        }
+
         <!-- Planned beats from the brief; replaced by the real scene breakdown once the storyboard lands -->
         @if (campaign.scenes.length === 0 && campaign.plannedBeats.length > 0) {
           <h3 class="sb-campaign-section-title">Planned beats</h3>

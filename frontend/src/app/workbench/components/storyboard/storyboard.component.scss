@@ -980,6 +980,138 @@ $cs-warning: #fdd663;
     font-weight: 600;
   }
 }
+.sb-campaign-section-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: $border-radius-pill;
+  background: rgba(94, 153, 255, 0.15);
+  color: $glow-color;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+// --- Reference assets -------------------------------------------------------
+.sb-campaign-assets {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0.25rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 0.75rem;
+}
+.sb-campaign-asset {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  animation: sb-campaign-card-enter 0.3s ease-out both;
+
+  &.is-creator .sb-campaign-asset-tile {
+    box-shadow: inset 0 0 0 1px rgba(94, 153, 255, 0.55);
+  }
+  &.is-unavailable .sb-campaign-asset-tile {
+    cursor: not-allowed;
+    opacity: 0.7;
+  }
+}
+.sb-campaign-asset-tile {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  padding: 0;
+  border: 1px solid $border-color;
+  border-radius: $border-radius-md;
+  background: $bg-card;
+  overflow: hidden;
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+
+  img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  &:hover,
+  &:focus-visible {
+    border-color: $border-light;
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+    outline: none;
+  }
+}
+.sb-campaign-asset-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  height: 100%;
+  color: $text-secondary;
+  mat-icon {
+    font-size: 28px;
+    width: 28px;
+    height: 28px;
+  }
+  small {
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  &.is-loading mat-icon {
+    animation: sb-campaign-asset-pulse 1.4s ease-in-out infinite;
+  }
+}
+.sb-campaign-asset-badge {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px 2px 5px;
+  border-radius: $border-radius-pill;
+  background: rgba(15, 17, 22, 0.78);
+  backdrop-filter: blur(4px);
+  color: #e3e3e3;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  pointer-events: none;
+  mat-icon {
+    color: $glow-color;
+  }
+}
+.sb-campaign-asset-caption {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: $text-secondary;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+@keyframes sb-campaign-asset-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
 
 // --- Scenes / planned beats ------------------------------------------------
 .sb-campaign-scenes {

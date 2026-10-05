@@ -41,6 +41,11 @@ import {
   ImageSelectorComponent,
   MediaItemSelection,
 } from '../../../common/components/image-selector/image-selector.component';
+import {CampaignReferenceAsset} from '../../utils/campaign-details';
+import {
+  ReferenceAssetPreview,
+  ReferenceAssetPreviewService,
+} from '../../services/reference-asset-preview.service';
 
 // --- Data Models ---
 export interface Character {
@@ -87,6 +92,7 @@ export class StoryboardComponent {
   private agentChatService = inject(AgentChatService);
   private dialog = inject(MatDialog);
   private storyboardService = inject(StoryboardService);
+  private referencePreviews = inject(ReferenceAssetPreviewService);
 
   // Navigation State
   activeTab = signal<'characters' | 'scenes' | 'campaign'>('scenes');
@@ -162,6 +168,59 @@ export class StoryboardComponent {
     this.briefExpanded.update(v => !v);
   }
 
+  /** Reference images the agent registered (user attachments + virtual creator). */
+  referenceAssets = computed<CampaignReferenceAsset[]>(
+    () => this.campaignDetails()?.referenceAssets ?? [],
+  );
+
+  /** Resolution state for one reference tile (tracked via the service signal). */
+  referencePreview(
+    asset: CampaignReferenceAsset,
+  ): ReferenceAssetPreview | undefined {
+    return this.referencePreviews.snapshot(asset);
+  }
+
+  referenceRoleLabel(role: CampaignReferenceAsset['role']): string {
+    switch (role) {
+      case 'creator':
+        return 'Virtual creator';
+      case 'logo':
+        return 'Logo';
+      default:
+        return 'Reference';
+    }
+  }
+
+  referenceRoleIcon(role: CampaignReferenceAsset['role']): string {
+    switch (role) {
+      case 'creator':
+        return 'person';
+      case 'logo':
+        return 'branding_watermark';
+      default:
+        return 'image';
+    }
+  }
+
+  /** Tooltip: caption, plus the creator's demographics when relevant. */
+  referenceTooltip(asset: CampaignReferenceAsset): string {
+    const parts = [
+      asset.description,
+      asset.role === 'creator' ? asset.demographics : undefined,
+    ].filter((p): p is string => !!p);
+    return parts.length > 0 ? parts.join('\n\n') : asset.key;
+  }
+
+  /** Opens the asset's detail page in a new tab (mirrors the chat's `viewAsset`). */
+  openReferenceAsset(asset: CampaignReferenceAsset): void {
+    if (typeof window === 'undefined') return;
+    const route =
+      asset.assetType === 'uploaded'
+        ? `/asset-detail/${asset.id}`
+        : `/gallery/${asset.id}`;
+    window.open(route, '_blank');
+  }
+
   // Dynamic Data
   scenes = signal<Scene[]>([]);
   isGeneratingStoryboard = computed(() =>
@@ -231,6 +290,16 @@ export class StoryboardComponent {
           this.lastBrief = brief;
           this.briefExpanded.set(false);
         });
+      },
+      {allowSignalWrites: true},
+    );
+
+    // Resolve reference thumbnails as soon as the agent registers them. The
+    // service fetches each id once, so the per-delta re-emits cost nothing.
+    effect(
+      () => {
+        const assets = this.referenceAssets();
+        untracked(() => this.referencePreviews.ensure(assets));
       },
       {allowSignalWrites: true},
     );

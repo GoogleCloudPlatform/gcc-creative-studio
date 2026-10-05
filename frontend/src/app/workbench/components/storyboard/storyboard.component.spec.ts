@@ -23,7 +23,14 @@ import {Subject} from 'rxjs';
 import {StoryboardComponent} from './storyboard.component';
 import {AgentChatService} from '../../services/agent-chat.service';
 import {StoryboardService} from '../../../services/storyboard/storyboard.service';
-import {CampaignDetails} from '../../utils/campaign-details';
+import {
+  CampaignDetails,
+  CampaignReferenceAsset,
+} from '../../utils/campaign-details';
+import {
+  ReferenceAssetPreview,
+  ReferenceAssetPreviewService,
+} from '../../services/reference-asset-preview.service';
 
 function brief(overrides: Partial<CampaignDetails> = {}): CampaignDetails {
   return {
@@ -31,6 +38,7 @@ function brief(overrides: Partial<CampaignDetails> = {}): CampaignDetails {
     voiceoverGroups: [],
     scenes: [],
     plannedBeats: [],
+    referenceAssets: [],
     stage: 'brief',
     ...overrides,
   };
@@ -42,11 +50,22 @@ describe('StoryboardComponent – Campaign tab reveal', () => {
   let campaignDetails: WritableSignal<CampaignDetails | null>;
   let currentStoryboard: WritableSignal<unknown>;
   let finalVideoReady: WritableSignal<boolean>;
+  let previews: WritableSignal<Record<string, ReferenceAssetPreview>>;
+  let previewService: {
+    ensure: jasmine.Spy;
+    snapshot: (a: {assetType: string; id: string}) => unknown;
+  };
 
   beforeEach(async () => {
     campaignDetails = signal<CampaignDetails | null>(null);
     currentStoryboard = signal<unknown>(null);
     finalVideoReady = signal(false);
+    previews = signal<Record<string, ReferenceAssetPreview>>({});
+    previewService = {
+      ensure: jasmine.createSpy('ensure'),
+      snapshot: (a: {assetType: string; id: string}) =>
+        previews()[`${a.assetType}:${a.id}`],
+    };
     const mockAgentChatService = {
       campaignDetails,
       currentStoryboard,
@@ -63,6 +82,7 @@ describe('StoryboardComponent – Campaign tab reveal', () => {
         {provide: AgentChatService, useValue: mockAgentChatService},
         {provide: StoryboardService, useValue: {}},
         {provide: MatDialog, useValue: {open: () => ({})}},
+        {provide: ReferenceAssetPreviewService, useValue: previewService},
       ],
     }).compileComponents();
 
@@ -266,6 +286,120 @@ describe('StoryboardComponent – Campaign tab reveal', () => {
         '.sb-campaign-section-hint',
       );
       expect(hint?.textContent).toContain('Feature Spotlight');
+    });
+  });
+
+  describe('reference assets', () => {
+    const product: CampaignReferenceAsset = {
+      key: 'generated_158',
+      id: '158',
+      assetType: 'generated',
+      role: 'reference',
+      description: 'A bottle of amber perfume on velvet.',
+    };
+    const logo: CampaignReferenceAsset = {
+      key: 'uploaded_12_logo',
+      id: '12',
+      assetType: 'uploaded',
+      role: 'logo',
+    };
+    const creator: CampaignReferenceAsset = {
+      key: 'virtual_creator_4c53.png',
+      id: '201',
+      assetType: 'generated',
+      role: 'creator',
+      description: 'A generated virtual creator character.',
+      demographics: 'Female, early 30s, dark bob',
+    };
+    const el = (): HTMLElement => fixture.nativeElement;
+
+    it('renders no section when the agent registered nothing', () => {
+      campaignDetails.set(brief());
+      fixture.detectChanges();
+      expect(el().querySelector('.sb-campaign-assets')).toBeNull();
+    });
+
+    it('asks the preview service to resolve every asset once they land', () => {
+      campaignDetails.set(brief({referenceAssets: [product, creator]}));
+      fixture.detectChanges();
+      expect(previewService.ensure).toHaveBeenCalledWith([product, creator]);
+    });
+
+    it('renders a tile per asset with role badge and caption', () => {
+      campaignDetails.set(brief({referenceAssets: [product, logo, creator]}));
+      fixture.detectChanges();
+
+      const tiles = el().querySelectorAll('.sb-campaign-asset');
+      expect(tiles.length).toBe(3);
+      expect(
+        el().querySelector('.sb-campaign-section-count')?.textContent,
+      ).toBe('3');
+      const badges = Array.from(
+        el().querySelectorAll('.sb-campaign-asset-badge'),
+      ).map(b => b.textContent?.replace(/\s+/g, ' ').trim());
+      expect(badges[0]).toContain('Reference');
+      expect(badges[1]).toContain('Logo');
+      expect(badges[2]).toContain('Virtual creator');
+      expect(tiles[2].classList).toContain('is-creator');
+      expect(
+        el().querySelector('.sb-campaign-asset-caption')?.textContent,
+      ).toContain('amber perfume');
+    });
+
+    it('shows a loading placeholder, then the image, then "not available" on failure', () => {
+      campaignDetails.set(brief({referenceAssets: [product]}));
+      fixture.detectChanges();
+      expect(el().querySelector('.sb-campaign-asset-placeholder.is-loading'))
+        .withContext('loading')
+        .not.toBeNull();
+      expect(el().querySelector('.sb-campaign-asset-tile img')).toBeNull();
+
+      previews.set({
+        'generated:158': {url: 'https://signed/158', unavailable: false},
+      });
+      fixture.detectChanges();
+      const img = el().querySelector<HTMLImageElement>(
+        '.sb-campaign-asset-tile img',
+      );
+      expect(img?.getAttribute('src')).toBe('https://signed/158');
+
+      previews.set({'generated:158': {url: '', unavailable: true}});
+      fixture.detectChanges();
+      expect(el().querySelector('.sb-campaign-asset-tile img')).toBeNull();
+      expect(
+        el().querySelector('.sb-campaign-asset-placeholder')?.textContent,
+      ).toContain('Not available');
+      expect(el().querySelector('.sb-campaign-asset')?.classList).toContain(
+        'is-unavailable',
+      );
+    });
+
+    it('opens generated assets in the gallery and uploads in asset-detail', () => {
+      const open = spyOn(window, 'open');
+      component.openReferenceAsset(product);
+      expect(open).toHaveBeenCalledWith('/gallery/158', '_blank');
+      component.openReferenceAsset(logo);
+      expect(open).toHaveBeenCalledWith('/asset-detail/12', '_blank');
+    });
+
+    it('builds tooltips from the caption and, for the creator, the demographics', () => {
+      expect(component.referenceTooltip(product)).toBe(product.description!);
+      expect(component.referenceTooltip(logo)).toBe(logo.key);
+      expect(component.referenceTooltip(creator)).toContain(
+        creator.description!,
+      );
+      expect(component.referenceTooltip(creator)).toContain(
+        creator.demographics!,
+      );
+    });
+
+    it('maps roles to labels and icons', () => {
+      expect(component.referenceRoleLabel('creator')).toBe('Virtual creator');
+      expect(component.referenceRoleLabel('logo')).toBe('Logo');
+      expect(component.referenceRoleLabel('reference')).toBe('Reference');
+      expect(component.referenceRoleIcon('creator')).toBe('person');
+      expect(component.referenceRoleIcon('logo')).toBe('branding_watermark');
+      expect(component.referenceRoleIcon('reference')).toBe('image');
     });
   });
 });

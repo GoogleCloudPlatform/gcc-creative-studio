@@ -19,6 +19,7 @@ import {
   findStorylineGuidanceInEvents,
   parseCampaignDetails,
   parseCampaignState,
+  parseReferenceAssets,
   withStorylineGuidance,
 } from './campaign-details';
 
@@ -410,6 +411,9 @@ describe('parseCampaignState', () => {
       'master_production_recipe',
       'storyboard',
       'stage_completed',
+      'asset_refs',
+      'user_assets',
+      'virtual_creator_metadata',
     ]);
   });
 });
@@ -506,5 +510,135 @@ describe('storyline guidance recovery', () => {
     expect(withStorylineGuidance(null, guidance)).toBeNull();
     expect(withStorylineGuidance('str', guidance)).toBe('str');
     expect(withStorylineGuidance([1], guidance)).toEqual([1]);
+  });
+});
+
+describe('parseReferenceAssets', () => {
+  // Shapes as written by upstream `demos/backend/utils/adk.py` (interceptor)
+  // and `ads_x/tools/user_assets/user_assets_tools.py` (virtual creator).
+  const ASSET_REFS = {
+    generated_158: {id: '158', asset_type: 'generated', workspace_id: '1'},
+    uploaded_42: {id: 42, asset_type: 'uploaded', workspace_id: '1'},
+    'brand_logo.png': {id: '7', asset_type: 'uploaded', workspace_id: '1'},
+    'virtual_creator_4c53.png': {
+      id: '201',
+      asset_type: 'generated',
+      workspace_id: '1',
+    },
+  };
+  const USER_ASSETS = {
+    generated_158:
+      '(Original file: generated_158) A bottle of amber perfume on velvet.',
+    uploaded_42: '(Original file: uploaded_42) A gold cap, macro.',
+    'brand_logo.png': "Uploaded reference image 'brand_logo.png'.",
+    'virtual_creator_4c53.png':
+      'A generated virtual creator character (Female, early 30s). Use this asset for scenes requiring the Creator.',
+  };
+  const CREATOR_META = {
+    asset_ref: {id: '201', asset_type: 'generated', workspace_id: '1'},
+    file_name: 'virtual_creator_4c53.png',
+    prompt: 'Photorealistic portrait…',
+    demographics: 'Female, early 30s, dark bob',
+  };
+
+  it('maps ids, types, roles and captions; creator goes last', () => {
+    const assets = parseReferenceAssets(ASSET_REFS, USER_ASSETS, CREATOR_META);
+    expect(assets.map(a => a.key)).toEqual([
+      'generated_158',
+      'uploaded_42',
+      'brand_logo.png',
+      'virtual_creator_4c53.png',
+    ]);
+    expect(assets[0]).toEqual(
+      jasmine.objectContaining({
+        id: '158',
+        assetType: 'generated',
+        role: 'reference',
+        description: 'A bottle of amber perfume on velvet.',
+      }),
+    );
+    // Numeric ids are normalised to strings
+    expect(assets[1].id).toBe('42');
+    expect(assets[1].assetType).toBe('uploaded');
+    expect(assets[1].description).toBe('A gold cap, macro.');
+    expect(assets[2].role).toBe('logo');
+    expect(assets[3]).toEqual(
+      jasmine.objectContaining({
+        role: 'creator',
+        demographics: 'Female, early 30s, dark bob',
+      }),
+    );
+    expect(assets[0].demographics).toBeUndefined();
+  });
+
+  it('recognises the creator by prefix even without metadata', () => {
+    const assets = parseReferenceAssets(
+      {'virtual_creator_ab12.png': {id: '9', asset_type: 'generated'}},
+      undefined,
+      undefined,
+    );
+    expect(assets.length).toBe(1);
+    expect(assets[0].role).toBe('creator');
+    expect(assets[0].description).toBeUndefined();
+  });
+
+  it('drops entries without a usable id or with an unknown type', () => {
+    const assets = parseReferenceAssets(
+      {
+        ok: {id: '1', asset_type: 'uploaded'},
+        noId: {asset_type: 'uploaded'},
+        emptyId: {id: '  ', asset_type: 'generated'},
+        badType: {id: '2', asset_type: 'video'},
+        notAnObject: 'x',
+        arr: [{id: '3'}],
+      },
+      {},
+      null,
+    );
+    expect(assets.map(a => a.key)).toEqual(['ok']);
+  });
+
+  it('returns [] for anything that is not a refs object', () => {
+    expect(parseReferenceAssets(undefined, undefined, undefined)).toEqual([]);
+    expect(parseReferenceAssets(null, {}, {})).toEqual([]);
+    expect(parseReferenceAssets([], {}, {})).toEqual([]);
+    expect(parseReferenceAssets('generated_1', {}, {})).toEqual([]);
+    expect(parseReferenceAssets({}, {}, {})).toEqual([]);
+  });
+
+  it('is exposed on parseCampaignState and allow-listed for state sync', () => {
+    for (const key of [
+      'asset_refs',
+      'user_assets',
+      'virtual_creator_metadata',
+    ]) {
+      expect(CAMPAIGN_STATE_KEYS as readonly string[]).toContain(key);
+    }
+    const full = parseCampaignState({
+      parameters: AGENT_PARAMETERS,
+      asset_refs: ASSET_REFS,
+      user_assets: USER_ASSETS,
+      virtual_creator_metadata: CREATOR_META,
+    })!;
+    expect(full.referenceAssets.length).toBe(4);
+    expect(full.title).toBeDefined();
+  });
+
+  it('shows the Campaign tab from the registry alone (assets land before the brief)', () => {
+    const assetsOnly = parseCampaignState({asset_refs: ASSET_REFS})!;
+    expect(assetsOnly).not.toBeNull();
+    expect(assetsOnly.stage).toBe('brief');
+    expect(assetsOnly.referenceAssets.length).toBe(4);
+    expect(parseCampaignState({asset_refs: {}})).toBeNull();
+    expect(parseCampaignState({user_assets: USER_ASSETS})).toBeNull();
+  });
+
+  it('keeps the assets when the authoritative storyboard layer lands', () => {
+    const merged = parseCampaignState({
+      storyboard: AGENT_STORYBOARD,
+      asset_refs: ASSET_REFS,
+    })!;
+    expect(merged.stage).toBe('storyboard');
+    expect(merged.referenceAssets.length).toBe(4);
   });
 });

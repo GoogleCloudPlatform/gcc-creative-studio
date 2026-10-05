@@ -23,6 +23,9 @@
  *  3. `master_production_recipe` – the chosen visual "Look"
  *  4. `storyboard`               – the final brief with scenes (authoritative)
  *
+ * Alongside, `asset_refs` / `user_assets` / `virtual_creator_metadata` form
+ * the agent's reference-image registry (see {@link CampaignReferenceAsset}).
+ *
  * {@link parseCampaignState} layers those keys (later ones win) so the
  * Campaign tab can appear as soon as the agent understood the brief and fill
  * in as the conversation progresses. Each key is also published via
@@ -94,6 +97,32 @@ export type CampaignStage =
   | 'frames'
   | 'generation';
 
+/**
+ * A reference image the agent registered for this campaign: either one the
+ * user attached in the chat (a Creative Studio media item or source asset) or
+ * the virtual creator headshot the agent generated itself.
+ *
+ * Built from three session-state keys the `ads_x` agent maintains:
+ *  - `asset_refs`  `{key: {id, asset_type: "generated"|"uploaded"}}` — the
+ *    real Creative Studio ids (the strategy gate's `uploaded_assets` list only
+ *    carries these *keys*, e.g. `generated_158`, `virtual_creator_4c53.png`).
+ *  - `user_assets` `{key: description}` — a Gemini-written caption per image.
+ *  - `virtual_creator_metadata` `{file_name, demographics, …}` — which key is
+ *    the generated creator.
+ */
+export interface CampaignReferenceAsset {
+  /** The agent's key for the asset (`generated_158`, `virtual_creator_….png`, a filename). */
+  key: string;
+  /** Creative Studio id: a media item for `generated`, a source asset for `uploaded`. */
+  id: string;
+  assetType: 'generated' | 'uploaded';
+  /** Mirrors how the agent itself classifies `user_assets` when binding scenes. */
+  role: 'creator' | 'logo' | 'reference';
+  description?: string;
+  /** Creator only: the demographics the agent generated the headshot from. */
+  demographics?: string;
+}
+
 export interface CampaignDetails {
   title?: string;
   templateName?: string;
@@ -120,6 +149,8 @@ export interface CampaignDetails {
   storylineArc?: string;
   plannedBeats: CampaignPlannedBeat[];
   look?: {name?: string; archetype?: string};
+  /** Reference images registered for the campaign (user-provided first, creator last). */
+  referenceAssets: CampaignReferenceAsset[];
 }
 
 /** Session-state keys that feed the Campaign tab (see module doc). */
@@ -129,6 +160,9 @@ export const CAMPAIGN_STATE_KEYS = [
   'master_production_recipe',
   'storyboard',
   'stage_completed',
+  'asset_refs',
+  'user_assets',
+  'virtual_creator_metadata',
 ] as const;
 
 const CAMPAIGN_FIELDS = [
@@ -284,6 +318,7 @@ export function parseCampaignDetails(raw: unknown): CampaignDetails | null {
     scenes,
     stage: 'storyboard',
     plannedBeats: [],
+    referenceAssets: [],
   };
 }
 
@@ -421,6 +456,72 @@ function overlay(
   }
 }
 
+/** The agent prefixes captions with "(Original file: <key>) " — drop it. */
+function stripOriginalFilePrefix(value: unknown): string | undefined {
+  const text = str(value);
+  if (!text) return undefined;
+  return str(text.replace(/^\(Original file:[^)]*\)\s*/i, ''));
+}
+
+/**
+ * Builds the {@link CampaignReferenceAsset} list from the agent's asset
+ * registry (see the interface doc for the three keys). Only entries with a
+ * usable id and a known `asset_type` are kept. User-provided assets keep the
+ * agent's order; the generated virtual creator is appended last.
+ */
+export function parseReferenceAssets(
+  assetRefs: unknown,
+  userAssets: unknown,
+  creatorMeta: unknown,
+): CampaignReferenceAsset[] {
+  if (!assetRefs || typeof assetRefs !== 'object' || Array.isArray(assetRefs)) {
+    return [];
+  }
+  const captions =
+    userAssets && typeof userAssets === 'object' && !Array.isArray(userAssets)
+      ? (userAssets as Record<string, unknown>)
+      : {};
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const meta = (creatorMeta ?? {}) as any;
+  const creatorKey = str(meta.file_name);
+  const creatorDemographics = str(meta.demographics);
+
+  const assets: CampaignReferenceAsset[] = [];
+  for (const [key, raw] of Object.entries(
+    assetRefs as Record<string, unknown>,
+  )) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ref = raw as any;
+    const id = str(ref.id);
+    const assetType = str(ref.asset_type);
+    if (!id || (assetType !== 'generated' && assetType !== 'uploaded')) {
+      continue;
+    }
+    const isCreator =
+      (!!creatorKey && key === creatorKey) ||
+      key.startsWith('virtual_creator_');
+    const role: CampaignReferenceAsset['role'] = isCreator
+      ? 'creator'
+      : key.toLowerCase().includes('logo')
+        ? 'logo'
+        : 'reference';
+    assets.push({
+      key,
+      id,
+      assetType,
+      role,
+      description: stripOriginalFilePrefix(captions[key]),
+      demographics: isCreator ? creatorDemographics : undefined,
+    });
+  }
+  // Stable partition: everything the user provided first, the creator last.
+  return [
+    ...assets.filter(a => a.role !== 'creator'),
+    ...assets.filter(a => a.role === 'creator'),
+  ];
+}
+
 /**
  * Builds the progressive {@link CampaignDetails} from a (possibly partial)
  * agent session state. Layers, in order of increasing authority:
@@ -437,12 +538,26 @@ export function parseCampaignState(state: unknown): CampaignDetails | null {
   const forced = parseForcedMetadata(s.forced_metadata);
   const look = parseLook(s.master_production_recipe);
   const storyboard = parseCampaignDetails(s.storyboard);
-  if (!params && !forced && !look && !storyboard) return null;
+  const referenceAssets = parseReferenceAssets(
+    s.asset_refs,
+    s.user_assets,
+    s.virtual_creator_metadata,
+  );
+  if (
+    !params &&
+    !forced &&
+    !look &&
+    !storyboard &&
+    referenceAssets.length === 0
+  ) {
+    return null;
+  }
 
   const merged: Partial<CampaignDetails> = {
     voiceoverGroups: [],
     scenes: [],
     plannedBeats: [],
+    referenceAssets,
   };
   overlay(merged, params);
   overlay(merged, forced);
