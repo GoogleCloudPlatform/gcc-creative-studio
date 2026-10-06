@@ -37,7 +37,6 @@ import {MatChipsModule} from '@angular/material/chips';
 
 import {CreateWorkspaceModalComponent} from './components/create-workspace-modal/create-workspace-modal.component';
 import {ConfirmationDialogComponent} from './components/confirmation-dialog/confirmation-dialog.component';
-import {CopyToWorkspaceDialogComponent} from './components/copy-to-workspace-dialog/copy-to-workspace-dialog.component';
 import {InviteUserModalComponent} from './components/invite-user-modal/invite-user-modal.component';
 import {WorkspaceSwitcherComponent} from './components/workspace-switcher/workspace-switcher.component';
 import {BrandGuidelineDialogComponent} from './components/brand-guideline-dialog/brand-guideline-dialog.component';
@@ -53,12 +52,18 @@ import {GalleryCardComponent} from './components/gallery-card/gallery-card.compo
 import {StudioDropdownComponent} from './components/studio-dropdown/studio-dropdown.component';
 import {StudioSearchFilterComponent} from './components/studio-search-filter/studio-search-filter.component';
 import {StudioDateRangeFilterComponent} from './components/studio-date-range-filter/studio-date-range-filter.component';
+import {UploadProgressWidgetComponent} from './components/upload-progress-widget/upload-progress-widget.component';
 import {TruncatePipe} from './pipes/truncate.pipe';
+import {FolderCardComponent} from './components/folder-card/folder-card.component';
+import {CreateFolderDialogComponent} from './components/create-folder-dialog/create-folder-dialog.component';
+import {MoveToFolderDialogComponent} from './components/move-to-folder-dialog/move-to-folder-dialog.component';
+import {CopyToFolderDialogComponent} from './components/copy-to-folder-dialog/copy-to-folder-dialog.component';
+import {FolderConflictDialogComponent} from './components/folder-conflict-dialog/folder-conflict-dialog.component';
+import {MatTabsModule} from '@angular/material/tabs';
 
 const DECLARATIONS = [
   CreateWorkspaceModalComponent,
   ConfirmationDialogComponent,
-  CopyToWorkspaceDialogComponent,
   InviteUserModalComponent,
   WorkspaceSwitcherComponent,
   BrandGuidelineDialogComponent,
@@ -71,8 +76,14 @@ const DECLARATIONS = [
   StudioDropdownComponent,
   StudioSearchFilterComponent,
   StudioDateRangeFilterComponent,
+  UploadProgressWidgetComponent,
   TruncatePipe,
   TagsManagementDialogComponent,
+  FolderCardComponent,
+  CreateFolderDialogComponent,
+  MoveToFolderDialogComponent,
+  CopyToFolderDialogComponent,
+  FolderConflictDialogComponent,
 ];
 
 const MODULES = [
@@ -95,6 +106,7 @@ const MODULES = [
   MatProgressSpinnerModule,
   MatDatepickerModule,
   MatNativeDateModule,
+  MatTabsModule,
   RouterModule,
   MarkdownModule.forRoot(),
 ];
@@ -118,6 +130,7 @@ const EXPORTED_MODULES = [
   MatDatepickerModule,
   MatNativeDateModule,
   MatProgressSpinnerModule,
+  MatTabsModule,
   MarkdownModule,
 ];
 

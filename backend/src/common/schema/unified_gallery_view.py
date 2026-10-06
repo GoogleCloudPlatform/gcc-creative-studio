@@ -44,6 +44,10 @@ class UnifiedGalleryView(Base):
         nullable=False,
     )
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    folder_id: Mapped[int | None] = mapped_column(
+        ForeignKey("folders.id"),
+        nullable=True,
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True)
     )
@@ -55,6 +59,8 @@ class UnifiedGalleryView(Base):
     workspace_name: Mapped[str | None] = mapped_column(String)
     user_picture: Mapped[str | None] = mapped_column(String)
     user_email: Mapped[str | None] = mapped_column(String)
+    titles: Mapped[list[str] | None] = mapped_column(ARRAY(String))
+    descriptions: Mapped[list[str] | None] = mapped_column(ARRAY(String))
 
     # Unified arrays for display
     gcs_uris: Mapped[list[str]] = mapped_column(ARRAY(String))

@@ -20,7 +20,7 @@
 .media-gallery-container {
   --max-container-width: 1400px;
   background-color: transparent;
-  padding: 20px 40px;
+  padding: 0 35px;
   max-width: var(--max-container-width);
   margin: 0 auto;
   margin-top: calc(10vh + 0px);
@@ -48,5 +48,20 @@
   &:hover {
     color: white !important;
     background: rgba(255, 255, 255, 0.1) !important;
+  }
+}
+
+.add-to-gallery-option {
+  min-width: 170px;
+}
+
+.breadcrumb-drag-over {
+  background: rgba(138, 180, 248, 0.25) !important;
+  color: #8ab4f8 !important;
+  border: 1px dashed #8ab4f8;
+  transform: scale(1.05);
+
+  * {
+    pointer-events: none;
   }
 }

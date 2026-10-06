@@ -145,7 +145,7 @@ class IamSignerCredentials(credentials.Signing):
         destination_blob_name: str,
         content_type: str,
         bucket_name: str,
-        expiration_hours: int = 1,
+        expiration_hours: int = 72,
     ) -> tuple[str | None, str | None]:
         """Generates a v4 signed URL for a client-side **UPLOAD (PUT)**.
 

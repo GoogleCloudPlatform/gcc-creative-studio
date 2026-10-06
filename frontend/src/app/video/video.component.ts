@@ -135,7 +135,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
   searchRequest: VeoRequest = {
     prompt: '',
-    generationModel: 'gemini-omni-flash-preview',
+    generationModel: 'gemini-omni-1.1-flash-preview',
     aspectRatio: '16:9',
     numberOfMedia: 1,
     style: null,
@@ -228,10 +228,11 @@ export class VideoComponent implements OnInit, AfterViewInit {
     @Inject(PLATFORM_ID) private platformId: Object,
   ) {
     this.generationModels = MODEL_CONFIGS.filter(m => m.type === 'VIDEO');
-    this.searchRequest.generationModel = 'gemini-omni-flash-preview';
+    this.searchRequest.generationModel = 'gemini-omni-1.1-flash-preview';
     this.selectedGenerationModel =
-      this.generationModels.find(m => m.value === 'gemini-omni-flash-preview')
-        ?.viewValue || this.generationModels[0].viewValue;
+      this.generationModels.find(
+        m => m.value === 'gemini-omni-1.1-flash-preview',
+      )?.viewValue || this.generationModels[0].viewValue;
 
     this.isBrowser = isPlatformBrowser(this.platformId);
     this.activeVideoJob$ = this.service.activeVideoJob$.pipe(
@@ -241,24 +242,6 @@ export class VideoComponent implements OnInit, AfterViewInit {
           : null,
       ),
     );
-
-    this.matIconRegistry
-      .addSvgIcon(
-        'content-type-icon',
-        this.setPath(`${this.path}/content-type-icon.svg`),
-      )
-      .addSvgIcon(
-        'lighting-icon',
-        this.setPath(`${this.path}/lighting-icon.svg`),
-      )
-      .addSvgIcon(
-        'number-of-images-icon',
-        this.setPath(`${this.path}/number-of-images-icon.svg`),
-      )
-      .addSvgIcon(
-        'gemini-spark-icon',
-        this.setPath(`${this.path}/gemini-spark-icon.svg`),
-      );
 
     const navigation = this.router.getCurrentNavigation();
     this.templateParams =
@@ -329,7 +312,10 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.searchRequest.colorAndTone = state.colorAndTone;
     this.searchRequest.lighting = state.lighting;
     this.searchRequest.numberOfMedia =
-      state.model === 'gemini-omni-flash-preview' ? 1 : state.numberOfMedia;
+      state.model === 'gemini-omni-flash-preview' ||
+      state.model === 'gemini-omni-1.1-flash-preview'
+        ? 1
+        : state.numberOfMedia;
     this.selectedOutputs.set(this.searchRequest.numberOfMedia || 1);
     this.searchRequest.durationSeconds = state.durationSeconds;
     this.searchRequest.composition = state.composition;
@@ -374,12 +360,6 @@ export class VideoComponent implements OnInit, AfterViewInit {
     }
   }
 
-  private path = '../../assets/images';
-
-  private setPath(url: string): SafeResourceUrl {
-    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
-  }
-
   selectModel(model: {value: string; viewValue: string}): void {
     this.searchRequest.generationModel = model.value;
     this.selectedGenerationModel = model.viewValue;
@@ -400,7 +380,10 @@ export class VideoComponent implements OnInit, AfterViewInit {
       this.selectedAspectRatio = landscapeOption.viewValue;
     }
 
-    if (model.value === 'gemini-omni-flash-preview') {
+    if (
+      model.value === 'gemini-omni-flash-preview' ||
+      model.value === 'gemini-omni-1.1-flash-preview'
+    ) {
       this.searchRequest.numberOfMedia = 1;
       this.selectedOutputs.set(1);
     }
@@ -501,7 +484,6 @@ export class VideoComponent implements OnInit, AfterViewInit {
   }
 
   onModeChanged(mode: string) {
-    console.log('Mode changed to:', mode);
     if (this.currentMode === mode) {
       return;
     }
@@ -650,7 +632,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
       !this.isConcatenateMode
     ) {
       const omniModel = this.generationModels.find(
-        m => m.value === 'gemini-omni-flash-preview',
+        m => m.value === 'gemini-omni-1.1-flash-preview',
       );
       if (omniModel) {
         this.selectModel(omniModel);
@@ -760,10 +742,9 @@ export class VideoComponent implements OnInit, AfterViewInit {
       .startVeoGeneration(payload)
       .pipe(finalize(() => (this.isLoading = false)))
       .subscribe({
-        next: (initialResponse: MediaItem) => {
+        next: () => {
           // This logic is now handled by the 'tap' operator in the service,
           // but it's fine to also have it here. The key is the 'error' block.
-          console.log('Job started successfully:', initialResponse);
           // The component's main display will be driven by the service's observable
         },
         error: error => {
@@ -843,7 +824,6 @@ export class VideoComponent implements OnInit, AfterViewInit {
     }
 
     if (this.templateParams.numMedia) {
-      console.log('Setting number of images:', this.templateParams.numMedia);
       this.searchRequest.numberOfMedia = this.templateParams.numMedia;
     }
 
@@ -946,7 +926,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
       if (isVeo30) {
         const omniModel = this.generationModels.find(
-          m => m.value === 'gemini-omni-flash-preview',
+          m => m.value === 'gemini-omni-1.1-flash-preview',
         );
         if (omniModel) {
           this.selectModel(omniModel);
@@ -1436,7 +1416,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.selectedMode.set('Ingredients to Video');
 
     const omniModel = this.generationModels.find(
-      m => m.value === 'gemini-omni-flash-preview',
+      m => m.value === 'gemini-omni-1.1-flash-preview',
     );
     if (omniModel) {
       this.selectModel(omniModel);
@@ -1569,7 +1549,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
         this.referenceAudio = {
           id: res.mediaItem.id,
           type: 'media_item',
-          name: res.mediaItem.title || 'Audio Reference',
+          name: res.mediaItem.titles?.[0] || 'Audio Reference',
           index: res.selectedIndex,
         };
       }
@@ -1586,8 +1566,17 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
   private handleOmniModelSwitch(): void {
     if (this.referenceVideo || this.referenceAudio) {
+      const currentModel = this.searchRequest.generationModel;
+      if (
+        currentModel === 'gemini-omni-flash-preview' ||
+        currentModel === 'gemini-omni-1.1-flash-preview'
+      ) {
+        return;
+      }
       const omniModel = this.generationModels.find(
-        m => m.value === 'gemini-omni-flash-preview',
+        m =>
+          m.value === 'gemini-omni-1.1-flash-preview' ||
+          m.value === 'gemini-omni-flash-preview',
       );
       if (omniModel) {
         if (this.searchRequest.generationModel !== omniModel.value) {
@@ -1709,30 +1698,40 @@ export class VideoComponent implements OnInit, AfterViewInit {
         this._snackBar.open(snackbarMessage, 'OK', {duration: 5000});
       }
 
-      const omniModel = this.generationModels.find(
-        m => m.value === 'gemini-omni-flash-preview',
-      );
-      if (omniModel) {
-        if (this.searchRequest.generationModel !== omniModel.value) {
-          this.selectModel(omniModel);
-          handleSuccessSnackbar(
-            this._snackBar,
-            "We've switched to the Gemini Omni model for you, as this one supports reference images.",
-          );
-        }
+      const currentModel = this.searchRequest.generationModel;
+      if (
+        currentModel === 'gemini-omni-flash-preview' ||
+        currentModel === 'gemini-omni-1.1-flash-preview'
+      ) {
+        // Already on an Omni model
       } else {
-        const veo31Model = this.generationModels.find(
-          m => m.value === 'veo-3.1-generate-001',
+        const omniModel = this.generationModels.find(
+          m =>
+            m.value === 'gemini-omni-1.1-flash-preview' ||
+            m.value === 'gemini-omni-flash-preview',
         );
-        if (
-          veo31Model &&
-          this.searchRequest.generationModel !== veo31Model.value
-        ) {
-          this.selectModel(veo31Model);
-          handleSuccessSnackbar(
-            this._snackBar,
-            "We've switched to the Veo 3.1 model for you, as this one supports reference images.",
+        if (omniModel) {
+          if (this.searchRequest.generationModel !== omniModel.value) {
+            this.selectModel(omniModel);
+            handleSuccessSnackbar(
+              this._snackBar,
+              "We've switched to the Gemini Omni model for you, as this one supports reference images.",
+            );
+          }
+        } else {
+          const veo31Model = this.generationModels.find(
+            m => m.value === 'veo-3.1-generate-001',
           );
+          if (
+            veo31Model &&
+            this.searchRequest.generationModel !== veo31Model.value
+          ) {
+            this.selectModel(veo31Model);
+            handleSuccessSnackbar(
+              this._snackBar,
+              "We've switched to the Veo 3.1 model for you, as this one supports reference images.",
+            );
+          }
         }
       }
     }
@@ -1840,13 +1839,11 @@ export class VideoComponent implements OnInit, AfterViewInit {
   selectMode(mode: string) {
     this.selectedMode.set(mode);
     this.isModeMenuOpen.set(false);
-    console.log('Selected Mode:', mode);
   }
 
   selectNewAspectRatio(ratio: string) {
     this.selectedNewAspectRatio.set(ratio);
     this.isSettingsDropdownOpen.set(null);
-    console.log('Selected Aspect Ratio:', ratio);
   }
 
   selectOutputs(count: number) {
@@ -1854,19 +1851,16 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.searchRequest.numberOfMedia = count;
     this.saveState();
     this.isSettingsDropdownOpen.set(null);
-    console.log('Selected Outputs:', count);
   }
 
   selectNewModel(model: string) {
     this.selectedModel.set(model);
     this.isSettingsDropdownOpen.set(null);
-    console.log('Selected Model:', model);
   }
 
   selectPreset(preset: string) {
     this.selectedPreset.set(preset);
     this.isExpandMenuOpen.set(false);
-    console.log('Selected Preset:', preset);
     // You could also append this to the prompt, e.g.:
     // this.promptText.set(this.promptText() + ' ' + preset);
   }

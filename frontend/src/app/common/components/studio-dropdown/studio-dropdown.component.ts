@@ -31,7 +31,7 @@ export interface DropdownOption {
   color?: string;
   icon?: string;
   isSvgIcon?: boolean;
-  deletable?: boolean;
+  tooltip?: string;
 }
 
 @Component({

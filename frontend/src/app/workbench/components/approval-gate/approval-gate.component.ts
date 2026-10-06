@@ -1,0 +1,302 @@
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import {
+  Component,
+  ChangeDetectionStrategy,
+  Input,
+  Output,
+  EventEmitter,
+  signal,
+  computed,
+} from '@angular/core';
+import {CommonModule} from '@angular/common';
+import {FormsModule} from '@angular/forms';
+import {MatIconModule} from '@angular/material/icon';
+import {MatButtonModule} from '@angular/material/button';
+import {MatTooltipModule} from '@angular/material/tooltip';
+import {SharedModule} from '../../../common/shared.module';
+
+export type GateDecisionType = 'accept' | 'modify' | 'regenerate';
+
+export interface ApprovalGateInfo {
+  callId: string;
+  toolName: string;
+  stage?: 'strategy' | 'storyboard' | 'frames' | 'final_cut' | string;
+  payload?: any;
+  options?: GateDecisionType[];
+}
+
+export interface ApprovalGateSubmission {
+  decision: GateDecisionType;
+  guidance: string;
+}
+
+export function asText(value: unknown): string {
+  if (value === null || value === undefined || value === '') {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(asText).filter(Boolean).join(', ');
+  }
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return asText(
+      record['message'] ??
+        record['text'] ??
+        record['name'] ??
+        record['id'] ??
+        '',
+    );
+  }
+  return String(value);
+}
+
+@Component({
+  selector: 'app-approval-gate',
+  standalone: true,
+  imports: [
+    CommonModule,
+    FormsModule,
+    MatIconModule,
+    MatButtonModule,
+    MatTooltipModule,
+    SharedModule,
+  ],
+  templateUrl: './approval-gate.component.html',
+  styleUrls: ['./approval-gate.component.scss'],
+  changeDetection: ChangeDetectionStrategy.OnPush,
+})
+export class ApprovalGateComponent {
+  gateSignal = signal<ApprovalGateInfo | undefined>(undefined);
+  @Input({required: true}) set gate(val: ApprovalGateInfo) {
+    this.gateSignal.set(val);
+  }
+  get gate(): ApprovalGateInfo {
+    return this.gateSignal()!;
+  }
+
+  private _isSubmitting = signal<boolean>(false);
+  @Input() set isSubmitting(val: boolean) {
+    this._isSubmitting.set(val);
+    if (!val) {
+      this.isLocalSubmitting.set(false);
+    }
+  }
+  get isSubmitting(): boolean {
+    return this._isSubmitting();
+  }
+  @Output() decisionSubmitted = new EventEmitter<ApprovalGateSubmission>();
+
+  isModifyOpen = signal<boolean>(false);
+  guidanceText = signal<string>('');
+  isLocalSubmitting = signal<boolean>(false);
+
+  isBusy = computed<boolean>(() => {
+    return this._isSubmitting() || this.isLocalSubmitting();
+  });
+
+  activeMode = computed<'select' | 'modify' | 'regenerate'>(() => {
+    return this.isModifyOpen() ? 'modify' : 'select';
+  });
+
+  stage = computed(() => {
+    const g = this.gateSignal();
+    if (g?.stage) return g.stage;
+    const name = g?.toolName || '';
+    if (name.includes('strategy')) return 'strategy';
+    if (name.includes('storyboard')) return 'storyboard';
+    if (name.includes('frame')) return 'frames';
+    if (name.includes('final_cut')) return 'final_cut';
+    return 'review';
+  });
+
+  stepLabel = computed(() => {
+    switch (this.stage()) {
+      case 'strategy':
+        return 'Checkpoint 1 of 4';
+      case 'storyboard':
+        return 'Checkpoint 2 of 4';
+      case 'frames':
+        return 'Checkpoint 3 of 4';
+      case 'final_cut':
+        return 'Checkpoint 4 of 4';
+      default:
+        return 'Review Checkpoint';
+    }
+  });
+
+  stageTitle = computed(() => {
+    switch (this.stage()) {
+      case 'strategy':
+        return 'Campaign Strategy Review';
+      case 'storyboard':
+        return 'Storyboard Review';
+      case 'frames':
+        return 'First Frame Review';
+      case 'final_cut':
+        return 'Final Cut Review';
+      default:
+        return 'Approval Checkpoint';
+    }
+  });
+
+  stageDescription = computed(() => {
+    switch (this.stage()) {
+      case 'strategy':
+        return 'Review campaign brief, tone, key message, and chosen visual Look.';
+      case 'storyboard':
+        return 'Review scenes, actions, voiceovers, and durations before rendering media.';
+      case 'frames':
+        return 'Review rendered first frames for each scene before video generation.';
+      case 'final_cut':
+        return 'Review clips in timeline.';
+      default:
+        return 'Review and provide your verdict to continue.';
+    }
+  });
+
+  displayMessage = computed(() => {
+    const payload = this.gateSignal()?.payload;
+    if (payload) {
+      let data = payload;
+      if (typeof data === 'string') {
+        try {
+          data = JSON.parse(data);
+        } catch {
+          const trimmed = data.trim();
+          if (trimmed) return trimmed;
+        }
+      }
+      if (data && typeof data === 'object') {
+        const rawMsg =
+          data.message ||
+          data.result?.message ||
+          data.response?.result?.message ||
+          data.response?.message ||
+          data.campaign?.message ||
+          data.storyboard?.message;
+        if (rawMsg) {
+          const parsed = asText(rawMsg).trim();
+          if (parsed) return parsed;
+        }
+      }
+    }
+    return this.stageDescription();
+  });
+
+  stageIcon = computed(() => {
+    switch (this.stage()) {
+      case 'strategy':
+        return 'psychology';
+      case 'storyboard':
+        return 'movie_filter';
+      case 'frames':
+        return 'image';
+      case 'final_cut':
+        return 'video_camera_front';
+      default:
+        return 'verified';
+    }
+  });
+
+  modifyPlaceholder = computed(() => {
+    switch (this.stage()) {
+      case 'strategy':
+        return 'What have I misunderstood? E.g., "Change target audience to Gen Z, switch visual Look to Outdoor Adventure..."';
+      case 'storyboard':
+        return 'What should change before anything is rendered? E.g., "Shorten scene 2 to 3 seconds and set it at night..."';
+      case 'frames':
+        return 'Which frames need to be redone? E.g., "Scene 1 frame is too blurry, redo it with sharper focus..."';
+      case 'final_cut':
+        return 'Which clips need another take? E.g., "Scene 2 is too dark, re-render it with higher contrast..."';
+      default:
+        return 'Enter specific guidance or requested changes...';
+    }
+  });
+
+  toggleModify() {
+    this.isModifyOpen.update(open => !open);
+    if (!this.isModifyOpen()) {
+      this.guidanceText.set('');
+    }
+  }
+
+  setMode(mode: 'select' | 'modify' | 'regenerate') {
+    this.isModifyOpen.set(mode === 'modify');
+    if (mode !== 'modify') {
+      this.guidanceText.set('');
+    }
+  }
+
+  submitDirectDecision(decision: GateDecisionType) {
+    if (this.isBusy()) return;
+    this.isLocalSubmitting.set(true);
+    this.decisionSubmitted.emit({
+      decision,
+      guidance: this.guidanceText().trim(),
+    });
+  }
+
+  submitModify() {
+    const guidance = this.guidanceText().trim();
+    if (!guidance || this.isBusy()) return;
+    this.isLocalSubmitting.set(true);
+    this.decisionSubmitted.emit({
+      decision: 'modify',
+      guidance,
+    });
+  }
+
+  submitRegenerate() {
+    if (this.isBusy()) return;
+    this.isLocalSubmitting.set(true);
+    this.decisionSubmitted.emit({
+      decision: 'regenerate',
+      guidance: this.guidanceText().trim(),
+    });
+  }
+
+  onModifyKeydown(event: KeyboardEvent) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      this.submitModify();
+    } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      this.submitModify();
+    }
+  }
+
+  onRegenerateKeydown(event: KeyboardEvent) {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      this.submitRegenerate();
+    }
+  }
+
+  onInputResize(event: Event) {
+    const textarea = event.target as HTMLTextAreaElement;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 128)}px`;
+  }
+}

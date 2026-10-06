@@ -26,10 +26,18 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__) + "/../"))
 
 # Set environment for tests
 os.environ["ENVIRONMENT"] = "local"
+os.environ["AGENT_ENGINE_RESOURCE_NAME"] = (
+    "projects/mock/locations/mock/reasoningEngines/mock"
+)
+# ENVIRONMENT=local would route AgentService to the local Izumi container;
+# keep the suite on the Vertex path (local-mode tests patch this explicitly).
+os.environ["USE_LOCAL_IZUMI_AGENT"] = "false"
 
 import google.auth
 
-google.auth.default = MagicMock(return_value=(MagicMock(), "dummy-project-id"))
+mock_creds = MagicMock()
+mock_creds.universe_domain = "googleapis.com"
+google.auth.default = MagicMock(return_value=(mock_creds, "dummy-project-id"))
 
 # Mock ProjectsClient to prevent live API calls during startup validation check
 from google.cloud import resourcemanager_v3

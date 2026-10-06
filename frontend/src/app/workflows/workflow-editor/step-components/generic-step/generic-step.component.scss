@@ -20,7 +20,9 @@
   border: 1px solid var(--border-color);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
   overflow: hidden;
-  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  transition:
+    border-color 0.3s ease,
+    box-shadow 0.3s ease;
 
   &:hover {
     border-color: #555;
@@ -33,40 +35,48 @@
   }
 
   /* Red */
-  &.generate-text {
+  &.generate-text,
+  &.generate_text {
     border-top: 4px solid #339af0;
   }
 
-  /* Blue */
-  &.generate-image {
+  &.generate-image,
+  &.generate_image {
     border-top: 4px solid #51cf66;
   }
 
-  /* Green */
-  &.edit-image {
+  &.edit-image,
+  &.edit_image {
     border-top: 4px solid #ff922b;
   }
 
-  /* Orange */
-  &.generate-video {
+  &.generate-video,
+  &.generate_video {
     border-top: 4px solid #fcc419;
   }
 
-  /* Purple */
-  &.crop-image {
+  &.crop-image,
+  &.crop_image {
     border-top: 4px solid #22b8cf;
   }
 
-  /* Cyan */
-  &.virtual-try-on {
+  &.virtual-try-on,
+  &.virtual_try_on {
     border-top: 4px solid #8b5cf6;
+  }
+
+  &.generate-audio,
+  &.generate_audio {
+    border-top: 4px solid #e040fb;
   }
 
   /* Purple */
 
   &.invalid-step {
     border-color: #f44336 !important;
-    box-shadow: 0 0 0 1px #f44336, 0 10px 30px rgba(244, 67, 54, 0.2) !important;
+    box-shadow:
+      0 0 0 1px #f44336,
+      0 10px 30px rgba(244, 67, 54, 0.2) !important;
 
     .step-header {
       background: rgba(244, 67, 54, 0.1);

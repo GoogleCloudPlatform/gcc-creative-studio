@@ -20,6 +20,7 @@ from pydantic import Field, field_validator, model_validator
 
 from src.common.base_dto import (
     AspectRatioEnum,
+    AssetReferenceDto,
     BaseDto,
     ColorAndToneEnum,
     CompositionEnum,
@@ -43,17 +44,6 @@ class ReferenceImageDto(BaseDto):
     )
 
 
-class AssetReferenceDto(BaseDto):
-    id: int = Field(description="The ID of the asset.")
-    type: str = Field(
-        description="The type of asset: 'source_asset' or 'media_item'."
-    )
-    index: int | None = Field(
-        default=0,
-        description="The index of the media in the media item (if applicable).",
-    )
-
-
 class CreateVeoDto(BaseDto):
     """The refactored request model. Defaults are defined here to make the API
     contract explicit and self-documenting.
@@ -66,6 +56,20 @@ class CreateVeoDto(BaseDto):
         ge=1,
         description="The ID of the workspace for this generation.",
     )
+
+    metadata_generation_model: GenerationModelEnum | str | None = Field(
+        default=GenerationModelEnum.GEMINI_3_5_FLASH,
+        description="The Gemini model to use for synchronous metadata generation.",
+    )
+    titles: list[str] | None = Field(
+        default=None,
+        description="Optional titles for the generated video.",
+    )
+    descriptions: list[str] | None = Field(
+        default=None,
+        description="Optional descriptions for the generated video.",
+    )
+
     generation_model: GenerationModelEnum = Field(
         default=GenerationModelEnum.VEO_3_1_GENERATE_001,
         description="Model used for image generation.",
@@ -150,6 +154,10 @@ class CreateVeoDto(BaseDto):
         default=None,
         description="The ID of the parent media item for multi-turn conversation editing.",
     )
+    file_name: str | None = Field(
+        default=None,
+        description="Optional name for the generated media.",
+    )
     resolution: Literal["1K", "2K", "4K"] = Field(
         default="1K",
         description="Resolution of the generated videos.",
@@ -202,9 +210,11 @@ class CreateVeoDto(BaseDto):
                 GenerationModelEnum.VEO_3_1_PREVIEW,
                 GenerationModelEnum.VEO_3_1_GENERATE_001,
                 GenerationModelEnum.VEO_3_1_LITE_GENERATE_001,
+                GenerationModelEnum.VEO_3_1_LITE_PREVIEW,
                 GenerationModelEnum.VEO_3_1_FAST_GENERATE_001,
                 GenerationModelEnum.GEMINI_OMNI,
                 GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+                GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
             }
             if model not in supported_reference_models:
                 raise ValueError(
@@ -212,9 +222,11 @@ class CreateVeoDto(BaseDto):
                     f"'{GenerationModelEnum.VEO_3_1_PREVIEW.value}' model, "
                     f"'{GenerationModelEnum.VEO_3_1_GENERATE_001.value}' model, "
                     f"'{GenerationModelEnum.VEO_3_1_LITE_GENERATE_001.value}' model, "
+                    f"'{GenerationModelEnum.VEO_3_1_LITE_PREVIEW.value}' model, "
                     f"'{GenerationModelEnum.VEO_3_1_FAST_GENERATE_001.value}' model, "
-                    f"'{GenerationModelEnum.GEMINI_OMNI.value}' model, or "
-                    f"'{GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW.value}' model.",
+                    f"'{GenerationModelEnum.GEMINI_OMNI.value}' model, "
+                    f"'{GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW.value}' model, or "
+                    f"'{GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW.value}' model.",
                 )
 
             start_image_present = bool(self.start_image_asset_id)
@@ -235,9 +247,13 @@ class CreateVeoDto(BaseDto):
         if model in (
             GenerationModelEnum.GEMINI_OMNI,
             GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+            GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
         ):
             allowed_resolutions = {"1K"}
-        elif model == GenerationModelEnum.VEO_3_1_LITE_GENERATE_001:
+        elif model in (
+            GenerationModelEnum.VEO_3_1_LITE_GENERATE_001,
+            GenerationModelEnum.VEO_3_1_LITE_PREVIEW,
+        ):
             allowed_resolutions = {"1K", "2K"}
         else:
             allowed_resolutions = {"1K", "2K", "4K"}
@@ -253,6 +269,7 @@ class CreateVeoDto(BaseDto):
         if model in (
             GenerationModelEnum.GEMINI_OMNI,
             GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+            GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
         ):
             max_duration = 10
 
@@ -265,6 +282,7 @@ class CreateVeoDto(BaseDto):
         return self
 
     @field_validator("aspect_ratio")
+    @classmethod
     def validate_video_aspect_ratio(
         cls, value: AspectRatioEnum
     ) -> AspectRatioEnum:
@@ -280,6 +298,7 @@ class CreateVeoDto(BaseDto):
         return value
 
     @field_validator("generation_model")
+    @classmethod
     def validate_video_generation_model(
         cls,
         value: GenerationModelEnum,
@@ -288,9 +307,11 @@ class CreateVeoDto(BaseDto):
         valid_video_ratios = [
             GenerationModelEnum.GEMINI_OMNI,
             GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+            GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
             GenerationModelEnum.VEO_3_1_PREVIEW,
             GenerationModelEnum.VEO_3_1_GENERATE_001,
             GenerationModelEnum.VEO_3_1_LITE_GENERATE_001,
+            GenerationModelEnum.VEO_3_1_LITE_PREVIEW,
             GenerationModelEnum.VEO_3_1_FAST_GENERATE_001,
             GenerationModelEnum.VEO_3_FAST,
             GenerationModelEnum.VEO_3_QUALITY,

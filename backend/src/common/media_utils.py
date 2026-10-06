@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import subprocess
 
 from PIL import Image as PILImage
@@ -237,3 +238,94 @@ def get_video_dimensions(video_path: str) -> tuple[int, int]:
     width = data["streams"][0]["width"]
     height = data["streams"][0]["height"]
     return width, height
+
+
+def extract_youtube_video_id(url: str | None) -> str | None:
+    """Extracts the 11-character video ID from a YouTube URL."""
+    if not url:
+        return None
+    trimmed = url.strip()
+    try:
+        from urllib.parse import urlparse, parse_qs
+
+        parsed = urlparse(trimmed)
+        hostname = parsed.hostname.lower() if parsed.hostname else ""
+
+        is_youtube = any(
+            hostname == h or hostname.endswith("." + h)
+            for h in ("youtube.com", "youtube-nocookie.com")
+        )
+        is_short = hostname == "youtu.be" or hostname.endswith(".youtu.be")
+
+        if is_youtube:
+            if any(p in parsed.path for p in ("/embed/", "/shorts/", "/v/")):
+                parts = parsed.path.split("/")
+                for p in parts:
+                    if len(p) == 11:
+                        return p
+            query_params = parse_qs(parsed.query)
+            v_list = query_params.get("v")
+            if v_list and len(v_list[0]) == 11:
+                return v_list[0]
+        elif is_short:
+            path_parts = parsed.path.strip("/").split("/")
+            if path_parts and len(path_parts[0]) == 11:
+                return path_parts[0]
+    except Exception:
+        pass
+    # Regex fallback
+    if "youtube" in trimmed or "youtu.be" in trimmed:
+        pattern = r"(?:youtu\.be\/|v\/|u\/\w\/|embed\/|shorts\/|watch\?v=|&v=)([a-zA-Z0-9_-]{11})"
+        match = re.search(pattern, trimmed)
+        return match.group(1) if match else None
+    return None
+
+
+def get_youtube_aspect_ratio(url: str | None) -> str:
+    """Determines the aspect ratio of a YouTube video based on its URL (e.g., 9:16 for Shorts)."""
+    from src.common.base_dto import AspectRatioEnum
+
+    if not url:
+        return AspectRatioEnum.RATIO_16_9.value
+    if "/shorts/" in url:
+        return AspectRatioEnum.RATIO_9_16.value
+    return AspectRatioEnum.RATIO_16_9.value
+
+
+def format_api_error_message(e: Exception | str | None) -> str:
+    """Extracts the exact, human-readable error message from API exceptions or error strings,
+    handling Google GenAI, Vertex AI, and Gemini Omni error payloads.
+    """
+    if e is None:
+        return "Unknown error occurred during media generation."
+
+    err_str = str(e)
+
+    # 1. Try regex extraction for 'message': "..." or 'message': '...' inside API error payloads
+    msg_match = re.search(r"['\"]message['\"]:\s*\"([^\"]+)\"", err_str)
+    if not msg_match:
+        msg_match = re.search(r"['\"]message['\"]:\s*'([^']+)'", err_str)
+
+    if msg_match:
+        return msg_match.group(1).strip()
+
+    # 2. Try parsing string as JSON if it contains a JSON-like object
+    if "{" in err_str and "}" in err_str:
+        try:
+            start_idx = err_str.index("{")
+            end_idx = err_str.rindex("}") + 1
+            json_substr = err_str[start_idx:end_idx].replace("'", '"')
+            parsed = json.loads(json_substr)
+            if isinstance(parsed, dict):
+                if (
+                    "error" in parsed
+                    and isinstance(parsed["error"], dict)
+                    and "message" in parsed["error"]
+                ):
+                    return str(parsed["error"]["message"])
+                if "message" in parsed:
+                    return str(parsed["message"])
+        except Exception:
+            pass
+
+    return err_str

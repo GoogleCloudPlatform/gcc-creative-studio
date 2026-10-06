@@ -74,10 +74,6 @@ export class WorkflowService implements OnDestroy {
     private http: HttpClient,
     private workspaceStateService: WorkspaceStateService,
   ) {
-    console.log(
-      'WorkflowService constructor: Initializing dataLoadingSubscription',
-    );
-
     // Subscribe to the GLOBAL workspace state
     if (isPlatformBrowser(this.platformId)) {
       this.dataLoadingSubscription =

@@ -44,6 +44,7 @@ class ConfigService(BaseSettings):
     ENVIRONMENT: str = "development"
     FRONTEND_URL: str = "http://localhost:4200"
     BACKEND_URL: str = "http://localhost:8080"
+    IZUMI_AGENT_URL: str = "http://izumi-agent:8080"
     LOG_LEVEL: str = "INFO"
     INIT_VERTEX: bool = True
 
@@ -52,6 +53,7 @@ class ConfigService(BaseSettings):
     ALLOWED_ORGS_STR: str = Field(
         default="", alias="IDENTITY_PLATFORM_ALLOWED_ORGS"
     )
+    ALLOWED_EMAILS_STR: str = Field(default="", alias="ALLOWED_EMAILS")
 
     # --- Storage ---
     # The defaults will be set in the validator below to prevent recursion.
@@ -93,6 +95,22 @@ class ConfigService(BaseSettings):
         ""  # The email address to send from (e.g., no-reply@your-domain.com)
     )
     ADMIN_USER_EMAIL: str = "system"
+
+    # --- Agent Auth ---
+    AGENT_ENGINE_RESOURCE_NAME: str = ""
+    AGENT_LOCATION: str = "us-central1"
+    AGENT_ENGINE_USER_AUTH_TOKEN_KEY: str = "user_auth_token"
+    # Talk to a local Izumi (ADK api_server) container at IZUMI_AGENT_URL
+    # instead of Vertex AI Agent Engine. Leave unset to derive it from
+    # ENVIRONMENT ("local" => local container); set explicitly to force it.
+    USE_LOCAL_IZUMI_AGENT: bool | None = None
+
+    @property
+    def IS_LOCAL_IZUMI_AGENT(self) -> bool:
+        """True when the agent chat should target the local Izumi container."""
+        if self.USE_LOCAL_IZUMI_AGENT is not None:
+            return self.USE_LOCAL_IZUMI_AGENT
+        return self.ENVIRONMENT.strip().lower() == "local"
 
     # --- Workflows ---
     WORKFLOWS_LOCATION: str = "us-central1"
@@ -147,6 +165,15 @@ class ConfigService(BaseSettings):
             org.strip()
             for org in self.ALLOWED_ORGS_STR.split(",")
             if org.strip()
+        )
+
+    @computed_field
+    @property
+    def ALLOWED_EMAILS(self) -> set[str]:
+        return set(
+            email.strip()
+            for email in self.ALLOWED_EMAILS_STR.split(",")
+            if email.strip()
         )
 
     @computed_field

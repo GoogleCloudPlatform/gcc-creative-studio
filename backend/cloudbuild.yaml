@@ -22,7 +22,7 @@ steps:
       [
         'build',
         '-t',
-        '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_SERVICE_NAME}:$SHORT_SHA',
+        '${_GCP_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_SERVICE_NAME}:$SHORT_SHA',
         '.',
       ]
     # This ensures the build context is the 'backend' folder
@@ -34,7 +34,7 @@ steps:
     args:
       [
         'push',
-        '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_SERVICE_NAME}:$SHORT_SHA',
+        '${_GCP_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_SERVICE_NAME}:$SHORT_SHA',
       ]
 
   # Step 3: Deploy to Cloud Run using the gcloud CLI builder.
@@ -46,23 +46,22 @@ steps:
       - 'run'
       - 'deploy'
       - '${_SERVICE_NAME}'
-      - '--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_SERVICE_NAME}:$SHORT_SHA'
+      - '--image=${_GCP_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_SERVICE_NAME}:$SHORT_SHA'
       - '--region'
-      - '${_REGION}'
+      - '${_GCP_REGION}'
       - '--quiet' # Suppress interactive prompts for CI/CD environments
 
 # BEST PRACTICE: Explicitly declare the image(s) built by this pipeline.
 # This integrates the build with Google Cloud's security features, like showing
 # vulnerability scan results in the Cloud Build UI.
 images:
-  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_SERVICE_NAME}:$SHORT_SHA'
+  - '${_GCP_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_SERVICE_NAME}:$SHORT_SHA'
 
 # Substitutions will be passed in from the Cloud Build trigger.
 # You can override these for manual runs.
 substitutions:
   _SERVICE_NAME: 'creative-studio-backend'
   _REPO_NAME: 'cs-be-development-repo' # This matches local.artifact_repo_id
-  _REGION: 'us-central1' # TODO: Make Region generic from users input
 
 options:
   logging: CLOUD_LOGGING_ONLY

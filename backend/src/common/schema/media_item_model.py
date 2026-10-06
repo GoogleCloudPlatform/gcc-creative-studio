@@ -83,6 +83,9 @@ class AssetRoleEnum(str, Enum):
     )
     VIDEO_REFERENCE = "video_reference"  # Video used as omni input reference
     AUDIO_REFERENCE = "audio_reference"  # Audio used as omni input reference
+    YOUTUBE_VIDEO_REFERENCE = (
+        "youtube_video_reference"  # YouTube video used as input reference
+    )
 
 
 class SourceAssetLink(BaseModel):
@@ -143,6 +146,10 @@ class MediaItem(Base):
         ForeignKey("workspaces.id"),
         nullable=False,
     )
+    folder_id: Mapped[int | None] = mapped_column(
+        ForeignKey("folders.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     user_email: Mapped[str] = mapped_column(String, nullable=False)
     user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id"),
@@ -154,6 +161,12 @@ class MediaItem(Base):
     )
 
     # Common fields
+    titles: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String), default=[], nullable=True
+    )
+    descriptions: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String), default=[], nullable=True
+    )
     prompt: Mapped[str | None] = mapped_column(String, nullable=True)
     original_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
     rewritten_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -250,12 +263,18 @@ class MediaItemModel(BaseDocument):
     workspace_id: int = Field(
         description="Foreign key (ID) to the 'workspaces' collection this creation belongs to.",
     )
+    folder_id: int | None = Field(
+        default=None,
+        description="Foreign key (ID) to the 'folders' collection this creation belongs to.",
+    )
     user_email: str
     user_id: int | None = None  # TODO: Change to 'required' in the future
     mime_type: MimeTypeEnum
     model: GenerationModelEnum | str
 
     # Common fields across media types
+    titles: list[str] | None = Field(default_factory=list)
+    descriptions: list[str] | None = Field(default_factory=list)
     prompt: str | None = None
     original_prompt: str | None = None
     rewritten_prompt: str | None = None

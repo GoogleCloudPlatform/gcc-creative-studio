@@ -41,6 +41,8 @@ import {
 import {AssignTagsDialogComponent} from '../assign-tags-dialog/assign-tags-dialog.component';
 import {TagsService} from '../../services/tags.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
+import {MoveToFolderDialogComponent} from '../move-to-folder-dialog/move-to-folder-dialog.component';
+import {FolderService} from '../../services/folder.service';
 
 @Component({
   selector: 'app-media-lightbox',
@@ -56,6 +58,7 @@ export class MediaLightboxComponent
   @Input() showShareButton = true;
   @Input() showDownloadButton = true;
   @Input() showDeleteButton = false;
+  @Input() showMoveButton = false;
 
   get isImage(): boolean {
     return this.mediaItem?.mimeType?.startsWith('image/') ?? false;
@@ -96,6 +99,9 @@ export class MediaLightboxComponent
   }>();
   @Output() deleteClicked = new EventEmitter<number>();
   @Output() tagsChanged = new EventEmitter<any>();
+  @Output() slideChanged = new EventEmitter<number>();
+  /** Emits the destination folder id (null = All Media) after a successful move. */
+  @Output() moved = new EventEmitter<number | null>();
 
   selectedIndex = 0;
   selectedUrl: string | undefined;
@@ -124,6 +130,7 @@ export class MediaLightboxComponent
     public dialog: MatDialog,
     private tagsService: TagsService,
     private workspaceStateService: WorkspaceStateService,
+    private folderService: FolderService,
   ) {}
 
   ngAfterViewInit(): void {
@@ -241,6 +248,66 @@ export class MediaLightboxComponent
     this.isShareMenuOpen = !this.isShareMenuOpen;
   }
 
+  openBatchMoveDialog(): void {
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    if (!workspaceId || !this.mediaItem) return;
+
+    const dialogRef = this.dialog.open(MoveToFolderDialogComponent, {
+      data: {
+        workspaceId,
+        itemCount: 1,
+        currentFolderId: this.mediaItem.folderId,
+      },
+    });
+
+    dialogRef.afterClosed().subscribe(result => {
+      if (result && result.destinationFolderId !== undefined) {
+        const destName =
+          result.destinationFolderId === null
+            ? 'All Media'
+            : result.folderName || 'Folder';
+        this.executeMove(workspaceId, result.destinationFolderId, destName);
+      }
+    });
+  }
+
+  private executeMove(
+    workspaceId: number,
+    destinationFolderId: number | null,
+    destinationName: string,
+  ): void {
+    if (!this.mediaItem || this.mediaItem.folderId === destinationFolderId)
+      return;
+
+    const assetType = (this.mediaItem as any).itemType || 'media_item';
+
+    this.folderService
+      .moveItems({
+        workspaceId,
+        mediaItemIds: assetType === 'media_item' ? [this.mediaItem.id] : [],
+        sourceAssetIds: assetType === 'source_asset' ? [this.mediaItem.id] : [],
+        folderIds: [],
+        destinationFolderId,
+      })
+      .subscribe({
+        next: res => {
+          this.snackBar.open(
+            `${res.total_moved} item${res.total_moved === 1 ? '' : 's'} moved to "${destinationName}"`,
+            'Close',
+            {duration: 3000},
+          );
+          this.mediaItem!.folderId = destinationFolderId;
+          this.moved.emit(destinationFolderId);
+        },
+        error: err => {
+          console.error('Error moving items via drag and drop:', err);
+          this.snackBar.open('Failed to move items', 'Close', {
+            duration: 3000,
+          });
+        },
+      });
+  }
+
   get currentImageUrl(): string {
     return this.selectedUrl || '';
   }
@@ -352,6 +419,7 @@ export class MediaLightboxComponent
       this.selectedIndex = index;
       this.selectedUrl = this.mediaItem.presignedUrls[index];
       this.updateUrlWithImageIndex(index);
+      this.slideChanged.emit(index);
 
       // If Audio, we need to reload the player
       if (this.isAudio) {
@@ -371,7 +439,6 @@ export class MediaLightboxComponent
     // This component is used on multiple pages (VTO, Home, Gallery).
     // We should ONLY manipulate the URL when on the gallery detail page.
     // Otherwise, it can cause unintended navigations and state loss.
-    console.log('this.router.url', this.router.url);
     if (!this.router.url.startsWith('/gallery/')) {
       // MediaLightbox: Skipping URL update because we are not on a gallery detail page.
       return;
@@ -403,6 +470,10 @@ export class MediaLightboxComponent
 
   get isVideo(): boolean {
     return this.mediaItem?.mimeType?.startsWith('video/') ?? false;
+  }
+
+  get isYoutubeVideo(): boolean {
+    return (this.mediaItem as any)?.metadata?.assetType === 'youtube_video';
   }
 
   get isAudio(): boolean {

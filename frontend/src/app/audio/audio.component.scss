@@ -40,33 +40,47 @@
     }
 }
 
-// 2. Layout
+// 2. Layout (mobile-first)
+// Breakpoints mirror the rest of the app: 576 / 768 / 992 / 1200.
 .studio-container {
-    height: 100vh;
+    position: relative;
+    z-index: 1;
+    min-height: 100vh;
+    min-height: 100dvh; // Accounts for mobile browser chrome where supported
     display: flex;
     flex-direction: column;
-    justify-content: flex-end;
-    padding: 2rem;
+    // Extra bottom space so the floating mobile nav (app-header) never covers the Create button.
+    padding: 1rem 1rem 6.5rem;
     box-sizing: border-box;
     color: white;
+
+    @media (min-width: 768px) {
+        padding: 2rem;
+    }
 }
 
 .header-section {
-    position: absolute;
-    top: 25vh;
-    left: 50%;
-    transform: translateX(-50%);
-    text-align: center;
+    // Lives in the normal flow and takes the free space above the panel,
+    // so it can never overlap the control panel on short screens.
+    flex: 1 1 auto;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 1rem;
+    text-align: center;
+    gap: 0.75rem;
+    padding: 2.5rem 0 1.5rem;
+    min-height: 20vh;
 
     h1 {
-        font-size: 3rem;
+        font-size: clamp(1.5rem, 4vw, 3rem);
         font-weight: 400;
         margin: 0;
         text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+    }
+
+    @media (min-width: 768px) {
+        gap: 1rem;
+        min-height: 25vh;
     }
 }
 
@@ -76,16 +90,24 @@
     justify-content: center;
     margin-bottom: 1rem;
     width: 100%;
+    min-width: 0;
     z-index: 10;
+
+    > * {
+        max-width: 100%;
+        min-width: 0;
+    }
 }
 
 .custom-player {
     display: flex;
     align-items: center;
-    gap: 15px;
-    padding: 12px 30px;
+    gap: 10px;
+    padding: 10px 16px;
     border-radius: 50px; // Pill shape
-    width: 600px;
+    width: 100%;
+    max-width: 600px;
+    box-sizing: border-box;
 
     // Glassmorphism
     background: rgba(255, 255, 255, 0.1);
@@ -94,11 +116,17 @@
     border: 1px solid rgba(255, 255, 255, 0.2);
     box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
 
+    @media (min-width: 576px) {
+        gap: 15px;
+        padding: 12px 30px;
+    }
+
     .play-btn {
         color: white;
         transform: scale(1.1);
         transition: transform 0.2s, color 0.2s;
         padding: 0;
+        flex-shrink: 0;
 
         &:hover {
             transform: scale(1.2);
@@ -118,10 +146,12 @@
         font-size: 0.9rem;
         min-width: 45px;
         text-align: center;
+        flex-shrink: 0;
     }
 
     .custom-slider {
         flex: 1;
+        min-width: 0;
 
         // Force slider to look white/glassy
         ::ng-deep {
@@ -146,14 +176,21 @@
     -webkit-backdrop-filter: blur(15px);
     border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 16px;
-    padding: 20px;
+    padding: 1rem;
     display: flex;
     flex-direction: column;
-    gap: 15px;
+    gap: 12px;
     max-width: 1200px;
     width: 100%;
+    min-width: 0;
     margin: 0 auto;
+    box-sizing: border-box;
     box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+
+    @media (min-width: 768px) {
+        padding: 20px;
+        gap: 15px;
+    }
 
     &.glass-effect {
         ::ng-deep .mat-mdc-form-field-subscript-wrapper {
@@ -175,41 +212,130 @@
 .model-selector {
     display: flex;
     justify-content: center;
+    min-width: 0;
 
     mat-button-toggle-group {
         background-color: rgba(0,0,0,0.4);
         border: none;
+        // Full-width, equally split toggles on phones; natural width on larger screens.
+        width: 100%;
+        max-width: 100%;
 
         mat-button-toggle {
             color: #ccc;
+            flex: 1 1 0;
+            min-width: 0;
+
             &.mat-button-toggle-checked {
                 background-color: rgba(255, 255, 255, 0.2);
                 color: white;
+            }
+
+            ::ng-deep .mat-button-toggle-label-content {
+                padding: 0 8px;
+                font-size: 0.85rem;
+                white-space: normal;
+                line-height: 1.2;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 44px;
+            }
+        }
+
+        @media (min-width: 576px) {
+            width: auto;
+
+            mat-button-toggle {
+                flex: 0 0 auto;
+
+                ::ng-deep .mat-button-toggle-label-content {
+                    padding: 0 16px;
+                    font-size: inherit;
+                    white-space: nowrap;
+                }
             }
         }
     }
 }
 
+// Mobile-first: one column; two columns on tablets (prompt spans both);
+// a single wrapping row on desktops.
 .config-grid {
-    display: flex;
-    flex-direction: row;
-    gap: 15px;
-    align-items: center;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.75rem 1rem;
+    align-items: start;
+    min-width: 0;
 
-    .large-field { flex: 3; }
-    .short-field { flex: 1; }
-    mat-form-field { flex: 2; }
+    mat-form-field {
+        width: 100%;
+        min-width: 0;
+    }
+
+    @media (min-width: 576px) {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+
+        .large-field { grid-column: 1 / -1; }
+    }
+
+    @media (min-width: 992px) {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 15px;
+
+        mat-form-field { flex: 2 1 10rem; width: auto; }
+        .large-field { flex: 4 1 16rem; }
+        .short-field { flex: 1 1 6rem; max-width: 12rem; }
+    }
 }
 
 .action-row {
     display: flex;
-    justify-content: flex-end;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+
+    @media (min-width: 576px) {
+        flex-direction: row;
+        align-items: center;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+        gap: 1rem;
+    }
+}
+
+.model-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.75);
+    line-height: 1.3;
+    min-width: 0;
+
+    mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+        flex-shrink: 0;
+    }
+
+    @media (min-width: 576px) {
+        margin-right: auto; // Push the Create button to the right edge
+    }
 }
 
 .create-btn {
+    width: 100%;
     padding: 0.5rem 3rem;
     font-size: 1.1rem;
     height: 48px;
+
+    @media (min-width: 576px) {
+        width: auto;
+    }
 }
 
 .add-voice-option {

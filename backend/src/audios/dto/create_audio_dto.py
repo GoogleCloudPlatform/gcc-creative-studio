@@ -41,6 +41,19 @@ class CreateAudioDto(BaseDto):
         description="The ID of the workspace for this generation.",
     )
 
+    metadata_generation_model: GenerationModelEnum | str | None = Field(
+        default=GenerationModelEnum.GEMINI_3_5_FLASH,
+        description="The Gemini model to use for synchronous metadata generation.",
+    )
+    titles: list[str] | None = Field(
+        default=None,
+        description="Optional titles for the generated audio.",
+    )
+    descriptions: list[str] | None = Field(
+        default=None,
+        description="Optional descriptions for the generated audio.",
+    )
+
     # --- Lyria Specific Fields ---
     negative_prompt: str | None = Field(
         default=None,
@@ -71,16 +84,25 @@ class CreateAudioDto(BaseDto):
         description="The specific voice ID. For Gemini, must be a valid GeminiVoiceEnum value.",
     )
 
+    file_name: str | None = Field(
+        default=None,
+        description="Optional name for the generated media.",
+    )
+
     @field_validator("model")
+    @classmethod
     def validate_audio_model(
         cls, value: GenerationModelEnum
     ) -> GenerationModelEnum:
         allowed_audio_models = {
             GenerationModelEnum.LYRIA_002,
+            GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+            GenerationModelEnum.LYRIA_3_PRO_PREVIEW,
             GenerationModelEnum.CHIRP_3,
             GenerationModelEnum.GEMINI_2_5_FLASH_TTS,
             GenerationModelEnum.GEMINI_2_5_FLASH_LITE_PREVIEW_TTS,
             GenerationModelEnum.GEMINI_2_5_PRO_TTS,
+            GenerationModelEnum.GEMINI_3_1_FLASH_TTS_PREVIEW,
         }
 
         if value not in allowed_audio_models:

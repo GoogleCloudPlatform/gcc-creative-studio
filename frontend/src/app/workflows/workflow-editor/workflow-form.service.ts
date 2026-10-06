@@ -238,6 +238,7 @@ export class WorkflowFormService {
 
       previousSteps.forEach((stepControl, stepIndex) => {
         const step = stepControl.value;
+
         // Access static config
         const stepConfig = (STEP_CONFIGS_MAP as any)[step.type];
         if (!stepConfig) return;
@@ -253,6 +254,7 @@ export class WorkflowFormService {
           });
         });
       });
+
       return availableOutputs;
     });
 
@@ -261,12 +263,12 @@ export class WorkflowFormService {
 
   // --- Data Patching ---
 
-  patchData(data: WorkflowModel | WorkflowBase): void {
-    const userInputStep = data.steps?.find(
-      s => s.type === NodeTypes.USER_INPUT,
-    );
+  patchData(data: any): void {
+    const userInputStep =
+      data.userInput ||
+      data.steps?.find((s: any) => s.type === NodeTypes.USER_INPUT);
     const otherSteps =
-      data.steps?.filter(s => s.type !== NodeTypes.USER_INPUT) || [];
+      data.steps?.filter((s: any) => s.type !== NodeTypes.USER_INPUT) || [];
 
     // 1. Patch Main Fields
     this.workflowForm.patchValue({
@@ -283,7 +285,14 @@ export class WorkflowFormService {
     this.outputDefinitionsArray.clear();
     const outputIdMap = new Map<string, string>();
 
-    if (userInputStep?.outputs) {
+    if (
+      userInputStep?.settings?.definitions &&
+      userInputStep.settings.definitions.length > 0
+    ) {
+      userInputStep.settings.definitions.forEach((def: any) => {
+        this.addOutputDefinition(def.name, def.type, def.id);
+      });
+    } else if (userInputStep?.outputs) {
       Object.entries(userInputStep.outputs).forEach(
         ([key, value]: [string, any]) => {
           // Reverse engineer the ID and Name from the stored output
@@ -296,7 +305,7 @@ export class WorkflowFormService {
 
     // 3. Rebuild Steps
     this.stepsArray.clear();
-    otherSteps.forEach(step => {
+    otherSteps.forEach((step: any) => {
       const stepData = {...step, status: StepStatusEnum.IDLE};
 
       // Backfill _definitionId into inputs and transform output names to display names
@@ -344,10 +353,21 @@ export class WorkflowFormService {
       settings: {},
     };
 
-    // Default settings logic
-    if (type === NodeTypes.EDIT_IMAGE) {
-      base.settings = {aspectRatio: '1:1', saveOutputToGallery: true};
+    const config = (STEP_CONFIGS_MAP as any)[type];
+    if (config?.settings) {
+      config.settings.forEach((s: any) => {
+        if (s.defaultValue !== undefined) {
+          base.settings[s.name] = s.defaultValue;
+        }
+      });
     }
+
+    if (config?.inputs) {
+      config.inputs.forEach((input: any) => {
+        base.inputs[input.name] = null;
+      });
+    }
+
     return base;
   }
 

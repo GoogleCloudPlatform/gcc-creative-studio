@@ -36,8 +36,11 @@ class GallerySearchDto(BaseSearchDto):
         description="The ID of the workspace to search within.",
     )
     include_deleted: bool = False
+    include_external: bool = False
     start_date: datetime.datetime | None = None
     end_date: datetime.datetime | None = None
     item_type: str | None = None  # 'media_item' or 'source_asset'
     query: str | None = None
     tags: list[str] | None = None
+    folder_id: int | None = None
+    is_root: bool | None = None

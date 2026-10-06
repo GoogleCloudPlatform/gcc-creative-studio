@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
+import {NodeTypes} from '../../../workflow.models';
 import {StepConfig} from '../generic-step/step.model';
 
 export const VIRTUAL_TRY_ON_STEP_CONFIG: StepConfig = {
-  type: 'virtual-try-on',
+  type: NodeTypes.VIRTUAL_TRY_ON,
   title: 'Virtual Try-On',
   icon: 'accessibility_new',
   inputs: [

@@ -10,3 +10,5 @@ Dockerfile
 .vscode
 .gitignore
 Makefile
+
+genmedia-agent-demos

@@ -1,0 +1,270 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<div
+  *ngIf="!isLoginRoute() && uploadService.hasActiveOrFinishedUploads()"
+  id="upload-progress-widget"
+  class="upload-widget-container"
+  [class.minimized]="!isExpanded()"
+>
+  <div
+    *ngIf="!isExpanded()"
+    id="upload-widget-minimized"
+    class="minimized-pill"
+  >
+    <ng-container *ngTemplateOutlet="uploadWidgetHeader"></ng-container>
+  </div>
+
+  <!-- MAXIMIZED DETAILED PANEL MODE -->
+  <div
+    *ngIf="isExpanded()"
+    id="upload-widget-maximized"
+    class="maximized-panel"
+  >
+    <!-- HEADER -->
+    <div class="panel-header">
+      <ng-container *ngTemplateOutlet="uploadWidgetHeader"></ng-container>
+    </div>
+
+    <!-- OVERALL PROGRESS BAR -->
+    <div
+      *ngIf="uploadService.inProgressCount() > 0"
+      class="overall-progress-track"
+    >
+      <div
+        class="overall-progress-fill"
+        [style.width.%]="uploadService.overallProgress()"
+      ></div>
+    </div>
+
+    <!-- FILE LIST -->
+    <div id="upload-widget-file-list" class="file-list">
+      <div
+        *ngFor="let item of uploadService.uploadQueue()"
+        [id]="'upload-item-' + item.id"
+        class="file-item-row"
+        [class.item-failed]="item.status === UploadStatus.FAILED"
+        [class.item-completed]="item.status === UploadStatus.COMPLETED"
+        [class.item-cancelled]="item.status === UploadStatus.CANCELLED"
+      >
+        <!-- FILE ICON & RETRY/CANCEL ACTION -->
+        <div class="item-icon-wrapper">
+          <mat-icon class="file-type-icon">{{
+            getFileIcon(item.mimeType)
+          }}</mat-icon>
+          <button
+            *ngIf="item.status === UploadStatus.FAILED || item.status === UploadStatus.CANCELLED"
+            [id]="'retry-btn-' + item.id"
+            class="retry-item-btn"
+            type="button"
+            [disabled]="!item.file"
+            [class.!cursor-not-allowed]="!item.file"
+            [attr.title]="item.file ? 'Retry uploading file' : 'File binary payload missing from memory. Please re-upload from your device.'"
+            (click)="onRetryItem(item.id)"
+          >
+            <mat-icon [style.opacity]="item.file ? 1 : 0.5">refresh</mat-icon>
+          </button>
+          <button
+            *ngIf="
+              item.status === UploadStatus.QUEUED ||
+              item.status === UploadStatus.PREPROCESSING_FILE ||
+              item.status === UploadStatus.GENERATING_URL ||
+              item.status === UploadStatus.UPLOADING ||
+              item.status === UploadStatus.FINALIZING
+            "
+            [id]="'cancel-btn-' + item.id"
+            class="cancel-item-btn"
+            type="button"
+            title="Cancel upload"
+            (click)="onCancelItem(item.id)"
+          >
+            <mat-icon>close</mat-icon>
+          </button>
+        </div>
+
+        <!-- DETAILS -->
+        <div class="item-details">
+          <div class="item-meta">
+            <span class="item-filename" [title]="item.originalFilename">{{
+              item.originalFilename
+            }}</span>
+            <span class="item-size">{{ formatFileSize(item.size) }}</span>
+          </div>
+
+          <!-- STATUS SPECIFIC RENDERING -->
+          <div class="item-status-container">
+            <!-- QUEUED -->
+            <div
+              *ngIf="item.status === UploadStatus.QUEUED"
+              class="status-badge status-queued"
+            >
+              <mat-icon class="badge-icon">schedule</mat-icon>
+              <span>Waiting in queue</span>
+            </div>
+
+            <!-- GENERATING URL -->
+            <div
+              *ngIf="item.status === UploadStatus.GENERATING_URL"
+              class="status-badge status-preparing"
+            >
+              <mat-spinner diameter="14" strokeWidth="2"></mat-spinner>
+              <span>Preparing signed URL</span>
+            </div>
+
+            <!-- PREPROCESSING FILE -->
+            <div
+              *ngIf="item.status === UploadStatus.PREPROCESSING_FILE"
+              class="status-badge status-preparing"
+            >
+              <mat-spinner diameter="14" strokeWidth="2"></mat-spinner>
+              <span>Preprocessing file</span>
+            </div>
+
+            <!-- UPLOADING -->
+            <div
+              *ngIf="item.status === UploadStatus.UPLOADING"
+              class="status-uploading"
+            >
+              <div class="progress-bar-track">
+                <div
+                  class="progress-bar-fill"
+                  [style.width.%]="item.progress"
+                ></div>
+              </div>
+              <span class="progress-pct-text">{{ item.progress }}%</span>
+            </div>
+
+            <!-- FINALIZING -->
+            <div
+              *ngIf="item.status === UploadStatus.FINALIZING"
+              class="status-badge status-finalizing"
+            >
+              <mat-spinner diameter="14" strokeWidth="2"></mat-spinner>
+              <span>Finalizing asset</span>
+            </div>
+
+            <!-- COMPLETED -->
+            <div
+              *ngIf="item.status === UploadStatus.COMPLETED"
+              class="status-badge status-completed"
+            >
+              <mat-icon class="badge-icon">check_circle</mat-icon>
+              <span>Uploaded successfully</span>
+            </div>
+
+            <!-- FAILED -->
+            <div
+              *ngIf="item.status === UploadStatus.FAILED"
+              class="status-badge status-failed"
+            >
+              <mat-icon class="badge-icon">error</mat-icon>
+              <span class="error-msg" [title]="item.errorMessage || 'Upload failed'">
+                {{
+                  item.errorMessage || 'Upload failed'
+                }}
+              </span>
+            </div>
+
+            <!-- CANCELLED -->
+            <div
+              *ngIf="item.status === UploadStatus.CANCELLED"
+              class="status-badge status-cancelled"
+            >
+              <mat-icon class="badge-icon">cancel</mat-icon>
+              <span>Upload cancelled</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- FOOTER ACTION FOR ALL FAILED -->
+    <div class="panel-footer">
+      <studio-button
+        id="retry-all-failed-btn"
+        type="button"
+        [disabled]="uploadService.totalFailed() === 0 || !uploadService.canClose()"
+        (click)="onRetryAll()"
+      >
+        <mat-icon>refresh</mat-icon>
+        <span>Retry All Failed</span>
+      </studio-button>
+    </div>
+  </div>
+</div>
+
+<ng-template #uploadWidgetHeader>
+  <div class="pill-left">
+    <span class="pill-title"
+      >Uploads: {{ uploadService.overallProgress() }}%</span
+    >
+  </div>
+
+  <div class="pill-badges">
+    <span
+      *ngIf="uploadService.totalUploaded() > 0"
+      class="indicator-item indicator-success"
+      [attr.title]="'Successful uploads: ' + uploadService.totalUploaded()"
+    >
+      <mat-icon class="indicator-icon">check_circle</mat-icon>
+      <span>{{ uploadService.totalUploaded() }}</span>
+    </span>
+    <span
+      *ngIf="uploadService.totalFailed() > 0"
+      class="indicator-item indicator-error"
+      [attr.title]="'Failed uploads: ' + uploadService.totalFailed()"
+    >
+      <mat-icon class="indicator-icon">warning</mat-icon>
+      <span>{{ uploadService.totalFailed() }}</span>
+    </span>
+    <span
+      *ngIf="uploadService.totalCancelled() > 0"
+      class="indicator-item indicator-cancelled"
+      [attr.title]="'Cancelled uploads: ' + uploadService.totalCancelled()"
+    >
+      <mat-icon class="indicator-icon">cancel</mat-icon>
+      <span>{{ uploadService.totalCancelled() }}</span>
+    </span>
+  </div>
+
+  <div class="pill-actions">
+    <button
+      id="upload-widget-expand-btn"
+      class="icon-btn"
+      type="button"
+      [title]="
+        isExpanded() ? 'Minimize panel' : 'Expand upload progress panel'
+      "
+      (click)="toggleExpand()"
+    >
+      <mat-icon>{{ isExpanded() ? 'expand_more' : 'expand_less' }}</mat-icon>
+    </button>
+    <button
+      id="upload-widget-min-close-btn"
+      class="icon-btn close-btn"
+      type="button"
+      [disabled]="!uploadService.canClose()"
+      [attr.title]="
+        uploadService.canClose()
+          ? 'Clear upload list'
+          : 'Uploads in progress'
+      "
+      (click)="onClose()"
+    >
+      <mat-icon>close</mat-icon>
+    </button>
+  </div>
+</ng-template>

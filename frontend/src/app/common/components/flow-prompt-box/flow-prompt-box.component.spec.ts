@@ -19,6 +19,7 @@ import {FlowPromptBoxComponent} from './flow-prompt-box.component';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {MatIconTestingModule} from '@angular/material/icon/testing';
+import {By} from '@angular/platform-browser';
 import {MODEL_CONFIGS} from '../../config/model-config';
 
 describe('FlowPromptBoxComponent', () => {
@@ -45,6 +46,194 @@ describe('FlowPromptBoxComponent', () => {
 
   it('should create', () => {
     expect(component).toBeTruthy();
+  });
+
+  describe('YouTube preview helpers', () => {
+    it('should return null when externalUrl is null or empty', () => {
+      component.externalUrl = null;
+      expect(component.youtubeVideoId()).toBeNull();
+      expect(component.youtubeThumbnailUrl()).toBeNull();
+
+      component.externalUrl = '';
+      expect(component.youtubeVideoId()).toBeNull();
+      expect(component.youtubeThumbnailUrl()).toBeNull();
+    });
+
+    it('should extract video ID and generate thumbnail URL for standard youtube watch URLs', () => {
+      component.externalUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+      expect(component.youtubeVideoId()).toBe('dQw4w9WgXcQ');
+      expect(component.youtubeThumbnailUrl()).toBe(
+        'https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg',
+      );
+    });
+
+    it('should extract video ID for youtu.be short URLs', () => {
+      component.externalUrl = 'https://youtu.be/dQw4w9WgXcQ';
+      expect(component.youtubeVideoId()).toBe('dQw4w9WgXcQ');
+      expect(component.youtubeThumbnailUrl()).toBe(
+        'https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg',
+      );
+    });
+
+    it('should extract video ID for shorts URLs', () => {
+      component.externalUrl =
+        'https://youtube.com/shorts/dQw4w9WgXcQ?feature=share';
+      expect(component.youtubeVideoId()).toBe('dQw4w9WgXcQ');
+      expect(component.youtubeThumbnailUrl()).toBe(
+        'https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg',
+      );
+    });
+  });
+
+  describe('Template rendering for Video to Image mode', () => {
+    beforeEach(() => {
+      component.mode = 'Video to Image';
+      fixture.detectChanges();
+    });
+
+    it('should render link icon placeholder when externalUrl is not set', () => {
+      component.externalUrl = null;
+      fixture.detectChanges();
+
+      const spanEls = fixture.debugElement.queryAll(
+        By.css('span.text-\\[8px\\]'),
+      );
+      const youtubeSpan = spanEls.find(
+        el => el.nativeElement.textContent.trim() === 'YouTube Link',
+      );
+      expect(youtubeSpan).toBeTruthy();
+    });
+
+    it('should render thumbnail image preview when externalUrl is valid', () => {
+      component.externalUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+      fixture.detectChanges();
+
+      const imgEl = fixture.debugElement.query(
+        By.css('img[alt="YouTube preview"]'),
+      );
+      expect(imgEl).toBeTruthy();
+      expect(imgEl.nativeElement.src).toContain(
+        'https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg',
+      );
+    });
+
+    it('should emit clearExternalUrl when close button is clicked', () => {
+      spyOn(component.clearExternalUrl, 'emit');
+      component.externalUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+      fixture.detectChanges();
+
+      const closeBtn = fixture.debugElement.query(
+        By.css('button.absolute.-right-2.-top-2'),
+      );
+      closeBtn.triggerEventHandler('click', {stopPropagation: () => {}});
+      expect(component.clearExternalUrl.emit).toHaveBeenCalled();
+    });
+
+    it('should disable Nano Banana 2 Lite and enable Nano Banana 2 in Video to Image mode', () => {
+      component.generationModels = MODEL_CONFIGS;
+      component.isSettingsMenuOpen.set(true);
+      component.isSettingsDropdownOpen.set('model');
+      fixture.detectChanges();
+
+      const modelButtons = fixture.debugElement.queryAll(
+        By.css('div.max-h-80 button'),
+      );
+      const nanoBanana2Btn = modelButtons.find(
+        btn =>
+          btn.nativeElement.textContent.trim().startsWith('Nano Banana 2') &&
+          !btn.nativeElement.textContent.includes('Lite') &&
+          !btn.nativeElement.textContent.includes('Pro'),
+      );
+      const nanoBanana2LiteBtn = modelButtons.find(btn =>
+        btn.nativeElement.textContent.includes('Nano Banana 2 Lite'),
+      );
+
+      expect(nanoBanana2Btn?.nativeElement.disabled).toBeFalse();
+      expect(nanoBanana2LiteBtn?.nativeElement.disabled).toBeTrue();
+    });
+
+    it('should not allow selecting Nano Banana 2 Lite in Video to Image mode', () => {
+      component.generationModels = MODEL_CONFIGS;
+      const nanoBanana2Lite = MODEL_CONFIGS.find(
+        m => m.value === 'gemini-3.1-flash-lite-image',
+      )!;
+      spyOn(component.modelSelected, 'emit');
+
+      component.selectInternalModel(nanoBanana2Lite);
+
+      expect(component.modelSelected.emit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Edit Overlay Visibility', () => {
+    it('should show editOverlay for Frames to Video mode when images are set', () => {
+      component.mode = 'Frames to Video';
+      component.image1Preview = 'http://example.com/img1.png';
+      component.image2Preview = 'http://example.com/img2.png';
+      fixture.detectChanges();
+
+      const editOverlays = fixture.debugElement.queryAll(
+        By.css('[matTooltip="Edit Image"]'),
+      );
+      expect(editOverlays.length).toBe(2);
+    });
+
+    it('should NOT show editOverlay for Extend Video mode', () => {
+      component.mode = 'Extend Video';
+      component.image1Preview = 'http://example.com/video1.mp4';
+      fixture.detectChanges();
+
+      const editOverlays = fixture.debugElement.queryAll(
+        By.css('[matTooltip="Edit Image"]'),
+      );
+      expect(editOverlays.length).toBe(0);
+    });
+
+    it('should NOT show editOverlay for Concatenate Video mode', () => {
+      component.mode = 'Concatenate Video';
+      component.image1Preview = 'http://example.com/video1.mp4';
+      component.image2Preview = 'http://example.com/video2.mp4';
+      fixture.detectChanges();
+
+      const editOverlays = fixture.debugElement.queryAll(
+        By.css('[matTooltip="Edit Image"]'),
+      );
+      expect(editOverlays.length).toBe(0);
+    });
+  });
+
+  describe('getAspectRatioIcon', () => {
+    it('should return matched option icon when present in aspectRatioOptions', () => {
+      component.aspectRatioOptions = [
+        {
+          value: 'auto',
+          viewValue: 'Auto \n Dynamic',
+          disabled: false,
+          icon: 'hdr_auto',
+        },
+        {
+          value: '1:1',
+          viewValue: '1:1 \n Square',
+          disabled: false,
+          icon: 'crop_square',
+        },
+      ];
+      expect(component.getAspectRatioIcon('Auto \n Dynamic')).toBe('hdr_auto');
+      expect(component.getAspectRatioIcon('auto')).toBe('hdr_auto');
+      expect(component.getAspectRatioIcon('1:1 \n Square')).toBe('crop_square');
+    });
+
+    it('should return hdr_auto for auto ratio when not matched in options', () => {
+      component.aspectRatioOptions = [];
+      expect(component.getAspectRatioIcon('auto')).toBe('hdr_auto');
+      expect(component.getAspectRatioIcon('Auto \n Dynamic')).toBe('hdr_auto');
+    });
+
+    it('should return crop_landscape or crop_portrait based on ratio when unmatched', () => {
+      component.aspectRatioOptions = [];
+      expect(component.getAspectRatioIcon('16:9')).toBe('crop_landscape');
+      expect(component.getAspectRatioIcon('9:16')).toBe('crop_portrait');
+    });
   });
 
   describe('Resolution Support', () => {
@@ -132,14 +321,14 @@ describe('FlowPromptBoxComponent', () => {
 
   describe('Duration Support', () => {
     const geminiOmni = MODEL_CONFIGS.find(
-      m => m.value === 'gemini-omni-flash-preview',
+      m => m.value === 'gemini-omni-1.1-flash-preview',
     )!;
 
     beforeEach(() => {
       component.generationModels = MODEL_CONFIGS;
     });
 
-    it('should support [4, 6, 8, 10] durations for Gemini Omni Flash in Text to Video mode', () => {
+    it('should support [4, 6, 8, 10] durations for Gemini Omni 1.1 Flash in Text to Video mode', () => {
       component.selectedGenerationModel = geminiOmni.viewValue;
       component.mode = 'Text to Video';
 
@@ -148,12 +337,23 @@ describe('FlowPromptBoxComponent', () => {
       expect(component.hasDurationOptions()).toBeTrue();
     });
 
-    it('should return only the longest duration (10s) for Gemini Omni Flash in Ingredients to Video mode', () => {
+    it('should support [4, 6, 8, 10] durations for Gemini Omni 1.1 Flash in Ingredients to Video mode', () => {
       component.selectedGenerationModel = geminiOmni.viewValue;
       component.mode = 'Ingredients to Video';
 
       const durations = component.getSelectedModelDurations();
-      expect(durations).toEqual([10]);
+      expect(durations).toEqual([4, 6, 8, 10]);
+    });
+
+    it('should identify omni models correctly with isOmniModel', () => {
+      component.selectedGenerationModel = 'Gemini Omni Flash';
+      expect(component.isOmniModel()).toBeTrue();
+
+      component.selectedGenerationModel = 'Gemini Omni 1.1 Flash';
+      expect(component.isOmniModel()).toBeTrue();
+
+      component.selectedGenerationModel = 'Veo 3.1';
+      expect(component.isOmniModel()).toBeFalse();
     });
 
     it('should update selectedDuration and emit durationChanged on selectDuration', () => {
@@ -164,6 +364,55 @@ describe('FlowPromptBoxComponent', () => {
       component.selectDuration(10);
       expect(component.selectedDuration()).toBe(10);
       expect(component.durationChanged.emit).toHaveBeenCalledWith(10);
+    });
+  });
+
+  describe('Video to Image / Video Reference Support', () => {
+    const nanoBanana2 = MODEL_CONFIGS.find(
+      m => m.value === 'gemini-3.1-flash-image',
+    )!;
+    const unsupportedModel = {
+      value: 'unsupported-image-model',
+      viewValue: 'Unsupported Image Model',
+      type: 'IMAGE' as const,
+      capabilities: {
+        supportedModes: ['Text to Image' as const],
+        maxReferenceImages: 0,
+        supportedAspectRatios: ['1:1'],
+        supportedResolutions: ['1K' as const],
+        supportedDurations: [],
+        supportsVideoReference: false,
+      },
+    };
+
+    beforeEach(() => {
+      component.generationModels = [...MODEL_CONFIGS, unsupportedModel];
+    });
+
+    it('should allow selecting models with supportsVideoReference in Video to Image mode', () => {
+      component.mode = 'Video to Image';
+      spyOn(component.modelSelected, 'emit');
+
+      component.selectInternalModel(nanoBanana2);
+      expect(component.modelSelected.emit).toHaveBeenCalledWith(nanoBanana2);
+    });
+
+    it('should prevent selecting models without supportsVideoReference in Video to Image mode', () => {
+      component.mode = 'Video to Image';
+      spyOn(component.modelSelected, 'emit');
+
+      component.selectInternalModel(unsupportedModel);
+      expect(component.modelSelected.emit).not.toHaveBeenCalled();
+    });
+
+    it('should allow selecting models without supportsVideoReference when not in Video to Image mode', () => {
+      component.mode = 'Text to Image';
+      spyOn(component.modelSelected, 'emit');
+
+      component.selectInternalModel(unsupportedModel);
+      expect(component.modelSelected.emit).toHaveBeenCalledWith(
+        unsupportedModel,
+      );
     });
   });
 });
