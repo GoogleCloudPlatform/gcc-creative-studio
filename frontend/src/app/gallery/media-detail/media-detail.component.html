@@ -20,19 +20,12 @@
   </div>
 
 <div *ngIf="mediaItem" class="lg:container lg:mx-auto py-8 px-4">
-  <div class="flex justify-end gap-4 items-center mb-8">
-    <button [routerLink]="['/gallery']"
-      class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded inline-flex items-center">
-      &larr; Go to Gallery
+  <div *ngIf="isAdmin" class="flex justify-end gap-4 items-center mb-8">
+    <button (click)="createTemplateFromMediaItem()" matTooltip="Create Template from Media"
+      class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded inline-flex items-center">
+      <mat-icon>auto_stories</mat-icon>
+      <span class="ml-2">Create Template</span>
     </button>
-
-    <div class="flex items-center gap-4">
-      <button *ngIf="isAdmin" (click)="createTemplateFromMediaItem()" matTooltip="Create Template from Media"
-        class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded inline-flex items-center">
-        <mat-icon>auto_stories</mat-icon>
-        <span class="ml-2">Create Template</span>
-        </button>
-        </div>
   </div>
 
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -40,6 +33,7 @@
     <div class="lg:col-span-2">
       <app-media-lightbox [mediaItem]="mediaItem" [initialIndex]="initialSlideIndex"
         [showDeleteButton]="true"
+        (slideChanged)="currentImageIndex = $event"
         (editClicked)="generateWithThisImage($event)"
         (generateVideoClicked)="generateVideoWithImage($event)"
         (sendToVtoClicked)="sendToVto($event)"
@@ -48,18 +42,44 @@
         (editWithOmniClicked)="handleEditWithOmni($event)"
         (deleteClicked)="deleteCurrentMedia()"
         (tagsChanged)="onTagsChanged($event)"
+        (moved)="onMediaMoved($event)"
+        [showMoveButton]="true"
         style="max-height: 80vh"
       ></app-media-lightbox>
     </div>
 
     <!-- Right Column: The Metadata -->
     <div class="lg:col-span-1 text-white">
-      <h2 class="text-3xl font-bold mb-4">Details</h2>
+      <!-- Location trail: where this file lives in the gallery. Lives in the
+           details column (not the page header) so it never sits under the
+           fixed workspace switcher / navigation column on laptop widths. -->
+      <nav class="media-location mb-3" aria-label="Media location">
+        <button type="button" class="media-location__crumb" [class.is-current]="locationCrumbs.length === 0"
+          (click)="navigateToFolder(null)" matTooltip="All Media">
+          <mat-icon class="media-location__icon">home</mat-icon>
+          <span>All Media</span>
+        </button>
+
+        <ng-container *ngFor="let crumb of locationCrumbs; trackBy: trackCrumb; let last = last">
+          <mat-icon class="media-location__sep" aria-hidden="true">chevron_right</mat-icon>
+          <button *ngIf="crumb.id !== null; else collapsedCrumb" type="button" class="media-location__crumb"
+            [class.is-current]="last" (click)="navigateToFolder(crumb)" [matTooltip]="crumb.name">
+            <span class="truncate">{{ crumb.name }}</span>
+          </button>
+          <ng-template #collapsedCrumb>
+            <span class="media-location__ellipsis" [matTooltip]="crumb.tooltip || ''">…</span>
+          </ng-template>
+        </ng-container>
+      </nav>
+
+      <h2 class="text-3xl font-bold mb-4 break-words">{{ currentTitle }}</h2>
+      <p *ngIf="currentDescription" class="text-gray-400 text-sm mb-6 break-words whitespace-pre-line">{{ currentDescription }}</p>
 
       <mat-tab-group mat-align-tabs="start" animationDuration="0ms">
         <!-- Generation Details Tab -->
         <mat-tab label="Details">
           <div class="py-4 space-y-6">
+
             <!-- Parameters Section -->
             <section class="space-y-3">
               <h3 class="text-lg font-semibold border-b border-gray-700">Parameters</h3>
@@ -125,11 +145,11 @@
                     {{ mediaItem.aspectRatio }}
                   </p>
                 </div>
-                <div *ngIf="mediaItem?.resolution" class="contents">
+                <div *ngIf="mediaItem.resolution" class="contents">
                   <strong class="font-semibold text-gray-400">Resolution:</strong>
                   <p class="text-right">{{ mediaItem.resolution }}</p>
                 </div>
-                <div *ngIf="mediaItem?.googleSearch !== undefined" class="contents">
+                <div *ngIf="mediaItem.googleSearch !== undefined" class="contents">
                   <strong class="font-semibold text-gray-400">Google Search:</strong>
                   <p class="text-right">
                     {{ mediaItem.googleSearch ? 'Enabled' : 'Disabled' }}
@@ -556,46 +576,48 @@
               </div>
             </section>
 
-            <!-- Storage -->
-            <section class="space-y-3">
-              <h3 class="text-lg font-semibold border-b border-gray-700 pb-2">
-                Storage
-              </h3>
-              <div class="text-sm space-y-3">
-                <div *ngIf="mediaItem.gcsUris?.length">
-                  <strong class="font-semibold text-gray-400 block mb-1">GCS URIs:</strong>
-                  <ul class="space-y-1">
-                    <li *ngFor="let uri of mediaItem.gcsUris">
-                      <a [href]="getGcsLink(uri)" target="_blank" rel="noopener noreferrer"
-                        class="p-3 rounded-md bg-gray-800 block break-all hover:bg-gray-700 transition-colors">
-                        {{ uri }}
-                      </a>
-                    </li>
-                  </ul>
+            @if (!isYoutubeVideo) {
+              <!-- Storage -->
+              <section class="space-y-3">
+                <h3 class="text-lg font-semibold border-b border-gray-700 pb-2">
+                  Storage
+                </h3>
+                <div class="text-sm space-y-3">
+                  <div *ngIf="mediaItem.gcsUris?.length">
+                    <strong class="font-semibold text-gray-400 block mb-1">GCS URIs:</strong>
+                    <ul class="space-y-1">
+                      <li *ngFor="let uri of mediaItem.gcsUris">
+                        <a [href]="getGcsLink(uri)" target="_blank" rel="noopener noreferrer"
+                          class="p-3 rounded-md bg-gray-800 block break-all hover:bg-gray-700 transition-colors">
+                          {{ uri }}
+                        </a>
+                      </li>
+                    </ul>
+                  </div>
                 </div>
-            </div>
-            </section>
-
-            <!-- Other -->
-            <section class="space-y-3">
-              <h3 class="text-lg font-semibold border-b border-gray-700 pb-2">
-                Other
-              </h3>
-              <div class="text-sm space-y-3">
-                <div *ngIf="mediaItem.comment">
-                  <strong class="font-semibold text-gray-400 block mb-1">Comment:</strong>
-                  <p class="p-3 rounded-md bg-gray-800 text-gray-300">
-                    {{ mediaItem.comment }}
-                  </p>
-                </div>
-                <div *ngIf="mediaItem.critique">
-                  <strong class="font-semibold text-gray-400 block mb-1">Critique:</strong>
-                  <p class="p-3 rounded-md bg-gray-800 text-gray-300">
-                    {{ mediaItem.critique }}
-                  </p>
-                </div>
-              </div>
               </section>
+
+              <!-- Other -->
+              <section class="space-y-3">
+                <h3 class="text-lg font-semibold border-b border-gray-700 pb-2">
+                  Other
+                </h3>
+                <div class="text-sm space-y-3">
+                  <div *ngIf="mediaItem.comment">
+                    <strong class="font-semibold text-gray-400 block mb-1">Comment:</strong>
+                    <p class="p-3 rounded-md bg-gray-800 text-gray-300">
+                      {{ mediaItem.comment }}
+                    </p>
+                  </div>
+                  <div *ngIf="mediaItem.critique">
+                    <strong class="font-semibold text-gray-400 block mb-1">Critique:</strong>
+                    <p class="p-3 rounded-md bg-gray-800 text-gray-300">
+                      {{ mediaItem.critique }}
+                    </p>
+                  </div>
+                </div>
+              </section>
+            }
           </div>
           </mat-tab>
           

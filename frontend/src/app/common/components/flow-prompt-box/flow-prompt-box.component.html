@@ -107,7 +107,7 @@
       <textarea
         (input)="onPromptInput($event)"
         [ngModel]="prompt"
-        [disabled]="mode === 'Concatenate Video'"
+        [disabled]="isConcatenateVideo()"
         class="w-full h-24 bg-transparent text-xl text-neutral-400 placeholder:text-neutral-600 focus:outline-none resize-none disabled:opacity-50 disabled:cursor-not-allowed"
         [placeholder]="
           isConcatenateVideo()
@@ -165,7 +165,7 @@
 
           <!-- Slot 2: Shown for Frames to Video and Concatenate Video -->
           <div
-            *ngIf="mode !== 'Extend Video'"
+            *ngIf="!isExtendVideo()"
             class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex items-center justify-center"
             (click)="openImageSelector.emit(2)"
             (dragover)="$event.preventDefault()"
@@ -197,11 +197,7 @@
         </ng-container>
 
         <!-- Unified Ingredients Mode Inputs -->
-        <ng-container
-          *ngIf="
-            mode === 'Ingredients to Video' || mode === 'Ingredients to Image'
-          "
-        >
+        <ng-container *ngIf="isIngredientsToVideo() || isIngredientsToImage()">
           <ng-container *ngIf="getSelectedModelObject() as model">
             <div
               class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex items-center justify-center"
@@ -610,13 +606,8 @@
             class="relative w-full flex items-center justify-between rounded-lg bg-neutral-700 px-3 py-2 text-left text-sm"
           >
             <span class="flex items-center gap-2 min-w-0">
-              <!-- Landscape Icon -->
               <mat-icon class="flex-shrink-0">
-                {{
-                  aspectRatio.includes('16:9')
-                    ? 'crop_landscape'
-                    : 'crop_portrait'
-                }}
+                {{ getAspectRatioIcon(aspectRatio) }}
               </mat-icon>
               <span class="truncate whitespace-nowrap">{{ aspectRatio }}</span>
             </span>

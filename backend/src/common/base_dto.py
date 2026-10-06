@@ -16,7 +16,7 @@
 
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 
@@ -25,6 +25,10 @@ class MimeTypeEnum(str, Enum):
 
     IMAGE_JPEG = "image/jpeg"
     IMAGE_PNG = "image/png"
+    IMAGE_WEBP = "image/webp"
+    IMAGE_HEIC = "image/heic"
+    IMAGE_HEIF = "image/heif"
+    IMAGE_AVIF = "image/avif"
     VIDEO_MP4 = "video/mp4"
     AUDIO_WAV = "audio/wav"
     AUDIO_MPEG = "audio/mpeg"
@@ -48,6 +52,8 @@ class GenerationModelEnum(str, Enum):
     IMAGEN_4_UPSCALE_PREVIEW = "imagen-4.0-upscale-preview"
     GEMINI_2_5_PRO = "gemini-2.5-pro"
     GEMINI_2_5_FLASH = "gemini-2.5-flash"
+    GEMINI_3_5_FLASH = "gemini-3.5-flash"
+    GEMINI_1_5_FLASH = "gemini-1.5-flash"
     GEMINI_2_5_FLASH_IMAGE_PREVIEW = "gemini-2.5-flash-image-preview"
     GEMINI_2_5_FLASH_IMAGE = "gemini-2.5-flash-image"
     GEMINI_3_PRO_PREVIEW = "gemini-3-pro-preview"
@@ -85,6 +91,8 @@ class GenerationModelEnum(str, Enum):
     GEMINI_2_5_FLASH_LITE_PREVIEW_TTS = "gemini-2.5-flash-lite-preview-tts"
     GEMINI_2_5_PRO_TTS = "gemini-2.5-pro-tts"
     GEMINI_3_1_FLASH_TTS_PREVIEW = "gemini-3.1-flash-tts-preview"
+    # Workbench Models
+    WORKBENCH_RENDER = "workbench-render"
 
     # Deprecated models (For old generations only, do not use)
     _DEPRECATED_VTO = "virtual-try-on-preview-08-04"
@@ -199,6 +207,7 @@ class AspectRatioEnum(str, Enum):
     RATIO_4_1 = "4:1"
     RATIO_1_8 = "1:8"
     RATIO_8_1 = "8:1"
+    AUTO = "auto"
     OTHER = "other"
 
 
@@ -272,4 +281,15 @@ class BaseDto(BaseModel):
         extra="forbid",
         populate_by_name=True,
         from_attributes=True,
+    )
+
+
+class AssetReferenceDto(BaseDto):
+    id: int = Field(description="The ID of the asset.")
+    type: str = Field(
+        description="The type of asset: 'source_asset' or 'media_item'."
+    )
+    index: int | None = Field(
+        default=0,
+        description="The index of the media in the media item (if applicable).",
     )

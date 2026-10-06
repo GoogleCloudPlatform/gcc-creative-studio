@@ -15,7 +15,11 @@
  */
 
 import {TestBed} from '@angular/core/testing';
-import {AudioStateService, AudioState} from './audio-state.service';
+import {
+  AudioStateService,
+  AudioState,
+  DEFAULT_LYRIA_MODEL,
+} from './audio-state.service';
 
 describe('AudioStateService', () => {
   let service: AudioStateService;
@@ -63,6 +67,33 @@ describe('AudioStateService', () => {
     const state = service.getState();
     expect(state.prompt).toBe('ambient techno');
     expect(state.sampleCount).toBe(2);
+  });
+
+  it('should default lyriaModel to Lyria 3 Clip', () => {
+    expect(service.getState().lyriaModel).toBe(DEFAULT_LYRIA_MODEL);
+    expect(DEFAULT_LYRIA_MODEL).toBe('lyria-3-clip-preview');
+  });
+
+  it('should keep a valid persisted lyriaModel', () => {
+    localStorage.setItem(
+      'audio_generation_state',
+      JSON.stringify({lyriaModel: 'lyria-3-pro-preview'}),
+    );
+    expect(service.getState().lyriaModel).toBe('lyria-3-pro-preview');
+  });
+
+  it('should fall back to the default lyriaModel for unknown or non-Lyria IDs', () => {
+    localStorage.setItem(
+      'audio_generation_state',
+      JSON.stringify({lyriaModel: 'chirp_3'}),
+    );
+    expect(service.getState().lyriaModel).toBe(DEFAULT_LYRIA_MODEL);
+
+    localStorage.setItem(
+      'audio_generation_state',
+      JSON.stringify({lyriaModel: 'lyria-99-does-not-exist'}),
+    );
+    expect(service.getState().lyriaModel).toBe(DEFAULT_LYRIA_MODEL);
   });
 
   it('should update state and save to localStorage when updateState is called', () => {

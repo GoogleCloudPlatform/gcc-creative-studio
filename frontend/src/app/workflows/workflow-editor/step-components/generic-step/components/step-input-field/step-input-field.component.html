@@ -45,7 +45,7 @@
 
   <!-- Textarea Input (Fixed) -->
   <mat-form-field *ngIf="mode === 'fixed' && config.type === 'textarea'" appearance="outline" class="value-input">
-    <textarea matInput [formControl]="control" [placeholder]="config.label" rows="2"></textarea>
+    <textarea matInput [formControl]="control" [placeholder]="config.label" cdkTextareaAutosize cdkAutosizeMinRows="2" cdkAutosizeMaxRows="8"></textarea>
     <mat-error *ngIf="showValidationErrors && control.hasError('required')">
       {{ config.label }} is required
     </mat-error>

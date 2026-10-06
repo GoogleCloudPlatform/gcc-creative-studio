@@ -53,9 +53,6 @@ export class AuthGuardService implements CanActivate {
       // --- SERVER SIDE ---
       // Allow navigation to render the basic app shell.
       // The client will verify localStorage and redirect if necessary.
-      console.log(
-        'AuthGuard (SSR): Allowing shell render. Client will verify auth.',
-      );
       return true;
     }
 

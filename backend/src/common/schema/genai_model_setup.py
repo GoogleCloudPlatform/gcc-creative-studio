@@ -15,10 +15,12 @@
 
 import importlib.metadata
 import logging
+import threading
 
 from google.genai import Client
 
 from src.config.config_service import config_service
+from src.common.request_context import is_agent_request
 
 logger = logging.getLogger(__name__)
 
@@ -35,70 +37,114 @@ class GenAIModelSetup:
     """
 
     _client: Client | None = None
+    _agent_client: Client | None = None
+    _client_lock = threading.Lock()
 
     @classmethod
     def get_client(cls) -> Client:
         """Initializes and returns a shared GenAI client instance for Vertex AI."""
-        if cls._client is None:
-            try:
-                config = config_service
-                project_id = config.PROJECT_ID
-                location = config.LOCATION
-                if None in [project_id, location]:
-                    raise ValueError("All parameters must be set.")
+        is_agent = is_agent_request.get()
+        if is_agent:
+            logger.info("Agent request: using Izumi agent...")
+            if cls._agent_client is None:
+                with cls._client_lock:
+                    if cls._agent_client is None:
+                        cls._agent_client = cls._create_client(is_agent=True)
+            return cls._agent_client
+        else:
+            logger.info("Frontend request: using with frontend...")
+            if cls._client is None:
+                with cls._client_lock:
+                    if cls._client is None:
+                        cls._client = cls._create_client(is_agent=False)
+            return cls._client
 
-                logger.info(
-                    f"Initializing shared GenAI client for project '{project_id}' in location '{location}'",
-                )
+    @classmethod
+    def _create_client(cls, is_agent: bool) -> Client:
+        try:
+            config = config_service
+            project_id = config.PROJECT_ID
+            location = config.LOCATION
+            if None in [project_id, location]:
+                raise ValueError("All parameters must be set.")
 
-                cls._client = Client(
-                    project=project_id,
-                    location=location,
-                    vertexai=config.INIT_VERTEX,
-                    http_options={
-                        "headers": {
-                            "user-agent": f"creative-studio/{VERSION} (+https://github.com/GoogleCloudPlatform/gcc-creative-studio)"
-                        }
-                    },
-                )
-            except Exception as e:
-                logger.error("Failed to initialize GenAI client: %s", e)
-                raise
-        return cls._client
+            logger.info(
+                f"Initializing shared GenAI client for project '{project_id}' in location '{location}' (is_agent={is_agent})",
+            )
+
+            user_agent_prefix = (
+                "creative-studio/izumi" if is_agent else "creative-studio"
+            )
+
+            return Client(
+                project=project_id,
+                location=location,
+                vertexai=config.INIT_VERTEX,
+                http_options={
+                    "headers": {
+                        "user-agent": f"{user_agent_prefix}/{VERSION} (+https://github.com/GoogleCloudPlatform/gcc-creative-studio)"
+                    }
+                },
+            )
+        except Exception as e:
+            logger.error("Failed to initialize GenAI client: %s", e)
+            raise
 
     _omni_client: Client | None = None
+    _omni_agent_client: Client | None = None
+    _omni_client_lock = threading.Lock()
 
     @classmethod
     def get_omni_client(cls) -> Client:
         """Initializes and returns a shared Omni GenAI client instance for Vertex AI."""
-        if cls._omni_client is None:
-            try:
-                config = config_service
-                project_id = config.PROJECT_ID
-                if project_id is None:
-                    raise ValueError("Project ID must be set.")
+        is_agent = is_agent_request.get()
+        if is_agent:
+            if cls._omni_agent_client is None:
+                with cls._omni_client_lock:
+                    if cls._omni_agent_client is None:
+                        cls._omni_agent_client = cls._create_omni_client(
+                            is_agent=True
+                        )
+            return cls._omni_agent_client
+        else:
+            if cls._omni_client is None:
+                with cls._omni_client_lock:
+                    if cls._omni_client is None:
+                        cls._omni_client = cls._create_omni_client(
+                            is_agent=False
+                        )
+            return cls._omni_client
 
-                logger.info(
-                    f"Initializing shared Gemini Omni GenAI client for project '{project_id}' in location 'global'",
-                )
+    @classmethod
+    def _create_omni_client(cls, is_agent: bool) -> Client:
+        try:
+            config = config_service
+            project_id = config.PROJECT_ID
+            if project_id is None:
+                raise ValueError("Project ID must be set.")
 
-                cls._omni_client = Client(
-                    vertexai=True,
-                    project=project_id,
-                    location="global",
-                    http_options={
-                        "base_url": "https://aiplatform.googleapis.com",
-                        "headers": {
-                            "user-agent": f"creative-studio/{VERSION} (+https://github.com/GoogleCloudPlatform/gcc-creative-studio)"
-                        },
+            logger.info(
+                f"Initializing shared Gemini Omni GenAI client for project '{project_id}' in location 'global' (is_agent={is_agent})",
+            )
+
+            user_agent_prefix = (
+                "creative-studio/izumi" if is_agent else "creative-studio"
+            )
+
+            return Client(
+                vertexai=True,
+                project=project_id,
+                location="global",
+                http_options={
+                    "base_url": "https://aiplatform.googleapis.com",
+                    "headers": {
+                        "user-agent": f"{user_agent_prefix}/{VERSION} (+https://github.com/GoogleCloudPlatform/gcc-creative-studio)"
                     },
-                )
-            except Exception as e:
-                logger.error(
-                    "Failed to initialize Gemini Omni GenAI client: %s", e
-                )
-                raise
-        return cls._omni_client
+                },
+            )
+        except Exception as e:
+            logger.error("Failed to initialize Gemini Omni GenAI client: %s", e)
+            raise
 
     @staticmethod
     def init() -> Client:

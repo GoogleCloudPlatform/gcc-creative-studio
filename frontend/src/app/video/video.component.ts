@@ -243,24 +243,6 @@ export class VideoComponent implements OnInit, AfterViewInit {
       ),
     );
 
-    this.matIconRegistry
-      .addSvgIcon(
-        'content-type-icon',
-        this.setPath(`${this.path}/content-type-icon.svg`),
-      )
-      .addSvgIcon(
-        'lighting-icon',
-        this.setPath(`${this.path}/lighting-icon.svg`),
-      )
-      .addSvgIcon(
-        'number-of-images-icon',
-        this.setPath(`${this.path}/number-of-images-icon.svg`),
-      )
-      .addSvgIcon(
-        'gemini-spark-icon',
-        this.setPath(`${this.path}/gemini-spark-icon.svg`),
-      );
-
     const navigation = this.router.getCurrentNavigation();
     this.templateParams =
       navigation?.extras.state?.['templateParams'] ||
@@ -376,12 +358,6 @@ export class VideoComponent implements OnInit, AfterViewInit {
         }
       }, 1500);
     }
-  }
-
-  private path = '../../assets/images';
-
-  private setPath(url: string): SafeResourceUrl {
-    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   }
 
   selectModel(model: {value: string; viewValue: string}): void {
@@ -508,7 +484,6 @@ export class VideoComponent implements OnInit, AfterViewInit {
   }
 
   onModeChanged(mode: string) {
-    console.log('Mode changed to:', mode);
     if (this.currentMode === mode) {
       return;
     }
@@ -767,10 +742,9 @@ export class VideoComponent implements OnInit, AfterViewInit {
       .startVeoGeneration(payload)
       .pipe(finalize(() => (this.isLoading = false)))
       .subscribe({
-        next: (initialResponse: MediaItem) => {
+        next: () => {
           // This logic is now handled by the 'tap' operator in the service,
           // but it's fine to also have it here. The key is the 'error' block.
-          console.log('Job started successfully:', initialResponse);
           // The component's main display will be driven by the service's observable
         },
         error: error => {
@@ -850,7 +824,6 @@ export class VideoComponent implements OnInit, AfterViewInit {
     }
 
     if (this.templateParams.numMedia) {
-      console.log('Setting number of images:', this.templateParams.numMedia);
       this.searchRequest.numberOfMedia = this.templateParams.numMedia;
     }
 
@@ -1576,7 +1549,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
         this.referenceAudio = {
           id: res.mediaItem.id,
           type: 'media_item',
-          name: res.mediaItem.title || 'Audio Reference',
+          name: res.mediaItem.titles?.[0] || 'Audio Reference',
           index: res.selectedIndex,
         };
       }
@@ -1866,13 +1839,11 @@ export class VideoComponent implements OnInit, AfterViewInit {
   selectMode(mode: string) {
     this.selectedMode.set(mode);
     this.isModeMenuOpen.set(false);
-    console.log('Selected Mode:', mode);
   }
 
   selectNewAspectRatio(ratio: string) {
     this.selectedNewAspectRatio.set(ratio);
     this.isSettingsDropdownOpen.set(null);
-    console.log('Selected Aspect Ratio:', ratio);
   }
 
   selectOutputs(count: number) {
@@ -1880,19 +1851,16 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.searchRequest.numberOfMedia = count;
     this.saveState();
     this.isSettingsDropdownOpen.set(null);
-    console.log('Selected Outputs:', count);
   }
 
   selectNewModel(model: string) {
     this.selectedModel.set(model);
     this.isSettingsDropdownOpen.set(null);
-    console.log('Selected Model:', model);
   }
 
   selectPreset(preset: string) {
     this.selectedPreset.set(preset);
     this.isExpandMenuOpen.set(false);
-    console.log('Selected Preset:', preset);
     // You could also append this to the prompt, e.g.:
     // this.promptText.set(this.promptText() + ' ' + preset);
   }

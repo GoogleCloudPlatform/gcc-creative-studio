@@ -18,22 +18,12 @@ import {Injectable} from '@angular/core';
 import {HttpClient} from '@angular/common/http';
 import {Observable} from 'rxjs';
 import {environment} from '../../environments/environment';
+import {TimelineDTO} from '../common/models/workbench.model';
+import {MediaItem} from '../common/models/media-item.model';
 
-export interface Clip {
-  assetId: string;
-  url: string;
-  startTime: number;
-  duration: number;
-  offset: number;
-  trackIndex: number;
-  type: 'video' | 'audio';
-}
-
-export interface TimelineRequest {
-  clips: Clip[];
-  output_format?: string;
-  width?: number;
-  height?: number;
+export interface RenderTimelineRequest {
+  timeline_id: number;
+  output_filename?: string;
 }
 
 @Injectable({
@@ -44,9 +34,25 @@ export class WorkbenchService {
 
   constructor(private http: HttpClient) {}
 
-  renderVideo(request: TimelineRequest): Observable<Blob> {
-    return this.http.post(`${this.apiUrl}/render`, request, {
-      responseType: 'blob',
-    });
+  renderVideo(request: RenderTimelineRequest): Observable<MediaItem> {
+    return this.http.post<MediaItem>(`${this.apiUrl}/render`, request);
+  }
+
+  getTimeline(timelineId: number | string): Observable<TimelineDTO> {
+    return this.http.get<TimelineDTO>(`${this.apiUrl}/timelines/${timelineId}`);
+  }
+
+  updateTimeline(
+    timelineId: number | string,
+    timeline: TimelineDTO,
+  ): Observable<TimelineDTO> {
+    return this.http.put<TimelineDTO>(
+      `${this.apiUrl}/timelines/${timelineId}`,
+      timeline,
+    );
+  }
+
+  createTimeline(timeline: TimelineDTO): Observable<TimelineDTO> {
+    return this.http.post<TimelineDTO>(`${this.apiUrl}/timelines`, timeline);
   }
 }

@@ -113,8 +113,9 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   private formService = inject(WorkflowFormService);
 
   private mainSubscription!: Subscription;
-  // private pollingSubscription?: Subscription; // Removed
+  private pollingSubscription?: Subscription;
   currentExecutionId: string | null = null;
+  initialExecutionId: string | null = null;
   currentExecutionState: string | null = null;
   executionStepEntries: any[] = [];
   mediaUrlMap = new Map<string, string>();
@@ -155,6 +156,23 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(params => {
         this.returnUrl = params.get('returnUrl');
+        const executionId = params.get('executionId');
+        if (executionId) {
+          this.initialExecutionId = executionId;
+          if (this.workflowId && this.displayedWorkflow) {
+            this.onExecutionSelected(executionId);
+          }
+        } else {
+          this.initialExecutionId = null;
+          this.currentExecutionId = null;
+          this.currentExecutionState = null;
+          this.executionStepEntries = [];
+          this.stopPollingExecution();
+
+          if (this.displayedWorkflow) {
+            this.formService.patchData(this.displayedWorkflow);
+          }
+        }
       });
 
     this.mainSubscription = this.route.paramMap
@@ -192,6 +210,9 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             this.displayedWorkflow = this.workflow;
             if (this.displayedWorkflow) {
               this.formService.patchData(this.displayedWorkflow);
+              if (this.initialExecutionId) {
+                this.onExecutionSelected(this.initialExecutionId);
+              }
             }
           } else {
             // Already initialized in initForm() defaults
@@ -276,10 +297,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     if (this.mainSubscription) {
       this.mainSubscription.unsubscribe();
     }
-    if (this.mainSubscription) {
-      this.mainSubscription.unsubscribe();
-    }
-    // pollingSubscription removal not needed, handled by DestroyRef
+    this.stopPollingExecution();
   }
 
   addOutput(name = '', type = 'text', id?: string): void {
@@ -340,7 +358,25 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     this.formService.addStep(type, existingData);
   }
 
-  // createFormGroupFromData removed, handled by service
+  cloneStep(index: number) {
+    const stepControl = this.stepsArray.at(index);
+    if (!stepControl) return;
+
+    const stepData = JSON.parse(JSON.stringify(stepControl.value));
+
+    // Generate new ID and reset status
+    stepData.stepId = `node_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    stepData.status = StepStatusEnum.IDLE;
+    stepData.outputs = {};
+
+    this.formService.addStep(stepData.type, stepData);
+    const newIndex = this.stepsArray.length - 1;
+    if (newIndex !== index + 1) {
+      this.formService.moveStep(newIndex, index + 1);
+    }
+    this.selectedStepIndex = index + 1;
+    this.workflowForm.markAsDirty();
+  }
 
   deleteStep(index: number) {
     const deletedStepId = this.formService.deleteStep(index);
@@ -370,7 +406,17 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       Object.keys(inputs.controls).forEach(inputKey => {
         const control = inputs.get(inputKey);
         const value = control?.value;
-        if (
+        if (Array.isArray(value)) {
+          const newValue = value.filter(
+            (v: any) =>
+              !(v && typeof v === 'object' && v.step === deletedStepId),
+          );
+          if (newValue.length !== value.length) {
+            control?.setValue(newValue);
+            control?.markAsDirty();
+            control?.updateValueAndValidity();
+          }
+        } else if (
           value &&
           typeof value === 'object' &&
           value.step === deletedStepId
@@ -453,7 +499,14 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       },
       error: err => {
         console.error('Failed to save workflow', err);
-        this.errorMessage = err.error?.message || 'Failed to save workflow.';
+        const errorMsg =
+          err.error?.detail || err.error?.message || 'Failed to save workflow.';
+        this.errorMessage = errorMsg;
+        handleErrorSnackbar(
+          this.snackBar,
+          {message: errorMsg},
+          'Save workflow',
+        );
         this.isLoading = false;
       },
     });
@@ -522,7 +575,16 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       },
       error: err => {
         console.error('Failed to save before run', err);
-        this.errorMessage = 'Failed to save workflow before running.';
+        const errorMsg =
+          err.error?.detail ||
+          err.error?.message ||
+          'Failed to save workflow before running.';
+        this.errorMessage = errorMsg;
+        handleErrorSnackbar(
+          this.snackBar,
+          {message: errorMsg},
+          'Save workflow',
+        );
         this.isLoading = false;
       },
     });
@@ -577,7 +639,13 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   }
 
   private cleanInputValue(val: any): any {
-    if (!val || typeof val !== 'object') return val;
+    if (!val) return val;
+
+    if (Array.isArray(val)) {
+      return val.map(item => this.cleanInputValue(item));
+    }
+
+    if (typeof val !== 'object') return val;
 
     let newVal = {...val};
 
@@ -613,7 +681,6 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         this.isLoading = true;
         this.workflowService.executeWorkflow(workflowId, result).subscribe({
           next: res => {
-            console.log('Workflow execution started', res);
             this.currentExecutionId = res.execution_id;
             this.currentExecutionState = 'ACTIVE';
             this.isLoading = false;
@@ -660,8 +727,17 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       });
   }
 
+  private stopPollingExecution(): void {
+    if (this.pollingSubscription) {
+      this.pollingSubscription.unsubscribe();
+      this.pollingSubscription = undefined;
+    }
+  }
+
   private startPollingExecution(workflowId: string, executionId: string): void {
-    this.workflowService
+    this.stopPollingExecution();
+
+    this.pollingSubscription = this.workflowService
       .pollExecutionDetails(workflowId, executionId)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
@@ -675,7 +751,6 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   }
 
   private handleExecutionUpdate(details: any): void {
-    console.log('Execution details:', details);
     this.currentExecutionState = details.state;
     this.executionStepEntries = details.step_entries || [];
     this.updateStepStatuses(details);

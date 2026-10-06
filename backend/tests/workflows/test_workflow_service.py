@@ -231,6 +231,7 @@ class TestExecuteWorkflow:
         workflow_service.get_by_id = AsyncMock(
             return_value=sample_workflow_model
         )
+        workflow_service._ensure_gcp_workflow_is_current = AsyncMock()
 
         # Mock GCP Execution Client
         mock_exec_client = AsyncMock()
@@ -259,8 +260,45 @@ class TestExecuteWorkflow:
 
         assert exec_id == "exec-123"
         workflow_service.get_by_id.assert_called_once_with("id-123")
+        workflow_service._ensure_gcp_workflow_is_current.assert_awaited_once_with(
+            sample_workflow_model
+        )
         mock_exec_client.create_execution.assert_called_once()
         mock_run_repo.create.assert_called_once()
+
+    @pytest.mark.anyio
+    @patch("src.workflows.workflow_service.executions_v1.ExecutionsAsyncClient")
+    async def test_execute_workflow_skips_heal_when_disabled(
+        self,
+        mock_exec_client_class,
+        workflow_service,
+        sample_workflow_model,
+        sample_user,
+    ):
+        workflow_service.get_by_id = AsyncMock(
+            return_value=sample_workflow_model
+        )
+        workflow_service._ensure_gcp_workflow_is_current = AsyncMock()
+
+        mock_exec_client = AsyncMock()
+        mock_exec_client_class.return_value = mock_exec_client
+        mock_response = MagicMock()
+        mock_response.name = (
+            "projects/p/locations/l/workflows/w/executions/exec-456"
+        )
+        mock_exec_client.create_execution = AsyncMock(
+            return_value=mock_response
+        )
+
+        exec_id = await workflow_service.execute_workflow(
+            workflow_id="id-123",
+            args={},
+            user=sample_user,
+            ensure_current=False,
+        )
+
+        assert exec_id == "exec-456"
+        workflow_service._ensure_gcp_workflow_is_current.assert_not_awaited()
 
 
 class TestGetExecutionDetails:
@@ -340,13 +378,19 @@ class TestBatchExecuteWorkflow:
     """Tests for batch_execute_workflow method."""
 
     @pytest.mark.anyio
-    async def test_batch_execute_success(self, workflow_service, sample_user):
+    async def test_batch_execute_success(
+        self, workflow_service, sample_user, sample_workflow_model
+    ):
         from src.workflows.dto.batch_execution_dto import (
             BatchExecutionItemDto,
             BatchExecutionRequestDto,
         )
 
-        # Mock execute_workflow
+        # Mock execute_workflow and the one-time heal
+        workflow_service.get_by_id = AsyncMock(
+            return_value=sample_workflow_model
+        )
+        workflow_service._ensure_gcp_workflow_is_current = AsyncMock()
         workflow_service.execute_workflow = AsyncMock(return_value="exec-123")
 
         # Build DTO
@@ -369,6 +413,14 @@ class TestBatchExecuteWorkflow:
         assert response.results[0].execution_id == "exec-123"
         assert response.results[1].status == "SUCCESS"
 
+        # Healed exactly once for the whole batch, never per row.
+        workflow_service._ensure_gcp_workflow_is_current.assert_awaited_once_with(
+            sample_workflow_model
+        )
+        assert workflow_service.execute_workflow.await_count == 2
+        for call in workflow_service.execute_workflow.await_args_list:
+            assert call.kwargs["ensure_current"] is False
+
     @pytest.mark.anyio
     async def test_batch_execute_gcs_ingestion_success(
         self,
@@ -381,6 +433,7 @@ class TestBatchExecuteWorkflow:
         )
 
         # Mock execute_workflow
+        workflow_service._ensure_gcp_workflow_is_current = AsyncMock()
         workflow_service.execute_workflow = AsyncMock(return_value="exec-123")
 
         # Mock SourceAssetService
@@ -426,6 +479,7 @@ class TestBatchExecuteWorkflow:
         )
 
         # Mock execute_workflow (should not be called)
+        workflow_service._ensure_gcp_workflow_is_current = AsyncMock()
         workflow_service.execute_workflow = AsyncMock()
 
         # Build DTO with GCS URI but NO workspace_id
@@ -451,6 +505,190 @@ class TestBatchExecuteWorkflow:
 
         # Verify execute_workflow was NOT called
         workflow_service.execute_workflow.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_batch_execute_skips_heal_when_workflow_missing(
+        self, workflow_service, sample_user
+    ):
+        from src.workflows.dto.batch_execution_dto import (
+            BatchExecutionItemDto,
+            BatchExecutionRequestDto,
+        )
+
+        workflow_service.get_by_id = AsyncMock(return_value=None)
+        workflow_service._ensure_gcp_workflow_is_current = AsyncMock()
+        workflow_service.execute_workflow = AsyncMock(
+            side_effect=ValueError("Workflow id-404 not found")
+        )
+
+        batch_dto = BatchExecutionRequestDto(
+            items=[BatchExecutionItemDto(row_index=0, args={"prompt": "x"})],
+        )
+
+        response = await workflow_service.batch_execute_workflow(
+            workflow_id="id-404",
+            batch_dto=batch_dto,
+            user=sample_user,
+        )
+
+        workflow_service._ensure_gcp_workflow_is_current.assert_not_awaited()
+        assert response.results[0].status == "FAILED"
+        assert "not found" in response.results[0].error
+
+
+class TestEnsureGcpWorkflowIsCurrent:
+    """Tests for the pre-execution self-heal of the deployed Cloud Workflow.
+
+    The executor URL / service account are compiled into the Cloud Workflow
+    at save time, so a migration that changes either leaves old workflows
+    pointing at a dead backend (HTTP 404). These tests pin the re-sync logic.
+    """
+
+    @staticmethod
+    def _deployed(source_contents: str, service_account: str = ""):
+        deployed = MagicMock()
+        deployed.source_contents = source_contents
+        deployed.service_account = service_account
+        return deployed
+
+    @pytest.mark.anyio
+    async def test_noop_when_yaml_and_sa_match(
+        self, workflow_service, sample_workflow_model
+    ):
+        from src.config.config_service import config_service
+
+        config_service.BACKEND_SERVICE_ACCOUNT_EMAIL = "run@p.iam"
+        expected_yaml = workflow_service._generate_workflow_yaml(
+            sample_workflow_model
+        )
+        workflow_service._get_gcp_workflow = MagicMock(
+            return_value=self._deployed(
+                expected_yaml, "projects/p/serviceAccounts/run@p.iam"
+            )
+        )
+        workflow_service._update_gcp_workflow = MagicMock()
+        workflow_service._create_gcp_workflow = MagicMock()
+
+        await workflow_service._ensure_gcp_workflow_is_current(
+            sample_workflow_model
+        )
+
+        workflow_service._update_gcp_workflow.assert_not_called()
+        workflow_service._create_gcp_workflow.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_updates_when_executor_url_is_stale(
+        self, workflow_service, sample_workflow_model
+    ):
+        from src.config.config_service import config_service
+
+        config_service.BACKEND_SERVICE_ACCOUNT_EMAIL = ""
+        expected_yaml = workflow_service._generate_workflow_yaml(
+            sample_workflow_model
+        )
+        # What an old deployment left behind: the legacy host compiled in.
+        stale_yaml = expected_yaml.replace(
+            "/api/workflows-executor/",
+            "https://cstudio-be-abc123-uc.a.run.app/api/workflows-executor/",
+        )
+        if stale_yaml == expected_yaml:
+            stale_yaml = expected_yaml + "\n# compiled by an older backend\n"
+        workflow_service._get_gcp_workflow = MagicMock(
+            return_value=self._deployed(stale_yaml)
+        )
+        workflow_service._update_gcp_workflow = MagicMock()
+        workflow_service._create_gcp_workflow = MagicMock()
+
+        await workflow_service._ensure_gcp_workflow_is_current(
+            sample_workflow_model
+        )
+
+        workflow_service._update_gcp_workflow.assert_called_once_with(
+            expected_yaml, sample_workflow_model.id
+        )
+        workflow_service._create_gcp_workflow.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_updates_when_service_account_is_stale(
+        self, workflow_service, sample_workflow_model
+    ):
+        from src.config.config_service import config_service
+
+        config_service.BACKEND_SERVICE_ACCOUNT_EMAIL = "new-run@p.iam"
+        expected_yaml = workflow_service._generate_workflow_yaml(
+            sample_workflow_model
+        )
+        workflow_service._get_gcp_workflow = MagicMock(
+            return_value=self._deployed(
+                expected_yaml, "projects/p/serviceAccounts/old-run@p.iam"
+            )
+        )
+        workflow_service._update_gcp_workflow = MagicMock()
+
+        await workflow_service._ensure_gcp_workflow_is_current(
+            sample_workflow_model
+        )
+
+        workflow_service._update_gcp_workflow.assert_called_once_with(
+            expected_yaml, sample_workflow_model.id
+        )
+
+    @pytest.mark.anyio
+    async def test_recreates_when_workflow_missing(
+        self, workflow_service, sample_workflow_model
+    ):
+        expected_yaml = workflow_service._generate_workflow_yaml(
+            sample_workflow_model
+        )
+        workflow_service._get_gcp_workflow = MagicMock(return_value=None)
+        workflow_service._update_gcp_workflow = MagicMock()
+        workflow_service._create_gcp_workflow = MagicMock()
+
+        await workflow_service._ensure_gcp_workflow_is_current(
+            sample_workflow_model
+        )
+
+        workflow_service._create_gcp_workflow.assert_called_once_with(
+            expected_yaml, sample_workflow_model.id
+        )
+        workflow_service._update_gcp_workflow.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_errors_are_swallowed(
+        self, workflow_service, sample_workflow_model
+    ):
+        workflow_service._get_gcp_workflow = MagicMock(
+            side_effect=RuntimeError("workflows api down")
+        )
+
+        # Must not raise: execution proceeds even if the heal fails.
+        await workflow_service._ensure_gcp_workflow_is_current(
+            sample_workflow_model
+        )
+
+    @patch("src.workflows.workflow_service.workflows_v1.WorkflowsClient")
+    def test_get_gcp_workflow_returns_none_on_not_found(
+        self, mock_client_class, workflow_service
+    ):
+        from google.api_core.exceptions import NotFound
+
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+        mock_client.workflow_path.return_value = "projects/p/l/w/id-1"
+        mock_client.get_workflow.side_effect = NotFound("gone")
+
+        assert workflow_service._get_gcp_workflow("id-1") is None
+
+    @patch("src.workflows.workflow_service.workflows_v1.WorkflowsClient")
+    def test_get_gcp_workflow_returns_deployed(
+        self, mock_client_class, workflow_service
+    ):
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+        deployed = MagicMock()
+        mock_client.get_workflow.return_value = deployed
+
+        assert workflow_service._get_gcp_workflow("id-1") is deployed
 
 
 class TestListExecutions:

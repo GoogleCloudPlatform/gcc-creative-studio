@@ -14,27 +14,52 @@
  limitations under the License.
 -->
 
-
-<div class="step-card" [formGroup]="stepForm" [ngClass]="localConfig.type" [class.invalid-step]="stepForm.invalid && showValidationErrors">
+<div
+  class="step-card"
+  [formGroup]="stepForm"
+  [ngClass]="localConfig.type"
+  [class.invalid-step]="stepForm.invalid && showValidationErrors"
+>
   <div class="step-header" (click)="isCollapsed = !isCollapsed" cdkDragHandle>
     <div class="step-title">
       <mat-icon>{{ localConfig.icon }}</mat-icon>
       <span>{{ localConfig.title }}</span>
-      <mat-icon *ngIf="stepForm.invalid && showValidationErrors" class="!text-red-500 ml-2" matTooltip="Step has errors">error</mat-icon>
+      <mat-icon
+        *ngIf="stepForm.invalid && showValidationErrors"
+        class="!text-red-500 ml-2"
+        matTooltip="Step has errors"
+        >error</mat-icon
+      >
       <span class="step-id-subtle">#{{ stepIndex + 1 }}</span>
       <!-- Status Chip -->
-      <mat-chip *ngIf="stepForm.get('status')?.value !== 'idle'" 
-                [ngClass]="stepForm.get('status')?.value | workflowStatus:'class'"
-                class="ml-2">
+      <mat-chip
+        *ngIf="stepForm.get('status')?.value !== StepStatusEnum.IDLE"
+        [ngClass]="stepForm.get('status')?.value | workflowStatus: 'class'"
+        class="ml-2"
+      >
         <mat-icon class="!text-sm !w-4 !h-4 mr-1">
-          {{ stepForm.get('status')?.value | workflowStatus:'icon' }}
+          {{ stepForm.get('status')?.value | workflowStatus: 'icon' }}
         </mat-icon>
         {{ stepForm.get('status')?.value | uppercase }}
       </mat-chip>
     </div>
     <div class="step-actions">
-      <button *ngIf="mode !== 'run'" mat-icon-button color="warn"
-              (click)="$event.stopPropagation(); delete.emit()" matTooltip="Delete step">
+      <button
+        *ngIf="mode !== 'run'"
+        mat-icon-button
+        color="primary"
+        (click)="$event.stopPropagation(); clone.emit()"
+        matTooltip="Clone step"
+      >
+        <mat-icon>content_copy</mat-icon>
+      </button>
+      <button
+        *ngIf="mode !== 'run'"
+        mat-icon-button
+        color="warn"
+        (click)="$event.stopPropagation(); delete.emit()"
+        matTooltip="Delete step"
+      >
         <mat-icon>delete</mat-icon>
       </button>
       <button mat-icon-button class="collapse-icon">
@@ -55,7 +80,8 @@
           [compatibleOutputs]="compatibleOutputs[input.name]"
           [showValidationErrors]="showValidationErrors"
           [maxMediaItems]="currentMaxReferenceImages"
-          (modeChange)="toggleInputMode(input.name, $event)">
+          (modeChange)="toggleInputMode(input.name, $event)"
+        >
         </app-step-input-field>
       </ng-container>
     </div>
@@ -65,37 +91,52 @@
       <div class="settings-grid">
         <ng-container *ngFor="let setting of localConfig.settings">
           <ng-container *ngIf="!setting.hidden">
-          <mat-form-field *ngIf="setting.type === 'select'" appearance="outline">
-            <mat-label>{{ setting.label }}</mat-label>
-            <mat-select [formControlName]="setting.name">
-              <mat-option *ngFor="let option of setting.options" [value]="option.value">{{ option.label }}</mat-option>
-            </mat-select>
-          </mat-form-field>
-          <mat-form-field *ngIf="setting.type === 'text' || setting.type === 'textarea'" appearance="outline">
-            <mat-label>{{ setting.label }}</mat-label>
-            <input matInput [formControlName]="setting.name">
-          </mat-form-field>
-          <div *ngIf="setting.type === 'checkbox'" class="checkbox-group">
-            <mat-checkbox [formControlName]="setting.name">{{ setting.label }}</mat-checkbox>
-          </div>
-          <div *ngIf="setting.type === 'slider'" class="slider-group">
-            <studio-slider
-              label="{{ setting.label }}"
-              [valueText]="stepForm.get('settings')?.get(setting.name)?.value"
-              [min]="setting.min || 0"
-              [max]="setting.max || 1"
-              [step]="setting.step || 0.1"
-              [formControlName]="setting.name"
-            ></studio-slider>
-          </div>
-          <div *ngIf="setting.type === 'radio'" class="radio-group">
-            <label>{{ setting.label }}</label>
-            <mat-radio-group [formControlName]="setting.name">
-              <mat-radio-button *ngFor="let option of setting.options" [value]="option.value">
-                {{ option.label }}
-              </mat-radio-button>
-            </mat-radio-group>
-          </div>
+            <mat-form-field
+              *ngIf="setting.type === 'select'"
+              appearance="outline"
+            >
+              <mat-label>{{ setting.label }}</mat-label>
+              <mat-select [formControlName]="setting.name">
+                <mat-option
+                  *ngFor="let option of setting.options"
+                  [value]="option.value"
+                  >{{ option.label }}</mat-option
+                >
+              </mat-select>
+            </mat-form-field>
+            <mat-form-field
+              *ngIf="setting.type === 'text' || setting.type === 'textarea'"
+              appearance="outline"
+            >
+              <mat-label>{{ setting.label }}</mat-label>
+              <input matInput [formControlName]="setting.name" />
+            </mat-form-field>
+            <div *ngIf="setting.type === 'checkbox'" class="checkbox-group">
+              <mat-checkbox [formControlName]="setting.name">{{
+                setting.label
+              }}</mat-checkbox>
+            </div>
+            <div *ngIf="setting.type === 'slider'" class="slider-group">
+              <studio-slider
+                label="{{ setting.label }}"
+                [valueText]="stepForm.get('settings')?.get(setting.name)?.value"
+                [min]="setting.min || 0"
+                [max]="setting.max || 1"
+                [step]="setting.step || 0.1"
+                [formControlName]="setting.name"
+              ></studio-slider>
+            </div>
+            <div *ngIf="setting.type === 'radio'" class="radio-group">
+              <label>{{ setting.label }}</label>
+              <mat-radio-group [formControlName]="setting.name">
+                <mat-radio-button
+                  *ngFor="let option of setting.options"
+                  [value]="option.value"
+                >
+                  {{ option.label }}
+                </mat-radio-button>
+              </mat-radio-group>
+            </div>
           </ng-container>
         </ng-container>
       </div>

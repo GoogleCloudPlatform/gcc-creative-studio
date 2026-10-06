@@ -44,6 +44,8 @@ export interface SourceAssetResponseDto {
   userId: string;
   gcsUri: string;
   originalFilename: string;
+  titles?: string[];
+  descriptions?: string[];
   mimeType: string;
   aspectRatio: string;
   fileHash: string;
@@ -218,8 +220,6 @@ export class SourceAssetService {
       )
       .pipe(
         tap(initialItem => {
-          console.log('Upscale job started successfully:', initialItem);
-
           this.activeUpscaleJob.next(initialItem);
           this.startUpscalePolling(String(initialItem.id));
         }),
@@ -232,7 +232,14 @@ export class SourceAssetService {
   ): Observable<MediaItem> {
     const formData = new FormData();
 
-    formData.append('id', String(asset.id));
+    if (
+      (asset as any).itemType === 'media_item' ||
+      (asset as any).isMediaItem
+    ) {
+      formData.append('mediaItemId', String(asset.id));
+    } else {
+      formData.append('id', String(asset.id));
+    }
     formData.append('gcsUri', asset.gcsUri);
     formData.append('originalFilename', asset.originalFilename);
     formData.append('mimeType', asset.mimeType);
@@ -268,8 +275,6 @@ export class SourceAssetService {
       )
       .pipe(
         tap(initialItem => {
-          console.log('Upscale job started successfully:', initialItem);
-
           this.activeUpscaleJob.next(initialItem);
           this.startUpscalePolling(String(initialItem.id));
         }),
@@ -418,5 +423,20 @@ export class SourceAssetService {
     return this.http.get<SourceAssetResponseDto>(
       `${environment.backendURL}/source_assets/${assetId}`,
     );
+  }
+
+  downloadAssetBlob(url: string): Observable<Blob> {
+    return this.http.get(url, {responseType: 'blob'});
+  }
+
+  downloadExternalAsset(url: string): Observable<Blob> {
+    return this.http.get(url, {responseType: 'blob'});
+  }
+
+  convertImageToPng(file: File): Observable<Blob> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const convertUrl = `${environment.backendURL}/source_assets/convert-to-png`;
+    return this.http.post(convertUrl, formData, {responseType: 'blob'});
   }
 }

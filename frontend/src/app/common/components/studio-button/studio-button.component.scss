@@ -187,6 +187,14 @@
   }
 }
 
+.btn-glass-primary ::ng-deep mat-icon,
+.btn-cta ::ng-deep mat-icon {
+  font-size: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 // Circular variant for "Edit" button (primary glass but round)
 .btn-glass-circle {
   @extend .btn-glass-primary;

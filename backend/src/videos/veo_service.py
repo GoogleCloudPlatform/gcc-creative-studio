@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Veo Service for video generation."""
 
 import asyncio
+import base64
 import logging
 import os
 import shutil
@@ -24,8 +26,7 @@ from concurrent.futures import ThreadPoolExecutor
 from fastapi import Depends, HTTPException
 from google.cloud.logging import Client as LoggerClient
 from google.cloud.logging.handlers import CloudLoggingHandler
-from google.genai import Client, types
-import base64
+from google.genai import types
 
 from src.auth.iam_signer_credentials_service import IamSignerCredentials
 from src.common.base_dto import (
@@ -34,7 +35,10 @@ from src.common.base_dto import (
     MimeTypeEnum,
     ReferenceImageTypeEnum,
 )
-from src.common.media_utils import concatenate_videos, generate_thumbnail
+from src.common.media_utils import (
+    concatenate_videos,
+    generate_thumbnail,
+)
 from src.common.schema.genai_model_setup import GenAIModelSetup
 from src.common.schema.media_item_model import (
     AssetRoleEnum,
@@ -45,6 +49,7 @@ from src.common.schema.media_item_model import (
 )
 from src.common.storage_service import GcsService
 from src.config.config_service import config_service
+from src.folders.agent_output_folder import resolve_agent_output_folder_id
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.images.repository.media_item_repository import MediaRepository
 from src.multimodal.gemini_service import GeminiService, PromptTargetEnum
@@ -93,11 +98,13 @@ def _process_video_in_background(
     request_dto: CreateVeoDto,
     user_email: str,
 ):  # type: ignore
-    """This is the long-running worker task. It creates its own service instances
-    because it runs in a separate thread.
+    """This is the long-running worker task.
+
+    It creates its own service instances because it runs in a separate thread.
     The long-running process that generates video, thumbnails, and updates the
     database record upon completion or failure.
     """
+    # pylint: disable=import-outside-toplevel,unused-argument
     from src.database import WorkerDatabase
 
     # In a new process, the logging configuration is reset. We must re-configure it
@@ -206,7 +213,8 @@ def _process_video_in_background(
                                     )
                                 else:
                                     worker_logger.warning(
-                                        f"Could not find source video asset: {ref.id}",
+                                        "Could not find source video asset: %s",
+                                        ref.id,
                                     )
                         if request_dto.start_image_asset_id:
                             ref = request_dto.start_image_asset_id
@@ -248,7 +256,8 @@ def _process_video_in_background(
 
                         if request_dto.reference_images:
                             worker_logger.info(
-                                f"Loading {len(request_dto.reference_images)} reference images.",
+                                "Loading %s reference images.",
+                                len(request_dto.reference_images),
                             )
                             for ref_dto in request_dto.reference_images:
                                 asset = await source_asset_repo.get_by_id(
@@ -354,7 +363,9 @@ def _process_video_in_background(
                                         )
                                 else:
                                     worker_logger.warning(
-                                        f"Could not find or use generated_input: {gen_input.media_item_id} at index {gen_input.media_index}",
+                                        "Could not find or use generated_input: %s at index %s",
+                                        gen_input.media_item_id,
+                                        gen_input.media_index,
                                     )
 
                         # Validation to prevent conflicting inputs
@@ -471,16 +482,24 @@ def _process_video_in_background(
                                         is_turn_2 = True
                                     else:
                                         worker_logger.warning(
-                                            f"Parent MediaItem {request_dto.parent_media_item_id} does not have interaction context in raw_data. Falling back to Turn 1 R2V generation."
+                                            "Parent MediaItem %s does not have "
+                                            "interaction context in raw_data. "
+                                            "Falling back to Turn 1 R2V generation.",
+                                            request_dto.parent_media_item_id,
                                         )
                                 else:
                                     worker_logger.warning(
-                                        f"Parent MediaItem {request_dto.parent_media_item_id} does not have interaction context. Falling back to Turn 1 R2V generation."
+                                        "Parent MediaItem %s does not have "
+                                        "interaction context. Falling back "
+                                        "to Turn 1 R2V generation.",
+                                        request_dto.parent_media_item_id,
                                     )
 
                             if is_turn_2:
                                 worker_logger.info(
-                                    f"Performing Turn 2 Multi-Turn generation from parent MediaItem: {request_dto.parent_media_item_id}"
+                                    "Performing Turn 2 Multi-Turn generation "
+                                    "from parent MediaItem: %s",
+                                    request_dto.parent_media_item_id,
                                 )
                                 prompt1 = (
                                     parent_media_item.original_prompt
@@ -550,7 +569,9 @@ def _process_video_in_background(
                                         os.remove(local_parent_path)
                                     except Exception as e:
                                         worker_logger.warning(
-                                            f"Failed to clean up parent video at {local_parent_path}: {e}"
+                                            "Failed to clean up parent video at %s: %s",
+                                            local_parent_path,
+                                            e,
                                         )
                             else:
                                 worker_logger.info(
@@ -641,7 +662,8 @@ def _process_video_in_background(
 
                             num_outputs = 1
                             worker_logger.info(
-                                f"Queueing {num_outputs} Gemini Omni generation interactions."
+                                "Queueing %s Gemini Omni generation interactions.",
+                                num_outputs,
                             )
 
                             async def generate_single_omni_output(i: int):
@@ -669,8 +691,21 @@ def _process_video_in_background(
                                     except Exception as e:
                                         last_err = e
                                         worker_logger.warning(
-                                            f"Gemini Omni interactions API call attempt {attempt + 1} failed: {e}. Retrying..."
+                                            "Gemini Omni interactions API call "
+                                            "attempt %s failed: %s. Retrying...",
+                                            attempt + 1,
+                                            e,
                                         )
+                                        err_str = str(e)
+                                        if (
+                                            "content_blocked" in err_str
+                                            or "restricted individuals"
+                                            in err_str
+                                        ):
+                                            worker_logger.error(
+                                                "Gemini Omni interactions API call blocked by policy/content filter. Stopping retries."
+                                            )
+                                            break
                                         if attempt < max_retries - 1:
                                             await asyncio.sleep(2)
 
@@ -701,8 +736,9 @@ def _process_video_in_background(
                                                 )
 
                                 if not contents or not contents[0].data:
-                                    raise Exception(
-                                        f"Interactions call {i + 1} succeeded but returned no model output data."
+                                    raise RuntimeError(
+                                        f"Interactions call {i + 1} succeeded "
+                                        "but returned no model output data."
                                     )
 
                                 raw_video_bytes = base64.b64decode(
@@ -764,7 +800,9 @@ def _process_video_in_background(
                                             os.remove(local_path)
                                         except Exception as e:
                                             worker_logger.warning(
-                                                f"Failed to clean up {local_path}: {e}"
+                                                "Failed to clean up %s: %s",
+                                                local_path,
+                                                e,
                                             )
 
                                 return (
@@ -856,7 +894,7 @@ def _process_video_in_background(
                                 )
 
                             if operation.error:
-                                raise Exception(operation.error)
+                                raise RuntimeError(operation.error)
 
                             if (
                                 not operation
@@ -868,6 +906,8 @@ def _process_video_in_background(
                             # Download the generated video and create thumbnail
                             thumbnail_path = ""
 
+                            permanent_thumbnail_gcs_uris = []
+
                             for (
                                 generated_video
                             ) in operation.response.generated_videos:
@@ -875,7 +915,12 @@ def _process_video_in_background(
                                     generated_video.video
                                     and generated_video.video.uri
                                 ):
-                                    output_path = f"{generated_video.video.uri.replace(f'gs://{cfg.GENMEDIA_BUCKET}/', '')}"
+                                    prefix = f"gs://{cfg.GENMEDIA_BUCKET}/"
+                                    output_path = (
+                                        generated_video.video.uri.replace(
+                                            prefix, ""
+                                        )
+                                    )
 
                                     # Step 1: Download the Video from GCS
                                     local_output_path = (
@@ -916,11 +961,15 @@ def _process_video_in_background(
                                             permanent_thumbnail_gcs_uris.append(
                                                 thumbnail_gcs_uri,
                                             )
+                                            # TODO: Delete the folder created under thumbnails/
                                         except Exception as e:
+                                            # It's good practice to log or handle potential upload errors.
                                             print(
                                                 f"Failed to upload {thumbnail_path}. Error: {e}",
                                             )
                                         finally:
+                                            # This block executes whether the try block succeeded or failed.
+                                            # We use shutil.rmtree to recursively delete the temporary directory.
                                             if os.path.exists(temp_dir):
                                                 shutil.rmtree(temp_dir)
 
@@ -928,6 +977,8 @@ def _process_video_in_background(
                                 operation.response.generated_videos or [],
                             )
 
+                        end_time = time.monotonic()
+                        generation_time = end_time - start_time
                         if request_dto.generation_model not in [
                             GenerationModelEnum.GEMINI_OMNI,
                             GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
@@ -944,10 +995,7 @@ def _process_video_in_background(
                                 if img.video and img.video.uri
                             ]
 
-                        end_time = time.monotonic()
-                        generation_time = end_time - start_time
-
-                        # --- WHEN COMPLETE, UPDATE THE DOCUMENT IN FIRESTORE ---
+                        # --- WHEN COMPLETE, UPDATE THE RECORD IN POSTGRESQL ---
                         update_data = {
                             "status": JobStatusEnum.COMPLETED,
                             "prompt": rewritten_prompt,
@@ -958,6 +1006,37 @@ def _process_video_in_background(
                         }
                         if raw_data_dict is not None:
                             update_data["raw_data"] = raw_data_dict
+
+                        if (
+                            getattr(
+                                request_dto, "metadata_generation_model", None
+                            )
+                            and final_gcs_uris
+                        ):
+                            try:
+                                metadata = await asyncio.to_thread(
+                                    gemini_service.generate_media_metadata,
+                                    prompt=(
+                                        "Describe this generated video "
+                                        f"based on prompt: {rewritten_prompt}"
+                                    ),
+                                    media_uris=final_gcs_uris,
+                                    model_name=request_dto.metadata_generation_model,
+                                    mime_type="video/mp4",
+                                )
+                                titles = metadata.get("titles")
+                                if titles:
+                                    update_data["titles"] = titles
+                                descriptions = metadata.get("descriptions")
+                                if descriptions:
+                                    update_data["descriptions"] = descriptions
+                            except Exception as e:
+                                worker_logger.warning(
+                                    "Failed to generate metadata for media "
+                                    "item %s: %s",
+                                    media_item_id,
+                                    e,
+                                )
 
                         await media_repo.update(media_item_id, update_data)
                         worker_logger.info(
@@ -1007,6 +1086,7 @@ def _process_video_concatenation_in_background(
     request_dto: ConcatenateVideosDto,
 ):
     """Background worker to concatenate multiple videos."""
+    # pylint: disable=import-outside-toplevel
     from src.database import WorkerDatabase
 
     worker_logger = logging.getLogger(f"video_concat_worker.{media_item_id}")
@@ -1075,7 +1155,9 @@ def _process_video_concatenation_in_background(
                                 (".mp4", ".mov", ".webm"),
                             ):
                                 worker_logger.warning(
-                                    f"Skipping non-video URI for {video_input.type} '{video_input.id}'",
+                                    "Skipping non-video URI for %s '%s'",
+                                    video_input.type,
+                                    video_input.id,
                                 )
                                 continue
 
@@ -1088,7 +1170,7 @@ def _process_video_concatenation_in_background(
                                 destination_file_path=f"{temp_dir}/{video_input.id}.mp4",
                             )
                             if not local_path:
-                                raise Exception(
+                                raise RuntimeError(
                                     f"Failed to download video: {gcs_uri}"
                                 )
                             local_video_paths.append(local_path)
@@ -1101,7 +1183,7 @@ def _process_video_concatenation_in_background(
                             output_path=final_video_path,
                         )
                         if not concatenated_path:
-                            raise Exception("ffmpeg concatenation failed.")
+                            raise RuntimeError("ffmpeg concatenation failed.")
 
                         # 3. Upload the final video
                         final_gcs_uri = await asyncio.to_thread(
@@ -1111,7 +1193,7 @@ def _process_video_concatenation_in_background(
                             mime_type="video/mp4",
                         )
                         if not final_gcs_uri:
-                            raise Exception(
+                            raise RuntimeError(
                                 "Failed to upload final concatenated video.",
                             )
 
@@ -1143,12 +1225,14 @@ def _process_video_concatenation_in_background(
                         }
                         await media_repo.update(media_item_id, update_data)
                         worker_logger.info(
-                            f"Successfully concatenated videos for job {media_item_id}",
+                            "Successfully concatenated videos for job %s",
+                            media_item_id,
                         )
 
                     except Exception as e:
                         worker_logger.error(
-                            f"Video concatenation task failed: {e}",
+                            "Video concatenation task failed: %s",
+                            e,
                             exc_info=True,
                         )
                         error_update_data = {
@@ -1167,12 +1251,15 @@ def _process_video_concatenation_in_background(
 
     except Exception as e:
         worker_logger.error(
-            f"Video concatenation worker failed to initialize: {e}",
+            "Video concatenation worker failed to initialize: %s",
+            e,
             exc_info=True,
         )
 
 
 class VeoService:
+    """Service to handle video generation requests using Google's Veo API."""
+
     def __init__(
         self,
         media_repo: MediaRepository = Depends(),
@@ -1310,8 +1397,12 @@ class VeoService:
                 )
 
         # 1. Create a placeholder MediaItem (without ID, let DB generate it)
+        folder_id = await resolve_agent_output_folder_id(
+            self.media_repo.db, request_dto.workspace_id, user
+        )
         placeholder_item = MediaItemModel(
             workspace_id=request_dto.workspace_id,
+            folder_id=folder_id,
             user_email=user.email,
             user_id=user.id,
             mime_type=MimeTypeEnum.VIDEO_MP4,
@@ -1332,6 +1423,9 @@ class VeoService:
             source_assets=source_assets or None,
             gcs_uris=[],
             thumbnail_uris=[],
+            comment=getattr(request_dto, "file_name", None),
+            titles=request_dto.titles,
+            descriptions=request_dto.descriptions,
         )
 
         # 2. Save to DB to get the ID
@@ -1405,8 +1499,12 @@ class VeoService:
                 )
 
         # 1. Create placeholder (let DB generate ID)
+        folder_id = await resolve_agent_output_folder_id(
+            self.media_repo.db, request_dto.workspace_id, user
+        )
         placeholder_item = MediaItemModel(
             workspace_id=request_dto.workspace_id,
+            folder_id=folder_id,
             user_email=user.email,
             user_id=user.id,
             mime_type=MimeTypeEnum.VIDEO_MP4,
@@ -1424,6 +1522,7 @@ class VeoService:
                     i.model_dump() for i in request_dto.inputs
                 ],
             },
+            comment=getattr(request_dto, "file_name", None),
         )
 
         # 2. Save to DB

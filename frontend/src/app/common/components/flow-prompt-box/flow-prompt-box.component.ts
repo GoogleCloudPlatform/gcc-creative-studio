@@ -27,6 +27,7 @@ import {
   OnInit,
   OnDestroy,
   inject,
+  OnChanges,
 } from '@angular/core';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {ReferenceImage} from '../../models/search.model';
@@ -37,6 +38,10 @@ import {FormsModule} from '@angular/forms';
 import {MatButtonModule} from '@angular/material/button';
 import {MatMenuModule} from '@angular/material/menu';
 import {MatTooltipModule} from '@angular/material/tooltip';
+import {
+  extractYouTubeVideoId,
+  getYouTubeThumbnailUrl,
+} from '../../../utils/youtube.utils';
 
 export type NumPos = 1 | 2;
 
@@ -145,8 +150,6 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   @Output() clearReferenceVideo = new EventEmitter<Event>();
   @Output() openAudioSelectorForReference = new EventEmitter<void>();
   @Output() clearReferenceAudio = new EventEmitter<Event>();
-
-  @Input() externalUrl: string | null = null;
   @Output() openVideoUrlInputForReference = new EventEmitter<void>();
   @Output() clearExternalUrl = new EventEmitter<void>();
 
@@ -156,6 +159,15 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   @Input() referenceImagesType: 'ASSET' | 'STYLE' = 'ASSET';
   @Input() referenceVideo: any | null = null;
   @Input() referenceAudio: any | null = null;
+  private _externalUrl: string | null = null;
+  private externalUrlSignal = signal<string | null>(null);
+  @Input() set externalUrl(val: string | null) {
+    this._externalUrl = val;
+    this.externalUrlSignal.set(val);
+  }
+  get externalUrl(): string | null {
+    return this._externalUrl;
+  }
 
   @ViewChild('modeTrigger') modeTrigger!: ElementRef;
   @ViewChild('modeMenu') modeMenu!: ElementRef;
@@ -235,15 +247,13 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
         .length > 0,
   );
 
-  youtubeThumbnailUrl = computed(() => {
-    const url = this.externalUrl;
-    if (!url) return null;
-    const regExp =
-      /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
-    const match = url.match(regExp);
-    const id = match && match[2].length === 11 ? match[2] : null;
-    return id ? `https://img.youtube.com/vi/${id}/hqdefault.jpg` : null;
-  });
+  youtubeVideoId = computed(() =>
+    extractYouTubeVideoId(this.externalUrlSignal()),
+  );
+
+  youtubeThumbnailUrl = computed(() =>
+    getYouTubeThumbnailUrl(this.youtubeVideoId()),
+  );
 
   // --- Lifecycle Hooks ---
   ngOnInit(): void {
@@ -327,6 +337,24 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   selectNewAspectRatio(ratio: string) {
     this.aspectRatioChanged.emit(ratio);
     this.isSettingsDropdownOpen.set(null);
+  }
+
+  getAspectRatioIcon(aspectRatio: string): string {
+    if (!aspectRatio) return 'crop_landscape';
+    const matched = this.aspectRatioOptions?.find(
+      o => o.viewValue === aspectRatio || o.value === aspectRatio,
+    );
+    if (matched && matched.icon) {
+      return matched.icon;
+    }
+    const lowerRatio = aspectRatio.toLowerCase();
+    if (lowerRatio.includes('auto')) {
+      return 'hdr_auto';
+    }
+    if (lowerRatio.includes('1:1') || lowerRatio.includes('square')) {
+      return 'crop_square';
+    }
+    return aspectRatio.includes('16:9') ? 'crop_landscape' : 'crop_portrait';
   }
 
   selectOutputs(count: number) {
