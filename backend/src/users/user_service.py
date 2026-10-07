@@ -478,7 +478,13 @@ class UserService:
     async def delete_user(
         self, user_id: int, deleted_by: int | None = None
     ) -> bool:
-        """Soft deletes a user."""
+        """Soft deletes a user, but never the last admin."""
+        admin_ids = await self.user_repo.lock_active_admin_ids()
+        if admin_ids == [user_id]:
+            raise HTTPException(
+                status_code=400,
+                detail="There must be at least 1 admin on the app.",
+            )
         return await self.user_repo.soft_delete(user_id, deleted_by=deleted_by)
 
     async def restore_user(self, user_id: int) -> bool:
@@ -491,31 +497,20 @@ class UserService:
         role_data: UserUpdateRoleDto,
     ) -> UserModel | None:
         """Updates the role of a specific user with safeties."""
-        from fastapi import HTTPException
-        from sqlalchemy import func, select
-
-        from src.users.user_model import User
-
         existing_user = await self.user_repo.get_by_id(user_id)
         if not existing_user:
             return None
 
-        was_admin = "admin" in existing_user.roles
+        # Lock the admin rows before checking, so two admins demoting each
+        # other at the same moment cannot both succeed.
+        admin_ids = await self.user_repo.lock_active_admin_ids()
         will_be_admin = "admin" in [role.value for role in role_data.roles]
 
-        if was_admin and not will_be_admin:
-            admin_query = (
-                select(func.count())
-                .select_from(User)
-                .where(User.roles.contains(["admin"]))
+        if not will_be_admin and admin_ids == [user_id]:
+            raise HTTPException(
+                status_code=400,
+                detail="There must be at least 1 admin on the app.",
             )
-            admin_count_result = await self.user_repo.db.execute(admin_query)
-            admin_count = admin_count_result.scalar() or 0
-            if admin_count <= 1:
-                raise HTTPException(
-                    status_code=400,
-                    detail="There must be at least 1 admin on the app.",
-                )
 
         roles_as_strings = [role.value for role in role_data.roles]
         return await self.user_repo.update(user_id, {"roles": roles_as_strings})

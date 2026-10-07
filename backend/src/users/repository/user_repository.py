@@ -100,6 +100,23 @@ class UserRepository(BaseRepository[User, UserModel]):
                 raise
             return existing
 
+    async def lock_active_admin_ids(self) -> list[int]:
+        """Locks every active admin row and returns their IDs.
+
+        Call this before any change that could remove an admin. A second
+        request doing the same thing waits here until the first one saves, so
+        two admins cannot remove each other at the same moment. Rows are
+        locked in ID order so two requests never deadlock. Deactivated users
+        are left out by the soft-delete filter that applies to every query.
+        """
+        result = await self.db.execute(
+            select(self.model.id)
+            .where(self.model.roles.contains(["admin"]))
+            .order_by(self.model.id)
+            .with_for_update()
+        )
+        return list(result.scalars().all())
+
     async def query(
         self,
         search_dto: UserSearchDto,

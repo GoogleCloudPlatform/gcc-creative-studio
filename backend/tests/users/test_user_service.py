@@ -14,7 +14,7 @@
 """Tests for User Service."""
 
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -154,10 +154,8 @@ class TestUpdateUserRole:
         # Setup: User IS an admin
         mock_user_repo.get_by_id.return_value = mock_admin
 
-        # Mock DB execute to return 1 (only 1 admin left)
-        mock_result = MagicMock()
-        mock_result.scalar.return_value = 1
-        mock_user_repo.db.execute.return_value = mock_result
+        # Mock repo to report that this user is the only admin left
+        mock_user_repo.lock_active_admin_ids.return_value = [2]
 
         # Action: Try to demote to regular user
         role_data = UserUpdateRoleDto(roles=[UserRoleEnum.USER])
@@ -190,3 +188,31 @@ class TestUpdateUserRole:
             1,
             {"roles": [UserRoleEnum.ADMIN.value]},
         )
+
+
+class TestDeleteUser:
+    """Tests for UserService.delete_user."""
+
+    @pytest.mark.anyio
+    async def test_prevent_deleting_last_admin(
+        self, user_service, mock_user_repo
+    ):
+        # Setup: the user being deleted is the only admin left
+        mock_user_repo.lock_active_admin_ids.return_value = [2]
+
+        with pytest.raises(HTTPException) as exc_info:
+            await user_service.delete_user(2, deleted_by=1)
+
+        assert exc_info.value.status_code == 400
+        assert "There must be at least 1 admin" in exc_info.value.detail
+        mock_user_repo.soft_delete.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_delete_admin_when_another_admin_remains(
+        self, user_service, mock_user_repo
+    ):
+        mock_user_repo.lock_active_admin_ids.return_value = [1, 2]
+
+        await user_service.delete_user(2, deleted_by=1)
+
+        mock_user_repo.soft_delete.assert_called_once_with(2, deleted_by=1)
