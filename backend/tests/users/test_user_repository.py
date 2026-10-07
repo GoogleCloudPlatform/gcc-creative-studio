@@ -71,6 +71,20 @@ async def test_get_by_email_not_found():
 
 
 @pytest.mark.anyio
+async def test_get_by_email_matches_lowercased_input():
+    mock_db = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    mock_db.execute.return_value = mock_result
+    repo = UserRepository(db=mock_db)
+
+    await repo.get_by_email(" Bob@Corp.com ")
+
+    stmt = mock_db.execute.call_args.args[0]
+    assert list(stmt.compile().params.values()) == ["bob@corp.com"]
+
+
+@pytest.mark.anyio
 async def test_query_no_filters():
     mock_db = AsyncMock()
 

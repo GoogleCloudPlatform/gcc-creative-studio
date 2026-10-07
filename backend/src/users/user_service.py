@@ -36,7 +36,11 @@ class UserService:
     ) -> UserModel:
         """Retrieves a user by their email. If the user exists, it returns it.
         If the user doesn't exist, it creates a new user document.
+        Emails are compared and stored in lowercase.
         """
+        # The same address in any letter case is the same person.
+        email = email.strip().lower()
+
         # 1. Check if the user already exists in the database.
         existing_user = await self.user_repo.get_by_email(email)
 

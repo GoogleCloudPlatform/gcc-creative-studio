@@ -124,11 +124,12 @@ async def get_current_user(
                 detail="Forbidden: User identity could not be confirmed from IAP token.",
             )
 
-        # If ALLOWED_ORGS is configured, check the user's organization.
+        # If ALLOWED_ORGS is configured, check the user's organization
+        # (case-insensitive).
         if config_service.ALLOWED_ORGS:
             if (
                 not token_info_hd
-                or token_info_hd not in config_service.ALLOWED_ORGS
+                or token_info_hd.lower() not in config_service.ALLOWED_ORGS
             ):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,

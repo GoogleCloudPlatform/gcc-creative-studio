@@ -85,6 +85,23 @@ class TestCreateUserIfNotExists:
         assert called_args["name"] == "New User"
         assert called_args["roles"] == [UserRoleEnum.USER]
 
+    @pytest.mark.anyio
+    async def test_mixed_case_email_is_looked_up_and_stored_lowercase(
+        self, user_service, mock_user_repo, mock_user
+    ):
+        mock_user_repo.get_by_email.return_value = None
+        mock_user_repo.create.return_value = mock_user
+
+        await user_service.create_user_if_not_exists(
+            email="  New.User@Example.COM ", name="New User", picture=""
+        )
+
+        mock_user_repo.get_by_email.assert_called_once_with(
+            "new.user@example.com"
+        )
+        created = mock_user_repo.create.call_args.args[0]
+        assert created["email"] == "new.user@example.com"
+
 
 class TestGetUserById:
     """Tests for UserService.get_user_by_id."""

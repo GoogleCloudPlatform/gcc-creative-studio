@@ -139,7 +139,7 @@ class ConfigService(BaseSettings):
     @property
     def ALLOWED_ORGS(self) -> set[str]:
         return set(
-            org.strip()
+            org.strip().lower()
             for org in self.ALLOWED_ORGS_STR.split(",")
             if org.strip()
         )

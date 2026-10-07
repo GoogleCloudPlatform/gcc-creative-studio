@@ -64,6 +64,11 @@ class User(Base):
         nullable=True,
     )
     deleted_by: Mapped[int | None] = mapped_column(nullable=True)
+    # Last time roles were reconciled against Entra ID (success or failure).
+    roles_checked_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
 
 
 class UserModel(BaseDocument):
@@ -77,6 +82,7 @@ class UserModel(BaseDocument):
     picture: str = ""
     deleted_at: datetime.datetime | None = None
     deleted_by: int | None = None
+    roles_checked_at: datetime.datetime | None = None
 
     @field_validator("roles", mode="after")
     @classmethod
