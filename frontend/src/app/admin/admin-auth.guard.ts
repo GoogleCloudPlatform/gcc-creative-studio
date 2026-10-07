@@ -23,12 +23,13 @@ import {
   Router,
 } from '@angular/router';
 import {isPlatformBrowser} from '@angular/common';
-import {Observable} from 'rxjs';
+import {firstValueFrom} from 'rxjs';
 import {UserService} from '../common/services/user.service';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {AuthService} from '../common/services/auth.service';
 import {handleErrorSnackbar} from '../utils/handleMessageSnackbar';
 import {SettingsService} from '../services/settings.service';
+import {environment} from '../../environments/environment';
 
 const LOGIN_ROUTE = '/login';
 
@@ -46,14 +47,10 @@ export class AdminAuthGuard implements CanActivate {
     private settingsService: SettingsService,
   ) {}
 
-  canActivate(
+  async canActivate(
     route: ActivatedRouteSnapshot,
     state: RouterStateSnapshot,
-  ):
-    | Observable<boolean | UrlTree>
-    | Promise<boolean | UrlTree>
-    | boolean
-    | UrlTree {
+  ): Promise<boolean | UrlTree> {
     if (!isPlatformBrowser(this.platformId)) {
       // --- SERVER SIDE ---
       // Allow navigation to render the basic app shell.
@@ -65,6 +62,18 @@ export class AdminAuthGuard implements CanActivate {
     }
 
     // --- BROWSER SIDE ---
+    // Refresh the user's roles from the backend once per page load so that
+    // Entra group changes are reflected before admin access is evaluated.
+    if (!environment.isLocal && !this.authService.isSessionSyncedThisLoad()) {
+      const authStatus = await firstValueFrom(
+        this.authService.checkIapSession(),
+      );
+      if (authStatus !== 'authenticated') {
+        void this.router.navigate([LOGIN_ROUTE]);
+        return false;
+      }
+    }
+
     if (!this.authService.isLoggedIn()) {
       void this.router.navigate([LOGIN_ROUTE]);
       return false;

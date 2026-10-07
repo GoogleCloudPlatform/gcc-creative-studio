@@ -17,7 +17,7 @@
 import {Injectable, PLATFORM_ID, inject} from '@angular/core';
 import {Router} from '@angular/router';
 import {UserModel, UserRolesEnum} from '../models/user.model';
-import {HttpClient, HttpHeaders, HttpErrorResponse} from '@angular/common/http';
+import {HttpClient, HttpErrorResponse} from '@angular/common/http';
 import {environment} from '../../../environments/environment';
 import {Auth, IdTokenResult} from '@angular/fire/auth';
 import {UserService} from '../services/user.service';
@@ -102,7 +102,7 @@ export class AuthService {
         this.firebaseTokenExpiry = expirationTime;
 
         // Call the backend to get or create the user profile.
-        return this.syncUserWithBackend$(token).pipe(
+        return this.syncUserWithBackend$().pipe(
           switchMap(() => from(this.settingsService.loadSettings())),
           map(() => token), // Pass the token along for the final result.
         );
@@ -169,7 +169,7 @@ export class AuthService {
         this.firebaseTokenExpiry = payload.exp * 1000;
 
         // Call the backend to get or create the user profile.
-        return this.syncUserWithBackend$(idToken).pipe(
+        return this.syncUserWithBackend$().pipe(
           switchMap(() => from(this.settingsService.loadSettings())),
           map(() => idToken), // Pass the token along for the final result.
         );
@@ -213,10 +213,7 @@ export class AuthService {
         this.firebaseIdToken = idToken;
         this.firebaseTokenExpiry = payload.exp * 1000;
 
-        this.firebaseIdToken = idToken;
-        this.firebaseTokenExpiry = payload.exp * 1000;
-
-        await firstValueFrom(this.syncUserWithBackend$(idToken));
+        await firstValueFrom(this.syncUserWithBackend$());
         await this.settingsService.loadSettings();
         // After successfully processing redirect, let the guard handle the navigation
       }
@@ -237,10 +234,7 @@ export class AuthService {
         this.firebaseIdToken = idToken;
         this.firebaseTokenExpiry = payload.exp * 1000;
 
-        this.firebaseIdToken = idToken;
-        this.firebaseTokenExpiry = payload.exp * 1000;
-
-        return this.syncUserWithBackend$(idToken).pipe(
+        return this.syncUserWithBackend$().pipe(
            switchMap(() => from(this.settingsService.loadSettings())),
            map(() => idToken)
         );
@@ -326,10 +320,17 @@ export class AuthService {
     return of(this.firebaseIdToken!);
   }
 
+  private sessionSyncedThisLoad = false;
+
+  isSessionSyncedThisLoad(): boolean {
+    return this.sessionSyncedThisLoad;
+  }
+
   checkIapSession(): Observable<'authenticated' | 'unauthenticated' | 'unauthorized'> {
     return this.httpClient.get<UserModel>(`${environment.backendURL}/users/me`, {withCredentials: true}).pipe(
       tap((userDetails: UserModel) => {
         localStorage.setItem(USER_DETAILS, JSON.stringify(userDetails));
+        this.sessionSyncedThisLoad = true;
         console.log('IAP Session detected and synchronized.');
       }),
       map(() => 'authenticated' as const),
@@ -343,17 +344,12 @@ export class AuthService {
     );
   }
 
-  private syncUserWithBackend$(token: string): Observable<UserModel> {
-
-    const headers = new HttpHeaders().set('X-Custom-Auth', `Bearer ${token}`);
-    
-    // First, exchange the token for an HttpOnly session cookie
-    return this.httpClient.post(`${environment.backendURL}/auth/session`, {}, {headers, withCredentials: true}).pipe(
-      // Then, fetch the user profile using the newly set cookie
-      switchMap(() => this.httpClient.get<UserModel>(`${environment.backendURL}/users/me`, {withCredentials: true})),
+  private syncUserWithBackend$(): Observable<UserModel> {
+    return this.httpClient.get<UserModel>(`${environment.backendURL}/users/me`, {withCredentials: true}).pipe(
       tap((userDetails: UserModel) => {
         // The backend is the source of truth. Save the returned profile to local storage.
         localStorage.setItem(USER_DETAILS, JSON.stringify(userDetails));
+        this.sessionSyncedThisLoad = true;
         console.log('User profile successfully synced with backend.');
       }),
       catchError((error: HttpErrorResponse) => {
@@ -372,6 +368,7 @@ export class AuthService {
 
   async logout(route: string = LOGIN_ROUTE) {
     this.settingsService.reset();
+    this.sessionSyncedThisLoad = false;
     
     // Attempt to log out of the backend first to clear the session cookie
     try {
@@ -389,6 +386,10 @@ export class AuthService {
         this.firebaseTokenExpiry = null;
         localStorage.removeItem(USER_DETAILS);
         localStorage.removeItem('showTooltip');
+        if (!environment.isLocal && isPlatformBrowser(this.platformId)) {
+          window.location.href = '/_gcp_iap/clear_login_cookie';
+          return;
+        }
         void this.router.navigateByUrl(route);
       })
       .catch(e => {
@@ -396,6 +397,10 @@ export class AuthService {
         this.settingsService.reset();
         localStorage.removeItem(USER_DETAILS);
         localStorage.removeItem('showTooltip');
+        if (!environment.isLocal && isPlatformBrowser(this.platformId)) {
+          window.location.href = '/_gcp_iap/clear_login_cookie';
+          return;
+        }
         void this.router.navigate([LOGIN_ROUTE]);
       });
   }
