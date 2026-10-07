@@ -25,5 +25,5 @@ router = APIRouter(
 async def logout():
     return RedirectResponse(
         url="/_gcp_iap/clear_login_cookie",
-        status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+        status_code=status.HTTP_303_SEE_OTHER,
     )
