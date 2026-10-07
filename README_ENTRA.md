@@ -69,6 +69,42 @@ You need to register the Creative Studio application in your Microsoft Entra Ten
 2.  Under **Implicit grant and hybrid flows**, ensure **ID tokens (used for implicit and hybrid flows)** is **checked**.
 3.  Select **Save**.
 
+### 5. Enable Entra Group → Application Role Sync (Microsoft Graph)
+IAP does not forward Entra group claims to the backend, so the backend reads group membership directly from Microsoft Graph and reconciles each user's `admin` / `creator` / `workflows` roles at most once per `ENTRA_ROLE_SYNC_TTL_SECONDS` (default 600s). Adding or removing a user from a mapped Entra group takes effect within that window, without re-login.
+
+1.  In the App Registration used for Graph access (the one from this step, or a dedicated one for least privilege), select **API permissions** > **Add a permission** > **Microsoft Graph** > **Application permissions**, and add:
+    *   `GroupMember.Read.All`
+    *   `User.Read.All`
+2.  Select **Grant admin consent for [tenant]**.
+3.  For each mapped Entra security group, copy its **Object ID** (GUID) from **Groups** > the group > **Overview**. Group display names are not accepted.
+4.  Add the configuration to your environment's `.tfvars`:
+    ```hcl
+    be_env_vars = {
+      development = {
+        # ...existing values...
+        ENTRA_TENANT_ID             = "YOUR_ENTRA_TENANT_ID"
+        ENTRA_GRAPH_CLIENT_ID       = "YOUR_GRAPH_APP_CLIENT_ID"
+        ENTRA_ADMIN_GROUPS          = "GROUP_OBJECT_ID_1"
+        ENTRA_CREATOR_GROUPS        = "GROUP_OBJECT_ID_2,GROUP_OBJECT_ID_3"
+        ENTRA_WORKFLOWS_GROUPS      = "GROUP_OBJECT_ID_4"
+        ENTRA_ROLE_SYNC_TTL_SECONDS = "600"
+      }
+    }
+
+    backend_secrets = [
+      "GOOGLE_TOKEN_AUDIENCE",
+      "ENTRA_GRAPH_CLIENT_SECRET",
+    ]
+
+    backend_runtime_secrets = {
+      "GOOGLE_TOKEN_AUDIENCE"     = "GOOGLE_TOKEN_AUDIENCE"
+      "ENTRA_GRAPH_CLIENT_SECRET" = "ENTRA_GRAPH_CLIENT_SECRET"
+    }
+    ```
+5.  Run `terraform apply`, then populate the `ENTRA_GRAPH_CLIENT_SECRET` secret value (e.g. via `update_secrets.sh`, which prompts for every entry in `backend_secrets`).
+
+*Behavior notes:* role sync is disabled if any of `ENTRA_TENANT_ID`, `ENTRA_GRAPH_CLIENT_ID`, or `ENTRA_GRAPH_CLIENT_SECRET` is empty, or if no group IDs are configured (roles are then managed only in the Admin UI). If Graph is unreachable, the last known roles are kept and the check is retried after the TTL. The last remaining admin is never demoted automatically.
+
 ---
 
 ## 🛡️ Step 3: Create Google Workforce OAuth Client for IAP
