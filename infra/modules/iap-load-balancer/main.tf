@@ -41,9 +41,10 @@ resource "google_iam_workforce_pool" "pool" {
 resource "google_iam_workforce_pool_provider" "entra" {
   count             = (var.org_id != "" && var.entra_tenant_id != "" && var.entra_client_id != "") ? 1 : 0
   provider          = google-beta
-  workforce_pool_id = google_iam_workforce_pool.pool[0].workforce_pool_id
+  workforce_pool_id = local.expected_pool_id
   provider_id       = "entra-provider"
   location          = "global"
+  depends_on        = [google_iam_workforce_pool.pool]
 
   oidc {
     issuer_uri = "https://login.microsoftonline.com/${var.entra_tenant_id}/v2.0"
