@@ -23,7 +23,7 @@ resource "google_sql_database_instance" "default" {
   project          = var.project_id
 
   settings {
-    tier = "db-perf-optimized-N-2"
+    tier = "db-custom-2-7680"
     
     # Enable IAM Authentication for better security (optional but recommended)
     database_flags {
