@@ -283,6 +283,27 @@ By default, any user authenticated via your Entra ID tenant can access the appli
 
 ---
 
+## 🔔 Step 4.7: Sign-in Alerts (Optional)
+
+Cloud Monitoring can email the deployer admin (`ADMIN_USER_EMAIL` in `be_env_vars`) when something goes wrong with sign-in. It is off by default. To turn it on, set this in your `.tfvars` and run `terraform apply`:
+
+```hcl
+enable_auth_alerts            = true
+invalid_token_alert_threshold = 20 # optional
+```
+
+You get an email (at most one every 5 minutes per alert) when:
+
+| Alert | When it fires | Backend log `event_type` |
+| :--- | :--- | :--- |
+| Entra role sync failed | The backend could not read a user's groups from Microsoft Graph and removed their admin and workflows roles. | `entra_role_sync_failed` |
+| Break-glass admin kept admin by exemption | The deployer admin would have lost admin and kept it only because of the break-glass rule. | `break_glass_admin_retained` |
+| Many invalid IAP tokens | The backend rejected more than `invalid_token_alert_threshold` invalid IAP tokens in 5 minutes. | `iap_invalid_token` |
+
+*Notes:* `ADMIN_USER_EMAIL` must be a real email address or `terraform apply` stops with an error. Google sends a confirmation email to that address the first time. On Cloud Run the backend writes every log as structured JSON, so you can also search for these events in Logs Explorer with `jsonPayload.event_type="entra_role_sync_failed"` (and so on). The invalid-token alert only counts tokens that reach the backend; requests IAP blocks itself are not counted.
+
+---
+
 ## 🌐 Step 5: Domain and Access Configuration
 
 You must access the deployed application over HTTPS for authentication protocols to work properly. Choose one of the two options below depending on whether you own a custom domain.

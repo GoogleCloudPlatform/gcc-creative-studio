@@ -157,5 +157,14 @@ variable "workforce_pool_id" {
   default     = ""
 }
 
+variable "enable_auth_alerts" {
+  type        = bool
+  description = "Email the deployer admin (ADMIN_USER_EMAIL) about Entra role sync failures, break-glass admin use, and bursts of invalid IAP tokens. Off by default."
+  default     = false
+}
 
-
+variable "invalid_token_alert_threshold" {
+  type        = number
+  description = "Alert when the backend rejects more than this many invalid IAP tokens in 5 minutes. Used only when enable_auth_alerts is true."
+  default     = 20
+}

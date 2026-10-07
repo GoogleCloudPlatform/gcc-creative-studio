@@ -92,6 +92,15 @@ def _user(roles, **overrides) -> UserModel:
     return UserModel(**fields)
 
 
+def _event_types(caplog) -> list[str]:
+    """Returns the event_type field of every captured log record."""
+    return [
+        r.json_fields["event_type"]
+        for r in caplog.records
+        if "event_type" in getattr(r, "json_fields", {})
+    ]
+
+
 async def _call(repo, email="alice@corp.com", entra_oid=None, name="Alice"):
     return await UserService(user_repo=repo).create_user_if_not_exists(
         email=email, name=name, picture="", entra_oid=entra_oid
@@ -155,6 +164,17 @@ class TestNewUserRoles:
             "alice@corp.com", include_deleted=True
         )
         assert graph.member_group_ids.call_args.args[0] == "alice@corp.com"
+
+    @pytest.mark.anyio
+    async def test_graph_failure_logs_role_sync_failed_event(
+        self, repo, graph, caplog
+    ):
+        repo.get_by_email.return_value = None
+        graph.member_group_ids.side_effect = EntraGraphError("down")
+
+        await _call(repo, entra_oid=OID_1)
+
+        assert _event_types(caplog) == ["entra_role_sync_failed"]
 
 
 @pytest.mark.usefixtures("config")
@@ -246,6 +266,21 @@ class TestDeployerAdmin:
 
         _, data = repo.update.call_args.args
         assert data["roles"] == ["user", "admin"]
+
+    @pytest.mark.anyio
+    async def test_deployer_kept_as_admin_logs_break_glass_event(
+        self, repo, graph, config, caplog
+    ):
+        config.ADMIN_USER_ENTRA_OID = OID_1
+        repo.get_by_entra_oid.return_value = _user(
+            [UserRoleEnum.USER, UserRoleEnum.ADMIN],
+            entra_oid=OID_1,
+            roles_checked_at=STALE,
+        )
+
+        await _call(repo, entra_oid=OID_1)
+
+        assert _event_types(caplog) == ["break_glass_admin_retained"]
 
     @pytest.mark.anyio
     async def test_admin_email_alone_does_not_keep_admin_when_graph_fails(

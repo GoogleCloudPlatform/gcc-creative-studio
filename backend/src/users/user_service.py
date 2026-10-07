@@ -422,6 +422,7 @@ class UserService:
                 "Entra role sync failed for %s; removing privileged roles: %s",
                 log_email or user_ref,
                 exc,
+                extra={"json_fields": {"event_type": "entra_role_sync_failed"}},
             )
             return None
         roles = {UserRoleEnum.USER}
@@ -446,6 +447,9 @@ class UserService:
                 "Entra sync would remove admin from deployer %s; "
                 "keeping the admin role (break-glass exemption).",
                 user_email,
+                extra={
+                    "json_fields": {"event_type": "break_glass_admin_retained"}
+                },
             )
             return target | {UserRoleEnum.ADMIN}
         return target

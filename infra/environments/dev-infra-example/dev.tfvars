@@ -91,3 +91,10 @@ iap_access_members       = []
 entra_access_group_ids   = []
 workforce_pool_id        = ""
 org_id                   = "YOUR_GCP_ORGANIZATION_ID"
+
+# --- Sign-in alerts (optional) ---
+# Set to true to email ADMIN_USER_EMAIL (above) when Entra role sync fails,
+# the break-glass admin keeps admin by exemption, or the backend rejects
+# more than invalid_token_alert_threshold invalid IAP tokens in 5 minutes.
+enable_auth_alerts            = false
+invalid_token_alert_threshold = 20

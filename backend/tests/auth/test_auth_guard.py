@@ -379,6 +379,25 @@ class TestGetCurrentUser:
 
     @pytest.mark.anyio
     @patch("src.auth.auth_guard.id_token.verify_token")
+    async def test_get_current_user_iap_invalid_token_logs_event(
+        self, mock_verify, mock_user_service, caplog
+    ):
+        config_service.ENVIRONMENT = "production"
+        config_service.IAP_EXPECTED_AUDIENCE = "test-iap-audience"
+        mock_verify.side_effect = ValueError("Invalid signature")
+
+        with pytest.raises(HTTPException):
+            await get_current_user(
+                request=MagicMock(spec=Request),
+                token="invalid_token",
+                user_service=mock_user_service,
+            )
+
+        events = [getattr(r, "json_fields", {}) for r in caplog.records]
+        assert {"event_type": "iap_invalid_token"} in events
+
+    @pytest.mark.anyio
+    @patch("src.auth.auth_guard.id_token.verify_token")
     async def test_get_current_user_iap_allowed_orgs_fail(
         self, mock_verify, mock_user_service
     ):

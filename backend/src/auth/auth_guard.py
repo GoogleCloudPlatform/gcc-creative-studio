@@ -272,7 +272,11 @@ async def get_current_user(
                     f"expected {_IAP_ISSUER!r}"
                 )
         except ValueError as exc:
-            logger.error("[get_current_user - Invalid IAP Token]: %s", exc)
+            logger.error(
+                "[get_current_user - Invalid IAP Token]: %s",
+                exc,
+                extra={"json_fields": {"event_type": "iap_invalid_token"}},
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=f"Invalid IAP authentication token: {exc}",

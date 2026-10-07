@@ -17,7 +17,10 @@ import sys
 from os import getenv
 
 from google.cloud.logging import Client as LoggerClient
-from google.cloud.logging.handlers import CloudLoggingHandler
+from google.cloud.logging.handlers import (
+    CloudLoggingHandler,
+    StructuredLogHandler,
+)
 
 
 def setup_logging():
@@ -37,7 +40,13 @@ def setup_logging():
         for handler in root_logger.handlers:
             root_logger.removeHandler(handler)
 
-    if getenv("ENVIRONMENT") == "production":
+    if getenv("K_SERVICE"):
+        # On Cloud Run (which sets K_SERVICE), write each log as one JSON
+        # line to stdout. Cloud Run turns it into a structured entry with
+        # a real severity and searchable fields (for example event_type,
+        # which the alerts in Terraform match on), whatever ENVIRONMENT is.
+        root_logger.addHandler(StructuredLogHandler(stream=sys.stdout))
+    elif getenv("ENVIRONMENT") == "production":
         # In PRODUCTION, attach the Google Cloud Logging handler.
         # This sends logs as structured JSON to Google Cloud.
         client = LoggerClient()

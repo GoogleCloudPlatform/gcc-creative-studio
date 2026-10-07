@@ -75,5 +75,8 @@ module "creative_studio_platform" {
   workforce_pool_id        = var.workforce_pool_id
   org_id                   = var.org_id
 
+  enable_auth_alerts            = var.enable_auth_alerts
+  invalid_token_alert_threshold = var.invalid_token_alert_threshold
+
   depends_on = [ google_project_service.apis ]
 }
