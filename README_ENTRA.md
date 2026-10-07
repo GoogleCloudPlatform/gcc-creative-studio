@@ -186,7 +186,7 @@ The project includes an automated `bootstrap.sh` script that handles the configu
     *   **GCP Project ID**: Enter your target Google Cloud Project ID (e.g., `my-project-123`). The script will attempt to set this as your active gcloud project.
     *   **Environment Name**: Enter a name for your deployment environment (default: `dev-infra`). This defines the folder name under `infra/environments/` where your specific configuration will be stored.
     *   **GitHub Repository URL**: Enter the URL of your forked repository (e.g., `https://github.com/your-user/gcc-creative-studio.git`).
-    *   **Branch Name**: Enter the git branch to deploy from (default: `main`). For testing the Entra integration, ensure you use `entra-authentication` or the branch where you have these changes.
+    *   **Branch Name**: Enter the git branch to deploy from (default: `entra-authentication`, the branch with the Entra integration). Only change this if your changes are on a different branch.
     *   **Authentication Choice**: Type **2** and press Enter to select **Microsoft Entra ID**.
     *   **Entra Client ID**: Paste the *Application (client) ID* of the App Registration you created in Step 2.
     *   **Entra Tenant ID**: Paste the *Directory (tenant) ID* of your Entra Tenant collected in Step 2.

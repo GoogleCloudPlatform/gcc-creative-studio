@@ -340,9 +340,9 @@ setup_repo() {
     done
 
     # --- Ask for Branch ---
-    prompt "Which git branch would you like to use? (default: main)"
+    prompt "Which git branch would you like to use? (default: entra-authentication)"
     read -p "   Branch Name: " SELECTED_BRANCH < /dev/tty
-    SELECTED_BRANCH=${SELECTED_BRANCH:-main}
+    SELECTED_BRANCH=${SELECTED_BRANCH:-entra-authentication}
     DEFAULT_BRANCH_NAME="$SELECTED_BRANCH"
 
     local REPO_CLONE_DIR=$(basename "$GITHUB_REPO_URL" .git)
