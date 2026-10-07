@@ -47,6 +47,11 @@ run "creates_pool_when_only_org_id_set" {
     condition     = google_iam_workforce_pool_provider.entra[0].workforce_pool_id == google_iam_workforce_pool.pool[0].workforce_pool_id
     error_message = "Provider should attach to the created pool."
   }
+
+  assert {
+    condition     = google_iam_workforce_pool_provider.entra[0].attribute_mapping["google.subject"] == "assertion.oid"
+    error_message = "Provider should map google.subject to assertion.oid."
+  }
 }
 
 run "reuses_existing_pool_when_workforce_pool_id_set" {
