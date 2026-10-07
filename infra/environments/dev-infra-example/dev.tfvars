@@ -20,7 +20,8 @@ frontend_custom_audiences = ["YOUR_OAUTH_WEB_CLIENT_ID_HERE", "YOUR_GCP_PROJECT_
 # --- Service-Specific Environment Variables ---
 be_env_vars = {
   common = {
-    LOG_LEVEL = "INFO"
+    LOG_LEVEL        = "INFO"
+    ADMIN_USER_EMAIL = "system"
   }
   development = {
     ENVIRONMENT  = "development"

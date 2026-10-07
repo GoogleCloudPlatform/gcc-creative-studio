@@ -467,6 +467,10 @@ configure_environment() {
             read -p "   IAP OAuth Client ID: " IAP_OAUTH_CLIENT_ID < /dev/tty
             read -s -p "   IAP OAuth Client Secret: " IAP_OAUTH_CLIENT_SECRET < /dev/tty; echo
 
+            local DEFAULT_ADMIN_EMAIL=$(gcloud config get-value account 2>/dev/null || echo "")
+            read -p "   Deployer Entra Sign-in Email (break-glass admin) [default value: $DEFAULT_ADMIN_EMAIL]: " DEPLOYER_ADMIN_EMAIL < /dev/tty
+            ADMIN_USER_EMAIL=${DEPLOYER_ADMIN_EMAIL:-$DEFAULT_ADMIN_EMAIL}
+
             sed -i.bak "s|^[#[:space:]]*entra_client_id[[:space:]]*=.*|entra_client_id = \"$ENTRA_CLIENT_ID\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*entra_tenant_id[[:space:]]*=.*|entra_tenant_id = \"$ENTRA_TENANT_ID\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*entra_client_secret[[:space:]]*=.*|entra_client_secret = \"$ENTRA_CLIENT_SECRET\"|g" "$TFVARS_FILE_PATH"
@@ -476,9 +480,13 @@ configure_environment() {
             sed -i.bak "s|^[#[:space:]]*iap_oauth2_client_secret[[:space:]]*=.*|iap_oauth2_client_secret = \"$IAP_OAUTH_CLIENT_SECRET\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*workforce_pool_id[[:space:]]*=.*|workforce_pool_id = \"\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*iap_access_members[[:space:]]*=.*|iap_access_members = []|g" "$TFVARS_FILE_PATH"
+            if [ -n "$ADMIN_USER_EMAIL" ]; then
+                sed -i.bak "s|^[#[:space:]]*ADMIN_USER_EMAIL[[:space:]]*=.*|    ADMIN_USER_EMAIL = \"$ADMIN_USER_EMAIL\"|g" "$TFVARS_FILE_PATH"
+            fi
 
             write_state "AUTH_CHOICE" "2"
             write_state "AUTO_ENTRA_CLIENT_SECRET" "$ENTRA_CLIENT_SECRET"
+            write_state "ADMIN_USER_EMAIL" "$ADMIN_USER_EMAIL"
         else
             # Google Auth selected
             # Ensure Entra variables in .tfvars are set to empty or default
@@ -771,7 +779,7 @@ seed_data() {
     cd "$REPO_ROOT"
 
     info "The user running this script will be set as the owner of initial data."
-    local CURRENT_USER=$(gcloud config get-value account 2>/dev/null)
+    local CURRENT_USER="${ADMIN_USER_EMAIL:-$(gcloud config get-value account 2>/dev/null)}"
     if [ -z "$CURRENT_USER" ]; then
       warn "Could not determine current gcloud user. Defaulting to 'system' owner in bootstrap script."
       CURRENT_USER="system"
