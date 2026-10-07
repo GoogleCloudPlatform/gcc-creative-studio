@@ -70,7 +70,7 @@ You need to register the Creative Studio application in your Microsoft Entra Ten
 3.  Select **Save**.
 
 ### 5. Enable Entra Group → Application Role Sync (Microsoft Graph)
-IAP does not forward Entra group claims to the backend, so the backend reads group membership directly from Microsoft Graph and reconciles each user's `admin` / `creator` / `workflows` roles at most once per `ENTRA_ROLE_SYNC_TTL_SECONDS` (default 600s). Adding or removing a user from a mapped Entra group takes effect within that window, without re-login.
+IAP does not forward Entra group claims to the backend, so the backend reads group membership directly from Microsoft Graph and reconciles each user's `admin` / `workflows` roles at most once per `ENTRA_ROLE_SYNC_TTL_SECONDS` (default 600s). Adding or removing a user from a mapped Entra group takes effect within that window, without re-login.
 
 1.  In the App Registration used for Graph access (the one from this step, or a dedicated one for least privilege), select **API permissions** > **Add a permission** > **Microsoft Graph** > **Application permissions**, and add:
     *   `GroupMember.Read.All`
@@ -85,8 +85,7 @@ IAP does not forward Entra group claims to the backend, so the backend reads gro
         ENTRA_TENANT_ID             = "YOUR_ENTRA_TENANT_ID"
         ENTRA_GRAPH_CLIENT_ID       = "YOUR_GRAPH_APP_CLIENT_ID"
         ENTRA_ADMIN_GROUPS          = "GROUP_OBJECT_ID_1"
-        ENTRA_CREATOR_GROUPS        = "GROUP_OBJECT_ID_2,GROUP_OBJECT_ID_3"
-        ENTRA_WORKFLOWS_GROUPS      = "GROUP_OBJECT_ID_4"
+        ENTRA_WORKFLOWS_GROUPS      = "GROUP_OBJECT_ID_2"
         ENTRA_ROLE_SYNC_TTL_SECONDS = "600"
       }
     }
@@ -103,7 +102,7 @@ IAP does not forward Entra group claims to the backend, so the backend reads gro
     ```
 5.  Run `terraform apply`, then populate the `ENTRA_GRAPH_CLIENT_SECRET` secret value (e.g. via `update_secrets.sh`, which prompts for every entry in `backend_secrets`).
 
-*Behavior notes:* role sync is disabled if any of `ENTRA_TENANT_ID`, `ENTRA_GRAPH_CLIENT_ID`, or `ENTRA_GRAPH_CLIENT_SECRET` is empty, or if no group IDs are configured (roles are then managed only in the Admin UI). If Graph is unreachable, the last known roles are kept and the check is retried after the TTL. The last remaining admin is never demoted automatically.
+*Behavior notes:* role sync is disabled if any of `ENTRA_TENANT_ID`, `ENTRA_GRAPH_CLIENT_ID`, or `ENTRA_GRAPH_CLIENT_SECRET` is empty, or if no group IDs are configured (roles are then managed only in the Admin UI). If Graph is unreachable, privileged roles (`admin` and `workflows`) are removed (except for the break-glass admin below) and the check is retried after the TTL. Role sync has no last-admin check—only manual user deletion in the Admin UI refuses to remove the last remaining admin—so use the break-glass admin setting below to prevent lockouts.
 
 *Break-glass admin:* the account you give as the deployer admin email always keeps the `admin` role, even if it is not in a mapped admin group or Graph is down. The backend recognises it by its Entra **Object ID**, not by email, so another account that later takes the same email address does not inherit admin. `bootstrap.sh` looks the Object ID up in Graph when you enter the email and writes it to `ADMIN_USER_ENTRA_OID`. If you deploy with Terraform only, copy the Object ID from **Users** > the user > **Overview** and set `ADMIN_USER_ENTRA_OID` in `be_env_vars`. Leaving it empty means there is no break-glass admin.
 

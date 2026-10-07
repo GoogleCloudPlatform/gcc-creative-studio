@@ -49,7 +49,6 @@ def fixture_config():
         ENTRA_ROLE_SYNC_TTL_SECONDS=600,
         ENTRA_GROUP_ROLES={
             ADMIN_G: frozenset({"admin"}),
-            CREATOR_G: frozenset({"creator"}),
             WORKFLOWS_G: frozenset({"workflows"}),
         },
         ADMIN_USER_EMAIL="system",
@@ -104,12 +103,12 @@ class TestNewUserRoles:
     @pytest.mark.anyio
     async def test_new_user_gets_roles_from_entra_groups(self, repo, graph):
         repo.get_by_email.return_value = None
-        graph.member_group_ids.return_value = {CREATOR_G}
+        graph.member_group_ids.return_value = {WORKFLOWS_G}
 
         await _call(repo, entra_oid=OID_1)
 
         created = repo.create_or_get_existing.call_args.args[0]
-        assert created["roles"] == ["user", "creator"]
+        assert created["roles"] == ["user", "workflows"]
 
     @pytest.mark.anyio
     async def test_new_user_groups_are_looked_up_by_entra_oid(
@@ -661,13 +660,19 @@ class TestEntraConfig:
     def test_group_roles_are_lowercased_and_merged(self):
         cfg = self._config(
             ENTRA_ADMIN_GROUPS=f" {ADMIN_G.upper()} ,",
-            ENTRA_CREATOR_GROUPS=f"{ADMIN_G},{CREATOR_G}",
+            ENTRA_WORKFLOWS_GROUPS=f"{ADMIN_G},{WORKFLOWS_G}",
         )
 
         assert cfg.ENTRA_GROUP_ROLES == {
-            ADMIN_G: frozenset({"admin", "creator"}),
-            CREATOR_G: frozenset({"creator"}),
+            ADMIN_G: frozenset({"admin", "workflows"}),
+            WORKFLOWS_G: frozenset({"workflows"}),
         }
+
+    def test_creator_groups_setting_grants_no_role(self):
+        # No endpoint checks the creator role, so Entra groups don't grant it.
+        cfg = self._config(ENTRA_CREATOR_GROUPS=CREATOR_G)
+
+        assert cfg.ENTRA_GROUP_ROLES == {}
 
     def test_group_roles_are_parsed_once(self):
         cfg = self._config(ENTRA_ADMIN_GROUPS=ADMIN_G)

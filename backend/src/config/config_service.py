@@ -66,9 +66,6 @@ class ConfigService(BaseSettings):
     ENTRA_GRAPH_CLIENT_ID: str = ""
     ENTRA_GRAPH_CLIENT_SECRET: str = ""
     ENTRA_ADMIN_GROUPS_STR: str = Field(default="", alias="ENTRA_ADMIN_GROUPS")
-    ENTRA_CREATOR_GROUPS_STR: str = Field(
-        default="", alias="ENTRA_CREATOR_GROUPS"
-    )
     ENTRA_WORKFLOWS_GROUPS_STR: str = Field(
         default="", alias="ENTRA_WORKFLOWS_GROUPS"
     )
@@ -189,7 +186,6 @@ class ConfigService(BaseSettings):
         group_roles: dict[str, set[str]] = {}
         for role, raw in (
             ("admin", self.ENTRA_ADMIN_GROUPS_STR),
-            ("creator", self.ENTRA_CREATOR_GROUPS_STR),
             ("workflows", self.ENTRA_WORKFLOWS_GROUPS_STR),
         ):
             for group_id in raw.split(","):
