@@ -11,11 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for the Entra role sync settings."""
+"""Tests for Entra sign-in in UserService and the settings it relies on."""
+
+import datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
+from src.auth.entra_graph_client import EntraGraphError
 from src.config.config_service import ConfigService
+from src.users.user_model import UserModel, UserRoleEnum
+from src.users.user_service import UserService
 
 ADMIN_G = "aaaaaaaa-0000-0000-0000-000000000001"
 CREATOR_G = "cccccccc-0000-0000-0000-000000000002"
@@ -24,6 +32,163 @@ GRAPH_CREDENTIALS = {
     "ENTRA_GRAPH_CLIENT_ID": "c",
     "ENTRA_GRAPH_CLIENT_SECRET": "s",
 }
+OID_1 = "11111111-2222-3333-4444-555555555555"
+OID_2 = "22222222-3333-4444-5555-666666666666"
+NOW = datetime.datetime.now(datetime.UTC)
+
+
+@pytest.fixture(name="config")
+def fixture_config():
+    cfg = SimpleNamespace(ENTRA_ROLE_SYNC_ENABLED=True)
+    with patch("src.users.user_service.config_service", cfg):
+        yield cfg
+
+
+@pytest.fixture(name="graph")
+def fixture_graph():
+    client = MagicMock()
+    client.get_user_emails = AsyncMock(return_value={"alice@corp.com"})
+    with patch(
+        "src.users.user_service.get_entra_graph_client", return_value=client
+    ):
+        yield client
+
+
+@pytest.fixture(name="repo")
+def fixture_repo():
+    repo = AsyncMock()
+    repo.update.side_effect = lambda uid, data: SimpleNamespace(id=uid, **data)
+    repo.get_by_entra_oid.return_value = None
+    return repo
+
+
+def _user(roles, **overrides) -> UserModel:
+    fields = {
+        "id": 7,
+        "email": "alice@corp.com",
+        "name": "Alice",
+        "roles": roles,
+    }
+    fields.update(overrides)
+    return UserModel(**fields)
+
+
+async def _call(repo, email="alice@corp.com", entra_oid=None, name="Alice"):
+    return await UserService(user_repo=repo).create_user_if_not_exists(
+        email=email, name=name, picture="", entra_oid=entra_oid
+    )
+
+
+@pytest.mark.usefixtures("config")
+class TestEntraObjectIdLookup:
+    @pytest.mark.anyio
+    async def test_lookup_by_entra_oid_takes_precedence_over_email(
+        self, repo, graph
+    ):
+        user = _user(
+            [UserRoleEnum.USER], email="original@corp.com", entra_oid=OID_1
+        )
+        repo.get_by_entra_oid.return_value = user
+
+        result = await _call(repo, email="changed@corp.com", entra_oid=OID_1)
+
+        assert result is user
+        repo.get_by_entra_oid.assert_called_once_with(
+            OID_1, include_deleted=True
+        )
+        repo.get_by_email.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_new_user_is_created_with_entra_oid(self, repo, graph):
+        repo.get_by_email.return_value = None
+
+        await _call(repo, entra_oid=OID_1.upper())
+
+        created = repo.create.call_args.args[0]
+        assert created["entra_oid"] == OID_1
+
+    @pytest.mark.anyio
+    async def test_unlinked_email_row_links_oid_after_graph_confirmation(
+        self, repo, graph
+    ):
+        repo.get_by_email.return_value = _user(
+            [UserRoleEnum.USER], entra_oid=None
+        )
+
+        await _call(repo, email="alice@corp.com", entra_oid=OID_1)
+
+        graph.get_user_emails.assert_called_once_with(OID_1)
+        repo.update.assert_called_once_with(7, {"entra_oid": OID_1})
+
+    @pytest.mark.anyio
+    async def test_unlinked_email_row_rejected_403_when_graph_email_mismatch(
+        self, repo, graph
+    ):
+        repo.get_by_email.return_value = _user(
+            [UserRoleEnum.USER, UserRoleEnum.ADMIN], entra_oid=None
+        )
+        graph.get_user_emails.return_value = {"attacker@corp.com"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _call(repo, email="alice@corp.com", entra_oid=OID_1)
+
+        assert exc_info.value.status_code == 403
+        repo.update.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_unlinked_email_row_returns_503_when_graph_confirmation_fails(
+        self, repo, graph
+    ):
+        repo.get_by_email.return_value = _user(
+            [UserRoleEnum.USER], entra_oid=None
+        )
+        graph.get_user_emails.side_effect = EntraGraphError("timeout")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _call(repo, email="alice@corp.com", entra_oid=OID_1)
+
+        assert exc_info.value.status_code == 503
+        repo.update.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_email_row_already_linked_to_different_oid_is_rejected_403(
+        self, repo, graph
+    ):
+        repo.get_by_email.return_value = _user(
+            [UserRoleEnum.USER], entra_oid=OID_2
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _call(repo, email="alice@corp.com", entra_oid=OID_1)
+
+        assert exc_info.value.status_code == 403
+        graph.get_user_emails.assert_not_called()
+        repo.update.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_unlinked_email_row_links_oid_when_sync_disabled(
+        self, repo, graph, config
+    ):
+        config.ENTRA_ROLE_SYNC_ENABLED = False
+        repo.get_by_email.return_value = _user(
+            [UserRoleEnum.USER], entra_oid=None
+        )
+
+        await _call(repo, email="alice@corp.com", entra_oid=OID_1)
+
+        graph.get_user_emails.assert_not_called()
+        repo.update.assert_called_once_with(7, {"entra_oid": OID_1})
+
+    @pytest.mark.anyio
+    async def test_soft_deleted_user_is_forbidden(self, repo, graph):
+        repo.get_by_entra_oid.return_value = _user(
+            [UserRoleEnum.USER], entra_oid=OID_1, deleted_at=NOW
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _call(repo, entra_oid=OID_1)
+
+        assert exc_info.value.status_code == 403
 
 
 class TestEntraConfig:
