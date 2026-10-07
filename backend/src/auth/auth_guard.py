@@ -41,6 +41,9 @@ logger = logging.getLogger(__name__)
 # The "iss" value IAP puts in every token it signs.
 _IAP_ISSUER = "https://cloud.google.com/iap"
 
+# Header a workflow run uses to name the user who started it.
+_ACTING_USER_HEADER = "x-acting-user-id"
+
 _WORKFORCE_SUB_PREFIX = (
     "principal://iam.googleapis.com/locations/global/workforcePools/"
 )
@@ -134,13 +137,82 @@ def _extract_workforce_oid(decoded_token: dict[str, Any]) -> str | None:
     return oid_part.lower()
 
 
+def _is_workflow_service_call(request: Request) -> bool:
+    """Returns True if the request looks like a workflow run calling us.
+
+    These calls come straight to Cloud Run (not through IAP), so they carry a
+    bearer token and the ID of the user who started the run instead of an IAP
+    header. The path is off unless the direct URL is configured.
+    """
+    if not config_service.BACKEND_INTERNAL_URL:
+        return False
+    authorization = request.headers.get("authorization") or ""
+    return authorization.startswith("Bearer ") and (
+        _ACTING_USER_HEADER in request.headers
+    )
+
+
+async def _get_workflow_acting_user(
+    request: Request, user_service: UserService
+) -> UserModel:
+    """Returns the user a workflow run acts for, after checking the caller.
+
+    Only a token that Google signed for this backend's own service account,
+    issued for our direct URL, is accepted. The user ID comes from the backend
+    itself, which set it when an IAP-verified user started the run. This never
+    creates users.
+    """
+    unauthorized = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Unauthorized: invalid workflow service credentials.",
+    )
+    expected_email = config_service.BACKEND_SERVICE_ACCOUNT_EMAIL.lower()
+    if not expected_email:
+        raise unauthorized
+
+    token = request.headers["authorization"].removeprefix("Bearer ")
+    try:
+        claims = await asyncio.to_thread(
+            id_token.verify_oauth2_token,
+            token,
+            google_auth_requests.Request(),
+            audience=config_service.BACKEND_INTERNAL_URL,
+        )
+    except ValueError as exc:
+        logger.error("[workflow service call - invalid token]: %s", exc)
+        raise unauthorized from exc
+
+    if (
+        str(claims.get("email", "")).lower() != expected_email
+        or claims.get("email_verified") is not True
+    ):
+        logger.error(
+            "[workflow service call - wrong caller]: %s", claims.get("email")
+        )
+        raise unauthorized
+
+    acting_user_id = request.headers.get(_ACTING_USER_HEADER, "")
+    if not acting_user_id.isdigit():
+        raise unauthorized
+    user = await user_service.user_repo.get_by_id(int(acting_user_id))
+    if user is None or user.deleted_at is not None:
+        raise unauthorized
+    return user
+
+
 async def get_iap_jwt(
     request: Request, x_goog_iap_jwt_assertion: str | None = Header(None)
 ) -> str | None:
-    """Extracts the IAP JWT assertion. In local environment, this is optional."""
+    """Extracts the IAP JWT assertion. In local environment, this is optional.
+
+    Returns None for a workflow run calling the backend directly; those calls
+    are checked separately in get_current_user.
+    """
     if config_service.ENVIRONMENT == "local":
         return x_goog_iap_jwt_assertion or "mock_local_token"
     if not x_goog_iap_jwt_assertion:
+        if _is_workflow_service_call(request):
+            return None
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Unauthorized: Missing X-Goog-Iap-Jwt-Assertion header.",
@@ -150,7 +222,7 @@ async def get_iap_jwt(
 
 async def get_current_user(
     request: Request,
-    token: str = Depends(get_iap_jwt),
+    token: str | None = Depends(get_iap_jwt),
     user_service: UserService = Depends(UserService),
 ) -> UserModel:
     """Dependency that handles the entire authentication and user
@@ -163,6 +235,10 @@ async def get_current_user(
     5. Returns a Pydantic model with the user's data.
     """
     try:
+        if token is None:
+            # A workflow run calling the backend directly, not through IAP.
+            return await _get_workflow_acting_user(request, user_service)
+
         if config_service.ENVIRONMENT == "local":
             # Local Dev Bypass: Use mock user
             mock_email = request.headers.get(
@@ -318,6 +394,28 @@ async def get_current_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An unexpected error occurred during authentication: {e}",
         ) from e
+
+
+async def require_workflow_service_caller(
+    request: Request,
+    user_service: UserService = Depends(UserService),
+) -> UserModel:
+    """Returns the user a workflow run acts for; refuses everyone else.
+
+    Used by the workflow executor endpoints, which only a workflow run may
+    call; signed-in users get 403. Local development keeps the mock user.
+    """
+    if config_service.ENVIRONMENT == "local":
+        token = await get_iap_jwt(
+            request, request.headers.get("x-goog-iap-jwt-assertion")
+        )
+        return await get_current_user(request, token, user_service)
+    if not _is_workflow_service_call(request):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only workflow runs may call this endpoint.",
+        )
+    return await _get_workflow_acting_user(request, user_service)
 
 
 class RoleChecker:

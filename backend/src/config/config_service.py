@@ -121,6 +121,10 @@ class ConfigService(BaseSettings):
         "http://localhost:8080"  # This service could be deployed alone in the future
     )
     BACKEND_SERVICE_ACCOUNT_EMAIL: str = ""
+    # Direct Cloud Run URL of this backend (not the load balancer). Workflow
+    # runs call it with a Google-signed token for the backend's own service
+    # account, because they cannot pass through IAP. Empty turns that off.
+    BACKEND_INTERNAL_URL: str = ""
 
     @model_validator(mode="before")
     @classmethod
