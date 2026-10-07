@@ -39,7 +39,13 @@ NOW = datetime.datetime.now(datetime.UTC)
 
 @pytest.fixture(name="config")
 def fixture_config():
-    cfg = SimpleNamespace(ENTRA_ROLE_SYNC_ENABLED=True)
+    cfg = SimpleNamespace(
+        ENTRA_ROLE_SYNC_ENABLED=True,
+        ENTRA_GROUP_ROLES={
+            ADMIN_G: frozenset({"admin"}),
+            CREATOR_G: frozenset({"creator"}),
+        },
+    )
     with patch("src.users.user_service.config_service", cfg):
         yield cfg
 
@@ -47,6 +53,7 @@ def fixture_config():
 @pytest.fixture(name="graph")
 def fixture_graph():
     client = MagicMock()
+    client.member_group_ids = AsyncMock(return_value=set())
     client.get_user_emails = AsyncMock(return_value={"alice@corp.com"})
     with patch(
         "src.users.user_service.get_entra_graph_client", return_value=client
@@ -77,6 +84,65 @@ async def _call(repo, email="alice@corp.com", entra_oid=None, name="Alice"):
     return await UserService(user_repo=repo).create_user_if_not_exists(
         email=email, name=name, picture="", entra_oid=entra_oid
     )
+
+
+@pytest.mark.usefixtures("config")
+class TestNewUserRoles:
+    @pytest.mark.anyio
+    async def test_new_user_gets_roles_from_entra_groups(self, repo, graph):
+        repo.get_by_email.return_value = None
+        graph.member_group_ids.return_value = {CREATOR_G}
+
+        await _call(repo, entra_oid=OID_1)
+
+        created = repo.create_or_get_existing.call_args.args[0]
+        assert created["roles"] == ["user", "creator"]
+
+    @pytest.mark.anyio
+    async def test_new_user_groups_are_looked_up_by_entra_oid(
+        self, repo, graph
+    ):
+        repo.get_by_email.return_value = None
+
+        await _call(repo, entra_oid=OID_1)
+
+        assert graph.member_group_ids.call_args.args[0] == OID_1
+
+    @pytest.mark.anyio
+    async def test_new_user_records_when_roles_were_checked(self, repo, graph):
+        repo.get_by_email.return_value = None
+        before = datetime.datetime.now(datetime.UTC)
+
+        await _call(repo, entra_oid=OID_1)
+
+        created = repo.create_or_get_existing.call_args.args[0]
+        after = datetime.datetime.now(datetime.UTC)
+        assert before <= created["roles_checked_at"] <= after
+
+    @pytest.mark.anyio
+    async def test_new_user_defaults_to_user_when_graph_fails(
+        self, repo, graph
+    ):
+        repo.get_by_email.return_value = None
+        graph.member_group_ids.side_effect = EntraGraphError("down")
+
+        await _call(repo, entra_oid=OID_1)
+
+        created = repo.create_or_get_existing.call_args.args[0]
+        assert created["roles"] == ["user"]
+
+    @pytest.mark.anyio
+    async def test_email_is_lowercased_before_lookup_and_graph(
+        self, repo, graph
+    ):
+        repo.get_by_email.return_value = None
+
+        await _call(repo, email="  Alice@Corp.COM ")
+
+        repo.get_by_email.assert_called_once_with(
+            "alice@corp.com", include_deleted=True
+        )
+        assert graph.member_group_ids.call_args.args[0] == "alice@corp.com"
 
 
 @pytest.mark.usefixtures("config")

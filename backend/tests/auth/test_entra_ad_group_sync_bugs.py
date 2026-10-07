@@ -11,7 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Regression tests that keep fixed sign-in defects from coming back."""
+"""Regression tests that keep fixed sign-in defects from coming back.
+
+App roles come from Microsoft Graph, never from the IAP token.
+"""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -43,6 +46,32 @@ def _user(**overrides) -> UserModel:
     }
     fields.update(overrides)
     return UserModel(**fields)
+
+
+class TestRoleSourceIsNotTheIapToken:
+    @pytest.mark.anyio
+    @patch("src.auth.auth_guard.id_token.verify_token")
+    async def test_guard_ignores_group_and_role_claims(self, mock_verify):
+        mock_verify.return_value = {
+            "iss": "https://cloud.google.com/iap",
+            "email": "alice@company.com",
+            "name": "Alice",
+            "groups": ["11111111-1111-1111-1111-111111111111"],
+            "roles": ["admin"],
+            "google": {"groups": ["admins"]},
+        }
+        user_service = AsyncMock()
+        user_service.create_user_if_not_exists.return_value = _user()
+
+        await get_current_user(
+            request=MagicMock(spec=Request),
+            token="jwt",
+            user_service=user_service,
+        )
+
+        user_service.create_user_if_not_exists.assert_called_once_with(
+            email="alice@company.com", name="Alice", picture=""
+        )
 
 
 class TestAuthDefectsStayFixed:

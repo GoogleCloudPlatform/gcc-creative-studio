@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import dataclasses
+import datetime
 import logging
 
 from fastapi import Depends, HTTPException, status
@@ -26,6 +27,13 @@ from src.users.repository.user_repository import UserRepository
 from src.users.user_model import UserModel, UserRoleEnum
 
 logger = logging.getLogger(__name__)
+
+_ROLE_ORDER = {role: index for index, role in enumerate(UserRoleEnum)}
+
+
+def _role_values(roles: set[UserRoleEnum]) -> list[str]:
+    """Returns the roles as strings, in a fixed order, for storage."""
+    return [r.value for r in sorted(roles, key=_ROLE_ORDER.__getitem__)]
 
 
 def _reject_if_deleted(user: UserModel | None) -> None:
@@ -86,7 +94,9 @@ class UserService:
         _reject_if_deleted(existing_user)
 
         if existing_user is None:
-            return await self._create_new_user(sign_in)
+            return await self._create_new_user(
+                sign_in, datetime.datetime.now(datetime.UTC)
+            )
         if sign_in.needs_link:
             return (
                 await self.user_repo.update(
@@ -143,15 +153,32 @@ class UserService:
         sign_in.needs_link = True
         return user
 
-    async def _create_new_user(self, sign_in: _SignIn) -> UserModel:
-        """Creates the account for someone signing in for the first time."""
+    async def _create_new_user(
+        self, sign_in: _SignIn, now: datetime.datetime
+    ) -> UserModel:
+        """Creates the account for someone signing in for the first time.
+
+        When role sync is on, their roles come from their Entra groups, and
+        `now` is recorded as when the roles were last checked. If Graph
+        fails they start with the basic user role only.
+        """
+        sync_enabled = config_service.ENTRA_ROLE_SYNC_ENABLED
         user_data = UserCreateDto(
             email=sign_in.email,
             name=sign_in.name,
             picture=sign_in.picture or "",
             entra_oid=sign_in.entra_oid,
         ).model_dump(exclude_none=True)
-        user_data["roles"] = [UserRoleEnum.USER]
+        entra_roles = (
+            await self._fetch_entra_roles(
+                sign_in.entra_oid or sign_in.email, sign_in.email
+            )
+            if sync_enabled
+            else None
+        )
+        user_data["roles"] = _role_values(entra_roles or {UserRoleEnum.USER})
+        if sync_enabled:
+            user_data["roles_checked_at"] = now
         return await self.user_repo.create_or_get_existing(user_data)
 
     async def _confirm_oid_email_via_graph(
@@ -196,6 +223,34 @@ class UserService:
                     "existing account."
                 ),
             )
+
+    async def _fetch_entra_roles(
+        self, user_ref: str, log_email: str | None = None
+    ) -> set[UserRoleEnum] | None:
+        """Returns the roles the user's Entra groups grant, or None on failure.
+
+        `user_ref` is the user's Entra object ID, or their email when the ID
+        is not known.
+        """
+        client = get_entra_graph_client()
+        if client is None:
+            return None
+        group_roles = config_service.ENTRA_GROUP_ROLES
+        try:
+            matched = await client.member_group_ids(
+                user_ref, group_roles.keys()
+            )
+        except EntraGraphError as exc:
+            logger.error(
+                "Entra role sync failed for %s; removing privileged roles: %s",
+                log_email or user_ref,
+                exc,
+            )
+            return None
+        roles = {UserRoleEnum.USER}
+        for group_id in matched:
+            roles.update(UserRoleEnum(r) for r in group_roles.get(group_id, ()))
+        return roles
 
     async def get_user_by_id(self, user_id: int) -> UserModel | None:
         """Finds a single user by their ID."""
