@@ -119,3 +119,26 @@ async def test_two_first_signins_at_once_both_succeed(session_factory):
     assert results[0].id == results[1].id
     assert results[0].entra_oid == _OID
     assert await _count_user_rows(session_factory) == 1
+
+
+async def test_losing_the_race_keeps_earlier_work_in_the_transaction(
+    session_factory,
+):
+    async with session_factory() as session:
+        await UserRepository(db=session).create(
+            {"email": _EMAIL, "name": "Winner", "roles": ["user"]}
+        )
+
+    async with session_factory() as session:
+        session.add(
+            User(email="earlier@example.com", name="Earlier", roles=["user"])
+        )
+        await session.flush()
+
+        existing = await UserRepository(db=session).create_or_get_existing(
+            {"email": _EMAIL, "name": "Loser", "roles": ["user"]}
+        )
+        await session.commit()
+
+    assert existing.name == "Winner"
+    assert await _count_user_rows(session_factory) == 2

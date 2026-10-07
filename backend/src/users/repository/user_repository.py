@@ -73,12 +73,14 @@ class UserRepository(BaseRepository[User, UserModel]):
         A browser's first page load sends several requests at once, and each
         can try to create the new user. Only one insert can succeed; the
         others undo their failed insert and use the row that now exists, if
-        it has the same email or Entra ID.
+        it has the same email or Entra ID. The insert runs inside a savepoint,
+        so undoing it leaves any earlier work in the transaction untouched.
         """
+        savepoint = await self.db.begin_nested()
         try:
             return await self.create(user_data)
         except IntegrityError:
-            await self.db.rollback()
+            await savepoint.rollback()
             existing = None
             if user_data.get("entra_oid"):
                 existing = await self.get_by_entra_oid(
