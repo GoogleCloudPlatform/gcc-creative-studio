@@ -91,6 +91,7 @@ variable "backend_runtime_secrets" {
 variable "iap_expected_audience" {
   type        = string
   description = "The expected Audience (aud) claim for Identity-Aware Proxy (IAP) JWT validation."
+  default     = ""
 }
 
 variable "org_id" {

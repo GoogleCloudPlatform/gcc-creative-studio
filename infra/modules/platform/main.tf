@@ -55,18 +55,30 @@ locals {
   # Use LB URL if IAP is enabled, otherwise use the direct Cloud Run URL
   backend_url = var.iap_oauth2_client_id != "" ? (var.domain_name != "" ? "https://${var.domain_name}" : "https://${module.iap_load_balancer[0].load_balancer_ip}") : "https://${var.backend_service_name}-${data.google_project.project.number}.${var.gcp_region}.run.app"
 
-  frontend_url = "https://${var.firebase_site_id}.web.app" # Predictable Firebase URL
+  frontend_url = (var.iap_oauth2_client_id != "" && var.domain_name != "") ? "https://${var.domain_name}" : "https://${var.firebase_site_id}.web.app"
+
+  resolved_iap_audience = (var.iap_expected_audience != "" && var.iap_expected_audience != "YOUR_IAP_EXPECTED_AUDIENCE") ? var.iap_expected_audience : (var.iap_oauth2_client_id != "" ? module.iap_load_balancer[0].iap_expected_audience : "")
+  resolved_workforce_pool_id = var.iap_oauth2_client_id != "" ? module.iap_load_balancer[0].workforce_pool_id : var.workforce_pool_id
+
+  entra_env_vars = merge(
+    (var.entra_tenant_id != "" && var.entra_tenant_id != "YOUR_ENTRA_TENANT_ID") ? { "ENTRA_TENANT_ID" = var.entra_tenant_id } : {},
+    (var.entra_client_id != "" && var.entra_client_id != "YOUR_ENTRA_CLIENT_ID") ? { "ENTRA_GRAPH_CLIENT_ID" = var.entra_client_id } : {},
+    (var.entra_client_secret != "" && var.entra_client_secret != "YOUR_ENTRA_CLIENT_SECRET") ? { "ENTRA_GRAPH_CLIENT_SECRET" = var.entra_client_secret } : {},
+    local.resolved_workforce_pool_id != "" ? { "WORKFORCE_POOL_ID" = local.resolved_workforce_pool_id } : {}
+  )
 
   backend_env_vars = merge(
     lookup(var.be_env_vars, "common", {}),
+    local.entra_env_vars,
     lookup(var.be_env_vars, var.environment, {}),
     {
+      "FRONTEND_URL"           = local.frontend_url
       "CORS_ORIGINS"           = "[\"${local.frontend_url}\"]"
       "GENMEDIA_BUCKET"        = google_storage_bucket.genmedia.name
       "SIGNING_SA_EMAIL"       = google_service_account.bucket_reader_sa.email
       "BACKEND_URL"            = local.backend_url
       "WORKFLOWS_EXECUTOR_URL" = "${local.backend_url}/api/workflows-executor"
-      "IAP_EXPECTED_AUDIENCE"  = var.iap_expected_audience
+      "IAP_EXPECTED_AUDIENCE"  = local.resolved_iap_audience
     }
   )
 }
@@ -222,8 +234,10 @@ module "iap_load_balancer" {
 
   gcp_project_id           = var.gcp_project_id
   gcp_region               = var.gcp_region
-  backend_service_name     = module.backend_service.service_name
-  frontend_service_name    = module.frontend_service.service_name
+  backend_service_name     = var.backend_service_name
+  frontend_service_name    = var.frontend_service_name
+  backend_cloud_run_name   = module.backend_service.service_name
+  frontend_cloud_run_name  = module.frontend_service.service_name
   org_id                   = var.org_id
   entra_client_id          = var.entra_client_id
   entra_tenant_id          = var.entra_tenant_id

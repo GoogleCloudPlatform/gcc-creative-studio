@@ -478,6 +478,7 @@ configure_environment() {
             sed -i.bak "s|^[#[:space:]]*org_id[[:space:]]*=.*|org_id = \"$ORG_ID\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*iap_oauth2_client_id[[:space:]]*=.*|iap_oauth2_client_id = \"$IAP_OAUTH_CLIENT_ID\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*iap_oauth2_client_secret[[:space:]]*=.*|iap_oauth2_client_secret = \"$IAP_OAUTH_CLIENT_SECRET\"|g" "$TFVARS_FILE_PATH"
+            sed -i.bak "s|^[#[:space:]]*iap_expected_audience[[:space:]]*=.*|iap_expected_audience = \"\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*workforce_pool_id[[:space:]]*=.*|workforce_pool_id = \"\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*iap_access_members[[:space:]]*=.*|iap_access_members = []|g" "$TFVARS_FILE_PATH"
             if [ -n "$ADMIN_USER_EMAIL" ]; then
@@ -495,6 +496,7 @@ configure_environment() {
             sed -i.bak "s|^[#[:space:]]*entra_client_secret[[:space:]]*=.*|entra_client_secret = \"\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*domain_name[[:space:]]*=.*|domain_name = \"\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*org_id[[:space:]]*=.*|org_id = \"\"|g" "$TFVARS_FILE_PATH"
+            sed -i.bak "s|^[#[:space:]]*iap_expected_audience[[:space:]]*=.*|iap_expected_audience = \"\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*workforce_pool_id[[:space:]]*=.*|workforce_pool_id = \"\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*iap_access_members[[:space:]]*=.*|iap_access_members = []|g" "$TFVARS_FILE_PATH"
 
@@ -922,8 +924,18 @@ main() {
         warn "Could not find 'backend_service_url' in Terraform outputs."
     fi
 
+    LOAD_BALANCER_IP=$(terraform output -raw load_balancer_ip 2>/dev/null || echo "")
+    ENTRA_REDIRECT_URI=$(terraform output -raw entra_redirect_uri 2>/dev/null || echo "")
+
     success "Your infrastructure is ready."
-    echo "------------------------------------------------------------------"; echo -e "   Frontend URL: ${C_YELLOW}${FRONTEND_URL}${C_RESET}"; echo -e "   Backend URL:  ${C_YELLOW}${BACKEND_URL}${C_RESET}"; echo "------------------------------------------------------------------"
+    echo "------------------------------------------------------------------"; echo -e "   Frontend URL: ${C_YELLOW}${FRONTEND_URL}${C_RESET}"; echo -e "   Backend URL:  ${C_YELLOW}${BACKEND_URL}${C_RESET}"
+    if [ -n "$LOAD_BALANCER_IP" ]; then
+        echo -e "   Load Balancer IP:   ${C_YELLOW}${LOAD_BALANCER_IP}${C_RESET}"
+    fi
+    if [ -n "$ENTRA_REDIRECT_URI" ]; then
+        echo -e "   Entra Redirect URI: ${C_YELLOW}${ENTRA_REDIRECT_URI}${C_RESET}"
+    fi
+    echo "------------------------------------------------------------------"
     info "It may take a few minutes for the builds to complete and the services to become available."
 
     echo # Add a blank line for spacing

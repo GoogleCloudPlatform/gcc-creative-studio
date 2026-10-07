@@ -31,3 +31,24 @@ output "cloud_sql_connection_name" {
   description = "The connection name of the Cloud SQL instance to be used by the bootstrap script."
   value       = module.creative_studio_platform.cloud_sql_connection_name
 }
+
+output "load_balancer_ip" {
+  description = "The external IP address of the Global HTTP(S) Load Balancer."
+  value       = module.creative_studio_platform.load_balancer_ip
+}
+
+output "iap_expected_audience" {
+  description = "The expected Audience (aud) claim for IAP JWT validation."
+  value       = module.creative_studio_platform.iap_expected_audience
+}
+
+output "workforce_pool_id" {
+  description = "The resolved Workforce Identity Pool ID."
+  value       = module.creative_studio_platform.workforce_pool_id
+}
+
+output "entra_redirect_uri" {
+  description = "The Workforce Identity Federation OIDC callback URI to register in Microsoft Entra ID."
+  value       = module.creative_studio_platform.entra_redirect_uri
+}
+

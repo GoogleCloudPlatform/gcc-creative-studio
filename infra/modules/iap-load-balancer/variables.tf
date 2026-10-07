@@ -18,6 +18,18 @@ variable "frontend_service_name" {
   description = "The name of the Cloud Run frontend service"
 }
 
+variable "backend_cloud_run_name" {
+  type        = string
+  description = "Optional Cloud Run backend service resource name reference for IAM binding ordering"
+  default     = ""
+}
+
+variable "frontend_cloud_run_name" {
+  type        = string
+  description = "Optional Cloud Run frontend service resource name reference for IAM binding ordering"
+  default     = ""
+}
+
 
 variable "org_id" {
   type        = string

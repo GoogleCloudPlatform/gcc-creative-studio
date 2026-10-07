@@ -39,3 +39,14 @@ output "iap_expected_audience" {
   description = "The expected Audience (aud) claim for IAP JWT validation."
 }
 
+output "workforce_pool_id" {
+  value       = var.iap_oauth2_client_id != "" ? module.iap_load_balancer[0].workforce_pool_id : ""
+  description = "The resolved Workforce Identity Pool ID."
+}
+
+output "entra_redirect_uri" {
+  value       = var.iap_oauth2_client_id != "" ? module.iap_load_balancer[0].entra_redirect_uri : ""
+  description = "The Workforce Identity Federation OIDC callback URI to register in Microsoft Entra ID."
+}
+
+

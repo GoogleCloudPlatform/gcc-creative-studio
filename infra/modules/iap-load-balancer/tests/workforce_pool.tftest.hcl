@@ -52,6 +52,16 @@ run "creates_pool_when_only_org_id_set" {
     condition     = google_iam_workforce_pool_provider.entra[0].attribute_mapping["google.subject"] == "assertion.oid"
     error_message = "Provider should map google.subject to assertion.oid."
   }
+
+  assert {
+    condition     = output.workforce_pool_id == "cs-workforce-pool-abcd1234"
+    error_message = "Output workforce_pool_id should match the generated pool id."
+  }
+
+  assert {
+    condition     = output.entra_redirect_uri == "https://auth.cloud.google/signin-callback/locations/global/workforcePools/cs-workforce-pool-abcd1234/providers/entra-provider"
+    error_message = "Output entra_redirect_uri should use the generated pool id."
+  }
 }
 
 run "reuses_existing_pool_when_workforce_pool_id_set" {
@@ -74,5 +84,39 @@ run "reuses_existing_pool_when_workforce_pool_id_set" {
   assert {
     condition     = google_iam_workforce_pool_provider.entra[0].workforce_pool_id == "existing-pool"
     error_message = "Provider should attach to the existing pool."
+  }
+
+  assert {
+    condition     = output.workforce_pool_id == "existing-pool"
+    error_message = "Output workforce_pool_id should match the existing pool id."
+  }
+
+  assert {
+    condition     = output.entra_redirect_uri == "https://auth.cloud.google/signin-callback/locations/global/workforcePools/existing-pool/providers/entra-provider"
+    error_message = "Output entra_redirect_uri should use the existing pool id."
+  }
+}
+
+run "no_pool_when_neither_org_id_nor_workforce_pool_id_set" {
+  command = plan
+
+  variables {
+    org_id            = ""
+    workforce_pool_id = ""
+  }
+
+  assert {
+    condition     = length(google_iam_workforce_pool.pool) == 0
+    error_message = "No pool should be created when org_id and workforce_pool_id are empty."
+  }
+
+  assert {
+    condition     = output.workforce_pool_id == ""
+    error_message = "Output workforce_pool_id should be empty when workforce federation is disabled."
+  }
+
+  assert {
+    condition     = output.entra_redirect_uri == ""
+    error_message = "Output entra_redirect_uri should be empty when workforce federation is disabled."
   }
 }

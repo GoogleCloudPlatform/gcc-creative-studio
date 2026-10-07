@@ -17,7 +17,7 @@ data "google_project" "project" {
 
 locals {
   # Generate the expected workforce pool ID, using a provided one or generating a dynamic one
-  expected_pool_id = var.workforce_pool_id != "" ? var.workforce_pool_id : "cs-workforce-pool-${random_id.pool_suffix[0].hex}"
+  expected_pool_id = var.workforce_pool_id != "" ? var.workforce_pool_id : (var.org_id != "" ? "cs-workforce-pool-${random_id.pool_suffix[0].hex}" : "")
   resolved_pool_id = var.org_id != "" ? "locations/global/workforcePools/${local.expected_pool_id}" : (var.workforce_pool_id != "" ? "locations/global/workforcePools/${var.workforce_pool_id}" : "")
   use_workforce    = local.resolved_pool_id != ""
 
@@ -234,7 +234,7 @@ resource "google_project_service_identity" "iap_sa" {
 
 resource "google_cloud_run_v2_service_iam_member" "iap_can_invoke_backend" {
   project  = var.gcp_project_id
-  name     = var.backend_service_name
+  name     = var.backend_cloud_run_name != "" ? var.backend_cloud_run_name : var.backend_service_name
   location = var.gcp_region
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_project_service_identity.iap_sa.email}"
@@ -242,7 +242,7 @@ resource "google_cloud_run_v2_service_iam_member" "iap_can_invoke_backend" {
 
 resource "google_cloud_run_v2_service_iam_member" "iap_can_invoke_frontend" {
   project  = var.gcp_project_id
-  name     = var.frontend_service_name
+  name     = var.frontend_cloud_run_name != "" ? var.frontend_cloud_run_name : var.frontend_service_name
   location = var.gcp_region
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_project_service_identity.iap_sa.email}"
