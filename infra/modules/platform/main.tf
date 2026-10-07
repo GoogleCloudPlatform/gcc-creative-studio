@@ -55,6 +55,10 @@ locals {
   # Use LB URL if IAP is enabled, otherwise use the direct Cloud Run URL
   backend_url = var.iap_oauth2_client_id != "" ? (var.domain_name != "" ? "https://${var.domain_name}" : "https://${module.iap_load_balancer[0].load_balancer_ip}") : "https://${var.backend_service_name}-${data.google_project.project.number}.${var.gcp_region}.run.app"
 
+  # Direct Cloud Run URL of the backend. Workflow runs call it (not the load
+  # balancer) because they cannot pass IAP; the backend checks their token.
+  backend_internal_url = "https://${var.backend_service_name}-${data.google_project.project.number}.${var.gcp_region}.run.app"
+
   frontend_url = (var.iap_oauth2_client_id != "" && var.domain_name != "") ? "https://${var.domain_name}" : "https://${var.firebase_site_id}.web.app"
 
   resolved_iap_audience = (var.iap_expected_audience != "" && var.iap_expected_audience != "YOUR_IAP_EXPECTED_AUDIENCE") ? var.iap_expected_audience : (var.iap_oauth2_client_id != "" ? module.iap_load_balancer[0].iap_expected_audience : "")
@@ -77,7 +81,8 @@ locals {
       "GENMEDIA_BUCKET"        = google_storage_bucket.genmedia.name
       "SIGNING_SA_EMAIL"       = google_service_account.bucket_reader_sa.email
       "BACKEND_URL"            = local.backend_url
-      "WORKFLOWS_EXECUTOR_URL" = "${local.backend_url}/api/workflows-executor"
+      "WORKFLOWS_EXECUTOR_URL" = "${local.backend_internal_url}/api/workflows-executor"
+      "BACKEND_INTERNAL_URL"   = local.backend_internal_url
       "IAP_EXPECTED_AUDIENCE"  = local.resolved_iap_audience
     }
   )
@@ -226,6 +231,17 @@ resource "google_cloud_run_v2_service_iam_member" "fe_trigger_can_view_backend" 
   location = module.backend_service.location
   role     = "roles/run.viewer"
   member   = "serviceAccount:${module.frontend_service.trigger_sa_email}"
+}
+
+# Workflow runs act as the backend's own service account and call the backend
+# directly (they cannot pass IAP), so that account must be allowed to invoke it.
+resource "google_cloud_run_v2_service_iam_member" "backend_sa_can_invoke_backend" {
+  provider = google-beta
+  project  = var.gcp_project_id
+  name     = module.backend_service.service_name
+  location = module.backend_service.location
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${module.backend_service.run_sa_email}"
 }
 
 module "iap_load_balancer" {

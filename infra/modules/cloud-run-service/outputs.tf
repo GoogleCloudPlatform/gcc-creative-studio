@@ -31,3 +31,8 @@ output "location" {
   description = "The location of the Cloud Run service."
   value       = google_cloud_run_v2_service.this.location
 }
+
+output "run_sa_email" {
+  description = "The service account the Cloud Run service runs as."
+  value       = google_service_account.run_sa.email
+}
