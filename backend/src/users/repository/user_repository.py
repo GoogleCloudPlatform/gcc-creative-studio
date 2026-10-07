@@ -30,14 +30,18 @@ class UserRepository(BaseRepository[User, UserModel]):
     def __init__(self, db: AsyncSession = Depends(get_db)):
         super().__init__(model=User, schema=UserModel, db=db)
 
-    async def get_by_email(self, email: str) -> UserModel | None:
+    async def get_by_email(
+        self, email: str, include_deleted: bool = False
+    ) -> UserModel | None:
         """Finds a single user by email, ignoring letter case.
 
         Emails are stored lowercase, so an equality match on the lowercased
         input stays on the users.email index.
         """
         result = await self.db.execute(
-            select(self.model).where(self.model.email == email.strip().lower()),
+            select(self.model)
+            .where(self.model.email == email.strip().lower())
+            .execution_options(include_deleted=include_deleted),
         )
         user = result.scalar_one_or_none()
         if not user:

@@ -85,6 +85,20 @@ async def test_get_by_email_matches_lowercased_input():
 
 
 @pytest.mark.anyio
+async def test_get_by_email_honours_include_deleted():
+    mock_db = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    mock_db.execute.return_value = mock_result
+    repo = UserRepository(db=mock_db)
+
+    await repo.get_by_email("bob@corp.com", include_deleted=True)
+
+    stmt = mock_db.execute.call_args.args[0]
+    assert stmt.get_execution_options()["include_deleted"] is True
+
+
+@pytest.mark.anyio
 async def test_query_no_filters():
     mock_db = AsyncMock()
 

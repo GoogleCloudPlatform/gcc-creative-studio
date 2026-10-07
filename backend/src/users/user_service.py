@@ -13,13 +13,22 @@
 # limitations under the License.
 
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException, status
 
 from src.common.dto.pagination_response_dto import PaginationResponseDto
 from src.users.dto.user_create_dto import UserCreateDto, UserUpdateRoleDto
 from src.users.dto.user_search_dto import UserSearchDto
 from src.users.repository.user_repository import UserRepository
 from src.users.user_model import UserModel, UserRoleEnum
+
+
+def _reject_if_deleted(user: UserModel | None) -> None:
+    """Refuses sign-in for a deactivated (soft-deleted) account."""
+    if user is not None and user.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: this account has been deactivated.",
+        )
 
 
 class UserService:
@@ -41,8 +50,13 @@ class UserService:
         # The same address in any letter case is the same person.
         email = email.strip().lower()
 
-        # 1. Check if the user already exists in the database.
-        existing_user = await self.user_repo.get_by_email(email)
+        # 1. Check if the user already exists in the database. Deactivated
+        #    users are included so they get a clear 403 instead of a failed
+        #    attempt to create them again.
+        existing_user = await self.user_repo.get_by_email(
+            email, include_deleted=True
+        )
+        _reject_if_deleted(existing_user)
 
         if existing_user:
             return existing_user

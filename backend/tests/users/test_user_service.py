@@ -55,7 +55,9 @@ class TestCreateUserIfNotExists:
 
         # Assertions
         assert result == mock_user
-        mock_user_repo.get_by_email.assert_called_once_with("user@example.com")
+        mock_user_repo.get_by_email.assert_called_once_with(
+            "user@example.com", include_deleted=True
+        )
         # Verify create was NOT called
         mock_user_repo.create.assert_not_called()
 
@@ -77,7 +79,9 @@ class TestCreateUserIfNotExists:
 
         # Assertions
         assert result == mock_user
-        mock_user_repo.get_by_email.assert_called_once_with("new@example.com")
+        mock_user_repo.get_by_email.assert_called_once_with(
+            "new@example.com", include_deleted=True
+        )
 
         # Verify create was called with correct data
         called_args = mock_user_repo.create.call_args[0][0]
@@ -97,7 +101,7 @@ class TestCreateUserIfNotExists:
         )
 
         mock_user_repo.get_by_email.assert_called_once_with(
-            "new.user@example.com"
+            "new.user@example.com", include_deleted=True
         )
         created = mock_user_repo.create.call_args.args[0]
         assert created["email"] == "new.user@example.com"

@@ -16,11 +16,12 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 from src.auth.auth_guard import get_current_user
 from src.config.config_service import config_service
 from src.users.user_model import UserModel, UserRoleEnum
+from src.users.user_service import UserService
 
 
 @pytest.fixture(autouse=True)
@@ -72,3 +73,25 @@ class TestAuthDefectsStayFixed:
         user_service.create_user_if_not_exists.assert_called_once()
         call = user_service.create_user_if_not_exists.call_args
         assert call.kwargs["email"] == "Alice.Smith@YourCompany.com"
+
+    @pytest.mark.anyio
+    @patch("src.auth.auth_guard.id_token.verify_token")
+    async def test_soft_deleted_user_gets_403_not_500(self, mock_verify):
+        mock_verify.return_value = {
+            "email": "gone@company.com",
+            "name": "Gone",
+        }
+        repo = AsyncMock()
+        repo.get_by_email.return_value = _user(
+            email="gone@company.com", deleted_at="2026-01-01T00:00:00Z"
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_user(
+                request=MagicMock(spec=Request),
+                token="jwt",
+                user_service=UserService(user_repo=repo),
+            )
+
+        assert exc_info.value.status_code == 403
+        repo.create.assert_not_called()
