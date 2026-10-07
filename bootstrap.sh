@@ -397,6 +397,33 @@ setup_repo() {
     info "Detected GitHub repo name: $GITHUB_REPO_NAME"
 }
 
+# Prints the Entra object ID of the user whose sign-in name or mail is the
+# given email, or nothing if no such user exists. Returns 1 if Microsoft
+# Graph cannot be reached with the app's credentials or the email matches
+# more than one user. The app needs the User.Read.All application
+# permission, which the backend already uses.
+lookup_entra_object_id() {
+    local tenant_id="$1" client_id="$2" client_secret="$3" email="$4"
+    local token_json token users_json count
+    token_json=$(curl -sS -f -X POST \
+        "https://login.microsoftonline.com/${tenant_id}/oauth2/v2.0/token" \
+        --data-urlencode "client_id=${client_id}" \
+        --data-urlencode "client_secret=${client_secret}" \
+        --data-urlencode "scope=https://graph.microsoft.com/.default" \
+        --data-urlencode "grant_type=client_credentials") || return 1
+    token=$(echo "$token_json" | jq -r '.access_token // empty')
+    [ -n "$token" ] || return 1
+    # OData string literals escape a single quote by doubling it.
+    local quoted="${email//\'/\'\'}"
+    users_json=$(curl -sS -f -G "https://graph.microsoft.com/v1.0/users" \
+        -H "Authorization: Bearer ${token}" \
+        --data-urlencode "\$filter=userPrincipalName eq '${quoted}' or mail eq '${quoted}'" \
+        --data-urlencode "\$select=id") || return 1
+    count=$(echo "$users_json" | jq '.value | length')
+    [ "$count" -le 1 ] || return 1
+    echo "$users_json" | jq -r '.value[0].id // empty'
+}
+
 configure_environment() {
     step 5 "Configuring Terraform Environment";
     cd "$REPO_ROOT/infra"
@@ -471,6 +498,20 @@ configure_environment() {
             read -p "   Deployer Entra Sign-in Email (break-glass admin) [default value: $DEFAULT_ADMIN_EMAIL]: " DEPLOYER_ADMIN_EMAIL < /dev/tty
             ADMIN_USER_EMAIL=${DEPLOYER_ADMIN_EMAIL:-$DEFAULT_ADMIN_EMAIL}
 
+            # Pin the break-glass admin to the Entra account that owns this
+            # email. The backend recognises that account by its object ID,
+            # which IAP proves on every request, instead of trusting the email.
+            ADMIN_USER_ENTRA_OID=""
+            while [ -z "$ADMIN_USER_ENTRA_OID" ]; do
+                ADMIN_USER_ENTRA_OID=$(lookup_entra_object_id "$ENTRA_TENANT_ID" "$ENTRA_CLIENT_ID" "$ENTRA_CLIENT_SECRET" "$ADMIN_USER_EMAIL") \
+                    || fail "Could not look up '$ADMIN_USER_EMAIL' in Microsoft Graph. Check the Entra client ID, secret and tenant, that the app has the User.Read.All application permission with admin consent, and that the email belongs to only one user."
+                if [ -z "$ADMIN_USER_ENTRA_OID" ]; then
+                    warn "No Entra account signs in with '$ADMIN_USER_EMAIL'. The break-glass admin must be an Entra user."
+                    read -p "   Deployer Entra Sign-in Email (break-glass admin): " ADMIN_USER_EMAIL < /dev/tty
+                fi
+            done
+            success "Break-glass admin $ADMIN_USER_EMAIL is Entra object ID $ADMIN_USER_ENTRA_OID."
+
             # Only members of these Entra groups can open the app through IAP.
             # Required: without it, nobody in Entra could sign in.
             prompt "Entra access group(s): only members can open the app (see README_ENTRA.md)."
@@ -498,10 +539,12 @@ configure_environment() {
             if [ -n "$ADMIN_USER_EMAIL" ]; then
                 sed -i.bak "s|^[#[:space:]]*ADMIN_USER_EMAIL[[:space:]]*=.*|    ADMIN_USER_EMAIL = \"$ADMIN_USER_EMAIL\"|g" "$TFVARS_FILE_PATH"
             fi
+            sed -i.bak "s|^[#[:space:]]*ADMIN_USER_ENTRA_OID[[:space:]]*=.*|    ADMIN_USER_ENTRA_OID = \"$ADMIN_USER_ENTRA_OID\"|g" "$TFVARS_FILE_PATH"
 
             write_state "AUTH_CHOICE" "2"
             write_state "AUTO_ENTRA_CLIENT_SECRET" "$ENTRA_CLIENT_SECRET"
             write_state "ADMIN_USER_EMAIL" "$ADMIN_USER_EMAIL"
+            write_state "ADMIN_USER_ENTRA_OID" "$ADMIN_USER_ENTRA_OID"
         else
             # Google Auth selected
             # Ensure Entra variables in .tfvars are set to empty or default

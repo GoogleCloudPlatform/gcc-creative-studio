@@ -105,6 +105,8 @@ IAP does not forward Entra group claims to the backend, so the backend reads gro
 
 *Behavior notes:* role sync is disabled if any of `ENTRA_TENANT_ID`, `ENTRA_GRAPH_CLIENT_ID`, or `ENTRA_GRAPH_CLIENT_SECRET` is empty, or if no group IDs are configured (roles are then managed only in the Admin UI). If Graph is unreachable, the last known roles are kept and the check is retried after the TTL. The last remaining admin is never demoted automatically.
 
+*Break-glass admin:* the account you give as the deployer admin email always keeps the `admin` role, even if it is not in a mapped admin group or Graph is down. The backend recognises it by its Entra **Object ID**, not by email, so another account that later takes the same email address does not inherit admin. `bootstrap.sh` looks the Object ID up in Graph when you enter the email and writes it to `ADMIN_USER_ENTRA_OID`. If you deploy with Terraform only, copy the Object ID from **Users** > the user > **Overview** and set `ADMIN_USER_ENTRA_OID` in `be_env_vars`. Leaving it empty means there is no break-glass admin.
+
 ---
 
 ## 🛡️ Step 3: Create Google Workforce OAuth Client for IAP

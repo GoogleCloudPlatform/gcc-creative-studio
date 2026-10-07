@@ -22,6 +22,9 @@ be_env_vars = {
   common = {
     LOG_LEVEL        = "INFO"
     ADMIN_USER_EMAIL = "system"
+    # Entra object ID of the break-glass admin (set by bootstrap.sh in
+    # Entra mode). Empty means no break-glass admin.
+    ADMIN_USER_ENTRA_OID = ""
   }
   development = {
     ENVIRONMENT  = "development"
