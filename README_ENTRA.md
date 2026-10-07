@@ -22,7 +22,7 @@ Clone the repository and checkout the latest branch containing the IAP and Entra
 
 > [!WARNING]
 > **If you are deploying from your own Fork (Required for Cloud Build):**  
-> The GitHub "Sync fork" button defaults to syncing only the `main` branch. Since the Entra integration relies on the `feature/entra-authentication-final` branch, you **must** manually select this branch from the branch dropdown in the GitHub UI and sync it with upstream before proceeding. If you skip this, your fork will be out of date and fail during Terraform deployment.
+> The GitHub "Sync fork" button defaults to syncing only the `main` branch. Since the Entra integration relies on the `entra-authentication` branch, you **must** manually select this branch from the branch dropdown in the GitHub UI and sync it with upstream before proceeding. If you skip this, your fork will be out of date and fail during Terraform deployment.
 
 1.  Open your terminal.
 2.  Clone the repository (replace with your fork URL if applicable):
@@ -32,7 +32,7 @@ Clone the repository and checkout the latest branch containing the IAP and Entra
     ```
 3.  Switch to the integration branch:
     ```bash
-    git checkout feature/entra-authentication-final
+    git checkout entra-authentication
     ```
 
 ---
@@ -186,7 +186,7 @@ The project includes an automated `bootstrap.sh` script that handles the configu
     *   **GCP Project ID**: Enter your target Google Cloud Project ID (e.g., `my-project-123`). The script will attempt to set this as your active gcloud project.
     *   **Environment Name**: Enter a name for your deployment environment (default: `dev-infra`). This defines the folder name under `infra/environments/` where your specific configuration will be stored.
     *   **GitHub Repository URL**: Enter the URL of your forked repository (e.g., `https://github.com/your-user/gcc-creative-studio.git`).
-    *   **Branch Name**: Enter the git branch to deploy from (default: `main`). For testing the Entra integration, ensure you use `feature/entra-authentication-final` or the branch where you have these changes.
+    *   **Branch Name**: Enter the git branch to deploy from (default: `main`). For testing the Entra integration, ensure you use `entra-authentication` or the branch where you have these changes.
     *   **Authentication Choice**: Type **2** and press Enter to select **Microsoft Entra ID**.
     *   **Entra Client ID**: Paste the *Application (client) ID* of the App Registration you created in Step 2.
     *   **Entra Tenant ID**: Paste the *Directory (tenant) ID* of your Entra Tenant collected in Step 2.
