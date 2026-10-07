@@ -48,6 +48,20 @@ class UserRepository(BaseRepository[User, UserModel]):
             return None
         return self.schema.model_validate(user)
 
+    async def get_by_entra_oid(
+        self, entra_oid: str, include_deleted: bool = False
+    ) -> UserModel | None:
+        """Finds a single user by Entra object ID (stored lowercase)."""
+        result = await self.db.execute(
+            select(self.model)
+            .where(self.model.entra_oid == entra_oid.strip().lower())
+            .execution_options(include_deleted=include_deleted),
+        )
+        user = result.scalar_one_or_none()
+        if not user:
+            return None
+        return self.schema.model_validate(user)
+
     async def query(
         self,
         search_dto: UserSearchDto,

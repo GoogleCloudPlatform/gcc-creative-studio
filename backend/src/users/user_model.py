@@ -44,6 +44,9 @@ class User(Base):
     email: Mapped[str] = mapped_column(
         String, unique=True, index=True, nullable=False
     )
+    entra_oid: Mapped[str | None] = mapped_column(
+        String, unique=True, index=True, nullable=True
+    )
     roles: Mapped[list[str]] = mapped_column(ARRAY(String), default=[])
     name: Mapped[str] = mapped_column(String, default="")
     picture: Mapped[str] = mapped_column(String, default="")
@@ -77,6 +80,7 @@ class UserModel(BaseDocument):
     # ID is required for Read DTOs
     id: int
     email: str
+    entra_oid: str | None = None
     roles: list[UserRoleEnum] = Field(default_factory=list)
     name: str
     picture: str = ""

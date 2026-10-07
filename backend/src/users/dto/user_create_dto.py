@@ -24,6 +24,7 @@ class UserCreateDto(BaseModel):
     email: EmailStr
     name: str = Field(..., min_length=2)
     picture: str | None = None
+    entra_oid: str | None = None
     # The role will be set to 'user' by default in the service
     # Admins can change it later via the update endpoint
 

@@ -99,6 +99,72 @@ async def test_get_by_email_honours_include_deleted():
 
 
 @pytest.mark.anyio
+async def test_get_by_entra_oid_success():
+    oid = "11111111-2222-3333-4444-555555555555"
+    mock_db = AsyncMock()
+    mock_result = MagicMock()
+    mock_user = get_dummy_user(email="test@example.com", entra_oid=oid)
+    mock_result.scalar_one_or_none.return_value = mock_user
+    mock_db.execute.return_value = mock_result
+
+    repo = UserRepository(db=mock_db)
+    response = await repo.get_by_entra_oid(entra_oid=oid)
+
+    assert response is not None
+    assert response.entra_oid == oid
+    assert response.id == 1
+    mock_db.execute.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_get_by_entra_oid_not_found():
+    mock_db = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    mock_db.execute.return_value = mock_result
+
+    repo = UserRepository(db=mock_db)
+    response = await repo.get_by_entra_oid(
+        entra_oid="00000000-0000-0000-0000-000000000000"
+    )
+
+    assert response is None
+    mock_db.execute.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_get_by_entra_oid_matches_lowercased_input():
+    mock_db = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    mock_db.execute.return_value = mock_result
+    repo = UserRepository(db=mock_db)
+
+    await repo.get_by_entra_oid(" 11111111-2222-3333-4444-AAAAAAAAAAAA ")
+
+    stmt = mock_db.execute.call_args.args[0]
+    assert list(stmt.compile().params.values()) == [
+        "11111111-2222-3333-4444-aaaaaaaaaaaa"
+    ]
+
+
+@pytest.mark.anyio
+async def test_get_by_entra_oid_honours_include_deleted():
+    mock_db = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    mock_db.execute.return_value = mock_result
+    repo = UserRepository(db=mock_db)
+
+    await repo.get_by_entra_oid(
+        "11111111-2222-3333-4444-555555555555", include_deleted=True
+    )
+
+    stmt = mock_db.execute.call_args.args[0]
+    assert stmt.get_execution_options()["include_deleted"] is True
+
+
+@pytest.mark.anyio
 async def test_query_no_filters():
     mock_db = AsyncMock()
 
