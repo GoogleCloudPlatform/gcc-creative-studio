@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from src.auth.auth_guard import RoleChecker, get_current_user
 from src.common.dto.pagination_response_dto import PaginationResponseDto
@@ -155,12 +155,13 @@ async def delete_workflow(
 async def execute_workflow(
     workflow_id: str,
     workflow_execute_dto: WorkflowExecuteDto,
-    authorization: str | None = Header(default=None),
     current_user: UserModel = Depends(get_current_user),
     workflow_service: WorkflowService = Depends(),
 ):
     """This function is the controller that calls the service to generate the workflow."""
-    workflow_execute_dto.args["user_auth_header"] = authorization
+    # The run acts for the signed-in user. Always overwrite this so a client
+    # cannot run a workflow as someone else.
+    workflow_execute_dto.args["acting_user_id"] = str(current_user.id)
 
     response = await workflow_service.execute_workflow(
         workflow_id=workflow_id,
@@ -177,15 +178,13 @@ async def execute_workflow(
 async def batch_execute_workflow(
     workflow_id: str,
     batch_dto: BatchExecutionRequestDto,
-    authorization: str | None = Header(default=None),
     current_user: UserModel = Depends(get_current_user),
     workflow_service: WorkflowService = Depends(),
 ):
     """Executes a batch of workflow runs based on the provided items."""
-    # Inject user_auth_header into each item's args
-    if authorization:
-        for item in batch_dto.items:
-            item.args["user_auth_header"] = authorization
+    # Every run acts for the signed-in user (always overwritten, as above).
+    for item in batch_dto.items:
+        item.args["acting_user_id"] = str(current_user.id)
 
     return await workflow_service.batch_execute_workflow(
         workflow_id=workflow_id,

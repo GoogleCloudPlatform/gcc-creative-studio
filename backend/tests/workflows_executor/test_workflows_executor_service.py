@@ -19,10 +19,15 @@ from fastapi import HTTPException
 from httpx import Response
 
 from src.common.schema.media_item_model import AssetRoleEnum
+from src.config.config_service import config_service
 from src.workflows.schema.workflow_model import ReferenceMediaOrAsset
 from src.workflows_executor.workflows_executor_service import (
     WorkflowsExecutorService,
 )
+
+
+EXECUTOR = "src.workflows_executor.workflows_executor_service"
+INTERNAL = "https://cstudio-be-123.us-central1.run.app"
 
 
 @pytest.fixture(name="service")
@@ -335,3 +340,47 @@ async def test_generate_audio(service):
         assert result["generated_audio"] == 555
         service.mock_rest_client.post.assert_called_once()
         mock_poll.assert_called_once_with(555, None)
+
+
+class TestInnerCallIdentity:
+    """The executor's calls back into the backend skip IAP."""
+
+    @pytest.mark.anyio
+    async def test_inner_calls_carry_service_token_and_acting_user(
+        self, service, monkeypatch
+    ):
+        monkeypatch.setattr(config_service, "BACKEND_INTERNAL_URL", INTERNAL)
+        request = MagicMock()
+        request.workspace_id = 1
+        request.inputs.prompt = "A cat"
+        request.config.model = "gemini-3.1-flash-image"
+        request.config.aspect_ratio = "1:1"
+        request.config.brand_guidelines = False
+        service.mock_rest_client.post.return_value = Response(
+            200, json={"id": 999}
+        )
+
+        with (
+            patch(f"{EXECUTOR}.id_token.fetch_id_token", return_value="sa-tok"),
+            patch.object(
+                service, "_poll_job_status", AsyncMock(return_value=True)
+            ),
+        ):
+            await service.generate_image(request, acting_user_id=7)
+
+        assert service.mock_rest_client.post.call_args.kwargs["headers"] == {
+            "Authorization": "Bearer sa-tok",
+            "X-Acting-User-Id": "7",
+        }
+
+    def test_inner_calls_go_to_this_container(self, monkeypatch):
+        monkeypatch.setattr(config_service, "BACKEND_INTERNAL_URL", INTERNAL)
+        monkeypatch.setenv("PORT", "8080")
+
+        with (
+            patch(f"{EXECUTOR}.RestClient"),
+            patch(f"{EXECUTOR}.GenAIModelSetup.init"),
+        ):
+            inner = WorkflowsExecutorService()
+
+        assert inner.backend_url == "http://127.0.0.1:8080"

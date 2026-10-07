@@ -603,3 +603,33 @@ class TestUpdateAndUpdateMethods:
         assert result is True
         mock_workflow_repo.delete.assert_called_once()
         mock_client.delete_workflow.assert_called_once()
+
+
+class TestWorkflowCallbackIdentity:
+    """Workflow steps call the backend directly, not through IAP."""
+
+    def test_steps_use_service_identity_and_acting_user(
+        self, workflow_service, sample_workflow_model, monkeypatch
+    ):
+        from src.config.config_service import config_service
+
+        internal = "https://cstudio-be-123.us-central1.run.app"
+        monkeypatch.setattr(config_service, "BACKEND_INTERNAL_URL", internal)
+        monkeypatch.setattr(
+            config_service,
+            "WORKFLOWS_EXECUTOR_URL",
+            f"{internal}/api/workflows-executor",
+        )
+
+        parsed = yaml.safe_load(
+            workflow_service._generate_workflow_yaml(sample_workflow_model)
+        )
+
+        args = parsed["main"]["steps"][0]["step_1"]["args"]
+        assert args["url"] == (
+            f"{internal}/api/workflows-executor/generate_text"
+        )
+        assert args["auth"] == {"type": "OIDC", "audience": internal}
+        assert args["headers"] == {
+            "X-Acting-User-Id": "${args.acting_user_id}"
+        }

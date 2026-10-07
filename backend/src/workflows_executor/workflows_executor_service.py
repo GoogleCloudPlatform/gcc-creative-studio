@@ -14,9 +14,12 @@
 
 import asyncio
 import logging
+import os
 
 from fastapi import HTTPException
+from google.auth.transport import requests as google_auth_requests
 from google.genai import types
+from google.oauth2 import id_token
 from httpx import AsyncClient as RestClient
 
 from src.common.schema.genai_model_setup import GenAIModelSetup
@@ -38,9 +41,35 @@ logger = logging.getLogger(__name__)
 
 class WorkflowsExecutorService:
     def __init__(self):
-        self.backend_url = config_service.BACKEND_URL
+        if config_service.BACKEND_INTERNAL_URL:
+            # Call this same container directly. Calls to the load balancer
+            # would be stopped by IAP.
+            port = os.environ.get("PORT", "8080")
+            self.backend_url = f"http://127.0.0.1:{port}"
+        else:
+            self.backend_url = config_service.BACKEND_URL
         self.rest_client = RestClient(timeout=600)
         self.genai_client = GenAIModelSetup.init()
+
+    async def _service_headers(
+        self, acting_user_id: int | None
+    ) -> dict[str, str]:
+        """Returns headers that let the backend act for the run's user.
+
+        The token is signed by Google for this backend's own service account,
+        so it proves the call comes from a workflow run, not a browser.
+        """
+        if not config_service.BACKEND_INTERNAL_URL or acting_user_id is None:
+            return {}
+        token = await asyncio.to_thread(
+            id_token.fetch_id_token,
+            google_auth_requests.Request(),
+            config_service.BACKEND_INTERNAL_URL,
+        )
+        return {
+            "Authorization": f"Bearer {token}",
+            "X-Acting-User-Id": str(acting_user_id),
+        }
 
     def _normalize_asset_inputs(
         self,
@@ -92,11 +121,11 @@ class WorkflowsExecutorService:
         return media_items, asset_ids
 
     async def _poll_job_status(
-        self, media_id: int, authorization: str | None = None
+        self, media_id: int, acting_user_id: int | None = None
     ):
         """Polls the gallery endpoint until the job is completed or failed."""
         url = f"{self.backend_url}/api/gallery/item/{media_id}"
-        headers = {"Authorization": authorization} if authorization else {}
+        headers = await self._service_headers(acting_user_id)
 
         # Poll configuration
         initial_delay = 2
@@ -152,13 +181,13 @@ class WorkflowsExecutorService:
     async def _resolve_media_to_parts(
         self,
         inputs,
-        authorization: str | None = None,
+        acting_user_id: int | None = None,
     ) -> list[types.Part]:
         """Resolves mixed input types into a list of Gemini types.Part."""
         parts = []
         media_items, asset_ids = self._normalize_asset_inputs(inputs)
 
-        headers = {"Authorization": authorization} if authorization else {}
+        headers = await self._service_headers(acting_user_id)
 
         # Resolve Media Items
         for item in media_items:
@@ -226,9 +255,8 @@ class WorkflowsExecutorService:
     async def generate_text(
         self,
         request: GenerateTextRequest,
-        authorization: str | None = None,
+        acting_user_id: int | None = None,
     ):
-        logger.info("authorization: %s", authorization)
         generate_content_config = types.GenerateContentConfig(
             temperature=request.config.temperature,
             top_p=0.95,
@@ -265,7 +293,7 @@ class WorkflowsExecutorService:
             logger.info("Adding images")
             image_parts = await self._resolve_media_to_parts(
                 request.inputs.input_images,
-                authorization,
+                acting_user_id,
             )
             logger.info("Image parts: %s", image_parts)
             contents.extend(image_parts)
@@ -274,7 +302,7 @@ class WorkflowsExecutorService:
         if request.inputs.input_videos:
             video_parts = await self._resolve_media_to_parts(
                 request.inputs.input_videos,
-                authorization,
+                acting_user_id,
             )
             contents.extend(video_parts)
 
@@ -293,7 +321,7 @@ class WorkflowsExecutorService:
     async def generate_image(
         self,
         request: GenerateImageRequest,
-        authorization: str | None = None,
+        acting_user_id: int | None = None,
     ):
         logger.info("Generate image execution")
 
@@ -308,11 +336,9 @@ class WorkflowsExecutorService:
             "number_of_media": 1,
         }
 
-        headers = {"Authorization": authorization} if authorization else {}
+        headers = await self._service_headers(acting_user_id)
 
-        logger.info(
-            f"Call backend with url: {url}, body: {body}, headers: {headers}"
-        )
+        logger.info("Call backend with url: %s, body: %s", url, body)
 
         response = await self.rest_client.post(url, json=body, headers=headers)
 
@@ -329,14 +355,14 @@ class WorkflowsExecutorService:
             raise HTTPException(status_code=500, detail="Couldn't create image")
 
         # Poll for completion
-        await self._poll_job_status(image_id, authorization)
+        await self._poll_job_status(image_id, acting_user_id)
 
         return {"generated_image": image_id}
 
     async def edit_image(
         self,
         request: EditImageRequest,
-        authorization: str | None = None,
+        acting_user_id: int | None = None,
     ):
         logger.info("Edit image execution")
 
@@ -357,11 +383,9 @@ class WorkflowsExecutorService:
             "source_asset_ids": asset_ids,
         }
 
-        headers = {"Authorization": authorization} if authorization else {}
+        headers = await self._service_headers(acting_user_id)
 
-        logger.info(
-            f"Call backend with url: {url}, body: {body}, headers: {headers}"
-        )
+        logger.info("Call backend with url: %s, body: %s", url, body)
 
         response = await self.rest_client.post(url, json=body, headers=headers)
 
@@ -378,14 +402,14 @@ class WorkflowsExecutorService:
             raise HTTPException(status_code=500, detail="Couldn't edit image")
 
         # Poll for completion
-        await self._poll_job_status(image_id, authorization)
+        await self._poll_job_status(image_id, acting_user_id)
 
         return {"edited_image": image_id}
 
     async def generate_video(
         self,
         request: GenerateVideoRequest,
-        authorization: str | None = None,
+        acting_user_id: int | None = None,
     ):
         logger.info("Generate video execution")
 
@@ -431,11 +455,9 @@ class WorkflowsExecutorService:
             "number_of_media": 1,
         }
 
-        headers = {"Authorization": authorization} if authorization else {}
+        headers = await self._service_headers(acting_user_id)
 
-        logger.info(
-            f"Call backend with url: {url}, body: {body}, headers: {headers}"
-        )
+        logger.info("Call backend with url: %s, body: %s", url, body)
 
         response = await self.rest_client.post(url, json=body, headers=headers)
 
@@ -452,7 +474,7 @@ class WorkflowsExecutorService:
             raise HTTPException(status_code=500, detail="Couldn't create video")
 
         # Poll for completion
-        await self._poll_job_status(video_id, authorization)
+        await self._poll_job_status(video_id, acting_user_id)
 
         return {"generated_video": video_id}
 
@@ -494,7 +516,7 @@ class WorkflowsExecutorService:
     async def virtual_try_on(
         self,
         request: VirtualTryOnRequest,
-        authorization: str | None = None,
+        acting_user_id: int | None = None,
     ):
         logger.info("Virtual Try On execution")
 
@@ -524,11 +546,9 @@ class WorkflowsExecutorService:
             "shoe_image": shoes_image,
         }
 
-        headers = {"Authorization": authorization} if authorization else {}
+        headers = await self._service_headers(acting_user_id)
 
-        logger.info(
-            f"Call backend with url: {url}, body: {body}, headers: {headers}"
-        )
+        logger.info("Call backend with url: %s, body: %s", url, body)
 
         response = await self.rest_client.post(url, json=body, headers=headers)
 
@@ -547,14 +567,14 @@ class WorkflowsExecutorService:
             )
 
         # Poll for completion
-        await self._poll_job_status(image_id, authorization)
+        await self._poll_job_status(image_id, acting_user_id)
 
         return {"generated_image": image_id}
 
     async def generate_audio(
         self,
         request: GenerateAudioRequest,
-        authorization: str | None = None,
+        acting_user_id: int | None = None,
     ):
         logger.info("Generate audio execution")
 
@@ -573,11 +593,9 @@ class WorkflowsExecutorService:
         # Filter None values to let DTO defaults take over if needed
         body = {k: v for k, v in body.items() if v is not None}
 
-        headers = {"Authorization": authorization} if authorization else {}
+        headers = await self._service_headers(acting_user_id)
 
-        logger.info(
-            f"Call backend with url: {url}, body: {body}, headers: {headers}"
-        )
+        logger.info("Call backend with url: %s, body: %s", url, body)
 
         # Note: Audio generation is synchronous in the current controller/service implementation
         response = await self.rest_client.post(url, json=body, headers=headers)
@@ -596,6 +614,6 @@ class WorkflowsExecutorService:
             raise HTTPException(status_code=500, detail="Couldn't create audio")
 
         # Poll for completion
-        await self._poll_job_status(audio_id, authorization)
+        await self._poll_job_status(audio_id, acting_user_id)
 
         return {"generated_audio": audio_id}

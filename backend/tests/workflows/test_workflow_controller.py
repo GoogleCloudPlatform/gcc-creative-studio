@@ -178,3 +178,41 @@ def test_list_executions_success(client, mock_service):
 
     assert response.status_code == 200
     assert len(response.json()) == 1
+
+
+def test_execute_sets_acting_user_from_signed_in_user(client, mock_service):
+    """A client must not be able to run a workflow as someone else."""
+    mock_service.execute_workflow.return_value = "exec_id_123"
+
+    payload = {"args": {"param1": "val1", "acting_user_id": "999"}}
+    response = client.post(
+        "/api/workflows/wf1/workflow-execute",
+        json=payload,
+        headers={"Authorization": "Bearer should-not-be-forwarded"},
+    )
+
+    assert response.status_code == 200
+    args = mock_service.execute_workflow.call_args.kwargs["args"]
+    assert args["acting_user_id"] == "1"
+    assert "user_auth_header" not in args
+
+
+def test_batch_execute_sets_acting_user_on_every_item(client, mock_service):
+    mock_service.batch_execute_workflow.return_value = {"results": []}
+
+    payload = {
+        "items": [
+            {"row_index": 0, "args": {"acting_user_id": "999"}},
+            {"row_index": 1, "args": {}},
+        ]
+    }
+    response = client.post("/api/workflows/wf1/batch-execute", json=payload)
+
+    assert response.status_code == 200
+    items = mock_service.batch_execute_workflow.call_args.kwargs[
+        "batch_dto"
+    ].items
+    assert (
+        items[0].args["acting_user_id"],
+        items[1].args["acting_user_id"],
+    ) == ("1", "1")

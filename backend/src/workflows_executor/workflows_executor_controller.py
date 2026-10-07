@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Annotated
+from fastapi import APIRouter, Depends
 
-from fastapi import APIRouter, Depends, Header
-
+from src.auth.auth_guard import require_workflow_service_caller
+from src.users.user_model import UserModel
 from src.workflows_executor.dto.workflows_executor_dto import (
     EditImageRequest,
     GenerateAudioRequest,
@@ -38,52 +38,52 @@ router = APIRouter(
 @router.post("/generate_text")
 async def generate_text(
     request: GenerateTextRequest,
-    authorization: Annotated[str | None, Header()] = None,
+    acting_user: UserModel = Depends(require_workflow_service_caller),
     service: WorkflowsExecutorService = Depends(),
 ):
-    return await service.generate_text(request, authorization)
+    return await service.generate_text(request, acting_user.id)
 
 
 @router.post("/generate_image")
 async def generate_image(
     request: GenerateImageRequest,
-    authorization: Annotated[str | None, Header()] = None,
+    acting_user: UserModel = Depends(require_workflow_service_caller),
     service: WorkflowsExecutorService = Depends(),
 ):
-    return await service.generate_image(request, authorization)
+    return await service.generate_image(request, acting_user.id)
 
 
 @router.post("/edit_image")
 async def edit_image(
     request: EditImageRequest,
-    authorization: Annotated[str | None, Header()] = None,
+    acting_user: UserModel = Depends(require_workflow_service_caller),
     service: WorkflowsExecutorService = Depends(),
 ):
-    return await service.edit_image(request, authorization)
+    return await service.edit_image(request, acting_user.id)
 
 
 @router.post("/generate_video")
 async def generate_video(
     request: GenerateVideoRequest,
-    authorization: Annotated[str | None, Header()] = None,
+    acting_user: UserModel = Depends(require_workflow_service_caller),
     service: WorkflowsExecutorService = Depends(),
 ):
-    return await service.generate_video(request, authorization)
+    return await service.generate_video(request, acting_user.id)
 
 
 @router.post("/virtual_try_on")
 async def virtual_try_on(
     request: VirtualTryOnRequest,
-    authorization: Annotated[str | None, Header()] = None,
+    acting_user: UserModel = Depends(require_workflow_service_caller),
     service: WorkflowsExecutorService = Depends(),
 ):
-    return await service.virtual_try_on(request, authorization)
+    return await service.virtual_try_on(request, acting_user.id)
 
 
 @router.post("/generate_audio")
 async def generate_audio(
     request: GenerateAudioRequest,
-    authorization: Annotated[str | None, Header()] = None,
+    acting_user: UserModel = Depends(require_workflow_service_caller),
     service: WorkflowsExecutorService = Depends(),
 ):
-    return await service.generate_audio(request, authorization)
+    return await service.generate_audio(request, acting_user.id)

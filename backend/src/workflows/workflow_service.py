@@ -56,7 +56,6 @@ from src.workflows.schema.workflow_run_model import (
 logger = logging.getLogger(__name__)
 PROJECT_ID = config_service.PROJECT_ID
 LOCATION = config_service.WORKFLOWS_LOCATION
-BACKEND_EXECUTOR_URL = config_service.WORKFLOWS_EXECUTOR_URL
 
 
 class WorkflowService:
@@ -83,8 +82,8 @@ class WorkflowService:
         # A very basic transformation to a GCP-like workflow structure
         step_outputs = {}
         gcp_steps = []
-        # We init with this default param that is going to propagate user auth header
-        workflow_params = ["user_auth_header"]
+        # Every run gets the ID of the user who started it (see the controller)
+        workflow_params = ["acting_user_id"]
         user_input_step_id = None
 
         for step in workflow.steps:
@@ -134,16 +133,25 @@ class WorkflowService:
                 "config": config,
             }
 
+            step_args = {
+                "url": f"{config_service.WORKFLOWS_EXECUTOR_URL}/{step_type}",
+                # The user who started the run; set by the backend, never by
+                # the browser.
+                "headers": {"X-Acting-User-Id": "${args.acting_user_id}"},
+                "body": body,
+            }
+            if config_service.BACKEND_INTERNAL_URL:
+                # Workflows signs each call as the workflow's service account
+                # (the backend's own), since these calls cannot pass IAP.
+                step_args["auth"] = {
+                    "type": "OIDC",
+                    "audience": config_service.BACKEND_INTERNAL_URL,
+                }
+
             gcp_step = {
                 step_name: {
                     "call": "http.post",
-                    "args": {
-                        "url": f"{BACKEND_EXECUTOR_URL}/{step_type}",
-                        "headers": {
-                            "Authorization": "${args.user_auth_header}"
-                        },
-                        "body": body,
-                    },
+                    "args": step_args,
                     "result": f"{step_name}_result",
                 },
             }
