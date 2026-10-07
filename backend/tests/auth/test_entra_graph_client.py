@@ -182,6 +182,87 @@ async def test_token_failure_raises_entra_graph_error():
         await client.member_group_ids("a@corp.com", ["g1"])
 
 
+def _body_response(body) -> httpx.Response:
+    if isinstance(body, bytes):
+        return httpx.Response(200, content=body)
+    return httpx.Response(200, json=body)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"not json",
+        {"token_type": "Bearer"},
+        [],
+        {"access_token": "tok", "expires_in": "soon"},
+    ],
+    ids=["non-json", "no-access-token", "list", "bad-expires-in"],
+)
+@pytest.mark.anyio
+async def test_malformed_token_body_raises_entra_graph_error(body):
+    async def handler(request):
+        return _body_response(body)
+
+    client = make_client(handler)
+
+    with pytest.raises(EntraGraphError):
+        await client.member_group_ids("a@corp.com", ["g1"])
+
+
+@pytest.mark.anyio
+async def test_malformed_token_is_not_cached():
+    token_requests = []
+
+    async def handler(request):
+        token_requests.append(request)
+        return _body_response({"access_token": "tok", "expires_in": "soon"})
+
+    client = make_client(handler)
+    with pytest.raises(EntraGraphError):
+        await client.member_group_ids("a@corp.com", ["g1"])
+
+    with pytest.raises(EntraGraphError):
+        await client.member_group_ids("a@corp.com", ["g1"])
+
+    assert len(token_requests) == 2
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"not json",
+        {},
+        {"value": None},
+        {"value": 5},
+        {"value": "abc"},
+        [],
+        {"value": [1]},
+    ],
+    ids=[
+        "non-json",
+        "missing-value",
+        "null-value",
+        "int-value",
+        "str-value",
+        "list-body",
+        "non-str-group",
+    ],
+)
+@pytest.mark.anyio
+async def test_malformed_check_member_groups_body_raises_entra_graph_error(
+    body,
+):
+    async def handler(request):
+        if request.url.host == TOKEN_HOST:
+            return httpx.Response(200, json={"access_token": "tok"})
+        return _body_response(body)
+
+    client = make_client(handler)
+
+    with pytest.raises(EntraGraphError):
+        await client.member_group_ids("a@corp.com", ["abc"])
+
+
 @pytest.mark.anyio
 async def test_concurrent_lookups_for_same_user_share_one_round_trip():
     fake = FakeGraph(members={"g1"})

@@ -104,6 +104,11 @@ class EntraGraphClient:
                     ]
                 },
             )
+            if not all(isinstance(g, str) for g in value):
+                raise EntraGraphError(
+                    f"Malformed Graph response for {user_ref}: non-string "
+                    "group id"
+                )
             matched.update(g.lower() for g in value)
         return matched
 
@@ -116,7 +121,7 @@ class EntraGraphClient:
     ) -> dict[str, Any]:
         """Returns the JSON object from a Graph call.
 
-        Any HTTP or network error raises EntraGraphError.
+        Any HTTP error or malformed body raises EntraGraphError.
         """
         token = await self._get_app_token()
         try:
@@ -134,7 +139,18 @@ class EntraGraphClient:
             raise EntraGraphError(
                 f"Graph HTTP {response.status_code} for {path}"
             )
-        return response.json()
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise EntraGraphError(
+                f"Malformed Graph response for {path}: {exc}"
+            ) from exc
+        if not isinstance(body, dict):
+            raise EntraGraphError(
+                f"Malformed Graph response for {path}: body is "
+                f"{type(body).__name__}, not dict"
+            )
+        return body
 
     async def _request(
         self,
@@ -143,11 +159,25 @@ class EntraGraphClient:
         headers: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> list[Any]:
-        """Returns the `value` list from a Graph call."""
+        """Returns the `value` list from a Graph call.
+
+        A malformed body raises EntraGraphError.
+        """
         body = await self._request_object(
             method, path, headers=headers, **kwargs
         )
-        return body["value"]
+        try:
+            value = body["value"]
+        except KeyError as exc:
+            raise EntraGraphError(
+                f"Malformed Graph response for {path}: {exc}"
+            ) from exc
+        if not isinstance(value, list):
+            raise EntraGraphError(
+                f"Malformed Graph response for {path}: 'value' is "
+                f"{type(value).__name__}, not list"
+            )
+        return value
 
     async def _get_app_token(self) -> str:
         if self._token and time.monotonic() < self._token_expires_at:
@@ -171,9 +201,14 @@ class EntraGraphClient:
                 raise EntraGraphError(
                     f"Token request failed: HTTP {response.status_code}"
                 )
-            body = response.json()
-            token = body["access_token"]
-            expires_in = int(body.get("expires_in", 3600))
+            try:
+                body = response.json()
+                token = body["access_token"]
+                expires_in = int(body.get("expires_in", 3600))
+            except (ValueError, KeyError, TypeError) as exc:
+                raise EntraGraphError(
+                    f"Malformed token response: {exc}"
+                ) from exc
             self._token = token
             self._token_expires_at = (
                 time.monotonic() + expires_in - _TOKEN_EXPIRY_SKEW_SECONDS
