@@ -59,6 +59,7 @@ class TestAuthDefectsStayFixed:
             config_service, "ALLOWED_ORGS_STR", "yourcompany.com"
         )
         mock_verify.return_value = {
+            "iss": "https://cloud.google.com/iap",
             "upn": "Alice.Smith@YourCompany.com",
         }
         user_service = AsyncMock()
@@ -78,6 +79,7 @@ class TestAuthDefectsStayFixed:
     @patch("src.auth.auth_guard.id_token.verify_token")
     async def test_soft_deleted_user_gets_403_not_500(self, mock_verify):
         mock_verify.return_value = {
+            "iss": "https://cloud.google.com/iap",
             "email": "gone@company.com",
             "name": "Gone",
         }

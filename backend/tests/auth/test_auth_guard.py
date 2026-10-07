@@ -131,6 +131,7 @@ class TestGetCurrentUser:
 
         mock_request = MagicMock(spec=Request)
         mock_verify.return_value = {
+            "iss": "https://cloud.google.com/iap",
             "email": "iap_user@example.com",
             "name": "IAP User",
             "picture": "http://example.com/pic.jpg",
@@ -165,6 +166,7 @@ class TestGetCurrentUser:
 
         mock_request = MagicMock(spec=Request)
         mock_verify.return_value = {
+            "iss": "https://cloud.google.com/iap",
             "sub": "principal://iam.googleapis.com/locations/global/workforcePools/pool/subject/user123",
             "name": "Federated User",
         }
@@ -224,6 +226,7 @@ class TestGetCurrentUser:
 
         mock_request = MagicMock(spec=Request)
         mock_verify.return_value = {
+            "iss": "https://cloud.google.com/iap",
             "email": "user@forbidden.com",
             "name": "Forbidden User",
             "hd": "forbidden.com",
@@ -251,6 +254,7 @@ class TestGetCurrentUser:
 
         mock_request = MagicMock(spec=Request)
         mock_verify.return_value = {
+            "iss": "https://cloud.google.com/iap",
             "preferred_username": "preferred_user@example.com",
             "name": "Preferred User",
         }
@@ -286,6 +290,7 @@ class TestGetCurrentUser:
 
         mock_request = MagicMock(spec=Request)
         mock_verify.return_value = {
+            "iss": "https://cloud.google.com/iap",
             "upn": "upn_user@example.com",
             "name": "UPN User",
         }
@@ -321,6 +326,7 @@ class TestGetCurrentUser:
 
         mock_request = MagicMock(spec=Request)
         mock_verify.return_value = {
+            "iss": "https://cloud.google.com/iap",
             "preferred_username": "preferred@example.com",
             "upn": "upn@example.com",
             "sub": "sub-id",
@@ -352,6 +358,7 @@ class TestGetCurrentUser:
 
         mock_request = MagicMock(spec=Request)
         mock_verify.return_value = {
+            "iss": "https://cloud.google.com/iap",
             "upn": "upn@example.com",
             "sub": "sub-id",
         }
@@ -370,6 +377,62 @@ class TestGetCurrentUser:
         )
 
         assert user.email == "upn@example.com"
+
+    @pytest.mark.anyio
+    @patch("src.auth.auth_guard.id_token.verify_token")
+    async def test_get_current_user_iap_wrong_issuer_rejected(
+        self, mock_verify, mock_user_service
+    ):
+        """A correctly signed token that IAP didn't issue must be refused."""
+        config_service.ENVIRONMENT = "production"
+        config_service.IAP_EXPECTED_AUDIENCE = "test-iap-audience"
+        config_service.ALLOWED_ORGS_STR = ""
+
+        mock_request = MagicMock(spec=Request)
+        mock_verify.return_value = {
+            "iss": "https://accounts.google.com",
+            "email": "iap_user@example.com",
+            "sub": "sub-id",
+        }
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_user(
+                request=mock_request,
+                token="valid_iap_jwt",
+                user_service=mock_user_service,
+            )
+
+        assert exc_info.value.status_code == 401
+        mock_user_service.create_user_if_not_exists.assert_not_called()
+
+    @pytest.mark.anyio
+    @patch("src.auth.auth_guard.id_token.verify_token")
+    async def test_get_current_user_error_after_verification_returns_500(
+        self, mock_verify, mock_user_service
+    ):
+        """A ValueError after the token is verified is not a bad token."""
+        config_service.ENVIRONMENT = "production"
+        config_service.IAP_EXPECTED_AUDIENCE = "test-iap-audience"
+        config_service.ALLOWED_ORGS_STR = ""
+
+        mock_request = MagicMock(spec=Request)
+        mock_verify.return_value = {
+            "iss": "https://cloud.google.com/iap",
+            "email": "iap_user@example.com",
+            "name": "IAP User",
+        }
+        mock_user_service.create_user_if_not_exists.side_effect = ValueError(
+            "db boom"
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_user(
+                request=mock_request,
+                token="valid_iap_jwt",
+                user_service=mock_user_service,
+            )
+
+        assert exc_info.value.status_code == 500
 
 
 class TestRoleChecker:
