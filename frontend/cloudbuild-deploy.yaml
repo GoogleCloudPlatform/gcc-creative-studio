@@ -44,6 +44,7 @@ steps:
         # Inject into Firebase config (firebase.json)
         sed -i "s|SITE_ID_PLACEHOLDER|${_FIREBASE_SITE_ID}|g" firebase.json
         sed -i "s|BACKEND_SERVICE_ID_PLACEHOLDER|$${_BACKEND_SERVICE_ID}|g" firebase.json
+        sed -i "s|REGION_PLACEHOLDER|${_GCP_REGION}|g" firebase.json
     dir: frontend
     env:
       - '_BACKEND_URL=${_BACKEND_URL}'
@@ -110,11 +111,3 @@ availableSecrets:
 
 options:
   logging: CLOUD_LOGGING_ONLY
-
-substitutions:
-  _FE_SERVICE_NAME: cstudio-fe
-  _BACKEND_SERVICE_ID: cstudio-be
-  _BACKEND_URL: https://YOUR_FIREBASE_SITE_ID.web.app
-  _FIREBASE_SITE_ID: YOUR_FIREBASE_SITE_ID
-  _ENTRA_CLIENT_ID: 'YOUR_ENTRA_CLIENT_ID'
-  _ENTRA_TENANT_ID: 'YOUR_ENTRA_TENANT_ID'
