@@ -298,6 +298,66 @@ class TestGetCurrentUser:
 
     @pytest.mark.anyio
     @patch("src.auth.auth_guard.id_token.verify_token")
+    async def test_get_current_user_iap_workforce_no_email_passes_oid_only(
+        self, mock_verify, mock_user_service
+    ):
+        config_service.ENVIRONMENT = "production"
+        config_service.IAP_EXPECTED_AUDIENCE = "test-iap-audience"
+        config_service.ALLOWED_ORGS_STR = ""
+
+        oid = "11111111-2222-3333-4444-555555555555"
+        mock_request = MagicMock(spec=Request)
+        mock_verify.return_value = {
+            "iss": "https://cloud.google.com/iap",
+            "sub": (
+                "principal://iam.googleapis.com/locations/global/"
+                f"workforcePools/pool/subject/{oid}"
+            ),
+            "name": "Federated User",
+        }
+
+        await get_current_user(
+            request=mock_request,
+            token="valid_iap_jwt",
+            user_service=mock_user_service,
+        )
+
+        mock_user_service.create_user_if_not_exists.assert_called_once_with(
+            email=None,
+            name="Federated User",
+            picture="",
+            entra_oid=oid,
+        )
+
+    @pytest.mark.anyio
+    @patch("src.auth.auth_guard.id_token.verify_token")
+    async def test_get_current_user_iap_no_email_non_workforce_rejected(
+        self, mock_verify, mock_user_service
+    ):
+        config_service.ENVIRONMENT = "production"
+        config_service.IAP_EXPECTED_AUDIENCE = "test-iap-audience"
+        config_service.ALLOWED_ORGS_STR = ""
+
+        mock_request = MagicMock(spec=Request)
+        mock_verify.return_value = {
+            "iss": "https://cloud.google.com/iap",
+            "sub": "accounts.google.com:1234567890",
+            "name": "Google User Without Email",
+        }
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_user(
+                request=mock_request,
+                token="valid_iap_jwt",
+                user_service=mock_user_service,
+            )
+
+        assert exc_info.value.status_code == 401
+        assert "email could not be confirmed" in exc_info.value.detail
+        mock_user_service.create_user_if_not_exists.assert_not_called()
+
+    @pytest.mark.anyio
+    @patch("src.auth.auth_guard.id_token.verify_token")
     async def test_get_current_user_iap_invalid_token(
         self, mock_verify, mock_user_service
     ):

@@ -19,7 +19,11 @@ from typing import Any
 
 from fastapi import Depends, HTTPException, status
 
-from src.auth.entra_graph_client import EntraGraphError, get_entra_graph_client
+from src.auth.entra_graph_client import (
+    EntraGraphError,
+    EntraUserNotFoundError,
+    get_entra_graph_client,
+)
 from src.common.dto.pagination_response_dto import PaginationResponseDto
 from src.config.config_service import config_service
 from src.users.dto.user_create_dto import UserCreateDto, UserUpdateRoleDto
@@ -52,6 +56,25 @@ def _is_deployer_admin(email: str) -> bool:
     return email.strip().lower() == admin_email
 
 
+def _check_allowed_org(email: str) -> None:
+    """Refuses an email outside IDENTITY_PLATFORM_ALLOWED_ORGS, if it is set.
+
+    Used when the email came from the database or Graph rather than the
+    sign-in token, so the sign-in guard could not check it up front.
+    """
+    allowed_orgs = config_service.ALLOWED_ORGS
+    if not allowed_orgs:
+        return
+    domain = email.split("@")[-1].lower() if "@" in email else ""
+    if not domain or domain not in allowed_orgs:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=(
+                f"User from '{domain}' is not part of an allowed organization."
+            ),
+        )
+
+
 def _reject_if_deleted(user: UserModel | None) -> None:
     """Refuses sign-in for a deactivated (soft-deleted) account."""
     if user is not None and user.deleted_at is not None:
@@ -75,6 +98,10 @@ class _SignIn:
     # True when an existing account found by email should be linked to
     # entra_oid.
     needs_link: bool = False
+    # True when the token had no email and it was looked up in Graph.
+    email_from_graph: bool = False
+    # Every email Graph lists for the user, when it was looked up.
+    graph_emails: set[str] = dataclasses.field(default_factory=set)
 
 
 class UserService:
@@ -85,7 +112,7 @@ class UserService:
 
     async def create_user_if_not_exists(
         self,
-        email: str,
+        email: str | None,
         name: str,
         picture: str | None,
         entra_oid: str | None = None,
@@ -96,10 +123,14 @@ class UserService:
         which never changes, rather than by email, which can. An older
         account with the same email but no object ID is linked to the
         object ID once. Emails are compared and stored in lowercase.
+
+        A Workforce token may carry no email. The email (and the display
+        name, when `name` is empty) is then looked up in Microsoft Graph by
+        object ID.
         """
         sign_in = _SignIn(
             # The same address in any letter case is the same person.
-            email=email.strip().lower(),
+            email=(email or "").strip().lower(),
             name=name,
             picture=picture,
             entra_oid=(entra_oid or "").strip().lower() or None,
@@ -123,6 +154,14 @@ class UserService:
         confirms the email belongs to it.
         """
         if sign_in.entra_oid is None:
+            if not sign_in.email:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=(
+                        "Unauthorized: User email could not be confirmed from "
+                        "IAP token."
+                    ),
+                )
             return await self.user_repo.get_by_email(
                 sign_in.email, include_deleted=True
             )
@@ -131,11 +170,33 @@ class UserService:
             sign_in.entra_oid, include_deleted=True
         )
         if user is not None:
+            if not sign_in.email:
+                # The token had no email, so its organization is checked here.
+                _check_allowed_org(user.email)
             return user
 
-        user = await self.user_repo.get_by_email(
-            sign_in.email, include_deleted=True
+        if not sign_in.email:
+            (
+                sign_in.email,
+                graph_display_name,
+                sign_in.graph_emails,
+            ) = await self._resolve_oid_profile_via_graph(sign_in.entra_oid)
+            sign_in.email_from_graph = True
+            if not sign_in.name and graph_display_name:
+                sign_in.name = graph_display_name
+            _check_allowed_org(sign_in.email)
+
+        # An older account may be under any of the user's emails.
+        candidate_emails = [sign_in.email] + sorted(
+            sign_in.graph_emails - {sign_in.email}
         )
+        user = None
+        for candidate in candidate_emails:
+            user = await self.user_repo.get_by_email(
+                candidate, include_deleted=True
+            )
+            if user is not None:
+                break
         if user is None:
             return None
         _reject_if_deleted(user)
@@ -147,11 +208,12 @@ class UserService:
                     "Entra identity."
                 ),
             )
-        if config_service.ENTRA_ROLE_SYNC_ENABLED:
+        sync_enabled = config_service.ENTRA_ROLE_SYNC_ENABLED
+        if sync_enabled and not sign_in.email_from_graph:
             await self._confirm_oid_email_via_graph(
                 sign_in.entra_oid, sign_in.email
             )
-        else:
+        elif not sync_enabled:
             logger.info(
                 "Linking existing user %s to Entra OID %s "
                 "(Entra role sync disabled).",
@@ -173,7 +235,7 @@ class UserService:
         sync_enabled = config_service.ENTRA_ROLE_SYNC_ENABLED
         user_data = UserCreateDto(
             email=sign_in.email,
-            name=sign_in.name,
+            name=sign_in.name or sign_in.email.split("@")[0],
             picture=sign_in.picture or "",
             entra_oid=sign_in.entra_oid,
         ).model_dump(exclude_none=True)
@@ -185,8 +247,11 @@ class UserService:
             else None
         )
         roles = entra_roles or {UserRoleEnum.USER}
-        if sync_enabled and _is_deployer_admin(sign_in.email):
-            if sign_in.entra_oid is not None:
+        if sync_enabled and (
+            _is_deployer_admin(sign_in.email)
+            or any(_is_deployer_admin(e) for e in sign_in.graph_emails)
+        ):
+            if sign_in.entra_oid is not None and not sign_in.email_from_graph:
                 # The deployer email came from the sign-in token. Confirm with
                 # Graph that this object ID really owns it before giving a new
                 # account break-glass admin.
@@ -251,6 +316,65 @@ class UserService:
                 updates["roles"],
             )
         return await self.user_repo.update(user.id, updates) or user
+
+    async def _resolve_oid_profile_via_graph(
+        self, entra_oid: str
+    ) -> tuple[str, str | None, set[str]]:
+        """Returns the user's email, display name and all emails from Graph.
+
+        Used when the sign-in token has no email. Refuses sign-in with 401 if
+        Graph is not configured, 403 if Graph does not know the user or has
+        no email for them, and 503 if Graph can't be reached.
+        """
+        client = get_entra_graph_client()
+        if client is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=(
+                    "Unauthorized: User email could not be confirmed from "
+                    "IAP token."
+                ),
+            )
+        try:
+            primary_email, display_name, all_emails = (
+                await client.get_user_profile(entra_oid)
+            )
+        except EntraUserNotFoundError as exc:
+            logger.warning(
+                "Entra OID %s not found in Microsoft Graph: %s", entra_oid, exc
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "Forbidden: Entra user was not found in Microsoft Graph."
+                ),
+            ) from exc
+        except EntraGraphError as exc:
+            logger.error(
+                "Failed to resolve email for Entra OID %s via Graph: %s",
+                entra_oid,
+                exc,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Unable to verify user identity with Microsoft Graph; "
+                    "please try again later."
+                ),
+            ) from exc
+        if not primary_email:
+            logger.warning(
+                "Entra OID %s has no mail or userPrincipalName in Graph.",
+                entra_oid,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "Forbidden: Entra user profile does not have a valid "
+                    "email or userPrincipalName."
+                ),
+            )
+        return primary_email, display_name, all_emails
 
     async def _confirm_oid_email_via_graph(
         self, entra_oid: str, email: str

@@ -20,7 +20,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from src.auth.entra_graph_client import EntraGraphError
+from src.auth.entra_graph_client import (
+    EntraGraphError,
+    EntraUserNotFoundError,
+)
 from src.config.config_service import ConfigService
 from src.users.user_model import UserModel, UserRoleEnum
 from src.users.user_service import UserService
@@ -50,6 +53,7 @@ def fixture_config():
             WORKFLOWS_G: frozenset({"workflows"}),
         },
         ADMIN_USER_EMAIL="system",
+        ALLOWED_ORGS=set(),
     )
     with patch("src.users.user_service.config_service", cfg):
         yield cfg
@@ -60,6 +64,9 @@ def fixture_graph():
     client = MagicMock()
     client.member_group_ids = AsyncMock(return_value=set())
     client.get_user_emails = AsyncMock(return_value={"alice@corp.com"})
+    client.get_user_profile = AsyncMock(
+        return_value=("alice@corp.com", "Alice Graph", {"alice@corp.com"})
+    )
     with patch(
         "src.users.user_service.get_entra_graph_client", return_value=client
     ):
@@ -473,6 +480,141 @@ class TestEntraObjectIdLookup:
             await _call(repo, entra_oid=OID_1)
 
         assert exc_info.value.status_code == 403
+
+
+@pytest.mark.usefixtures("config")
+class TestMissingEmail:
+    @pytest.mark.anyio
+    async def test_missing_email_creates_user_from_graph_profile(
+        self, repo, graph
+    ):
+        repo.get_by_email.return_value = None
+        graph.get_user_profile.return_value = (
+            "alice@corp.com",
+            "Alice From Graph",
+            {"alice@corp.com", "alice.upn@corp.com"},
+        )
+
+        await _call(repo, email=None, entra_oid=OID_1, name="")
+
+        created = repo.create_or_get_existing.call_args.args[0]
+        assert (created["email"], created["name"], created["entra_oid"]) == (
+            "alice@corp.com",
+            "Alice From Graph",
+            OID_1,
+        )
+
+    @pytest.mark.anyio
+    async def test_missing_email_does_not_reconfirm_email_with_graph(
+        self, repo, graph
+    ):
+        repo.get_by_email.return_value = None
+
+        await _call(repo, email=None, entra_oid=OID_1, name="")
+
+        graph.get_user_profile.assert_called_once_with(OID_1)
+        graph.get_user_emails.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_missing_email_links_existing_row_under_another_email(
+        self, repo, graph
+    ):
+        unlinked = _user(
+            [UserRoleEnum.USER],
+            email="alice.upn@corp.com",
+            entra_oid=None,
+            roles_checked_at=NOW,
+        )
+        repo.get_by_email.side_effect = lambda addr, include_deleted=False: {
+            "alice.upn@corp.com": unlinked
+        }.get(addr)
+        graph.get_user_profile.return_value = (
+            "alice@corp.com",
+            "Alice",
+            {"alice@corp.com", "alice.upn@corp.com"},
+        )
+
+        await _call(repo, email=None, entra_oid=OID_1, name="")
+
+        repo.update.assert_called_once_with(7, {"entra_oid": OID_1})
+        graph.get_user_emails.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_missing_email_with_existing_oid_row_skips_graph_profile(
+        self, repo, graph
+    ):
+        existing = _user(
+            [UserRoleEnum.USER], entra_oid=OID_1, roles_checked_at=NOW
+        )
+        repo.get_by_entra_oid.return_value = existing
+
+        result = await _call(repo, email=None, entra_oid=OID_1, name="")
+
+        assert result is existing
+        graph.get_user_profile.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_missing_email_existing_oid_row_outside_allowed_orgs(
+        self, repo, graph, config
+    ):
+        config.ALLOWED_ORGS = {"corp.com"}
+        repo.get_by_entra_oid.return_value = _user(
+            [UserRoleEnum.USER],
+            email="alice@other.com",
+            entra_oid=OID_1,
+            roles_checked_at=NOW,
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _call(repo, email=None, entra_oid=OID_1, name="")
+
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_missing_email_returns_503_when_graph_profile_lookup_fails(
+        self, repo, graph
+    ):
+        graph.get_user_profile.side_effect = EntraGraphError("timeout")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _call(repo, email=None, entra_oid=OID_1, name="")
+
+        assert exc_info.value.status_code == 503
+        repo.create_or_get_existing.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "profile_lookup",
+        [
+            pytest.param(
+                AsyncMock(side_effect=EntraUserNotFoundError("404")),
+                id="user-not-found",
+            ),
+            pytest.param(
+                AsyncMock(return_value=(None, "No Email", set())),
+                id="no-email-in-graph",
+            ),
+        ],
+    )
+    @pytest.mark.anyio
+    async def test_missing_email_returns_403_when_graph_has_no_email(
+        self, repo, graph, profile_lookup
+    ):
+        graph.get_user_profile = profile_lookup
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _call(repo, email=None, entra_oid=OID_1, name="")
+
+        assert exc_info.value.status_code == 403
+        repo.create_or_get_existing.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_missing_email_without_entra_oid_is_rejected_401(
+        self, repo, graph
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await _call(repo, email=None, name="")
+
+        assert exc_info.value.status_code == 401
 
 
 class TestEntraConfig:

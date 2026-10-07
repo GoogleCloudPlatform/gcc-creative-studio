@@ -213,38 +213,42 @@ async def get_current_user(
         entra_oid = _extract_workforce_oid(decoded_token)
 
         email = decoded_token.get("email")
-        # In Workforce Identity Federation, the username/email might be in a different claim.
-        # Fall back to preferred_username, upn, or subject (final fallback) if email claim is not present.
+        # With Workforce Identity Federation the email may be in
+        # preferred_username or upn instead. Never fall back to `sub`: it is
+        # an opaque identifier, not an email.
         if not email:
             email = decoded_token.get("preferred_username")
         if not email:
             email = decoded_token.get("upn")
-        if not email:
-            email = decoded_token.get("sub")
 
-        name = decoded_token.get(
-            "name", email.split("@")[0] if email and "@" in email else "User"
+        has_token_email = isinstance(email, str) and "@" in email
+        if not has_token_email:
+            if entra_oid is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=(
+                        "Unauthorized: User email could not be confirmed from "
+                        "IAP token."
+                    ),
+                )
+            # A Workforce user: UserService looks the email up in Microsoft
+            # Graph by object ID.
+            email = None
+
+        name = decoded_token.get("name") or (
+            email.split("@")[0] if email else ""
         )
         picture = decoded_token.get("picture", "")
 
         token_info_hd = decoded_token.get("hd")
-        if not token_info_hd and email and "@" in email:
+        if not token_info_hd and email:
             token_info_hd = email.split("@")[-1]
 
-        # Restrict by particular organizations if it's a closed environment
-        if not email:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Forbidden: User identity could not be confirmed from IAP token.",
-            )
-
-        # If ALLOWED_ORGS is configured, check the user's organization
-        # (case-insensitive).
-        if config_service.ALLOWED_ORGS:
-            if (
-                not token_info_hd
-                or token_info_hd.lower() not in config_service.ALLOWED_ORGS
-            ):
+        # If ALLOWED_ORGS is configured and the token shows a domain, check
+        # the user's organization (case-insensitive) before any DB or Graph
+        # calls. Without a domain, it is checked once the email is known.
+        if config_service.ALLOWED_ORGS and token_info_hd:
+            if token_info_hd.lower() not in config_service.ALLOWED_ORGS:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail=(
@@ -255,6 +259,8 @@ async def get_current_user(
 
         # Just-In-Time (JIT) User Provisioning:
         # Create a user profile in our database on their first API call.
+        # When the token has no email, UserService resolves it from Microsoft
+        # Graph using entra_oid.
         create_kwargs: dict[str, Any] = {
             "email": email,
             "name": name,
@@ -270,8 +276,31 @@ async def get_current_user(
                 detail="Could not create or retrieve user profile.",
             )
 
+        # Defense in depth: UserService already checks the organization of
+        # an email it resolved itself, but check the stored email here too
+        # when the token had no domain.
+        if config_service.ALLOWED_ORGS and not token_info_hd:
+            resolved_hd = (
+                user_doc.email.split("@")[-1]
+                if user_doc.email and "@" in user_doc.email
+                else ""
+            )
+            if (
+                not resolved_hd
+                or resolved_hd.lower() not in config_service.ALLOWED_ORGS
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=(
+                        f"User from '{resolved_hd}' is not part of an "
+                        "allowed organization."
+                    ),
+                )
+
         if not user_doc.picture and picture:
-            logger.info("Updating picture for user: %s", email)
+            logger.info(
+                "Updating picture for user: %s", user_doc.email or email
+            )
             user_doc.picture = picture
             if user_doc.id:
                 await user_service.user_repo.update(

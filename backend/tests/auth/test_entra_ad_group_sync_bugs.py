@@ -110,6 +110,49 @@ class TestAuthDefectsStayFixed:
 
     @pytest.mark.anyio
     @patch("src.auth.auth_guard.id_token.verify_token")
+    async def test_sub_only_token_is_rejected_when_allowed_orgs_set(
+        self, mock_verify, monkeypatch
+    ):
+        """A Workforce token with no email still gets the org allowlist.
+
+        The email Graph returns for the object ID is outside the allowed
+        organization, so sign-in is refused before any account is created.
+        """
+        monkeypatch.setattr(
+            config_service, "ALLOWED_ORGS_STR", "yourcompany.com"
+        )
+        mock_verify.return_value = {
+            "iss": "https://cloud.google.com/iap",
+            "sub": "principal://iam.googleapis.com/locations/global/"
+            "workforcePools/pool/subject/11111111-2222-3333-4444-555555555555",
+        }
+        repo = AsyncMock()
+        repo.get_by_entra_oid.return_value = None
+        repo.get_by_email.return_value = None
+        graph = MagicMock()
+        graph.get_user_profile = AsyncMock(
+            return_value=("bob@other.com", "Bob", {"bob@other.com"})
+        )
+
+        with (
+            patch(
+                "src.users.user_service.get_entra_graph_client",
+                return_value=graph,
+            ),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await get_current_user(
+                request=MagicMock(spec=Request),
+                token="jwt",
+                user_service=UserService(user_repo=repo),
+            )
+
+        assert exc_info.value.status_code == 401
+        assert "not part of an allowed organization" in exc_info.value.detail
+        repo.create_or_get_existing.assert_not_called()
+
+    @pytest.mark.anyio
+    @patch("src.auth.auth_guard.id_token.verify_token")
     async def test_soft_deleted_user_gets_403_not_500(self, mock_verify):
         mock_verify.return_value = {
             "iss": "https://cloud.google.com/iap",
