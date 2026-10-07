@@ -114,6 +114,11 @@ class ConfigService(BaseSettings):
         ""  # The email address to send from (e.g., no-reply@your-domain.com)
     )
     ADMIN_USER_EMAIL: str = "system"
+    # Entra object ID of the break-glass admin, looked up from
+    # ADMIN_USER_EMAIL at setup time. With Entra role sync on, only the user
+    # with this ID keeps admin regardless of their groups. Empty means there
+    # is no break-glass admin.
+    ADMIN_USER_ENTRA_OID: str = ""
 
     # --- Workflows ---
     WORKFLOWS_LOCATION: str = "us-central1"

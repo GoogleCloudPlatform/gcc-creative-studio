@@ -48,12 +48,17 @@ def _roles_check_due(user: UserModel, now: datetime.datetime) -> bool:
     ) >= datetime.timedelta(seconds=config_service.ENTRA_ROLE_SYNC_TTL_SECONDS)
 
 
-def _is_deployer_admin(email: str) -> bool:
-    """Returns True if `email` is the deployer's break-glass admin email."""
-    admin_email = config_service.ADMIN_USER_EMAIL.strip().lower()
-    if not admin_email or admin_email == "system":
+def _is_deployer_admin(entra_oid: str | None) -> bool:
+    """Returns True if `entra_oid` is the break-glass admin's object ID.
+
+    The ID is looked up from the admin's email once, at setup time. Matching
+    on it needs no Microsoft Graph call, so it still works when Graph is
+    down, and someone who merely shares the admin's email cannot match.
+    """
+    admin_oid = config_service.ADMIN_USER_ENTRA_OID.strip().lower()
+    if not admin_oid or entra_oid is None:
         return False
-    return email.strip().lower() == admin_email
+    return entra_oid.strip().lower() == admin_oid
 
 
 def _check_allowed_org(email: str) -> None:
@@ -247,34 +252,10 @@ class UserService:
             else None
         )
         roles = entra_roles or {UserRoleEnum.USER}
-        if sync_enabled and (
-            _is_deployer_admin(sign_in.email)
-            or any(_is_deployer_admin(e) for e in sign_in.graph_emails)
-        ):
-            if sign_in.entra_oid is not None and not sign_in.email_from_graph:
-                # The deployer email came from the sign-in token. Confirm with
-                # Graph that this object ID really owns it before giving a new
-                # account break-glass admin.
-                try:
-                    await self._confirm_oid_email_via_graph(
-                        sign_in.entra_oid, sign_in.email
-                    )
-                    roles = self._apply_deployer_admin_safeguard(
-                        sign_in.email, roles
-                    )
-                except HTTPException as exc:
-                    # Sign-in still goes ahead: IAP has already verified this
-                    # person, and only the extra admin grant is withheld. They
-                    # get the roles their Entra groups grant, like anyone else.
-                    logger.warning(
-                        "Not granting deployer admin to new user %s: could "
-                        "not confirm Entra OID %s owns that email: %s",
-                        sign_in.email,
-                        sign_in.entra_oid,
-                        exc.detail,
-                    )
-            else:
-                roles = roles | {UserRoleEnum.ADMIN}
+        if sync_enabled:
+            roles = self._apply_deployer_admin_safeguard(
+                sign_in.entra_oid, sign_in.email, roles
+            )
         user_data["roles"] = _role_values(roles)
         if sync_enabled:
             user_data["roles_checked_at"] = now
@@ -303,6 +284,7 @@ class UserService:
         lookup_ref = sign_in.entra_oid or user.entra_oid or user.email
         entra_roles = await self._fetch_entra_roles(lookup_ref, user.email)
         target = self._apply_deployer_admin_safeguard(
+            sign_in.entra_oid or user.entra_oid,
             user.email,
             entra_roles if entra_roles is not None else {UserRoleEnum.USER},
         )
@@ -448,14 +430,18 @@ class UserService:
         return roles
 
     def _apply_deployer_admin_safeguard(
-        self, user_email: str, target: set[UserRoleEnum]
+        self,
+        entra_oid: str | None,
+        user_email: str,
+        target: set[UserRoleEnum],
     ) -> set[UserRoleEnum]:
         """Returns `target`, with admin added back if the user is the deployer.
 
-        The deployer (ADMIN_USER_EMAIL) is the break-glass admin, so Entra
-        groups can never remove their admin role.
+        The deployer is the break-glass admin, identified by the object ID in
+        ADMIN_USER_ENTRA_OID, so Entra groups and Graph outages can never
+        remove their admin role. `user_email` is used only for the log.
         """
-        if UserRoleEnum.ADMIN not in target and _is_deployer_admin(user_email):
+        if UserRoleEnum.ADMIN not in target and _is_deployer_admin(entra_oid):
             logger.warning(
                 "Entra sync would remove admin from deployer %s; "
                 "keeping the admin role (break-glass exemption).",

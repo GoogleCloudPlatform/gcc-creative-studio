@@ -263,6 +263,7 @@ class TestMalformedGraphResponsesFailClosedWithoutLogout:
             ENTRA_ROLE_SYNC_TTL_SECONDS=600,
             ENTRA_GROUP_ROLES={_ADMIN_GROUP: frozenset({"admin"})},
             ADMIN_USER_EMAIL="system",
+            ADMIN_USER_ENTRA_OID="",
         )
 
         with (
