@@ -90,6 +90,52 @@ class EntraGraphClient:
             task.add_done_callback(lambda _: self._inflight.pop(key, None))
         return await asyncio.shield(task)
 
+    async def get_user_profile(
+        self, oid: str
+    ) -> tuple[str | None, str | None, set[str]]:
+        """Returns `(primary_email, display_name, all_emails)` for `oid`.
+
+        Reads `mail`, `userPrincipalName` and `displayName` from
+        `GET /users/{oid}`. `primary_email` prefers `mail` over
+        `userPrincipalName`; all emails are lowercased.
+        """
+        user_ref = quote(oid.strip().lower(), safe="")
+        body = await self._request_object(
+            "GET",
+            f"/users/{user_ref}",
+            params={"$select": "id,mail,userPrincipalName,displayName"},
+        )
+        ordered_emails: list[str] = []
+        for field in ("mail", "userPrincipalName"):
+            raw = body.get(field)
+            if raw is None:
+                continue
+            if not isinstance(raw, str):
+                raise EntraGraphError(
+                    f"Malformed Graph user {user_ref}: {field} is not a string"
+                )
+            cleaned = raw.strip().lower()
+            if cleaned and "@" in cleaned and cleaned not in ordered_emails:
+                ordered_emails.append(cleaned)
+
+        raw_name = body.get("displayName")
+        if raw_name is not None and not isinstance(raw_name, str):
+            raise EntraGraphError(
+                f"Malformed Graph user {user_ref}: displayName is not a string"
+            )
+        display_name = (
+            raw_name.strip()
+            if isinstance(raw_name, str) and raw_name.strip()
+            else None
+        )
+        primary_email = ordered_emails[0] if ordered_emails else None
+        return primary_email, display_name, set(ordered_emails)
+
+    async def get_user_emails(self, oid: str) -> set[str]:
+        """Returns the lowercased `mail` and `userPrincipalName` of `oid`."""
+        _, _, emails = await self.get_user_profile(oid)
+        return emails
+
     async def _check_member_groups(
         self, user_ref: str, group_ids: list[str]
     ) -> set[str]:
