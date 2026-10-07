@@ -27,6 +27,7 @@ from src.users.user_service import UserService
 
 ADMIN_G = "aaaaaaaa-0000-0000-0000-000000000001"
 CREATOR_G = "cccccccc-0000-0000-0000-000000000002"
+WORKFLOWS_G = "wwwwwwww-0000-0000-0000-000000000003"
 GRAPH_CREDENTIALS = {
     "ENTRA_TENANT_ID": "t",
     "ENTRA_GRAPH_CLIENT_ID": "c",
@@ -35,16 +36,20 @@ GRAPH_CREDENTIALS = {
 OID_1 = "11111111-2222-3333-4444-555555555555"
 OID_2 = "22222222-3333-4444-5555-666666666666"
 NOW = datetime.datetime.now(datetime.UTC)
+STALE = NOW - datetime.timedelta(seconds=601)
 
 
 @pytest.fixture(name="config")
 def fixture_config():
     cfg = SimpleNamespace(
         ENTRA_ROLE_SYNC_ENABLED=True,
+        ENTRA_ROLE_SYNC_TTL_SECONDS=600,
         ENTRA_GROUP_ROLES={
             ADMIN_G: frozenset({"admin"}),
             CREATOR_G: frozenset({"creator"}),
+            WORKFLOWS_G: frozenset({"workflows"}),
         },
+        ADMIN_USER_EMAIL="system",
     )
     with patch("src.users.user_service.config_service", cfg):
         yield cfg
@@ -146,13 +151,226 @@ class TestNewUserRoles:
 
 
 @pytest.mark.usefixtures("config")
+class TestDeployerAdmin:
+    @pytest.mark.anyio
+    async def test_new_deployer_gets_admin_after_graph_confirms_email(
+        self, repo, graph, config
+    ):
+        config.ADMIN_USER_EMAIL = "Alice@Corp.com"
+        repo.get_by_email.return_value = None
+
+        await _call(repo, entra_oid=OID_1)
+
+        created = repo.create_or_get_existing.call_args.args[0]
+        assert created["roles"] == ["user", "admin"]
+
+    @pytest.mark.anyio
+    async def test_new_deployer_is_created_without_admin_when_unconfirmed(
+        self, repo, graph, config
+    ):
+        config.ADMIN_USER_EMAIL = "alice@corp.com"
+        repo.get_by_email.return_value = None
+        graph.get_user_emails.return_value = {"someone.else@corp.com"}
+
+        await _call(repo, entra_oid=OID_1)
+
+        created = repo.create_or_get_existing.call_args.args[0]
+        assert created["roles"] == ["user"]
+
+    @pytest.mark.anyio
+    async def test_new_deployer_without_entra_oid_gets_admin(
+        self, repo, graph, config
+    ):
+        config.ADMIN_USER_EMAIL = "alice@corp.com"
+        repo.get_by_email.return_value = None
+
+        await _call(repo)
+
+        created = repo.create_or_get_existing.call_args.args[0]
+        assert created["roles"] == ["user", "admin"]
+
+    @pytest.mark.anyio
+    async def test_deployer_admin_is_never_demoted_when_removed_from_group(
+        self, repo, graph, config
+    ):
+        config.ADMIN_USER_EMAIL = "Alice@Corp.com"
+        repo.get_by_email.return_value = _user(
+            [UserRoleEnum.USER, UserRoleEnum.ADMIN], roles_checked_at=STALE
+        )
+
+        await _call(repo)
+
+        _, data = repo.update.call_args.args
+        assert "roles" not in data
+
+    @pytest.mark.anyio
+    async def test_deployer_keeps_admin_when_graph_sync_fails(
+        self, repo, graph, config
+    ):
+        config.ADMIN_USER_EMAIL = "alice@corp.com"
+        repo.get_by_email.return_value = _user(
+            [
+                UserRoleEnum.USER,
+                UserRoleEnum.CREATOR,
+                UserRoleEnum.ADMIN,
+                UserRoleEnum.WORKFLOWS,
+            ],
+            roles_checked_at=STALE,
+        )
+        graph.member_group_ids.side_effect = EntraGraphError("down")
+
+        await _call(repo)
+
+        _, data = repo.update.call_args.args
+        assert data["roles"] == ["user", "admin"]
+
+    @pytest.mark.anyio
+    async def test_non_deployer_sole_admin_is_demoted_on_entra_path(
+        self, repo, graph, config
+    ):
+        config.ADMIN_USER_EMAIL = "deployer@corp.com"
+        repo.get_by_email.return_value = _user(
+            [UserRoleEnum.USER, UserRoleEnum.ADMIN], roles_checked_at=STALE
+        )
+
+        await _call(repo)
+
+        _, data = repo.update.call_args.args
+        assert data["roles"] == ["user"]
+
+
+@pytest.mark.usefixtures("config")
+class TestRoleRecheck:
+    @pytest.mark.anyio
+    async def test_fresh_roles_skip_graph_and_writes(self, repo, graph):
+        user = _user([UserRoleEnum.USER], roles_checked_at=NOW)
+        repo.get_by_email.return_value = user
+
+        assert await _call(repo) is user
+        graph.member_group_ids.assert_not_called()
+        repo.update.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_stale_promotion_updates_roles_once(self, repo, graph):
+        repo.get_by_email.return_value = _user(
+            [UserRoleEnum.USER], roles_checked_at=STALE
+        )
+        graph.member_group_ids.return_value = {ADMIN_G}
+
+        await _call(repo)
+
+        repo.update.assert_called_once()
+        uid, data = repo.update.call_args.args
+        assert uid == 7
+        assert data["roles"] == ["user", "admin"]
+
+    @pytest.mark.anyio
+    async def test_stale_check_records_new_check_time(self, repo, graph):
+        repo.get_by_email.return_value = _user(
+            [UserRoleEnum.USER], roles_checked_at=STALE
+        )
+        before = datetime.datetime.now(datetime.UTC)
+
+        await _call(repo)
+
+        _, data = repo.update.call_args.args
+        after = datetime.datetime.now(datetime.UTC)
+        assert before <= data["roles_checked_at"] <= after
+
+    @pytest.mark.anyio
+    async def test_stale_unchanged_only_bumps_marker(self, repo, graph):
+        repo.get_by_email.return_value = _user(
+            [UserRoleEnum.ADMIN, UserRoleEnum.USER], roles_checked_at=STALE
+        )
+        graph.member_group_ids.return_value = {ADMIN_G}
+
+        await _call(repo)
+
+        _, data = repo.update.call_args.args
+        assert set(data) == {"roles_checked_at"}
+
+    @pytest.mark.anyio
+    async def test_demotion_when_removed_from_group(self, repo, graph):
+        repo.get_by_email.return_value = _user(
+            [UserRoleEnum.USER, UserRoleEnum.CREATOR], roles_checked_at=None
+        )
+
+        await _call(repo)
+
+        _, data = repo.update.call_args.args
+        assert data["roles"] == ["user"]
+
+    @pytest.mark.anyio
+    async def test_graph_failure_removes_all_privileged_roles(
+        self, repo, graph
+    ):
+        repo.get_by_email.return_value = _user(
+            [
+                UserRoleEnum.USER,
+                UserRoleEnum.CREATOR,
+                UserRoleEnum.ADMIN,
+                UserRoleEnum.WORKFLOWS,
+            ],
+            roles_checked_at=STALE,
+        )
+        graph.member_group_ids.side_effect = EntraGraphError("down")
+
+        await _call(repo)
+
+        _, data = repo.update.call_args.args
+        assert data["roles"] == ["user"]
+
+    @pytest.mark.anyio
+    async def test_graph_failure_still_records_check_time(self, repo, graph):
+        repo.get_by_email.return_value = _user(
+            [UserRoleEnum.USER], roles_checked_at=STALE
+        )
+        graph.member_group_ids.side_effect = EntraGraphError("down")
+
+        await _call(repo)
+
+        _, data = repo.update.call_args.args
+        assert data["roles_checked_at"] > STALE
+
+    @pytest.mark.anyio
+    async def test_sync_disabled_returns_existing_user(
+        self, repo, graph, config
+    ):
+        config.ENTRA_ROLE_SYNC_ENABLED = False
+        user = _user([UserRoleEnum.USER], roles_checked_at=None)
+        repo.get_by_email.return_value = user
+
+        assert await _call(repo) is user
+        graph.member_group_ids.assert_not_called()
+        repo.update.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_stale_unlinked_row_saves_link_and_roles_together(
+        self, repo, graph
+    ):
+        repo.get_by_email.return_value = _user(
+            [UserRoleEnum.USER], entra_oid=None, roles_checked_at=STALE
+        )
+        graph.member_group_ids.return_value = {ADMIN_G}
+
+        await _call(repo, email="alice@corp.com", entra_oid=OID_1)
+
+        assert graph.member_group_ids.call_args.args[0] == OID_1
+        _, data = repo.update.call_args.args
+        assert (data["entra_oid"], data["roles"]) == (OID_1, ["user", "admin"])
+
+
+@pytest.mark.usefixtures("config")
 class TestEntraObjectIdLookup:
     @pytest.mark.anyio
     async def test_lookup_by_entra_oid_takes_precedence_over_email(
         self, repo, graph
     ):
         user = _user(
-            [UserRoleEnum.USER], email="original@corp.com", entra_oid=OID_1
+            [UserRoleEnum.USER],
+            email="original@corp.com",
+            entra_oid=OID_1,
+            roles_checked_at=NOW,
         )
         repo.get_by_entra_oid.return_value = user
 
@@ -178,7 +396,7 @@ class TestEntraObjectIdLookup:
         self, repo, graph
     ):
         repo.get_by_email.return_value = _user(
-            [UserRoleEnum.USER], entra_oid=None
+            [UserRoleEnum.USER], entra_oid=None, roles_checked_at=NOW
         )
 
         await _call(repo, email="alice@corp.com", entra_oid=OID_1)

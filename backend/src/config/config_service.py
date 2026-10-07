@@ -72,6 +72,7 @@ class ConfigService(BaseSettings):
     ENTRA_WORKFLOWS_GROUPS_STR: str = Field(
         default="", alias="ENTRA_WORKFLOWS_GROUPS"
     )
+    ENTRA_ROLE_SYNC_TTL_SECONDS: int = 600
 
     # --- Storage ---
     # The defaults will be set in the validator below to prevent recursion.

@@ -15,6 +15,7 @@
 import dataclasses
 import datetime
 import logging
+from typing import Any
 
 from fastapi import Depends, HTTPException, status
 
@@ -34,6 +35,21 @@ _ROLE_ORDER = {role: index for index, role in enumerate(UserRoleEnum)}
 def _role_values(roles: set[UserRoleEnum]) -> list[str]:
     """Returns the roles as strings, in a fixed order, for storage."""
     return [r.value for r in sorted(roles, key=_ROLE_ORDER.__getitem__)]
+
+
+def _roles_check_due(user: UserModel, now: datetime.datetime) -> bool:
+    """Returns True if the user's roles were never checked or are stale."""
+    return user.roles_checked_at is None or (
+        now - user.roles_checked_at
+    ) >= datetime.timedelta(seconds=config_service.ENTRA_ROLE_SYNC_TTL_SECONDS)
+
+
+def _is_deployer_admin(email: str) -> bool:
+    """Returns True if `email` is the deployer's break-glass admin email."""
+    admin_email = config_service.ADMIN_USER_EMAIL.strip().lower()
+    if not admin_email or admin_email == "system":
+        return False
+    return email.strip().lower() == admin_email
 
 
 def _reject_if_deleted(user: UserModel | None) -> None:
@@ -93,18 +109,10 @@ class UserService:
         # create them again.
         _reject_if_deleted(existing_user)
 
+        now = datetime.datetime.now(datetime.UTC)
         if existing_user is None:
-            return await self._create_new_user(
-                sign_in, datetime.datetime.now(datetime.UTC)
-            )
-        if sign_in.needs_link:
-            return (
-                await self.user_repo.update(
-                    existing_user.id, {"entra_oid": sign_in.entra_oid}
-                )
-                or existing_user
-            )
-        return existing_user
+            return await self._create_new_user(sign_in, now)
+        return await self._recheck_roles(existing_user, sign_in, now)
 
     async def _find_or_link_user(self, sign_in: _SignIn) -> UserModel | None:
         """Finds the account for this sign-in, or None for a new user.
@@ -176,10 +184,73 @@ class UserService:
             if sync_enabled
             else None
         )
-        user_data["roles"] = _role_values(entra_roles or {UserRoleEnum.USER})
+        roles = entra_roles or {UserRoleEnum.USER}
+        if sync_enabled and _is_deployer_admin(sign_in.email):
+            if sign_in.entra_oid is not None:
+                # The deployer email came from the sign-in token. Confirm with
+                # Graph that this object ID really owns it before giving a new
+                # account break-glass admin.
+                try:
+                    await self._confirm_oid_email_via_graph(
+                        sign_in.entra_oid, sign_in.email
+                    )
+                    roles = self._apply_deployer_admin_safeguard(
+                        sign_in.email, roles
+                    )
+                except HTTPException as exc:
+                    # Sign-in still goes ahead: IAP has already verified this
+                    # person, and only the extra admin grant is withheld. They
+                    # get the roles their Entra groups grant, like anyone else.
+                    logger.warning(
+                        "Not granting deployer admin to new user %s: could "
+                        "not confirm Entra OID %s owns that email: %s",
+                        sign_in.email,
+                        sign_in.entra_oid,
+                        exc.detail,
+                    )
+            else:
+                roles = roles | {UserRoleEnum.ADMIN}
+        user_data["roles"] = _role_values(roles)
         if sync_enabled:
             user_data["roles_checked_at"] = now
         return await self.user_repo.create_or_get_existing(user_data)
+
+    async def _recheck_roles(
+        self, user: UserModel, sign_in: _SignIn, now: datetime.datetime
+    ) -> UserModel:
+        """Returns the existing user, rechecking their roles when due.
+
+        With role sync on, roles are rechecked against Entra groups at most
+        once per ENTRA_ROLE_SYNC_TTL_SECONDS. If Graph fails, privileged roles
+        are removed, except that the deployer keeps admin. The check time is
+        saved either way, so Graph is retried after one TTL rather than on
+        every request. A pending object ID link is saved here too.
+        """
+        link = {"entra_oid": sign_in.entra_oid} if sign_in.needs_link else {}
+        if not config_service.ENTRA_ROLE_SYNC_ENABLED or not _roles_check_due(
+            user, now
+        ):
+            if link:
+                return await self.user_repo.update(user.id, link) or user
+            return user
+
+        updates: dict[str, Any] = {"roles_checked_at": now, **link}
+        lookup_ref = sign_in.entra_oid or user.entra_oid or user.email
+        entra_roles = await self._fetch_entra_roles(lookup_ref, user.email)
+        target = self._apply_deployer_admin_safeguard(
+            user.email,
+            entra_roles if entra_roles is not None else {UserRoleEnum.USER},
+        )
+        current = {UserRoleEnum(r) for r in user.roles}
+        if target != current:
+            updates["roles"] = _role_values(target)
+            logger.info(
+                "Entra role sync for %s: %s -> %s",
+                user.email,
+                _role_values(current),
+                updates["roles"],
+            )
+        return await self.user_repo.update(user.id, updates) or user
 
     async def _confirm_oid_email_via_graph(
         self, entra_oid: str, email: str
@@ -251,6 +322,23 @@ class UserService:
         for group_id in matched:
             roles.update(UserRoleEnum(r) for r in group_roles.get(group_id, ()))
         return roles
+
+    def _apply_deployer_admin_safeguard(
+        self, user_email: str, target: set[UserRoleEnum]
+    ) -> set[UserRoleEnum]:
+        """Returns `target`, with admin added back if the user is the deployer.
+
+        The deployer (ADMIN_USER_EMAIL) is the break-glass admin, so Entra
+        groups can never remove their admin role.
+        """
+        if UserRoleEnum.ADMIN not in target and _is_deployer_admin(user_email):
+            logger.warning(
+                "Entra sync would remove admin from deployer %s; "
+                "keeping the admin role (break-glass exemption).",
+                user_email,
+            )
+            return target | {UserRoleEnum.ADMIN}
+        return target
 
     async def get_user_by_id(self, user_id: int) -> UserModel | None:
         """Finds a single user by their ID."""
