@@ -20,17 +20,12 @@ import {
   HttpHandler,
   HttpEvent,
   HttpInterceptor,
-  HttpErrorResponse,
 } from '@angular/common/http';
-import {Observable, throwError} from 'rxjs';
-import {catchError, switchMap} from 'rxjs/operators';
-import {AuthService} from './common/services/auth.service';
+import {Observable} from 'rxjs';
 import {environment} from '../environments/environment';
 
 @Injectable()
 export class AuthInterceptor implements HttpInterceptor {
-  constructor(private authService: AuthService) {}
-
   intercept(
     request: HttpRequest<unknown>,
     next: HttpHandler,
@@ -41,17 +36,10 @@ export class AuthInterceptor implements HttpInterceptor {
     if (request.url.startsWith(environment.backendURL) || request.url.includes('/api/')) {
       authorizedRequest = request.clone({ withCredentials: true });
     }
-    
-    return next.handle(authorizedRequest).pipe(
-      catchError(error => {
-        // If we receive a 401 Unauthorized from the backend, our HttpOnly session
-        // cookie has likely expired or is invalid. We log the user out.
-        if (error instanceof HttpErrorResponse && error.status === 401) {
-          console.error('AuthInterceptor: Session expired (401). Logging out.');
-          void this.authService.logout();
-        }
-        return throwError(() => error);
-      }),
-    );
+
+    // A 401 is passed on to the page unchanged. We do not log out here: IAP
+    // would sign the same user straight back in and the page would reload
+    // forever. The login page shows its own "Authorization Failed" message.
+    return next.handle(authorizedRequest);
   }
 }
