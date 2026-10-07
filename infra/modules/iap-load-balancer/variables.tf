@@ -82,6 +82,17 @@ variable "iap_access_members" {
   default     = []
 }
 
+variable "entra_access_group_ids" {
+  type        = list(string)
+  description = "Object IDs of the Entra groups whose members may open the app through IAP. Required when Entra sign-in is used; only these groups get in, not everyone in the tenant. The groups must be assigned to the Entra app and sent in its groups claim."
+  default     = []
+
+  validation {
+    condition     = length(var.entra_access_group_ids) > 0 || (var.org_id == "" && var.workforce_pool_id == "")
+    error_message = "Entra sign-in needs at least one access group: set entra_access_group_ids to the Entra group object ID(s) allowed to use the app."
+  }
+}
+
 variable "workforce_pool_id" {
   type        = string
   description = "An existing Workforce Identity Pool ID (e.g. cs-workforce-pool). Required if using an existing pool instead of creating a new one."

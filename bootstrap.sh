@@ -471,6 +471,19 @@ configure_environment() {
             read -p "   Deployer Entra Sign-in Email (break-glass admin) [default value: $DEFAULT_ADMIN_EMAIL]: " DEPLOYER_ADMIN_EMAIL < /dev/tty
             ADMIN_USER_EMAIL=${DEPLOYER_ADMIN_EMAIL:-$DEFAULT_ADMIN_EMAIL}
 
+            # Only members of these Entra groups can open the app through IAP.
+            # Required: without it, nobody in Entra could sign in.
+            prompt "Entra access group(s): only members can open the app (see README_ENTRA.md)."
+            ENTRA_ACCESS_GROUP_IDS=""
+            while [ -z "$ENTRA_ACCESS_GROUP_IDS" ]; do
+                read -p "   Entra access group object ID(s), comma-separated: " ENTRA_ACCESS_GROUP_IDS < /dev/tty
+                ENTRA_ACCESS_GROUP_IDS=$(echo "$ENTRA_ACCESS_GROUP_IDS" | tr -d '[:space:]')
+                if [ -z "$ENTRA_ACCESS_GROUP_IDS" ]; then
+                    echo -e "   ${C_RED}At least one access group is required for Entra sign-in.${C_RESET}"
+                fi
+            done
+            ENTRA_ACCESS_GROUPS_HCL="[\"${ENTRA_ACCESS_GROUP_IDS//,/\", \"}\"]"
+
             sed -i.bak "s|^[#[:space:]]*entra_client_id[[:space:]]*=.*|entra_client_id = \"$ENTRA_CLIENT_ID\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*entra_tenant_id[[:space:]]*=.*|entra_tenant_id = \"$ENTRA_TENANT_ID\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*entra_client_secret[[:space:]]*=.*|entra_client_secret = \"$ENTRA_CLIENT_SECRET\"|g" "$TFVARS_FILE_PATH"
@@ -481,6 +494,7 @@ configure_environment() {
             sed -i.bak "s|^[#[:space:]]*iap_expected_audience[[:space:]]*=.*|iap_expected_audience = \"\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*workforce_pool_id[[:space:]]*=.*|workforce_pool_id = \"\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*iap_access_members[[:space:]]*=.*|iap_access_members = []|g" "$TFVARS_FILE_PATH"
+            sed -i.bak "s|^[#[:space:]]*entra_access_group_ids[[:space:]]*=.*|entra_access_group_ids = $ENTRA_ACCESS_GROUPS_HCL|g" "$TFVARS_FILE_PATH"
             if [ -n "$ADMIN_USER_EMAIL" ]; then
                 sed -i.bak "s|^[#[:space:]]*ADMIN_USER_EMAIL[[:space:]]*=.*|    ADMIN_USER_EMAIL = \"$ADMIN_USER_EMAIL\"|g" "$TFVARS_FILE_PATH"
             fi
@@ -499,6 +513,7 @@ configure_environment() {
             sed -i.bak "s|^[#[:space:]]*iap_expected_audience[[:space:]]*=.*|iap_expected_audience = \"\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*workforce_pool_id[[:space:]]*=.*|workforce_pool_id = \"\"|g" "$TFVARS_FILE_PATH"
             sed -i.bak "s|^[#[:space:]]*iap_access_members[[:space:]]*=.*|iap_access_members = []|g" "$TFVARS_FILE_PATH"
+            sed -i.bak "s|^[#[:space:]]*entra_access_group_ids[[:space:]]*=.*|entra_access_group_ids = []|g" "$TFVARS_FILE_PATH"
 
             write_state "AUTH_CHOICE" "1"
         fi

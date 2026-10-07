@@ -84,5 +84,7 @@ iap_oauth2_client_secret = "YOUR_IAP_OAUTH2_CLIENT_SECRET"
 iap_expected_audience    = ""
 domain_name              = "YOUR_CUSTOM_DOMAIN_NAME_OR_IP"
 iap_access_members       = []
+# Entra sign-in only: object IDs of the Entra group(s) allowed through IAP.
+entra_access_group_ids   = []
 workforce_pool_id        = ""
 org_id                   = "YOUR_GCP_ORGANIZATION_ID"

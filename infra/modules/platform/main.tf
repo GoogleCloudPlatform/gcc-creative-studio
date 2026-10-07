@@ -262,6 +262,7 @@ module "iap_load_balancer" {
   iap_oauth2_client_secret = var.iap_oauth2_client_secret
   domain_name              = var.domain_name
   iap_access_members       = var.iap_access_members
+  entra_access_group_ids   = var.entra_access_group_ids
   workforce_pool_id        = var.workforce_pool_id
 }
 

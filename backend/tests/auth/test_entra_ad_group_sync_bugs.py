@@ -17,6 +17,8 @@ App roles come from Microsoft Graph, never from the IAP token.
 """
 
 import datetime
+import re
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -29,6 +31,8 @@ from src.auth.entra_graph_client import EntraGraphClient
 from src.config.config_service import config_service
 from src.users.user_model import UserModel, UserRoleEnum
 from src.users.user_service import UserService
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture(autouse=True)
@@ -53,6 +57,19 @@ def _user(**overrides) -> UserModel:
 
 
 class TestRoleSourceIsNotTheIapToken:
+    def test_wif_attribute_mapping_uses_oid_and_groups_only_for_iap(self):
+        """The pool keys users by Entra object ID and passes groups to IAP.
+
+        The object ID never changes, so it identifies each user. The Entra
+        groups are passed through only so IAP can check the access group.
+        App roles never come from the sign-in token (see the next test).
+        """
+        content = (
+            REPO_ROOT / "infra/modules/iap-load-balancer/main.tf"
+        ).read_text(encoding="utf-8")
+        assert re.search(r'"google\.subject"\s*=\s*"assertion\.oid"', content)
+        assert re.search(r'"google\.groups"\s*=\s*"assertion\.groups"', content)
+
     @pytest.mark.anyio
     @patch("src.auth.auth_guard.id_token.verify_token")
     async def test_guard_ignores_group_and_role_claims(self, mock_verify):

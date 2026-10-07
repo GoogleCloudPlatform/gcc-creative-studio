@@ -36,6 +36,12 @@ resource "google_iam_workforce_pool" "pool" {
   workforce_pool_id = local.expected_pool_id
   parent            = "organizations/${var.org_id}"
   location          = "global"
+
+  # How long a sign-in lasts before the user is sent back to Entra. This is
+  # also the longest someone keeps access after they are disabled in Entra
+  # or removed from the access group, so it is set on purpose, not left to
+  # the default.
+  session_duration = "3600s"
 }
 
 resource "google_iam_workforce_pool_provider" "entra" {
@@ -67,6 +73,9 @@ resource "google_iam_workforce_pool_provider" "entra" {
     "google.subject"      = "assertion.oid"
     "google.display_name" = "assertion.name"
     "google.email"        = "has(assertion.email) ? assertion.email : assertion.preferred_username"
+    # Group object IDs from the Entra groups claim; IAP access is granted
+    # per group (see the *_entra_group grants below).
+    "google.groups" = "assertion.groups"
   }
 
 }
@@ -257,12 +266,13 @@ resource "google_iap_web_backend_service_iam_member" "member" {
   member              = each.key
 }
 
-resource "google_iap_web_backend_service_iam_member" "backend_entra_member" {
-  count               = local.use_workforce ? 1 : 0
+resource "google_iap_web_backend_service_iam_member" "backend_entra_group" {
+  for_each            = local.use_workforce ? toset(var.entra_access_group_ids) : toset([])
   project             = var.gcp_project_id
   web_backend_service = google_compute_backend_service.be_service.name
   role                = "roles/iap.httpsResourceAccessor"
-  member              = "principalSet://iam.googleapis.com/${local.resolved_pool_id}/*"
+  # Only members of this Entra group get through IAP (not the whole pool).
+  member = "principalSet://iam.googleapis.com/${local.resolved_pool_id}/group/${each.key}"
 }
 
 # Grant users IAP secured Web App User role on frontend service
@@ -274,12 +284,12 @@ resource "google_iap_web_backend_service_iam_member" "fe_member" {
   member              = each.key
 }
 
-resource "google_iap_web_backend_service_iam_member" "frontend_entra_member" {
-  count               = local.use_workforce ? 1 : 0
+resource "google_iap_web_backend_service_iam_member" "frontend_entra_group" {
+  for_each            = local.use_workforce ? toset(var.entra_access_group_ids) : toset([])
   project             = var.gcp_project_id
   web_backend_service = google_compute_backend_service.fe_service.name
   role                = "roles/iap.httpsResourceAccessor"
-  member              = "principalSet://iam.googleapis.com/${local.resolved_pool_id}/*"
+  member              = "principalSet://iam.googleapis.com/${local.resolved_pool_id}/group/${each.key}"
 }
 
 # Configure IAP Settings to prioritize Workforce Identity Federation on backend service

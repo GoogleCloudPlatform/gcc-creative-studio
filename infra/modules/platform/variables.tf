@@ -145,6 +145,12 @@ variable "iap_access_members" {
   default     = []
 }
 
+variable "entra_access_group_ids" {
+  type        = list(string)
+  description = "Object IDs of the Entra groups whose members may open the app through IAP. Required for Entra sign-in."
+  default     = []
+}
+
 variable "workforce_pool_id" {
   type        = string
   description = "An existing Workforce Identity Pool ID (e.g. cs-workforce-pool)."

@@ -28,6 +28,7 @@ variables {
   entra_tenant_id       = "00000000-0000-0000-0000-000000000001"
   entra_client_id       = "00000000-0000-0000-0000-000000000002"
   entra_client_secret   = "dummy-secret"
+  entra_access_group_ids = ["aaaa-access-group"]
 }
 
 run "creates_pool_when_only_org_id_set" {
@@ -118,5 +119,51 @@ run "no_pool_when_neither_org_id_nor_workforce_pool_id_set" {
   assert {
     condition     = output.entra_redirect_uri == ""
     error_message = "Output entra_redirect_uri should be empty when workforce federation is disabled."
+  }
+}
+
+# Q3: in Entra mode, IAP must let in only members of the named Entra access
+# group(s), never the whole workforce pool.
+run "iap_access_limited_to_entra_access_group" {
+  command = plan
+
+  assert {
+    condition     = google_iam_workforce_pool_provider.entra[0].attribute_mapping["google.groups"] == "assertion.groups"
+    error_message = "Provider should map google.groups to assertion.groups so IAP can check group membership."
+  }
+
+  assert {
+    condition     = google_iap_web_backend_service_iam_member.backend_entra_group["aaaa-access-group"].member == "principalSet://iam.googleapis.com/locations/global/workforcePools/cs-workforce-pool-abcd1234/group/aaaa-access-group"
+    error_message = "Backend IAP access should be granted to the Entra access group."
+  }
+
+  assert {
+    condition     = google_iap_web_backend_service_iam_member.frontend_entra_group["aaaa-access-group"].member == "principalSet://iam.googleapis.com/locations/global/workforcePools/cs-workforce-pool-abcd1234/group/aaaa-access-group"
+    error_message = "Frontend IAP access should be granted to the Entra access group."
+  }
+}
+
+run "entra_mode_refuses_empty_access_group_list" {
+  command = plan
+
+  variables {
+    entra_access_group_ids = []
+  }
+
+  expect_failures = [var.entra_access_group_ids]
+}
+
+run "google_mode_needs_no_access_group" {
+  command = plan
+
+  variables {
+    org_id                 = ""
+    workforce_pool_id      = ""
+    entra_access_group_ids = []
+  }
+
+  assert {
+    condition     = length(google_iap_web_backend_service_iam_member.backend_entra_group) == 0
+    error_message = "No Entra group grant should exist outside Entra mode."
   }
 }
