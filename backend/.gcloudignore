@@ -21,3 +21,5 @@ __pycache__/
 # Ignored by the build system
 /setup.cfg
 my_env
+# Local environment file with test settings; never ship it in an image
+.env
