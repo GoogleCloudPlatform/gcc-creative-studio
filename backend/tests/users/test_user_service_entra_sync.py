@@ -104,7 +104,7 @@ class TestEntraObjectIdLookup:
 
         await _call(repo, entra_oid=OID_1.upper())
 
-        created = repo.create.call_args.args[0]
+        created = repo.create_or_get_existing.call_args.args[0]
         assert created["entra_oid"] == OID_1
 
     @pytest.mark.anyio

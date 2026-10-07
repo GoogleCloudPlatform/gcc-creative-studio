@@ -59,7 +59,7 @@ class TestCreateUserIfNotExists:
             "user@example.com", include_deleted=True
         )
         # Verify create was NOT called
-        mock_user_repo.create.assert_not_called()
+        mock_user_repo.create_or_get_existing.assert_not_called()
 
     @pytest.mark.anyio
     async def test_user_does_not_exist(
@@ -68,7 +68,7 @@ class TestCreateUserIfNotExists:
         # Setup: Mock repo to return None (user doesn't exist)
         mock_user_repo.get_by_email.return_value = None
         # Mock create to return the created user
-        mock_user_repo.create.return_value = mock_user
+        mock_user_repo.create_or_get_existing.return_value = mock_user
 
         # Action: Call service method
         result = await user_service.create_user_if_not_exists(
@@ -84,7 +84,7 @@ class TestCreateUserIfNotExists:
         )
 
         # Verify create was called with correct data
-        called_args = mock_user_repo.create.call_args[0][0]
+        called_args = mock_user_repo.create_or_get_existing.call_args[0][0]
         assert called_args["email"] == "new@example.com"
         assert called_args["name"] == "New User"
         assert called_args["roles"] == [UserRoleEnum.USER]
@@ -94,7 +94,7 @@ class TestCreateUserIfNotExists:
         self, user_service, mock_user_repo, mock_user
     ):
         mock_user_repo.get_by_email.return_value = None
-        mock_user_repo.create.return_value = mock_user
+        mock_user_repo.create_or_get_existing.return_value = mock_user
 
         await user_service.create_user_if_not_exists(
             email="  New.User@Example.COM ", name="New User", picture=""
@@ -103,7 +103,7 @@ class TestCreateUserIfNotExists:
         mock_user_repo.get_by_email.assert_called_once_with(
             "new.user@example.com", include_deleted=True
         )
-        created = mock_user_repo.create.call_args.args[0]
+        created = mock_user_repo.create_or_get_existing.call_args.args[0]
         assert created["email"] == "new.user@example.com"
 
 

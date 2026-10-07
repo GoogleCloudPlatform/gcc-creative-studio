@@ -13,8 +13,11 @@
 # limitations under the License.
 
 
+from typing import Any
+
 from fastapi import Depends
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.base_repository import BaseRepository
@@ -61,6 +64,41 @@ class UserRepository(BaseRepository[User, UserModel]):
         if not user:
             return None
         return self.schema.model_validate(user)
+
+    async def create_or_get_existing(
+        self, user_data: dict[str, Any]
+    ) -> UserModel:
+        """Creates the user, or returns the row another request just created.
+
+        A browser's first page load sends several requests at once, and each
+        can try to create the new user. Only one insert can succeed; the
+        others undo their failed insert and use the row that now exists, if
+        it has the same email or Entra ID.
+        """
+        try:
+            return await self.create(user_data)
+        except IntegrityError:
+            await self.db.rollback()
+            existing = None
+            if user_data.get("entra_oid"):
+                existing = await self.get_by_entra_oid(
+                    user_data["entra_oid"], include_deleted=True
+                )
+            if existing is None and user_data.get("email"):
+                existing = await self.get_by_email(
+                    user_data["email"], include_deleted=True
+                )
+            if existing is None:
+                raise
+            # Only reuse the row if it is the same, active person. Anything
+            # else keeps the original error rather than handing over another
+            # identity's (or a deactivated) account.
+            if existing.deleted_at is not None or (
+                user_data.get("entra_oid")
+                and existing.entra_oid != user_data["entra_oid"]
+            ):
+                raise
+            return existing
 
     async def query(
         self,

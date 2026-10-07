@@ -96,4 +96,4 @@ class TestAuthDefectsStayFixed:
             )
 
         assert exc_info.value.status_code == 403
-        repo.create.assert_not_called()
+        repo.create_or_get_existing.assert_not_called()

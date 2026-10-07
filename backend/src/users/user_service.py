@@ -152,7 +152,7 @@ class UserService:
             entra_oid=sign_in.entra_oid,
         ).model_dump(exclude_none=True)
         user_data["roles"] = [UserRoleEnum.USER]
-        return await self.user_repo.create(user_data)
+        return await self.user_repo.create_or_get_existing(user_data)
 
     async def _confirm_oid_email_via_graph(
         self, entra_oid: str, email: str
