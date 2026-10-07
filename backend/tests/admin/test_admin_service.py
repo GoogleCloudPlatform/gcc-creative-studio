@@ -123,14 +123,19 @@ async def test_get_generation_health():
 
 @pytest.mark.asyncio
 async def test_get_active_users_monthly():
+    from unittest.mock import patch
+    from datetime import datetime
+
     mock_repo = MagicMock()
     mock_repo.get_active_users_monthly_counts = AsyncMock(
         return_value={"2026-04": 3}
     )
 
-    service = AdminService(admin_repo=mock_repo)
-    result = await service.get_active_users_monthly()
-    assert len(result) == 7  # Default 180 days should yield 7 months
+    with patch("src.admin.admin_service.datetime") as mock_datetime:
+        mock_datetime.today.return_value = datetime(2026, 7, 1)
+        service = AdminService(admin_repo=mock_repo)
+        result = await service.get_active_users_monthly()
+        assert len(result) == 7  # Default 180 days should yield 7 months
 
 
 @pytest.mark.asyncio

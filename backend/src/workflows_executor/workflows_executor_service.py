@@ -334,6 +334,7 @@ class WorkflowsExecutorService:
             "aspect_ratio": request.config.aspect_ratio,
             "use_brand_guidelines": request.config.brand_guidelines,
             "number_of_media": 1,
+            "resolution": request.config.resolution,
         }
 
         headers = await self._service_headers(acting_user_id)
@@ -381,6 +382,7 @@ class WorkflowsExecutorService:
             "number_of_media": 1,
             "source_media_items": media_items,
             "source_asset_ids": asset_ids,
+            "resolution": request.config.resolution,
         }
 
         headers = await self._service_headers(acting_user_id)
@@ -447,6 +449,7 @@ class WorkflowsExecutorService:
             "prompt": request.inputs.prompt,
             "workspace_id": request.workspace_id,
             "generation_model": request.config.model,
+            "resolution": request.config.resolution,
             "use_brand_guidelines": request.config.brand_guidelines,
             "reference_images": reference_images,
             "source_media_items": media_items,

@@ -82,25 +82,30 @@ export class ImageSelectorComponent implements OnInit {
 
   // This method is called by the file input or drop event inside this component
   handleFileSelect(file: File): void {
-    if (file.type.startsWith('image/')) {
+    const isImage =
+      file.type.startsWith('image/') ||
+      /\.(jpg|jpeg|png|gif|webp|avif)$/i.test(file.name);
+    const isVideoOrAudio =
+      file.type.startsWith('video/') ||
+      file.type.startsWith('audio/') ||
+      /\.(mp4|webm|mov|avi|mkv|mp3|wav|ogg|m4a|aac|flac|wma)$/i.test(file.name);
+
+    if (isImage) {
       if (this.shouldCrop) {
         // If shouldCrop is true, open the cropper dialog
-        const cropperDialogRef = this.dialog.open(ImageCropperDialogComponent, {
-          data: {
-            imageFile: file,
-            assetType: this.data.assetType,
-            enableUpscale: this.data.enableUpscale,
-          },
-          width: '600px',
+        const cropperDialogRef = ImageCropperDialogComponent.open(this.dialog, {
+          imageFile: file,
+          assetType: this.data.assetType,
+          enableUpscale: this.data.enableUpscale,
         });
 
-        cropperDialogRef
-          .afterClosed()
-          .subscribe((asset: SourceAssetResponseDto) => {
+        cropperDialogRef.subscribe(
+          (asset: SourceAssetResponseDto | undefined) => {
             if (asset) {
               this.dialogRef.close(asset);
             }
-          });
+          },
+        );
       } else {
         // If shouldCrop is false, upload directly
         this.isUploading = true;
@@ -113,10 +118,7 @@ export class ImageSelectorComponent implements OnInit {
             }
           });
       }
-    } else if (
-      file.type.startsWith('video/') ||
-      file.type.startsWith('audio/')
-    ) {
+    } else if (isVideoOrAudio) {
       // If it's a video or audio, upload it directly from here
       this.isUploading = true;
       this.uploadMediaDirectly(file)
@@ -152,24 +154,81 @@ export class ImageSelectorComponent implements OnInit {
     event.preventDefault();
     event.stopPropagation();
     this.isDragging = false;
-    if (event.dataTransfer?.files[0]) {
-      this.handleFileSelect(event.dataTransfer.files[0]);
+    if (this.isUploading) return;
+
+    let file: File | null = null;
+    const dt = event.dataTransfer;
+
+    // Debug logging synchronously before the event context is lost
+    const debugItems = dt?.items
+      ? Array.from(dt.items).map(i => ({kind: i.kind, type: i.type}))
+      : [];
+    const debugFiles = dt?.files ? dt.files.length : 0;
+
+    if (dt?.files && dt.files.length > 0) {
+      file = dt.files[0];
+    } else if (dt?.items) {
+      const items = Array.from(dt.items);
+      const fileItem = items.find(item => item.kind === 'file');
+      if (fileItem) {
+        file = fileItem.getAsFile();
+      } else {
+        // Try to handle dragging an image from another webpage
+        const uriItem = items.find(item => item.type === 'text/uri-list');
+        if (uriItem) {
+          this.isUploading = true;
+          uriItem.getAsString(uriList => {
+            // text/uri-list can have multiple lines, take the first valid URL
+            const url = uriList
+              .split('\n')
+              .find(line => line.trim() && !line.startsWith('#'))
+              ?.trim();
+            if (url) {
+              fetch(url)
+                .then(res => {
+                  if (!res.ok)
+                    throw new Error(`HTTP error! status: ${res.status}`);
+                  return res.blob();
+                })
+                .then(blob => {
+                  const fetchedFile = new File([blob], 'downloaded_image', {
+                    type: blob.type,
+                  });
+                  this.isUploading = false;
+                  this.handleFileSelect(fetchedFile);
+                })
+                .catch(err => {
+                  console.error(
+                    'Failed to fetch image from dropped URL',
+                    url,
+                    err,
+                  );
+                  this.isUploading = false;
+                  alert(
+                    'Could not download the dropped image directly from the browser due to cross-origin security restrictions (CORS). Please drag the image to your Desktop first, then drag it here.',
+                  );
+                });
+            } else {
+              this.isUploading = false;
+            }
+          });
+          return; // We are handling the upload asynchronously
+        }
+      }
     }
-  }
 
-  openCropperDialog(file: File): void {
-    if (file.type.startsWith('image/')) {
-      this.dialogRef.close();
-
-      this.dialog.open(ImageCropperDialogComponent, {
-        data: {
-          imageFile: file,
-          assetType: this.data.assetType,
-        },
-        width: '600px',
-      });
+    if (file) {
+      this.handleFileSelect(file);
     } else {
-      console.log('File is not an image, cannot open cropper.');
+      console.error(
+        'No valid file found in drop event. items:',
+        debugItems,
+        'files count:',
+        debugFiles,
+      );
+      alert(
+        'Could not read the dropped file. This happens if the file was dragged from an unsupported app. Try selecting it via the upload button instead.',
+      );
     }
   }
 
@@ -264,6 +323,9 @@ export class ImageSelectorComponent implements OnInit {
   onDragOver(event: DragEvent) {
     event.preventDefault();
     event.stopPropagation();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'copy';
+    }
     this.isDragging = true;
   }
 

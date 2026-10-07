@@ -15,8 +15,34 @@
  */
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {ReactiveFormsModule, FormsModule} from '@angular/forms';
+import {MatDialogModule} from '@angular/material/dialog';
+import {MatSnackBarModule} from '@angular/material/snack-bar';
+import {MatMenuModule} from '@angular/material/menu';
+import {MatButtonModule} from '@angular/material/button';
+import {MatIconModule} from '@angular/material/icon';
+import {MatTooltipModule} from '@angular/material/tooltip';
+import {MatSelectModule} from '@angular/material/select';
+import {MatFormFieldModule} from '@angular/material/form-field';
+import {MatInputModule} from '@angular/material/input';
+import {MatChipsModule} from '@angular/material/chips';
+import {MatButtonToggleModule} from '@angular/material/button-toggle';
+import {MatSlideToggleModule} from '@angular/material/slide-toggle';
+import {MatSliderModule} from '@angular/material/slider';
+import {MatRadioModule} from '@angular/material/radio';
+import {MatProgressSpinnerModule} from '@angular/material/progress-spinner';
+import {NoopAnimationsModule} from '@angular/platform-browser/animations';
+import {provideHttpClient} from '@angular/common/http';
+import {provideHttpClientTesting} from '@angular/common/http/testing';
+import {provideRouter} from '@angular/router';
+import {CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
+import {of} from 'rxjs';
 
 import {VideoComponent} from './video.component';
+import {SearchService} from '../services/search/search.service';
+import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
+import {VideoStateService} from '../services/video-state.service';
+import {GalleryService} from '../gallery/gallery.service';
 
 describe('VideoComponent', () => {
   let component: VideoComponent;
@@ -25,6 +51,58 @@ describe('VideoComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [VideoComponent],
+      imports: [
+        ReactiveFormsModule,
+        FormsModule,
+        MatDialogModule,
+        MatSnackBarModule,
+        MatMenuModule,
+        MatButtonModule,
+        MatIconModule,
+        MatTooltipModule,
+        MatSelectModule,
+        MatFormFieldModule,
+        MatInputModule,
+        MatChipsModule,
+        MatButtonToggleModule,
+        MatSlideToggleModule,
+        MatSliderModule,
+        MatRadioModule,
+        MatProgressSpinnerModule,
+        NoopAnimationsModule,
+      ],
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+        {
+          provide: SearchService,
+          useValue: {
+            activeVideoJob$: of(null),
+            videoPrompt: '',
+          },
+        },
+        {
+          provide: WorkspaceStateService,
+          useValue: {
+            getActiveWorkspaceId: () => 1,
+          },
+        },
+        {
+          provide: VideoStateService,
+          useValue: {
+            getState: () => ({}),
+            updateState: jasmine.createSpy('updateState'),
+          },
+        },
+        {
+          provide: GalleryService,
+          useValue: {
+            mapUnifiedItem: (item: any) => item,
+          },
+        },
+      ],
+      schemas: [CUSTOM_ELEMENTS_SCHEMA],
     }).compileComponents();
 
     fixture = TestBed.createComponent(VideoComponent);

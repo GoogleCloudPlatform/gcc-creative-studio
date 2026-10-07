@@ -18,3 +18,5 @@ local/
 !**/environments/dev-infra-example/
 
 genmedia-agent-demos
+.gemini
+.agents

@@ -15,6 +15,11 @@
  */
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {provideHttpClient} from '@angular/common/http';
+import {provideHttpClientTesting} from '@angular/common/http/testing';
+import {MatDialogModule} from '@angular/material/dialog';
+import {NoopAnimationsModule} from '@angular/platform-browser/animations';
+import {CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
 
 import {WorkbenchComponent} from './workbench.component';
 
@@ -25,6 +30,9 @@ describe('WorkbenchComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [WorkbenchComponent],
+      imports: [MatDialogModule, NoopAnimationsModule],
+      providers: [provideHttpClient(), provideHttpClientTesting()],
+      schemas: [CUSTOM_ELEMENTS_SCHEMA],
     }).compileComponents();
 
     fixture = TestBed.createComponent(WorkbenchComponent);

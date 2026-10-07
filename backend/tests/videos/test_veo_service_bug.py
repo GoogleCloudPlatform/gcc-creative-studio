@@ -88,16 +88,9 @@ class TestVeoServiceOmniUploadFailure:
             patch(
                 "src.videos.veo_service.GcsService",
             ) as mock_gcs_class,
-            patch(
-                "src.system_settings.repository.system_settings_repository.SystemSettingsRepository",
-            ) as mock_settings_repo_class,
         ):
             mock_media_repo = AsyncMock()
             mock_media_repo_class.return_value = mock_media_repo
-
-            mock_settings_repo = AsyncMock()
-            mock_settings_repo_class.return_value = mock_settings_repo
-            mock_settings_repo.get_by_id.return_value = None
 
             mock_item1 = MediaItemModel(
                 id=10,

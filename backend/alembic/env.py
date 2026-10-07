@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import os
 from logging.config import fileConfig
 
 from sqlalchemy import pool
@@ -20,10 +21,25 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
+from src.config.config_service import config_service
+
+if not os.getenv("ENVIRONMENT"):
+    os.environ["ENVIRONMENT"] = config_service.ENVIRONMENT
+
+
 from src.database import Base, get_conn_string
-from src.tags.schema.tags_model import (
-    Tag,
-)  # Import to ensure registered with Base.metadata
+from src.tags.schema.tags_model import Tag
+from src.common.schema.media_item_model import MediaItem
+from src.workflows.schema.workflow_model import Workflow
+from src.workflows.schema.workflow_run_model import WorkflowRun
+from src.workspaces.schema.workspace_model import (
+    Workspace,
+    WorkspaceMemberAssociation,
+)
+from src.users.user_model import User
+from src.source_assets.schema.source_asset_model import SourceAsset
+from src.media_templates.schema.media_template_model import MediaTemplate
+from src.common.schema.unified_gallery_view import UnifiedGalleryView
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -74,8 +90,6 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 from google.cloud.sql.connector import Connector, IPTypes
-
-from src.config.config_service import config_service
 
 
 # Define a local get_connection for Alembic to avoid loop issues with the global one

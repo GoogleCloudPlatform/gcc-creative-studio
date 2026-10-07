@@ -15,6 +15,7 @@
  */
 
 import {Injectable} from '@angular/core';
+import {MODEL_CONFIGS} from '../common/config/model-config';
 
 export interface AudioState {
   model: string;
@@ -37,7 +38,7 @@ export class AudioStateService {
     prompt: '',
     negativePrompt: '',
     seed: undefined,
-    sampleCount: 4,
+    sampleCount: 1,
     selectedLanguage: 'en-US',
     selectedVoice: 'Puck',
   };
@@ -47,6 +48,18 @@ export class AudioStateService {
     if (saved) {
       try {
         const parsedState = JSON.parse(saved);
+
+        let loadedModel = parsedState.model ?? this.defaultState.model;
+        const isValidAudioModel = MODEL_CONFIGS.some(
+          m => m.type === 'AUDIO' && m.value === loadedModel,
+        );
+
+        if (!isValidAudioModel) {
+          loadedModel = this.defaultState.model;
+        }
+
+        parsedState.model = loadedModel;
+
         return {...this.defaultState, ...parsedState};
       } catch (e) {
         console.error('Failed to parse audio state', e);

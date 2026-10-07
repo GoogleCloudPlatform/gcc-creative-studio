@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Query
 from pydantic import Field, field_validator, model_validator
@@ -106,8 +106,8 @@ class CreateVeoDto(BaseDto):
     duration_seconds: int = Field(
         default=8,
         ge=1,
-        le=8,
-        description="Duration in seconds for the videos to generate (between 1 and 8 secs).",
+        le=10,
+        description="Duration in seconds for the videos to generate (between 1 and 10 secs).",
     )
     start_image_asset_id: AssetReferenceDto | None = Field(
         default=None,
@@ -150,6 +150,10 @@ class CreateVeoDto(BaseDto):
         default=None,
         description="The ID of the parent media item for multi-turn conversation editing.",
     )
+    resolution: Literal["1K", "2K", "4K"] = Field(
+        default="1K",
+        description="Resolution of the generated videos.",
+    )
 
     @model_validator(mode="after")
     def validate_cross_fields(self) -> "CreateVeoDto":
@@ -157,6 +161,8 @@ class CreateVeoDto(BaseDto):
         1. Ensures that source_media_items have a valid role.
         2. Ensures references are not used with start/end frames or source videos.
         3. Ensures reference image roles are only used with correct model.
+        4. Validates model-specific resolution limits.
+        5. Validates model-specific duration limits.
         """
         conflicting_roles_present = False
         reference_roles_present = False
@@ -192,20 +198,27 @@ class CreateVeoDto(BaseDto):
         has_any_references = has_asset_references or reference_roles_present
 
         if has_any_references:
-            if (
-                model != GenerationModelEnum.VEO_3_1_PREVIEW
-                and model != GenerationModelEnum.VEO_3_1_GENERATE_001
-                and model != GenerationModelEnum.VEO_3_1_LITE_GENERATE_001
-                and model != GenerationModelEnum.VEO_3_1_FAST_GENERATE_001
-                and model != GenerationModelEnum.GEMINI_OMNI
-            ):
+            supported_reference_models = {
+                GenerationModelEnum.VEO_3_1_PREVIEW,
+                GenerationModelEnum.VEO_3_1_GENERATE_001,
+                GenerationModelEnum.VEO_3_1_LITE_GENERATE_001,
+                GenerationModelEnum.VEO_3_1_LITE_PREVIEW,
+                GenerationModelEnum.VEO_3_1_FAST_GENERATE_001,
+                GenerationModelEnum.GEMINI_OMNI,
+                GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+                GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+            }
+            if model not in supported_reference_models:
                 raise ValueError(
                     "Reference images/media are only supported by the "
                     f"'{GenerationModelEnum.VEO_3_1_PREVIEW.value}' model, "
                     f"'{GenerationModelEnum.VEO_3_1_GENERATE_001.value}' model, "
                     f"'{GenerationModelEnum.VEO_3_1_LITE_GENERATE_001.value}' model, "
-                    f"'{GenerationModelEnum.VEO_3_1_FAST_GENERATE_001.value}' model, or "
-                    f"'{GenerationModelEnum.GEMINI_OMNI.value}' model.",
+                    f"'{GenerationModelEnum.VEO_3_1_LITE_PREVIEW.value}' model, "
+                    f"'{GenerationModelEnum.VEO_3_1_FAST_GENERATE_001.value}' model, "
+                    f"'{GenerationModelEnum.GEMINI_OMNI.value}' model, "
+                    f"'{GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW.value}' model, or "
+                    f"'{GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW.value}' model.",
                 )
 
             start_image_present = bool(self.start_image_asset_id)
@@ -221,6 +234,42 @@ class CreateVeoDto(BaseDto):
                 raise ValueError(
                     "Reference media cannot be used at the same time as a start frame, end frame, or source video.",
                 )
+
+        # Validate model-specific resolution limits
+        if model in (
+            GenerationModelEnum.GEMINI_OMNI,
+            GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+            GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+        ):
+            allowed_resolutions = {"1K"}
+        elif model in (
+            GenerationModelEnum.VEO_3_1_LITE_GENERATE_001,
+            GenerationModelEnum.VEO_3_1_LITE_PREVIEW,
+        ):
+            allowed_resolutions = {"1K", "2K"}
+        else:
+            allowed_resolutions = {"1K", "2K", "4K"}
+
+        if self.resolution not in allowed_resolutions:
+            raise ValueError(
+                f"Model '{model.value}' does not support resolution '{self.resolution}'. "
+                f"Supported resolutions: {sorted(list(allowed_resolutions))}"
+            )
+
+        # Validate model-specific duration limits
+        max_duration = 8
+        if model in (
+            GenerationModelEnum.GEMINI_OMNI,
+            GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+            GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+        ):
+            max_duration = 10
+
+        if self.duration_seconds > max_duration:
+            raise ValueError(
+                f"Model '{model.value}' does not support duration '{self.duration_seconds}s'. "
+                f"Maximum supported duration: {max_duration}s."
+            )
 
         return self
 
@@ -247,9 +296,12 @@ class CreateVeoDto(BaseDto):
         """Ensures that only supported generation models for video are used."""
         valid_video_ratios = [
             GenerationModelEnum.GEMINI_OMNI,
+            GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+            GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
             GenerationModelEnum.VEO_3_1_PREVIEW,
             GenerationModelEnum.VEO_3_1_GENERATE_001,
             GenerationModelEnum.VEO_3_1_LITE_GENERATE_001,
+            GenerationModelEnum.VEO_3_1_LITE_PREVIEW,
             GenerationModelEnum.VEO_3_1_FAST_GENERATE_001,
             GenerationModelEnum.VEO_3_FAST,
             GenerationModelEnum.VEO_3_QUALITY,

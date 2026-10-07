@@ -27,7 +27,6 @@ import {UserService} from './user.service';
 import {UserRolesEnum} from '../models/user.model';
 import {isPlatformBrowser} from '@angular/common';
 import {Observable, of, firstValueFrom} from 'rxjs';
-import {SettingsService} from '../../services/settings.service';
 import {environment} from '../../../environments/environment';
 
 const LOGIN_ROUTE = '/login';
@@ -41,7 +40,6 @@ export class AuthGuardService implements CanActivate {
     private authService: AuthService,
     private router: Router,
     private userService: UserService,
-    private settingsService: SettingsService,
   ) {}
 
   async canActivate(
@@ -84,21 +82,18 @@ export class AuthGuardService implements CanActivate {
       }
     }
 
+    const requiredRoles = route.data?.['requiredRoles'] as UserRolesEnum[];
+    if (requiredRoles && requiredRoles.length > 0) {
+      const userDetails = this.userService.getUserDetails();
+      const userRoles = userDetails?.roles || [];
+      const hasRole = requiredRoles.some(role => userRoles.includes(role));
 
-    return this.settingsService.loadSettings().then(() => {
-      const requiredRoles = route.data?.['requiredRoles'] as UserRolesEnum[];
-      if (requiredRoles && requiredRoles.length > 0) {
-        const userDetails = this.userService.getUserDetails();
-        const userRoles = userDetails?.roles || [];
-        const hasRole = requiredRoles.some(role => userRoles.includes(role));
-
-        if (!hasRole) {
-          console.warn('Access denied. Required roles:', requiredRoles);
-          void this.router.navigate(['/']);
-          return false;
-        }
+      if (!hasRole) {
+        console.warn('Access denied. Required roles:', requiredRoles);
+        void this.router.navigate(['/']);
+        return false;
       }
-      return true;
-    });
+    }
+    return true;
   }
 }

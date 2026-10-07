@@ -22,7 +22,6 @@ import {
   MatDialogRef,
 } from '@angular/material/dialog';
 import {AssetTypeEnum} from '../../../admin/source-assets-management/source-asset.model';
-import {ImageCropperDialogComponent} from '../../../common/components/image-cropper-dialog/image-cropper-dialog.component';
 import {
   ImageSelectorComponent,
   MediaItemSelection,

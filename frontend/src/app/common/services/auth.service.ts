@@ -30,7 +30,6 @@ import {Observable, from, throwError, of, firstValueFrom, EMPTY} from 'rxjs';
 import {catchError, tap, map, switchMap} from 'rxjs/operators';
 import { PublicClientApplication, Configuration, AuthenticationResult } from '@azure/msal-browser';
 import {isPlatformBrowser} from '@angular/common';
-import {SettingsService} from '../../services/settings.service';
 
 // Declare the 'google' global object from the Google Identity Services script
 declare const google: any;
@@ -64,7 +63,6 @@ export class AuthService {
     private router: Router,
     private httpClient: HttpClient,
     private userService: UserService,
-    private settingsService: SettingsService,
   ) {
     this.provider.setCustomParameters({
       // Set custom params for the provider
@@ -103,7 +101,6 @@ export class AuthService {
 
         // Call the backend to get or create the user profile.
         return this.syncUserWithBackend$().pipe(
-          switchMap(() => from(this.settingsService.loadSettings())),
           map(() => token), // Pass the token along for the final result.
         );
       }),
@@ -170,7 +167,6 @@ export class AuthService {
 
         // Call the backend to get or create the user profile.
         return this.syncUserWithBackend$().pipe(
-          switchMap(() => from(this.settingsService.loadSettings())),
           map(() => idToken), // Pass the token along for the final result.
         );
       }),
@@ -214,7 +210,6 @@ export class AuthService {
         this.firebaseTokenExpiry = payload.exp * 1000;
 
         await firstValueFrom(this.syncUserWithBackend$());
-        await this.settingsService.loadSettings();
         // After successfully processing redirect, let the guard handle the navigation
       }
     } catch (error) {
@@ -235,7 +230,6 @@ export class AuthService {
         this.firebaseTokenExpiry = payload.exp * 1000;
 
         return this.syncUserWithBackend$().pipe(
-           switchMap(() => from(this.settingsService.loadSettings())),
            map(() => idToken)
         );
       }),
@@ -367,7 +361,6 @@ export class AuthService {
   }
 
   async logout(route: string = LOGIN_ROUTE) {
-    this.settingsService.reset();
     this.sessionSyncedThisLoad = false;
     
     // Attempt to log out of the backend first to clear the session cookie
@@ -394,7 +387,6 @@ export class AuthService {
       })
       .catch(e => {
         console.error('Sign Out Error', e);
-        this.settingsService.reset();
         localStorage.removeItem(USER_DETAILS);
         localStorage.removeItem('showTooltip');
         if (!environment.isLocal && isPlatformBrowser(this.platformId)) {

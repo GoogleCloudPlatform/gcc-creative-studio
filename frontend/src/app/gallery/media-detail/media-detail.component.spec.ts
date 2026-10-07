@@ -15,8 +15,20 @@
  */
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {provideRouter} from '@angular/router';
+import {provideHttpClient} from '@angular/common/http';
+import {provideHttpClientTesting} from '@angular/common/http/testing';
+import {MatSnackBarModule} from '@angular/material/snack-bar';
+import {MatDialogModule} from '@angular/material/dialog';
+import {NoopAnimationsModule} from '@angular/platform-browser/animations';
+import {CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
+import {of} from 'rxjs';
 
 import {MediaDetailComponent} from './media-detail.component';
+import {GalleryService} from '../gallery.service';
+import {AuthService} from '../../common/services/auth.service';
+import {LoadingService} from '../../common/services/loading.service';
+import {WorkspaceStateService} from '../../services/workspace/workspace-state.service';
 
 describe('MediaDetailComponent', () => {
   let component: MediaDetailComponent;
@@ -25,6 +37,38 @@ describe('MediaDetailComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [MediaDetailComponent],
+      imports: [MatSnackBarModule, MatDialogModule, NoopAnimationsModule],
+      providers: [
+        provideRouter([]),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        {
+          provide: GalleryService,
+          useValue: {
+            getAsset: jasmine.createSpy('getAsset').and.returnValue(of({})),
+            getMedia: jasmine.createSpy('getMedia').and.returnValue(of({})),
+          },
+        },
+        {
+          provide: AuthService,
+          useValue: {
+            isUserAdmin: () => false,
+          },
+        },
+        {
+          provide: LoadingService,
+          useValue: {
+            hide: jasmine.createSpy('hide'),
+          },
+        },
+        {
+          provide: WorkspaceStateService,
+          useValue: {
+            getActiveWorkspaceId: () => 1,
+          },
+        },
+      ],
+      schemas: [CUSTOM_ELEMENTS_SCHEMA],
     }).compileComponents();
 
     fixture = TestBed.createComponent(MediaDetailComponent);

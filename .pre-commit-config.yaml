@@ -43,7 +43,8 @@ repos:
     entry: pylint
     args: [ "--rcfile=backend/pylintrc", "--fail-under=9.0" ]
     language: system
-    files: ^backend/
+    files: ^backend/(src|tests)/
+    exclude: ^backend/\.venv/
     stages: [manual]
 
 
@@ -52,3 +53,4 @@ repos:
   hooks:
   - id: black
     files: ^backend/
+    exclude: ^backend/\.venv/

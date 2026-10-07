@@ -15,8 +15,18 @@
  */
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {MatTableModule} from '@angular/material/table';
+import {MatPaginatorModule} from '@angular/material/paginator';
+import {MatDialogModule} from '@angular/material/dialog';
+import {MatSnackBarModule} from '@angular/material/snack-bar';
+import {NoopAnimationsModule} from '@angular/platform-browser/animations';
+import {provideHttpClient} from '@angular/common/http';
+import {provideHttpClientTesting} from '@angular/common/http/testing';
+import {CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
+import {of} from 'rxjs';
 
 import {UsersManagementComponent} from './users-management.component';
+import {UserService} from './user.service';
 
 describe('UsersManagementComponent', () => {
   let component: UsersManagementComponent;
@@ -25,6 +35,28 @@ describe('UsersManagementComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [UsersManagementComponent],
+      imports: [
+        MatTableModule,
+        MatPaginatorModule,
+        MatDialogModule,
+        MatSnackBarModule,
+        NoopAnimationsModule,
+      ],
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        {
+          provide: UserService,
+          useValue: {
+            getUsers: jasmine
+              .createSpy('getUsers')
+              .and.returnValue(
+                of({data: [], total: 0, page: 0, limit: 10, totalPages: 0}),
+              ),
+          },
+        },
+      ],
+      schemas: [CUSTOM_ELEMENTS_SCHEMA],
     }).compileComponents();
 
     fixture = TestBed.createComponent(UsersManagementComponent);

@@ -29,6 +29,7 @@ import base64
 
 from src.auth.iam_signer_credentials_service import IamSignerCredentials
 from src.common.base_dto import (
+    AspectRatioEnum,
     GenerationModelEnum,
     MimeTypeEnum,
     ReferenceImageTypeEnum,
@@ -55,6 +56,34 @@ from src.videos.dto.concatenate_videos_dto import ConcatenateVideosDto
 from src.videos.dto.create_veo_dto import CreateVeoDto
 
 logger = logging.getLogger(__name__)
+
+VIDEO_RESOLUTION_MAP = {
+    "1K": "720p",
+    "2K": "1080p",
+    "4K": "4k",
+}
+
+
+def _format_omni_prompt(
+    prompt: str,
+    aspect_ratio: AspectRatioEnum | str | None,
+) -> str:
+    """Formats prompt with aspect ratio and resolution directives for Gemini Omni."""
+    if (
+        aspect_ratio == AspectRatioEnum.RATIO_9_16
+        and "9:16" not in prompt
+        and "vertical" not in prompt.lower()
+        and "portrait" not in prompt.lower()
+    ):
+        return f"{prompt}\nAspect ratio: 9:16 vertical portrait format. Resolution: 720p."
+    if (
+        aspect_ratio == AspectRatioEnum.RATIO_16_9
+        and "16:9" not in prompt
+        and "widescreen" not in prompt.lower()
+        and "landscape" not in prompt.lower()
+    ):
+        return f"{prompt}\nAspect ratio: 16:9 widescreen landscape format. Resolution: 720p."
+    return prompt
 
 
 # --- STANDALONE WORKER FUNCTION ---
@@ -342,33 +371,19 @@ def _process_video_in_background(
                         permanent_thumbnail_gcs_uris = []
                         final_gcs_uris = []
                         raw_data_dict = None
-                        model_name_for_api = None
+                        model_name_for_api = request_dto.generation_model.value
 
                         start_time = time.monotonic()
 
-                        if (
-                            request_dto.generation_model
-                            == GenerationModelEnum.GEMINI_OMNI
-                        ):
+                        if request_dto.generation_model in [
+                            GenerationModelEnum.GEMINI_OMNI,
+                            GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+                            GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+                        ]:
                             worker_logger.info(
                                 "Running Gemini Omni video generation via Interactions API..."
                             )
                             vertex_client = GenAIModelSetup.get_omni_client()
-
-                            # Fetch custom model name from settings
-                            from src.system_settings.repository.system_settings_repository import (
-                                SystemSettingsRepository,
-                            )
-
-                            settings_repo = SystemSettingsRepository(db)
-                            omni_model_setting = await settings_repo.get_by_id(
-                                "gemini_omni_model_name"
-                            )
-                            model_name_for_api = (
-                                omni_model_setting.value
-                                if omni_model_setting is not None
-                                else ""
-                            )
 
                             interaction_id = None
                             thought_signature = None
@@ -493,6 +508,10 @@ def _process_video_in_background(
                                 with open(local_parent_path, "rb") as f:
                                     parent_video_bytes = f.read()
 
+                                omni_prompt = _format_omni_prompt(
+                                    request_dto.prompt, request_dto.aspect_ratio
+                                )
+
                                 turn2_input = [
                                     {
                                         "type": "user_input",
@@ -519,7 +538,7 @@ def _process_video_in_background(
                                         "content": [
                                             {
                                                 "type": "text",
-                                                "text": request_dto.prompt,
+                                                "text": omni_prompt,
                                             }
                                         ],
                                     },
@@ -537,8 +556,12 @@ def _process_video_in_background(
                                 worker_logger.info(
                                     "Performing Turn 1 Video Generation/R2V"
                                 )
+                                omni_prompt = _format_omni_prompt(
+                                    request_dto.prompt, request_dto.aspect_ratio
+                                )
+
                                 t1_inputs = [
-                                    {"type": "text", "text": request_dto.prompt}
+                                    {"type": "text", "text": omni_prompt}
                                 ]
 
                                 for ref_img in reference_images_for_api:
@@ -599,6 +622,23 @@ def _process_video_in_background(
                             permanent_thumbnail_gcs_uris = []
                             interaction_details = []
 
+                            duration_str = (
+                                f"{request_dto.duration_seconds}s"
+                                if request_dto.duration_seconds
+                                else "8s"
+                            )
+                            omni_response_format: dict[str, str] = {
+                                "type": "video",
+                                "duration": duration_str,
+                            }
+                            if request_dto.aspect_ratio in (
+                                AspectRatioEnum.RATIO_9_16,
+                                AspectRatioEnum.RATIO_16_9,
+                            ):
+                                omni_response_format["aspect_ratio"] = (
+                                    request_dto.aspect_ratio.value
+                                )
+
                             num_outputs = 1
                             worker_logger.info(
                                 f"Queueing {num_outputs} Gemini Omni generation interactions."
@@ -616,12 +656,14 @@ def _process_video_in_background(
                                                 model=model_name_for_api,
                                                 previous_interaction_id=interaction1_id,
                                                 input=turn2_input,
+                                                response_format=omni_response_format,
                                             )
                                         else:
                                             interaction = await asyncio.to_thread(
                                                 vertex_client.interactions.create,
                                                 model=model_name_for_api,
                                                 input=t1_inputs,
+                                                response_format=omni_response_format,
                                             )
                                         break
                                     except Exception as e:
@@ -760,6 +802,11 @@ def _process_video_in_background(
                             }
 
                         else:
+                            # Map DTO resolution ("1K", "2K", "4K") to GenAI SDK supported resolutions ("720p", "1080p", "4k")
+                            api_resolution = VIDEO_RESOLUTION_MAP.get(
+                                request_dto.resolution, "720p"
+                            )
+
                             # Run sync API call in thread
                             operation: types.GenerateVideosOperation = (
                                 await asyncio.to_thread(
@@ -772,6 +819,7 @@ def _process_video_in_background(
                                         number_of_videos=request_dto.number_of_media,
                                         output_gcs_uri=gcs_output_directory,
                                         aspect_ratio=request_dto.aspect_ratio,
+                                        resolution=api_resolution,
                                         negative_prompt=request_dto.negative_prompt,
                                         generate_audio=request_dto.generate_audio,
                                         # TODO: Pass from dto the secs if extending video (4, 5, 6, 7)
@@ -880,6 +928,11 @@ def _process_video_in_background(
                                 operation.response.generated_videos or [],
                             )
 
+                        if request_dto.generation_model not in [
+                            GenerationModelEnum.GEMINI_OMNI,
+                            GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+                            GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+                        ]:
                             valid_generated_videos = [
                                 img
                                 for img in all_generated_videos

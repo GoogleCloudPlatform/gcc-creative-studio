@@ -15,8 +15,18 @@
  */
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {NoopAnimationsModule} from '@angular/platform-browser/animations';
+import {provideRouter} from '@angular/router';
+import {provideHttpClient} from '@angular/common/http';
+import {provideHttpClientTesting} from '@angular/common/http/testing';
+import {MatMenuModule} from '@angular/material/menu';
+import {MatIconModule} from '@angular/material/icon';
+import {MatTooltipModule} from '@angular/material/tooltip';
+import {CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
 
 import {HeaderComponent} from './header.component';
+import {UserService} from '../common/services/user.service';
+import {AuthService} from '../common/services/auth.service';
 
 describe('HeaderComponent', () => {
   let component: HeaderComponent;
@@ -25,6 +35,37 @@ describe('HeaderComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [HeaderComponent],
+      imports: [
+        NoopAnimationsModule,
+        MatMenuModule,
+        MatIconModule,
+        MatTooltipModule,
+      ],
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+        {
+          provide: UserService,
+          useValue: {
+            getUserDetails: () => ({
+              id: '1',
+              name: 'Test User',
+              email: 'test@example.com',
+            }),
+          },
+        },
+        {
+          provide: AuthService,
+          useValue: {
+            logout: jasmine.createSpy('logout'),
+            isUserAdmin: jasmine
+              .createSpy('isUserAdmin')
+              .and.returnValue(false),
+          },
+        },
+      ],
+      schemas: [CUSTOM_ELEMENTS_SCHEMA],
     }).compileComponents();
 
     fixture = TestBed.createComponent(HeaderComponent);

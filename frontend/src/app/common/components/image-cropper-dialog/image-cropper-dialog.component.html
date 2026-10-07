@@ -15,120 +15,305 @@
 -->
 
 <div class="image-cropper-container">
-  <h2 mat-dialog-title>Crop Your Image</h2>
+  <h2 mat-dialog-title>Edit Your Image</h2>
   <mat-dialog-content>
-    <div *ngIf="isConverting" class="loading-overlay">
+    <div *ngIf="loadingMessage" class="loading-overlay">
       <mat-progress-spinner
         mode="indeterminate"
         [diameter]="50"
       ></mat-progress-spinner>
-      <p>Converting image...</p>
+      <p>{{ loadingMessage }}</p>
     </div>
 
-    <div *ngIf="!isConverting">
-      <div class="controls-toolbar">
-        <mat-form-field
-          appearance="outline"
-          class="aspect-ratio-dropdown mt-3"
-          *ngIf="aspectRatios.length > 1"
+    <div *ngIf="!loadingMessage" class="editor-workspace-container">
+      <!-- Left-side Vertical Dock -->
+      <div class="vertical-toolbar">
+        <button
+          mat-icon-button
+          [class.active]="activeMode() === ImageEditorMode.CROP"
+          [class.opened]="activeMode() === ImageEditorMode.CROP && isPanelOpen()"
+          (click)="setMode(ImageEditorMode.CROP)"
+          matTooltip="Crop & Rotate"
+          id="btn-mode-crop"
         >
-          <mat-label>Aspect Ratio</mat-label>
-          <mat-select
-            [value]="currentAspectRatio"
-            (selectionChange)="onAspectRatioChange($event.value)"
-          >
-            <mat-option *ngFor="let ratio of aspectRatios" [value]="ratio.value">
-              {{ ratio.label }}
-            </mat-option>
-          </mat-select>
-        </mat-form-field>
+          <mat-icon>crop</mat-icon>
+        </button>
 
-        <div class="control-group">
-          <button mat-icon-button (click)="zoomOut()" matTooltip="Zoom Out">
-            <mat-icon>zoom_out</mat-icon>
-          </button>
-          <button mat-icon-button (click)="zoomIn()" matTooltip="Zoom In">
-            <mat-icon>zoom_in</mat-icon>
-          </button>
-        </div>
-
-        <div class="control-group">
-          <button mat-icon-button (click)="rotateLeft()" matTooltip="Rotate Left">
-            <mat-icon>rotate_left</mat-icon>
-          </button>
-          <button
-            mat-icon-button
-            (click)="rotateRight()"
-            matTooltip="Rotate Right"
-          >
-            <mat-icon>rotate_right</mat-icon>
-          </button>
-        </div>
-
-        <div class="control-group">
-          <button
-            mat-icon-button
-            (click)="flipHorizontal()"
-            matTooltip="Flip Horizontal"
-          >
-            <mat-icon>flip</mat-icon>
-          </button>
-          <button
-            mat-icon-button
-            (click)="flipVertical()"
-            matTooltip="Flip Vertical"
-            class="flip-vertical"
-          >
-            <mat-icon>flip</mat-icon>
-          </button>
-        </div>
-
-        <div class="control-group">
-          <button mat-icon-button (click)="moveLeft()" matTooltip="Move Left">
-            <mat-icon>keyboard_arrow_left</mat-icon>
-          </button>
-          <button mat-icon-button (click)="moveRight()" matTooltip="Move Right">
-            <mat-icon>keyboard_arrow_right</mat-icon>
-          </button>
-          <button mat-icon-button (click)="moveUp()" matTooltip="Move Up">
-            <mat-icon>keyboard_arrow_up</mat-icon>
-          </button>
-          <button mat-icon-button (click)="moveDown()" matTooltip="Move Down">
-            <mat-icon>keyboard_arrow_down</mat-icon>
-          </button>
-        </div>
+        <button
+          mat-icon-button
+          [class.active]="activeMode() === ImageEditorMode.DRAW"
+          [class.opened]="activeMode() === ImageEditorMode.DRAW && isPanelOpen()"
+          (click)="setMode(ImageEditorMode.DRAW)"
+          matTooltip="Drawing Tools"
+          id="btn-mode-draw"
+        >
+          <mat-icon>brush</mat-icon>
+        </button>
       </div>
 
-      <div class="cropper-area">
-        <image-cropper
-          [imageFile]="imageFile || undefined"
-          [options]="options"
-          [canvasRotation]="canvasRotation"
-          [(transform)]="transform"
-          [containWithinAspectRatio]="containWithinAspectRatio"
-          format="png"
-          (imageCropped)="imageCropped($event)"
-        ></image-cropper>
+      <!-- Center/Right Side: Main Workspace -->
+      <div class="main-workspace">
+        <!-- Floated Crop & Rotate Configuration Panel -->
+        <div class="crop-panel" *ngIf="activeMode() === ImageEditorMode.CROP && isPanelOpen()" id="crop-panel">
+          <!-- Aspect Ratio Selection -->
+          <div class="panel-section" *ngIf="aspectRatios.length > 1">
+            <span class="section-label">ASPECT RATIO</span>
+            <mat-select
+              [value]="currentAspectRatio"
+              (selectionChange)="onAspectRatioChange($event.value)"
+              id="select-aspect-ratio"
+            >
+              <mat-option
+                *ngFor="let ratio of aspectRatios"
+                [value]="ratio.value"
+              >
+                {{ ratio.label }}
+              </mat-option>
+            </mat-select>
+          </div>
+
+          <!-- Zoom Controls -->
+          <div class="panel-section">
+            <span class="section-label">ZOOM</span>
+            <div class="panel-actions">
+              <button mat-icon-button (click)="zoomOut()" matTooltip="Zoom Out" id="btn-zoom-out">
+                <mat-icon>zoom_out</mat-icon>
+              </button>
+              <button mat-icon-button (click)="zoomIn()" matTooltip="Zoom In" id="btn-zoom-in">
+                <mat-icon>zoom_in</mat-icon>
+              </button>
+            </div>
+          </div>
+
+          <!-- Rotate Controls -->
+          <div class="panel-section">
+            <span class="section-label">ROTATE</span>
+            <div class="panel-actions">
+              <button mat-icon-button (click)="rotateLeft()" matTooltip="Rotate Left" id="btn-rotate-left">
+                <mat-icon>rotate_left</mat-icon>
+              </button>
+              <button mat-icon-button (click)="rotateRight()" matTooltip="Rotate Right" id="btn-rotate-right">
+                <mat-icon>rotate_right</mat-icon>
+              </button>
+            </div>
+          </div>
+
+          <!-- Flip Controls -->
+          <div class="panel-section">
+            <span class="section-label">FLIP</span>
+            <div class="panel-actions">
+              <button mat-icon-button (click)="flipHorizontal()" matTooltip="Flip Horizontal" id="btn-flip-h">
+                <mat-icon>flip</mat-icon>
+              </button>
+              <button mat-icon-button (click)="flipVertical()" matTooltip="Flip Vertical" class="flip-vertical" id="btn-flip-v">
+                <mat-icon>flip</mat-icon>
+              </button>
+            </div>
+          </div>
+
+          <!-- Move Controls -->
+          <div class="panel-section">
+            <span class="section-label">MOVE</span>
+            <div class="panel-actions move-actions">
+              <button mat-icon-button (click)="moveLeft()" matTooltip="Move Left" id="btn-move-left">
+                <mat-icon>keyboard_arrow_left</mat-icon>
+              </button>
+              <button mat-icon-button (click)="moveRight()" matTooltip="Move Right" id="btn-move-right">
+                <mat-icon>keyboard_arrow_right</mat-icon>
+              </button>
+              <button mat-icon-button (click)="moveUp()" matTooltip="Move Up" id="btn-move-up">
+                <mat-icon>keyboard_arrow_up</mat-icon>
+              </button>
+              <button mat-icon-button (click)="moveDown()" matTooltip="Move Down" id="btn-move-down">
+                <mat-icon>keyboard_arrow_down</mat-icon>
+              </button>
+            </div>
+          </div>
+
+          <!-- Fill Aspect Ratio Toggle -->
+          <div class="panel-section">
+            <div class="toggle-row">
+              <span class="section-label">FILL ASPECT RATIO</span>
+              <mat-slide-toggle
+                [(ngModel)]="containWithinAspectRatio"
+                id="toggle-fill-aspect"
+              ></mat-slide-toggle>
+            </div>
+          </div>
+
+          <!-- Background Color -->
+          <div class="panel-section">
+            <span class="section-label">BACKGROUND COLOR</span>
+            <div class="color-picker-row">
+              <input
+                type="color"
+                [ngModel]="backgroundColor"
+                (ngModelChange)="onBackgroundColorChange($event)"
+                id="input-bg-color"
+              />
+              <span class="color-value">{{ backgroundColor }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Floating drawing configuration panel (conditionally visible when draw mode active) -->
+        <div class="drawing-panel" *ngIf="activeMode() === ImageEditorMode.DRAW && isPanelOpen()" id="drawing-panel">
+          <!-- Tool Selectors -->
+          <div class="panel-section">
+            <span class="section-label">TOOL</span>
+            <div class="tool-selector">
+              <button
+                mat-icon-button
+                [class.active]="activeDrawTool() === DrawingTool.BRUSH"
+                (click)="setDrawTool(DrawingTool.BRUSH)"
+                matTooltip="Brush"
+                id="btn-tool-brush"
+              >
+                <mat-icon>brush</mat-icon>
+              </button>
+              <button
+                mat-icon-button
+                [class.active]="activeDrawTool() === DrawingTool.TEXT"
+                (click)="setDrawTool(DrawingTool.TEXT)"
+                matTooltip="Text"
+                id="btn-tool-text"
+              >
+                <mat-icon>title</mat-icon>
+              </button>
+              <button
+                mat-icon-button
+                [class.active]="activeDrawTool() === DrawingTool.RECTANGLE"
+                (click)="setDrawTool(DrawingTool.RECTANGLE)"
+                matTooltip="Rectangle"
+                id="btn-tool-rect"
+              >
+                <mat-icon>crop_square</mat-icon>
+              </button>
+            </div>
+          </div>
+
+          <!-- Color Swatches -->
+          <div class="panel-section">
+            <span class="section-label">COLOR</span>
+            <div class="color-swatches-grid">
+              <button
+                *ngFor="let color of presetColors"
+                class="color-swatch"
+                [style.background-color]="color"
+                [class.active]="brushColor() === color"
+                (click)="setBrushColor(color)"
+                [attr.aria-label]="color"
+              ></button>
+
+              <!-- Custom Color Picker -->
+              <div class="custom-color-picker-wrapper">
+                <input
+                  type="color"
+                  id="custom-color-picker"
+                  [value]="brushColor()"
+                  (input)="onBrushColorPickerChange($event)"
+                />
+                <label
+                  for="custom-color-picker"
+                  class="custom-color-label"
+                  matTooltip="Custom Color"
+                >
+                  <mat-icon>palette</mat-icon>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Size Slider -->
+          <div class="panel-section">
+            <div class="slider-header">
+              <span class="section-label">SIZE</span>
+              <span class="size-value">{{ brushSize() }}px</span>
+            </div>
+            <mat-slider min="1" max="50" step="1" class="size-slider">
+              <input
+                matSliderThumb
+                [value]="brushSize()"
+                (input)="onBrushSizeChange($event)"
+              />
+            </mat-slider>
+          </div>
+
+          <!-- History Controls -->
+          <div class="panel-section history-section">
+            <span class="section-label">ACTIONS</span>
+            <div class="history-actions">
+              <button
+                mat-icon-button
+                [disabled]="!canUndo()"
+                (click)="undo()"
+                matTooltip="Undo"
+                id="btn-history-undo"
+              >
+                <mat-icon>undo</mat-icon>
+              </button>
+              <button
+                mat-icon-button
+                [disabled]="!canRedo()"
+                (click)="redo()"
+                matTooltip="Redo"
+                id="btn-history-redo"
+              >
+                <mat-icon>redo</mat-icon>
+              </button>
+              <button
+                mat-icon-button
+                (click)="clearDrawing()"
+                matTooltip="Clear All"
+                id="btn-history-clear"
+              >
+                <mat-icon>delete_sweep</mat-icon>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Workspace Viewport -->
+        <div class="workspace-viewport">
+          <div
+            class="cropper-area"
+            [class.hidden]="activeMode() === ImageEditorMode.DRAW"
+          >
+            <image-cropper
+              [imageFile]="imageFile || undefined"
+              [options]="options"
+              class="image-cropper"
+              [canvasRotation]="canvasRotation"
+              [(transform)]="transform"
+              [containWithinAspectRatio]="containWithinAspectRatio"
+              format="png"
+              (imageCropped)="imageCropped($event)"
+            ></image-cropper>
+          </div>
+
+          <div class="canvas-area" [class.hidden]="activeMode() !== ImageEditorMode.DRAW">
+            <canvas #drawingCanvas class="drawing-canvas"></canvas>
+            <input
+              #textInput
+              *ngIf="textInputCanvas"
+              type="text"
+              class="canvas-text-input"
+              [style.left.px]="textInputCanvas.position.x"
+              [style.top.px]="textInputCanvas.position.y"
+              [style.borderColor]="brushColor()"
+              [style.color]="brushColor()"
+              [style.font-size.px]="brushSize()"
+              [(ngModel)]="textInputCanvas.value"
+              (keydown.enter)="commitText()"
+              (blur)="commitText()"
+            />
+          </div>
+        </div>
       </div>
     </div>
   </mat-dialog-content>
+
   <mat-dialog-actions>
-    <div class="controls-row">
-      <div class="footer-controls">
-        <label class="text-white">Fill Aspect Ratio</label>
-        <mat-slide-toggle [(ngModel)]="containWithinAspectRatio"></mat-slide-toggle>
-
-        <div class="color-picker">
-          <label class="text-white">Background</label>
-          <input
-            type="color"
-            [ngModel]="backgroundColor"
-            (ngModelChange)="onBackgroundColorChange($event)"
-          />
-        </div>
-      </div>
-    </div>
-
     <div class="buttons-row">
       <studio-button mat-dialog-close [disabled]="isUploading">
         Cancel
@@ -137,14 +322,14 @@
         variant="cta"
         size="medium"
         (click)="uploadCroppedImage()"
-        [disabled]="isUploading || !croppedImageBlob"
+        [disabled]="isUploading || (activeMode() !== ImageEditorMode.DRAW && !croppedImageBlob)"
       >
         <mat-spinner
           *ngIf="isUploading"
           [diameter]="20"
           class="mr-2 inline-block"
         ></mat-spinner>
-        <span *ngIf="!isUploading">Crop & Upload</span>
+        <span *ngIf="!isUploading">Upload edited</span>
       </studio-button>
     </div>
   </mat-dialog-actions>

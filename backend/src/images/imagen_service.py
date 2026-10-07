@@ -781,7 +781,7 @@ def _process_image_in_background(
                                                 add_watermark=(
                                                     request_dto.add_watermark
                                                 ),
-                                                image_size="2K",
+                                                image_size=request_dto.resolution,
                                             ),
                                         )
                                         break
