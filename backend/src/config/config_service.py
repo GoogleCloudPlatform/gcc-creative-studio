@@ -56,6 +56,7 @@ class ConfigService(BaseSettings):
 
     # --- Google Cloud IAP ---
     IAP_EXPECTED_AUDIENCE: str = ""
+    WORKFORCE_POOL_ID: str = ""
 
     # --- Microsoft Entra ID role sync (Microsoft Graph, app-only) ---
     # Role sync is enabled only when tenant, client ID, secret and at least one

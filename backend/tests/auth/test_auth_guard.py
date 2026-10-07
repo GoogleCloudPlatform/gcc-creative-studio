@@ -157,7 +157,7 @@ class TestGetCurrentUser:
 
     @pytest.mark.anyio
     @patch("src.auth.auth_guard.id_token.verify_token")
-    async def test_get_current_user_iap_success_fallback_to_sub(
+    async def test_get_current_user_iap_workforce_sub_non_guid_rejected(
         self, mock_verify, mock_user_service
     ):
         config_service.ENVIRONMENT = "production"
@@ -168,31 +168,133 @@ class TestGetCurrentUser:
         mock_verify.return_value = {
             "iss": "https://cloud.google.com/iap",
             "sub": "principal://iam.googleapis.com/locations/global/workforcePools/pool/subject/user123",
+            "email": "federated@example.com",
             "name": "Federated User",
         }
 
-        mock_user_service.create_user_if_not_exists.return_value = UserModel(
-            id=4,
-            email="principal://iam.googleapis.com/locations/global/workforcePools/pool/subject/user123",
-            name="Federated User",
-            roles=["user"],
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_user(
+                request=mock_request,
+                token="valid_iap_jwt",
+                user_service=mock_user_service,
+            )
+
+        assert exc_info.value.status_code == 401
+        assert "not a valid Entra OID" in exc_info.value.detail
+        mock_user_service.create_user_if_not_exists.assert_not_called()
+
+    @pytest.mark.anyio
+    @patch("src.auth.auth_guard.id_token.verify_token")
+    async def test_get_current_user_iap_workforce_sub_extracts_oid(
+        self, mock_verify, mock_user_service, monkeypatch
+    ):
+        config_service.ENVIRONMENT = "production"
+        config_service.IAP_EXPECTED_AUDIENCE = "test-iap-audience"
+        config_service.ALLOWED_ORGS_STR = ""
+        monkeypatch.setattr(config_service, "WORKFORCE_POOL_ID", "cs-pool")
+
+        oid = "11111111-2222-3333-4444-555555555555"
+        mock_request = MagicMock(spec=Request)
+        mock_verify.return_value = {
+            "iss": "https://cloud.google.com/iap",
+            "sub": (
+                "principal://iam.googleapis.com/locations/global/"
+                f"workforcePools/cs-pool/subject/{oid.upper()}"
+            ),
+            "email": "federated@example.com",
+            "name": "Federated User",
+        }
+
+        await get_current_user(
+            request=mock_request,
+            token="valid_iap_jwt",
+            user_service=mock_user_service,
         )
 
-        user = await get_current_user(
+        mock_user_service.create_user_if_not_exists.assert_called_once_with(
+            email="federated@example.com",
+            name="Federated User",
+            picture="",
+            entra_oid=oid,
+        )
+
+    @pytest.mark.anyio
+    @patch("src.auth.auth_guard.id_token.verify_token")
+    async def test_get_current_user_iap_workforce_identity_claim_extracts_oid(
+        self, mock_verify, mock_user_service, monkeypatch
+    ):
+        # Shape of a real IAP token for an Entra user signing in through a
+        # Workforce pool (observed live on 2026-10-06): `sub` is an opaque
+        # Google ID, and the Entra principal is in `workforce_identity`.
+        config_service.ENVIRONMENT = "production"
+        config_service.IAP_EXPECTED_AUDIENCE = "test-iap-audience"
+        config_service.ALLOWED_ORGS_STR = ""
+        monkeypatch.setattr(config_service, "WORKFORCE_POOL_ID", "cs-pool")
+
+        oid = "11111111-2222-3333-4444-555555555555"
+        mock_request = MagicMock(spec=Request)
+        mock_verify.return_value = {
+            "iss": "https://cloud.google.com/iap",
+            "sub": "sts.google.com:AAFTZopaqueGoogleId",
+            "identity_source": "WORKFORCE_IDENTITY",
+            "workforce_identity": {
+                "iam_principal": (
+                    "principal://iam.googleapis.com/locations/global/"
+                    f"workforcePools/cs-pool/subject/{oid}"
+                ),
+                "workforce_pool_name": (
+                    "locations/global/workforcePools/cs-pool"
+                ),
+            },
+            "email": "federated@example.com",
+        }
+
+        await get_current_user(
             request=mock_request,
             token="valid_iap_jwt",
             user_service=mock_user_service,
         )
 
         assert (
-            user.email
-            == "principal://iam.googleapis.com/locations/global/workforcePools/pool/subject/user123"
+            mock_user_service.create_user_if_not_exists.call_args.kwargs[
+                "entra_oid"
+            ]
+            == oid
         )
-        mock_user_service.create_user_if_not_exists.assert_called_once_with(
-            email="principal://iam.googleapis.com/locations/global/workforcePools/pool/subject/user123",
-            name="Federated User",
-            picture="",
+
+    @pytest.mark.anyio
+    @patch("src.auth.auth_guard.id_token.verify_token")
+    async def test_get_current_user_iap_workforce_pool_mismatch_rejected(
+        self, mock_verify, mock_user_service, monkeypatch
+    ):
+        config_service.ENVIRONMENT = "production"
+        config_service.IAP_EXPECTED_AUDIENCE = "test-iap-audience"
+        config_service.ALLOWED_ORGS_STR = ""
+        monkeypatch.setattr(
+            config_service, "WORKFORCE_POOL_ID", "expected-pool"
         )
+
+        mock_request = MagicMock(spec=Request)
+        mock_verify.return_value = {
+            "iss": "https://cloud.google.com/iap",
+            "sub": (
+                "principal://iam.googleapis.com/locations/global/"
+                "workforcePools/other-pool/subject/"
+                "11111111-2222-3333-4444-555555555555"
+            ),
+            "email": "federated@example.com",
+        }
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_user(
+                request=mock_request,
+                token="valid_iap_jwt",
+                user_service=mock_user_service,
+            )
+
+        assert exc_info.value.status_code == 401
+        assert "workforce pool does not match" in exc_info.value.detail
+        mock_user_service.create_user_if_not_exists.assert_not_called()
 
     @pytest.mark.anyio
     @patch("src.auth.auth_guard.id_token.verify_token")

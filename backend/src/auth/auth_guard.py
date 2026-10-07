@@ -16,6 +16,8 @@
 
 import asyncio
 import logging
+import re
+from typing import Any
 
 from fastapi import Depends, HTTPException, status, Request, Header
 from firebase_admin import auth
@@ -38,6 +40,98 @@ logger = logging.getLogger(__name__)
 
 # The "iss" value IAP puts in every token it signs.
 _IAP_ISSUER = "https://cloud.google.com/iap"
+
+_WORKFORCE_SUB_PREFIX = (
+    "principal://iam.googleapis.com/locations/global/workforcePools/"
+)
+_GUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+def _extract_workforce_oid(decoded_token: dict[str, Any]) -> str | None:
+    """Returns the user's Entra object ID from a Workforce sign-in token.
+
+    IAP puts the Workforce principal
+    (`principal://.../workforcePools/<pool>/subject/<oid>`) in the
+    `workforce_identity.iam_principal` claim, while `sub` holds an opaque
+    Google ID. Older or synthetic tokens may carry the principal in `sub`
+    instead, so that is used as a fallback.
+
+    Returns the lowercased object ID, or None for a token that is not from
+    a Workforce pool when WORKFORCE_POOL_ID is not set. Raises 401 if a
+    Workforce token names a different pool or its subject is not a GUID.
+    """
+    sub = decoded_token.get("sub")
+    identity_source = decoded_token.get("identity_source")
+    workforce_identity = decoded_token.get("workforce_identity")
+    iam_principal = (
+        workforce_identity.get("iam_principal")
+        if isinstance(workforce_identity, dict)
+        else None
+    )
+    principal = iam_principal if isinstance(iam_principal, str) else sub
+    configured_pool = config_service.WORKFORCE_POOL_ID.strip()
+    is_workforce = (
+        bool(configured_pool)
+        or isinstance(workforce_identity, dict)
+        or (isinstance(sub, str) and sub.startswith("principal://"))
+        or identity_source
+        in (
+            "WORKFORCE_IDENTITY",
+            "WORKFORCE_POOL",
+            "WORKFORCE_IDENTITY_FEDERATION",
+        )
+    )
+    if not is_workforce:
+        return None
+
+    if not isinstance(principal, str) or not principal.startswith(
+        _WORKFORCE_SUB_PREFIX
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=(
+                "Invalid IAP authentication token: missing or malformed "
+                "workforce principal subject."
+            ),
+        )
+    rest = principal[len(_WORKFORCE_SUB_PREFIX) :]
+    if "/subject/" not in rest:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=(
+                "Invalid IAP authentication token: missing subject segment "
+                "in workforce principal."
+            ),
+        )
+    pool_id, oid_part = rest.split("/subject/", 1)
+    if not pool_id or "/" in pool_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=(
+                "Invalid IAP authentication token: invalid workforce pool "
+                "identifier."
+            ),
+        )
+    if configured_pool and pool_id != configured_pool:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=(
+                "Invalid IAP authentication token: workforce pool does not "
+                "match configured pool."
+            ),
+        )
+    if not _GUID_RE.match(oid_part):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=(
+                "Invalid IAP authentication token: workforce subject is not "
+                "a valid Entra OID."
+            ),
+        )
+    return oid_part.lower()
 
 
 async def get_iap_jwt(
@@ -64,7 +158,7 @@ async def get_current_user(
 
     1. Checks if running locally to bypass verification.
     2. Verifies the Google-signed IAP JWT token.
-    3. Extracts user information (email, name, picture).
+    3. Extracts user information (entra_oid, email, name, picture).
     4. If the user is new, creates their profile JIT.
     5. Returns a Pydantic model with the user's data.
     """
@@ -116,6 +210,8 @@ async def get_current_user(
             decoded_token.get("hd"),
         )
 
+        entra_oid = _extract_workforce_oid(decoded_token)
+
         email = decoded_token.get("email")
         # In Workforce Identity Federation, the username/email might be in a different claim.
         # Fall back to preferred_username, upn, or subject (final fallback) if email claim is not present.
@@ -159,11 +255,14 @@ async def get_current_user(
 
         # Just-In-Time (JIT) User Provisioning:
         # Create a user profile in our database on their first API call.
-        user_doc = await user_service.create_user_if_not_exists(
-            email=email,
-            name=name,
-            picture=picture,
-        )
+        create_kwargs: dict[str, Any] = {
+            "email": email,
+            "name": name,
+            "picture": picture,
+        }
+        if entra_oid is not None:
+            create_kwargs["entra_oid"] = entra_oid
+        user_doc = await user_service.create_user_if_not_exists(**create_kwargs)
 
         if not user_doc:
             raise HTTPException(
