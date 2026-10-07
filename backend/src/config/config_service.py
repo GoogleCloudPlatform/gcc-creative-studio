@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import cached_property
 from typing import Any
 
 import google.auth
@@ -55,6 +56,21 @@ class ConfigService(BaseSettings):
 
     # --- Google Cloud IAP ---
     IAP_EXPECTED_AUDIENCE: str = ""
+
+    # --- Microsoft Entra ID role sync (Microsoft Graph, app-only) ---
+    # Role sync is enabled only when tenant, client ID, secret and at least one
+    # group-ID list are set. Group lists are comma-separated Entra group
+    # object IDs (GUIDs), not display names.
+    ENTRA_TENANT_ID: str = ""
+    ENTRA_GRAPH_CLIENT_ID: str = ""
+    ENTRA_GRAPH_CLIENT_SECRET: str = ""
+    ENTRA_ADMIN_GROUPS_STR: str = Field(default="", alias="ENTRA_ADMIN_GROUPS")
+    ENTRA_CREATOR_GROUPS_STR: str = Field(
+        default="", alias="ENTRA_CREATOR_GROUPS"
+    )
+    ENTRA_WORKFLOWS_GROUPS_STR: str = Field(
+        default="", alias="ENTRA_WORKFLOWS_GROUPS"
+    )
 
     # --- Storage ---
     # The defaults will be set in the validator below to prevent recursion.
@@ -142,6 +158,35 @@ class ConfigService(BaseSettings):
             org.strip().lower()
             for org in self.ALLOWED_ORGS_STR.split(",")
             if org.strip()
+        )
+
+    @cached_property
+    def ENTRA_GROUP_ROLES(self) -> dict[str, frozenset[str]]:
+        """Maps lowercased Entra group object ID -> app role values it grants.
+
+        Parsed once per process (cached_property); role values are plain
+        strings to avoid importing the users package from config.
+        """
+        group_roles: dict[str, set[str]] = {}
+        for role, raw in (
+            ("admin", self.ENTRA_ADMIN_GROUPS_STR),
+            ("creator", self.ENTRA_CREATOR_GROUPS_STR),
+            ("workflows", self.ENTRA_WORKFLOWS_GROUPS_STR),
+        ):
+            for group_id in raw.split(","):
+                if group_id.strip():
+                    group_roles.setdefault(group_id.strip().lower(), set()).add(
+                        role
+                    )
+        return {gid: frozenset(roles) for gid, roles in group_roles.items()}
+
+    @property
+    def ENTRA_ROLE_SYNC_ENABLED(self) -> bool:
+        return bool(
+            self.ENTRA_TENANT_ID
+            and self.ENTRA_GRAPH_CLIENT_ID
+            and self.ENTRA_GRAPH_CLIENT_SECRET
+            and self.ENTRA_GROUP_ROLES
         )
 
     @computed_field
