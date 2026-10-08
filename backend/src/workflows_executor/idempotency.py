@@ -15,7 +15,9 @@
 """Step checkpoint and idempotency guard for executor calls.
 
 Every step call that carries ``run_id`` / ``step_id`` goes through a
-:class:`StepIdempotencyGuard`, keyed by ``(run_id, step_id)``:
+:class:`StepIdempotencyGuard`, keyed by ``(run_id, step_state_key)``:
+``"<step_id>"``, or ``"<step_id>#<iteration>"`` for loop body iterations
+(each iteration is an independent record, created lazily):
 
 1. A completed step returns its stored outputs (no new generation).
 2. A step whose gen job (``job_id``) is in flight or finished keeps polling
@@ -49,6 +51,7 @@ from src.workflows.repository.workflow_run_repository import (
 )
 from src.workflows.schema.workflow_model import StepStatusEnum
 from src.workflows.schema.workflow_run_model import StepErrorInfo, StepState
+from src.workflows.step_state_keys import step_state_key
 from src.workflows_executor.dto.workflows_executor_dto import StepCallContext
 from src.workflows_executor.step_errors import (
     StepError,
@@ -93,6 +96,7 @@ class StepIdempotencyGuard:
         execution_id: str | None = None,
         max_step_duration_seconds: int | None = None,
         clock: Callable[[], datetime.datetime] | None = None,
+        iteration: int | None = None,
     ) -> None:
         if max_step_duration_seconds is None:
             max_step_duration_seconds = (
@@ -100,6 +104,9 @@ class StepIdempotencyGuard:
             )
         self.run_id = run_id
         self.step_id = step_id
+        self.iteration = iteration
+        # "<step_id>" or, for loop body iterations, "<step_id>#<iteration>".
+        self.state_key = step_state_key(step_id, iteration)
         self._repository = repository
         self._user_id = user_id
         self._execution_id = execution_id
@@ -137,6 +144,7 @@ class StepIdempotencyGuard:
             step_id=request.step_id,
             user_id=user_id,
             execution_id=request.execution_id or None,
+            iteration=request.iteration,
         )
 
     # --- Public API -------------------------------------------------------
@@ -199,7 +207,7 @@ class StepIdempotencyGuard:
                         "Prior job %s for step %s of run %s did not complete "
                         "(%s); regenerating.",
                         job_id,
-                        self.step_id,
+                        self.state_key,
                         self.run_id,
                         error.error_category.value,
                     )
@@ -229,12 +237,18 @@ class StepIdempotencyGuard:
             raise
         return job_id
 
-    async def complete(self, outputs: dict[str, Any]) -> None:
-        """Checkpoints the step as completed with its (JSON-safe) outputs."""
+    async def complete(
+        self,
+        outputs: dict[str, Any],
+        step_inputs: dict[str, Any] | None = None,
+    ) -> None:
+        """Checkpoints the step as completed with its (JSON-safe) outputs
+        and the concrete inputs it ran with (``step_inputs``)."""
         now = self._clock()
 
         def mutate(state: StepState, unused_run_attempt: int) -> None:
             state.status = StepStatusEnum.COMPLETED
+            state.inputs = step_inputs
             state.outputs = outputs
             state.completed_at = now
             state.error = None
@@ -284,7 +298,7 @@ class StepIdempotencyGuard:
         except Exception:  # pylint: disable=broad-exception-caught
             logger.exception(
                 "Could not record the failure of step %s of run %s.",
-                self.step_id,
+                self.state_key,
                 self.run_id,
             )
 
@@ -395,7 +409,7 @@ class StepIdempotencyGuard:
         except ValidationError:
             logger.warning(
                 "Ignoring unreadable state of step %s in run %s.",
-                self.step_id,
+                self.state_key,
                 self.run_id,
             )
             return StepState()
@@ -422,13 +436,13 @@ class StepIdempotencyGuard:
                     ErrorCategory.FORBIDDEN,
                     "The workflow run belongs to another user.",
                 )
-            state = self._load_state(context.step_states.get(self.step_id))
+            state = self._load_state(context.step_states.get(self.state_key))
             before = state.to_json()
             outcome = mutate(state, context.attempt_count)
             after = state.to_json()
             if after != before:
                 await self._repository.set_step_state(
-                    self.run_id, self.step_id, after
+                    self.run_id, self.state_key, after
                 )
             await db.commit()
         except Exception:

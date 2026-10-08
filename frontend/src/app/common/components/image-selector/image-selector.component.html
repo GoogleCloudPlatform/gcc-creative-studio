@@ -16,37 +16,40 @@
 
 <div class="image-selector-container">
   <div class="selector-header">
-    <h2 class="selector-title">Select Media</h2>
-    <mat-slide-toggle
-      [(ngModel)]="shouldCrop"
-      class="mr-4"
-      color="primary"
-    >
-      <span class="text-sm text-neutral-300">Edit before upload</span>
-    </mat-slide-toggle>
-    <studio-button
-      variant="primary"
-      size="medium"
-      (click)="!isUploading && fileInput.click()"
-      [disabled]="isUploading"
-    >
-      <mat-icon *ngIf="!isUploading">upload_file</mat-icon>
-      <mat-progress-spinner
-        *ngIf="isUploading"
-        mode="indeterminate"
-        [diameter]="18"
-        class="inline-spinner"
-      ></mat-progress-spinner>
-      {{ isUploading ? 'Uploading...' : 'Upload New' }}
-    </studio-button>
-    <input
-      hidden
-      type="file"
-      #fileInput
-      (change)="onFileSelected($event)"
-      [accept]="getAcceptTypes()"
-      [disabled]="isUploading"
-    />
+    <h2 class="selector-title">{{ title }}</h2>
+    <ng-container *ngIf="!isFolderMode">
+      <mat-slide-toggle
+        [(ngModel)]="shouldCrop"
+        class="mr-4"
+        color="primary"
+      >
+        <span class="text-sm text-neutral-300">Edit before upload</span>
+      </mat-slide-toggle>
+      <studio-button
+        id="image-selector-upload-btn"
+        variant="primary"
+        size="medium"
+        (click)="!isUploading && fileInput.click()"
+        [disabled]="isUploading"
+      >
+        <mat-icon *ngIf="!isUploading">upload_file</mat-icon>
+        <mat-progress-spinner
+          *ngIf="isUploading"
+          mode="indeterminate"
+          [diameter]="18"
+          class="inline-spinner"
+        ></mat-progress-spinner>
+        {{ isUploading ? 'Uploading...' : 'Upload New' }}
+      </studio-button>
+      <input
+        hidden
+        type="file"
+        #fileInput
+        (change)="onFileSelected($event)"
+        [accept]="getAcceptTypes()"
+        [disabled]="isUploading"
+      />
+    </ng-container>
   </div>
 
   <div class="gallery-wrapper" 
@@ -56,7 +59,7 @@
        (drop)="onDrop($event)"
        [class.dragging]="isDragging">
     
-    <div *ngIf="isDragging" class="drop-overlay">
+    <div *ngIf="isDragging && !isFolderMode" class="drop-overlay">
       <div class="drop-message">
         <mat-icon>cloud_upload</mat-icon>
         <p>Drop file to upload</p>
@@ -73,12 +76,14 @@
             [filterByType]="data.mimeType"
             [maxSelection]="data.maxSelection ?? null"
             [includeExternal]="data.includeExternal ?? false"
+            [initialFolderId]="initialFolderId"
             (mediaItemSelected)="onMediaItemSelected($event)"
             (mediaSelected)="onMediaSelected($event)"
+            (currentFolderChange)="onCurrentFolderChange($event)"
           ></app-media-gallery>
         </ng-template>
       </mat-tab>
-      <mat-tab label="My Uploaded Assets">
+      <mat-tab *ngIf="!isFolderMode" label="My Uploaded Assets">
         <ng-template matTabContent>
           <app-media-gallery
             [isSelectorMode]="true"
@@ -96,7 +101,7 @@
     </mat-tab-group>
   </div>
 
-  <div class="selector-footer" *ngIf="data.multiSelect || data.showFooter">
+  <div class="selector-footer" *ngIf="!isFolderMode && (data.multiSelect || data.showFooter)">
     <div class="selection-info">
       <ng-container *ngIf="selectedMediaItems.size > 0 || data.maxSelection">
         {{ selectedMediaItems.size }} 
@@ -119,6 +124,35 @@
       [disabled]="selectedMediaItems.size === 0"
     >
       Select {{ selectedMediaItems.size > 0 ? '(' + selectedMediaItems.size + ')' : '' }}
+    </studio-button>
+  </div>
+
+  <div class="selector-footer folder-footer" *ngIf="isFolderMode">
+    <div
+      id="folder-selector-location"
+      class="folder-location"
+      [title]="currentPath()"
+    >
+      <mat-icon class="folder-location-icon">folder</mat-icon>
+      <span class="folder-location-path">{{ currentPath() }}</span>
+    </div>
+    <div class="flex-grow"></div>
+    <studio-button
+      id="folder-selector-cancel-btn"
+      variant="primary"
+      size="medium"
+      (click)="dialogRef.close()"
+    >
+      Cancel
+    </studio-button>
+    <studio-button
+      id="folder-selector-confirm-btn"
+      variant="cta"
+      size="medium"
+      (click)="confirmFolderSelection()"
+      [disabled]="!canConfirmFolder()"
+    >
+      Use this folder
     </studio-button>
   </div>
 </div>

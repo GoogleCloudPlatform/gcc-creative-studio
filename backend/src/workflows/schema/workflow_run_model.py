@@ -177,6 +177,8 @@ class StepState(BaseModel):
     model_config = ConfigDict(extra="allow", use_enum_values=True)
 
     status: StepStatusEnum = StepStatusEnum.PENDING
+    # Concrete inputs resolved at execution time (None for legacy rows).
+    inputs: dict[str, Any] | None = None
     outputs: dict[str, Any] | None = None
     # Counts failures only; in-progress continuations are counted apart.
     attempts: int = 0

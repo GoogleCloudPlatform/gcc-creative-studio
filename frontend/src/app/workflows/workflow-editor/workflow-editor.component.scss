@@ -568,6 +568,9 @@
 .port-type-chip[data-type*='Audio'] {
   background-color: #805ad5;
 }
+.port-type-chip[data-type*='loop'] {
+  background-color: hsl(173, 60%, 43%);
+}
 
 @keyframes magnetic-snap-pulse {
   0% {

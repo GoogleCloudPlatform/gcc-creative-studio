@@ -27,7 +27,7 @@ import {
   ParamMap,
   Router,
 } from '@angular/router';
-import {BehaviorSubject, of, throwError} from 'rxjs';
+import {BehaviorSubject, Subject, of, throwError} from 'rxjs';
 import {MediaGalleryComponent} from './media-gallery.component';
 import {GalleryService} from '../gallery.service';
 import {UserService} from '../../common/services/user.service';
@@ -36,7 +36,11 @@ import {TagsService} from '../../common/services/tags.service';
 import {MediaUploadService} from '../../common/services/media-upload/media-upload.service';
 import {GoogleDriveService} from '../../common/services/google-drive/google-drive.service';
 import {FolderService} from '../../common/services/folder.service';
-import {Folder} from '../../common/models/folder.model';
+import {
+  Folder,
+  FolderBreadcrumb,
+  GalleryFolderLocation,
+} from '../../common/models/folder.model';
 import {FolderConflictDialogComponent} from '../../common/components/folder-conflict-dialog/folder-conflict-dialog.component';
 import {MatSnackBar} from '@angular/material/snack-bar';
 
@@ -1176,6 +1180,131 @@ describe('MediaGalleryComponent', () => {
 
       expect(component.currentFolderId).toBe(42);
       expect(routerSpy.navigate).not.toHaveBeenCalledWith(['/gallery']);
+    });
+  });
+
+  describe('Selector folder location', () => {
+    const SUMMER_CRUMBS: FolderBreadcrumb[] = [
+      {id: 1, name: 'Marketing', parentId: null},
+      {id: 2, name: 'Summer', parentId: 1},
+    ];
+
+    function createSelectorGallery(
+      initialFolderId: number | null,
+    ): MediaGalleryComponent {
+      const selFixture = TestBed.createComponent(MediaGalleryComponent);
+      const selComp = selFixture.componentInstance;
+      selComp.isSelectorMode = true;
+      selComp.isSelectionMode = true;
+      selComp.initialFolderId = initialFolderId;
+      return selComp;
+    }
+
+    it('opens the initial folder in selector mode', () => {
+      folderService.getBreadcrumbs.and.returnValue(of(SUMMER_CRUMBS));
+      const selComp = createSelectorGallery(2);
+      const emitted: GalleryFolderLocation[] = [];
+      selComp.currentFolderChange.subscribe(location => emitted.push(location));
+
+      selComp.ngOnInit();
+
+      expect(selComp.currentFolderId).toBe(2);
+      expect(folderService.getFolders).toHaveBeenCalledWith(1, 2);
+      expect(emitted[emitted.length - 1]).toEqual({
+        folderId: 2,
+        breadcrumbs: SUMMER_CRUMBS,
+      });
+    });
+
+    it('ignores an invalid initial folder id', () => {
+      const selComp = createSelectorGallery(-4);
+      selComp.ngOnInit();
+      expect(selComp.currentFolderId).toBeNull();
+    });
+
+    it('ignores the initial folder id outside selector mode', () => {
+      const standalone = TestBed.createComponent(MediaGalleryComponent);
+      const standaloneComp = standalone.componentInstance;
+      standaloneComp.initialFolderId = 2;
+      standaloneComp.ngOnInit();
+      expect(standaloneComp.currentFolderId).toBeNull();
+    });
+
+    it('emits the root location when no folder is open', () => {
+      const selComp = createSelectorGallery(null);
+      const emitSpy = spyOn(selComp.currentFolderChange, 'emit');
+      selComp.ngOnInit();
+      expect(emitSpy).toHaveBeenCalledWith({folderId: null, breadcrumbs: []});
+    });
+
+    it('emits the location after navigating to a folder and a breadcrumb', () => {
+      const selComp = createSelectorGallery(null);
+      selComp.ngOnInit();
+      const emitSpy = spyOn(selComp.currentFolderChange, 'emit');
+
+      folderService.getBreadcrumbs.and.returnValue(of(SUMMER_CRUMBS));
+      selComp.navigateToFolder({id: 2, name: 'Summer'} as Folder);
+      expect(emitSpy).toHaveBeenCalledWith({
+        folderId: 2,
+        breadcrumbs: SUMMER_CRUMBS,
+      });
+
+      selComp.navigateToBreadcrumb(null);
+      expect(emitSpy).toHaveBeenCalledWith({folderId: null, breadcrumbs: []});
+    });
+
+    it('ignores breadcrumb responses for a folder that is no longer open', () => {
+      const selComp = createSelectorGallery(null);
+      selComp.ngOnInit();
+      const pending = new Subject<FolderBreadcrumb[]>();
+      folderService.getBreadcrumbs.and.returnValue(pending.asObservable());
+      const emitSpy = spyOn(selComp.currentFolderChange, 'emit');
+
+      selComp.navigateToFolder({id: 2, name: 'Summer'} as Folder);
+      folderService.getBreadcrumbs.and.returnValue(
+        of([{id: 4, name: 'Archive', parentId: null}]),
+      );
+      selComp.navigateToFolder({id: 4, name: 'Archive'} as Folder);
+      pending.next(SUMMER_CRUMBS);
+
+      expect(selComp.currentFolderId).toBe(4);
+      expect(selComp.breadcrumbs).toEqual([
+        {id: 4, name: 'Archive', parentId: null},
+      ]);
+      expect(emitSpy).not.toHaveBeenCalledWith({
+        folderId: 2,
+        breadcrumbs: SUMMER_CRUMBS,
+      });
+    });
+
+    it('ignores breadcrumb errors for a folder that is no longer open', () => {
+      spyOn(console, 'error');
+      const selComp = createSelectorGallery(null);
+      selComp.ngOnInit();
+      const pending = new Subject<FolderBreadcrumb[]>();
+      folderService.getBreadcrumbs.and.returnValue(pending.asObservable());
+
+      selComp.navigateToFolder({id: 2, name: 'Summer'} as Folder);
+      folderService.getBreadcrumbs.and.returnValue(of([]));
+      selComp.navigateToFolder({id: 4, name: 'Archive'} as Folder);
+      pending.error({status: 404});
+
+      expect(selComp.currentFolderId).toBe(4);
+    });
+
+    it('falls back to the root when the initial folder cannot be loaded', () => {
+      spyOn(console, 'error');
+      folderService.getBreadcrumbs.and.returnValue(
+        throwError(() => ({status: 404})),
+      );
+      const selComp = createSelectorGallery(77);
+      const emitSpy = spyOn(selComp.currentFolderChange, 'emit');
+
+      selComp.ngOnInit();
+
+      expect(selComp.currentFolderId).toBeNull();
+      expect(emitSpy).toHaveBeenCalledWith({folderId: null, breadcrumbs: []});
+      expect(routerSpy.navigate).not.toHaveBeenCalled();
     });
   });
 });

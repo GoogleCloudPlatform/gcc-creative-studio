@@ -12,22 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import datetime
+from collections.abc import Iterable
+from typing import Any
+
 from src.workspaces.schema.workspace_model import Workspace
 from src.users.user_model import User
 
 
 from fastapi import Depends
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.base_repository import BaseRepository
 from src.common.dto.pagination_response_dto import PaginationResponseDto
+from src.common.schema.media_item_model import JobStatusEnum
 from src.common.schema.unified_gallery_view import UnifiedGalleryView
 from src.database import get_db
 from src.galleries.dto.gallery_search_dto import GallerySearchDto
 from src.galleries.dto.unified_gallery_response import (
     UnifiedGalleryItemResponse,
 )
+
+# ``item_type`` values of the unified gallery view.
+LOOP_MEDIA_ITEM = "media_item"
+LOOP_SOURCE_ASSET = "source_asset"
 
 
 class UnifiedGalleryRepository(
@@ -190,3 +198,128 @@ class UnifiedGalleryRepository(
             total_pages=total_pages,
             data=data,
         )
+
+    def _loop_item_conditions(
+        self, *, workspace_id: int, mime_type_prefix: str
+    ) -> tuple[Any, ...]:
+        """Conditions of a row a workflow ``Loop`` step may iterate over.
+
+        Non-deleted rows of the workspace whose ``mime_type`` starts with
+        ``"<mime_type_prefix>/"``: completed generated ``media_item`` rows
+        and uploaded ``source_asset`` rows. External resources
+        (``external_url`` set) are skipped, as in the default gallery view.
+        """
+        external_url = self.model.metadata_["external_url"].astext
+        return (
+            self.model.workspace_id == workspace_id,
+            self.model.deleted_at.is_(None),
+            self.model.metadata_["mime_type"].astext.like(
+                f"{mime_type_prefix}/%"
+            ),
+            external_url.is_(None) | (external_url == ""),
+            or_(
+                and_(
+                    self.model.item_type == LOOP_MEDIA_ITEM,
+                    self.model.status == JobStatusEnum.COMPLETED.value,
+                ),
+                self.model.item_type == LOOP_SOURCE_ASSET,
+            ),
+        )
+
+    async def list_folder_loop_items(
+        self,
+        *,
+        workspace_id: int,
+        folder_id: int,
+        mime_type_prefix: str,
+        limit: int,
+    ) -> tuple[list[tuple[str, int]], int]:
+        """Media of a folder iterated by a workflow ``Loop`` step.
+
+        Considers non-deleted rows of the given workspace and folder whose
+        ``mime_type`` starts with ``"<mime_type_prefix>/"``: completed
+        generated ``media_item`` rows and uploaded ``source_asset`` rows.
+        External resources (``external_url`` set) are skipped, as in the
+        default gallery view.
+
+        Args:
+            workspace_id: Workspace the folder belongs to.
+            folder_id: Folder to list.
+            mime_type_prefix: ``"image"``, ``"video"`` or ``"audio"``.
+            limit: Maximum number of rows returned.
+
+        Returns:
+            ``(rows, total)``: up to ``limit`` ``(item_type, id)`` pairs
+            (``item_type`` is ``"media_item"`` or ``"source_asset"``),
+            oldest first (``created_at, item_type, id``), and the total
+            number of matches.
+        """
+        conditions = (
+            *self._loop_item_conditions(
+                workspace_id=workspace_id, mime_type_prefix=mime_type_prefix
+            ),
+            self.model.folder_id == folder_id,
+        )
+        count_result = await self.db.execute(
+            select(func.count()).select_from(self.model).where(*conditions)
+        )
+        total = count_result.scalar_one()
+        rows_result = await self.db.execute(
+            select(self.model.item_type, self.model.id)
+            .where(*conditions)
+            .order_by(
+                self.model.created_at.asc(),
+                self.model.item_type.asc(),
+                self.model.id.asc(),
+            )
+            .limit(limit)
+        )
+        rows = [(item_type, item_id) for item_type, item_id in rows_result]
+        return rows, total
+
+    async def filter_linked_loop_items(
+        self,
+        *,
+        workspace_id: int,
+        media_item_ids: Iterable[int],
+        source_asset_ids: Iterable[int],
+        mime_type_prefix: str,
+    ) -> set[tuple[str, int]]:
+        """Linked media a workflow ``Loop`` step may iterate over.
+
+        Applies the same eligibility rules as
+        :meth:`list_folder_loop_items` (workspace, not deleted, mime prefix,
+        completed media items, no external URL) to the given ids, in one
+        query and without any folder filter.
+
+        Args:
+            workspace_id: Workspace of the run.
+            media_item_ids: Candidate generated media item ids.
+            source_asset_ids: Candidate uploaded source asset ids.
+            mime_type_prefix: ``"image"``, ``"video"`` or ``"audio"``.
+
+        Returns:
+            The eligible ``(item_type, id)`` pairs (``item_type`` is
+            ``"media_item"`` or ``"source_asset"``). Empty, without any
+            query, when no id is given.
+        """
+        id_filters = [
+            and_(self.model.item_type == item_type, self.model.id.in_(ids))
+            for item_type, ids in (
+                (LOOP_MEDIA_ITEM, sorted(set(media_item_ids))),
+                (LOOP_SOURCE_ASSET, sorted(set(source_asset_ids))),
+            )
+            if ids
+        ]
+        if not id_filters:
+            return set()
+        result = await self.db.execute(
+            select(self.model.item_type, self.model.id).where(
+                *self._loop_item_conditions(
+                    workspace_id=workspace_id,
+                    mime_type_prefix=mime_type_prefix,
+                ),
+                or_(*id_filters),
+            )
+        )
+        return {(item_type, item_id) for item_type, item_id in result}

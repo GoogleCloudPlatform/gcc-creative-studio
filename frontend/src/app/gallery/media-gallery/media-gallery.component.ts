@@ -65,6 +65,7 @@ import {
   Folder,
   FolderBreadcrumb,
   GalleryDragPayload,
+  GalleryFolderLocation,
 } from '../../common/models/folder.model';
 import {FolderService} from '../../common/services/folder.service';
 import {CreateFolderDialogComponent} from '../../common/components/create-folder-dialog/create-folder-dialog.component';
@@ -118,6 +119,10 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   @Input() filterByUserEmail: string | null = null;
   @Input() showFiltersInSelector = false;
   @Input() includeExternal = false;
+  /** Folder opened first in selector/selection mode (null = root). */
+  @Input() initialFolderId: number | null = null;
+  /** Emits the current folder location once its breadcrumbs are resolved. */
+  @Output() currentFolderChange = new EventEmitter<GalleryFolderLocation>();
   private isInitialized = false;
 
   @Input() set itemType(value: string) {
@@ -345,6 +350,14 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     let lastWorkspaceId = this.workspaceStateService.getActiveWorkspaceId();
 
     if (this.isSelectionMode || this.isSelectorMode) {
+      const initialFolderId = this.initialFolderId;
+      if (
+        initialFolderId !== null &&
+        Number.isInteger(initialFolderId) &&
+        initialFolderId > 0
+      ) {
+        this.currentFolderId = initialFolderId;
+      }
       this.reload();
     } else {
       this.routeSub = this.route.paramMap.subscribe(params => {
@@ -1212,23 +1225,40 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   loadBreadcrumbs(): void {
-    if (this.currentFolderId === null) {
+    const requestedFolderId = this.currentFolderId;
+    if (requestedFolderId === null) {
       this.breadcrumbs = [];
+      this.currentFolderChange.emit({folderId: null, breadcrumbs: []});
       return;
     }
 
     const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
     this.folderService
-      .getBreadcrumbs(this.currentFolderId, workspaceId ?? undefined)
+      .getBreadcrumbs(requestedFolderId, workspaceId ?? undefined)
       .subscribe({
         next: crumbs => {
+          // Ignore responses for a folder the user already navigated away from.
+          if (this.currentFolderId !== requestedFolderId) {
+            return;
+          }
           this.breadcrumbs = crumbs;
+          this.currentFolderChange.emit({
+            folderId: requestedFolderId,
+            breadcrumbs: crumbs,
+          });
         },
         error: err => {
           console.error('Error loading breadcrumbs:', err);
+          if (this.currentFolderId !== requestedFolderId) {
+            return;
+          }
           if (!this.isSelectionMode && !this.isSelectorMode) {
             this.handleFolderLoadError(err);
+            return;
           }
+          // In selector mode an unreachable folder falls back to the root.
+          this.currentFolderId = null;
+          this.reload();
         },
       });
   }

@@ -321,7 +321,11 @@
     color="primary"
     (click)="runBatch()"
     [disabled]="
-      !csvFile || parsedItemsSignal().length === 0 || isProcessing || !isValid
+      !csvFile ||
+      parsedItemsSignal().length === 0 ||
+      isProcessing ||
+      isConfirmingBatch() ||
+      !isValid
     "
     *ngIf="resultRows().length === 0"
   >

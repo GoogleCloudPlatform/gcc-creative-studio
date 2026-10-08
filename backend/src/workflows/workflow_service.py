@@ -23,7 +23,7 @@ from fastapi import Depends
 from google.api_core.exceptions import InvalidArgument, NotFound
 from google.cloud import workflows_v1
 from google.cloud.workflows import executions_v1
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 from src.common.dto.pagination_response_dto import PaginationResponseDto
 from src.common.secret_redaction import install_secret_redaction
@@ -54,9 +54,6 @@ from src.workflows.repository.workflow_template_repository import (
     WorkflowTemplateRepository,
 )
 from src.workflows.schema.workflow_model import (
-    NodeTypes,
-    StepOutputReference,
-    StepStatusEnum,
     WorkflowBase,
     WorkflowCreateDto,
     WorkflowModel,
@@ -71,7 +68,7 @@ from src.workflows.schema.workflow_template_model import (
     WorkflowTemplateCreateDto,
     WorkflowTemplateModel,
 )
-from src.workflows.workflow_constants import IMAGE_MODE_ALLOWED_INPUTS
+from src.workflows.run_step_entries import build_step_entries
 from src.workflows.workflow_utils import interpolate_prompt_variables
 from src.workflows.workflow_yaml_builder import (
     RESERVED_ARGS,
@@ -656,6 +653,9 @@ class WorkflowService:
     ) -> list[dict[str, Any]]:
         """Builds ``step_entries`` from ``step_states`` and ``workflow_snapshot``.
 
+        Each entry carries a ``history`` array (one item per completed record
+        or loop iteration); see :func:`build_step_entries`.
+
         When ``step_states`` is empty (e.g. a legacy row migrated before step
         checkpoints existed), returns ``[]`` without any special message.
         """
@@ -676,150 +676,12 @@ class WorkflowService:
         except ValidationError:
             return []
 
-        user_inputs = dict(run.input_args or {})
-        user_input_step = next(
-            (
-                step
-                for step in workflow_model.steps
-                if step.type == NodeTypes.USER_INPUT
-            ),
-            None,
+        return build_step_entries(
+            workflow_model.steps,
+            run.step_states,
+            user_inputs=dict(run.input_args or {}),
+            started_at=run.started_at,
         )
-        user_input_step_id = (
-            user_input_step.step_id if user_input_step else "user_input"
-        )
-
-        previous_outputs: dict[str, dict[str, Any]] = {
-            user_input_step_id: user_inputs,
-            "user_input": user_inputs,
-        }
-        entries: list[dict[str, Any]] = [
-            {
-                "step_id": user_input_step_id,
-                "state": "STATE_SUCCEEDED",
-                "step_inputs": {},
-                "step_outputs": user_inputs,
-                "start_time": (
-                    run.started_at.isoformat() if run.started_at else None
-                ),
-                "end_time": (
-                    run.started_at.isoformat() if run.started_at else None
-                ),
-            }
-        ]
-
-        def resolve_value(value: Any) -> Any:
-            if isinstance(value, StepOutputReference):
-                return previous_outputs.get(value.step, {}).get(value.output)
-            if (
-                isinstance(value, dict)
-                and "step" in value
-                and "output" in value
-            ):
-                return previous_outputs.get(value["step"], {}).get(
-                    value["output"]
-                )
-            if isinstance(value, list):
-                return [resolve_value(item) for item in value]
-            return value
-
-        state_map = {
-            StepStatusEnum.COMPLETED: "STATE_SUCCEEDED",
-            StepStatusEnum.FAILED: "STATE_FAILED",
-            StepStatusEnum.RUNNING: "STATE_IN_PROGRESS",
-            StepStatusEnum.PENDING: "STATE_PENDING",
-        }
-
-        for current_step in workflow_model.steps:
-            if current_step.type == NodeTypes.USER_INPUT:
-                continue
-            step_id = current_step.step_id
-            state = run.step_states.get(step_id)
-            if state is None:
-                continue
-
-            raw_inputs = (
-                current_step.inputs.model_dump()
-                if isinstance(current_step.inputs, BaseModel)
-                else (
-                    current_step.inputs
-                    if isinstance(current_step.inputs, dict)
-                    else {}
-                )
-            )
-            step_inputs: dict[str, Any] = {}
-            if current_step.type == NodeTypes.IMAGE:
-                settings_mode = (
-                    getattr(current_step.settings, "mode", "generate_image")
-                    if isinstance(current_step.settings, BaseModel)
-                    else (
-                        current_step.settings.get("mode", "generate_image")
-                        if isinstance(current_step.settings, dict)
-                        else "generate_image"
-                    )
-                )
-                allowed_inputs = IMAGE_MODE_ALLOWED_INPUTS.get(
-                    settings_mode, ["prompt"]
-                )
-                for inp_name, inp_value in raw_inputs.items():
-                    if inp_name in allowed_inputs and inp_value is not None:
-                        step_inputs[inp_name] = resolve_value(inp_value)
-            else:
-                for inp_name, inp_value in raw_inputs.items():
-                    if inp_value is not None:
-                        step_inputs[inp_name] = resolve_value(inp_value)
-                if current_step.type == NodeTypes.GENERATE_TEXT:
-                    prompt_val = step_inputs.get("prompt")
-                    if isinstance(prompt_val, str):
-                        step_inputs["prompt"] = (
-                            self._interpolate_prompt_variables(
-                                prompt_val, step_inputs
-                            )
-                        )
-
-            raw_outputs = dict(state.outputs or {})
-            if current_step.type == NodeTypes.IMAGE and raw_outputs:
-                img_val = (
-                    raw_outputs.get("generated_image")
-                    or raw_outputs.get("edited_image")
-                    or raw_outputs.get("upscaled_image")
-                    or raw_outputs.get("image_output")
-                )
-                step_outputs = (
-                    {"generated_image": img_val}
-                    if img_val is not None
-                    else raw_outputs
-                )
-            else:
-                step_outputs = raw_outputs
-
-            previous_outputs[step_id] = step_outputs
-            status_enum = StepStatusEnum(state.status)
-            entries.append(
-                {
-                    "step_id": step_id,
-                    "state": state_map.get(status_enum, "STATE_PENDING"),
-                    "step_inputs": step_inputs,
-                    "step_outputs": step_outputs,
-                    "start_time": (
-                        state.started_at.isoformat()
-                        if state.started_at
-                        else None
-                    ),
-                    "end_time": (
-                        state.completed_at.isoformat()
-                        if state.completed_at
-                        else None
-                    ),
-                    "attempts": state.attempts,
-                    "error": (
-                        state.error.model_dump(mode="json", exclude_none=True)
-                        if state.error
-                        else None
-                    ),
-                }
-            )
-        return entries
 
     async def resume_run(
         self,

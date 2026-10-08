@@ -14,7 +14,14 @@
  * limitations under the License.
  */
 
-import {Component, Inject, OnInit, ViewChild} from '@angular/core';
+import {
+  Component,
+  Inject,
+  OnInit,
+  ViewChild,
+  computed,
+  signal,
+} from '@angular/core';
 import {
   MAT_DIALOG_DATA,
   MatDialog,
@@ -28,6 +35,10 @@ import {
 } from '../../services/source-asset.service';
 import {AssetTypeEnum} from '../../../admin/source-assets-management/source-asset.model';
 import {MediaItem} from '../../models/media-item.model';
+import {
+  FolderSelectionResult,
+  GalleryFolderLocation,
+} from '../../models/folder.model';
 import {MediaGalleryComponent} from '../../../gallery/media-gallery/media-gallery.component';
 import {ImageCropperDialogComponent} from '../image-cropper-dialog/image-cropper-dialog.component';
 
@@ -45,6 +56,26 @@ export interface MediaItemSelection {
   selectedIndex: number;
 }
 
+/** What the selector dialog returns: media items (default) or a folder. */
+export type ImageSelectorTarget = 'media' | 'folder';
+
+export interface ImageSelectorDialogData {
+  mimeType: SelectorMimeType;
+  assetType: AssetTypeEnum;
+  enableUpscale?: boolean;
+  multiSelect?: boolean;
+  showFooter?: boolean;
+  maxSelection?: number;
+  includeExternal?: boolean;
+  /** Optional for backward compatibility with existing callers; defaults to 'media'. */
+  selectionTarget?: ImageSelectorTarget;
+  /** Folder mode only; null = root. */
+  initialFolderId?: number | null;
+}
+
+const ROOT_FOLDER_LABEL = 'All Media';
+const FOLDER_PATH_SEPARATOR = ' / ';
+
 @Component({
   selector: 'app-image-selector',
   templateUrl: './image-selector.component.html',
@@ -57,6 +88,25 @@ export class ImageSelectorComponent implements OnInit {
   shouldCrop = false;
   currentUserEmail: string | null = null;
 
+  /** True when the dialog is used to pick a folder instead of media. */
+  readonly isFolderMode: boolean;
+  readonly title: string;
+  readonly initialFolderId: number | null;
+  readonly currentLocation = signal<GalleryFolderLocation>({
+    folderId: null,
+    breadcrumbs: [],
+  });
+  readonly currentPath = computed(() => {
+    const names = this.currentLocation().breadcrumbs.map(crumb => crumb.name);
+    return names.length > 0
+      ? names.join(FOLDER_PATH_SEPARATOR)
+      : ROOT_FOLDER_LABEL;
+  });
+  /** The root is never a valid folder selection. */
+  readonly canConfirmFolder = computed(
+    () => this.currentLocation().folderId !== null,
+  );
+
   @ViewChild(MediaGalleryComponent) mediaGallery!: MediaGalleryComponent;
 
   constructor(
@@ -65,17 +115,12 @@ export class ImageSelectorComponent implements OnInit {
     private dialog: MatDialog,
     private userService: UserService,
     @Inject(MAT_DIALOG_DATA)
-    public data: {
-      mimeType: SelectorMimeType;
-      assetType: AssetTypeEnum;
-      enableUpscale?: boolean;
-      multiSelect?: boolean;
-      showFooter?: boolean;
-      maxSelection?: number;
-      includeExternal?: boolean;
-    },
+    public data: ImageSelectorDialogData,
   ) {
     this.dialogRef.addPanelClass('image-selector-dialog');
+    this.isFolderMode = (data.selectionTarget ?? 'media') === 'folder';
+    this.title = this.isFolderMode ? 'Select a Folder' : 'Select Media';
+    this.initialFolderId = data.initialFolderId ?? null;
   }
 
   ngOnInit(): void {
@@ -83,8 +128,30 @@ export class ImageSelectorComponent implements OnInit {
     this.currentUserEmail = userDetails?.email || null;
   }
 
+  onCurrentFolderChange(location: GalleryFolderLocation): void {
+    this.currentLocation.set(location);
+  }
+
+  /** Closes the dialog with the currently open folder (no-op at root). */
+  confirmFolderSelection(): void {
+    const {folderId, breadcrumbs} = this.currentLocation();
+    if (folderId === null) {
+      return;
+    }
+    const current = breadcrumbs[breadcrumbs.length - 1];
+    const result: FolderSelectionResult = {
+      folderId,
+      folderName: current?.name ?? '',
+      path: this.currentPath(),
+    };
+    this.dialogRef.close(result);
+  }
+
   // This method is called by the file input or drop event inside this component
   handleFileSelect(file: File): void {
+    if (this.isFolderMode) {
+      return;
+    }
     const isImage =
       file.type.startsWith('image/') ||
       /\.(jpg|jpeg|png|gif|webp|avif)$/i.test(file.name);
@@ -157,7 +224,7 @@ export class ImageSelectorComponent implements OnInit {
     event.preventDefault();
     event.stopPropagation();
     this.isDragging = false;
-    if (this.isUploading) return;
+    if (this.isUploading || this.isFolderMode) return;
 
     let file: File | null = null;
     const dt = event.dataTransfer;
@@ -232,6 +299,9 @@ export class ImageSelectorComponent implements OnInit {
   }
 
   onMediaSelected(selection: MediaItemSelection): void {
+    if (this.isFolderMode) {
+      return;
+    }
     const item = selection.mediaItem as any;
     const id = `${item.itemType || 'media_item'}:${item.id}`;
     if (this.selectedMediaItems.has(id)) {
@@ -252,6 +322,9 @@ export class ImageSelectorComponent implements OnInit {
   }
 
   onMediaItemSelected(selection: MediaItemSelection): void {
+    if (this.isFolderMode) {
+      return;
+    }
     if (this.data.multiSelect || this.data.showFooter) {
       // In multi-select mode or when footer is shown, we don't close on single item selection
       // Instead, we just let MediaGalleryComponent handle the toggle and wait for Select btn

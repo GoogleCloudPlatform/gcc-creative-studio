@@ -64,6 +64,25 @@ describe('WorkflowMagneticUtil', () => {
       expect(getCanonicalType('textarea')).toBe('TXT');
       expect(getCanonicalType('prompt')).toBe('TXT');
     });
+
+    it('should map loop_ending and loop to LOOP', () => {
+      expect(getCanonicalType('loop_ending')).toBe('LOOP');
+      expect(getCanonicalType('loop')).toBe('LOOP');
+    });
+  });
+  describe('isPortTypeCompatible (loop_ending)', () => {
+    it('should only connect loop_ending outputs to loop_ending inputs', () => {
+      expect(isPortTypeCompatible('loop_ending', 'loop_ending')).toBeTrue();
+      ['text', 'image', 'video', 'audio', 'any'].forEach(target => {
+        expect(isPortTypeCompatible('loop_ending', target)).toBeFalse();
+        expect(isPortTypeCompatible(target, 'loop_ending')).toBeFalse();
+      });
+    });
+
+    it('should give loop ports a dedicated color', () => {
+      expect(getShortType('loop_ending')).toBe('LOOP');
+      expect(getPortTypeColor('loop_ending')).toBe(PORT_TYPE_COLORS.LOOP);
+    });
   });
   describe('isPortTypeCompatible', () => {
     it('should return false for null, undefined, or empty types', () => {
@@ -436,6 +455,26 @@ describe('WorkflowMagneticUtil', () => {
       ).toBeTrue();
       expect(isInputPortFull('hello', 'prompt', 'gemini-2.5-pro')).toBeTrue();
       expect(isInputPortFull(null, 'prompt', 'gemini-2.5-pro')).toBeFalse();
+    });
+  });
+
+  describe('Loop linked_items port capacity', () => {
+    const buildRefs = (count: number) =>
+      Array.from({length: count}, (_, index) => ({
+        step: `img_${index}`,
+        output: 'generated_image',
+      }));
+
+    it('allows up to 100 links, whatever the model', () => {
+      expect(getMaxAllowedInputs('linked_items')).toBe(100);
+      expect(
+        getMaxAllowedInputs('linked_items', 'gemini-2.5-flash-image'),
+      ).toBe(100);
+    });
+
+    it('is not full at 99 links and full at 100', () => {
+      expect(isInputPortFull(buildRefs(99), 'linked_items')).toBeFalse();
+      expect(isInputPortFull(buildRefs(100), 'linked_items')).toBeTrue();
     });
   });
 });
