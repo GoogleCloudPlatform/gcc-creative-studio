@@ -116,7 +116,7 @@ class TestWorkflowServiceConfig:
     ):
         from src.config.config_service import config_service
 
-        config_service.WORKFLOWS_LOCATION = "asia-southeast1"
+        config_service.WORKFLOWS_LOCATION = "us-central1"
 
         yaml_output = workflow_service._generate_workflow_yaml(
             sample_workflow_model
