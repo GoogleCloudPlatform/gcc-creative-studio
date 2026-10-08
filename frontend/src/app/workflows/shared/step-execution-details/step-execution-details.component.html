@@ -31,10 +31,10 @@
 
 <label
   class="block text-sm font-medium text-neutral-300 mb-2"
-  *ngIf="inputCount > 0"
+  *ngIf="showInputs && inputCount > 0"
   >inputs</label
 >
-<div class="bg-neutral-700 p-3 rounded-lg mb-4" *ngIf="inputCount > 0">
+<div class="bg-neutral-700 p-3 rounded-lg mb-4" *ngIf="showInputs && inputCount > 0">
   <div
     class="grid gap-2"
     [ngClass]="{'grid-cols-1': inputCount === 1, 'grid-cols-2': inputCount > 1}"
@@ -196,12 +196,22 @@
   </div>
 </div>
 
+<div
+  *ngIf="showOutputs && loopTruncationMessage() as truncationMessage"
+  [id]="'loop-truncation-banner-' + stepId"
+  class="loop-truncation-banner"
+  role="alert"
+>
+  <mat-icon class="loop-truncation-icon">warning_amber</mat-icon>
+  <span>{{ truncationMessage }}</span>
+</div>
+
 <label
   class="block text-sm font-medium text-neutral-300 mb-2"
-  *ngIf="outputCount > 0"
+  *ngIf="showOutputs && outputCount > 0"
   >outputs</label
 >
-<div class="bg-neutral-700 p-3 rounded-lg" *ngIf="outputCount > 0">
+<div class="bg-neutral-700 p-3 rounded-lg" *ngIf="showOutputs && outputCount > 0">
   <div
     class="grid gap-2"
     [ngClass]="{
@@ -346,12 +356,32 @@
         </div>
       </div>
 
+      <!-- Loop Text Items (numbered list) -->
+      <div
+        *ngIf="isLoopTextMode() && output.key === loopItemsKey"
+        class="col-span-full loop-text-items"
+      >
+        <span class="text-xs text-neutral-500 block mb-1">{{
+          output.key
+        }}</span>
+        <ol class="loop-text-list">
+          <li
+            *ngFor="let item of loopTextItems(); let i = index"
+            class="loop-text-item"
+          >
+            <span class="loop-text-index">{{ i + 1 }}.</span>
+            <span class="loop-text-value">{{ item }}</span>
+          </li>
+        </ol>
+      </div>
+
       <!-- Text/Other Output -->
       <div
         *ngIf="
           !isImageOutput(output.key) &&
           !isVideoOutput(output.key) &&
-          !isAudioOutput(output.key)
+          !isAudioOutput(output.key) &&
+          !(isLoopTextMode() && output.key === loopItemsKey)
         "
         class="col-span-2 bg-neutral-900 p-2 rounded border border-neutral-800 mb-2"
       >

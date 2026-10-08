@@ -427,6 +427,66 @@ class TestOnFinished:
             )
         mock_repo.db.rollback.assert_awaited_once()
 
+    @pytest.mark.anyio
+    async def test_on_finished_failed_loop_iteration_uses_flat_key(
+        self, service, mock_repo
+    ):
+        run = _make_run(
+            step_states={
+                "gen#2": StepState(
+                    status=StepStatusEnum.RUNNING,
+                    attempts=0,
+                    started_at=BASE_TIME,
+                )
+            }
+        )
+        mock_repo.lock_run.return_value = run
+
+        updated = await service.on_finished(
+            "run-123",
+            {
+                "execution_id": "exec-1",
+                "status": "FAILED",
+                "step_id": "gen#2",
+                "error": {"code": 503, "message": "Service Unavailable"},
+            },
+            user_id=7,
+        )
+
+        assert mock_repo.set_step_state.await_args.args[1] == "gen#2"
+        assert updated.step_states["gen#2"].status == StepStatusEnum.FAILED
+        assert "gen" not in updated.step_states
+        first_fields = mock_repo.update_fields.await_args_list[0].args[1]
+        assert first_fields["current_step_id"] == "gen"
+        assert updated.current_step_id == "gen"
+
+
+class TestCheckpointIterationKeys:
+    """Iteration records never reach ``prior_outputs``."""
+
+    @pytest.mark.anyio
+    async def test_fallback_checkpoint_skips_iteration_records(
+        self, service, mock_repo
+    ):
+        run = _make_run(
+            workflow_snapshot={},
+            step_states={
+                "step_a": StepState(
+                    status=StepStatusEnum.COMPLETED,
+                    outputs={"generated_text": "hello"},
+                ),
+                "gen#0": StepState(
+                    status=StepStatusEnum.COMPLETED,
+                    outputs={"generated_image": [1]},
+                ),
+            },
+        )
+        mock_repo.get_by_id.return_value = run
+
+        prior = await service.get_checkpoint("run-123", user_id=7)
+
+        assert prior == {"step_a": {"generated_text": "hello"}}
+
 
 class TestOnStepFailedCategoriesAndTransitions:
     """Tests for failure categories, continuations, session wait, and caps."""

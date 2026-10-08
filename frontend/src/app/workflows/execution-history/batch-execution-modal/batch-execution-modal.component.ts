@@ -15,10 +15,19 @@
  */
 
 import {Component, Inject, computed, signal} from '@angular/core';
-import {MAT_DIALOG_DATA, MatDialogRef} from '@angular/material/dialog';
+import {
+  MAT_DIALOG_DATA,
+  MatDialog,
+  MatDialogRef,
+} from '@angular/material/dialog';
 import * as Papa from 'papaparse';
 import {take} from 'rxjs/operators';
+import {
+  ConfirmationDialogComponent,
+  ConfirmationDialogData,
+} from '../../../common/components/confirmation-dialog/confirmation-dialog.component';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
+import {workflowHasLoopStep} from '../../utils/workflow-loop.util';
 import {
   BatchItemResult,
   BatchItemStatus,
@@ -27,6 +36,15 @@ import {
   WorkflowModel,
 } from '../../workflow.models';
 import {WorkflowService} from '../../workflow.service';
+
+/** Confirmation shown before a batch run of a workflow that contains a Loop. */
+export const LOOP_BATCH_WARNING: ConfirmationDialogData = {
+  title: 'Run batch with a Loop?',
+  message:
+    'This workflow contains a Loop. Each batch row runs every loop iteration, which can trigger many generations and incur significant cost. Continue?',
+  confirmLabel: 'Continue',
+  confirmColor: 'primary',
+};
 
 export interface BatchResultRowViewModel {
   rowNumber: number;
@@ -45,6 +63,10 @@ export interface BatchResultRowViewModel {
 })
 export class BatchExecutionModalComponent {
   workflow: WorkflowModel;
+  /** The saved workflow never changes while the modal is open. */
+  readonly hasLoopStep: boolean;
+  /** True while the Loop batch warning is open (blocks double submissions). */
+  readonly isConfirmingBatch = signal<boolean>(false);
 
   csvFile: File | null = null;
   headers: string[] = [];
@@ -168,8 +190,10 @@ export class BatchExecutionModalComponent {
     @Inject(MAT_DIALOG_DATA) public data: {workflow: WorkflowModel},
     private workflowService: WorkflowService,
     private workspaceStateService: WorkspaceStateService,
+    private dialog: MatDialog,
   ) {
     this.workflow = data.workflow;
+    this.hasLoopStep = workflowHasLoopStep(this.workflow);
     this.extractExpectedInputs();
   }
 
@@ -255,9 +279,38 @@ export class BatchExecutionModalComponent {
     return header.trim().toLowerCase().replace(/\s+/g, '_');
   }
 
+  /**
+   * Starts the batch. When the saved workflow contains a Loop, a confirmation
+   * dialog warns about the cost first and the batch is only submitted on
+   * Continue.
+   */
   runBatch(): void {
     if (!this.isValid || this.parsedItems.length === 0) return;
+    if (this.isProcessing || this.isConfirmingBatch()) return;
 
+    if (!this.hasLoopStep) {
+      this.submitBatch();
+      return;
+    }
+
+    this.isConfirmingBatch.set(true);
+    this.dialog
+      .open<ConfirmationDialogComponent, ConfirmationDialogData, boolean>(
+        ConfirmationDialogComponent,
+        {data: LOOP_BATCH_WARNING},
+      )
+      .afterClosed()
+      .pipe(take(1))
+      .subscribe(confirmed => {
+        this.isConfirmingBatch.set(false);
+        if (confirmed === true) {
+          this.submitBatch();
+        }
+      });
+  }
+
+  /** Submits every mapped CSV row as one batch execution. */
+  submitBatch(): void {
     this.isProcessing = true;
     this.results = [];
 

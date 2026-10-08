@@ -15,33 +15,90 @@
  */
 
 import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {MatButtonModule} from '@angular/material/button';
 import {
   MatDialogModule,
   MatDialogRef,
   MAT_DIALOG_DATA,
 } from '@angular/material/dialog';
-import {ConfirmationDialogComponent} from './confirmation-dialog.component';
+import {
+  ConfirmationDialogComponent,
+  ConfirmationDialogData,
+} from './confirmation-dialog.component';
 
 describe('ConfirmationDialogComponent', () => {
   let component: ConfirmationDialogComponent;
   let fixture: ComponentFixture<ConfirmationDialogComponent>;
+  let dialogRefSpy: jasmine.SpyObj<MatDialogRef<ConfirmationDialogComponent>>;
 
-  beforeEach(async () => {
+  async function setup(data: ConfirmationDialogData): Promise<void> {
+    dialogRefSpy = jasmine.createSpyObj<
+      MatDialogRef<ConfirmationDialogComponent>
+    >('MatDialogRef', ['close']);
     await TestBed.configureTestingModule({
       declarations: [ConfirmationDialogComponent],
-      imports: [MatDialogModule],
+      imports: [MatDialogModule, MatButtonModule],
       providers: [
-        {provide: MatDialogRef, useValue: {}},
-        {provide: MAT_DIALOG_DATA, useValue: {}},
+        {provide: MatDialogRef, useValue: dialogRefSpy},
+        {provide: MAT_DIALOG_DATA, useValue: data},
       ],
     }).compileComponents();
 
     fixture = TestBed.createComponent(ConfirmationDialogComponent);
     component = fixture.componentInstance;
     fixture.detectChanges();
+  }
+
+  function queryButton(id: string): HTMLButtonElement {
+    return fixture.nativeElement.querySelector(`#${id}`) as HTMLButtonElement;
+  }
+
+  describe('with default buttons', () => {
+    beforeEach(async () => {
+      await setup({title: 'Delete item?', message: 'This cannot be undone.'});
+    });
+
+    it('should create', () => {
+      expect(component).toBeTruthy();
+    });
+
+    it('renders the Delete / warn confirm button and a Cancel button', () => {
+      const confirmButton = queryButton('confirmation-dialog-confirm-btn');
+      expect(confirmButton.textContent?.trim()).toBe('Delete');
+      expect(confirmButton.classList).toContain('mat-warn');
+      expect(
+        queryButton('confirmation-dialog-cancel-btn').textContent?.trim(),
+      ).toBe('Cancel');
+    });
+
+    it('closes with true on confirm and false on dismiss', () => {
+      component.onConfirm();
+      expect(dialogRefSpy.close).toHaveBeenCalledWith(true);
+
+      component.onDismiss();
+      expect(dialogRefSpy.close).toHaveBeenCalledWith(false);
+    });
   });
 
-  it('should create', () => {
-    expect(component).toBeTruthy();
+  describe('with custom buttons', () => {
+    beforeEach(async () => {
+      await setup({
+        title: 'Run batch?',
+        message: 'Continue?',
+        confirmLabel: 'Continue',
+        confirmColor: 'primary',
+        cancelLabel: 'Go back',
+      });
+    });
+
+    it('renders the custom labels and colour', () => {
+      const confirmButton = queryButton('confirmation-dialog-confirm-btn');
+      expect(confirmButton.textContent?.trim()).toBe('Continue');
+      expect(confirmButton.classList).toContain('mat-primary');
+      expect(confirmButton.classList).not.toContain('mat-warn');
+      expect(
+        queryButton('confirmation-dialog-cancel-btn').textContent?.trim(),
+      ).toBe('Go back');
+    });
   });
 });

@@ -374,7 +374,7 @@
                   [style.left.px]="getNodePosition(step.value.stepId).x"
                   [style.top.px]="getNodePosition(step.value.stepId).y"
                   (mousedown)="onNodeMouseDown($event, step.value.stepId)"
-                  (click)="selectedStepIndex = i"
+                  (click)="onStepClick(i, step.value.stepId)"
                   [stepForm]="asFormGroup(step)"
                   [stepIndex]="i"
                   [config]="getStepConfig(step.value.type)"
@@ -383,6 +383,12 @@
                   [stepExecution]="getStepExecution(step.value.stepId)"
                   [mediaUrlMap]="mediaUrlMap"
                   [isSelected]="selectedNodeId === step.value.stepId"
+                  [isOutputLinked]="
+                    linkedOutputStepMap()[step.value.stepId] || false
+                  "
+                  [showLoopEndingOutput]="
+                    loopEndingVisibleStepMap()[step.value.stepId] || false
+                  "
                   [isHighlighted]="
                     highlightedNodeMap()[step.value.stepId] || false
                   "
@@ -448,4 +454,19 @@
       </div>
     </div>
   </div>
+
+  <!-- Step Execution History Sidebar -->
+  @if (historySidebarStep(); as sidebarStep) {
+    @if (historySidebarEntry(); as sidebarEntry) {
+      <app-step-history-sidebar
+        id="workflow-step-history-sidebar"
+        [entry]="sidebarEntry"
+        [stepType]="sidebarStep.type"
+        [stepTitle]="sidebarStep.title"
+        [stepMode]="sidebarStep.mode"
+        [mediaUrlMap]="mediaUrlMap"
+        (closed)="closeHistorySidebar()"
+      ></app-step-history-sidebar>
+    }
+  }
 </div>

@@ -17,7 +17,7 @@
 import {NO_ERRORS_SCHEMA} from '@angular/core';
 import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {Router} from '@angular/router';
-import {NodeTypes} from '../../workflow.models';
+import {LoopMediaItem, NodeTypes} from '../../workflow.models';
 import {StepExecutionDetailsComponent} from './step-execution-details.component';
 
 describe('StepExecutionDetailsComponent', () => {
@@ -409,6 +409,254 @@ describe('StepExecutionDetailsComponent', () => {
         category: 'ERROR',
         detail: 'Plain error string',
       });
+    });
+  });
+
+  describe('Loop Step', () => {
+    const query = (selector: string): HTMLElement | null =>
+      fixture.nativeElement.querySelector(selector);
+
+    beforeEach(() => {
+      component.stepId = 'loop_1';
+      component.stepType = NodeTypes.LOOP;
+    });
+
+    it('surfaces folder metadata and renders items as media in folder mode', () => {
+      component.inputs = {
+        mode: 'folder',
+        folder_id: 42,
+        folder_name: 'Product Photos',
+        item_type: 'video',
+      };
+      component.outputs = {
+        items: [101, 102],
+        total_iterations: 2,
+        total_found: 2,
+        truncated: false,
+      };
+      fixture.detectChanges();
+
+      expect(component.filteredInputs).toEqual({
+        mode: 'Media Gallery Folder',
+        folder_name: 'Product Photos',
+        item_type: 'video',
+      });
+      expect(component.filteredOutputs).toEqual({items: [101, 102]});
+      expect(component.isVideoOutput('items')).toBeTrue();
+      expect(component.isImageOutput('items')).toBeFalse();
+      expect(component.isAudioOutput('items')).toBeFalse();
+      expect(component.getResolvedValues(component.outputs['items'])).toEqual([
+        101, 102,
+      ]);
+      expect(query('.loop-text-list')).toBeNull();
+      expect(query('#loop-truncation-banner-loop_1')).toBeNull();
+    });
+
+    it('surfaces linked items metadata and renders items as media in linked items mode', () => {
+      component.inputs = {
+        mode: 'linked_items',
+        item_type: 'image',
+        source_count: 3,
+        skipped_count: 1,
+        folder_name: 'Stale folder',
+        items_text: 'stale, text',
+      };
+      component.outputs = {
+        items: [201, 202],
+        total_iterations: 2,
+        total_found: 2,
+        truncated: false,
+      };
+      component.mediaUrlMap = new Map([
+        ['media:201', 'https://media/201.png'],
+        ['media:202', 'https://media/202.png'],
+      ]);
+      fixture.detectChanges();
+
+      expect(component.filteredInputs).toEqual({
+        mode: 'Linked Items',
+        item_type: 'image',
+        source_count: 3,
+        skipped_count: 1,
+      });
+      expect(component.loopMediaType()).toBe('image');
+      expect(component.isImageOutput('items')).toBeTrue();
+      expect(component.isVideoOutput('items')).toBeFalse();
+      expect(component.isLoopTextMode()).toBeFalse();
+      const srcs = Array.from(
+        fixture.nativeElement.querySelectorAll('img[alt="Generated Image"]'),
+      ).map(img => (img as HTMLImageElement).getAttribute('src'));
+      expect(srcs).toEqual(['https://media/201.png', 'https://media/202.png']);
+      expect(query('.loop-text-list')).toBeNull();
+    });
+
+    it('does not treat a Loop without a recorded mode as media', () => {
+      component.inputs = {item_type: 'image'};
+      component.outputs = {items: [1]};
+
+      expect(component.loopMediaType()).toBeNull();
+      expect(component.isImageOutput('items')).toBeFalse();
+    });
+
+    it('renders text items as a numbered list in text_input mode', () => {
+      component.inputs = {mode: 'text_input', items_text: 'cat, dog, rabbit'};
+      component.outputs = {
+        items: ['cat', 'dog', 'rabbit'],
+        total_iterations: 3,
+        total_found: 3,
+        truncated: false,
+      };
+      fixture.detectChanges();
+
+      expect(component.filteredInputs).toEqual({
+        mode: 'Text Input',
+        items_text: 'cat, dog, rabbit',
+      });
+      expect(component.isImageOutput('items')).toBeFalse();
+      expect(component.loopMediaType()).toBeNull();
+      expect(component.loopTextItems()).toEqual(['cat', 'dog', 'rabbit']);
+      const listItems =
+        fixture.nativeElement.querySelectorAll('.loop-text-item');
+      expect(listItems.length).toBe(3);
+      expect(listItems[0].textContent).toContain('1.');
+      expect(listItems[0].textContent).toContain('cat');
+    });
+
+    it('builds the truncation banner from total_found and MAX_LOOP_ITEMS', () => {
+      component.inputs = {mode: 'folder', item_type: 'image'};
+      component.outputs = {
+        items: [1],
+        total_iterations: 100,
+        total_found: 250,
+        truncated: true,
+      };
+      fixture.detectChanges();
+
+      expect(component.loopTruncationMessage()).toBe(
+        'Found 250 items, only the first 100 will be processed',
+      );
+      expect(query('#loop-truncation-banner-loop_1')?.textContent).toContain(
+        'Found 250 items',
+      );
+    });
+
+    it('hides the inputs block when showInputs is false', () => {
+      component.inputs = {mode: 'text_input', items_text: 'a, b'};
+      component.outputs = {items: ['a', 'b']};
+      component.showInputs = false;
+      fixture.detectChanges();
+
+      const labels = Array.from(
+        fixture.nativeElement.querySelectorAll('label'),
+      ).map(l => (l as HTMLElement).textContent?.trim());
+      expect(labels).toEqual(['outputs']);
+    });
+
+    it('hides the outputs block and banner when showOutputs is false', () => {
+      component.inputs = {mode: 'folder', item_type: 'image'};
+      component.outputs = {items: [1], total_found: 250, truncated: true};
+      component.showOutputs = false;
+      fixture.detectChanges();
+
+      expect(query('#loop-truncation-banner-loop_1')).toBeNull();
+      const labels = Array.from(
+        fixture.nativeElement.querySelectorAll('label'),
+      ).map(l => (l as HTMLElement).textContent?.trim());
+      expect(labels).toEqual(['inputs']);
+    });
+
+    describe('mixed generated media and uploaded source assets', () => {
+      const mixedItems: LoopMediaItem[] = [
+        101,
+        {sourceAssetId: 7, previewUrl: ''},
+        103,
+      ];
+
+      beforeEach(() => {
+        component.inputs = {mode: 'folder', item_type: 'image'};
+        component.outputs = {items: mixedItems, total_iterations: 3};
+        component.mediaUrlMap = new Map([
+          ['media:101', 'https://media/101.png'],
+          ['asset:7', 'https://asset/7.png'],
+          ['media:103', 'https://media/103.png'],
+        ]);
+      });
+
+      it('renders a resolved thumbnail for every item kind', () => {
+        fixture.detectChanges();
+
+        const srcs = Array.from(
+          fixture.nativeElement.querySelectorAll('img'),
+        ).map(img => (img as HTMLImageElement).getAttribute('src'));
+        expect(srcs).toEqual([
+          'https://media/101.png',
+          'https://asset/7.png',
+          'https://media/103.png',
+        ]);
+      });
+
+      it('uses the asset key (not the empty previewUrl) for source assets', () => {
+        const asset = {sourceAssetId: 7, previewUrl: ''};
+        expect(component.getMediaUrl(asset)).toBe('https://asset/7.png');
+        expect(component.trackByMedia(0, asset)).toBe('asset:7');
+        component.mediaUrlMap = new Map();
+        expect(component.getMediaUrl(asset)).toBe('');
+      });
+
+      it('opens the gallery only for generated media items', () => {
+        routerSpy.createUrlTree.and.returnValue(
+          {} as ReturnType<Router['createUrlTree']>,
+        );
+        routerSpy.serializeUrl.and.returnValue('/gallery/101');
+        const openSpy = spyOn(window, 'open');
+
+        component.navigateToGallery({sourceAssetId: 7, previewUrl: ''});
+        expect(routerSpy.createUrlTree).not.toHaveBeenCalled();
+        expect(openSpy).not.toHaveBeenCalled();
+
+        component.navigateToGallery(101);
+        expect(routerSpy.createUrlTree).toHaveBeenCalledWith([
+          '/gallery',
+          '101',
+        ]);
+        expect(openSpy).toHaveBeenCalledWith('/gallery/101', '_blank');
+      });
+    });
+  });
+
+  describe('Loop body step fed by current_item', () => {
+    const sourceAssetItem: LoopMediaItem = {sourceAssetId: 7, previewUrl: ''};
+
+    const renderInputThumbnails = (
+      inputImages: LoopMediaItem | LoopMediaItem[],
+    ): Array<string | null> => {
+      component.stepType = NodeTypes.IMAGE;
+      component.mode = 'edit_image';
+      component.inputs = {prompt: 'Add fireworks', input_images: inputImages};
+      component.mediaUrlMap = new Map([
+        ['media:101', 'https://media/101.png'],
+        ['asset:7', 'https://asset/7.png'],
+      ]);
+      fixture.detectChanges();
+      return Array.from(
+        fixture.nativeElement.querySelectorAll('img[alt="Input Image"]'),
+      ).map(img => (img as HTMLImageElement).getAttribute('src'));
+    };
+
+    it('renders a directly wired generated media item', () => {
+      expect(renderInputThumbnails(101)).toEqual(['https://media/101.png']);
+    });
+
+    it('renders a directly wired uploaded source asset', () => {
+      expect(renderInputThumbnails(sourceAssetItem)).toEqual([
+        'https://asset/7.png',
+      ]);
+    });
+
+    it('renders an item wired as one entry of an input list', () => {
+      expect(renderInputThumbnails([sourceAssetItem])).toEqual([
+        'https://asset/7.png',
+      ]);
     });
   });
 });

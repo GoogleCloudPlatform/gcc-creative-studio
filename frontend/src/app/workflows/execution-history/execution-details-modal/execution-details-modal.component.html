@@ -222,18 +222,32 @@
           [id]="'modal-step-card-' + step.stepId"
           class="glass-card !p-0 overflow-hidden"
         >
-          <!-- Step Header -->
+          <!-- Step Header (opens the step history sidebar) -->
           <div
             class="p-3 flex justify-between items-center cursor-pointer hover:bg-white/5 transition-colors"
-            (click)="toggleStep(step.stepId)"
+            [id]="'modal-step-header-' + step.stepId"
+            role="button"
+            tabindex="0"
+            matTooltip="View execution history"
+            (click)="openStepHistory(step)"
+            (keydown.enter)="onStepHeaderKeydown($event, step)"
           >
             <div class="flex items-center gap-3">
-              <mat-icon
-                [class.rotate-90]="step.isExpanded"
-                class="transition-transform text-neutral-400"
+              <button
+                type="button"
+                class="modal-step-expand-btn"
+                [id]="'modal-step-expand-' + step.stepId"
+                [attr.aria-expanded]="step.isExpanded"
+                aria-label="Toggle step details"
+                (click)="onToggleStepClick($event, step.stepId)"
               >
-                chevron_right
-              </mat-icon>
+                <mat-icon
+                  [class.rotate-90]="step.isExpanded"
+                  class="transition-transform"
+                >
+                  chevron_right
+                </mat-icon>
+              </button>
               <span class="font-medium text-neutral-200">{{
                 step.stepId
               }}</span>
@@ -262,14 +276,30 @@
               <app-step-execution-details
                 [stepId]="step.stepId"
                 [stepType]="step.stepType"
-                [inputs]="step.inputs"
-                [outputs]="step.outputs"
                 [attempts]="step.attempts"
                 [lastError]="step.lastError"
-                [mediaUrlMap]="mediaUrlMap"
-                [mode]="step.stepMode"
+                [showInputs]="false"
+                [showOutputs]="false"
               >
               </app-step-execution-details>
+              <div
+                *ngFor="let iteration of step.iterations"
+                [id]="iteration.elementId"
+                class="modal-step-iteration"
+              >
+                <h4 *ngIf="iteration.label" class="modal-step-iteration-label">
+                  {{ iteration.label }}
+                </h4>
+                <app-step-execution-details
+                  [stepId]="step.stepId"
+                  [stepType]="step.stepType"
+                  [inputs]="iteration.inputs"
+                  [outputs]="iteration.outputs"
+                  [mediaUrlMap]="mediaUrlMap"
+                  [mode]="step.stepMode"
+                >
+                </app-step-execution-details>
+              </div>
             </div>
 
             <div

@@ -18,6 +18,7 @@ import {GENERATE_AUDIO_STEP_CONFIG} from '../workflow-editor/step-components/ste
 import {GENERATE_TEXT_STEP_CONFIG} from '../workflow-editor/step-components/step-configs/generate-text-step.config';
 import {GENERATE_VIDEO_STEP_CONFIG} from '../workflow-editor/step-components/step-configs/generate-video-step.config';
 import {IMAGE_STEP_CONFIG} from '../workflow-editor/step-components/step-configs/image-step.config';
+import {LOOP_STEP_CONFIG} from '../workflow-editor/step-components/step-configs/loop-step.config';
 import {NodeTypes} from '../workflow.models';
 
 export const STEP_CONFIGS_MAP = {
@@ -25,4 +26,5 @@ export const STEP_CONFIGS_MAP = {
   [NodeTypes.GENERATE_VIDEO]: GENERATE_VIDEO_STEP_CONFIG,
   [NodeTypes.GENERATE_AUDIO]: GENERATE_AUDIO_STEP_CONFIG,
   [NodeTypes.IMAGE]: IMAGE_STEP_CONFIG,
+  [NodeTypes.LOOP]: LOOP_STEP_CONFIG,
 };

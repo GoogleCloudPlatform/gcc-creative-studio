@@ -48,6 +48,14 @@ describe('AddStepModalComponent', () => {
     expect(imageOption?.label).toBe('Image');
   });
 
+  it('should include loop in stepTypes with a unique option id', () => {
+    const loopOption = component.stepTypes.find(s => s.type === 'loop');
+    expect(loopOption?.label).toBe('Loop');
+    expect(
+      fixture.nativeElement.querySelector('#add-step-option-loop'),
+    ).not.toBeNull();
+  });
+
   it('should close dialog with selected step type', () => {
     component.selectStep('image');
     expect(dialogRefSpy.close).toHaveBeenCalledWith('image');

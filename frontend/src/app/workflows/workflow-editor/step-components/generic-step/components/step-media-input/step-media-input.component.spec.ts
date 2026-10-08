@@ -442,4 +442,132 @@ describe('StepMediaInputComponent', () => {
       ]);
     });
   });
+
+  describe('Loop linked_items configuration', () => {
+    const galleryTile = (): HTMLElement | null =>
+      fixture.nativeElement.querySelector(
+        '[data-testid="step-media-add-gallery"]',
+      );
+    const videoPick = {
+      previewUrl: 'https://example.com/clip_thumb.png',
+      sourceMediaItem: {
+        mediaItemId: 456,
+        mediaIndex: 0,
+        role: 'reference_video',
+      },
+    };
+    const buildRefs = (count: number) =>
+      Array.from({length: count}, (_, index) => ({
+        step: `vid_${index}`,
+        output: 'generated_video',
+      }));
+
+    beforeEach(() => {
+      component.inputName = 'linked_items';
+      component.type = 'video';
+      component.maxItems = 100;
+      component.linkedOnly = false;
+    });
+
+    it('shows the add-from-gallery tile next to the link tile', () => {
+      fixture.detectChanges();
+      expect(galleryTile()).not.toBeNull();
+    });
+
+    it('opens the gallery filtered to the current item type', () => {
+      component.openImageSelectorForReference();
+
+      expect(mockDialog.open).toHaveBeenCalledWith(
+        jasmine.any(Function),
+        jasmine.objectContaining({
+          data: jasmine.objectContaining({
+            mimeType: 'video/*',
+            multiSelect: true,
+            maxSelection: 100,
+          }),
+        }),
+      );
+    });
+
+    it('keeps wires and gallery picks in one array, in insertion order', () => {
+      const firstRef = {step: 'vid_a', output: 'generated_video'};
+      const secondRef = {step: 'vid_b', output: 'generated_video'};
+      component.control.setValue([firstRef]);
+      mockDialog.open.and.returnValue({
+        afterClosed: () =>
+          of({
+            mediaItem: {
+              id: 456,
+              presignedUrls: ['https://example.com/clip.mp4'],
+              presignedThumbnailUrls: ['https://example.com/clip_thumb.png'],
+            },
+            selectedIndex: 0,
+          }),
+      } as unknown as ReturnType<MatDialog['open']>);
+
+      component.openImageSelectorForReference();
+      component.addLinkedOutput(secondRef);
+
+      expect(component.control.value).toEqual([firstRef, videoPick, secondRef]);
+    });
+
+    it('hides the add tiles and blocks picks once 100 items are set', () => {
+      component.control.setValue([...buildRefs(99), videoPick]);
+      fixture.detectChanges();
+
+      expect(galleryTile()).toBeNull();
+      component.openImageSelectorForReference();
+      expect(mockDialog.open).not.toHaveBeenCalled();
+    });
+
+    it('limits a multi-pick to the remaining slots', () => {
+      component.control.setValue(buildRefs(98));
+
+      component.openImageSelectorForReference();
+
+      expect(mockDialog.open).toHaveBeenCalledWith(
+        jasmine.any(Function),
+        jasmine.objectContaining({
+          data: jasmine.objectContaining({maxSelection: 2}),
+        }),
+      );
+    });
+
+    it('shows the Loop empty-state message', () => {
+      component.control.setErrors({linkedItemsRequired: true});
+      expect(component.emptyErrorMessage).toBe(
+        'Add at least one item to the Loop.',
+      );
+    });
+  });
+
+  describe('linkedOnly inputs', () => {
+    beforeEach(() => {
+      component.linkedOnly = true;
+      fixture.detectChanges();
+    });
+
+    it('hides the gallery tile and ignores picks and drops', () => {
+      expect(
+        fixture.nativeElement.querySelector(
+          '[data-testid="step-media-add-gallery"]',
+        ),
+      ).toBeNull();
+
+      component.openImageSelectorForReference();
+      component.onReferenceImageDrop({
+        preventDefault: jasmine.createSpy('preventDefault'),
+        dataTransfer: {files: [new File(['x'], 'a.png', {type: 'image/png'})]},
+      } as unknown as DragEvent);
+
+      expect(mockDialog.open).not.toHaveBeenCalled();
+      expect(mockSourceAssetService.uploadAsset).not.toHaveBeenCalled();
+    });
+
+    it('keeps the default empty-state message for other errors', () => {
+      expect(component.emptyErrorMessage).toBe(
+        'At least one input is required',
+      );
+    });
+  });
 });

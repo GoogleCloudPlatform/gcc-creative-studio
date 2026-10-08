@@ -88,6 +88,8 @@
   <div class="flex gap-2" *ngIf="items.length < maxItems && !control.disabled">
     <!-- Add Fixed -->
     <div
+      *ngIf="!linkedOnly"
+      data-testid="step-media-add-gallery"
       class="h-10 w-10 flex flex-col items-center justify-center cursor-pointer rounded-lg border-2 border-dashed border-neutral-700 hover:border-neutral-500 hover:bg-neutral-800 transition-colors gap-1"
       (click)="openImageSelectorForReference()"
       [matTooltip]="
@@ -137,6 +139,6 @@
       items.length === 0
     "
   >
-    At least one input is required
+    {{ emptyErrorMessage }}
   </mat-error>
 </div>

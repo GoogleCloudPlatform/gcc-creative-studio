@@ -17,7 +17,12 @@
 import {NO_ERRORS_SCHEMA} from '@angular/core';
 import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {ReactiveFormsModule} from '@angular/forms';
-import {MAT_DIALOG_DATA, MatDialogRef} from '@angular/material/dialog';
+import {
+  MAT_DIALOG_DATA,
+  MatDialog,
+  MatDialogConfig,
+  MatDialogRef,
+} from '@angular/material/dialog';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {Router} from '@angular/router';
 import {of, throwError} from 'rxjs';
@@ -30,6 +35,11 @@ import {
 } from '../../workflow.models';
 import {WorkflowStatusPipe} from '../../workflow-status.pipe';
 import {WorkflowService} from '../../workflow.service';
+import {StepHistorySidebarDialogComponent} from '../../workflow-editor/step-history-sidebar/step-history-sidebar-dialog.component';
+import {
+  STEP_HISTORY_SIDEBAR_PANEL_CLASS,
+  StepHistorySidebarDialogData,
+} from '../../workflow-editor/step-history-sidebar/step-history-sidebar.models';
 import {ExecutionDetailsModalComponent} from './execution-details-modal.component';
 
 describe('ExecutionDetailsModalComponent', () => {
@@ -41,6 +51,7 @@ describe('ExecutionDetailsModalComponent', () => {
   >;
   let mediaResolutionSpy: jasmine.SpyObj<MediaResolutionService>;
   let snackBarSpy: jasmine.SpyObj<MatSnackBar>;
+  let dialogSpy: jasmine.SpyObj<MatDialog>;
 
   const mockNeedsAttentionRun: WorkflowRunDetail = {
     id: 'run-attention-1',
@@ -123,6 +134,7 @@ describe('ExecutionDetailsModalComponent', () => {
       ['resolveMediaUrls'],
     );
     snackBarSpy = jasmine.createSpyObj<MatSnackBar>('MatSnackBar', ['open']);
+    dialogSpy = jasmine.createSpyObj<MatDialog>('MatDialog', ['open']);
 
     workflowServiceSpy.getRunDetails.and.returnValue(of(mockNeedsAttentionRun));
 
@@ -140,6 +152,7 @@ describe('ExecutionDetailsModalComponent', () => {
         {provide: Router, useValue: {}},
         {provide: MediaResolutionService, useValue: mediaResolutionSpy},
         {provide: MatSnackBar, useValue: snackBarSpy},
+        {provide: MatDialog, useValue: dialogSpy},
       ],
       schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();
@@ -290,5 +303,169 @@ describe('ExecutionDetailsModalComponent', () => {
     expect(textContent).toContain('Hello world');
     expect(textContent).toContain('Snapshot Workflow');
     expect(textContent.toLowerCase()).not.toContain('legacy');
+  });
+
+  it('groups loop iteration step_states into per-step history iterations', () => {
+    const loopRun: WorkflowRunDetail = {
+      id: 'run-loop',
+      workflow_id: 'wf-1',
+      status: WorkflowRunStatusEnum.RUNNING,
+      workflow_snapshot: {
+        id: 'wf-1',
+        name: 'Loop Workflow',
+        description: '',
+        createdAt: '2026-04-19T00:00:00Z',
+        updatedAt: '2026-04-19T00:00:00Z',
+        userId: '1',
+        steps: [
+          {
+            stepId: 'loop_1',
+            type: NodeTypes.LOOP,
+            status: 'IDLE',
+            position: {x: 0, y: 0},
+            collapsed: false,
+            inputs: {loop_ending: {step: 'gen_image', output: 'loop_ending'}},
+            outputs: {},
+            settings: {mode: 'folder', item_type: 'image'},
+          },
+          {
+            stepId: 'gen_image',
+            type: NodeTypes.IMAGE,
+            status: 'IDLE',
+            position: {x: 400, y: 0},
+            collapsed: false,
+            inputs: {input_images: {step: 'loop_1', output: 'current_item'}},
+            outputs: {},
+            settings: {mode: 'edit_image'},
+          },
+        ],
+      },
+      step_states: {
+        loop_1: {
+          status: 'COMPLETED',
+          inputs: {mode: 'folder', folder_name: 'Photos', item_type: 'image'},
+          outputs: {items: [101, 102], total_iterations: 2},
+        },
+        'gen_image#0': {
+          status: 'COMPLETED',
+          inputs: {input_images: 101},
+          outputs: {generated_image: [501]},
+        },
+        'gen_image#1': {status: 'RUNNING'},
+      },
+    };
+
+    component.runDetails.set(loopRun);
+    component.workflowSignal.set(loopRun.workflow_snapshot ?? null);
+    component.expandedStepIds.set(new Set(['loop_1', 'gen_image']));
+    fixture.detectChanges();
+
+    const steps = component.stepViewModels();
+    expect(steps.map(s => s.stepId)).toEqual(['loop_1', 'gen_image']);
+    expect(steps[0].status).toBe('RUNNING');
+    expect(steps[0].iterations.length).toBe(1);
+    expect(steps[0].iterations[0].label).toBeNull();
+    expect(steps[1].iterations.length).toBe(1);
+    expect(steps[1].outputs).toEqual({generated_image: [501]});
+
+    component.runDetails.set({
+      ...loopRun,
+      step_states: {
+        ...loopRun.step_states,
+        'gen_image#1': {
+          status: 'COMPLETED',
+          inputs: {input_images: 102},
+          outputs: {generated_image: [502]},
+        },
+      },
+    });
+    fixture.detectChanges();
+
+    const genImage = component.stepViewModels()[1];
+    expect(genImage.iterations.map(i => i.label)).toEqual([
+      'Iteration 1',
+      'Iteration 2',
+    ]);
+    expect(genImage.outputs).toEqual({generated_image: [502]});
+    expect(component.stepViewModels()[0].status).toBe('COMPLETED');
+    expect(
+      fixture.nativeElement.querySelector('#modal-step-iteration-gen_image-1'),
+    ).not.toBeNull();
+  });
+
+  describe('step history sidebar', () => {
+    const query = (selector: string): HTMLElement =>
+      fixture.nativeElement.querySelector(selector) as HTMLElement;
+
+    const lastOpenArgs = (): {
+      component: unknown;
+      config: MatDialogConfig<StepHistorySidebarDialogData>;
+    } => {
+      const [openedComponent, config] = dialogSpy.open.calls.mostRecent()
+        .args as [unknown, MatDialogConfig<StepHistorySidebarDialogData>];
+      return {component: openedComponent, config};
+    };
+
+    it('opens the sidebar above the modal when a step card header is clicked', () => {
+      query('#modal-step-header-generate_image_1').click();
+
+      expect(dialogSpy.open).toHaveBeenCalledTimes(1);
+      const {component: opened, config} = lastOpenArgs();
+      expect(opened).toBe(StepHistorySidebarDialogComponent);
+      expect(config.panelClass).toBe(STEP_HISTORY_SIDEBAR_PANEL_CLASS);
+      expect(config.position).toEqual({top: '0', right: '0'});
+      expect(config.data?.stepType).toBe(NodeTypes.IMAGE);
+      expect(config.data?.stepTitle).toBe('generate_image_1');
+      expect(config.data?.stepMode).toBe('generate_image');
+      expect(config.data?.mediaUrlMap).toBe(component.mediaUrlMap);
+      expect(config.data?.entry()?.step_id).toBe('generate_image_1');
+      // The modal stays open behind the sidebar.
+      expect(dialogRefSpy.close).not.toHaveBeenCalled();
+    });
+
+    it('feeds live run updates into the opened sidebar entry', () => {
+      component.openStepHistory(component.stepViewModels()[0]);
+      const entry = lastOpenArgs().config.data?.entry ?? null;
+      expect(entry).not.toBeNull();
+      expect(entry?.()?.attempts).toBe(3);
+
+      component.runDetails.set({
+        ...mockNeedsAttentionRun,
+        step_states: {
+          generate_image_1: {
+            status: 'COMPLETED',
+            attempts: 4,
+            outputs: {generated_image: [900]},
+          },
+        },
+      });
+
+      expect(entry?.()?.attempts).toBe(4);
+      expect(entry?.()?.history.at(-1)?.step_outputs).toEqual({
+        generated_image: [900],
+      });
+    });
+
+    it('toggles inline details from the chevron without opening the sidebar', () => {
+      const wasExpanded = component.stepViewModels()[0].isExpanded;
+
+      query('#modal-step-expand-generate_image_1').click();
+
+      expect(dialogSpy.open).not.toHaveBeenCalled();
+      expect(component.stepViewModels()[0].isExpanded).toBe(!wasExpanded);
+    });
+
+    it('opens the sidebar on Enter only when the header itself is focused', () => {
+      const header = query('#modal-step-header-generate_image_1');
+      query('#modal-step-expand-generate_image_1').dispatchEvent(
+        new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}),
+      );
+      expect(dialogSpy.open).not.toHaveBeenCalled();
+
+      header.dispatchEvent(
+        new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}),
+      );
+      expect(dialogSpy.open).toHaveBeenCalledTimes(1);
+    });
   });
 });

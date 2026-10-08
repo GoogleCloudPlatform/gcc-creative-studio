@@ -22,7 +22,7 @@ import {
   fakeAsync,
   tick,
 } from '@angular/core/testing';
-import {FormBuilder, ReactiveFormsModule} from '@angular/forms';
+import {FormBuilder, FormGroup, ReactiveFormsModule} from '@angular/forms';
 import {MatDialog} from '@angular/material/dialog';
 import {MatFormFieldModule} from '@angular/material/form-field';
 import {MatInputModule} from '@angular/material/input';
@@ -33,9 +33,20 @@ import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {ActivatedRoute, Router} from '@angular/router';
 import {of, throwError} from 'rxjs';
 import {MediaResolutionService} from '../shared/media-resolution.service';
-import {NodeTypes, StepStatusEnum, WorkflowTemplate} from '../workflow.models';
+import {collectReferenceEdges} from '../utils/workflow-loop.util';
+import {
+  DynamicStepRecord,
+  NodeTypes,
+  StepOutputReference,
+  StepStatusEnum,
+  WorkflowTemplate,
+} from '../workflow.models';
 import {WorkflowStatusPipe} from '../workflow-status.pipe';
 import {WorkflowService} from '../workflow.service';
+import {
+  loopItemsTextValidator,
+  loopLinkedItemsRequiredValidator,
+} from './step-components/step-configs/loop-step.config';
 import {SaveTemplateModalComponent} from './save-template-modal/save-template-modal.component';
 import {EditorMode, WorkflowEditorComponent} from './workflow-editor.component';
 import {WorkflowFormService} from './workflow-form.service';
@@ -721,6 +732,262 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
 
     const dynamicInputs = component.getDynamicInputs(config, inputsGroup);
     expect(dynamicInputs).toEqual([]);
+  });
+
+  describe('Loop Linked Items wiring', () => {
+    type StepSeed = {
+      stepId: string;
+      type: NodeTypes;
+      inputs?: DynamicStepRecord;
+      settings?: DynamicStepRecord;
+    };
+
+    const addStep = (seed: StepSeed): void =>
+      formService.addStep(seed.type, {
+        stepId: seed.stepId,
+        type: seed.type,
+        status: StepStatusEnum.IDLE,
+        position: {x: 0, y: 0},
+        collapsed: false,
+        inputs: seed.inputs ?? {},
+        outputs: {},
+        settings: seed.settings ?? {},
+      });
+
+    const findStep = (stepId: string): FormGroup =>
+      component.stepsArray.controls.find(
+        c => c.get('stepId')?.value === stepId,
+      ) as FormGroup;
+
+    const imageRef = (stepId: string): StepOutputReference => ({
+      step: stepId,
+      output: 'generated_image',
+    });
+
+    function addLoop(
+      mode: string,
+      inputs: DynamicStepRecord = {},
+      stepId = 'loop_1',
+    ): FormGroup {
+      addStep({
+        stepId,
+        type: NodeTypes.LOOP,
+        inputs: {
+          items_text: null,
+          linked_items: null,
+          loop_ending: null,
+          ...inputs,
+        },
+        settings: {mode, folder_id: null, item_type: 'image'},
+      });
+      return findStep(stepId);
+    }
+
+    function addSources(): void {
+      ['img_a', 'img_b', 'img_c'].forEach(stepId =>
+        addStep({stepId, type: NodeTypes.IMAGE}),
+      );
+      addStep({stepId: 'vid_a', type: NodeTypes.GENERATE_VIDEO});
+      addStep({stepId: 'txt_1', type: NodeTypes.GENERATE_TEXT});
+    }
+
+    function drop(sourceStepId: string, outputName: string): void {
+      component.dragSourcePort = {stepId: sourceStepId, outputName};
+      component.onPortDrop(
+        {stepId: 'loop_1', inputName: 'linked_items'},
+        'loop_1',
+      );
+    }
+
+    const linkedItemsValue = (): unknown =>
+      findStep('loop_1').get('inputs.linked_items')?.value;
+
+    beforeEach(() => {
+      addSources();
+    });
+
+    it('appends dropped image outputs to linked_items in link order', () => {
+      addLoop('linked_items');
+
+      ['img_a', 'img_b', 'img_c'].forEach(stepId =>
+        drop(stepId, 'generated_image'),
+      );
+
+      expect(linkedItemsValue()).toEqual([
+        imageRef('img_a'),
+        imageRef('img_b'),
+        imageRef('img_c'),
+      ]);
+    });
+
+    it('rejects a video output while item_type is image', () => {
+      addLoop('linked_items');
+
+      drop('vid_a', 'generated_video');
+
+      expect(linkedItemsValue()).toBeNull();
+      expect(component.dragSourcePort).toBeNull();
+    });
+
+    it('accepts a video output once item_type is video', () => {
+      const loop = addLoop('linked_items');
+      loop.get('settings.item_type')?.setValue('video');
+
+      drop('vid_a', 'generated_video');
+
+      expect(linkedItemsValue()).toEqual([
+        {step: 'vid_a', output: 'generated_video'},
+      ]);
+    });
+
+    it('rejects linking the same step output twice', () => {
+      addLoop('linked_items', {linked_items: [imageRef('img_a')]});
+
+      drop('img_a', 'generated_image');
+
+      expect(linkedItemsValue()).toEqual([imageRef('img_a')]);
+    });
+
+    it('rejects the 101st link', () => {
+      const fullLinks = Array.from({length: 100}, (_, index) =>
+        imageRef(`img_${index}`),
+      );
+      addLoop('linked_items', {linked_items: fullLinks});
+
+      drop('img_c', 'generated_image');
+
+      expect((linkedItemsValue() as StepOutputReference[]).length).toBe(100);
+    });
+
+    it('appends a wire after existing gallery picks, keeping the order', () => {
+      const assetPick = {sourceAssetId: 7, previewUrl: ''};
+      addLoop('linked_items', {linked_items: [assetPick]});
+
+      drop('img_a', 'generated_image');
+
+      expect(linkedItemsValue()).toEqual([assetPick, imageRef('img_a')]);
+    });
+
+    it('rejects a drop when wires and gallery picks already total 100', () => {
+      const mixed = [
+        ...Array.from({length: 99}, (_, index) => imageRef(`img_${index}`)),
+        {sourceAssetId: 7, previewUrl: ''},
+      ];
+      addLoop('linked_items', {linked_items: mixed});
+
+      drop('img_c', 'generated_image');
+
+      expect(linkedItemsValue()).toEqual(mixed);
+    });
+
+    it('rejects a body step of another loop feeding linked_items', () => {
+      addLoop('folder', {loop_ending: imageRef('edit_1')}, 'loop_a');
+      addStep({
+        stepId: 'edit_1',
+        type: NodeTypes.IMAGE,
+        inputs: {input_images: [{step: 'loop_a', output: 'current_item'}]},
+      });
+      addLoop('linked_items');
+
+      drop('edit_1', 'generated_image');
+
+      expect(linkedItemsValue()).toBeNull();
+    });
+
+    describe('magnetic candidates', () => {
+      beforeEach(() => {
+        spyOn(document, 'querySelector').and.returnValue(
+          document.createElement('div'),
+        );
+        spyOn<any>(component, 'getPortPosition').and.returnValue({
+          x: 10,
+          y: 10,
+        });
+      });
+
+      const linkedItemsCandidate = (sourceStepId: string, output: string) =>
+        component
+          .collectMagneticCandidatePorts(sourceStepId, output)
+          .find(c => c.stepId === 'loop_1' && c.portName === 'linked_items');
+
+      it('offers linked_items for a matching type with the dynamic port type', () => {
+        addLoop('linked_items');
+        expect(linkedItemsCandidate('img_a', 'generated_image')?.type).toBe(
+          'image',
+        );
+      });
+
+      it('hides linked_items for a different media type', () => {
+        addLoop('linked_items');
+        expect(
+          linkedItemsCandidate('vid_a', 'generated_video'),
+        ).toBeUndefined();
+      });
+
+      it('hides linked_items outside Linked Items mode (disabled control)', () => {
+        const loop = addLoop('folder');
+        loop.get('inputs.linked_items')?.disable();
+        expect(
+          linkedItemsCandidate('img_a', 'generated_image'),
+        ).toBeUndefined();
+      });
+    });
+
+    describe('save validation', () => {
+      let consoleErrorSpy: jasmine.Spy;
+
+      beforeEach(() => {
+        consoleErrorSpy = spyOn(console, 'error');
+      });
+
+      const expectSaveBlockedWith = (message: string): void => {
+        let result: unknown = 'not emitted';
+        component.saveWorkflow(true).subscribe(value => (result = value));
+        expect(result).toBeNull();
+        expect(consoleErrorSpy).toHaveBeenCalledWith(
+          'Save workflow error:',
+          jasmine.objectContaining({message}),
+        );
+      };
+
+      it('blocks Save with zero links in Linked Items mode', () => {
+        const loop = addLoop('linked_items');
+        const linkedItems = loop.get('inputs.linked_items');
+        linkedItems?.setValidators(loopLinkedItemsRequiredValidator);
+        linkedItems?.updateValueAndValidity();
+
+        expectSaveBlockedWith('Add at least one item to the Loop.');
+      });
+
+      it('blocks Save with a separator-only fixed items_text', () => {
+        const loop = addLoop('text_input', {items_text: ' , '});
+        const itemsText = loop.get('inputs.items_text');
+        itemsText?.setValidators(loopItemsTextValidator);
+        itemsText?.updateValueAndValidity();
+
+        expectSaveBlockedWith('Enter at least one item.');
+      });
+    });
+
+    it('drops the upstream -> Loop edge after leaving Text Input mode with a linked items_text', () => {
+      spyOn<any>(component, 'getPortPosition').and.returnValue({x: 5, y: 5});
+      const loop = addLoop('text_input', {
+        items_text: {step: 'txt_1', output: 'generated_text'},
+      });
+      const textEdgeExists = (): boolean =>
+        collectReferenceEdges(component.stepsArray.getRawValue()).some(
+          edge =>
+            edge.sourceStepId === 'txt_1' && edge.targetStepId === 'loop_1',
+        );
+      (component as any).updateEdges();
+      expect(component.edges.some(e => e.sourceId === 'txt_1')).toBeTrue();
+      expect(textEdgeExists()).toBeTrue();
+
+      loop.get('settings.mode')?.setValue('folder');
+
+      expect(textEdgeExists()).toBeFalse();
+      expect(component.edges.some(e => e.sourceId === 'txt_1')).toBeFalse();
+    });
   });
 
   describe('Workflow Templates Integration', () => {
@@ -1518,6 +1785,164 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
       expect(imgStepCtrl?.get('status')?.value).toBe(StepStatusEnum.COMPLETED);
       expect(imgStepCtrl?.get('outputs')?.value).toEqual({
         generated_image: 999,
+      });
+    });
+
+    describe('Loop workflows', () => {
+      function addLoopWorkflow(): void {
+        formService.addStep(NodeTypes.LOOP, {
+          stepId: 'loop_1',
+          type: NodeTypes.LOOP,
+          status: StepStatusEnum.IDLE,
+          inputs: {loop_ending: {step: 'gen_image', output: 'loop_ending'}},
+          outputs: {},
+          settings: {mode: 'folder', folder_id: 42, item_type: 'image'},
+        });
+        formService.addStep(NodeTypes.IMAGE, {
+          stepId: 'gen_image',
+          type: NodeTypes.IMAGE,
+          status: StepStatusEnum.IDLE,
+          inputs: {input_images: {step: 'loop_1', output: 'current_item'}},
+          outputs: {},
+          settings: {mode: 'edit_image'},
+        });
+      }
+
+      const loopRunDetail = {
+        id: 'run-loop',
+        workflow_id: 'wf-loop',
+        status: 'running',
+        step_states: {
+          loop_1: {
+            status: 'COMPLETED',
+            inputs: {mode: 'folder', folder_name: 'Photos', item_type: 'image'},
+            outputs: {items: [101, 102], total_iterations: 2},
+          },
+          'gen_image#0': {
+            status: 'COMPLETED',
+            inputs: {input_images: 101},
+            outputs: {generated_image: [501]},
+          },
+          'gen_image#1': {status: 'RUNNING'},
+        },
+      };
+
+      it('groups iteration keys into history and keeps the Loop running', () => {
+        const workflowService = TestBed.inject(WorkflowService);
+        component.workflowId = 'wf-loop';
+        addLoopWorkflow();
+        (workflowService.getRunDetails as jasmine.Spy).and.returnValue(
+          of(loopRunDetail),
+        );
+        (workflowService.pollRunDetails as jasmine.Spy).and.returnValue(
+          of(loopRunDetail),
+        );
+
+        component.onExecutionSelected('run-loop');
+
+        const genImage = component.getStepExecution('gen_image');
+        expect(genImage?.history.length).toBe(1);
+        expect(genImage?.total_iterations).toBe(2);
+        expect(component.getStepExecution('gen_image#0')).toBeNull();
+
+        const loopCtrl = component.stepsArray.controls.find(
+          c => c.get('stepId')?.value === 'loop_1',
+        );
+        const imgCtrl = component.stepsArray.controls.find(
+          c => c.get('stepId')?.value === 'gen_image',
+        );
+        expect(loopCtrl?.get('status')?.value).toBe(StepStatusEnum.RUNNING);
+        expect(imgCtrl?.get('status')?.value).toBe(StepStatusEnum.RUNNING);
+        expect(imgCtrl?.get('outputs.generated_image')?.value).toEqual([501]);
+      });
+
+      it('opens the history sidebar for a step with execution data', () => {
+        const workflowService = TestBed.inject(WorkflowService);
+        component.workflowId = 'wf-loop';
+        addLoopWorkflow();
+        (workflowService.getRunDetails as jasmine.Spy).and.returnValue(
+          of(loopRunDetail),
+        );
+        (workflowService.pollRunDetails as jasmine.Spy).and.returnValue(
+          of(loopRunDetail),
+        );
+        component.onExecutionSelected('run-loop');
+
+        const imgIndex = component.stepsArray.controls.findIndex(
+          c => c.get('stepId')?.value === 'gen_image',
+        );
+        component.onStepClick(imgIndex, 'gen_image');
+
+        expect(component.historySidebarStep()?.type).toBe(NodeTypes.IMAGE);
+        expect(component.historySidebarStep()?.mode).toBe('edit_image');
+        expect(component.historySidebarEntry()?.step_id).toBe('gen_image');
+
+        component.closeHistorySidebar();
+        expect(component.historySidebarEntry()).toBeNull();
+      });
+
+      it('does not open the sidebar without execution data', () => {
+        addLoopWorkflow();
+        component.onStepClick(0, 'loop_1');
+        expect(component.historySidebarStep()).toBeNull();
+        expect(component.selectedNodeId).toBe('loop_1');
+      });
+
+      it('does not treat the loop_ending back-edge as a cycle', () => {
+        addLoopWorkflow();
+        const steps = component.stepsArray.getRawValue();
+        expect(component['hasCycle'](steps)).toBeFalse();
+      });
+
+      describe('Loop Ending port visibility', () => {
+        function addOutsideImageStep(inputs: Record<string, unknown>): void {
+          formService.addStep(NodeTypes.IMAGE, {
+            stepId: 'outside_image',
+            type: NodeTypes.IMAGE,
+            status: StepStatusEnum.IDLE,
+            inputs,
+            outputs: {},
+            settings: {mode: 'generate_image'},
+          });
+        }
+
+        it('shows the port for steps inside a loop body', () => {
+          addLoopWorkflow();
+          component['updateEdges']();
+          const visibleMap = component.loopEndingVisibleStepMap();
+          expect(visibleMap['gen_image']).toBeTrue();
+          expect(visibleMap['loop_1']).toBeUndefined();
+        });
+
+        it('hides the port for steps outside any loop body', () => {
+          addLoopWorkflow();
+          addOutsideImageStep({prompt: 'static prompt'});
+          component['updateEdges']();
+          expect(
+            component.loopEndingVisibleStepMap()['outside_image'],
+          ).toBeUndefined();
+        });
+
+        it('shows the port for an outside step whose loop_ending is wired', () => {
+          addLoopWorkflow();
+          addOutsideImageStep({prompt: 'static prompt'});
+          const loopCtrl = component.stepsArray.controls.find(
+            c => c.get('stepId')?.value === 'loop_1',
+          );
+          loopCtrl
+            ?.get('inputs.loop_ending')
+            ?.setValue({step: 'outside_image', output: 'loop_ending'});
+          component['updateEdges']();
+          expect(
+            component.loopEndingVisibleStepMap()['outside_image'],
+          ).toBeTrue();
+        });
+
+        it('hides the port for every step when there is no loop', () => {
+          addOutsideImageStep({prompt: 'static prompt'});
+          component['updateEdges']();
+          expect(component.loopEndingVisibleStepMap()).toEqual({});
+        });
       });
     });
   });

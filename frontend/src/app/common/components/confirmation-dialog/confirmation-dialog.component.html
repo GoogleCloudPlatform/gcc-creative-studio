@@ -20,14 +20,21 @@
     <p>{{ data.message }}</p>
   </div>
   <div mat-dialog-actions align="end">
-    <button mat-button (click)="onDismiss()">Cancel</button>
+    <button
+      mat-button
+      id="confirmation-dialog-cancel-btn"
+      (click)="onDismiss()"
+    >
+      {{ cancelLabel }}
+    </button>
     <button
       mat-raised-button
-      color="warn"
+      id="confirmation-dialog-confirm-btn"
+      [color]="confirmColor"
       (click)="onConfirm()"
       cdkFocusInitial
     >
-      Delete
+      {{ confirmLabel }}
     </button>
   </div>
 </div>

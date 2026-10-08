@@ -967,3 +967,46 @@ async def test_service_text_step_checkpoints_its_outputs(service):
     assert first == second == {"generated_text": "An old pond"}
     stream.assert_called_once()
     assert repo.state().status == StepStatusEnum.COMPLETED
+    assert repo.state().inputs == {"prompt": "Write a haiku"}
+
+
+# --- loop iterations ------------------------------------------------------
+
+
+async def test_iteration_requests_use_flat_iteration_keys():
+    repo = FakeRunRepository(
+        step_states={
+            f"{STEP_ID}#0": {
+                "status": "completed",
+                "outputs": {"generated_image": 1},
+            }
+        }
+    )
+    first = StepIdempotencyGuard.from_request(
+        image_request(**_context(), iteration=0), USER_ID, repo
+    )
+    second = StepIdempotencyGuard.from_request(
+        image_request(**_context(), iteration=1), USER_ID, repo
+    )
+
+    assert first.state_key == f"{STEP_ID}#0"
+    assert await first.begin() == {"generated_image": 1}
+    assert second.state_key == f"{STEP_ID}#1"
+    assert await second.begin() is None
+    assert repo.writes[-1][0] == f"{STEP_ID}#1"
+
+    await second.complete(
+        {"generated_image": 2}, step_inputs={"prompt": "A cat"}
+    )
+    state = repo.state(f"{STEP_ID}#1")
+    assert state.status == StepStatusEnum.COMPLETED
+    assert state.inputs == {"prompt": "A cat"}
+    assert state.outputs == {"generated_image": 2}
+    assert STEP_ID not in repo.step_states
+
+
+def test_iteration_index_is_bounded():
+    with pytest.raises(ValueError):
+        image_request(**_context(), iteration=-1)
+    with pytest.raises(ValueError):
+        image_request(**_context(), iteration=1001)
