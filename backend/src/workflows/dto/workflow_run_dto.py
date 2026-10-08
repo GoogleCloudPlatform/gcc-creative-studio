@@ -28,6 +28,7 @@ from src.workflows.schema.workflow_run_model import (
     StepState,
     WorkflowRunExecution,
 )
+from src.workflows.step_state_keys import STEP_STATE_KEY_PATTERN
 
 RUN_KEY_PATTERN = r"^[A-Za-z0-9_-]+$"
 OPTIONAL_KEY_PATTERN = r"^[A-Za-z0-9_-]*$"
@@ -51,8 +52,9 @@ class RunFinishedCallbackDto(BaseModel):
         min_length=1, max_length=KEY_MAX_LENGTH, pattern=RUN_KEY_PATTERN
     )
     status: ExecutionCallbackStatusEnum
+    # Flat step-state key: "<step_id>" or "<step_id>#<iteration>" (loops).
     step_id: str | None = Field(
-        default=None, max_length=KEY_MAX_LENGTH, pattern=OPTIONAL_KEY_PATTERN
+        default=None, max_length=KEY_MAX_LENGTH, pattern=STEP_STATE_KEY_PATTERN
     )
     error: Any = None
 

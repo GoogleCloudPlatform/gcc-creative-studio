@@ -404,6 +404,17 @@ app-workspace-switcher .workspace-name {
   overflow-y: auto;
 }
 
+/* Workflow step history sidebar opened as an overlay (above dialogs) */
+.step-history-sidebar-dialog {
+  .mat-mdc-dialog-container .mat-mdc-dialog-surface {
+    background: transparent;
+    border-radius: 0;
+    box-shadow: none;
+    overflow: visible;
+    height: 100%;
+  }
+}
+
 /* --- Global Custom Scrollbar Styles --- */
 
 /* For Firefox */

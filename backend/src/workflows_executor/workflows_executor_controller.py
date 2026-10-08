@@ -19,6 +19,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, Path, Query
 
 from src.auth.auth_guard import get_current_user
+from src.folders.repository.folder_repository import FolderRepository
+from src.galleries.repository.unified_gallery_repository import (
+    UnifiedGalleryRepository,
+)
 from src.users.user_model import UserModel
 from src.workflows.dto.workflow_run_dto import (
     KEY_MAX_LENGTH,
@@ -40,12 +44,14 @@ from src.workflows_executor.dto.workflows_executor_dto import (
     GenerateTextRequest,
     GenerateVideoRequest,
     ImageStepRequest,
+    ResolveLoopItemsRequest,
 )
 from src.workflows_executor.idempotency import StepIdempotencyGuard
 from src.workflows_executor.step_errors import StructuredErrorRoute
 from src.workflows_executor.workflows_executor_service import (
     WorkflowsExecutorService,
 )
+from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
 # Every error is answered as {"error_category", "detail"}.
 router = APIRouter(
@@ -110,6 +116,30 @@ async def generate_audio(
         request, current_user.id, run_repository
     )
     return await service.generate_audio(request, authorization, guard=guard)
+
+
+@router.post("/resolve-loop-items")
+async def resolve_loop_items(
+    request: ResolveLoopItemsRequest,
+    current_user: UserModel = Depends(get_current_user),
+    run_repository: WorkflowRunRepository = Depends(),
+    folder_repository: FolderRepository = Depends(),
+    gallery_repository: UnifiedGalleryRepository = Depends(),
+    workspace_auth: WorkspaceAuth = Depends(),
+    service: WorkflowsExecutorService = Depends(),
+):
+    """Resolves (and snapshots) the items a ``Loop`` step iterates over."""
+    guard = StepIdempotencyGuard.from_request(
+        request, current_user.id, run_repository
+    )
+    return await service.resolve_loop_items(
+        request,
+        user=current_user,
+        folder_repository=folder_repository,
+        gallery_repository=gallery_repository,
+        workspace_auth=workspace_auth,
+        guard=guard,
+    )
 
 
 @router.get(

@@ -403,7 +403,10 @@ class TestGetExecutionDetails:
             e for e in details.step_entries if e["step_id"] == "step_1"
         )
         assert step_1_entry["state"] == "STATE_SUCCEEDED"
-        assert step_1_entry["step_outputs"] == {"generated_text": "hello world"}
+        assert "step_outputs" not in step_1_entry
+        assert step_1_entry["history"][0]["step_outputs"] == {
+            "generated_text": "hello world"
+        }
 
         # Non-owner or empty step_states
         assert (
@@ -505,10 +508,18 @@ class TestGetExecutionDetails:
             e for e in step_entries if e["step_id"] == "upscale_step"
         )
 
-        assert img_entry["step_inputs"] == {"prompt": "A majestic eagle"}
-        assert img_entry["step_outputs"] == {"generated_image": 111}
-        assert upscale_entry["step_inputs"] == {"input_image": 555}
-        assert upscale_entry["step_outputs"] == {"generated_image": 222}
+        assert img_entry["history"][0]["step_inputs"] == {
+            "prompt": "A majestic eagle"
+        }
+        assert img_entry["history"][0]["step_outputs"] == {
+            "generated_image": 111
+        }
+        assert upscale_entry["history"][0]["step_inputs"] == {
+            "input_image": 555
+        }
+        assert upscale_entry["history"][0]["step_outputs"] == {
+            "generated_image": 222
+        }
 
     @pytest.mark.anyio
     async def test_get_execution_details_video_step_reference_resolution(
@@ -602,9 +613,14 @@ class TestGetExecutionDetails:
         step_entries = details.step_entries
         step_2_entry = next(e for e in step_entries if e["step_id"] == "step_2")
 
-        assert step_2_entry["step_inputs"]["input_video"] == 888
-        assert step_2_entry["step_inputs"]["prompt"] == "add an elephant here"
-        assert step_2_entry["step_outputs"] == {"generated_video": 999}
+        assert step_2_entry["history"][0]["step_inputs"]["input_video"] == 888
+        assert (
+            step_2_entry["history"][0]["step_inputs"]["prompt"]
+            == "add an elephant here"
+        )
+        assert step_2_entry["history"][0]["step_outputs"] == {
+            "generated_video": 999
+        }
 
     @pytest.mark.anyio
     async def test_get_execution_details_resolves_step_output_references(
@@ -685,7 +701,7 @@ class TestGetExecutionDetails:
         step_entries = details.step_entries
         img_entry = next(e for e in step_entries if e["step_id"] == "img_step")
 
-        assert img_entry["step_inputs"] == {
+        assert img_entry["history"][0]["step_inputs"] == {
             "prompt": "A photo of a cyberpunk city at night",
         }
 
@@ -760,7 +776,7 @@ class TestGetExecutionDetails:
             e for e in step_entries if e["step_id"] == "text_step"
         )
 
-        assert text_entry["step_inputs"] == {
+        assert text_entry["history"][0]["step_inputs"] == {
             "prompt": "create a short story of a cat with a red hat",
             "animal": "cat",
             "color": "red",

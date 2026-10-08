@@ -182,3 +182,35 @@ async def test_query_include_external(mock_db):
     assert res.count == 1
     assert len(res.data) == 1
     assert mock_db.execute.call_count == 2
+
+
+@pytest.mark.anyio
+async def test_list_folder_loop_items_is_scoped_and_ordered(mock_db):
+    repo = UnifiedGalleryRepository(db=mock_db)
+    count_result = MagicMock()
+    count_result.scalar_one.return_value = 250
+    rows_result = MagicMock()
+    rows_result.__iter__.return_value = iter(
+        [("media_item", 3), ("source_asset", 4)]
+    )
+    mock_db.execute.side_effect = [count_result, rows_result]
+
+    rows, total = await repo.list_folder_loop_items(
+        workspace_id=10, folder_id=5, mime_type_prefix="video", limit=100
+    )
+
+    assert (rows, total) == ([("media_item", 3), ("source_asset", 4)], 250)
+    sqls = [
+        str(call.args[0].compile(compile_kwargs={"literal_binds": True}))
+        for call in mock_db.execute.await_args_list
+    ]
+    for sql in sqls:
+        assert "workspace_id = 10" in sql
+        assert "folder_id = 5" in sql
+        assert "'media_item'" in sql and "'completed'" in sql
+        assert "'source_asset'" in sql
+        assert "deleted_at IS NULL" in sql
+        assert "'video/%'" in sql
+        assert "external_url" in sql
+    assert "created_at ASC" in sqls[1]
+    assert "LIMIT 100" in sqls[1]

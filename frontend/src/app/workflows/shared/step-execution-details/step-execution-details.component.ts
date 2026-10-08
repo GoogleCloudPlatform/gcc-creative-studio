@@ -14,12 +14,30 @@
  * limitations under the License.
  */
 
-import {Component, Input, OnInit} from '@angular/core';
+import {Component, Input, OnInit, computed, signal} from '@angular/core';
 import {Router} from '@angular/router';
-import {NodeTypes, StepErrorInfo} from '../../workflow.models';
+import {
+  DynamicStepRecord,
+  LoopItemType,
+  NodeTypes,
+  StepErrorInfo,
+} from '../../workflow.models';
 import {IMAGE_MODE_ALLOWED_INPUTS} from '../../workflow-editor/step-components/step-configs/image-step.config';
+import {
+  LOOP_MODE_FOLDER,
+  LOOP_MODE_TEXT_INPUT,
+  buildLoopTruncationMessage,
+  toLoopItemType,
+} from '../../workflow-editor/step-components/step-configs/loop-step.config';
 import {isVideoUrl} from '../../utils/workflow-step.util';
 import {STEP_CONFIGS_MAP} from '../step-configs.map';
+
+/** Output key holding a Loop step's resolved items. */
+const LOOP_ITEMS_KEY = 'items';
+
+/** `mediaUrlMap` key prefixes (see MediaResolutionService). */
+const MEDIA_KEY_PREFIX = 'media:';
+const ASSET_KEY_PREFIX = 'asset:';
 
 @Component({
   selector: 'app-step-execution-details',
@@ -28,17 +46,78 @@ import {STEP_CONFIGS_MAP} from '../step-configs.map';
 })
 export class StepExecutionDetailsComponent implements OnInit {
   @Input() stepId = '';
-  @Input() stepType = '';
-  @Input() inputs: any = {};
-  @Input() outputs: any = {};
   @Input() mediaUrlMap: Map<string, string> = new Map();
-  @Input() mode?: string;
+  @Input() mode: string | null = null;
   @Input() attempts: number | null = null;
   @Input() lastError: StepErrorInfo | null = null;
   @Input() error: StepErrorInfo | string | null = null;
+  /** Whether the Inputs block is rendered (node cards never show inputs). */
+  @Input() showInputs = true;
+  /** Whether the Outputs block is rendered. */
+  @Input() showOutputs = true;
+
+  private readonly stepTypeState = signal<string>('');
+  private readonly inputsState = signal<DynamicStepRecord>({});
+  private readonly outputsState = signal<DynamicStepRecord>({});
+
+  @Input() set stepType(value: string | null) {
+    this.stepTypeState.set(value ?? '');
+  }
+  get stepType(): string {
+    return this.stepTypeState();
+  }
+
+  @Input() set inputs(value: DynamicStepRecord | null) {
+    this.inputsState.set(value ?? {});
+  }
+  get inputs(): DynamicStepRecord {
+    return this.inputsState();
+  }
+
+  @Input() set outputs(value: DynamicStepRecord | null) {
+    this.outputsState.set(value ?? {});
+  }
+  get outputs(): DynamicStepRecord {
+    return this.outputsState();
+  }
+
+  /** True when rendering a Loop step's run data. */
+  readonly isLoopStep = computed(() => this.stepTypeState() === NodeTypes.LOOP);
+
+  /** Media type of a Loop's items in folder mode, otherwise `null`. */
+  readonly loopMediaType = computed<LoopItemType | null>(() => {
+    if (!this.isLoopStep()) return null;
+    const inputs = this.inputsState();
+    return inputs['mode'] === LOOP_MODE_FOLDER
+      ? toLoopItemType(inputs['item_type'])
+      : null;
+  });
+
+  /** True when a Loop iterates comma-separated text items. */
+  readonly isLoopTextMode = computed(
+    () =>
+      this.isLoopStep() && this.inputsState()['mode'] === LOOP_MODE_TEXT_INPUT,
+  );
+
+  /** Resolved Loop text items rendered as a numbered list. */
+  readonly loopTextItems = computed<string[]>(() => {
+    if (!this.isLoopTextMode()) return [];
+    const items = this.outputsState()[LOOP_ITEMS_KEY];
+    return Array.isArray(items) ? items.map(item => String(item)) : [];
+  });
+
+  /** Warning banner shown above a truncated Loop's items. */
+  readonly loopTruncationMessage = computed<string | null>(() => {
+    if (!this.isLoopStep()) return null;
+    const outputs = this.outputsState();
+    if (outputs['truncated'] !== true) return null;
+    const totalFound = Number(outputs['total_found'] ?? 0);
+    return buildLoopTruncationMessage(totalFound);
+  });
 
   loadedMedia = new Set<string>();
   NodeTypes = NodeTypes;
+  readonly loopItemsKey = LOOP_ITEMS_KEY;
 
   constructor(private router: Router) {}
 
@@ -92,6 +171,17 @@ export class StepExecutionDetailsComponent implements OnInit {
 
     const result: Record<string, any> = {};
 
+    if (this.isLoopStep()) {
+      const loopKeys =
+        this.inputs['mode'] === LOOP_MODE_TEXT_INPUT
+          ? ['mode', 'items_text']
+          : ['mode', 'folder_name', 'item_type'];
+      loopKeys
+        .filter(key => this.hasValue(this.inputs[key]))
+        .forEach(key => (result[key] = this.inputs[key]));
+      return result;
+    }
+
     if (this.isImageStep()) {
       const activeMode = this.getActiveImageMode();
       const allowedKeys = IMAGE_MODE_ALLOWED_INPUTS[activeMode] || ['prompt'];
@@ -123,6 +213,13 @@ export class StepExecutionDetailsComponent implements OnInit {
     if (!this.outputs || typeof this.outputs !== 'object') return {};
 
     const result: Record<string, any> = {};
+
+    if (this.isLoopStep()) {
+      if (this.hasValue(this.outputs[LOOP_ITEMS_KEY])) {
+        result[LOOP_ITEMS_KEY] = this.outputs[LOOP_ITEMS_KEY];
+      }
+      return result;
+    }
 
     if (this.isImageStep()) {
       const primaryKey = 'generated_image';
@@ -179,20 +276,16 @@ export class StepExecutionDetailsComponent implements OnInit {
   }
 
   navigateToGallery(value: any): void {
-    const id = this.getIdFromValue(value);
-    if (!id) return;
-
-    // Use getKeyFromValue to check if we have it loaded, but navigation only works for Media Items currently
-    // If it's an asset, we might not have a gallery route for it yet, or we assume it's media.
-    // For now assuming ID is enough if it's in the map.
+    // Only generated media items have a gallery route; uploaded source
+    // assets (`asset:` keys) share the ID space with nothing in /gallery.
     const key = this.getKeyFromValue(value);
-    if (key && this.mediaUrlMap.has(key)) {
-      // Only navigate if it's a media item (heuristic: if key starts with media:)
-      // Or just try to navigate if we have an ID.
-      const urlTree = this.router.createUrlTree(['/gallery', id]);
-      const url = this.router.serializeUrl(urlTree);
-      window.open(url, '_blank');
+    if (!key?.startsWith(MEDIA_KEY_PREFIX) || !this.mediaUrlMap.has(key)) {
+      return;
     }
+    const id = key.slice(MEDIA_KEY_PREFIX.length);
+    const urlTree = this.router.createUrlTree(['/gallery', id]);
+    const url = this.router.serializeUrl(urlTree);
+    window.open(url, '_blank');
   }
 
   private getKeyFromValue(value: any): string | null {
@@ -200,29 +293,14 @@ export class StepExecutionDetailsComponent implements OnInit {
       typeof value === 'number' ||
       (typeof value === 'string' && /^\d+$/.test(value))
     ) {
-      return `media:${value}`;
+      return `${MEDIA_KEY_PREFIX}${value}`;
     } else if (value && typeof value === 'object') {
       const assetId = value.sourceAssetId ?? value.source_asset_id;
       if (assetId) {
-        return `asset:${assetId}`;
+        return `${ASSET_KEY_PREFIX}${assetId}`;
       } else if (value.sourceMediaItem?.mediaItemId) {
-        return `media:${value.sourceMediaItem.mediaItemId}`;
+        return `${MEDIA_KEY_PREFIX}${value.sourceMediaItem.mediaItemId}`;
       }
-    }
-    return null;
-  }
-
-  private getIdFromValue(value: any): number | string | null {
-    if (typeof value === 'number') {
-      return value;
-    } else if (typeof value === 'string' && /^\d+$/.test(value)) {
-      return Number(value);
-    } else if (value && typeof value === 'object') {
-      const id =
-        value.sourceAssetId ??
-        value.source_asset_id ??
-        value.sourceMediaItem?.mediaItemId;
-      return id !== undefined && id !== null ? id : null;
     }
     return null;
   }
@@ -259,7 +337,21 @@ export class StepExecutionDetailsComponent implements OnInit {
     return input?.type === 'image';
   }
 
+  /** Loop folder-mode items render as media of the configured `item_type`. */
+  private isLoopMediaOutput(
+    outputName: unknown,
+    mediaType: LoopItemType,
+  ): boolean {
+    return (
+      String(outputName) === LOOP_ITEMS_KEY &&
+      this.loopMediaType() === mediaType
+    );
+  }
+
   isImageOutput(outputName?: any): boolean {
+    if (this.isLoopStep()) {
+      return this.isLoopMediaOutput(outputName, 'image');
+    }
     if (this.isImageStep()) {
       return true;
     }
@@ -310,6 +402,9 @@ export class StepExecutionDetailsComponent implements OnInit {
   }
 
   isVideoOutput(outputName?: any): boolean {
+    if (this.isLoopStep()) {
+      return this.isLoopMediaOutput(outputName, 'video');
+    }
     const config = this.getStepConfig();
     if (!config) {
       if (outputName && this.outputs) {
@@ -336,6 +431,9 @@ export class StepExecutionDetailsComponent implements OnInit {
   }
 
   isAudioOutput(outputName?: any): boolean {
+    if (this.isLoopStep()) {
+      return this.isLoopMediaOutput(outputName, 'audio');
+    }
     const config = this.getStepConfig();
     if (!config) return false;
 

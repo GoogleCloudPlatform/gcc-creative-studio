@@ -1520,5 +1520,163 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
         generated_image: 999,
       });
     });
+
+    describe('Loop workflows', () => {
+      function addLoopWorkflow(): void {
+        formService.addStep(NodeTypes.LOOP, {
+          stepId: 'loop_1',
+          type: NodeTypes.LOOP,
+          status: StepStatusEnum.IDLE,
+          inputs: {loop_ending: {step: 'gen_image', output: 'loop_ending'}},
+          outputs: {},
+          settings: {mode: 'folder', folder_id: 42, item_type: 'image'},
+        });
+        formService.addStep(NodeTypes.IMAGE, {
+          stepId: 'gen_image',
+          type: NodeTypes.IMAGE,
+          status: StepStatusEnum.IDLE,
+          inputs: {input_images: {step: 'loop_1', output: 'current_item'}},
+          outputs: {},
+          settings: {mode: 'edit_image'},
+        });
+      }
+
+      const loopRunDetail = {
+        id: 'run-loop',
+        workflow_id: 'wf-loop',
+        status: 'running',
+        step_states: {
+          loop_1: {
+            status: 'COMPLETED',
+            inputs: {mode: 'folder', folder_name: 'Photos', item_type: 'image'},
+            outputs: {items: [101, 102], total_iterations: 2},
+          },
+          'gen_image#0': {
+            status: 'COMPLETED',
+            inputs: {input_images: 101},
+            outputs: {generated_image: [501]},
+          },
+          'gen_image#1': {status: 'RUNNING'},
+        },
+      };
+
+      it('groups iteration keys into history and keeps the Loop running', () => {
+        const workflowService = TestBed.inject(WorkflowService);
+        component.workflowId = 'wf-loop';
+        addLoopWorkflow();
+        (workflowService.getRunDetails as jasmine.Spy).and.returnValue(
+          of(loopRunDetail),
+        );
+        (workflowService.pollRunDetails as jasmine.Spy).and.returnValue(
+          of(loopRunDetail),
+        );
+
+        component.onExecutionSelected('run-loop');
+
+        const genImage = component.getStepExecution('gen_image');
+        expect(genImage?.history.length).toBe(1);
+        expect(genImage?.total_iterations).toBe(2);
+        expect(component.getStepExecution('gen_image#0')).toBeNull();
+
+        const loopCtrl = component.stepsArray.controls.find(
+          c => c.get('stepId')?.value === 'loop_1',
+        );
+        const imgCtrl = component.stepsArray.controls.find(
+          c => c.get('stepId')?.value === 'gen_image',
+        );
+        expect(loopCtrl?.get('status')?.value).toBe(StepStatusEnum.RUNNING);
+        expect(imgCtrl?.get('status')?.value).toBe(StepStatusEnum.RUNNING);
+        expect(imgCtrl?.get('outputs.generated_image')?.value).toEqual([501]);
+      });
+
+      it('opens the history sidebar for a step with execution data', () => {
+        const workflowService = TestBed.inject(WorkflowService);
+        component.workflowId = 'wf-loop';
+        addLoopWorkflow();
+        (workflowService.getRunDetails as jasmine.Spy).and.returnValue(
+          of(loopRunDetail),
+        );
+        (workflowService.pollRunDetails as jasmine.Spy).and.returnValue(
+          of(loopRunDetail),
+        );
+        component.onExecutionSelected('run-loop');
+
+        const imgIndex = component.stepsArray.controls.findIndex(
+          c => c.get('stepId')?.value === 'gen_image',
+        );
+        component.onStepClick(imgIndex, 'gen_image');
+
+        expect(component.historySidebarStep()?.type).toBe(NodeTypes.IMAGE);
+        expect(component.historySidebarStep()?.mode).toBe('edit_image');
+        expect(component.historySidebarEntry()?.step_id).toBe('gen_image');
+
+        component.closeHistorySidebar();
+        expect(component.historySidebarEntry()).toBeNull();
+      });
+
+      it('does not open the sidebar without execution data', () => {
+        addLoopWorkflow();
+        component.onStepClick(0, 'loop_1');
+        expect(component.historySidebarStep()).toBeNull();
+        expect(component.selectedNodeId).toBe('loop_1');
+      });
+
+      it('does not treat the loop_ending back-edge as a cycle', () => {
+        addLoopWorkflow();
+        const steps = component.stepsArray.getRawValue();
+        expect(component['hasCycle'](steps)).toBeFalse();
+      });
+
+      describe('Loop Ending port visibility', () => {
+        function addOutsideImageStep(inputs: Record<string, unknown>): void {
+          formService.addStep(NodeTypes.IMAGE, {
+            stepId: 'outside_image',
+            type: NodeTypes.IMAGE,
+            status: StepStatusEnum.IDLE,
+            inputs,
+            outputs: {},
+            settings: {mode: 'generate_image'},
+          });
+        }
+
+        it('shows the port for steps inside a loop body', () => {
+          addLoopWorkflow();
+          component['updateEdges']();
+          const visibleMap = component.loopEndingVisibleStepMap();
+          expect(visibleMap['gen_image']).toBeTrue();
+          expect(visibleMap['loop_1']).toBeUndefined();
+        });
+
+        it('hides the port for steps outside any loop body', () => {
+          addLoopWorkflow();
+          addOutsideImageStep({prompt: 'static prompt'});
+          component['updateEdges']();
+          expect(
+            component.loopEndingVisibleStepMap()['outside_image'],
+          ).toBeUndefined();
+        });
+
+        it('shows the port for an outside step whose loop_ending is wired', () => {
+          addLoopWorkflow();
+          addOutsideImageStep({prompt: 'static prompt'});
+          const loopCtrl = component.stepsArray.controls.find(
+            c => c.get('stepId')?.value === 'loop_1',
+          );
+          loopCtrl
+            ?.get('inputs.loop_ending')
+            ?.setValue({step: 'outside_image', output: 'loop_ending'});
+          component['updateEdges']();
+          expect(
+            component.loopEndingVisibleStepMap()['outside_image'],
+          ).toBeTrue();
+        });
+
+        it('hides the port for every step when there is no loop', () => {
+          addOutsideImageStep({prompt: 'static prompt'});
+          component['updateEdges']();
+          expect(component.loopEndingVisibleStepMap()).toEqual({});
+        });
+      });
+    });
   });
 });

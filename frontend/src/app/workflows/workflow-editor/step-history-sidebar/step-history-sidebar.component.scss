@@ -1,0 +1,374 @@
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/*
+ * Palette mirrors the workflow editor / execution details modal dark theme:
+ * glass panels on #1e1e1e, rgba(255,255,255,0.1) borders, #e3e3e3 text,
+ * #a0a0a0 secondary text and the Google blue (#8ab4f8) status accent.
+ * Editor-level variables (--card-bg, --border-color, --text-*) win if defined.
+ */
+:host {
+  --sidebar-surface: var(--card-bg, #1e1e1e);
+  --sidebar-glass: rgba(30, 30, 30, 0.92);
+  --sidebar-border: rgba(255, 255, 255, 0.1);
+  --sidebar-border-strong: rgba(255, 255, 255, 0.2);
+  --sidebar-text: var(--text-primary, #e3e3e3);
+  --sidebar-muted: var(--text-secondary, #a0a0a0);
+  --sidebar-hover: rgba(255, 255, 255, 0.06);
+  --sidebar-inset: rgba(0, 0, 0, 0.2);
+  --sidebar-accent: #8ab4f8;
+  --sidebar-accent-soft: rgba(138, 180, 248, 0.15);
+  --sidebar-accent-border: rgba(138, 180, 248, 0.35);
+
+  /*
+   * Full-height panel flush with the right edge. The editor header uses
+   * z-index 100 inside the same (editor host) stacking context.
+   */
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 110;
+  display: flex;
+  font-family: 'Google Sans', sans-serif;
+  animation: sidebar-slide-in 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Rendered inside a CDK overlay pane (above dialogs): fill the pane. */
+:host(.embedded) {
+  position: relative;
+  top: auto;
+  right: auto;
+  bottom: auto;
+  z-index: auto;
+  height: 100%;
+}
+
+.history-sidebar {
+  display: flex;
+  width: 420px;
+  max-width: 100vw;
+  height: 100%;
+  overflow: hidden;
+  color: var(--sidebar-text);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.06) 0%,
+      rgba(255, 255, 255, 0.01) 100%
+    ),
+    var(--sidebar-glass);
+  border-left: 1px solid var(--sidebar-border);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.3);
+  transition: width 0.3s ease;
+
+  &.two-column {
+    width: 640px;
+  }
+}
+
+/* ---------- Left column ---------- */
+.history-list {
+  display: flex;
+  flex-direction: column;
+  width: 200px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--sidebar-border);
+  background: var(--sidebar-inset);
+}
+
+.history-list-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px 16px 12px;
+  border-bottom: 1px solid var(--sidebar-border);
+}
+
+.history-step-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--sidebar-text);
+  word-break: break-word;
+}
+
+.history-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--sidebar-accent);
+  background: var(--sidebar-accent-soft);
+  border: 1px solid var(--sidebar-accent-border);
+}
+
+.history-progress-icon {
+  font-size: 13px;
+  width: 13px;
+  height: 13px;
+}
+
+.history-iterations {
+  list-style: none;
+  margin: 0;
+  padding: 10px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.history-iteration-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--sidebar-muted);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.2s ease,
+    color 0.2s ease,
+    border-color 0.2s ease;
+
+  &:hover {
+    color: var(--sidebar-text);
+    background: var(--sidebar-hover);
+  }
+
+  &.active {
+    color: var(--sidebar-text);
+    background: var(--sidebar-accent-soft);
+    border-color: var(--sidebar-accent-border);
+
+    .history-iteration-dot {
+      background: var(--sidebar-accent);
+    }
+  }
+}
+
+.history-iteration-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--sidebar-border-strong);
+  transition: background 0.2s ease;
+}
+
+/* ---------- Right column ---------- */
+.history-details {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.history-details-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 18px 14px 20px;
+  background: rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--sidebar-border);
+}
+
+.history-details-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.history-details-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--sidebar-text);
+  word-break: break-word;
+}
+
+.history-close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--sidebar-muted);
+  cursor: pointer;
+  transition:
+    color 0.2s ease,
+    background 0.2s ease,
+    border-color 0.2s ease;
+
+  &:hover {
+    color: var(--sidebar-text);
+    background: var(--sidebar-hover);
+    border-color: var(--sidebar-border);
+  }
+
+  .mat-icon {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+  }
+}
+
+.history-details-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.history-section {
+  border-radius: 12px;
+  border: 1px solid var(--sidebar-border);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.08) 0%,
+    rgba(255, 255, 255, 0.02) 100%
+  );
+  overflow: hidden;
+  transition: border-color 0.2s ease;
+
+  &:hover {
+    border-color: var(--sidebar-border-strong);
+  }
+}
+
+.history-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 12px 14px;
+  border: none;
+  background: transparent;
+  color: var(--sidebar-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    background 0.2s ease,
+    color 0.2s ease;
+
+  &:hover {
+    color: var(--sidebar-text);
+    background: var(--sidebar-hover);
+  }
+}
+
+.history-chevron {
+  font-size: 20px;
+  width: 20px;
+  height: 20px;
+  color: var(--sidebar-muted);
+  transition: transform 0.25s ease;
+
+  &.open {
+    transform: rotate(90deg);
+  }
+}
+
+.history-section-content {
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--sidebar-border);
+  background: var(--sidebar-inset);
+  animation: section-fade-in 0.25s ease;
+}
+
+.history-empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--sidebar-muted);
+  font-style: italic;
+}
+
+.history-pending {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 40px 16px;
+  color: var(--sidebar-muted);
+  font-size: 13px;
+  text-align: center;
+
+  p {
+    margin: 0;
+  }
+}
+
+.history-pending-spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid var(--sidebar-accent-soft);
+  border-top-color: var(--sidebar-accent);
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes sidebar-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes section-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -23,6 +23,7 @@ export enum NodeTypes {
   CROP_IMAGE = 'crop_image',
   GENERATE_AUDIO = 'generate_audio',
   IMAGE = 'image',
+  LOOP = 'loop',
 }
 
 export interface StepOutputReference {
@@ -75,6 +76,49 @@ interface BaseStep<T = DynamicStepRecord, S = DynamicStepRecord> {
 
 // --- Union of all step types (Dynamic by default) ---
 export type WorkflowStep = BaseStep;
+
+// --- Loop Step ---
+
+/** Source of the items iterated by a Loop step. */
+export type LoopMode = 'folder' | 'text_input';
+
+/** Media type iterated by a Loop step in `folder` mode. */
+export type LoopItemType = 'image' | 'video' | 'audio';
+
+export interface LoopInputs {
+  /** Comma-separated items (fixed text or a linked text output). Used in `text_input` mode. */
+  items_text: string | StepOutputReference | null;
+  /** Back-edge from the loop end step's `loop_ending` output. */
+  loop_ending: StepOutputReference | null;
+}
+
+export interface LoopSettings {
+  mode: LoopMode;
+  folder_id: number | null;
+  item_type: LoopItemType;
+}
+
+export interface LoopStep extends BaseStep<LoopInputs, LoopSettings> {
+  type: NodeTypes.LOOP;
+}
+
+/**
+ * One folder-mode Loop item, a single value like the media step outputs: a
+ * generated media item ID (`101`) or an uploaded source asset reference
+ * (`{sourceAssetId: 7, previewUrl: ''}`).
+ */
+export type LoopMediaItem = number | ReferenceImage;
+
+/** A single looped item: a {@link LoopMediaItem} in folder mode or a string in text mode. */
+export type LoopItem = LoopMediaItem | string;
+
+/** Persisted `step_outputs` of a Loop step's single history entry. */
+export interface LoopStepOutputs {
+  items: LoopItem[];
+  total_iterations: number;
+  total_found: number;
+  truncated: boolean;
+}
 
 export enum WorkflowRunStatusEnum {
   QUEUED = 'queued',
@@ -251,6 +295,7 @@ export interface StepErrorInfo {
 
 export interface StepState {
   status: StepStatus;
+  inputs?: DynamicStepRecord | null;
   outputs?: DynamicStepRecord | null;
   attempts?: number;
   in_progress_continuations?: number;
@@ -365,11 +410,19 @@ export interface ExecutionResponse {
   queuePosition?: number | null;
 }
 
+/** One completed execution (iteration) of a workflow step. */
+export interface StepHistoryEntry {
+  step_inputs: DynamicStepRecord;
+  step_outputs: DynamicStepRecord;
+}
+
 export interface StepEntry {
   step_id: string;
   state: string;
-  step_inputs: DynamicStepRecord;
-  step_outputs: DynamicStepRecord;
+  /** Completed executions, oldest first. Empty while no iteration has completed. */
+  history: StepHistoryEntry[];
+  /** Number of iterations resolved by the owning Loop (`null` for non-loop steps). */
+  total_iterations?: number | null;
   start_time?: string | null;
   end_time?: string | null;
   attempts?: number;

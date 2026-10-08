@@ -517,6 +517,45 @@
 .port-type-chip[data-type*='Audio'] {
   background-color: #805ad5;
 }
+.port-type-chip[data-type*='loop'] {
+  background-color: hsl(173, 60%, 43%);
+}
+
+.loop-capacity-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 16px 12px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: hsl(173, 70%, 72%);
+  background: linear-gradient(
+    135deg,
+    hsla(173, 60%, 43%, 0.18),
+    hsla(190, 70%, 45%, 0.12)
+  );
+  border: 1px solid hsla(173, 60%, 50%, 0.35);
+  box-shadow: 0 0 12px hsla(173, 60%, 45%, 0.25);
+  backdrop-filter: blur(6px);
+  transition:
+    box-shadow 0.25s ease,
+    transform 0.25s ease;
+
+  .mat-icon {
+    font-size: 14px;
+    width: 14px;
+    height: 14px;
+  }
+
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 0 18px hsla(173, 60%, 50%, 0.45);
+  }
+}
 
 .selected-node {
   box-shadow:

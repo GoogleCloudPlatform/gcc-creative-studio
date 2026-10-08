@@ -24,7 +24,7 @@ When you click **Run**, your workflow doesn't just fire blindly—it goes throug
                     └──► (Needs user fix)  ──► [ NEEDS_ATTENTION (Paused) ] ──► Resume!
 ```
 
-1. **Build:** Add steps (`user_input`, `generate_text`, `image`, `crop_image`, `generate_video`, `generate_audio`) and link their inputs/outputs in the **Workflow Editor**.
+1. **Build:** Add steps (`user_input`, `generate_text`, `image`, `crop_image`, `generate_video`, `generate_audio`, `loop`) and link their inputs/outputs in the **Workflow Editor**.
 2. **Queue (`QUEUED`):** Submitted runs enter a fair round-robin queue across users so no single user hogs capacity.
 3. **Execute (`RUNNING`):** Steps run in order. The UI polls run progress and updates each step's state live.
 4. **Finish (`COMPLETED`):** All generated media and text outputs are saved and viewable in **Execution History**.
@@ -95,4 +95,56 @@ To prevent one user's huge batch from blocking everyone else, the system uses a 
 * **Turn-Taking Across Users:** Whenever execution slots open up, the dispatcher picks **1 oldest queued run from each waiting user in turns** (starting with the user who was dispatched least recently).
 * **No Head-of-Line Blocking:** If Alice queues 50 runs and Bob submits 1 run a second later, Bob doesn't wait behind all 50 of Alice's runs—Bob gets the very next turn!
 * **No Idle Capacity (No Per-User Cap):** If Alice is the *only* active user, she can use all `20` concurrent slots at once. As soon as Bob or Carol submits a run, the next freed slots automatically rotate to them.
+
+---
+
+## 5. How the Loop Node Works
+
+Need to run the same steps for every image in a folder or every word in a list? The **Loop** node repeats its body once per item—inside a single run.
+
+```text
+[ Loop ] ──current_item──► [ Generate Text ] ──► [ Generate Image ]
+    ▲       (1 per iteration)                            │
+    └──────────────────── loop_ending ◄──────────────────┘
+```
+
+### Step-by-Step
+1. **Pick a Source (`mode`):**
+   * **Media Gallery Folder (`folder`):** Choose a folder and an `item_type` (`image`, `video`, `audio`). Each matching item (generated or uploaded) becomes one iteration, oldest first. The folder is required in this mode.
+     * The folder select shows the current folder (full path on hover) plus a **Choose folder…** action. It opens the Media Gallery in folder mode, previewing items of the selected `item_type`. Browse to a folder and click **Use this folder** (the root "All Media" can't be selected).
+   * **Text Input (`text_input`):** Provide comma-separated text (`"cat, dog, bird"`), fixed or linked from an upstream text output. Each trimmed value becomes one iteration.
+2. **Wire the Body:** Connect `current_item` to the first body step. Connect the last body step's **Loop Ending** port back to the Loop's `loop_ending` input.
+   * The **Loop Ending** output port only appears on steps inside a Loop body (downstream of the Loop). A step outside any body keeps showing it only while its Loop Ending is still wired, so the stale wire can be removed.
+   * `current_item` is a **single value**, like the media step outputs: a generated media item ID (`101`) or an uploaded asset reference (`{"sourceAssetId": 7, "previewUrl": ""}`) in folder mode, a string in text mode. The Loop's `items` output lists them (e.g. `[101, {"sourceAssetId": 7, "previewUrl": ""}, 103]`).
+   * Wired directly to an input, the body step receives the item itself (`"input_images": 101`); wired as one entry of a multi-media input list, it receives a list (`"input_images": [101]`).
+3. **Run:** Items are resolved once and snapshotted, so retries/resumes always loop over the same items. Each iteration is checkpointed independently—resuming skips completed iterations.
+
+### Rules & Limits
+* **Max 100 loops (`MAX_LOOP_ITEMS`):** Extra items are dropped (not failed); the sidebar shows `"Found X items, only the first 100 will be processed"`.
+* **Empty source:** 0 items → loop body is skipped, the run does **not** fail.
+* **Missing folder:** In the editor, a saved folder that no longer exists (or isn't accessible) shows as `Folder #<id>` with a warning icon; the id is kept until you choose another folder. At run time it pauses the run in `NEEDS_ATTENTION`.
+* **No post-loop steps & no nested loops:** The loop-ending step terminates its branch, and a Loop cannot live inside another Loop's body.
+
+---
+
+## 6. How Step History Works (`history`)
+
+Every step in a run (loop or not) exposes its data through a single **`history`** array—one entry per completed iteration.
+
+```json
+{
+  "step_id": "gen_image",
+  "state": "STATE_IN_PROGRESS",
+  "total_iterations": 3,
+  "history": [
+    { "step_inputs": { "input_images": [101] }, "step_outputs": { "generated_image": [501] } },
+    { "step_inputs": { "input_images": [102] }, "step_outputs": { "generated_image": [502] } }
+  ]
+}
+```
+
+* **Single Source of Truth:** `step_inputs` / `step_outputs` live **only** inside `history[]` (no top-level fields). Regular steps have 1 entry; not-yet-completed steps have `history: []`.
+* **Progress:** Loop and loop-body steps include `total_iterations`, so the UI can show `2 / 3`.
+* **History Sidebar:** Clicking a step opens a sidebar. With more than 1 entry, a left column lists `Iteration 1`, `Iteration 2`, ...; the right column shows collapsible **Inputs** (collapsed) and **Outputs** (expanded).
+* **Node Card Preview:** Cards only preview the **latest** entry (`history.at(-1)`), and only when none of the step's outputs are linked.
 

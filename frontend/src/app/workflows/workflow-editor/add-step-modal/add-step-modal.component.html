@@ -27,6 +27,7 @@
       <button
         *ngFor="let step of stepTypes"
         class="node-card"
+        [id]="'add-step-option-' + step.type"
         [disabled]="step.disabled"
         (click)="!step.disabled && selectStep(step.type)"
       >

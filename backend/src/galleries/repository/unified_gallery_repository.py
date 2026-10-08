@@ -17,17 +17,22 @@ from src.users.user_model import User
 
 
 from fastapi import Depends
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.base_repository import BaseRepository
 from src.common.dto.pagination_response_dto import PaginationResponseDto
+from src.common.schema.media_item_model import JobStatusEnum
 from src.common.schema.unified_gallery_view import UnifiedGalleryView
 from src.database import get_db
 from src.galleries.dto.gallery_search_dto import GallerySearchDto
 from src.galleries.dto.unified_gallery_response import (
     UnifiedGalleryItemResponse,
 )
+
+# ``item_type`` values of the unified gallery view.
+LOOP_MEDIA_ITEM = "media_item"
+LOOP_SOURCE_ASSET = "source_asset"
 
 
 class UnifiedGalleryRepository(
@@ -190,3 +195,65 @@ class UnifiedGalleryRepository(
             total_pages=total_pages,
             data=data,
         )
+
+    async def list_folder_loop_items(
+        self,
+        *,
+        workspace_id: int,
+        folder_id: int,
+        mime_type_prefix: str,
+        limit: int,
+    ) -> tuple[list[tuple[str, int]], int]:
+        """Media of a folder iterated by a workflow ``Loop`` step.
+
+        Considers non-deleted rows of the given workspace and folder whose
+        ``mime_type`` starts with ``"<mime_type_prefix>/"``: completed
+        generated ``media_item`` rows and uploaded ``source_asset`` rows.
+        External resources (``external_url`` set) are skipped, as in the
+        default gallery view.
+
+        Args:
+            workspace_id: Workspace the folder belongs to.
+            folder_id: Folder to list.
+            mime_type_prefix: ``"image"``, ``"video"`` or ``"audio"``.
+            limit: Maximum number of rows returned.
+
+        Returns:
+            ``(rows, total)``: up to ``limit`` ``(item_type, id)`` pairs
+            (``item_type`` is ``"media_item"`` or ``"source_asset"``),
+            oldest first (``created_at, item_type, id``), and the total
+            number of matches.
+        """
+        external_url = self.model.metadata_["external_url"].astext
+        conditions = (
+            self.model.workspace_id == workspace_id,
+            self.model.folder_id == folder_id,
+            self.model.deleted_at.is_(None),
+            self.model.metadata_["mime_type"].astext.like(
+                f"{mime_type_prefix}/%"
+            ),
+            external_url.is_(None) | (external_url == ""),
+            or_(
+                and_(
+                    self.model.item_type == LOOP_MEDIA_ITEM,
+                    self.model.status == JobStatusEnum.COMPLETED.value,
+                ),
+                self.model.item_type == LOOP_SOURCE_ASSET,
+            ),
+        )
+        count_result = await self.db.execute(
+            select(func.count()).select_from(self.model).where(*conditions)
+        )
+        total = count_result.scalar_one()
+        rows_result = await self.db.execute(
+            select(self.model.item_type, self.model.id)
+            .where(*conditions)
+            .order_by(
+                self.model.created_at.asc(),
+                self.model.item_type.asc(),
+                self.model.id.asc(),
+            )
+            .limit(limit)
+        )
+        rows = [(item_type, item_id) for item_type, item_id in rows_result]
+        return rows, total

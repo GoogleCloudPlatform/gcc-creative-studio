@@ -17,6 +17,7 @@
 import {MODEL_CONFIGS} from '../../../../common/config/model-config';
 import {NodeTypes} from '../../../workflow.models';
 import {StepConfig} from '../generic-step/step.model';
+import {LOOP_ENDING_OUTPUT} from './loop-step.config';
 
 export const IMAGE_MODE_OPTIONS = [
   {value: 'generate_image', label: 'Text to Image'},
@@ -187,5 +188,6 @@ export const IMAGE_STEP_CONFIG: StepConfig = {
       label: 'generated_image',
       type: 'image',
     },
+    LOOP_ENDING_OUTPUT,
   ],
 };

@@ -52,6 +52,7 @@
   <mat-form-field
     *ngIf="
       mode !== 'mixed' &&
+      !config.linkedOnly &&
       config.type !== 'image' &&
       config.type !== 'video' &&
       config.type !== 'audio'

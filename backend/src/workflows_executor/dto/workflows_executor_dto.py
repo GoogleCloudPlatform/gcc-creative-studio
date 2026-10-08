@@ -25,11 +25,17 @@ from src.workflows.schema.workflow_model import (
     GenerateVideoSettings,
     ImageInputs,
     ImageSettings,
+    LoopSettings,
 )
 
 # Run ids are UUIDs or GCP execution ids; step ids are editor node ids.
+# '#' is rejected: it separates '<step_id>#<iteration>' step state keys.
 _KEY_PATTERN = r"^[A-Za-z0-9_-]*$"
 _KEY_MAX_LENGTH = 128
+# Upper bound of a loop iteration index (MAX_LOOP_ITEMS is far below).
+MAX_ITERATION_INDEX = 1000
+# Bound of the raw comma-separated text of a text_input Loop step.
+MAX_LOOP_ITEMS_TEXT_LENGTH = 100_000
 
 
 class StepCallContext(BaseModel):
@@ -37,7 +43,8 @@ class StepCallContext(BaseModel):
 
     Sent by the generated YAML. Calls without ``run_id`` (missing or empty,
     e.g. executions started before the queue existed) run without
-    checkpoint or idempotency.
+    checkpoint or idempotency. Loop body calls send ``iteration`` and are
+    checkpointed under ``"<step_id>#<iteration>"``.
     """
 
     run_id: str | None = Field(
@@ -49,6 +56,7 @@ class StepCallContext(BaseModel):
     execution_id: str | None = Field(
         default=None, max_length=_KEY_MAX_LENGTH, pattern=_KEY_PATTERN
     )
+    iteration: int | None = Field(default=None, ge=0, le=MAX_ITERATION_INDEX)
 
     @model_validator(mode="after")
     def _require_step_id_with_run_id(self) -> "StepCallContext":
@@ -78,3 +86,20 @@ class GenerateAudioRequest(StepCallContext):
     workspace_id: int
     inputs: GenerateAudioInputs
     config: GenerateAudioSettings
+
+
+class ResolveLoopItemsInputs(BaseModel):
+    """Resolved inputs of a ``Loop`` step (``loop_ending`` is a back-edge
+    and never sent)."""
+
+    items_text: str | None = Field(
+        default=None, max_length=MAX_LOOP_ITEMS_TEXT_LENGTH
+    )
+
+
+class ResolveLoopItemsRequest(StepCallContext):
+    workspace_id: int
+    inputs: ResolveLoopItemsInputs = Field(
+        default_factory=ResolveLoopItemsInputs
+    )
+    config: LoopSettings

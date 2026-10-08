@@ -22,8 +22,17 @@ import {
   SourceAssetService,
 } from '../../common/services/source-asset.service';
 import {GalleryService} from '../../gallery/gallery.service';
-import {NodeTypes} from '../workflow.models';
+import {getLatestStepOutputs} from '../utils/step-history.util';
+import {LOOP_MODE_FOLDER} from '../workflow-editor/step-components/step-configs/loop-step.config';
+import {
+  DynamicStepRecord,
+  NodeTypes,
+  StepEntry,
+  StepHistoryEntry,
+} from '../workflow.models';
 import {STEP_CONFIGS_MAP} from './step-configs.map';
+
+const MEDIA_PORT_TYPES: ReadonlyArray<string> = ['image', 'audio', 'video'];
 
 @Injectable({
   providedIn: 'root',
@@ -35,13 +44,14 @@ export class MediaResolutionService {
   ) {}
 
   /**
-   * Resolves media URLs for the given step entries.
+   * Resolves media URLs for the given step entries, reading inputs/outputs
+   * strictly from each entry's `history[]`.
    * @param stepEntries The execution details step entries.
    * @param stepTypeMap A map of stepId -> stepType (NodeTypes | string).
    * @param mediaUrlMap The map to populate with resolved URLs (key format: "type:id").
    */
   resolveMediaUrls(
-    stepEntries: any[],
+    stepEntries: StepEntry[],
     stepTypeMap: Map<string, NodeTypes | string>,
     mediaUrlMap: Map<string, string>,
   ): void {
@@ -50,50 +60,54 @@ export class MediaResolutionService {
     const mediaItemIds = new Set<string | number>();
     const sourceAssetIds = new Set<string | number>();
 
-    // Create a map of step outputs for reference resolution
-    const stepOutputsMap = new Map<string, any>();
+    // Map of latest step outputs for reference resolution
+    const stepOutputsMap = new Map<string, DynamicStepRecord>();
     stepEntries.forEach(step => {
-      stepOutputsMap.set(step.step_id, step.step_outputs);
+      stepOutputsMap.set(step.step_id, getLatestStepOutputs(step));
     });
 
-    stepEntries.forEach((step: any) => {
+    const collect = (val: unknown) =>
+      this.collectMediaIds(val, mediaItemIds, sourceAssetIds, stepOutputsMap);
+
+    stepEntries.forEach(step => {
       const type = stepTypeMap.get(step.step_id);
       if (!type) return;
+      const history: StepHistoryEntry[] = step.history ?? [];
+
+      if (type === NodeTypes.LOOP) {
+        history
+          .filter(entry => entry.step_inputs?.['mode'] === LOOP_MODE_FOLDER)
+          .forEach(entry => collect(entry.step_outputs?.['items']));
+        return;
+      }
 
       const config = STEP_CONFIGS_MAP[type as keyof typeof STEP_CONFIGS_MAP];
       if (!config) {
-        [step.step_outputs, step.step_inputs].forEach(io => {
-          if (io) {
-            Object.values(io).forEach(val => {
-              this.collectMediaIds(
-                val,
-                mediaItemIds,
-                sourceAssetIds,
-                stepOutputsMap,
-              );
-            });
-          }
+        history.forEach(entry => {
+          [entry.step_outputs, entry.step_inputs].forEach(io => {
+            if (io) Object.values(io).forEach(collect);
+          });
         });
         return;
       }
 
       // Helper to process inputs/outputs
-      const processIO = (ioConfig: any[], sourceData: any) => {
+      const processIO = (
+        ioConfig: ReadonlyArray<{name: string; type: string}>,
+        sourceData: DynamicStepRecord | null | undefined,
+      ) => {
         if (!sourceData) return;
         ioConfig.forEach(item => {
-          if (['image', 'audio', 'video'].includes(item.type)) {
-            this.collectMediaIds(
-              sourceData[item.name],
-              mediaItemIds,
-              sourceAssetIds,
-              stepOutputsMap,
-            );
+          if (MEDIA_PORT_TYPES.includes(item.type)) {
+            collect(sourceData[item.name]);
           }
         });
       };
 
-      if (config.outputs) processIO(config.outputs, step.step_outputs);
-      if (config.inputs) processIO(config.inputs, step.step_inputs);
+      history.forEach(entry => {
+        if (config.outputs) processIO(config.outputs, entry.step_outputs);
+        if (config.inputs) processIO(config.inputs, entry.step_inputs);
+      });
     });
 
     // Filter out already resolved IDs using namespaced keys
@@ -120,7 +134,7 @@ export class MediaResolutionService {
         ),
       ),
       ...sourceIdsToFetch.map(id =>
-        this.sourceAssetService.getAsset(id as any).pipe(
+        this.sourceAssetService.getAsset(id as number).pipe(
           map(asset => ({key: `asset:${id}`, url: asset.presignedUrl})),
           catchError(err => {
             console.error(`Failed to resolve source asset ID ${id}`, err);
@@ -144,7 +158,7 @@ export class MediaResolutionService {
     val: any,
     mediaItemIds: Set<string | number>,
     sourceAssetIds: Set<string | number>,
-    stepOutputsMap: Map<string, any>,
+    stepOutputsMap: Map<string, DynamicStepRecord>,
   ): void {
     if (!val) return;
 

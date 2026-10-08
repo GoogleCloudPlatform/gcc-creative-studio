@@ -24,10 +24,12 @@ import {
   Validators,
 } from '@angular/forms';
 import {BehaviorSubject} from 'rxjs';
-import {pairwise, startWith} from 'rxjs/operators';
+import {distinctUntilChanged, map, pairwise, startWith} from 'rxjs/operators';
 import {STEP_CONFIGS_MAP} from '../shared/step-configs.map';
+import {isPortTypeCompatible} from '../utils/workflow-magnetic.util';
 import {labelToName, nameToLabel} from '../utils/workflow-step.util';
 import {
+  DynamicStepRecord,
   NodeTypes,
   ParameterDefinition,
   ParameterRemapEntry,
@@ -38,6 +40,15 @@ import {
   WorkflowModel,
   WorkflowTemplate,
 } from '../workflow.models';
+import {
+  DEFAULT_LOOP_SETTINGS,
+  LOOP_CURRENT_ITEM_PORT,
+  getLoopCurrentItemType,
+} from './step-components/step-configs/loop-step.config';
+import {
+  StepConfig,
+  StepOutputType,
+} from './step-components/generic-step/step.model';
 
 const DEFAULT_NODE_POSITION: Point = {x: 100, y: 100};
 
@@ -145,7 +156,73 @@ export class WorkflowFormService {
     });
 
     this.stepsArray.push(stepGroup);
+    if (safeStepData.type === NodeTypes.LOOP) {
+      this.watchLoopOutputType(stepGroup);
+    }
     this.updateAvailableOutputs();
+  }
+
+  /**
+   * The Loop `current_item` output type depends on its settings (mode and
+   * item_type). Whenever it changes, refresh available outputs and drop
+   * downstream links that are no longer type-compatible (spec §5.2.9).
+   */
+  private watchLoopOutputType(stepGroup: FormGroup): void {
+    const settings = stepGroup.get('settings') as FormGroup;
+    settings.valueChanges
+      .pipe(
+        map((value: DynamicStepRecord) => getLoopCurrentItemType(value)),
+        distinctUntilChanged(),
+      )
+      .subscribe(newType => {
+        this.pruneIncompatibleLoopLinks(
+          stepGroup.get('stepId')?.value as string,
+          newType,
+        );
+        this.updateAvailableOutputs();
+      });
+  }
+
+  /** Removes links to a Loop's `current_item` whose target type no longer matches. */
+  private pruneIncompatibleLoopLinks(
+    loopStepId: string,
+    newType: StepOutputType,
+  ): void {
+    const isLoopItemRef = (v: unknown): boolean => {
+      if (!v || typeof v !== 'object') return false;
+      const ref = v as Record<string, unknown>;
+      return (
+        ref['step'] === loopStepId && ref['output'] === LOOP_CURRENT_ITEM_PORT
+      );
+    };
+
+    this.stepsArray.controls.forEach(stepControl => {
+      const stepType = stepControl.get('type')?.value as NodeTypes;
+      const config = (
+        STEP_CONFIGS_MAP as Partial<Record<NodeTypes, StepConfig>>
+      )[stepType];
+      const inputs = stepControl.get('inputs') as FormGroup | null;
+      if (!config || !inputs) return;
+
+      Object.keys(inputs.controls).forEach(inputKey => {
+        const inputConfig = config.inputs.find(i => i.name === inputKey);
+        if (!inputConfig || isPortTypeCompatible(newType, inputConfig.type)) {
+          return;
+        }
+        const control = inputs.get(inputKey);
+        const value: unknown = control?.value;
+        if (Array.isArray(value)) {
+          const filtered = value.filter(v => !isLoopItemRef(v));
+          if (filtered.length !== value.length) {
+            control?.setValue(filtered);
+            control?.markAsDirty();
+          }
+        } else if (isLoopItemRef(value)) {
+          control?.setValue(null);
+          control?.markAsDirty();
+        }
+      });
+    });
   }
 
   deleteStep(index: number): string | null {
@@ -301,13 +378,18 @@ export class WorkflowFormService {
         if (!stepConfig) return;
 
         stepConfig.outputs.forEach((output: any) => {
+          const isLoopItem =
+            step.type === NodeTypes.LOOP &&
+            output.name === LOOP_CURRENT_ITEM_PORT;
           availableOutputs.push({
             label: `Step ${stepIndex + 1}: ${output.label} `,
             value: {
               step: step.stepId,
               output: output.name,
             },
-            type: output.type,
+            type: isLoopItem
+              ? getLoopCurrentItemType(step.settings ?? null)
+              : output.type,
           });
         });
       });
@@ -595,7 +677,9 @@ export class WorkflowFormService {
     return candidate;
   }
 
-  getUniqueStepId(baseStepId: string, existingStepIds: Set<string>): string {
+  getUniqueStepId(rawStepId: string, existingStepIds: Set<string>): string {
+    // '#' is reserved for loop iteration keys ("<step_id>#<n>").
+    const baseStepId = rawStepId.replace(/#/g, '_');
     if (!existingStepIds.has(baseStepId)) {
       return baseStepId;
     }
@@ -693,6 +777,8 @@ export class WorkflowFormService {
         resolution: '1K',
         brand_guidelines: false,
       };
+    } else if (type === NodeTypes.LOOP) {
+      base.settings = {...DEFAULT_LOOP_SETTINGS};
     }
     return base;
   }

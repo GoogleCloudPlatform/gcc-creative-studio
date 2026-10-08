@@ -285,7 +285,7 @@
         <ng-container *ngFor="let setting of localConfig.settings">
           <ng-container *ngIf="!setting.hidden && setting.name !== 'mode'">
             <mat-form-field
-              *ngIf="setting.type === 'select'"
+              *ngIf="setting.type === 'select' && setting.name !== loopFolderSettingName"
               appearance="outline"
             >
               <mat-label>{{ setting.label }}</mat-label>
@@ -297,6 +297,48 @@
                   >{{ option.label }}</mat-option
                 >
               </mat-select>
+            </mat-form-field>
+            <mat-form-field
+              *ngIf="setting.name === loopFolderSettingName"
+              class="loop-folder-field"
+              appearance="outline"
+              [title]="loopFolderOption().path"
+              (mousedown)="$event.stopPropagation()"
+            >
+              <mat-label>{{ setting.label }}</mat-label>
+              <mat-select
+                [formControlName]="setting.name"
+                placeholder="No folder selected"
+                [id]="'loop-folder-select-' + stepForm.value.stepId"
+                (openedChange)="onLoopFolderOpenedChange($event)"
+                (selectionChange)="onLoopFolderSelectionChange($event)"
+              >
+                <mat-option
+                  *ngFor="
+                    let option of loopFolderOptions();
+                    trackBy: trackLoopFolderOption
+                  "
+                  class="loop-folder-current-option"
+                  [value]="option.value"
+                  [disabled]="option.isPlaceholder"
+                  [title]="option.path"
+                  >{{ option.label }}</mat-option
+                >
+                <mat-option
+                  class="loop-folder-choose-option"
+                  [value]="loopFolderChooseValue"
+                  >Choose folder…</mat-option
+                >
+              </mat-select>
+              <mat-icon
+                matSuffix
+                *ngIf="loopFolderOption().isMissing"
+                class="loop-folder-missing-icon"
+                color="warn"
+                [matTooltip]="loopFolderMissingTooltip"
+                >warning</mat-icon
+              >
+              <mat-error>Select a folder to loop over.</mat-error>
             </mat-form-field>
             <mat-form-field
               *ngIf="setting.type === 'text' || setting.type === 'textarea'"
@@ -345,11 +387,14 @@
       <h3>Outputs</h3>
       <div class="flex flex-col gap-2">
         <div
-          *ngFor="let output of localConfig.outputs"
+          *ngFor="let output of visibleOutputs()"
           class="output-row relative w-full flex items-center justify-between"
         >
           <div class="output-pill relative">
-            <mat-icon>{{ output.type }}</mat-icon> {{ output.label }}
+            <mat-icon>{{
+              output.type === 'loop_ending' ? 'loop' : output.type
+            }}</mat-icon>
+            {{ output.label }}
           </div>
           <div
             class="port output-port"
@@ -377,24 +422,33 @@
     </div>
 
     <!-- Execution Results embedded inside the Node -->
-    <div
-      class="section execution-results"
-      *ngIf="stepExecution && (stepExecution | keyvalue)?.length"
-    >
+    <div class="section execution-results" *ngIf="showExecutionResults()">
       <h3>Results</h3>
       <app-step-execution-details
         [stepId]="stepForm.value.stepId"
         [stepType]="stepForm.value.type"
-        [inputs]="stepExecution.step_inputs"
-        [outputs]="stepExecution.step_outputs"
+        [showInputs]="false"
+        [showOutputs]="showOutputPreview()"
+        [outputs]="latestStepOutputs()"
+        [inputs]="latestStepInputs()"
         [mediaUrlMap]="mediaUrlMap"
-        [attempts]="stepExecution.attempts ?? null"
-        [lastError]="stepExecution.last_error ?? stepExecution.error ?? null"
+        [attempts]="stepExecution?.attempts ?? null"
+        [error]="stepExecutionError()"
         [mode]="
           stepForm.get('settings.mode')?.value || stepForm.value?.settings?.mode
         "
       >
       </app-step-execution-details>
     </div>
+  </div>
+
+  <!-- Loop node static capacity hint (editor and run view) -->
+  <div
+    *ngIf="isLoopStep"
+    class="loop-capacity-hint"
+    [id]="'loop-capacity-hint-' + stepForm.value.stepId"
+  >
+    <mat-icon class="loop-capacity-icon">all_inclusive</mat-icon>
+    <span>Max {{ maxLoopItems }} loops</span>
   </div>
 </div>

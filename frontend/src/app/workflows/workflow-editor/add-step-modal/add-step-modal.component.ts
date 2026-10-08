@@ -59,6 +59,13 @@ export class AddStepModalComponent {
       description: 'Generates audio (music or speech) from a text prompt.',
       icon: 'music_note',
     },
+    {
+      type: 'loop',
+      label: 'Loop',
+      description:
+        'Repeats the connected steps for each item in a Media Gallery folder or a comma-separated list.',
+      icon: 'loop',
+    },
   ];
 
   constructor(public dialogRef: MatDialogRef<AddStepModalComponent>) {}

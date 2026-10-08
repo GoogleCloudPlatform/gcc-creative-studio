@@ -83,6 +83,22 @@ import {
   MagneticPortCandidate,
   PortShortType,
 } from '../utils/workflow-magnetic.util';
+import {
+  getLoopBodies,
+  getLoopEndingVisibleStepIds,
+  hasForwardCycle,
+  isLoopConnectionAllowed,
+  LoopGraphStep,
+  validateLoopTopology,
+} from '../utils/workflow-loop.util';
+import {
+  getLatestStepOutputs,
+  mergeLiveStepEntries,
+} from '../utils/step-history.util';
+import {
+  getLoopCurrentItemType,
+  LOOP_CURRENT_ITEM_PORT,
+} from './step-components/step-configs/loop-step.config';
 import {WorkflowService} from '../workflow.service';
 import {AddStepModalComponent} from './add-step-modal/add-step-modal.component';
 import {RunWorkflowModalComponent} from './run-workflow-modal/run-workflow-modal.component';
@@ -92,6 +108,15 @@ import {WorkflowFormService} from './workflow-form.service';
 import * as d3 from 'd3';
 
 export {Point} from '../workflow.models';
+
+/** Step currently inspected in the execution history sidebar. */
+export interface HistorySidebarStep {
+  stepId: string;
+  type: NodeTypes;
+  title: string;
+  /** Step `settings.mode` (e.g. image generation mode), if any. */
+  mode: string | null;
+}
 
 export type Edge = {
   path: string;
@@ -217,7 +242,22 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   currentExecutionId: string | null = null;
   initialExecutionId: string | null = null;
   currentExecutionState: string | null = null;
-  executionStepEntries: any[] = [];
+  executionStepEntries: StepEntry[] = [];
+  /** Signal mirror of {@link executionStepEntries} used by the history sidebar. */
+  readonly executionEntries = signal<StepEntry[]>([]);
+  /** Map of step ID -> whether any other step consumes one of its outputs. */
+  readonly linkedOutputStepMap = signal<Record<string, boolean>>({});
+  /**
+   * Map of step ID -> whether its `loop_ending` output port is shown: the step
+   * is inside a Loop body or its `loop_ending` output is already wired.
+   */
+  readonly loopEndingVisibleStepMap = signal<Record<string, boolean>>({});
+  readonly historySidebarStep = signal<HistorySidebarStep | null>(null);
+  readonly historySidebarEntry = computed<StepEntry | null>(() => {
+    const step = this.historySidebarStep();
+    if (!step) return null;
+    return this.executionEntries().find(e => e.step_id === step.stepId) ?? null;
+  });
   mediaUrlMap = new Map<string, string>();
   loadedMedia = new Set<string>();
   returnUrl: string | null = null;
@@ -426,6 +466,8 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
           this.currentExecutionId = null;
           this.currentExecutionState = null;
           this.executionStepEntries = [];
+          this.executionEntries.set([]);
+          this.historySidebarStep.set(null);
           this.stopPollingExecution();
 
           if (this.displayedWorkflow) {
@@ -622,9 +664,60 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     return this.nodePositions[stepId] || {x: 100, y: 100};
   }
 
-  getStepExecution(stepId: string): any {
+  getStepExecution(stepId: string): StepEntry | null {
     if (!this.executionStepEntries) return null;
     return this.executionStepEntries.find(e => e.step_id === stepId) || null;
+  }
+
+  /**
+   * Selects a step and, when execution data exists for it, opens the
+   * execution history sidebar.
+   */
+  onStepClick(index: number, stepId: string): void {
+    this.selectedStepIndex = index;
+    this.selectedNodeId = stepId;
+    if (!this.getStepExecution(stepId)) {
+      this.historySidebarStep.set(null);
+      return;
+    }
+    const type = this.getStepType(stepId) as NodeTypes;
+    const mode = this.stepsArray.at(index)?.get('settings.mode')?.value;
+    this.historySidebarStep.set({
+      stepId,
+      type,
+      title: this.getStepConfig(type)?.title ?? stepId,
+      mode: typeof mode === 'string' ? mode : null,
+    });
+  }
+
+  closeHistorySidebar(): void {
+    this.historySidebarStep.set(null);
+  }
+
+  /** Minimal step graph (including user input) used for loop-aware analysis. */
+  private getGraphSteps(): LoopGraphStep[] {
+    return this.stepsArray.getRawValue().map(
+      (step: LoopGraphStep): LoopGraphStep => ({
+        stepId: step.stepId,
+        type: step.type,
+        inputs: step.inputs ?? null,
+      }),
+    );
+  }
+
+  /** Rejects wires violating loop rules (post-loop continuation, nesting). */
+  private isLoopWireAllowed(
+    sourceStepId: string,
+    sourceOutput: string,
+    targetStepId: string,
+    targetInput: string,
+  ): boolean {
+    return isLoopConnectionAllowed(this.getGraphSteps(), {
+      sourceStepId,
+      sourceOutput,
+      targetStepId,
+      targetInput,
+    });
   }
 
   onNodeMouseDown(event: MouseEvent, stepId: string): void {
@@ -854,6 +947,19 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
           return;
         }
 
+        // Skip candidate if the wire would violate loop topology rules
+        if (
+          sourceOutputName &&
+          !this.isLoopWireAllowed(
+            sourceStepId,
+            sourceOutputName,
+            stepId,
+            input.name,
+          )
+        ) {
+          return;
+        }
+
         // Block if this input is already linked to the same source output or full
         if (inputsGroup) {
           const currentVal = inputsGroup.get(input.name)?.value;
@@ -945,12 +1051,18 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             return;
           }
 
-          // Block duplicate same portOut-portIN link
+          // Block duplicate same portOut-portIN link, and loop rule violations
           if (
             isInputAlreadyLinked(
               currentVal,
               this.dragSourcePort.stepId,
               this.dragSourcePort.outputName,
+            ) ||
+            !this.isLoopWireAllowed(
+              this.dragSourcePort.stepId,
+              this.dragSourcePort.outputName,
+              targetStepId,
+              event.inputName,
             )
           ) {
             this.dragSourcePort = null;
@@ -1010,6 +1122,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
 
   private updateEdges(): void {
     this.edges = [];
+    const linkedOutputs: Record<string, boolean> = {};
 
     // Basic wire computation: iterate over all steps and their inputs
     this.stepsArray.controls.forEach(stepControl => {
@@ -1031,6 +1144,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
           val.forEach((item: any) => {
             if (item && typeof item === 'object' && item.step && item.output) {
               const sourceId = item.step;
+              linkedOutputs[sourceId] = true;
 
               const sourcePos = this.getPortPosition(
                 sourceId,
@@ -1059,6 +1173,21 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         });
       }
     });
+    this.linkedOutputStepMap.set(linkedOutputs);
+    this.updateLoopEndingVisibility();
+  }
+
+  /**
+   * Recomputes which steps expose a `loop_ending` output port. A port that
+   * becomes visible is wired on the next edge refresh, which the nodes
+   * container DOM observer triggers once the port element is rendered.
+   */
+  private updateLoopEndingVisibility(): void {
+    const visible: Record<string, boolean> = {};
+    getLoopEndingVisibleStepIds(this.getGraphSteps()).forEach(stepId => {
+      visible[stepId] = true;
+    });
+    this.loopEndingVisibleStepMap.set(visible);
   }
 
   private getOutputType(stepId: string, outputName: string): string {
@@ -1069,6 +1198,12 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       return def?.get('type')?.value || 'text';
     } else {
       const type = this.getStepType(stepId) as string;
+      if (type === NodeTypes.LOOP && outputName === LOOP_CURRENT_ITEM_PORT) {
+        const stepControl = this.stepsArray.controls.find(
+          c => c.get('stepId')?.value === stepId,
+        );
+        return getLoopCurrentItemType(stepControl?.get('settings')?.value);
+      }
       if (type) {
         const config = this.getStepConfig(type);
         const output = config?.outputs?.find((o: any) => o.name === outputName);
@@ -1415,6 +1550,12 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       return of(null);
     }
 
+    const loopError = validateLoopTopology(steps);
+    if (loopError) {
+      handleErrorSnackbar(this.snackBar, new Error(loopError), 'Save workflow');
+      return of(null);
+    }
+
     // If form is pristine, not forced, and already has an existing ID, return current state directly
     if (this.workflowForm.pristine && this.workflowId && !force) {
       const currentWorkflow: WorkflowModel = {
@@ -1559,6 +1700,12 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         ),
         'Save template',
       );
+      return;
+    }
+
+    const loopError = validateLoopTopology(steps);
+    if (loopError) {
+      handleErrorSnackbar(this.snackBar, new Error(loopError), 'Save template');
       return;
     }
 
@@ -2028,56 +2175,9 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     return [user_input_step, ...steps];
   }
 
-  private hasCycle(steps: any[]): boolean {
-    const adj = new Map<string, string[]>();
-    steps.forEach(s => adj.set(s.stepId, []));
-
-    // Build adjacency list (edges from dependencies to dependents)
-    steps.forEach(step => {
-      if (!step.inputs) return;
-
-      const addEdge = (ref: any) => {
-        if (ref && typeof ref === 'object' && ref.step) {
-          if (adj.has(ref.step)) {
-            adj.get(ref.step)!.push(step.stepId);
-          }
-        }
-      };
-
-      Object.values(step.inputs).forEach((val: any) => {
-        if (Array.isArray(val)) {
-          val.forEach(addEdge);
-        } else {
-          addEdge(val);
-        }
-      });
-    });
-
-    const visited = new Set<string>();
-    const recStack = new Set<string>();
-
-    const dfs = (node: string): boolean => {
-      if (recStack.has(node)) return true; // cycle found
-      if (visited.has(node)) return false;
-
-      visited.add(node);
-      recStack.add(node);
-
-      const neighbors = adj.get(node) || [];
-      for (const neighbor of neighbors) {
-        if (dfs(neighbor)) return true;
-      }
-
-      recStack.delete(node);
-      return false;
-    };
-
-    for (const step of steps) {
-      if (!visited.has(step.stepId)) {
-        if (dfs(step.stepId)) return true;
-      }
-    }
-    return false;
+  /** Detects forward cycles, ignoring Loop `loop_ending` back-edges. */
+  private hasCycle(steps: LoopGraphStep[]): boolean {
+    return hasForwardCycle(steps);
   }
 
   private cleanInputValue(val: any): any {
@@ -2198,7 +2298,8 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     const runStatus = details.status ?? details.state ?? '';
     this.currentExecutionState = runStatus;
     this.executionStepEntries = this.buildStepEntriesFromRunDetails(details);
-    this.updateStepStatuses(details);
+    this.executionEntries.set(this.executionStepEntries);
+    this.updateStepStatuses(this.executionStepEntries);
     this.resolveMediaUrls({step_entries: this.executionStepEntries});
 
     if (runStatus && !isNonTerminalRunStatus(runStatus)) {
@@ -2232,64 +2333,27 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     setTimeout(() => this.updateEdges(), 0);
   }
 
+  /**
+   * Merges live `step_states` (including `"<step_id>#<n>"` loop iteration keys)
+   * into history-based step entries with loop-aware aggregate states.
+   */
   private buildStepEntriesFromRunDetails(
     details: WorkflowRunDetail,
   ): StepEntry[] {
-    const stepStates: Record<string, StepState> =
-      details.step_states ?? details.stepStates ?? {};
-    const existingEntries: StepEntry[] =
-      details.step_entries ?? details.stepEntries ?? [];
-    const stateKeys = Object.keys(stepStates);
-
-    if (stateKeys.length === 0) {
-      return existingEntries;
-    }
-
-    return stateKeys.map(stepId => {
-      const state = stepStates[stepId];
-      const existing = existingEntries.find(e => e.step_id === stepId);
-      return {
-        step_id: stepId,
-        state: (state?.status ??
-          existing?.state ??
-          'PENDING') as StepEntry['state'],
-        step_inputs: existing?.step_inputs ?? {},
-        step_outputs: state?.outputs ?? existing?.step_outputs ?? {},
-        attempts: state?.attempts ?? existing?.attempts ?? 0,
-        last_error: state?.last_error ?? existing?.last_error ?? null,
-        error: state?.last_error ?? existing?.error,
-      };
-    });
+    return mergeLiveStepEntries(details, getLoopBodies(this.getGraphSteps()));
   }
 
-  private updateStepStatuses(details: WorkflowRunDetail): void {
-    const stepStates: Record<string, StepState> =
-      details.step_states ?? details.stepStates ?? {};
-    const stepEntries: StepEntry[] =
-      details.step_entries ?? details.stepEntries ?? [];
-
+  private updateStepStatuses(stepEntries: StepEntry[]): void {
     const statusByStep = new Map<string, string>();
     const outputsByStep = new Map<string, Record<string, unknown>>();
 
-    for (const [stepId, state] of Object.entries(stepStates)) {
-      if (state?.status) {
-        statusByStep.set(stepId, state.status);
-      }
-      if (state?.outputs && Object.keys(state.outputs).length > 0) {
-        outputsByStep.set(stepId, state.outputs);
-      }
-    }
-
     for (const entry of stepEntries) {
-      if (!statusByStep.has(entry.step_id) && entry.state) {
+      if (entry.state) {
         statusByStep.set(entry.step_id, entry.state);
       }
-      if (
-        !outputsByStep.has(entry.step_id) &&
-        entry.step_outputs &&
-        Object.keys(entry.step_outputs).length > 0
-      ) {
-        outputsByStep.set(entry.step_id, entry.step_outputs);
+      const latestOutputs = getLatestStepOutputs(entry);
+      if (Object.keys(latestOutputs).length > 0) {
+        outputsByStep.set(entry.step_id, latestOutputs);
       }
     }
 

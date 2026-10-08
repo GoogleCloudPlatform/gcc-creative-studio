@@ -64,6 +64,25 @@ describe('WorkflowMagneticUtil', () => {
       expect(getCanonicalType('textarea')).toBe('TXT');
       expect(getCanonicalType('prompt')).toBe('TXT');
     });
+
+    it('should map loop_ending and loop to LOOP', () => {
+      expect(getCanonicalType('loop_ending')).toBe('LOOP');
+      expect(getCanonicalType('loop')).toBe('LOOP');
+    });
+  });
+  describe('isPortTypeCompatible (loop_ending)', () => {
+    it('should only connect loop_ending outputs to loop_ending inputs', () => {
+      expect(isPortTypeCompatible('loop_ending', 'loop_ending')).toBeTrue();
+      ['text', 'image', 'video', 'audio', 'any'].forEach(target => {
+        expect(isPortTypeCompatible('loop_ending', target)).toBeFalse();
+        expect(isPortTypeCompatible(target, 'loop_ending')).toBeFalse();
+      });
+    });
+
+    it('should give loop ports a dedicated color', () => {
+      expect(getShortType('loop_ending')).toBe('LOOP');
+      expect(getPortTypeColor('loop_ending')).toBe(PORT_TYPE_COLORS.LOOP);
+    });
   });
   describe('isPortTypeCompatible', () => {
     it('should return false for null, undefined, or empty types', () => {

@@ -68,6 +68,7 @@ from src.workflows.schema.workflow_run_model import (
     WorkflowRunExecution,
     WorkflowRunModel,
 )
+from src.workflows.step_state_keys import base_step_id, parse_step_state_key
 from src.workflows.workflow_yaml_builder import (
     RESERVED_ARGS,
     build_prior_outputs,
@@ -379,6 +380,8 @@ class RunStateService:
             for step_id, state in run.step_states.items()
             if state.status == StepStatusEnum.COMPLETED
             and state.outputs is not None
+            # Loop iteration records ("<step_id>#<n>") are never gated.
+            and parse_step_state_key(step_id)[1] is None
         }
 
     async def on_finished(
@@ -489,14 +492,21 @@ class RunStateService:
                 await db.commit()
                 return run
 
+            # Flat "<step_id>#<n>" key for step_states; the run itself only
+            # tracks the base step id.
             effective_step_id = _resolve_step_id(run, step_id)
+            current_step_id = (
+                base_step_id(effective_step_id)
+                if effective_step_id is not None
+                else None
+            )
             # Short-lived STEP_FAILED state persisted in the same transaction
             # so a crash during classification is visible.
             await self._repository.update_fields(
                 run_id,
                 {
                     "status": WorkflowRunStatusEnum.STEP_FAILED.value,
-                    "current_step_id": effective_step_id,
+                    "current_step_id": current_step_id,
                 },
             )
 
@@ -577,7 +587,7 @@ class RunStateService:
                 category=final_category,
                 retryable=retryable,
                 detail=detail,
-                effective_step_id=effective_step_id,
+                effective_step_id=current_step_id,
                 step_attempts=step_attempts,
                 session_wait_seconds=folded_wait,
                 executions=executions,

@@ -440,3 +440,72 @@ def test_finish_run_rejects_malformed_run_id_or_body(fake_service):
     )
     assert bad_body_resp.status_code == 422
     assert bad_body_resp.json()["error_category"] == "INVALID_INPUT"
+
+
+def test_resolve_loop_items_route_wires_guard_and_dependencies():
+    from src.folders.repository.folder_repository import FolderRepository
+    from src.galleries.repository.unified_gallery_repository import (
+        UnifiedGalleryRepository,
+    )
+    from src.workspaces.workspace_auth_guard import WorkspaceAuth
+
+    service = MagicMock()
+    service.resolve_loop_items = AsyncMock(
+        return_value={
+            "items": [],
+            "total_iterations": 0,
+            "total_found": 0,
+            "truncated": False,
+        }
+    )
+    app, client = _build_client(service)
+    folder_repository, gallery_repository, workspace_auth = (
+        MagicMock(),
+        MagicMock(),
+        MagicMock(),
+    )
+    app.dependency_overrides[FolderRepository] = lambda: folder_repository
+    app.dependency_overrides[UnifiedGalleryRepository] = (
+        lambda: gallery_repository
+    )
+    app.dependency_overrides[WorkspaceAuth] = lambda: workspace_auth
+
+    response = client.post(
+        f"{PREFIX}/resolve-loop-items",
+        json={
+            **CONTEXT,
+            "step_id": "loop_1",
+            "workspace_id": 1,
+            "inputs": {},
+            "config": {"mode": "folder", "folder_id": 42, "item_type": "image"},
+        },
+        headers={"Authorization": AUTH},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total_iterations"] == 0
+    request = service.resolve_loop_items.await_args.args[0]
+    kwargs = service.resolve_loop_items.await_args.kwargs
+    assert request.config.folder_id == 42
+    assert kwargs["user"] == USER
+    assert kwargs["folder_repository"] is folder_repository
+    assert kwargs["gallery_repository"] is gallery_repository
+    assert kwargs["workspace_auth"] is workspace_auth
+    assert kwargs["guard"].state_key == "loop_1"
+
+
+def test_resolve_loop_items_rejects_invalid_config(fake_service):
+    _, client = _build_client(fake_service)
+
+    response = client.post(
+        f"{PREFIX}/resolve-loop-items",
+        json={
+            **CONTEXT,
+            "workspace_id": 1,
+            "config": {"mode": "folder", "item_type": "pdf"},
+        },
+        headers={"Authorization": AUTH},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error_category"] == "INVALID_INPUT"

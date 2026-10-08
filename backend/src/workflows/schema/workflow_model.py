@@ -31,6 +31,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from src.common.base_dto import BaseDto
 from src.common.base_repository import BaseStringDocument
 from src.database import Base
+from src.workflows.step_state_keys import validate_step_id_chars
 
 
 class NodeTypes(str, Enum):
@@ -42,6 +43,7 @@ class NodeTypes(str, Enum):
     CROP_IMAGE = "crop_image"
     GENERATE_AUDIO = "generate_audio"
     IMAGE = "image"
+    LOOP = "loop"
 
 
 # =========================================
@@ -119,6 +121,12 @@ class BaseStep(BaseDto, Generic[InputT, SettingsT]):
     # --- Definition ---
     inputs: InputT
     settings: SettingsT
+
+    @field_validator("step_id")
+    @classmethod
+    def _reject_iteration_separator(cls, value: str) -> str:
+        """'#' is reserved for '<step_id>#<iteration>' step state keys."""
+        return validate_step_id_chars(value)
 
 
 # =========================================
@@ -261,6 +269,30 @@ class ImageStep(BaseStep[ImageInputs, ImageSettings]):
     settings: ImageSettings = Field(default_factory=ImageSettings)
 
 
+# --- Loop ---
+LoopMode = Literal["folder", "text_input"]
+LoopItemType = Literal["image", "video", "audio"]
+
+
+class LoopInputs(BaseModel):
+    # Comma-separated items (text_input mode): fixed text or a reference.
+    items_text: StepOutputReference | str | None = None
+    # Loop-closing back-edge from the last step of the loop body.
+    loop_ending: StepOutputReference | None = None
+
+
+class LoopSettings(BaseModel):
+    mode: LoopMode = "folder"
+    folder_id: int | None = None
+    item_type: LoopItemType = "image"
+
+
+class LoopStep(BaseStep[LoopInputs, LoopSettings]):
+    type: Literal[NodeTypes.LOOP] = NodeTypes.LOOP
+    inputs: LoopInputs = Field(default_factory=LoopInputs)
+    settings: LoopSettings = Field(default_factory=LoopSettings)
+
+
 # =========================================
 # Legacy Step Translation Helper
 # =========================================
@@ -341,6 +373,7 @@ WorkflowStepUnion = Union[
     GenerateVideoStep,
     GenerateAudioStep,
     ImageStep,
+    LoopStep,
 ]
 
 # Discriminated union based on the 'type' field in each step

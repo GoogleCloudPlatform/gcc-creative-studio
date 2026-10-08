@@ -17,6 +17,7 @@
 import {MODEL_CONFIGS} from '../../../../common/config/model-config';
 import {NodeTypes} from '../../../workflow.models';
 import {StepConfig} from '../generic-step/step.model';
+import {LOOP_ENDING_OUTPUT} from './loop-step.config';
 
 const model_options = MODEL_CONFIGS.filter(model => model.type === 'TEXT').map(
   model => ({
@@ -73,5 +74,6 @@ export const GENERATE_TEXT_STEP_CONFIG: StepConfig = {
       label: 'generated_text',
       type: 'text',
     },
+    LOOP_ENDING_OUTPUT,
   ],
 };
