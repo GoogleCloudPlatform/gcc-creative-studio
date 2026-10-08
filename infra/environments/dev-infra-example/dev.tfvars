@@ -1,5 +1,5 @@
 gcp_project_id = "YOUR_GCP_PROJECT_ID"
-gcp_region     = "asia-southeast1"
+gcp_region     = "us-central1"
 environment    = "development"
 
 # --- Service Names ---
