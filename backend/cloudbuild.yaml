@@ -62,7 +62,7 @@ images:
 substitutions:
   _SERVICE_NAME: 'creative-studio-backend'
   _REPO_NAME: 'cs-be-development-repo' # This matches local.artifact_repo_id
-  _REGION: 'asia-southeast1' # TODO: Make Region generic from users input
+  _REGION: 'us-central1' # TODO: Make Region generic from users input
 
 options:
   logging: CLOUD_LOGGING_ONLY
