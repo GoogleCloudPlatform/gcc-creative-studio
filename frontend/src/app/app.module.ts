@@ -24,14 +24,18 @@ import {MatDatepickerModule} from '@angular/material/datepicker';
 import {MatNativeDateModule} from '@angular/material/core';
 import {MatDividerModule} from '@angular/material/divider';
 import {MatExpansionModule} from '@angular/material/expansion';
-import {MatIconModule} from '@angular/material/icon';
+import {MatIconModule, MatIconRegistry} from '@angular/material/icon';
 import {MatMenuModule} from '@angular/material/menu';
 import {MatProgressSpinnerModule} from '@angular/material/progress-spinner';
 import {MatSelectModule} from '@angular/material/select';
 import {MatTabsModule} from '@angular/material/tabs';
 import {MatToolbarModule} from '@angular/material/toolbar';
 import {MatTooltipModule} from '@angular/material/tooltip';
-import {BrowserModule, provideClientHydration} from '@angular/platform-browser';
+import {
+  BrowserModule,
+  DomSanitizer,
+  provideClientHydration,
+} from '@angular/platform-browser';
 import {environment} from '../environments/environment';
 import {setAppInjector} from './app-injector';
 import {NotificationContainerComponent} from './common/components/notification-container/notification-container.component';
@@ -39,7 +43,9 @@ import {NotificationContainerComponent} from './common/components/notification-c
 import {ClipboardModule} from '@angular/cdk/clipboard';
 import {DragDropModule} from '@angular/cdk/drag-drop';
 import {ScrollingModule} from '@angular/cdk/scrolling';
+import {TextFieldModule} from '@angular/cdk/text-field';
 import {NgOptimizedImage} from '@angular/common';
+import {MarkdownModule} from 'ngx-markdown';
 import {
   HTTP_INTERCEPTORS,
   provideHttpClient,
@@ -94,6 +100,8 @@ import {LoginComponent} from './login/login.component';
 import {VideoComponent} from './video/video.component';
 import {VtoComponent} from './vto/vto.component';
 import {WorkbenchComponent} from './workbench/workbench.component';
+import {ProjectsComponent} from './projects/projects.component';
+import {ChatInterfaceComponent} from './workbench/components/chat-interface/chat-interface.component';
 import {BatchExecutionModalComponent} from './workflows/execution-history/batch-execution-modal/batch-execution-modal.component';
 import {ExecutionDetailsModalComponent} from './workflows/execution-history/execution-details-modal/execution-details-modal.component';
 import {ExecutionHistoryComponent} from './workflows/execution-history/execution-history.component';
@@ -107,6 +115,13 @@ import {WorkflowEditorComponent} from './workflows/workflow-editor/workflow-edit
 import {WorkflowListComponent} from './workflows/workflow-list/workflow-list.component';
 import {WorkflowStatusPipe} from './workflows/workflow-status.pipe';
 import {UpscaleComponent} from './upscale/upscale.component';
+import {StoryboardComponent} from './workbench/components/storyboard/storyboard.component';
+import {TimeRulerComponent} from './workbench/components/time-ruler/time-ruler.component';
+import {TransitionIndicatorComponent} from './workbench/components/transition-indicator/transition-indicator.component';
+import {AudioClipInspectorComponent} from './workbench/components/audio-clip-inspector/audio-clip-inspector.component';
+import {ApprovalGateComponent} from './workbench/components/approval-gate/approval-gate.component';
+import {FeedbackFabComponent} from './common/components/feedback-fab/feedback-fab.component';
+import {SafeUrlPipe} from './common/pipes/safe-url.pipe';
 
 @NgModule({
   declarations: [
@@ -126,6 +141,7 @@ import {UpscaleComponent} from './upscale/upscale.component';
     SourceAssetGalleryComponent,
     ImageCropperDialogComponent,
     WorkbenchComponent,
+    ChatInterfaceComponent,
     AudioComponent,
     AddVoiceDialogComponent,
     WorkflowListComponent,
@@ -140,11 +156,14 @@ import {UpscaleComponent} from './upscale/upscale.component';
     StepExecutionDetailsComponent,
     BatchExecutionModalComponent,
     UpscaleComponent,
+    ProjectsComponent,
+    FeedbackFabComponent,
   ],
   imports: [
     BrowserModule,
     AppRoutingModule,
     NgOptimizedImage,
+    MarkdownModule.forRoot(),
     MatTooltipModule,
     MatToolbarModule,
     MatDividerModule,
@@ -183,6 +202,13 @@ import {UpscaleComponent} from './upscale/upscale.component';
     MatPaginatorModule,
     ClipboardModule,
     WorkflowStatusPipe,
+    StoryboardComponent,
+    TimeRulerComponent,
+    TransitionIndicatorComponent,
+    AudioClipInspectorComponent,
+    ApprovalGateComponent,
+    TextFieldModule,
+    SafeUrlPipe,
   ],
   providers: [
     provideClientHydration(),
@@ -209,7 +235,78 @@ import {UpscaleComponent} from './upscale/upscale.component';
   bootstrap: [AppComponent],
 })
 export class AppModule {
-  constructor(injector: Injector) {
+  constructor(
+    injector: Injector,
+    matIconRegistry: MatIconRegistry,
+    sanitizer: DomSanitizer,
+  ) {
     setAppInjector(injector);
+
+    const iconPath = 'assets/images';
+    const setPath = (url: string) =>
+      sanitizer.bypassSecurityTrustResourceUrl(url);
+
+    matIconRegistry
+      .addSvgIcon(
+        'creative-studio-icon',
+        setPath(`${iconPath}/creative-studio-icon.svg`),
+      )
+      .addSvgIcon(
+        'fun-templates-icon',
+        setPath(`${iconPath}/fun-templates-icon.svg`),
+      )
+      .addSvgIcon(
+        'audio-generation-icon',
+        setPath(`${iconPath}/audio-generation-icon.svg`),
+      )
+      .addSvgIcon(
+        'white-gemini-spark-icon',
+        setPath(`${iconPath}/mobile-white-gemini-spark-icon.svg`),
+      )
+      .addSvgIcon(
+        'mobile-white-gemini-spark-icon',
+        setPath(`${iconPath}/mobile-white-gemini-spark-icon.svg`),
+      )
+      .addSvgIcon('gemini-spark-icon', setPath(`${iconPath}/gemini-spark.svg`))
+      .addSvgIcon('video-clap-icon', setPath(`${iconPath}/video-clap-icon.svg`))
+      .addSvgIcon(
+        'movie-shallow-icon',
+        setPath(`${iconPath}/movie-clap-shallow-icon.svg`),
+      )
+      .addSvgIcon('volume-off-icon', setPath(`${iconPath}/volume-off-icon.svg`))
+      .addSvgIcon('upload-icon', setPath(`${iconPath}/upload-icon.svg`))
+      .addSvgIcon(
+        'sound-sensing-icon',
+        setPath(`${iconPath}/sound-sensing-icon.svg`),
+      )
+      .addSvgIcon('lock-icon', setPath(`${iconPath}/lock-icon.svg`))
+      .addSvgIcon('img-icon', setPath(`${iconPath}/img-icon.svg`))
+      .addSvgIcon('eye-icon', setPath(`${iconPath}/eye-icon.svg`))
+      .addSvgIcon('drive-icon', setPath(`${iconPath}/drive-icon.svg`))
+      .addSvgIcon(
+        'audio-magic-eraser-icon',
+        setPath(`${iconPath}/audio_magic_eraser-icon.svg`),
+      )
+      .addSvgIcon('play-arrow-icon', setPath(`${iconPath}/play-arrow-icon.svg`))
+      .addSvgIcon('square-icon', setPath(`${iconPath}/square.svg`))
+      .addSvgIcon('phone-icon', setPath(`${iconPath}/pixel-9.svg`))
+      .addSvgIcon('lightbulb-icon', setPath(`${iconPath}/lightbulb-tips.svg`))
+      .addSvgIcon('desktop-icon', setPath(`${iconPath}/desktop.svg`))
+      .addSvgIcon('desktop-mac-icon', setPath(`${iconPath}/desktop-mac.svg`))
+      .addSvgIcon('edit-icon', setPath(`${iconPath}/edit.svg`))
+      .addSvgIcon(
+        'photo-merge-auto-icon',
+        setPath(`${iconPath}/photo-merge-auto.svg`),
+      )
+      .addSvgIcon('web-stories-icon', setPath(`${iconPath}/web-stories.svg`))
+      .addSvgIcon(
+        'content-type-icon',
+        setPath(`${iconPath}/content-type-icon.svg`),
+      )
+      .addSvgIcon('lighting-icon', setPath(`${iconPath}/lighting-icon.svg`))
+      .addSvgIcon(
+        'number-of-images-icon',
+        setPath(`${iconPath}/number-of-images-icon.svg`),
+      );
   }
 }

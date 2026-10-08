@@ -118,8 +118,10 @@ async def run_pending_migrations():
                     "SELECT pg_advisory_unlock($1)", MIGRATION_LOCK_ID
                 )
                 logger.info("Advisory lock released.")
-                await conn.close()
-            except asyncpg.PostgresError as e:
-                logger.error(
-                    "Error releasing lock or closing connection: %s", e
-                )
+            except Exception as e:
+                logger.error("Error releasing advisory lock: %s", e)
+            finally:
+                try:
+                    await conn.close()
+                except Exception as e:
+                    logger.error("Error closing database connection: %s", e)

@@ -1,0 +1,301 @@
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {
+  ApprovalGateComponent,
+  ApprovalGateInfo,
+} from './approval-gate.component';
+import {FormsModule} from '@angular/forms';
+import {MatIconModule} from '@angular/material/icon';
+import {MatButtonModule} from '@angular/material/button';
+import {MatTooltipModule} from '@angular/material/tooltip';
+
+describe('ApprovalGateComponent', () => {
+  let component: ApprovalGateComponent;
+  let fixture: ComponentFixture<ApprovalGateComponent>;
+
+  const mockGate: ApprovalGateInfo = {
+    callId: 'call_12345',
+    toolName: 'await_strategy_approval',
+    stage: 'strategy',
+    options: ['accept', 'modify', 'regenerate'],
+  };
+
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({
+      imports: [
+        ApprovalGateComponent,
+        FormsModule,
+        MatIconModule,
+        MatButtonModule,
+        MatTooltipModule,
+      ],
+    }).compileComponents();
+
+    fixture = TestBed.createComponent(ApprovalGateComponent);
+    component = fixture.componentInstance;
+    component.gate = mockGate;
+    fixture.detectChanges();
+  });
+
+  it('should create the component with correct stepLabel and stageTitle', () => {
+    expect(component).toBeTruthy();
+    expect(component.stepLabel()).toBe('Checkpoint 1 of 4');
+    expect(component.stageTitle()).toBe('Campaign Strategy Review');
+  });
+
+  it('should return displayMessage from payload.message when provided', () => {
+    component.gate = {
+      ...mockGate,
+      payload: {
+        message:
+          'Before I write a single scene, please check I have understood the brief.',
+      },
+    };
+    fixture.detectChanges();
+    expect(component.displayMessage()).toBe(
+      'Before I write a single scene, please check I have understood the brief.',
+    );
+  });
+
+  it('should render Gate 1-4 messages from tool responses', () => {
+    // Gate 1: strategy
+    component.gate = {
+      ...mockGate,
+      stage: 'strategy',
+      payload: {
+        campaign: {visual_look: 'Outdoor Adventure'},
+        message:
+          'A 12s product-only ad for general audience, shot in the "Outdoor Adventure" style. Accept to continue, or tell me what to change.',
+        status: 'pending_approval',
+      },
+    };
+    fixture.detectChanges();
+    expect(component.displayMessage()).toBe(
+      'A 12s product-only ad for general audience, shot in the "Outdoor Adventure" style. Accept to continue, or tell me what to change.',
+    );
+
+    // Gate 2: storyboard
+    component.gate = {
+      ...mockGate,
+      stage: 'storyboard',
+      payload: {
+        message:
+          '4 scenes, 12 seconds in total. Accept to continue, or tell me what to change. You can adjust a scene, reorder them, or ask for a different storyboard.',
+      },
+    };
+    fixture.detectChanges();
+    expect(component.displayMessage()).toBe(
+      '4 scenes, 12 seconds in total. Accept to continue, or tell me what to change. You can adjust a scene, reorder them, or ask for a different storyboard.',
+    );
+
+    // Gate 3: frames
+    component.gate = {
+      ...mockGate,
+      stage: 'frames',
+      payload: {
+        message:
+          '4 of 4 opening frames are ready. Each one is the first frame of its scene. Accept to continue to video generation, or name the frames to redo.',
+      },
+    };
+    fixture.detectChanges();
+    expect(component.displayMessage()).toBe(
+      '4 of 4 opening frames are ready. Each one is the first frame of its scene. Accept to continue to video generation, or name the frames to redo.',
+    );
+
+    // Gate 4: final cut
+    component.gate = {
+      ...mockGate,
+      stage: 'final_cut',
+      payload: {
+        message:
+          'Your video is ready: 4 clips, stitched. Accept to finish, or name the clips that need another take and they will be re-rendered and the cut rebuilt.',
+      },
+    };
+    fixture.detectChanges();
+    expect(component.displayMessage()).toBe(
+      'Your video is ready: 4 clips, stitched. Accept to finish, or name the clips that need another take and they will be re-rendered and the cut rebuilt.',
+    );
+  });
+
+  it('should extract message from nested result or stringified JSON payload', () => {
+    // Nested result.message
+    component.gate = {
+      ...mockGate,
+      payload: {
+        result: {
+          message: 'Nested result message',
+        },
+      },
+    };
+    fixture.detectChanges();
+    expect(component.displayMessage()).toBe('Nested result message');
+
+    // Stringified JSON payload
+    component.gate = {
+      ...mockGate,
+      payload: JSON.stringify({
+        message: 'Stringified JSON message',
+      }),
+    };
+    fixture.detectChanges();
+    expect(component.displayMessage()).toBe('Stringified JSON message');
+  });
+
+  it('should fallback displayMessage to stageDescription when payload is missing', () => {
+    component.gate = {
+      ...mockGate,
+      payload: undefined,
+    };
+    fixture.detectChanges();
+    expect(component.displayMessage()).toBe(
+      'Review campaign brief, tone, key message, and chosen visual Look.',
+    );
+  });
+
+  it('should return correct step labels for each stage', () => {
+    component.gate = {
+      ...mockGate,
+      stage: 'storyboard',
+      toolName: 'await_storyboard_approval',
+    };
+    expect(component.stepLabel()).toBe('Checkpoint 2 of 4');
+    expect(component.stageTitle()).toBe('Storyboard Review');
+    expect(component.stageIcon()).toBe('movie_filter');
+
+    component.gate = {
+      ...mockGate,
+      stage: 'frames',
+      toolName: 'await_frame_approval',
+    };
+    expect(component.stepLabel()).toBe('Checkpoint 3 of 4');
+    expect(component.stageTitle()).toBe('First Frame Review');
+    expect(component.stageIcon()).toBe('image');
+    expect(component.stageDescription()).toBe(
+      'Review rendered first frames for each scene before video generation.',
+    );
+
+    component.gate = {
+      ...mockGate,
+      stage: 'final_cut',
+      toolName: 'await_final_cut_approval',
+    };
+    expect(component.stepLabel()).toBe('Checkpoint 4 of 4');
+    expect(component.stageTitle()).toBe('Final Cut Review');
+    expect(component.stageIcon()).toBe('video_camera_front');
+  });
+
+  it('should emit direct decision when accept is clicked', () => {
+    spyOn(component.decisionSubmitted, 'emit');
+    component.submitDirectDecision('accept');
+    expect(component.decisionSubmitted.emit).toHaveBeenCalledWith({
+      decision: 'accept',
+      guidance: '',
+    });
+  });
+
+  it('should switch to modify mode and emit modify decision with guidance', () => {
+    spyOn(component.decisionSubmitted, 'emit');
+    component.setMode('modify');
+    expect(component.activeMode()).toBe('modify');
+
+    component.guidanceText.set('Change tone to playful');
+    component.submitModify();
+
+    expect(component.decisionSubmitted.emit).toHaveBeenCalledWith({
+      decision: 'modify',
+      guidance: 'Change tone to playful',
+    });
+  });
+
+  it('should not emit modify if guidance is empty', () => {
+    spyOn(component.decisionSubmitted, 'emit');
+    component.setMode('modify');
+    component.guidanceText.set('   ');
+    component.submitModify();
+
+    expect(component.decisionSubmitted.emit).not.toHaveBeenCalled();
+  });
+
+  it('should emit direct decision when regenerate is clicked', () => {
+    spyOn(component.decisionSubmitted, 'emit');
+    component.submitDirectDecision('regenerate');
+    expect(component.decisionSubmitted.emit).toHaveBeenCalledWith({
+      decision: 'regenerate',
+      guidance: '',
+    });
+  });
+
+  it('should emit regenerate decision with guidance when submitRegenerate is called', () => {
+    spyOn(component.decisionSubmitted, 'emit');
+    component.guidanceText.set('Completely redo the theme');
+    component.submitRegenerate();
+
+    expect(component.decisionSubmitted.emit).toHaveBeenCalledWith({
+      decision: 'regenerate',
+      guidance: 'Completely redo the theme',
+    });
+  });
+
+  it('should not emit decision when isSubmitting is true (isBusy)', () => {
+    spyOn(component.decisionSubmitted, 'emit');
+    component.isSubmitting = true;
+    fixture.detectChanges();
+    expect(component.isBusy()).toBeTrue();
+
+    component.submitDirectDecision('accept');
+    expect(component.decisionSubmitted.emit).not.toHaveBeenCalled();
+
+    component.setMode('modify');
+    component.guidanceText.set('Change tone');
+    component.submitModify();
+    expect(component.decisionSubmitted.emit).not.toHaveBeenCalled();
+
+    component.setMode('regenerate');
+    component.submitRegenerate();
+    expect(component.decisionSubmitted.emit).not.toHaveBeenCalled();
+  });
+
+  it('should set isLocalSubmitting and block concurrent clicks', () => {
+    spyOn(component.decisionSubmitted, 'emit');
+    expect(component.isLocalSubmitting()).toBeFalse();
+
+    component.submitDirectDecision('accept');
+    expect(component.isLocalSubmitting()).toBeTrue();
+    expect(component.decisionSubmitted.emit).toHaveBeenCalledTimes(1);
+
+    // Second click while isLocalSubmitting is true should be ignored
+    component.submitDirectDecision('accept');
+    expect(component.decisionSubmitted.emit).toHaveBeenCalledTimes(1);
+  });
+
+  it('should reset isLocalSubmitting when isSubmitting is set to false to allow retry', () => {
+    spyOn(component.decisionSubmitted, 'emit');
+    component.submitDirectDecision('accept');
+    expect(component.isLocalSubmitting()).toBeTrue();
+    expect(component.isBusy()).toBeTrue();
+
+    // Simulating parent completing or failing and clearing isSubmitting
+    component.isSubmitting = false;
+    expect(component.isLocalSubmitting()).toBeFalse();
+    expect(component.isBusy()).toBeFalse();
+
+    // Should now allow retry
+    component.submitDirectDecision('accept');
+    expect(component.decisionSubmitted.emit).toHaveBeenCalledTimes(2);
+  });
+});

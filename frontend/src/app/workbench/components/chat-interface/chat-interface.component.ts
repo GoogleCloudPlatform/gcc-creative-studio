@@ -1,0 +1,3119 @@
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import {
+  Component,
+  OnInit,
+  signal,
+  computed,
+  inject,
+  effect,
+  ViewChild,
+  ElementRef,
+  AfterViewChecked,
+  TemplateRef,
+  OnDestroy,
+  untracked,
+} from '@angular/core';
+import {
+  AgentChatService,
+  ChatMessageUI,
+  StageMilestone,
+  SSECallbacks,
+} from '../../services/agent-chat.service';
+import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
+import {StoryboardService} from '../../../services/storyboard/storyboard.service';
+import {TimelineStateService} from '../../services/timeline-state.service';
+import {ActivatedRoute, Router} from '@angular/router';
+import {combineLatest, Subscription} from 'rxjs';
+import {CommonModule} from '@angular/common';
+import {FormsModule} from '@angular/forms';
+import {MatIconModule} from '@angular/material/icon';
+import {MatButtonModule} from '@angular/material/button';
+import {MarkdownModule, MarkdownService} from 'ngx-markdown';
+
+import {ConfirmationDialogComponent} from '../../../common/components/confirmation-dialog/confirmation-dialog.component';
+import {MatDialog, MatDialogRef} from '@angular/material/dialog';
+import {
+  ImageSelectorComponent,
+  MediaItemSelection,
+} from '../../../common/components/image-selector/image-selector.component';
+import {GalleryService} from '../../../gallery/gallery.service';
+import {SourceAssetResponseDto} from '../../../common/services/source-asset.service';
+import {MatSnackBar} from '@angular/material/snack-bar';
+import {handleErrorSnackbar} from '../../../utils/handleMessageSnackbar';
+
+import {
+  StoryboardResponse,
+  TimelineDTO,
+  ChatSession,
+  SessionDetailResponse,
+} from '../../../common/models/workbench.model';
+import {
+  ApprovalGateInfo,
+  ApprovalGateSubmission,
+} from '../approval-gate/approval-gate.component';
+import {
+  CAMPAIGN_STATE_KEYS,
+  findStorylineGuidanceInEvents,
+  parseCampaignState,
+  withStorylineGuidance,
+} from '../../utils/campaign-details';
+
+interface DropdownOption {
+  value: string;
+  label: string;
+  tooltip?: string;
+}
+
+/**
+ * Prefixes emitted by `formatGateDecisionText` for user gate decisions
+ * reconstructed from history. Used by `recoverLastActionFromHistory` to avoid
+ * replaying a consumed `function_response` on Retry.
+ */
+const GATE_DECISION_MARKERS: readonly string[] = [
+  '✅ Approved',
+  '✏️ Requested Modifications',
+  '🔄 Requested Regeneration',
+];
+
+@Component({
+  selector: 'app-chat-interface',
+  templateUrl: './chat-interface.component.html',
+  styleUrls: ['./chat-interface.component.scss'],
+})
+export class ChatInterfaceComponent
+  implements OnInit, AfterViewChecked, OnDestroy
+{
+  private agentChatService = inject(AgentChatService);
+  private workspaceStateService = inject(WorkspaceStateService);
+  private dialog = inject(MatDialog);
+  private snackBar = inject(MatSnackBar);
+  private storyboardService = inject(StoryboardService);
+  private route = inject(ActivatedRoute);
+  private router = inject(Router);
+  private timelineState = inject(TimelineStateService);
+  private galleryService = inject(GalleryService);
+  private markdownService = inject(MarkdownService);
+
+  sessions = this.agentChatService.sessions;
+  topics = signal<{[key: string]: any}>({});
+  chatMessages = this.agentChatService.chatMessages;
+  filteredChatMessages = computed(() => {
+    return this.chatMessages().filter(msg => !msg.isHidden);
+  });
+  selectedImages = signal<(SourceAssetResponseDto | MediaItemSelection)[]>([]);
+  isTyping = signal<boolean>(false);
+  isSubmittingGate = signal<boolean>(false);
+  /**
+   * Locks the composer, Send and Retry. `isTyping` only covers the typing
+   * dots (cleared on the first text chunk) and `isSubmittingGate` the gate
+   * round-trip; `streamActive` covers the whole run until `[DONE]` or an
+   * error event, so no second run can be started on the same session while
+   * e.g. `generate_all_media` is still executing.
+   */
+  isBusy = computed<boolean>(
+    () =>
+      this.isTyping() ||
+      this.isSubmittingGate() ||
+      this.agentChatService.streamActive(),
+  );
+  isLoadingHistory = signal<boolean>(false);
+  /**
+   * True while a session switch is still settling: either the chat history
+   * (`getSessionDetail`) or the storyboard's timeline (Workbench
+   * `getTimeline`) is in flight. The session picker, delete and composer are
+   * disabled while locked so a user cannot queue a second switch on top of
+   * one that has not finished yet. "New Chat" stays enabled as the escape
+   * hatch; it resets both loaders synchronously.
+   */
+  isSessionLocked = computed<boolean>(
+    () => this.isLoadingHistory() || this.timelineState.isLoadingTimeline(),
+  );
+  agentUnavailable = signal<boolean>(false);
+  activeApprovalGate = signal<ApprovalGateInfo | null>(null);
+  visibleApprovalGate = computed<ApprovalGateInfo | null>(() => {
+    return this.activeApprovalGate();
+  });
+  private submittedGateCallIds = new Set<string>();
+  currentSessionId: string | null = this.agentChatService.selectedSessionId();
+  private lastWorkspaceId: number | null =
+    this.workspaceStateService.getActiveWorkspaceId();
+  private isProgrammaticWorkspaceSwitch = false;
+  private lastExecutedAction: {
+    type: 'chat' | 'gate';
+    text?: string;
+    partsParams?: any;
+    submission?: ApprovalGateSubmission;
+    gate?: ApprovalGateInfo;
+  } | null = null;
+  /** In-flight `getSessionDetail` request; replaced on every session switch. */
+  private loadSubscription: Subscription | null = null;
+
+  /**
+   * Reacts to `selectedSessionId` being changed by someone other than this
+   * component (URL query params, a storyboard pick, ...). The picker calls
+   * `loadChatMessages` directly and sets `currentSessionId` first, so it never
+   * re-enters here. `allowSignalWrites` is required: without it Angular 18
+   * throws NG0600 at the first `.set()` inside `loadChatMessages`, *after*
+   * `currentSessionId` was already overwritten — the chat then shows the old
+   * history under the new session id. `untracked` keeps the dozens of signal
+   * reads inside the load from becoming dependencies of this effect.
+   */
+  private sessionSelectorEffect = effect(
+    () => {
+      const sessionId = this.agentChatService.selectedSessionId();
+      if (sessionId && sessionId !== this.currentSessionId) {
+        this.currentSessionId = sessionId;
+        this.submittedGateCallIds.clear();
+        this.lastExecutedAction = null;
+        this.streamedStoryboardId = null;
+        untracked(() => this.loadChatMessages(sessionId));
+      }
+    },
+    {allowSignalWrites: true},
+  );
+
+  private storyboardSessionSyncEffect = effect(
+    () => {
+      const sb = this.agentChatService.currentStoryboard();
+      if (
+        sb &&
+        sb.session_id &&
+        sb.session_id !== this.agentChatService.selectedSessionId()
+      ) {
+        this.agentChatService.selectedSessionId.set(sb.session_id);
+      }
+    },
+    {allowSignalWrites: true},
+  );
+
+  // NOTE: there is deliberately no "storyboard → URL" effect here. The
+  // session-detail response handlers (`loadChatMessages`, `loadChatSessions`)
+  // are the single writers of `sessionId` / `storyboardId` in the URL. A
+  // previous effect navigated with `sessionId: null` whenever the storyboard
+  // changed while `route.snapshot` was still stale, stripping the session the
+  // response handler had just written and re-triggering every queryParams
+  // subscriber — one arc of the session ping-pong loop.
+
+  private resolvingAssetIds = new Set<string>();
+
+  private resolveMessageImagesEffect = effect(
+    () => {
+      const messages = this.chatMessages();
+      messages.forEach(msg => {
+        if (msg.images) {
+          msg.images.forEach((img: any) => {
+            const isMediaItem = 'mediaItem' in img;
+            const assetId = isMediaItem
+              ? String(img.mediaItem.id)
+              : String(img.id);
+
+            if (this.resolvingAssetIds.has(assetId)) {
+              return;
+            }
+
+            if (isMediaItem) {
+              if (!img.mediaItem.presignedUrls) {
+                this.resolvingAssetIds.add(assetId);
+                const id = Number(assetId);
+                this.galleryService.getMedia(id).subscribe({
+                  next: res => {
+                    img.mediaItem.presignedUrls = res.presignedUrls;
+                    img.mediaItem.presignedThumbnailUrls =
+                      res.presignedThumbnailUrls;
+                    this.chatMessages.update(msgs => [...msgs]);
+                  },
+                  error: err => {
+                    console.error('Failed to resolve media item:', id, err);
+                    // Keep the id in `resolvingAssetIds`: a deleted or
+                    // inaccessible item must not be re-fetched on every
+                    // render. The template shows a "no longer available" tile.
+                    img.unavailable = true;
+                    this.chatMessages.update(msgs => [...msgs]);
+                  },
+                });
+              }
+            } else {
+              if (!img.presignedUrl) {
+                this.resolvingAssetIds.add(assetId);
+                const id = Number(assetId);
+                this.galleryService.getAsset(id).subscribe({
+                  next: res => {
+                    img.presignedUrl = res.presignedUrls?.[0] || '';
+                    img.presignedThumbnailUrl =
+                      res.presignedThumbnailUrls?.[0] || '';
+                    this.chatMessages.update(msgs => [...msgs]);
+                  },
+                  error: err => {
+                    console.error('Failed to resolve source asset:', id, err);
+                    img.unavailable = true;
+                    this.chatMessages.update(msgs => [...msgs]);
+                  },
+                });
+              }
+            }
+          });
+        }
+      });
+    },
+    {allowSignalWrites: true},
+  );
+
+  chatInputValue = signal<string>('');
+  isInputExpanded = signal<boolean>(false);
+
+  availableAgents: DropdownOption[] = [
+    {label: 'Creative Toolbox', value: 'creative_toolbox'},
+    {label: 'Ads X Agent', value: 'ads_x'},
+  ];
+
+  get currentAgent(): string {
+    return this.agentChatService.activeAgent();
+  }
+
+  isBrowser = true;
+  private shouldScrollToBottom = true;
+
+  @ViewChild('chatContainer') private chatContainer!: ElementRef;
+  @ViewChild('expandDialog') expandDialog!: TemplateRef<unknown>;
+  private dialogRef: MatDialogRef<unknown> | null = null;
+
+  dropdownOptions = computed<DropdownOption[]>(() => {
+    const currentTopics = this.topics();
+    return this.sessions().map(s => {
+      const topic = currentTopics[s.id];
+      const date = s.lastUpdateTime
+        ? new Date(s.lastUpdateTime * 1000).toLocaleDateString()
+        : '';
+
+      let label = 'New Chat';
+      let tooltip = '';
+      if (topic) {
+        if (typeof topic === 'string') {
+          label = topic;
+        } else {
+          label = topic.title || label;
+          tooltip = topic.summary || tooltip;
+        }
+      } else if (date) {
+        label = `${date} - Chat`;
+      }
+
+      return {
+        value: s.id,
+        label: label,
+        tooltip: tooltip,
+      };
+    });
+  });
+
+  ngOnInit() {
+    this.isBrowser = typeof window !== 'undefined';
+    this.markdownService.renderer.link = (
+      arg1: any,
+      arg2?: any,
+      arg3?: any,
+    ) => {
+      let href = '';
+      let title = '';
+      let text = '';
+
+      if (typeof arg1 === 'object' && arg1 !== null) {
+        href = arg1.href || '';
+        title = arg1.title || '';
+        text = arg1.text || '';
+      } else {
+        href = arg1 || '';
+        title = arg2 || '';
+        text = arg3 || '';
+      }
+
+      let isSafe = false;
+      let sanitizedHref = '';
+      const baseOrigin =
+        typeof window !== 'undefined' ? window.location.origin : '';
+      let URLConstructor = typeof window !== 'undefined' ? window.URL : null;
+      if (!URLConstructor) {
+        try {
+          const g = Function('return this')();
+          URLConstructor = g ? g.URL : null;
+        } catch (e) {
+          // Fallback if dynamic function execution is blocked by CSP
+        }
+      }
+
+      if (href) {
+        href = href.trim().replace(/[\t\n\r]/g, '');
+        if (URLConstructor) {
+          try {
+            const parsedUrl = baseOrigin
+              ? new URLConstructor(href, baseOrigin)
+              : new URLConstructor(href);
+            const protocolSafe =
+              parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:';
+            const originMatches =
+              !baseOrigin || parsedUrl.origin === baseOrigin;
+
+            if (protocolSafe && originMatches) {
+              isSafe = true;
+              sanitizedHref = parsedUrl.href;
+            }
+          } catch (e) {
+            // URL parsing failed
+          }
+        }
+
+        // Fallback check if it's a relative path and wasn't successfully resolved/verified above
+        if (!isSafe) {
+          const hasProtocol = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href);
+          const hasBackslash = href.includes('\\');
+          if (!hasProtocol && !href.startsWith('//') && !hasBackslash) {
+            isSafe = true;
+            sanitizedHref = href;
+          }
+        }
+      }
+
+      if (!isSafe) {
+        return text;
+      }
+
+      const escapedTitle = title ? title.replace(/"/g, '&quot;') : '';
+      const escapedHref = sanitizedHref
+        ? sanitizedHref.replace(/"/g, '&quot;')
+        : '';
+      return `<a href="${escapedHref}" title="${escapedTitle}" target="_blank" rel="noopener noreferrer" class="markdown-link">${text}</a>`;
+    };
+    this.initializeAgentChat();
+    this.loadChatSessions();
+
+    // Listen for cross-component triggers
+    this.agentChatService.generateVideoRequest$.subscribe(() => {
+      const sb = this.agentChatService.currentStoryboard();
+      if (sb && sb.id) {
+        this.sendChatMessage(
+          `Please generate the final video for storyboard ID ${sb.id}.`,
+        );
+      } else {
+        this.sendChatMessage(
+          "Please generate the final video matching this storyboard's approved layout.",
+        );
+      }
+    });
+
+    // The Characters tab rewrites session state outside an agent run; merge
+    // the returned slice exactly like a streamed `state_delta`.
+    this.campaignStateSubscription =
+      this.agentChatService.campaignStateUpdated$.subscribe(state => {
+        this.syncCampaignDetails(state, true);
+      });
+  }
+
+  private campaignStateSubscription: Subscription | null = null;
+
+  ngOnDestroy() {
+    // The chat is torn down whenever the user switches side panels. Remember an
+    // in-flight stream so the next instance resumes polling instead of leaving
+    // undelivered events (and the final [DONE]) queued server-side forever.
+    this.agentChatService.interruptedSessionId.set(
+      this.agentChatService.isPolling() ? this.currentSessionId : null,
+    );
+    this.agentChatService.stopPolling();
+    // A late session-detail response must not write into the shared service
+    // signals from a component that no longer exists.
+    this.loadSubscription?.unsubscribe();
+    this.loadSubscription = null;
+    this.campaignStateSubscription?.unsubscribe();
+    this.campaignStateSubscription = null;
+  }
+
+  ngAfterViewChecked() {
+    if (this.shouldScrollToBottom) {
+      this.scrollToBottom();
+      this.shouldScrollToBottom = false;
+    }
+  }
+
+  saveSessionTopic(sessionId: string, title: string, summary?: string) {
+    this.topics.update(t => {
+      const newTopics = {...t, [sessionId]: {title, summary}};
+      if (this.isBrowser) {
+        localStorage.setItem('izumi_topics', JSON.stringify(newTopics));
+      }
+      return newTopics;
+    });
+  }
+
+  initializeAgentChat() {
+    let savedTopics = {};
+    if (this.isBrowser) {
+      savedTopics = JSON.parse(localStorage.getItem('izumi_topics') || '{}');
+    }
+    this.topics.set(savedTopics);
+  }
+
+  loadChatSessions() {
+    this.isLoadingHistory.set(true);
+
+    combineLatest([
+      this.route.queryParams,
+      this.workspaceStateService.activeWorkspaceId$,
+    ]).subscribe(([params, workspaceId]) => {
+      if (!workspaceId) return;
+
+      const storyboardId = params['storyboardId'];
+      const sessionId = params['sessionId'];
+
+      const isWorkspaceChanged =
+        this.lastWorkspaceId !== null && this.lastWorkspaceId !== workspaceId;
+
+      if (isWorkspaceChanged) {
+        if (this.isProgrammaticWorkspaceSwitch) {
+          this.isProgrammaticWorkspaceSwitch = false;
+          this.lastWorkspaceId = workspaceId;
+        } else {
+          // Clean timeline
+          this.timelineState.loadedTimelineId.set(undefined);
+          this.timelineState.timelineClips.set([]);
+          this.timelineState.transitions.set([]);
+          this.timelineState.transitionIn.set(null);
+          this.timelineState.transitionOut.set(null);
+
+          // Reset chat interface
+          this.agentChatService.stopPolling();
+          this.isLoadingHistory.set(false);
+          this.currentSessionId = null;
+          this.agentChatService.selectedSessionId.set(null);
+          this.chatMessages.set([]);
+          this.sessions.set([]);
+          this.activeApprovalGate.set(null);
+          this.agentChatService.currentStoryboard.set(null);
+          this.clearCampaignDetails();
+          this.agentChatService.interruptedSessionId.set(null);
+          this.addWelcomeMessage();
+          this.shouldScrollToBottom = true;
+          this.lastWorkspaceId = workspaceId;
+
+          if (storyboardId || sessionId) {
+            void this.router.navigate([], {
+              relativeTo: this.route,
+              queryParams: {
+                sessionId: null,
+                storyboardId: null,
+              },
+              queryParamsHandling: 'merge',
+            });
+            return;
+          }
+        }
+      }
+
+      // A previous chat instance was torn down mid-stream (panel switch). The
+      // shared chatMessages signal still holds the conversation and the missing
+      // events are queued server-side, so simply pick the poll loop back up.
+      const interruptedSessionId = this.agentChatService.interruptedSessionId();
+      if (interruptedSessionId) {
+        this.agentChatService.interruptedSessionId.set(null);
+        if (interruptedSessionId === this.currentSessionId) {
+          this.isLoadingHistory.set(false);
+          this.resumePolling(interruptedSessionId);
+          return;
+        }
+      }
+
+      const isExplicitNewChat =
+        !sessionId &&
+        !storyboardId &&
+        this.lastWorkspaceId === workspaceId &&
+        this.sessions().length > 0;
+
+      if (isExplicitNewChat) {
+        this.isLoadingHistory.set(false);
+        return;
+      }
+
+      // URL echo: the query params already describe the state we hold (this
+      // is how every navigate() we issue ourselves comes back to us). Doing
+      // nothing here is what keeps "session → URL → session" from looping.
+      const urlMatchesCurrentState =
+        this.lastWorkspaceId === workspaceId &&
+        this.sessions().length > 0 &&
+        (sessionId ?? null) === (this.currentSessionId ?? null) &&
+        (storyboardId ? Number(storyboardId) : null) ===
+          (this.agentChatService.currentStoryboard()?.id ?? null);
+      if (urlMatchesCurrentState) {
+        return;
+      }
+
+      this.isLoadingHistory.set(true);
+
+      // Always load sessions first to populate the sessions dropdown
+      this.agentChatService
+        .getSessions(workspaceId, false, sessionId, storyboardId)
+        .subscribe({
+          next: (sessions: ChatSession[]) => {
+            this.sessions.set(sessions || []);
+
+            // Check if the query parameter sessionId or storyboardId belongs to this workspace
+            const sessionExistsInWorkspace =
+              sessions &&
+              sessions.some(s => {
+                if (sessionId && s.id === sessionId) {
+                  return true;
+                }
+                if (
+                  storyboardId &&
+                  (Number(s.state?.current_storyboard_id) ===
+                    Number(storyboardId) ||
+                    Number(s.state?.currentStoryboardId) ===
+                      Number(storyboardId))
+                ) {
+                  return true;
+                }
+                return false;
+              });
+
+            const shouldLoadDetail =
+              (sessionId && sessionExistsInWorkspace) || !!storyboardId;
+
+            if (shouldLoadDetail) {
+              const isDifferentSession =
+                (sessionId && sessionId !== this.currentSessionId) ||
+                (storyboardId &&
+                  Number(storyboardId) !==
+                    Number(this.agentChatService.currentStoryboard()?.id));
+              const isDifferentWorkspace = workspaceId !== this.lastWorkspaceId;
+
+              if (isDifferentSession || isDifferentWorkspace) {
+                this.lastWorkspaceId = workspaceId;
+
+                if (sessionId && sessionExistsInWorkspace) {
+                  // Session-first deep link: reuse the single hardened loader
+                  // (request cancellation, stale-response guard,
+                  // navigate-only-if-different) instead of a second copy.
+                  this.currentSessionId = sessionId;
+                  this.submittedGateCallIds.clear();
+                  this.lastExecutedAction = null;
+                  this.loadChatMessages(
+                    sessionId,
+                    storyboardId ? Number(storyboardId) : undefined,
+                  );
+                  return;
+                }
+
+                // Storyboard-first deep link (no session in the URL).
+                this.agentChatService
+                  .getSessionDetail(
+                    workspaceId,
+                    undefined,
+                    storyboardId ? Number(storyboardId) : undefined,
+                  )
+                  .subscribe({
+                    next: (res: SessionDetailResponse) => {
+                      if (
+                        res.storyboard &&
+                        res.storyboard.workspace_id !== workspaceId
+                      ) {
+                        this.isProgrammaticWorkspaceSwitch = true;
+                        this.workspaceStateService.setActiveWorkspaceId(
+                          res.storyboard.workspace_id,
+                        );
+                        return;
+                      }
+                      if (res.storyboard) {
+                        if (res.storyboard.timeline_id) {
+                          this.timelineState.loadedTimelineId.set(undefined);
+                        }
+                        this.agentChatService.currentStoryboard.set(
+                          res.storyboard,
+                        );
+                      }
+                      this.syncCampaignDetails(
+                        res.session?.state,
+                        false,
+                        res.session?.events,
+                      );
+                      this.syncFinalVideoReady(res.session?.state);
+                      if (res.session && res.session.id) {
+                        this.currentSessionId = res.session.id;
+                        this.agentChatService.selectedSessionId.set(
+                          res.session.id,
+                        );
+
+                        const messages = res.session.events || [];
+                        const mappedMessages =
+                          this.mapEventsToMessages(messages);
+                        this.chatMessages.set(mappedMessages);
+                        const pendingGate = this.checkUnresolvedGate(
+                          messages,
+                          res.session?.state,
+                        );
+                        this.activeApprovalGate.set(pendingGate);
+                        this.shouldScrollToBottom = true;
+                        this.checkAndResumePolling(res, pendingGate);
+
+                        // Synchronize URL: retain both sessionId and storyboardId
+                        const targetSessionId = res.session.id;
+                        const targetStoryboardId = res.storyboard?.id || null;
+                        void this.router.navigate([], {
+                          relativeTo: this.route,
+                          queryParams: {
+                            sessionId: targetSessionId,
+                            storyboardId: targetStoryboardId,
+                          },
+                          queryParamsHandling: 'merge',
+                        });
+                      } else if (res.storyboard) {
+                        // Storyboard exists but has no active session/conversation
+                        this.currentSessionId = null;
+                        this.agentChatService.selectedSessionId.set(null);
+                        this.chatMessages.set([]);
+                        this.activeApprovalGate.set(null);
+                        this.addWelcomeMessage();
+                        this.shouldScrollToBottom = true;
+
+                        void this.router.navigate([], {
+                          relativeTo: this.route,
+                          queryParams: {
+                            sessionId: null,
+                            storyboardId: res.storyboard.id,
+                          },
+                          queryParamsHandling: 'merge',
+                        });
+                      } else {
+                        this.startNewChat();
+                      }
+                      this.isLoadingHistory.set(false);
+                    },
+                    error: err => {
+                      console.error('Failed to preload workspace state:', err);
+                      handleErrorSnackbar(
+                        this.snackBar,
+                        err as any,
+                        'Preload Session Details',
+                      );
+                      this.isLoadingHistory.set(false);
+                      this.startNewChat();
+                    },
+                  });
+              } else {
+                this.isLoadingHistory.set(false);
+              }
+            } else {
+              if (
+                (sessionId || storyboardId) &&
+                this.lastWorkspaceId === null
+              ) {
+                handleErrorSnackbar(
+                  this.snackBar,
+                  new Error(
+                    'The requested session or storyboard does not exist in this workspace.',
+                  ),
+                  'Workspace Sync',
+                );
+              }
+
+              this.lastWorkspaceId = workspaceId;
+              this.startNewChat();
+            }
+          },
+          error: err => {
+            console.error('Error fetching sessions:', err);
+            if ((err as any)?.status === 503) {
+              console.warn(
+                'Backend returned 503: Agent Engine is likely missing AGENT_ENGINE_RESOURCE_NAME in environment.',
+              );
+              this.agentUnavailable.set(true);
+            } else {
+              handleErrorSnackbar(this.snackBar, err as any, 'Fetch Sessions');
+            }
+            this.isLoadingHistory.set(false);
+            this.startNewChat();
+          },
+        });
+    });
+  }
+
+  loadChatMessages(sessionId: string, storyboardId?: number) {
+    this.agentChatService.stopPolling();
+    // Latest click wins: a session-detail response for a session the user has
+    // already left must never be applied — it would write the stale session
+    // back into `selectedSessionId`, the storyboard and the URL, and each of
+    // those re-triggers a load (the "ping-pong" when switching chats quickly).
+    this.loadSubscription?.unsubscribe();
+    this.isLoadingHistory.set(true);
+
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+
+    if (workspaceId) {
+      this.loadSubscription = this.agentChatService
+        .getSessionDetail(workspaceId, sessionId, storyboardId)
+        .subscribe({
+          next: (res: SessionDetailResponse) => {
+            if (this.currentSessionId !== sessionId) {
+              // The user switched again while this request was in flight.
+              return;
+            }
+            const activeSessionId =
+              (res.session && res.session.id) || sessionId;
+            this.currentSessionId = activeSessionId;
+            this.agentChatService.selectedSessionId.set(activeSessionId);
+
+            if (res.storyboard) {
+              if (res.storyboard.timeline_id) {
+                this.timelineState.loadedTimelineId.set(undefined);
+              }
+              this.agentChatService.currentStoryboard.set(res.storyboard);
+            } else {
+              this.agentChatService.currentStoryboard.set(null);
+            }
+            this.syncCampaignDetails(
+              res.session?.state,
+              false,
+              res.session?.events,
+            );
+            this.syncFinalVideoReady(res.session?.state);
+            this.trackStreamedStoryboardId(res.session?.state);
+
+            const messages = (res.session && res.session.events) || [];
+            const mappedMessages = this.mapEventsToMessages(messages);
+            this.chatMessages.set(mappedMessages);
+            const pendingGate = this.checkUnresolvedGate(
+              messages,
+              res.session?.state,
+            );
+            this.activeApprovalGate.set(pendingGate);
+            this.checkAndResumePolling(res, pendingGate);
+            if (mappedMessages.length === 0) {
+              this.addWelcomeMessage();
+            }
+            this.isLoadingHistory.set(false);
+            this.shouldScrollToBottom = true;
+
+            // Sync URL query parameters — only when they actually differ, so
+            // the `queryParams` subscription in the Workbench is not re-fed
+            // with the session it already knows about.
+            const targetSessionId = activeSessionId;
+            const targetStoryboardId = res.storyboard?.id || null;
+            const qp = this.route.snapshot?.queryParams ?? {};
+            const urlSessionId = qp['sessionId'] || null;
+            const urlStoryboardId = qp['storyboardId']
+              ? Number(qp['storyboardId'])
+              : null;
+            if (
+              urlSessionId !== targetSessionId ||
+              urlStoryboardId !== targetStoryboardId
+            ) {
+              void this.router.navigate([], {
+                relativeTo: this.route,
+                queryParams: {
+                  sessionId: targetSessionId,
+                  storyboardId: targetStoryboardId,
+                },
+                queryParamsHandling: 'merge',
+              });
+            }
+          },
+          error: err => {
+            console.error('Error loading session details:', err);
+            if ((err as any)?.status === 503) {
+              console.warn(
+                'Backend returned 503: Agent Engine is likely missing AGENT_ENGINE_RESOURCE_NAME in environment.',
+              );
+              this.agentUnavailable.set(true);
+            } else {
+              handleErrorSnackbar(this.snackBar, err, 'Load Session Details');
+            }
+            this.isLoadingHistory.set(false);
+          },
+        });
+    } else {
+      // Do not reset isLoadingHistory to false if workspace is still loading/null
+    }
+  }
+
+  private formatGateDecisionText(
+    decision: string,
+    stage?: string,
+    guidance?: string,
+  ): string {
+    const stageLower = (stage || '').toLowerCase();
+    const stageLabel = stageLower.includes('strategy')
+      ? 'Campaign Strategy'
+      : stageLower.includes('storyboard')
+        ? 'Storyboard'
+        : stageLower.includes('frame')
+          ? 'First Frames'
+          : stageLower.includes('final_cut')
+            ? 'Final Cut'
+            : stage || '';
+    const stageSuffix = stageLabel ? ` (${stageLabel})` : '';
+
+    if (decision === 'accept') {
+      return `✅ Approved${stageSuffix}`;
+    } else if (decision === 'modify') {
+      return `✏️ Requested Modifications${stageSuffix}: "${guidance || ''}"`;
+    } else if (decision === 'regenerate') {
+      return `🔄 Requested Regeneration${stageSuffix}${
+        guidance ? `: "${guidance}"` : ''
+      }`;
+    }
+    return decision;
+  }
+
+  getMilestoneForStage(
+    stage?: string,
+    toolName?: string,
+    storyboard?: any,
+  ): StageMilestone | undefined {
+    const s = (stage || '').toLowerCase();
+    const t = (toolName || '').toLowerCase();
+
+    if (s === 'strategy' || t.includes('strategy')) {
+      return {
+        stage: 'strategy',
+        title: 'Campaign Strategy Ready',
+        subtitle: 'Theme, tone, and visual direction defined',
+        icon: 'psychology',
+      };
+    }
+
+    if (
+      s === 'storyboard' ||
+      t.includes('storyboard') ||
+      (!s && !t && storyboard)
+    ) {
+      const sceneCount = Array.isArray(storyboard?.scenes)
+        ? storyboard.scenes.length
+        : 0;
+      return {
+        stage: 'storyboard',
+        title: 'Storyboard Ready',
+        // Never invent a number: the count is shown only when it comes from
+        // the agent's own storyboard data (state delta or tool result). A
+        // placeholder here once reported "4 scenes" for a 2-scene storyboard.
+        subtitle:
+          sceneCount > 0
+            ? `Generated ${sceneCount} scene${sceneCount === 1 ? '' : 's'}`
+            : 'Ready for review',
+        icon: 'auto_awesome_motion',
+      };
+    }
+
+    if (s === 'frames' || t.includes('frame')) {
+      return {
+        stage: 'frames',
+        title: 'Scene Frames & Audio Ready',
+        subtitle: 'Opening frames and voiceovers rendered',
+        icon: 'burst_mode',
+      };
+    }
+
+    if (s === 'final_cut' || t.includes('final_cut')) {
+      return {
+        stage: 'final_cut',
+        title: 'Final Cut Ready',
+        subtitle: 'Commercial video assembled and stitched',
+        icon: 'movie',
+      };
+    }
+
+    return undefined;
+  }
+
+  private mapEventsToMessages(messages: any[]): any[] {
+    const approvalFunctions = new Set([
+      'await_strategy_approval',
+      'await_storyboard_approval',
+      'await_frame_approval',
+      'await_final_cut_approval',
+    ]);
+
+    const resultMessages: any[] = [];
+    // The storyboard the agent currently holds, as republished in the events'
+    // state deltas. Gate cards use it for a truthful scene count (a gate call
+    // event itself carries no storyboard).
+    let lastKnownStoryboard: StoryboardResponse | null = null;
+
+    for (const m of messages) {
+      const content = m.content || {};
+      const role = content.role || m.author;
+      const parts = content.parts || [];
+      let text = '';
+      let assetMetadata = null;
+      let storyboardMetadata = null;
+      let isUserDecision = false;
+      let milestone: StageMilestone | undefined = undefined;
+      const extractedImages: any[] = [];
+      lastKnownStoryboard =
+        this.storyboardFromStateDelta(m) || lastKnownStoryboard;
+      if (m.actions?.storyboard) {
+        const extracted = this.extractStoryboardData(m.actions.storyboard);
+        if (extracted) {
+          storyboardMetadata = extracted;
+        }
+      }
+      for (const part of parts) {
+        if (part.text) {
+          let partText = part.text;
+          if (partText.includes('[System Note:')) {
+            const systemNote = partText.split('[System Note:')[1];
+            partText = partText.split('[System Note:')[0].trim();
+
+            const regex =
+              /<creative_studio_asset\s+id="?(\d+)"?\s+type="?([\w_]+)"?\s*\/>/g;
+            let match;
+            while ((match = regex.exec(systemNote)) !== null) {
+              const assetId = Number(match[1]);
+              const assetType = match[2];
+              if (assetType === 'source_asset') {
+                extractedImages.push({id: assetId});
+              } else if (assetType === 'media_item') {
+                extractedImages.push({
+                  mediaItem: {
+                    id: assetId,
+                  },
+                });
+              }
+            }
+          }
+          text += partText;
+          this.checkForStoryboardId(partText);
+        }
+
+        const fc =
+          part.functionCall ||
+          part.function_call ||
+          part.toolCall ||
+          part.tool_call;
+        if (fc && approvalFunctions.has(fc.name)) {
+          milestone = this.getMilestoneForStage(
+            undefined,
+            fc.name,
+            storyboardMetadata || lastKnownStoryboard,
+          );
+        }
+
+        const fr =
+          part.functionResponse ||
+          part.function_response ||
+          part.toolResponse ||
+          part.tool_response;
+        if (fr) {
+          let frResponse = fr.response;
+          if (typeof frResponse === 'string') {
+            try {
+              frResponse = JSON.parse(frResponse);
+            } catch (e) {
+              // ignore
+            }
+          }
+
+          const decision = frResponse?.decision || frResponse?.result?.decision;
+          if (decision) {
+            isUserDecision = true;
+            const guidance =
+              frResponse?.guidance || frResponse?.result?.guidance || '';
+            const stage = fr.name || frResponse?.stage || '';
+            const decisionText = this.formatGateDecisionText(
+              decision,
+              stage,
+              guidance,
+            );
+            text = text ? `${text}\n${decisionText}` : decisionText;
+          } else if (approvalFunctions.has(fr.name)) {
+            milestone = this.getMilestoneForStage(
+              undefined,
+              fr.name,
+              storyboardMetadata || lastKnownStoryboard,
+            );
+          }
+
+          const frResult = frResponse?.result || frResponse;
+          if (frResult) {
+            let resultObj = frResult;
+            if (typeof resultObj === 'string') {
+              try {
+                resultObj = JSON.parse(resultObj);
+              } catch (e) {
+                // ignore
+              }
+            }
+            if (resultObj && typeof resultObj === 'object') {
+              if (resultObj.asset) {
+                assetMetadata = resultObj.asset;
+                if (resultObj.asset.type === 'video') {
+                  this.agentChatService.videoGenerated$.next(resultObj.asset);
+                }
+              } else if (resultObj.clips && resultObj.assets) {
+                this.agentChatService.videoGenerated$.next(resultObj);
+              } else {
+                const extracted = this.extractStoryboardData(resultObj);
+                if (extracted) {
+                  storyboardMetadata = extracted;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      if (storyboardMetadata && !milestone) {
+        milestone = this.getMilestoneForStage(
+          'storyboard',
+          undefined,
+          storyboardMetadata,
+        );
+      }
+
+      const currentText = text.trim();
+      let isHidden = false;
+      if (currentText.startsWith('{') && currentText.endsWith('}')) {
+        try {
+          const parsed = JSON.parse(currentText);
+          if (parsed.campaign_brief || parsed.scenes || parsed.template_name) {
+            isHidden = true;
+          }
+        } catch (e) {
+          // Not valid JSON
+        }
+      }
+
+      // If this event has a milestone but no text/asset/storyboard,
+      // attach it to the preceding agent message if available
+      if (milestone && !currentText && !assetMetadata && !storyboardMetadata) {
+        if (
+          resultMessages.length > 0 &&
+          resultMessages[resultMessages.length - 1].sender === 'agent'
+        ) {
+          if (!resultMessages[resultMessages.length - 1].milestone) {
+            resultMessages[resultMessages.length - 1].milestone = milestone;
+          }
+          continue;
+        }
+        if (role === 'user' && !isUserDecision) {
+          continue;
+        }
+      }
+
+      const sender = role === 'user' || isUserDecision ? 'user' : 'agent';
+
+      resultMessages.push({
+        sender: sender,
+        text: text,
+        asset: assetMetadata,
+        storyboard: storyboardMetadata,
+        milestone: sender === 'user' ? undefined : milestone,
+        isHidden: isHidden,
+        images: extractedImages.length > 0 ? extractedImages : undefined,
+        timestamp: m.timestamp ? new Date(m.timestamp * 1000) : new Date(),
+      });
+    }
+
+    return resultMessages.filter(
+      (msg: any) =>
+        msg.text ||
+        msg.asset ||
+        msg.storyboard ||
+        msg.milestone ||
+        msg.isHidden,
+    );
+  }
+
+  addWelcomeMessage() {
+    const welcomeMessage = {
+      sender: 'agent',
+      text: `
+      Hi! I'm Izumi, your GenMedia Marketing AI Coworker! 
+      
+      I can help you create stunning creative brief campaigns, storyboard scripts, and scenes to generate a final GREAT video for your creative content or ads! 🚀
+      
+      How can I help you today?`,
+      timestamp: new Date(),
+    };
+    this.chatMessages.update(msgs => {
+      if (msgs.length === 0) {
+        return [welcomeMessage];
+      }
+      return msgs;
+    });
+  }
+  viewAsset(assetId: string) {
+    if (typeof window !== 'undefined') {
+      let route = `/gallery/${assetId}`;
+      if (assetId.indexOf(':') !== -1) {
+        const parts = assetId.split(':');
+        const type = parts[0];
+        const id = parts[1];
+        if (type === 'source_asset') {
+          route = `/asset-detail/${id}`;
+        } else if (type === 'media_item') {
+          route = `/gallery/${id}`;
+        }
+      }
+      window.open(route, '_blank');
+    }
+  }
+  startNewChat() {
+    this.agentChatService.stopPolling();
+    this.isLoadingHistory.set(false);
+    this.currentSessionId = null;
+    this.lastExecutedAction = null;
+    this.agentChatService.selectedSessionId.set(null);
+    this.chatMessages.set([]);
+    this.activeApprovalGate.set(null);
+    this.agentChatService.currentStoryboard.set(null);
+    this.streamedStoryboardId = null;
+    this.clearCampaignDetails();
+    this.addWelcomeMessage();
+    this.shouldScrollToBottom = true;
+
+    // Clear query parameters from the URL
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: {
+        sessionId: null,
+        storyboardId: null,
+      },
+      queryParamsHandling: 'merge',
+    });
+  }
+  onSessionChange(sessionId: string) {
+    // The picker is disabled in the template while locked; this is the
+    // backstop for keyboard / programmatic calls. Dropping the click (instead
+    // of queueing it) is what keeps a rapid A→B→C from stacking requests.
+    if (this.isSessionLocked()) return;
+    if (sessionId && sessionId !== this.currentSessionId) {
+      this.activeApprovalGate.set(null);
+      this.currentSessionId = sessionId;
+      this.lastExecutedAction = null;
+      this.loadChatMessages(sessionId);
+    }
+  }
+  onAgentChange(agentValue: string) {
+    this.agentChatService.stopPolling();
+    this.agentChatService.activeAgent.set(agentValue);
+    this.currentSessionId = null;
+    this.lastExecutedAction = null;
+    this.activeApprovalGate.set(null);
+    this.chatMessages.set([]);
+    this.sessions.set([]);
+    this.loadChatSessions();
+  }
+  deleteChat() {
+    if (!this.currentSessionId || this.isSessionLocked()) return;
+    const dialogRef = this.dialog.open(ConfirmationDialogComponent, {
+      data: {
+        title: 'Delete Chat',
+        message: 'Are you sure you want to delete this conversation?',
+      },
+    });
+    dialogRef.afterClosed().subscribe(result => {
+      if (result) {
+        const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+        this.agentChatService
+          .deleteSession(this.currentSessionId!, workspaceId ?? undefined)
+          .subscribe({
+            next: () => {
+              this.sessions.update(s =>
+                s.filter(sess => sess.id !== this.currentSessionId),
+              );
+              this.topics.update(topics => {
+                delete topics[this.currentSessionId!];
+                if (this.isBrowser) {
+                  localStorage.setItem('izumi_topics', JSON.stringify(topics));
+                }
+                return {...topics};
+              });
+              this.currentSessionId = null;
+              this.chatMessages.set([]);
+              if (this.sessions().length > 0) {
+                this.currentSessionId = this.sessions()[0].id;
+                this.loadChatMessages(this.currentSessionId!);
+              } else {
+                this.startNewChat();
+              }
+            },
+            error: err => console.error('Error deleting session:', err),
+          });
+      }
+    });
+  }
+  sendChatMessage(text: string) {
+    if (this.isBusy() || this.isSessionLocked()) return;
+    if ((!text || !text.trim()) && this.selectedImages().length === 0) return;
+
+    if (!this.currentSessionId) {
+      this.isTyping.set(true);
+      const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+      this.agentChatService.createSession(workspaceId ?? undefined).subscribe({
+        next: (session: ChatSession) => {
+          this.sessions.update(s => [session, ...s]);
+          this.currentSessionId = session.id;
+          this.agentChatService.selectedSessionId.set(session.id);
+          void this.router.navigate([], {
+            relativeTo: this.route,
+            queryParams: {
+              sessionId: session.id,
+            },
+            queryParamsHandling: 'merge',
+          });
+          this.executeSendMessage(text);
+        },
+        error: err => {
+          console.error(
+            'Error starting new chat session on first message:',
+            err,
+          );
+          this.isTyping.set(false);
+          handleErrorSnackbar(this.snackBar, err, 'Start Chat');
+        },
+      });
+      return;
+    }
+
+    this.executeSendMessage(text);
+  }
+
+  private executeSendMessage(text: string) {
+    const currentImages = this.selectedImages();
+    const userMessage = {
+      sender: 'user',
+      text: text,
+      images: currentImages, // Store locally to show in UI
+      timestamp: new Date(),
+    };
+    this.chatMessages.update(msgs => [...msgs, userMessage]);
+    const hasNoTopic = !this.topics()[this.currentSessionId!];
+    if (hasNoTopic) {
+      this.agentChatService.generateTitle(text).subscribe({
+        next: (response: any) => {
+          this.saveSessionTopic(
+            this.currentSessionId!,
+            response.title,
+            response.summary,
+          );
+        },
+        error: err => {
+          console.error('Error generating title:', err);
+          this.saveSessionTopic(this.currentSessionId!, text);
+        },
+      });
+    }
+    this.isTyping.set(true);
+    if (this.currentAgent === 'ads_x') {
+      this.agentChatService.isGeneratingStoryboard.set(true);
+    }
+    this.shouldScrollToBottom = true;
+    const callbacks = this.setupCallbacks();
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const partsParams: any[] = [];
+    if (text && text.trim()) partsParams.push({text});
+    for (const img of this.selectedImages()) {
+      if ('mediaItem' in img) {
+        partsParams.push({
+          sourceMediaItem: {
+            mediaItemId: img.mediaItem.id,
+            mediaIndex: img.selectedIndex || 0,
+            role: 'input',
+          },
+        });
+      } else {
+        partsParams.push({sourceAssetId: img.id});
+      }
+    }
+    const messagePayload = partsParams.length > 0 ? partsParams : text;
+    this.lastExecutedAction = {
+      type: 'chat',
+      text,
+      partsParams: messagePayload,
+    };
+    void this.agentChatService.sendMessage(
+      this.currentSessionId!,
+      messagePayload,
+      workspaceId,
+      callbacks,
+    );
+    this.selectedImages.set([]);
+  }
+
+  handleGateDecision(submission: ApprovalGateSubmission) {
+    const gate = this.visibleApprovalGate() || this.activeApprovalGate();
+    if (!gate || !this.currentSessionId || this.isSubmittingGate()) return;
+
+    if (!gate.callId) {
+      handleErrorSnackbar(
+        this.snackBar,
+        new Error(
+          'Cannot submit approval: missing tool call identifier for this checkpoint. Please ask the agent to continue or start a new chat.',
+        ),
+        'Approval Checkpoint',
+      );
+      this.activeApprovalGate.set(null);
+      return;
+    }
+
+    this.submittedGateCallIds.add(gate.callId);
+
+    const decisionText = this.formatGateDecisionText(
+      submission.decision,
+      gate.stage || gate.toolName,
+      submission.guidance,
+    );
+
+    const userMessage = {
+      sender: 'user',
+      text: decisionText,
+      timestamp: new Date(),
+    };
+    this.chatMessages.update(msgs => [...msgs, userMessage]);
+
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const partsParams = [
+      {
+        function_response: {
+          id: gate.callId,
+          name: gate.toolName,
+          response: {
+            decision: submission.decision,
+            guidance: submission.guidance || '',
+          },
+        },
+      },
+    ];
+
+    this.lastExecutedAction = {
+      type: 'gate',
+      submission,
+      gate,
+      partsParams,
+    };
+
+    this.isSubmittingGate.set(true);
+    this.activeApprovalGate.set(null);
+    this.isTyping.set(true);
+    if (this.currentAgent === 'ads_x') {
+      this.agentChatService.isGeneratingStoryboard.set(true);
+      // Accepting the frames starts the video render + stitch stage
+      if (gate.stage === 'frames' && submission.decision === 'accept') {
+        this.agentChatService.isGeneratingVideo.set(true);
+      }
+    }
+    this.shouldScrollToBottom = true;
+
+    // Immediately stop current polling to abort any in-flight poll fetches
+    this.agentChatService.stopPolling();
+
+    const callbacks = this.setupCallbacks();
+    void this.agentChatService.sendMessage(
+      this.currentSessionId,
+      partsParams,
+      workspaceId,
+      callbacks,
+    );
+  }
+
+  private extractGateFromEvent(event: any): ApprovalGateInfo | null {
+    if (!event) return null;
+
+    // Filter out user authored events
+    if (event.author === 'user' || event.raw_event?.author === 'user') {
+      return null;
+    }
+
+    const approvalFunctions = new Set([
+      'await_strategy_approval',
+      'await_storyboard_approval',
+      'await_frame_approval',
+      'await_final_cut_approval',
+    ]);
+
+    const content = event.content || event.raw_event?.content || {};
+    const parts = content.parts || [];
+
+    for (const part of parts) {
+      const fc =
+        part.functionCall ||
+        part.function_call ||
+        part.toolCall ||
+        part.tool_call;
+      if (fc && approvalFunctions.has(fc.name)) {
+        const callId =
+          fc.id ||
+          (event.long_running_tool_ids && event.long_running_tool_ids[0]) ||
+          (event.longRunningToolIds && event.longRunningToolIds[0]) ||
+          '';
+
+        if (callId && this.submittedGateCallIds.has(callId)) {
+          return null;
+        }
+
+        let payload = fc.args || fc.arguments;
+        if (typeof payload === 'string') {
+          try {
+            payload = JSON.parse(payload);
+          } catch (e) {
+            // ignore
+          }
+        }
+
+        return {
+          callId,
+          toolName: fc.name,
+          stage: fc.name.includes('strategy')
+            ? 'strategy'
+            : fc.name.includes('storyboard')
+              ? 'storyboard'
+              : fc.name.includes('frame')
+                ? 'frames'
+                : 'final_cut',
+          payload: payload || undefined,
+          options: payload?.options || ['accept', 'modify', 'regenerate'],
+        };
+      }
+
+      const fr =
+        part.functionResponse ||
+        part.function_response ||
+        part.toolResponse ||
+        part.tool_response;
+      if (fr && approvalFunctions.has(fr.name)) {
+        let result = fr.response?.result || fr.response;
+        if (typeof result === 'string') {
+          try {
+            result = JSON.parse(result);
+          } catch (e) {
+            // ignore
+          }
+        }
+        if (result && typeof result === 'object' && result.result) {
+          let inner = result.result;
+          if (typeof inner === 'string') {
+            try {
+              inner = JSON.parse(inner);
+            } catch (e) {
+              // ignore
+            }
+          }
+          if (inner && typeof inner === 'object') {
+            result = {...result, ...inner};
+          }
+        }
+        // Result must explicitly indicate awaiting human review / pending approval and must NOT be a user decision payload
+        if (
+          result &&
+          !result.decision &&
+          (result.status === 'awaiting_human_review' ||
+            result.status === 'pending_approval' ||
+            result.message ||
+            result.expected_response)
+        ) {
+          const callId = fr.id || '';
+          if (callId && this.submittedGateCallIds.has(callId)) {
+            return null;
+          }
+
+          return {
+            callId,
+            toolName: fr.name,
+            stage:
+              result.stage ||
+              (fr.name.includes('strategy')
+                ? 'strategy'
+                : fr.name.includes('storyboard')
+                  ? 'storyboard'
+                  : fr.name.includes('frame')
+                    ? 'frames'
+                    : 'final_cut'),
+            payload: result,
+            options: result.expected_response?.decision || [
+              'accept',
+              'modify',
+              'regenerate',
+            ],
+          };
+        }
+      }
+    }
+
+    const lrtIds = event.long_running_tool_ids || event.longRunningToolIds;
+    const approvalFn = event.approval_function || event.approvalFunction;
+    if (approvalFn && lrtIds && lrtIds.length > 0) {
+      if (this.submittedGateCallIds.has(lrtIds[0])) {
+        return null;
+      }
+      return {
+        callId: lrtIds[0],
+        toolName: approvalFn,
+        stage: approvalFn.includes('strategy')
+          ? 'strategy'
+          : approvalFn.includes('storyboard')
+            ? 'storyboard'
+            : approvalFn.includes('frame')
+              ? 'frames'
+              : 'final_cut',
+        options: ['accept', 'modify', 'regenerate'],
+      };
+    }
+
+    return null;
+  }
+
+  private isToolResolvingStage(toolName: string, stage?: string): boolean {
+    if (!toolName) return false;
+
+    // Director agent is supervisor orchestrator, never a resolving tool
+    if (toolName === 'director_agent') return false;
+
+    // Stage-specific decision records
+    if (
+      toolName === 'record_strategy_decision' ||
+      toolName === 'record_storyboard_decision' ||
+      toolName === 'record_frame_decision' ||
+      toolName === 'record_final_cut_decision'
+    ) {
+      return true;
+    }
+
+    if (stage === 'strategy') {
+      return (
+        toolName === 'record_strategy_decision' ||
+        toolName === 'storyboard_agent_creative' ||
+        toolName === 'storyboard_agent_templated' ||
+        toolName === 'generate_scene_frames' ||
+        toolName === 'frames_agent' ||
+        toolName === 'generate_scene_videos' ||
+        toolName === 'videos_agent' ||
+        toolName === 'stitch_final_video'
+      );
+    }
+
+    if (stage === 'storyboard') {
+      return (
+        toolName === 'record_storyboard_decision' ||
+        toolName === 'generate_scene_frames' ||
+        toolName === 'frames_agent' ||
+        toolName === 'generate_scene_videos' ||
+        toolName === 'videos_agent' ||
+        toolName === 'stitch_final_video'
+      );
+    }
+
+    if (stage === 'frames') {
+      return (
+        toolName === 'record_frame_decision' ||
+        toolName === 'generate_scene_videos' ||
+        toolName === 'videos_agent' ||
+        toolName === 'stitch_final_video'
+      );
+    }
+
+    if (stage === 'final_cut') {
+      return (
+        toolName === 'record_final_cut_decision' ||
+        toolName === 'stitch_final_video'
+      );
+    }
+
+    const downstreamTools = new Set([
+      'generate_scene_frames',
+      'frames_agent',
+      'generate_scene_videos',
+      'videos_agent',
+      'stitch_final_video',
+      'generate_scene_media',
+      'stitch_video_timeline',
+      'render_clip',
+      'edit_scene',
+      'add_scene',
+      'remove_scene',
+      'reorder_scenes',
+      'regenerate_scene',
+      'regenerate_storyboard',
+      'regenerate_all_media',
+      'regenerate_music',
+    ]);
+    return downstreamTools.has(toolName);
+  }
+
+  private checkUnresolvedGate(
+    events: any[],
+    state?: any,
+  ): ApprovalGateInfo | null {
+    if (!events || events.length === 0) return null;
+
+    let candidateGate: ApprovalGateInfo | null = null;
+
+    for (let i = 0; i < events.length; i++) {
+      const ev = events[i];
+      const gate = this.extractGateFromEvent(ev);
+      if (gate) {
+        if (!gate.callId || !this.submittedGateCallIds.has(gate.callId)) {
+          if (
+            candidateGate !== null &&
+            candidateGate.stage === gate.stage &&
+            (candidateGate.toolName === gate.toolName || !gate.callId)
+          ) {
+            const mergedPayload: any = {
+              ...(typeof candidateGate.payload === 'object'
+                ? candidateGate.payload
+                : {}),
+              ...(typeof gate.payload === 'object' ? gate.payload : {}),
+            };
+            if (!mergedPayload.message && candidateGate.payload?.message) {
+              mergedPayload.message = candidateGate.payload.message;
+            }
+            candidateGate = {
+              callId: gate.callId || candidateGate.callId,
+              toolName: gate.toolName || candidateGate.toolName,
+              stage: gate.stage || candidateGate.stage,
+              options: gate.options || candidateGate.options,
+              payload: mergedPayload,
+            };
+          } else {
+            candidateGate = gate;
+          }
+          continue;
+        }
+      }
+
+      if (candidateGate) {
+        const content = ev.content || ev.raw_event?.content || {};
+        const isUserEvt =
+          ev.author === 'user' ||
+          ev.raw_event?.author === 'user' ||
+          ev.role === 'user' ||
+          content.role === 'user';
+        const parts = content.parts || [];
+        let isResolved = false;
+
+        for (const p of parts) {
+          const fc =
+            p.functionCall || p.function_call || p.toolCall || p.tool_call;
+          const fr =
+            p.functionResponse ||
+            p.function_response ||
+            p.toolResponse ||
+            p.tool_response;
+
+          let frResult = fr?.response?.result || fr?.response;
+          if (typeof frResult === 'string') {
+            try {
+              frResult = JSON.parse(frResult);
+            } catch (e) {
+              // ignore
+            }
+          }
+
+          const isApprovalFn =
+            fr &&
+            (fr.name === 'await_strategy_approval' ||
+              fr.name === 'await_storyboard_approval' ||
+              fr.name === 'await_frame_approval' ||
+              fr.name === 'await_final_cut_approval');
+
+          if (
+            (fr &&
+              (frResult?.decision ||
+                (candidateGate.callId &&
+                  fr.id === candidateGate.callId &&
+                  (isUserEvt || !isApprovalFn)))) ||
+            (fc && this.isToolResolvingStage(fc.name, candidateGate.stage)) ||
+            (fr && this.isToolResolvingStage(fr.name, candidateGate.stage))
+          ) {
+            isResolved = true;
+            break;
+          }
+        }
+
+        const delta =
+          ev.actions?.state_delta || ev.raw_event?.actions?.state_delta || {};
+        if (
+          (candidateGate.stage === 'strategy' && delta.strategy_decision) ||
+          (candidateGate.stage === 'storyboard' && delta.storyboard_decision) ||
+          (candidateGate.stage === 'frames' && delta.frame_decision) ||
+          (candidateGate.stage === 'final_cut' && delta.final_cut_decision)
+        ) {
+          isResolved = true;
+        }
+
+        if (isResolved) {
+          candidateGate = null;
+        }
+      }
+    }
+
+    if (!candidateGate || !candidateGate.callId) return null;
+
+    // Check if session state shows the stage is already decided
+    if (state) {
+      if (candidateGate.stage === 'strategy' && state.strategy_decision)
+        return null;
+      if (candidateGate.stage === 'storyboard' && state.storyboard_decision)
+        return null;
+      if (candidateGate.stage === 'frames' && state.frame_decision) return null;
+      if (candidateGate.stage === 'final_cut' && state.final_cut_decision)
+        return null;
+      // NOTE: `stage_completed` is monotonic — it stays `generation` for the
+      // rest of the session, including while a *re-opened* gate (after a
+      // `regenerate` decision) is pending. Only the per-stage `*_decision`
+      // keys above say whether the current gate is decided; the agent nulls
+      // them when it re-opens a gate.
+      if (state.stage_completed === 'complete') return null;
+    }
+
+    return candidateGate;
+  }
+
+  private resumePolling(sessionId: string) {
+    this.isTyping.set(true);
+    if (this.currentAgent === 'ads_x') {
+      this.agentChatService.isGeneratingStoryboard.set(true);
+    }
+    const callbacks = this.setupCallbacks();
+    this.agentChatService.startPolling(sessionId, callbacks);
+  }
+
+  private hasPendingToolCall(event: any): boolean {
+    if (!event) return false;
+    const content = event.content || {};
+    const parts = content.parts || [];
+    for (const part of parts) {
+      if (
+        part.functionCall ||
+        part.function_call ||
+        part.toolCall ||
+        part.tool_call
+      ) {
+        return true;
+      }
+    }
+    const rawEvent = event.raw_event || {};
+    const rawParts = rawEvent.content?.parts || [];
+    for (const part of rawParts) {
+      if (
+        part.functionCall ||
+        part.function_call ||
+        part.toolCall ||
+        part.tool_call
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private isToolResponse(event: any): boolean {
+    if (!event) return false;
+    const content = event.content || {};
+    const parts = content.parts;
+    if (Array.isArray(parts)) {
+      for (const part of parts) {
+        if (
+          part &&
+          (part.functionResponse ||
+            part.function_response ||
+            part.toolResponse ||
+            part.tool_response)
+        ) {
+          return true;
+        }
+      }
+    }
+    const rawEvent = event.raw_event || {};
+    const rawParts = rawEvent.content?.parts;
+    if (Array.isArray(rawParts)) {
+      for (const part of rawParts) {
+        if (
+          part &&
+          (part.functionResponse ||
+            part.function_response ||
+            part.toolResponse ||
+            part.tool_response)
+        ) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Decides on session load whether a run is still in flight and the poll
+   * loop must be re-attached. Getting this wrong in the "resume" direction
+   * is a dead end: `resumePolling` locks the composer and the gate card
+   * behind `isBusy`, and the loop only ends on a `[DONE]`/error event that
+   * a finished run has already delivered (the queue is drained on read).
+   *
+   * Two things therefore must NOT count as "in flight":
+   * - A pending approval gate. The run ended at `await_*_approval` and is
+   *   waiting for the user; `checkUnresolvedGate` already proved nobody has
+   *   answered it yet.
+   * - Content-less events. Every state write that bypasses the runner
+   *   (`PATCH …/sessions/{id}` with a `stateDelta`: token propagation,
+   *   character edits, storyboard sync) is appended by ADK as an
+   *   `author: "user"` event with no `content.parts`. It is not a user turn,
+   *   so the decision is based on the last event that carries parts.
+   */
+  checkAndResumePolling(
+    res: SessionDetailResponse,
+    pendingGate: ApprovalGateInfo | null = null,
+  ) {
+    if (res.session) {
+      // If the session hasn't been updated in over 20 minutes, do not poll
+      const nowSeconds = Date.now() / 1000;
+      const lastUpdateSeconds = res.session.lastUpdateTime;
+      if (lastUpdateSeconds && nowSeconds - lastUpdateSeconds > 1200) {
+        this.clearGeneratingState();
+        return;
+      }
+
+      if (pendingGate) {
+        this.clearGeneratingState();
+        return;
+      }
+
+      const lastEvent = this.lastEventWithParts(res.session.events);
+      if (lastEvent) {
+        const role = lastEvent.content?.role || lastEvent.author;
+
+        const isLastEventUser = role === 'user';
+        const isLastEventPendingTool = this.hasPendingToolCall(lastEvent);
+        const isLastEventToolResponse = this.isToolResponse(lastEvent);
+
+        if (
+          (isLastEventUser && !isLastEventToolResponse) ||
+          isLastEventPendingTool
+        ) {
+          this.resumePolling(res.session.id);
+          return;
+        }
+      }
+    }
+    // Nothing in flight for this session: drop any "generating" state inherited
+    // from a previous session or a torn-down poll loop.
+    this.clearGeneratingState();
+  }
+
+  /**
+   * Last event that carries `content.parts` (or `raw_event.content.parts`).
+   * State-delta-only events are skipped: they say nothing about whose turn
+   * it is.
+   */
+  private lastEventWithParts(events: any[] | undefined | null): any | null {
+    if (!events) return null;
+    const hasParts = (parts: unknown) =>
+      Array.isArray(parts) && parts.length > 0;
+    for (let i = events.length - 1; i >= 0; i--) {
+      const ev = events[i];
+      if (
+        hasParts(ev?.content?.parts) ||
+        hasParts(ev?.raw_event?.content?.parts)
+      ) {
+        return ev;
+      }
+    }
+    return null;
+  }
+
+  private clearGeneratingState() {
+    this.isTyping.set(false);
+    this.isSubmittingGate.set(false);
+    this.agentChatService.isGeneratingStoryboard.set(false);
+    this.agentChatService.isGeneratingVideo.set(false);
+  }
+
+  private setupCallbacks(): SSECallbacks<any> {
+    let agentMessageIndex = -1;
+    let lastInvocationId = '';
+    const isInJsonBlock = false;
+    // Storyboard the agent published in this run's state deltas; the gate
+    // event itself carries none, so the milestone count comes from here.
+    let lastStreamedStoryboard: StoryboardResponse | null = null;
+
+    return {
+      onMessage: (data: any) => {
+        lastStreamedStoryboard =
+          this.storyboardFromStateDelta(data) || lastStreamedStoryboard;
+        const gate = this.extractGateFromEvent(data);
+        if (gate) {
+          this.activeApprovalGate.update(existing => {
+            if (!existing || existing.stage !== gate.stage) return gate;
+            const mergedPayload: any = {
+              ...(typeof existing.payload === 'object' ? existing.payload : {}),
+              ...(typeof gate.payload === 'object' ? gate.payload : {}),
+            };
+            if (!mergedPayload.message && existing.payload?.message) {
+              mergedPayload.message = existing.payload.message;
+            }
+            return {
+              ...existing,
+              ...gate,
+              callId: gate.callId || existing.callId || '',
+              payload: mergedPayload,
+            };
+          });
+
+          const milestone = this.getMilestoneForStage(
+            gate.stage,
+            gate.toolName,
+            gate.stage === 'storyboard' ? lastStreamedStoryboard : undefined,
+          );
+          if (milestone) {
+            this.chatMessages.update(msgs => {
+              if (agentMessageIndex !== -1 && msgs[agentMessageIndex]) {
+                msgs[agentMessageIndex].milestone = milestone;
+              } else if (
+                msgs.length > 0 &&
+                msgs[msgs.length - 1].sender === 'agent'
+              ) {
+                msgs[msgs.length - 1].milestone = milestone;
+              }
+              return [...msgs];
+            });
+          }
+
+          this.isTyping.set(false);
+          this.isSubmittingGate.set(false);
+          this.agentChatService.isGeneratingStoryboard.set(false);
+          this.agentChatService.isGeneratingVideo.set(false);
+        } else {
+          const parts =
+            data.content?.parts || data.raw_event?.content?.parts || [];
+          let shouldClear = false;
+          const currentStage = this.activeApprovalGate()?.stage;
+          for (const p of parts) {
+            const fc =
+              p.functionCall || p.function_call || p.toolCall || p.tool_call;
+            const fr =
+              p.functionResponse ||
+              p.function_response ||
+              p.toolResponse ||
+              p.tool_response;
+            if (
+              (fc && this.isToolResolvingStage(fc.name, currentStage)) ||
+              (fr && this.isToolResolvingStage(fr.name, currentStage))
+            ) {
+              shouldClear = true;
+              break;
+            }
+          }
+          const delta =
+            data.actions?.state_delta ||
+            data.raw_event?.actions?.state_delta ||
+            {};
+          if (
+            delta.strategy_decision ||
+            delta.storyboard_decision ||
+            delta.frame_decision ||
+            delta.final_cut_decision
+          ) {
+            shouldClear = true;
+          }
+          if (shouldClear) {
+            this.activeApprovalGate.set(null);
+            this.isSubmittingGate.set(false);
+          }
+        }
+        // The final video is stitched well before the stream ends (the agent
+        // still writes a summary and opens the final-cut gate). Surface it
+        // immediately instead of leaving the storyboard in its loading state.
+        if (this.isFinalVideoReadyEvent(data)) {
+          this.agentChatService.isGeneratingStoryboard.set(false);
+          this.agentChatService.isGeneratingVideo.set(false);
+          this.agentChatService.finalVideoReady.set(true);
+          this.refreshStoryboardForSession(true);
+        }
+        // The agent republishes its full campaign brief in the state delta
+        // whenever it changes; keep the read-only Campaign tab in sync.
+        const stateDelta =
+          data.actions?.state_delta ||
+          data.actions?.stateDelta ||
+          data.raw_event?.actions?.state_delta;
+        this.syncCampaignDetails(stateDelta, true);
+        this.syncFinalVideoReady(stateDelta, true);
+        this.trackStreamedStoryboardId(stateDelta);
+        if (data.actions?.storyboard) {
+          this.isTyping.set(false);
+          this.agentChatService.isGeneratingStoryboard.set(false);
+          const sb = this.extractStoryboardData(data.actions.storyboard);
+          if (sb) {
+            const milestone = this.getMilestoneForStage(
+              'storyboard',
+              undefined,
+              sb,
+            );
+            this.chatMessages.update(msgs => {
+              if (agentMessageIndex !== -1 && msgs[agentMessageIndex]) {
+                msgs[agentMessageIndex].storyboard = sb;
+                msgs[agentMessageIndex].milestone = milestone;
+              } else if (
+                msgs.length > 0 &&
+                msgs[msgs.length - 1].sender === 'agent'
+              ) {
+                msgs[msgs.length - 1].storyboard = sb;
+                msgs[msgs.length - 1].milestone = milestone;
+              }
+              return [...msgs];
+            });
+          }
+        }
+        if (data.content && data.content.parts) {
+          const currentInvocationId = data.id || data.invocation_id || '';
+          if (currentInvocationId && currentInvocationId !== lastInvocationId) {
+            agentMessageIndex = -1;
+          }
+          for (const part of data.content.parts) {
+            if (part.text) {
+              const textChunk = part.text;
+              this.isTyping.set(false);
+
+              // Only hide if the chunk is explicitly a raw JSON data block payload
+              const trimmed = textChunk.trim();
+              const isRawJson =
+                (trimmed.startsWith('{') &&
+                  (trimmed.includes('"scenes"') ||
+                    trimmed.includes('"campaign_brief"') ||
+                    trimmed.includes('"template_name"') ||
+                    trimmed.includes('"stage_recipe"'))) ||
+                (trimmed.startsWith('```json') &&
+                  (trimmed.includes('"scenes"') ||
+                    trimmed.includes('"campaign_brief"')));
+
+              this.chatMessages.update(msgs => {
+                if (isRawJson) {
+                  msgs.push({
+                    sender: 'agent',
+                    text: textChunk,
+                    isHidden: true,
+                    timestamp: new Date(),
+                  });
+                  return [...msgs];
+                }
+
+                if (
+                  agentMessageIndex === -1 ||
+                  msgs[agentMessageIndex]?.asset ||
+                  msgs[agentMessageIndex]?.sender !== 'agent' ||
+                  msgs[agentMessageIndex]?.isHidden
+                ) {
+                  msgs.push({
+                    sender: 'agent',
+                    text: textChunk
+                      .replace(/\[System Note:[\s\S]*?(?:\]|$)/g, '')
+                      .trim(),
+                    rawText: textChunk,
+                    timestamp: new Date(),
+                  });
+                  agentMessageIndex = msgs.length - 1;
+                  lastInvocationId = currentInvocationId;
+                } else {
+                  const fullRaw =
+                    (msgs[agentMessageIndex].rawText ||
+                      msgs[agentMessageIndex].text) + textChunk;
+                  msgs[agentMessageIndex].rawText = fullRaw;
+                  msgs[agentMessageIndex].text = fullRaw
+                    .replace(/\[System Note:[\s\S]*?(?:\]|$)/g, '')
+                    .trim();
+                }
+                return [...msgs];
+              });
+              this.shouldScrollToBottom = true;
+            }
+            if (part.functionResponse?.response?.result) {
+              try {
+                const result = JSON.parse(
+                  part.functionResponse.response.result,
+                );
+                if (result.asset) {
+                  this.chatMessages.update(msgs => {
+                    if (agentMessageIndex === -1) {
+                      msgs.push({
+                        sender: 'agent',
+                        text: '',
+                        asset: result.asset,
+                        timestamp: new Date(),
+                      });
+                      agentMessageIndex = msgs.length - 1;
+                    } else {
+                      msgs[agentMessageIndex].asset = result.asset;
+                    }
+                    // Broadcast newly generated asset to the main Workbench ONLY if it's a video
+                    if (result.asset.type === 'video') {
+                      this.agentChatService.videoGenerated$.next(result.asset);
+                    }
+                    return [...msgs];
+                  });
+                  this.shouldScrollToBottom = true;
+                } else if (result.clips && result.assets) {
+                  this.isTyping.set(false);
+                  this.agentChatService.isGeneratingStoryboard.set(false);
+                  this.agentChatService.videoGenerated$.next(result);
+                } else if (result.storyboard_id) {
+                  this.isTyping.set(false);
+                  this.agentChatService.isGeneratingStoryboard.set(false);
+                  this.storyboardService
+                    .getStoryboard(result.storyboard_id)
+                    .subscribe({
+                      next: storyboard => {
+                        if (storyboard.timeline_id) {
+                          this.timelineState.loadedTimelineId.set(undefined);
+                        }
+                        this.agentChatService.currentStoryboard.set(storyboard);
+                      },
+                      error: err => {
+                        console.error('Failed to fetch storyboard:', err);
+                        handleErrorSnackbar(
+                          this.snackBar,
+                          err,
+                          'Fetch Storyboard',
+                        );
+                      },
+                    });
+                } else {
+                  const extracted = this.extractStoryboardData(result);
+                  if (extracted) {
+                    this.isTyping.set(false);
+                    this.agentChatService.isGeneratingStoryboard.set(false);
+                    const milestone = this.getMilestoneForStage(
+                      'storyboard',
+                      undefined,
+                      extracted,
+                    );
+                    this.chatMessages.update(msgs => {
+                      if (agentMessageIndex !== -1 && msgs[agentMessageIndex]) {
+                        msgs[agentMessageIndex].storyboard = extracted;
+                        msgs[agentMessageIndex].milestone = milestone;
+                      } else if (
+                        msgs.length > 0 &&
+                        msgs[msgs.length - 1].sender === 'agent'
+                      ) {
+                        msgs[msgs.length - 1].storyboard = extracted;
+                        msgs[msgs.length - 1].milestone = milestone;
+                      }
+                      return [...msgs];
+                    });
+                  }
+                }
+              } catch (e) {
+                // eslint-disable-next-line no-empty
+              }
+            }
+          }
+        }
+      },
+      onError: err => {
+        console.error('SSE Error:', err);
+        const friendly = this.getFriendlyErrorMessage(err);
+        if (friendly.type === 'agent_busy') {
+          // The backend refused to start a second run on this session, so
+          // nothing reached the agent: roll back the optimistic user turn
+          // and follow the run that is actually executing.
+          this.rollbackUnsentAction();
+          this.snackBar.open(friendly.text, 'OK', {duration: 6000});
+          this.reattachToLiveRun();
+          return;
+        }
+        if (friendly.code === 503) {
+          console.warn(
+            'Backend returned 503: Agent Engine is likely missing AGENT_ENGINE_RESOURCE_NAME in environment.',
+          );
+          this.agentUnavailable.set(true);
+        } else {
+          handleErrorSnackbar(this.snackBar, err, 'Agent Execution');
+        }
+
+        // If an empty partial agent message was created before error, clean it up
+        if (agentMessageIndex !== -1) {
+          const currentMsgs = this.chatMessages();
+          const partialMsg = currentMsgs[agentMessageIndex];
+          if (partialMsg && !partialMsg.text?.trim() && !partialMsg.asset) {
+            this.chatMessages.update(msgs =>
+              msgs.filter((_, idx) => idx !== agentMessageIndex),
+            );
+          }
+        }
+
+        const errorMessage: ChatMessageUI = {
+          sender: 'agent',
+          text: friendly.text,
+          isError: true,
+          errorCode: friendly.code,
+          errorType: friendly.type,
+          timestamp: new Date(),
+        };
+
+        this.chatMessages.update(msgs => [...msgs, errorMessage]);
+        this.shouldScrollToBottom = true;
+
+        this.isTyping.set(false);
+        this.isSubmittingGate.set(false);
+        this.agentChatService.isGeneratingStoryboard.set(false);
+        this.agentChatService.isGeneratingVideo.set(false);
+
+        if (friendly.type === 'concurrent_run') {
+          // The run we were following lost the optimistic-concurrency race;
+          // the other run is still live, so keep showing its progress.
+          this.reattachToLiveRun();
+        }
+      },
+      onClose: () => {
+        this.isTyping.set(false);
+        this.isSubmittingGate.set(false);
+        this.agentChatService.isGeneratingStoryboard.set(false);
+        this.agentChatService.isGeneratingVideo.set(false);
+        if (agentMessageIndex !== -1) {
+          const currentMsgs = this.chatMessages();
+          const msg = currentMsgs[agentMessageIndex];
+          if (msg && msg.text) {
+            const extraction = this.parseAndExtractJSONs(msg.text);
+            if (extraction.assets.length > 0) {
+              currentMsgs[agentMessageIndex].asset = extraction.assets[0];
+              currentMsgs[agentMessageIndex].text = extraction.cleanText;
+              // Broadcast newly generated asset to the main Workbench ONLY if it's a video
+              if (extraction.assets[0].type === 'video') {
+                this.agentChatService.videoGenerated$.next(
+                  extraction.assets[0],
+                );
+              }
+            }
+            this.checkForStoryboardId(msg.text);
+            if (extraction.assets.length > 0) {
+              this.chatMessages.set([...currentMsgs]);
+            }
+          }
+        }
+
+        // Always query database on stream completion to get the latest storyboard & scenes
+        this.refreshStoryboardForSession();
+      },
+    };
+  }
+
+  /**
+   * True when the event marks the final video as produced: either the
+   * `stitch_final_video` tool succeeded or the agent published the final asset
+   * in its state delta. Handles both snake_case (Agent Engine / local ADK) and
+   * camelCase payloads.
+   */
+  private isFinalVideoReadyEvent(data: any): boolean {
+    if (!data) return false;
+    const delta =
+      data.actions?.state_delta ||
+      data.actions?.stateDelta ||
+      data.raw_event?.actions?.state_delta ||
+      {};
+    if (delta.final_video_asset_id || delta.final_video_asset_ref) {
+      return true;
+    }
+    const parts = data.content?.parts || data.raw_event?.content?.parts || [];
+    return parts.some((p: any) => {
+      const fr =
+        p?.functionResponse ||
+        p?.function_response ||
+        p?.toolResponse ||
+        p?.tool_response;
+      if (!fr || fr.name !== 'stitch_final_video') return false;
+      const status = fr.response?.status;
+      return !status || status === 'succeeded' || status === 'success';
+    });
+  }
+
+  /**
+   * Raw copy of the campaign-related session-state keys seen so far
+   * (see `CAMPAIGN_STATE_KEYS`). Streamed `state_delta`s are partial, so they
+   * are merged into this before parsing; a session load replaces it.
+   */
+  private campaignState: Record<string, unknown> | null = null;
+
+  /**
+   * Updates the read-only campaign brief from an agent state object (either a
+   * full `session.state` or a streamed `state_delta`). With `keepExisting`
+   * (streaming), deltas without any campaign key leave the brief untouched;
+   * otherwise (session load) a missing/invalid brief hides the Campaign tab.
+   *
+   * The agent strips `parameters.storyline_guidance` once strategy is mapped
+   * (templated mode), so a `parameters` value without it inherits the one
+   * already seen while streaming, or the last one in `events` on a load.
+   */
+  private syncCampaignDetails(
+    state: any,
+    keepExisting = false,
+    events?: unknown[],
+  ) {
+    const picked: Record<string, unknown> = {};
+    let hasAny = false;
+    if (state && typeof state === 'object') {
+      for (const key of CAMPAIGN_STATE_KEYS) {
+        if (state[key] !== undefined) {
+          picked[key] = state[key];
+          hasAny = true;
+        }
+      }
+    }
+    if (picked['parameters'] !== undefined) {
+      const fallback = keepExisting
+        ? (this.campaignState?.['parameters'] as any)?.storyline_guidance
+        : findStorylineGuidanceInEvents(events);
+      picked['parameters'] = withStorylineGuidance(
+        picked['parameters'],
+        fallback,
+      );
+    }
+    if (keepExisting) {
+      if (!hasAny) return;
+      const merged = {...(this.campaignState || {}), ...picked};
+      const parsed = parseCampaignState(merged);
+      if (parsed === null) return;
+      this.campaignState = merged;
+      this.agentChatService.campaignDetails.set(parsed);
+      this.publishCampaignSession();
+      return;
+    }
+    this.campaignState = hasAny ? picked : null;
+    this.agentChatService.campaignDetails.set(parseCampaignState(picked));
+    this.publishCampaignSession();
+  }
+
+  /** Tells side panels which session/workspace `campaignDetails` describe. */
+  private publishCampaignSession() {
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const sessionId = this.currentSessionId;
+    this.agentChatService.campaignSession.set(
+      sessionId && workspaceId && this.agentChatService.campaignDetails()
+        ? {sessionId, workspaceId}
+        : null,
+    );
+  }
+
+  /** Forgets the campaign brief and final-cut flag (new chat / session switch). */
+  private clearCampaignDetails() {
+    this.campaignState = null;
+    this.agentChatService.campaignDetails.set(null);
+    this.agentChatService.campaignSession.set(null);
+    this.agentChatService.finalVideoReady.set(false);
+  }
+
+  /**
+   * Updates `finalVideoReady` from an agent state object (full `session.state`
+   * or a streamed `state_delta`). The agent writes `final_video_asset_id` /
+   * `final_video_asset_ref` when `stitch_final_video` succeeds and resets them
+   * to `null` when the user regenerates. With `keepExisting` (streaming), a
+   * delta without either key leaves the flag untouched; otherwise (session
+   * load) a missing key means no final cut exists yet.
+   */
+  private syncFinalVideoReady(state: any, keepExisting = false) {
+    const hasKey =
+      !!state &&
+      typeof state === 'object' &&
+      ('final_video_asset_id' in state || 'final_video_asset_ref' in state);
+    if (!hasKey) {
+      if (!keepExisting) this.agentChatService.finalVideoReady.set(false);
+      return;
+    }
+    this.agentChatService.finalVideoReady.set(
+      !!(state.final_video_asset_id || state.final_video_asset_ref),
+    );
+  }
+
+  /**
+   * Storyboard id the agent last announced for this session, taken from
+   * `current_storyboard_id` in the loaded state or a streamed delta. It is
+   * the authoritative record to show: the agent may rewrite it in place or,
+   * on legacy sessions, re-point to a fresh row.
+   */
+  private streamedStoryboardId: number | null = null;
+
+  private trackStreamedStoryboardId(state: any) {
+    if (!state || typeof state !== 'object') return;
+    let raw: unknown;
+    if ('current_storyboard_id' in state) raw = state.current_storyboard_id;
+    else if ('currentStoryboardId' in state) raw = state.currentStoryboardId;
+    else return; // not part of this delta
+    const id = Number(raw);
+    this.streamedStoryboardId =
+      raw !== null && raw !== '' && Number.isFinite(id) && id > 0 ? id : null;
+  }
+
+  /**
+   * Re-reads the storyboard bound to the current session so `currentStoryboard`
+   * reflects the latest scenes / `timeline_id`. With `videoReady` it also
+   * notifies listeners that the final cut is available (the storyboard panel
+   * toggles its "See Video" CTA). `timeline_id` alone is NOT evidence of a
+   * video: the agent creates the timeline when it persists the storyboard,
+   * long before `stitch_final_video` runs.
+   */
+  private refreshStoryboardForSession(videoReady = false) {
+    const announce = () => {
+      if (videoReady) this.agentChatService.videoGenerated$.next(true);
+    };
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    if (!workspaceId || !this.currentSessionId) {
+      announce();
+      return;
+    }
+    const sessionId = this.currentSessionId;
+    this.storyboardService
+      .getStoryboardForSession(workspaceId, sessionId)
+      .subscribe({
+        next: storyboards => {
+          if (
+            storyboards &&
+            storyboards.length > 0 &&
+            this.currentSessionId === sessionId
+          ) {
+            // The backend lists newest first; prefer the record the agent
+            // says it is working on when we know it.
+            const preferred =
+              this.streamedStoryboardId !== null
+                ? storyboards.find(
+                    s => Number(s.id) === this.streamedStoryboardId,
+                  )
+                : undefined;
+            const storyboard = preferred ?? storyboards[0];
+            if (storyboard.timeline_id) {
+              this.timelineState.loadedTimelineId.set(undefined);
+            }
+            this.agentChatService.currentStoryboard.set(storyboard);
+            this.syncStoryboardUrl(sessionId, storyboard.id);
+          }
+          announce();
+        },
+        error: err => {
+          console.error(
+            'Failed to fetch storyboard after stream completion:',
+            err,
+          );
+          announce();
+        },
+      });
+  }
+
+  /** Keeps `?storyboardId=` pointing at the storyboard actually shown. */
+  private syncStoryboardUrl(sessionId: string, storyboardId: number) {
+    const qp = this.route.snapshot?.queryParams ?? {};
+    const urlStoryboardId = qp['storyboardId']
+      ? Number(qp['storyboardId'])
+      : null;
+    if (urlStoryboardId === storyboardId) return;
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: {sessionId, storyboardId},
+      queryParamsHandling: 'merge',
+    });
+  }
+
+  private scrollToBottom(): void {
+    if (this.chatContainer) {
+      setTimeout(() => {
+        try {
+          this.chatContainer.nativeElement.scrollTop =
+            this.chatContainer.nativeElement.scrollHeight;
+        } catch (err) {
+          // eslint-disable-next-line no-empty
+        }
+      }, 50);
+    }
+  }
+
+  onMessageClick(event: MouseEvent) {
+    const target = event.target as HTMLElement;
+    if (target.tagName === 'IMG') {
+      const url = target.getAttribute('src');
+      if (url) {
+        window.open(url, '_blank');
+      }
+    } else if (target.tagName === 'A') {
+      const url = target.getAttribute('href');
+      if (
+        url &&
+        (url.endsWith('.png') ||
+          url.endsWith('.jpg') ||
+          url.includes('storage.googleapis.com'))
+      ) {
+        event.preventDefault();
+        window.open(url, '_blank');
+      }
+    }
+  }
+
+  /**
+   * The storyboard the agent republished in an event's state delta
+   * (`actions.state_delta.storyboard` / `actions.stateDelta.storyboard`), or
+   * `null` when the event carries none or an empty one. This is the agent's
+   * own record, so it is the only source a scene count may be quoted from.
+   */
+  private storyboardFromStateDelta(event: any): StoryboardResponse | null {
+    const actions = event?.actions || event?.raw_event?.actions || {};
+    const delta = actions.state_delta || actions.stateDelta || {};
+    const sb = delta.storyboard;
+    if (sb && Array.isArray(sb.scenes) && sb.scenes.length > 0) {
+      return sb as StoryboardResponse;
+    }
+    return null;
+  }
+
+  private extractStoryboardData(parsed: unknown): StoryboardResponse | null {
+    if (!parsed || typeof parsed !== 'object') return null;
+    const obj = parsed as Record<string, any>;
+    // Check current level
+    if (obj['scenes'] && Array.isArray(obj['scenes'])) {
+      return obj as unknown as StoryboardResponse;
+    }
+    // Check specific known wrappers to prevent deep search overhead if possible
+    if (obj['storyboard']?.scenes && Array.isArray(obj['storyboard'].scenes)) {
+      return obj['storyboard'] as StoryboardResponse;
+    }
+    if (
+      obj['storyboard_agent_templated_response']?.scenes &&
+      Array.isArray(obj['storyboard_agent_templated_response'].scenes)
+    ) {
+      return obj['storyboard_agent_templated_response'] as StoryboardResponse;
+    }
+    // Otherwise recursive search up to a certain depth to prevent stack overflows
+    return this.deepSearchScenes(obj, 5);
+  }
+  private deepSearchScenes(obj: any, depth: number): StoryboardResponse | null {
+    if (depth === 0 || !obj || typeof obj !== 'object') return null;
+    if (obj.scenes && Array.isArray(obj.scenes)) {
+      return obj as StoryboardResponse;
+    }
+    for (const key of Object.keys(obj)) {
+      const result = this.deepSearchScenes(obj[key], depth - 1);
+      if (result) return result;
+    }
+    return null;
+  }
+
+  private parseAndExtractJSONs(text: string): {
+    assets: any[];
+    storyboards: StoryboardResponse[];
+    timelines: TimelineDTO[];
+
+    cleanText: string;
+  } {
+    const cleanText = text;
+    const assets: any[] = [];
+    const storyboards: StoryboardResponse[] = [];
+    const timelines: TimelineDTO[] = [];
+
+    if (!text.includes('{') || !text.includes('}')) {
+      return {assets, storyboards, timelines, cleanText};
+    }
+
+    const codeBlockRegex = /```(?:json)?\s*([\s\S]*?)\s*```/g;
+    let match;
+    let modifiedText = text;
+
+    while ((match = codeBlockRegex.exec(text)) !== null) {
+      const innerText = match[1];
+      try {
+        const parsed = JSON.parse(innerText);
+        if (parsed.asset) {
+          assets.push(parsed.asset);
+          modifiedText = modifiedText.replace(match[0], '').trim();
+        } else if (parsed.clips && parsed.assets) {
+          timelines.push(parsed);
+          modifiedText = modifiedText.replace(match[0], '').trim();
+        } else {
+          const sb = this.extractStoryboardData(parsed);
+          if (sb) {
+            storyboards.push(sb);
+            modifiedText = modifiedText.replace(match[0], '').trim();
+          }
+        }
+      } catch (e) {
+        // Ignore parse error inside block
+      }
+    }
+
+    if (
+      assets.length === 0 &&
+      storyboards.length === 0 &&
+      timelines.length === 0
+    ) {
+      try {
+        const raw = modifiedText.trim();
+        const parsed = JSON.parse(raw);
+        if (parsed.asset) {
+          assets.push(parsed.asset);
+          modifiedText = '';
+          modifiedText = '';
+        } else if (parsed.clips && parsed.assets) {
+          timelines.push(parsed);
+          modifiedText = '';
+          const sb = this.extractStoryboardData(parsed);
+          if (sb) {
+            storyboards.push(sb);
+            modifiedText = '';
+          }
+        }
+      } catch (e) {
+        try {
+          const firstBrace = modifiedText.indexOf('{');
+          const lastBrace = modifiedText.lastIndexOf('}');
+          if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+            const possibleJson = modifiedText.substring(
+              firstBrace,
+              lastBrace + 1,
+            );
+            const parsed = JSON.parse(possibleJson);
+            if (parsed.asset) {
+              assets.push(parsed.asset);
+              modifiedText = modifiedText.replace(possibleJson, '').trim();
+            } else if (parsed.clips && parsed.assets) {
+              timelines.push(parsed);
+              modifiedText = modifiedText.replace(possibleJson, '').trim();
+            } else {
+              const sb = this.extractStoryboardData(parsed);
+              if (sb) {
+                storyboards.push(sb);
+                modifiedText = modifiedText.replace(possibleJson, '').trim();
+              }
+            }
+          }
+        } catch (ex) {
+          // Could not find any valid pure JSON
+        }
+      }
+    }
+
+    return {assets, storyboards, timelines, cleanText: modifiedText};
+  }
+
+  private checkForStoryboardId(text: string) {
+    const idMatch = text.match(/\[ID:\s*([^\]]+)\]/);
+    if (idMatch) {
+      const storyboardId = idMatch[1];
+      const numericId = storyboardId.split('_').pop();
+      if (numericId) {
+        const id = parseInt(numericId, 10);
+        if (!isNaN(id)) {
+          this.storyboardService.getStoryboard(id).subscribe({
+            next: sb => {
+              if (sb.timeline_id) {
+                this.timelineState.loadedTimelineId.set(undefined);
+              }
+              this.agentChatService.currentStoryboard.set(sb);
+            },
+            error: err => console.error('Failed to fetch storyboard:', err),
+          });
+        }
+      }
+    }
+  }
+
+  // --- Image Selector Methods ---
+
+  openImageSelector() {
+    const dialogRef = this.dialog.open(ImageSelectorComponent, {
+      width: '90vw',
+      height: '80vh',
+      maxWidth: '90vw',
+      data: {
+        mimeType: 'image/*',
+        multiSelect: true,
+        maxSelection: 10 - this.selectedImages().length,
+        // The Izumi agent resolves an attached media item by id and always
+        // takes its FIRST image, ignoring `mediaIndex`. Until that is fixed
+        // upstream, only let the user pick index 0 so the preview matches
+        // what the agent actually receives.
+        firstIndexOnly: true,
+      },
+      panelClass: 'image-selector-dialog',
+    });
+
+    dialogRef
+      .afterClosed()
+      .subscribe(
+        (
+          result:
+            | SourceAssetResponseDto
+            | MediaItemSelection
+            | Array<SourceAssetResponseDto | MediaItemSelection>
+            | undefined,
+        ) => {
+          if (!result) return;
+
+          const results = (Array.isArray(result) ? result : [result]).map(
+            img =>
+              'mediaItem' in img && img.selectedIndex
+                ? {...img, selectedIndex: 0}
+                : img,
+          );
+          this.selectedImages.update(current => {
+            return [...current, ...results];
+          });
+        },
+      );
+  }
+
+  removeSelectedImage(index: number) {
+    this.selectedImages.update(current => {
+      const newImages = [...current];
+      newImages.splice(index, 1);
+      return newImages;
+    });
+  }
+
+  getAssetUrl(img: SourceAssetResponseDto | MediaItemSelection): string {
+    if ('mediaItem' in img) {
+      // It's a MediaItemSelection from the unified gallery
+      const selection = img as MediaItemSelection;
+      const index = selection.selectedIndex || 0;
+      if (selection.mediaItem.presignedThumbnailUrls?.length) {
+        return selection.mediaItem.presignedThumbnailUrls[index];
+      }
+      if (selection.mediaItem.presignedUrls?.length) {
+        return selection.mediaItem.presignedUrls[index];
+      }
+      return '';
+    } else {
+      // It's a SourceAssetResponseDto
+      const asset = img as SourceAssetResponseDto;
+      if (asset.presignedThumbnailUrl) return asset.presignedThumbnailUrl;
+      if (asset.presignedUrl) return asset.presignedUrl;
+      // No presigned URL yet: `resolveMessageImagesEffect` is fetching it.
+      // Never guess a backend URL here — all media is served through
+      // presigned GCS URLs; there is no "download" route.
+      return '';
+    }
+  }
+
+  /** True once the resolver gave up on this image (deleted / not accessible). */
+  isAssetUnavailable(
+    img: SourceAssetResponseDto | MediaItemSelection,
+  ): boolean {
+    return (img as {unavailable?: boolean}).unavailable === true;
+  }
+
+  /** Error types for which re-sending the last turn would make things worse. */
+  private static readonly NON_RETRYABLE_ERROR_TYPES = new Set([
+    'agent_busy',
+    'concurrent_run',
+  ]);
+
+  /** Whether an error card should offer the Retry button. */
+  isRetryableError(msg: ChatMessageUI): boolean {
+    return !ChatInterfaceComponent.NON_RETRYABLE_ERROR_TYPES.has(
+      msg.errorType || '',
+    );
+  }
+
+  errorCardTitle(msg: ChatMessageUI): string {
+    return this.isRetryableError(msg) ? 'Agent Execution Failed' : 'Agent Busy';
+  }
+
+  /**
+   * Undoes the optimistic UI of a turn the backend refused (409): drops the
+   * user bubble, puts the text back into the composer or re-opens the gate
+   * card so the decision can be submitted again once the run is over.
+   */
+  private rollbackUnsentAction() {
+    const action = this.lastExecutedAction;
+    this.lastExecutedAction = null;
+    this.chatMessages.update(msgs => {
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i].sender === 'user') {
+          return msgs.filter((_, idx) => idx !== i);
+        }
+      }
+      return msgs;
+    });
+    if (action?.type === 'chat' && action.text) {
+      this.chatInputValue.set(action.text);
+    } else if (action?.type === 'gate' && action.gate) {
+      if (action.gate.callId) {
+        this.submittedGateCallIds.delete(action.gate.callId);
+      }
+      this.activeApprovalGate.set(action.gate);
+    }
+    this.isTyping.set(false);
+    this.isSubmittingGate.set(false);
+    this.agentChatService.isGeneratingStoryboard.set(false);
+    this.agentChatService.isGeneratingVideo.set(false);
+  }
+
+  /** Follows the run that is still executing on the current session. */
+  private reattachToLiveRun() {
+    if (!this.currentSessionId) return;
+    this.resumePolling(this.currentSessionId);
+  }
+
+  getFriendlyErrorMessage(err: any): {
+    text: string;
+    code?: number;
+    type?: string;
+  } {
+    let code: number | undefined = (err as any)?.code || (err as any)?.status;
+    let type: string | undefined = (err as any)?.type;
+    const rawMsg =
+      ((err as any)?.message || (typeof err === 'string' ? err : '')) + '';
+
+    if (!code) {
+      if (
+        rawMsg.includes('401') ||
+        rawMsg.toLowerCase().includes('unauthorized') ||
+        rawMsg.toLowerCase().includes('unauthenticated') ||
+        rawMsg.toLowerCase().includes('token expired')
+      ) {
+        code = 401;
+        type = 'auth_expired';
+      } else if (
+        rawMsg.includes('429') ||
+        rawMsg.includes('ResourceExhausted') ||
+        rawMsg.toLowerCase().includes('quota')
+      ) {
+        code = 429;
+        type = 'quota_exceeded';
+      } else if (rawMsg.includes('503') || rawMsg.includes('UNAVAILABLE')) {
+        code = 503;
+        type = 'service_unavailable';
+      } else if (
+        rawMsg.includes('504') ||
+        rawMsg.includes('DeadlineExceeded') ||
+        rawMsg.toLowerCase().includes('timeout')
+      ) {
+        code = 504;
+        type = 'timeout';
+      } else if (rawMsg.includes('400') || rawMsg.includes('InvalidArgument')) {
+        code = 400;
+        type = 'invalid_argument';
+      }
+    }
+
+    if (type === 'agent_busy') {
+      return {
+        text: 'Izumi is still working on the previous step in this conversation. Your message was not sent — wait for the current step to finish, then send it again.',
+        code: 409,
+        type: 'agent_busy',
+      };
+    }
+
+    if (type === 'concurrent_run' || code === 409) {
+      return {
+        text: 'Two requests ran on this conversation at the same time and this one was dropped. The other request is still running — wait for it to finish before continuing.',
+        code: 409,
+        type: 'concurrent_run',
+      };
+    }
+
+    if (code === 401 || type === 'auth_expired') {
+      return {
+        text: 'Your sign-in expired while the agent was working. Sign in again and press Retry to resume from your last message.',
+        code: 401,
+        type: 'auth_expired',
+      };
+    }
+
+    if (code === 429 || type === 'quota_exceeded') {
+      return {
+        text: 'AI Model Quota Exceeded: The agent has temporarily reached its rate or quota limit. Please wait a moment and retry.',
+        code: 429,
+        type: 'quota_exceeded',
+      };
+    }
+
+    if (code === 503 || type === 'service_unavailable') {
+      return {
+        text: 'Agent Service Unavailable: The agent reasoning engine or foundation model is temporarily unreachable. Please retry shortly.',
+        code: 503,
+        type: 'service_unavailable',
+      };
+    }
+
+    if (code === 504 || type === 'timeout') {
+      return {
+        text: 'Request Timed Out: The agent took too long generating a response or media. Please retry.',
+        code: 504,
+        type: 'timeout',
+      };
+    }
+
+    if (code === 400 || type === 'invalid_argument') {
+      return {
+        text: 'Invalid Request: The agent received conflicting instructions or parameters. Please try rephrasing your request.',
+        code: 400,
+        type: 'invalid_argument',
+      };
+    }
+
+    return {
+      text: 'Agent Execution Failed: An unexpected error occurred while processing your request. Please try again.',
+      code: code || 500,
+      type: type || 'unknown',
+    };
+  }
+
+  /**
+   * Whether the Retry button on an error card can do anything.
+   * `lastExecutedAction` only survives while this component instance lives;
+   * after a re-login (token expired mid-run) the component is re-created, so
+   * we also accept a user turn that can be recovered from the loaded history.
+   */
+  canRetry(): boolean {
+    if (this.isBusy() || !this.currentSessionId) return false;
+    return (
+      this.lastExecutedAction !== null ||
+      this.recoverLastActionFromHistory() !== null
+    );
+  }
+
+  retryLastAction() {
+    if (this.isBusy() || !this.currentSessionId) {
+      return;
+    }
+    const action =
+      this.lastExecutedAction ?? this.recoverLastActionFromHistory();
+    if (!action) {
+      return;
+    }
+
+    // Remove the error card from the chat
+    this.chatMessages.update(msgs => msgs.filter(m => !m.isError));
+
+    this.isTyping.set(true);
+    if (this.currentAgent === 'ads_x') {
+      this.agentChatService.isGeneratingStoryboard.set(true);
+    }
+    this.shouldScrollToBottom = true;
+
+    if (action.type === 'gate') {
+      this.isSubmittingGate.set(true);
+      this.activeApprovalGate.set(null);
+    }
+
+    this.agentChatService.stopPolling();
+    const callbacks = this.setupCallbacks();
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+
+    void this.agentChatService.sendMessage(
+      this.currentSessionId,
+      action.partsParams,
+      workspaceId,
+      callbacks,
+    );
+  }
+
+  /**
+   * Rebuilds a retryable action from the last user turn in `chatMessages`.
+   * Used when `lastExecutedAction` is null (new component instance after a
+   * login redirect or session switch). Gate decisions are NOT replayed as a
+   * `function_response`: their tool-call id was already consumed by the agent
+   * and the backend rejects it, so we ask the agent to continue in plain text.
+   */
+  private recoverLastActionFromHistory(): {
+    type: 'chat';
+    text: string;
+    partsParams: any[];
+  } | null {
+    const msgs = this.chatMessages();
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const msg = msgs[i];
+      if (msg.isError || msg.sender !== 'user') continue;
+      const text = (msg.text || '').trim();
+      const images: any[] = msg.images || [];
+      if (!text && images.length === 0) continue;
+
+      if (GATE_DECISION_MARKERS.some(marker => text.includes(marker))) {
+        const continuation = `Please continue from where you left off. My last decision was: ${text}`;
+        return {
+          type: 'chat',
+          text: continuation,
+          partsParams: [{text: continuation}],
+        };
+      }
+
+      const partsParams: any[] = [];
+      if (text) partsParams.push({text});
+      for (const img of images) {
+        if (img && 'mediaItem' in img && img.mediaItem?.id) {
+          partsParams.push({
+            sourceMediaItem: {
+              mediaItemId: img.mediaItem.id,
+              mediaIndex: img.selectedIndex || 0,
+              role: 'input',
+            },
+          });
+        } else if (img?.id) {
+          partsParams.push({sourceAssetId: img.id});
+        }
+      }
+      if (partsParams.length === 0) continue;
+      return {type: 'chat', text, partsParams};
+    }
+    return null;
+  }
+
+  toggleInputExpand() {
+    if (this.isInputExpanded()) {
+      this.isInputExpanded.set(false);
+      if (this.dialogRef) {
+        this.dialogRef.close();
+        this.dialogRef = null;
+      }
+    } else {
+      this.isInputExpanded.set(true);
+      this.dialogRef = this.dialog.open(this.expandDialog, {
+        width: '60vw',
+        maxWidth: '900px',
+        panelClass: 'custom-glass-dialog',
+        disableClose: false,
+      });
+      this.dialogRef.afterClosed().subscribe(() => {
+        this.isInputExpanded.set(false);
+        this.dialogRef = null;
+      });
+    }
+  }
+
+  onInputResize(event: Event) {
+    const element = event.target as HTMLTextAreaElement;
+    this.chatInputValue.set(element.value);
+    element.style.height = 'auto';
+    element.style.height = `${element.scrollHeight}px`;
+  }
+
+  onKeyDown(event: KeyboardEvent) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      this.submitChat();
+    }
+  }
+
+  submitChat() {
+    if (this.isBusy()) return;
+    const val = this.chatInputValue();
+    if ((!val || !val.trim()) && this.selectedImages().length === 0) return;
+    this.sendChatMessage(val);
+    this.chatInputValue.set('');
+
+    if (this.dialogRef) {
+      this.dialogRef.close();
+    }
+
+    // Reset height of textarea in base input area
+    setTimeout(() => {
+      const textarea = document.querySelector(
+        'textarea[data-chat-input]',
+      ) as HTMLTextAreaElement;
+      if (textarea) {
+        textarea.style.height = 'auto';
+      }
+    }, 0);
+  }
+}

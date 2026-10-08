@@ -31,7 +31,7 @@ import {WorkflowEditorComponent} from './workflows/workflow-editor/workflow-edit
 import {WorkflowListComponent} from './workflows/workflow-list/workflow-list.component';
 import {WorkbenchComponent} from './workbench/workbench.component';
 import {UpscaleComponent} from './upscale/upscale.component';
-import {UserRolesEnum} from './common/models/user.model';
+import {ProjectsComponent} from './projects/projects.component';
 
 const routes: Routes = [
   {path: 'login', component: LoginComponent},
@@ -49,10 +49,22 @@ const routes: Routes = [
     component: WorkbenchComponent,
     canActivate: [AuthGuardService],
   },
+  {
+    path: 'projects',
+    component: ProjectsComponent,
+    canActivate: [AuthGuardService],
+  },
   // When a user goes to '/gallery', show the main feed.
   {
     path: 'gallery',
     component: MediaGalleryComponent,
+    canActivate: [AuthGuardService],
+  },
+  // When a user navigates to a folder in the gallery.
+  {
+    path: 'folders/:folderId',
+    component: MediaGalleryComponent,
+    canActivate: [AuthGuardService],
   },
   // When a user goes to '/gallery/some-unique-id', show the detail page.
   // The ':id' is a placeholder for the media item's ID.
@@ -80,7 +92,6 @@ const routes: Routes = [
   {
     path: 'workflows',
     canActivate: [AuthGuardService],
-    data: {requiredRoles: [UserRolesEnum.WORKFLOWS, UserRolesEnum.ADMIN]},
     children: [
       {path: '', component: WorkflowListComponent, pathMatch: 'full'},
       {

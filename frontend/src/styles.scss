@@ -496,3 +496,20 @@ app-workspace-switcher .workspace-name {
     font-weight: 600;
   }
 }
+
+.google-drive-snackbar {
+  --mdc-snackbar-container-color: #000000;
+  --mdc-snackbar-supporting-text-color: #ffffff;
+}
+
+// Tooltip used to reveal a full (truncated) prompt, e.g. in the media lightbox audio stage.
+// Tooltips render in the CDK overlay, so this must live in the global stylesheet.
+.full-prompt-tooltip .mdc-tooltip__surface {
+  max-width: min(32rem, 90vw);
+  max-height: 60vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-align: left;
+  line-height: 1.4;
+}

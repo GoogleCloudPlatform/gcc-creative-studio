@@ -23,6 +23,7 @@ import {
   QueryList,
   ElementRef,
   OnDestroy,
+  HostListener,
   effect,
   inject,
   OnInit,
@@ -30,40 +31,53 @@ import {
   PLATFORM_ID,
 } from '@angular/core';
 import {isPlatformBrowser} from '@angular/common';
+import {HttpClient} from '@angular/common/http';
 import {MatIconRegistry} from '@angular/material/icon';
-import {
-  DomSanitizer,
-  SafeResourceUrl,
-  SafeUrl,
-} from '@angular/platform-browser';
+import {DomSanitizer, SafeResourceUrl} from '@angular/platform-browser';
 import {MatDialog} from '@angular/material/dialog';
 import {
   ImageSelectorComponent,
   MediaItemSelection,
 } from '../common/components/image-selector/image-selector.component';
-import {SourceAssetResponseDto} from '../common/services/source-asset.service';
+import {
+  SourceAssetResponseDto,
+  SourceAssetService,
+} from '../common/services/source-asset.service';
 // --- Interfaces ---
-import {WorkbenchService, TimelineRequest, Clip} from './workbench.service';
-
-interface MediaAsset {
-  id: string;
-  name: string;
-  type: 'video' | 'audio';
-  url: string;
-  safeUrl: SafeUrl;
-  duration: number; // in seconds
-  thumbnail?: string;
-}
-
-interface TimelineClip {
-  id: string;
-  assetId: string;
-  startTime: number; // absolute time on timeline
-  duration: number; // duration of this specific clip (could be trimmed later)
-  offset: number; // offset into the original source file
-  trackIndex: number; // 0 for video, 1 for audio
-  color: string;
-}
+import {WorkbenchService, RenderTimelineRequest} from './workbench.service';
+import {AgentChatService} from './services/agent-chat.service';
+import {TimeRulerComponent} from './components/time-ruler/time-ruler.component';
+import {TimelineStateService} from './services/timeline-state.service';
+import {PlayheadSyncService} from './services/playhead-sync.service';
+import {
+  TimelineDTO,
+  VideoClipDTO,
+  AudioClipDTO,
+  TransitionType,
+  TimelineClip,
+  MediaAsset,
+} from '../common/models/workbench.model';
+import {clampFade, clampGain} from './utils/audio-gain';
+import {AudioClipAdjustment} from './components/audio-clip-inspector/audio-clip-inspector.component';
+import {ActivatedRoute, Router} from '@angular/router';
+import {MatSnackBar} from '@angular/material/snack-bar';
+import {
+  handleErrorSnackbar,
+  handleSuccessSnackbar,
+} from '../utils/handleMessageSnackbar';
+import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
+import {
+  Subject,
+  Subscription,
+  of,
+  Observable,
+  interval,
+  throwError,
+} from 'rxjs';
+import {debounceTime, switchMap, takeWhile, catchError} from 'rxjs/operators';
+import {StoryboardService} from '../services/storyboard/storyboard.service';
+import {GalleryService} from '../gallery/gallery.service';
+import {MediaItem} from '../common/models/media-item.model';
 
 @Component({
   selector: 'app-workbench',
@@ -72,14 +86,17 @@ interface TimelineClip {
 })
 export class WorkbenchComponent implements OnInit, OnDestroy {
   // Signals for State
-  assets = signal<MediaAsset[]>([]);
-  timelineClips = signal<TimelineClip[]>([]);
-  currentTime = signal<number>(0);
-  isPlaying = signal<boolean>(false);
-  selectedClipId = signal<string | null>(null);
+
   activeToolButton = signal<
     'gallery' | 'audio' | 'stories' | 'edit' | 'agent' | null
   >(null);
+  isVideoHidden = signal<boolean>(false);
+  lockedTracks = signal<Set<number>>(new Set());
+  mutedTracks = signal<Set<number>>(new Set());
+
+  currentScroll = signal<number>(0);
+  containerWidthSignal = signal<number>(0);
+  isPausing = false;
 
   // Simple tab between video/audio assets (UX only)
   activeTab = signal<'video' | 'audio'>('video');
@@ -88,76 +105,56 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   exposureVal = 100;
   contrastVal = 100;
   saturateVal = 100;
-  pixelsPerSecond = 15; // Default reduced from 30 to 15
-
-  // Computed Values
-  videoClips = computed(() =>
-    this.timelineClips()
-      .filter(c => c.trackIndex === 0)
-      .sort((a, b) => a.startTime - b.startTime),
-  );
-
-  // Group audio clips by track index
-  audioTracks = computed(() => {
-    const clips = this.timelineClips().filter(c => c.trackIndex > 0);
-    if (clips.length === 0) return [[]]; // Always return at least one empty track
-    const maxTrack = Math.max(...clips.map(c => c.trackIndex), 1);
-    const tracks: TimelineClip[][] = [];
-    for (let i = 1; i <= maxTrack; i++) {
-      tracks.push(clips.filter(c => c.trackIndex === i));
-    }
-    return tracks;
-  });
 
   // Filtered assets list based on active tab
   filteredAssets = computed(() => {
     const tab = this.activeTab();
-    return this.assets().filter(a => a.type === tab);
+    return this.timelineState.assets().filter(a => a.type === tab);
   });
 
   videoTrackEnd = computed(() => {
-    const clips = this.videoClips();
+    const clips = this.timelineState.videoClips();
     return clips.length > 0
       ? Math.max(...clips.map(c => c.startTime + c.duration))
       : 0;
   });
 
-  totalDuration = computed(() => {
-    if (this.timelineClips().length === 0) return 0;
-    return Math.max(...this.timelineClips().map(c => c.startTime + c.duration));
-  });
-
   timelineWidth = computed(() => {
     // Ensure timeline is at least screen width or longer based on content
-    return Math.max(this.totalDuration() * this.pixelsPerSecond + 800, 800);
-  });
-
-  // derived signals for active source logic
-  activeVideoClip = computed(() => {
-    const time = this.currentTime();
-    return this.videoClips().find(
-      c => time >= c.startTime && time < c.startTime + c.duration,
+    return (
+      this.timelineState.totalDuration() *
+        this.timelineState.pixelsPerSecond() +
+      this.containerWidthSignal()
     );
   });
 
-  activeAudioClips = computed(() => {
-    const time = this.currentTime();
-    return this.audioTracks().map(track =>
-      track.find(c => time >= c.startTime && time < c.startTime + c.duration),
-    );
+  selectedClipIndex = computed(() => {
+    const id = this.timelineState.selectedClipId();
+    if (!id) return -1;
+    return this.timelineState.videoClips().findIndex(c => c.id === id);
+  });
+
+  /** The selected clip when it sits on an audio track, else null. */
+  selectedAudioClip = computed<TimelineClip | null>(() => {
+    const id = this.timelineState.selectedClipId();
+    if (!id) return null;
+    const clip = this.timelineState.timelineClips().find(c => c.id === id);
+    return clip && clip.trackIndex > 0 ? clip : null;
   });
 
   activeVideoSrc = computed(() => {
-    const clip = this.activeVideoClip();
+    const clip = this.timelineState.activeVideoClip();
     if (!clip) return '';
-    const asset = this.assets().find(a => a.id === clip.assetId);
+    const asset = this.timelineState.assets().find(a => a.id === clip.assetId);
     return asset ? asset.safeUrl : '';
   });
 
   activeAudioSrcs = computed(() => {
-    return this.activeAudioClips().map(clip => {
+    return this.timelineState.activeAudioClips().map(clip => {
       if (!clip) return '';
-      const asset = this.assets().find(a => a.id === clip.assetId);
+      const asset = this.timelineState
+        .assets()
+        .find(a => a.id === clip.assetId);
       return asset ? asset.safeUrl : '';
     });
   });
@@ -166,17 +163,41 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     return `brightness(${this.exposureVal}%) contrast(${this.contrastVal}%) saturate(${this.saturateVal}%)`;
   });
 
-  animationFrameId: any;
-
   // View Children
-  @ViewChild('mainVideo') mainVideo!: ElementRef<HTMLVideoElement>;
+  @ViewChildren('timelineVideo') timelineVideos!: QueryList<
+    ElementRef<HTMLVideoElement>
+  >;
+
+  private applyVideoFilter() {
+    const filterValue = this.videoFilter();
+    this.timelineVideos?.forEach(video => {
+      if (video.nativeElement) {
+        video.nativeElement.style.filter = filterValue;
+      }
+    });
+  }
   @ViewChildren('bgAudio') bgAudios!: QueryList<ElementRef<HTMLAudioElement>>;
+  @ViewChild(TimeRulerComponent) timeRuler!: TimeRulerComponent;
   @ViewChild('timelineContainer')
   timelineContainer!: ElementRef<HTMLDivElement>;
+  @ViewChild('dummyScrollContainer')
+  dummyScrollContainer!: ElementRef<HTMLDivElement>;
 
   // Services
   private sanitizer = inject(DomSanitizer);
   private workbenchService = inject(WorkbenchService);
+  private http = inject(HttpClient);
+  private agentChatService = inject(AgentChatService);
+  protected timelineState = inject(TimelineStateService);
+  protected playbackService = inject(PlayheadSyncService);
+  private route = inject(ActivatedRoute);
+  private router = inject(Router);
+  private storyboardService = inject(StoryboardService);
+  private galleryService = inject(GalleryService);
+  private snackBar = inject(MatSnackBar);
+
+  private workspaceStateService = inject(WorkspaceStateService);
+  private sourceAssetService = inject(SourceAssetService);
 
   isDownloading = signal(false);
 
@@ -189,6 +210,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     initialStart: number;
     initialDur: number;
     initialOffset: number;
+    hasMoved?: boolean;
   } | null = null;
 
   // Drag state for moving clips along the timeline
@@ -197,9 +219,20 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     clipId: string;
     startX: number;
     initialStartTime: number;
+    hasMoved?: boolean;
   } | null = null;
 
   isBrowser: boolean;
+  lastSavedText = signal<string>('');
+  videoAspectRatio = signal<string>('16/9');
+
+  private saveSubject = new Subject<void>();
+  private saveSubscription?: Subscription;
+  private activeSaveSubscription?: Subscription;
+  private hasPendingSave = false;
+  private isSaving = false;
+  /** Monotonic id of the latest timeline fetch (see the timeline effect). */
+  private timelineLoadSeq = 0;
 
   constructor(
     public matIconRegistry: MatIconRegistry,
@@ -207,156 +240,232 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     @Inject(PLATFORM_ID) platformId: Object,
   ) {
     this.isBrowser = isPlatformBrowser(platformId);
-    this.matIconRegistry
-      .addSvgIcon(
-        'white-gemini-spark-icon',
-        this.setPath(`${this.path}/mobile-white-gemini-spark-icon.svg`),
-      )
-      .addSvgIcon(
-        'creative-studio-icon',
-        this.setPath(`${this.path}/creative-studio-icon.svg`),
-      )
-      .addSvgIcon(
-        'mobile-white-gemini-spark-icon',
-        this.setPath(`${this.path}/mobile-white-gemini-spark-icon.svg`),
-      )
-      .addSvgIcon(
-        'creative-studio-icon',
-        this.setPath(`${this.path}/creative-studio-icon.svg`),
-      )
-      .addSvgIcon(
-        'fun-templates-icon',
-        this.setPath(`${this.path}/fun-templates-icon.svg`),
-      )
-      .addSvgIcon(
-        'video-clap-icon',
-        this.setPath(`${this.path}/video-clap-icon.svg`),
-      )
-      .addSvgIcon(
-        'movie-shallow-icon',
-        this.setPath(`${this.path}/movie-clap-shallow-icon.svg`),
-      )
-      .addSvgIcon(
-        'volume-off-icon',
-        this.setPath(`${this.path}/volume-off-icon.svg`),
-      )
-      .addSvgIcon('upload-icon', this.setPath(`${this.path}/upload-icon.svg`))
-      .addSvgIcon(
-        'sound-sensing-icon',
-        this.setPath(`${this.path}/sound-sensing-icon.svg`),
-      )
-      .addSvgIcon('lock-icon', this.setPath(`${this.path}/lock-icon.svg`))
-      .addSvgIcon('img-icon', this.setPath(`${this.path}/img-icon.svg`))
-      .addSvgIcon('eye-icon', this.setPath(`${this.path}/eye-icon.svg`))
-      .addSvgIcon('drive-icon', this.setPath(`${this.path}/drive-icon.svg`))
-      .addSvgIcon(
-        'audio-magic-eraser-icon',
-        this.setPath(`${this.path}/audio_magic_eraser-icon.svg`),
-      )
-      .addSvgIcon(
-        'play-arrow-icon',
-        this.setPath(`${this.path}/play-arrow-icon.svg`),
-      )
-      .addSvgIcon('square-icon', this.setPath(`${this.path}/square.svg`))
-      .addSvgIcon('phone-icon', this.setPath(`${this.path}/pixel-9.svg`))
-      .addSvgIcon(
-        'lightbulb-icon',
-        this.setPath(`${this.path}/lightbulb-tips.svg`),
-      )
-      .addSvgIcon('desktop-icon', this.setPath(`${this.path}/desktop.svg`))
-      .addSvgIcon(
-        'desktop-mac-icon',
-        this.setPath(`${this.path}/desktop-mac.svg`),
-      )
-      .addSvgIcon('edit-icon', this.setPath(`${this.path}/edit.svg`))
-      .addSvgIcon(
-        'gemini-spark-icon',
-        this.setPath(`${this.path}/gemini-spark.svg`),
-      )
-      .addSvgIcon(
-        'photo-merge-auto-icon',
-        this.setPath(`${this.path}/photo-merge-auto.svg`),
-      )
-      .addSvgIcon(
-        'web-stories-icon',
-        this.setPath(`${this.path}/web-stories.svg`),
-      );
 
-    // Setup an effect to handle video seeking/sync when active clip changes or time jumps
     effect(() => {
-      if (!this.isBrowser) return;
-
-      const vid = this.mainVideo?.nativeElement;
-      const vClip = this.activeVideoClip();
-      const curTime = this.currentTime();
-
-      // Video Sync
-      if (vid && vClip) {
-        const fileTime = curTime - vClip.startTime + vClip.offset;
-        if (Math.abs(vid.currentTime - fileTime) > 0.5)
-          vid.currentTime = fileTime;
-        if (this.isPlaying() && vid.paused)
-          vid.play().catch(e => console.error('[VideoSync] Play failed', e));
-        if (!this.isPlaying() && !vid.paused) vid.pause();
-      } else if (vid) {
-        vid.pause();
-      }
-
-      // Audio Sync (Multi-track)
-      const _ = this.audioElementsChanged(); // Dependency
-      const audioElements = this.bgAudios?.toArray();
-      const activeAClips = this.activeAudioClips();
-
-      if (audioElements) {
-        audioElements.forEach((audioRef, index) => {
-          const aud = audioRef.nativeElement;
-          const aClip = activeAClips[index];
-
-          if (aud && aClip) {
-            const fileTime = curTime - aClip.startTime + aClip.offset;
-            if (Math.abs(aud.currentTime - fileTime) > 0.5) {
-              aud.currentTime = fileTime;
-            }
-
-            if (this.isPlaying() && aud.paused) {
-              aud.play().catch(e => console.error('Audio play failed', e));
-            }
-            if (!this.isPlaying() && !aud.paused) {
-              aud.pause();
-            }
-          } else if (aud) {
-            if (!aud.paused) {
-              aud.pause();
-            }
-          }
-        });
-      }
+      this.applyVideoFilter();
     });
-  }
 
-  private path = '../../../assets/images';
+    // Sync loadedTimelineId with storyboard's timeline_id
+    effect(
+      () => {
+        const storyboard = this.agentChatService.currentStoryboard();
+        if (storyboard && storyboard.timeline_id) {
+          this.timelineState.loadedTimelineId.set(storyboard.timeline_id);
+        } else {
+          const hasTimelineParam =
+            this.route.snapshot.queryParams['timelineId'];
+          if (!hasTimelineParam) {
+            this.timelineState.loadedTimelineId.set(undefined);
+          }
+        }
+      },
+      {allowSignalWrites: true},
+    );
 
-  private setPath(url: string): SafeResourceUrl {
-    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
+    // Load timeline when loadedTimelineId changes
+    effect(
+      () => {
+        const timelineId = this.timelineState.loadedTimelineId();
+        if (this.isSaving) {
+          return;
+        }
+        if (timelineId) {
+          // Publish the in-flight state so the chat can lock session switching
+          // until the timeline for this storyboard has actually landed. The
+          // sequence guards against a superseded fetch clearing the flag that
+          // a newer fetch still owns.
+          const requestSeq = ++this.timelineLoadSeq;
+          this.timelineState.isLoadingTimeline.set(true);
+          this.workbenchService.getTimeline(timelineId).subscribe({
+            next: (timeline: TimelineDTO) => {
+              if (requestSeq === this.timelineLoadSeq) {
+                this.timelineState.isLoadingTimeline.set(false);
+              }
+              this.processGeneratedData(timeline);
+              this.lastSavedText.set('Saved');
+
+              // If the timeline is associated with a session/storyboard, show
+              // the agent panel. Do NOT write sessionId/storyboardId into the
+              // URL here: the chat (`loadChatMessages`) is the single owner of
+              // those query params. Navigating from here wrote the *timeline's*
+              // session back into the URL after the user had already switched
+              // chats, and the queryParams subscription below then flipped
+              // `selectedSessionId` back — an endless session ping-pong.
+              if (timeline.storyboard_id || timeline.session_id) {
+                this.activeToolButton.set('agent');
+              } else {
+                // Manual timeline: clear agent chat state
+                this.agentChatService.currentStoryboard.set(null);
+                this.agentChatService.selectedSessionId.set(null);
+                this.agentChatService.chatMessages.set([]);
+                if (this.activeToolButton() === 'agent') {
+                  this.activeToolButton.set(null);
+                }
+              }
+            },
+            error: err => {
+              if (requestSeq === this.timelineLoadSeq) {
+                this.timelineState.isLoadingTimeline.set(false);
+              }
+              console.error('Failed to fetch timeline:', err);
+              this.lastSavedText.set('Failed to load timeline');
+            },
+          });
+        } else {
+          // No timeline to load: invalidate any in-flight fetch and unlock.
+          this.timelineLoadSeq++;
+          this.timelineState.isLoadingTimeline.set(false);
+          this.timelineState.timelineClips.set([]);
+          this.timelineState.selectedClipId.set(null);
+          this.timelineState.assets.set([]);
+          this.timelineState.currentTime.set(0);
+          this.timelineState.isPlaying.set(false);
+          this.timelineState.scrollOffset.set(0);
+          this.lastSavedText.set('');
+        }
+      },
+      {allowSignalWrites: true},
+    );
+
+    // Pause playback when switching away from video player to agent view
+    effect(
+      () => {
+        if (
+          this.activeToolButton() === 'agent' &&
+          this.timelineState.isPlaying()
+        ) {
+          const lastScroll = this.timelineState.scrollOffset();
+          this.timelineState.isPlaying.set(false);
+          this.playbackService.stopLoop();
+          if (this.dummyScrollContainer?.nativeElement) {
+            this.dummyScrollContainer.nativeElement.scrollLeft = lastScroll;
+          }
+        }
+      },
+      {allowSignalWrites: true},
+    );
   }
 
   // Signal to track audio element changes
   audioElementsChanged = signal<number>(0);
 
-  ngOnInit() {}
+  onCloseAgentView() {
+    this.activeToolButton.set(null);
+  }
+
+  toggleVideoVisibility() {
+    this.isVideoHidden.update(v => !v);
+  }
+
+  toggleTrackLock(trackIndex: number) {
+    this.lockedTracks.update(prev => {
+      const next = new Set(prev);
+      if (next.has(trackIndex)) next.delete(trackIndex);
+      else next.add(trackIndex);
+      return next;
+    });
+  }
+
+  toggleTrackMute(trackIndex: number) {
+    this.mutedTracks.update(prev => {
+      const next = new Set(prev);
+      if (next.has(trackIndex)) next.delete(trackIndex);
+      else next.add(trackIndex);
+      return next;
+    });
+  }
+
+  isTrackLocked(trackIndex: number): boolean {
+    return this.lockedTracks().has(trackIndex);
+  }
+
+  isTrackMuted(trackIndex: number): boolean {
+    return this.mutedTracks().has(trackIndex);
+  }
+
+  ngOnInit() {
+    // save timeline after 10 seconds of inactivity
+    this.saveSubscription = this.saveSubject
+      .pipe(debounceTime(10000))
+      .subscribe(() => {
+        this.hasPendingSave = false;
+        this.saveTimeline();
+      });
+
+    this.route.queryParams.subscribe(params => {
+      const sessionId = params['sessionId'];
+      const storyboardId = params['storyboardId'];
+      const timelineId = params['timelineId'];
+
+      if (sessionId) {
+        this.agentChatService.selectedSessionId.set(sessionId);
+      }
+
+      if (timelineId) {
+        this.timelineState.loadedTimelineId.set(timelineId);
+      }
+
+      if (sessionId || storyboardId) {
+        this.activeToolButton.set('agent');
+      }
+    });
+  }
 
   ngAfterViewInit() {
     this.bgAudios.changes.subscribe(() => {
       this.audioElementsChanged.update(v => v + 1);
+      this.registerPlaybackElements();
+    });
+
+    this.timelineVideos.changes.subscribe(() => {
+      this.registerPlaybackElements();
+      this.applyVideoFilter();
+    });
+
+    // Set initial container width for timeline
+    if (this.timelineContainer?.nativeElement) {
+      this.containerWidthSignal.set(
+        this.timelineContainer.nativeElement.clientWidth,
+      );
+    }
+
+    this.registerPlaybackElements();
+  }
+
+  private registerPlaybackElements() {
+    const videoElements =
+      this.timelineVideos?.toArray().map(e => e.nativeElement) || [];
+    this.playbackService.registerElements({
+      videos: videoElements,
+      audios: this.bgAudios?.toArray().map(e => e.nativeElement) || [],
+      timeline: this.timelineContainer?.nativeElement,
+      dummyScroll: this.dummyScrollContainer?.nativeElement,
+      timeRuler: this.timeRuler,
     });
   }
 
+  @HostListener('window:resize')
+  onResize() {
+    if (this.timelineContainer?.nativeElement) {
+      this.containerWidthSignal.set(
+        this.timelineContainer.nativeElement.clientWidth,
+      );
+    }
+  }
+
   ngOnDestroy() {
-    if (this.animationFrameId) cancelAnimationFrame(this.animationFrameId);
+    this.playbackService.stopLoop();
+    if (this.hasPendingSave) {
+      this.saveTimeline();
+    } else if (this.activeSaveSubscription) {
+      this.activeSaveSubscription.unsubscribe();
+    }
+    if (this.saveSubscription) {
+      this.saveSubscription.unsubscribe();
+    }
   }
 
   // --- Logic: File Handling ---
-
   onFileSelected(event: Event) {
     const input = event.target as HTMLInputElement;
     if (!input.files) return;
@@ -379,7 +488,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         duration: 0,
       };
 
-      this.assets.update(prev => [...prev, asset]);
+      this.timelineState.assets.update(prev => [...prev, asset]);
 
       if (isVideo) {
         this.extractVideoMetadata(asset, file);
@@ -401,7 +510,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       data: {
         mimeType: mimeType,
         showFooter: true,
-        maxSelection: 1,
+        maxSelection: 10,
+        multiSelect: true,
       },
       panelClass: 'image-selector-dialog',
     });
@@ -410,7 +520,14 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       .afterClosed()
       .subscribe((result: MediaItemSelection | SourceAssetResponseDto) => {
         if (result) {
-          this.processCloudMediaResult(result);
+          // Normalize to an array: if it's already an array, use it;
+          // if it's a single object, wrap it in an array.
+          const results = Array.isArray(result) ? result : [result];
+
+          // Process each result individually
+          results.forEach(res => {
+            this.processCloudMediaResult(res);
+          });
         }
       });
   }
@@ -425,6 +542,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     let type: 'video' | 'audio';
     let thumbnail: string | undefined;
 
+    let mediaItemId: number | undefined;
+    let sourceAssetId: number | undefined;
+
     if (isGalleryItem) {
       const selection = result as MediaItemSelection;
       const mediaItem = selection.mediaItem;
@@ -438,6 +558,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         type === 'video'
           ? mediaItem.presignedThumbnailUrls?.[selectedIndex] || url
           : undefined;
+      mediaItemId = mediaItem.id;
     } else {
       const asset = result as SourceAssetResponseDto;
       url = asset.presignedUrl || '';
@@ -448,6 +569,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         type === 'video'
           ? asset.presignedThumbnailUrl || asset.presignedUrl
           : undefined;
+      sourceAssetId = asset.id;
     }
 
     if (!url) return;
@@ -461,9 +583,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       safeUrl: this.sanitizer.bypassSecurityTrustUrl(url),
       duration: 0,
       thumbnail,
+      mediaItemId,
+      sourceAssetId,
     };
 
-    this.assets.update(prev => [...prev, newAsset]);
+    this.timelineState.assets.update(prev => [...prev, newAsset]);
 
     // Extract duration from the cloud media
     if (type === 'video') {
@@ -491,7 +615,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         if (ctx) {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const thumbUrl = canvas.toDataURL('image/jpeg');
-          this.assets.update(items =>
+          this.timelineState.assets.update(items =>
             items.map(i =>
               i.id === asset.id ? {...i, thumbnail: thumbUrl} : i,
             ),
@@ -503,8 +627,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       }
     };
     video.onerror = () => {
-      // If video fails to load metadata, set a default duration
-      this.updateAssetDuration(asset.id, 10);
+      // Metadata failed: 10 s is a display estimate only, never a trim.
+      this.updateAssetDuration(asset.id, 10, false);
     };
   }
 
@@ -519,8 +643,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       this.updateAssetDuration(asset.id, audio.duration);
     };
     audio.onerror = e => {
-      // If audio fails to load metadata, set a default duration
-      this.updateAssetDuration(asset.id, 10);
+      // Metadata failed: 10 s is a display estimate only, never a trim.
+      this.updateAssetDuration(asset.id, 10, false);
     };
   }
 
@@ -544,7 +668,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       if (ctx) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const thumbUrl = canvas.toDataURL('image/jpeg');
-        this.assets.update(items =>
+        this.timelineState.assets.update(items =>
           items.map(i => (i.id === asset.id ? {...i, thumbnail: thumbUrl} : i)),
         );
       }
@@ -562,142 +686,79 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     };
   }
 
-  updateAssetDuration(id: string, duration: number) {
-    this.assets.update(items =>
-      items.map(i => (i.id === id ? {...i, duration} : i)),
+  /**
+   * Applies a media duration learned from the browser. `resolved=false`
+   * marks it as a display estimate (metadata failed): the asset and its
+   * clips keep `isDurationPlaceholder` so saveTimeline() never persists the
+   * guess as a trim, and a duration that is already known is left alone.
+   */
+  updateAssetDuration(id: string, duration: number, resolved = true) {
+    this.timelineState.assets.update(items =>
+      items.map(i => {
+        if (i.id !== id) return i;
+        if (!resolved && i.duration > 0 && !i.isDurationPlaceholder) return i;
+        const updatedAsset: MediaAsset = {...i, duration};
+        if (resolved) delete updatedAsset.isDurationPlaceholder;
+        else updatedAsset.isDurationPlaceholder = true;
+        return updatedAsset;
+      }),
     );
-    this.timelineClips.update(clips =>
-      clips.map(clip => (clip.assetId === id ? {...clip, duration} : clip)),
-    );
-    this.refreshTimelineLayout();
-  }
-
-  onThumbnailError(asset: MediaAsset) {
-    // Clear the thumbnail if it fails to load, so the placeholder icon shows
-    this.assets.update(items =>
-      items.map(i => (i.id === asset.id ? {...i, thumbnail: undefined} : i)),
-    );
-  }
-
-  refreshTimelineLayout() {
-    this.timelineClips.update(clips => {
-      const vClips = clips.filter(c => c.trackIndex === 0);
-      const otherClips = clips.filter(c => c.trackIndex !== 0);
-
-      const layoutTrack = (trackClips: TimelineClip[]) => {
-        let currentTime = 0;
-        return trackClips.map(clip => {
-          const newClip = {...clip, startTime: currentTime};
-          currentTime += clip.duration;
-          return newClip;
-        });
-      };
-
-      return [...layoutTrack(vClips), ...otherClips];
+    this.timelineState.timelineClips.update(clips => {
+      const updated = clips.map(clip => {
+        if (clip.assetId === id) {
+          if (clip.duration === 0 || clip.isDurationPlaceholder) {
+            const clipSpeed = clip.speed !== undefined ? clip.speed : 1.0;
+            const targetDuration = duration / clipSpeed;
+            const updatedClip: TimelineClip = {
+              ...clip,
+              duration: targetDuration,
+            };
+            if (resolved) delete updatedClip.isDurationPlaceholder;
+            else updatedClip.isDurationPlaceholder = true;
+            return updatedClip;
+          }
+        }
+        return clip;
+      });
+      return this.recalculateAudioTracks(updated);
     });
-  }
-
-  getAssetThumbnail(id: string): string | undefined {
-    return this.assets().find(a => a.id === id)?.thumbnail;
-  }
-
-  getAssetName(id: string): string {
-    return this.assets().find(a => a.id === id)?.name || 'Clip';
-  }
-
-  isAssetVideo(id: string): boolean {
-    return this.assets().find(a => a.id === id)?.type === 'video';
-  }
-
-  // --- Logic: Timeline ---
-
-  addToTimeline(asset: MediaAsset) {
-    const clipsToAdd: TimelineClip[] = [];
-    const assetColor = this.getRandomColor();
-
-    if (asset.type === 'video') {
-      // Magnetic Video: Always add to the end of the video track
-      const vClips = this.timelineClips().filter(c => c.trackIndex === 0);
-      const vStartTime =
-        vClips.length > 0
-          ? Math.max(...vClips.map(c => c.startTime + c.duration))
-          : 0;
-
-      clipsToAdd.push({
-        id: Math.random().toString(36).substr(2, 9),
-        assetId: asset.id,
-        startTime: vStartTime,
-        duration: asset.duration,
-        offset: 0,
-        trackIndex: 0,
-        color: assetColor,
-      });
-
-      // Add Audio for Video (Synced at same start time)
-      const targetTrack = this.findAvailableAudioTrack(
-        vStartTime,
-        asset.duration,
-      );
-      clipsToAdd.push({
-        id: Math.random().toString(36).substr(2, 9),
-        assetId: asset.id,
-        startTime: vStartTime,
-        duration: asset.duration,
-        offset: 0,
-        trackIndex: targetTrack,
-        color: '#10b981',
-      });
-    } else {
-      // Smart Audio: Add at playhead, find first available track
-      const playhead = this.currentTime();
-      const targetTrack = this.findAvailableAudioTrack(
-        playhead,
-        asset.duration,
-      );
-
-      clipsToAdd.push({
-        id: Math.random().toString(36).substr(2, 9),
-        assetId: asset.id,
-        startTime: playhead,
-        duration: asset.duration,
-        offset: 0,
-        trackIndex: targetTrack,
-        color: '#10b981',
-      });
-    }
-
-    this.timelineClips.update(prev => [...prev, ...clipsToAdd]);
     this.refreshTimelineLayout();
   }
 
-  deleteAsset(asset: MediaAsset, event: Event) {
-    event.stopPropagation();
+  private recalculateAudioTracks(clips: TimelineClip[]): TimelineClip[] {
+    const videoClips = clips.filter(c => c.trackIndex === 0);
+    const audioClips = clips.filter(c => c.trackIndex > 0);
 
-    // Remove from assets list
-    this.assets.update(prev => prev.filter(a => a.id !== asset.id));
+    // Sort audio clips by startTime to ensure deterministic and clean layout
+    audioClips.sort((a, b) => a.startTime - b.startTime);
 
-    // Remove any clips associated with this asset from the timeline
-    this.timelineClips.update(prev => prev.filter(c => c.assetId !== asset.id));
+    const updatedAudioClips: TimelineClip[] = [];
 
-    // Clear selection if it was a clip of this asset
-    const selectedId = this.selectedClipId();
-    if (selectedId) {
-      const stillExists = this.timelineClips().some(c => c.id === selectedId);
-      if (!stillExists) {
-        this.selectedClipId.set(null);
-      }
-    }
+    audioClips.forEach(clip => {
+      const targetTrack = this.findNextAvailableTrackForClip(
+        clip.startTime,
+        clip.duration,
+        updatedAudioClips,
+      );
+      updatedAudioClips.push({
+        ...clip,
+        trackIndex: targetTrack,
+      });
+    });
 
-    this.refreshTimelineLayout();
+    return [...videoClips, ...updatedAudioClips];
   }
 
-  private findAvailableAudioTrack(startTime: number, duration: number): number {
-    const allAudioClips = this.timelineClips().filter(c => c.trackIndex > 0);
+  private findNextAvailableTrackForClip(
+    startTime: number,
+    duration: number,
+    existingAudioClips: TimelineClip[],
+  ): number {
     let targetTrack = 1;
     let placed = false;
 
     while (!placed) {
-      const trackClips = allAudioClips.filter(
+      const trackClips = existingAudioClips.filter(
         c => c.trackIndex === targetTrack,
       );
       const hasOverlap = trackClips.some(c => {
@@ -715,8 +776,383 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     return targetTrack;
   }
 
+  onThumbnailError(asset: MediaAsset) {
+    // Clear the thumbnail if it fails to load, so the placeholder icon shows
+    this.timelineState.assets.update(items =>
+      items.map(i => (i.id === asset.id ? {...i, thumbnail: undefined} : i)),
+    );
+  }
+
+  /**
+   * Re-lays the video track from t=0 back-to-back: `start(N+1) = end(N)`.
+   * Transitions never move clips — the backend ffmpeg graph centres each
+   * cross-fade on the cut using frozen-frame handles (and the preview does
+   * the same), so the render keeps Σ(clip durations) and absolute audio
+   * placements stay aligned with their scene. Every site that relayouts the
+   * video track (delete, trim, metadata extraction, drag) MUST go through
+   * this helper so the UI never drifts from what the render produces.
+   */
+  private layoutVideoTrack(videoClips: TimelineClip[]): TimelineClip[] {
+    const ordered = [...videoClips].sort((a, b) => a.startTime - b.startTime);
+    let currentTime = 0;
+    return ordered.map(clip => {
+      const newClip = {...clip, startTime: currentTime};
+      currentTime += clip.duration;
+      return newClip;
+    });
+  }
+
+  refreshTimelineLayout() {
+    this.timelineState.timelineClips.update(clips => {
+      const vClips = clips.filter(c => c.trackIndex === 0);
+      const otherClips = clips.filter(c => c.trackIndex !== 0);
+      return [...this.layoutVideoTrack(vClips), ...otherClips];
+    });
+  }
+
+  processGeneratedData(data: TimelineDTO) {
+    const newClips: TimelineClip[] = [];
+    const videoStartTimes: number[] = [];
+    const assetsToExtract: MediaAsset[] = [];
+
+    // Save transitions metadata
+
+    this.timelineState.transitions.set(data.transitions || []);
+    this.timelineState.transitionIn.set(data.transition_in || null);
+    this.timelineState.transitionOut.set(data.transition_out || null);
+
+    // Handle Video Clips
+    let currentVideoTime = 0;
+    if (data.video_clips) {
+      data.video_clips.forEach((clip: VideoClipDTO, idx: number) => {
+        const mediaItemId =
+          clip.asset_ref?.type === 'media_item'
+            ? Number(clip.asset_ref.id)
+            : undefined;
+        const sourceAssetId =
+          clip.asset_ref?.type === 'source_asset'
+            ? Number(clip.asset_ref.id)
+            : undefined;
+        const speed =
+          clip.speed !== undefined && clip.speed !== null ? clip.speed : 1.0;
+        const trimDuration = (clip.trim?.duration_seconds || 5) / speed;
+        const trimOffset = clip.trim?.offset_seconds || 0;
+
+        const assetId = String(mediaItemId || sourceAssetId || '');
+        const isPlaceholder = !clip.trim?.duration_seconds;
+
+        // Populate assets signal so lookup works
+        let existingAsset = this.timelineState
+          .assets()
+          .find(a => a.id === assetId);
+        if (!existingAsset && clip.presigned_url) {
+          existingAsset = {
+            id: assetId,
+            name: 'Clip ' + assetId,
+            type: 'video',
+            url: clip.presigned_url!,
+            safeUrl: this.sanitizer.bypassSecurityTrustUrl(clip.presigned_url!),
+            duration: trimDuration,
+            ...(isPlaceholder ? {isDurationPlaceholder: true} : {}),
+            thumbnail: clip.presigned_thumbnail_url || undefined,
+            mediaItemId: mediaItemId,
+            sourceAssetId: sourceAssetId,
+          };
+          this.timelineState.assets.update(prev => [...prev, existingAsset!]);
+        }
+
+        if (isPlaceholder && existingAsset) {
+          if (!assetsToExtract.some(a => a.id === existingAsset!.id)) {
+            assetsToExtract.push(existingAsset);
+          }
+        }
+
+        const transitionInfo = data.transitions && data.transitions[idx];
+        const transitionType = transitionInfo
+          ? transitionInfo.type
+          : TransitionType.NONE;
+        const transitionDuration = transitionInfo
+          ? transitionInfo.duration_seconds
+          : 0;
+
+        newClips.push({
+          id: Math.random().toString(36).substr(2, 9),
+          assetId: assetId,
+          startTime: currentVideoTime,
+          duration: trimDuration,
+          offset: trimOffset,
+          trackIndex: 0,
+          color: '#3b82f6',
+          mediaItemId: mediaItemId,
+          sourceAssetId: sourceAssetId,
+          first_frame_asset_ref: clip.first_frame_asset_ref || null,
+          last_frame_asset_ref: clip.last_frame_asset_ref || null,
+          placeholder: clip.placeholder || null,
+          isDurationPlaceholder: isPlaceholder || undefined,
+          volume:
+            clip.volume !== undefined && clip.volume !== null
+              ? clip.volume
+              : 1.0,
+          speed:
+            clip.speed !== undefined && clip.speed !== null ? clip.speed : 1.0,
+          transition_to_next_type: transitionType,
+          transition_to_next_duration: transitionDuration,
+        });
+        videoStartTimes.push(currentVideoTime);
+        // Back-to-back, same as layoutVideoTrack(): transitions are centred
+        // on the cut by the render and never shift the next clip.
+        currentVideoTime += trimDuration;
+      });
+    }
+
+    // Handle Audio Clips
+    if (data.audio_clips) {
+      data.audio_clips.forEach((clip: AudioClipDTO) => {
+        const mediaItemId =
+          clip.asset_ref?.type === 'media_item'
+            ? Number(clip.asset_ref.id)
+            : undefined;
+        const sourceAssetId =
+          clip.asset_ref?.type === 'source_asset'
+            ? Number(clip.asset_ref.id)
+            : undefined;
+        const speed =
+          clip.speed !== undefined && clip.speed !== null ? clip.speed : 1.0;
+        const trimDuration = (clip.trim?.duration_seconds || 5) / speed;
+        const trimOffset = clip.trim?.offset_seconds || 0;
+
+        let startTime = clip.start_at?.offset_seconds || 0;
+        const vClipIndex = clip.start_at?.video_clip_index;
+        if (
+          vClipIndex !== undefined &&
+          vClipIndex !== null &&
+          vClipIndex >= 0 &&
+          vClipIndex < videoStartTimes.length
+        ) {
+          startTime =
+            videoStartTimes[vClipIndex] + (clip.start_at?.offset_seconds || 0);
+        }
+
+        const assetId = clip.presigned_url || '';
+        const isPlaceholder = !clip.trim?.duration_seconds;
+
+        // Populate assets signal
+        let existingAsset = this.timelineState
+          .assets()
+          .find(a => a.id === assetId);
+        if (!existingAsset && clip.presigned_url) {
+          existingAsset = {
+            id: assetId,
+            name: 'Audio ' + assetId,
+            type: 'audio',
+            url: clip.presigned_url!,
+            safeUrl: this.sanitizer.bypassSecurityTrustUrl(clip.presigned_url!),
+            duration: trimDuration,
+            ...(isPlaceholder ? {isDurationPlaceholder: true} : {}),
+            mediaItemId: mediaItemId,
+            sourceAssetId: sourceAssetId,
+          };
+          this.timelineState.assets.update(prev => [...prev, existingAsset!]);
+        }
+
+        // Probe every audio asset, not only placeholders: an asset created
+        // from a trimmed clip only knows the trim, so the trim handle (capped
+        // at asset.duration) could never extend the clip back to the full
+        // file. updateAssetDuration() leaves non-placeholder clips untouched.
+        if (existingAsset) {
+          if (!assetsToExtract.some(a => a.id === existingAsset!.id)) {
+            assetsToExtract.push(existingAsset);
+          }
+        }
+
+        // Find available track among newClips
+        const duration = trimDuration;
+        const allAudioClips = newClips.filter(c => c.trackIndex > 0);
+        let targetTrack = 1;
+        let found = false;
+        while (!found) {
+          const trackClips = allAudioClips.filter(
+            c => c.trackIndex === targetTrack,
+          );
+          const hasOverlap = trackClips.some(c => {
+            return (
+              (startTime >= c.startTime &&
+                startTime < c.startTime + c.duration) ||
+              (startTime + duration > c.startTime &&
+                startTime + duration <= c.startTime + c.duration) ||
+              (startTime <= c.startTime &&
+                startTime + duration >= c.startTime + c.duration)
+            );
+          });
+          if (!hasOverlap) {
+            found = true;
+          } else {
+            targetTrack++;
+          }
+        }
+
+        newClips.push({
+          id: Math.random().toString(36).substr(2, 9),
+          assetId: assetId,
+          startTime: startTime,
+          duration: duration,
+          offset: trimOffset,
+          trackIndex: targetTrack,
+          color: '#10b981',
+          mediaItemId: mediaItemId,
+          sourceAssetId: sourceAssetId,
+          isDurationPlaceholder: isPlaceholder || undefined,
+          volume:
+            clip.volume !== undefined && clip.volume !== null
+              ? clip.volume
+              : 1.0,
+          speed:
+            clip.speed !== undefined && clip.speed !== null ? clip.speed : 1.0,
+          fadeIn: clip.fade_in_duration_seconds ?? 0,
+          fadeOut: clip.fade_out_duration_seconds ?? 0,
+        });
+      });
+    }
+
+    this.timelineState.timelineClips.set(newClips);
+    this.refreshTimelineLayout();
+
+    assetsToExtract.forEach(asset => {
+      if (asset.type === 'video') {
+        this.extractVideoMetadataFromUrl(asset);
+      } else {
+        this.extractAudioMetadataFromUrl(asset);
+      }
+    });
+  }
+
+  getAssetThumbnail(id: string): string | undefined {
+    return this.timelineState.assets().find(a => a.id === id)?.thumbnail;
+  }
+
+  getAssetName(id: string): string {
+    return this.timelineState.assets().find(a => a.id === id)?.name || 'Clip';
+  }
+
+  isAssetVideo(id: string): boolean {
+    return this.timelineState.assets().find(a => a.id === id)?.type === 'video';
+  }
+
+  // --- Logic: Timeline ---
+
+  addToTimeline(asset: MediaAsset) {
+    const clipsToAdd: TimelineClip[] = [];
+    const assetColor = this.getRandomColor();
+
+    if (asset.type === 'video') {
+      // Magnetic Video: Always add to the end of the video track
+      const vClips = this.timelineState
+        .timelineClips()
+        .filter(c => c.trackIndex === 0);
+      const vStartTime =
+        vClips.length > 0
+          ? Math.max(...vClips.map(c => c.startTime + c.duration))
+          : 0;
+
+      clipsToAdd.push({
+        id: Math.random().toString(36).substr(2, 9),
+        assetId: asset.id,
+        startTime: vStartTime,
+        duration: asset.duration,
+        ...(asset.isDurationPlaceholder ? {isDurationPlaceholder: true} : {}),
+        offset: 0,
+        trackIndex: 0,
+        color: assetColor,
+        mediaItemId: asset.mediaItemId,
+        sourceAssetId: asset.sourceAssetId,
+      });
+
+      // Add Audio for Video (Synced at same start time)
+      const targetTrack = this.findAvailableAudioTrack(
+        vStartTime,
+        asset.duration,
+      );
+      clipsToAdd.push({
+        id: Math.random().toString(36).substr(2, 9),
+        assetId: asset.id,
+        startTime: vStartTime,
+        duration: asset.duration,
+        ...(asset.isDurationPlaceholder ? {isDurationPlaceholder: true} : {}),
+        offset: 0,
+        trackIndex: targetTrack,
+        color: '#10b981',
+        mediaItemId: asset.mediaItemId,
+        sourceAssetId: asset.sourceAssetId,
+      });
+    } else {
+      // Smart Audio: Add at playhead, find first available track
+      const playhead = this.timelineState.currentTime();
+      const targetTrack = this.findAvailableAudioTrack(
+        playhead,
+        asset.duration,
+      );
+
+      clipsToAdd.push({
+        id: Math.random().toString(36).substr(2, 9),
+        assetId: asset.id,
+        startTime: playhead,
+        duration: asset.duration,
+        ...(asset.isDurationPlaceholder ? {isDurationPlaceholder: true} : {}),
+        offset: 0,
+        trackIndex: targetTrack,
+        color: '#10b981',
+        mediaItemId: asset.mediaItemId,
+        sourceAssetId: asset.sourceAssetId,
+      });
+    }
+
+    this.timelineState.timelineClips.update(prev => [...prev, ...clipsToAdd]);
+    this.refreshTimelineLayout();
+    this.triggerAutoSave();
+  }
+
+  deleteAsset(asset: MediaAsset, event: Event) {
+    event.stopPropagation();
+
+    // Remove from assets list
+    this.timelineState.assets.update(prev =>
+      prev.filter(a => a.id !== asset.id),
+    );
+
+    // Remove any clips associated with this asset from the timeline
+    this.timelineState.timelineClips.update(prev =>
+      prev.filter(c => c.assetId !== asset.id),
+    );
+
+    // Clear selection if it was a clip of this asset
+    const selectedId = this.timelineState.selectedClipId();
+    if (selectedId) {
+      const stillExists = this.timelineState
+        .timelineClips()
+        .some(c => c.id === selectedId);
+      if (!stillExists) {
+        this.timelineState.selectedClipId.set(null);
+      }
+    }
+
+    this.refreshTimelineLayout();
+    this.triggerAutoSave();
+  }
+
+  private findAvailableAudioTrack(startTime: number, duration: number): number {
+    const allAudioClips = this.timelineState
+      .timelineClips()
+      .filter(c => c.trackIndex > 0);
+    return this.findNextAvailableTrackForClip(
+      startTime,
+      duration,
+      allAudioClips,
+    );
+  }
+
   // Start dragging a clip horizontally on the timeline
   startDrag(event: MouseEvent, clip: TimelineClip) {
+    if (this.isTrackLocked(clip.trackIndex)) return;
     event.stopPropagation();
     event.preventDefault();
     this.selectClip(clip.id, event);
@@ -726,29 +1162,34 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       startX: event.clientX,
       initialStartTime: clip.startTime,
     };
-    this.isPlaying.set(false);
+    this.timelineState.isPlaying.set(false);
   }
 
   selectClip(id: string, event: MouseEvent) {
     event.stopPropagation();
-    this.selectedClipId.set(id);
+    const clip = this.timelineState.timelineClips().find(c => c.id === id);
+    if (clip && this.isTrackLocked(clip.trackIndex)) return;
+    this.timelineState.selectedClipId.set(id);
   }
 
   deleteSelectedClip() {
-    const id = this.selectedClipId();
+    const id = this.timelineState.selectedClipId();
     if (!id) return;
-    this.timelineClips.update(prev => prev.filter(c => c.id !== id));
-    this.selectedClipId.set(null);
+    this.timelineState.timelineClips.update(prev =>
+      prev.filter(c => c.id !== id),
+    );
+    this.timelineState.selectedClipId.set(null);
     this.refreshTimelineLayout();
+    this.triggerAutoSave();
   }
 
   // --- Split Logic ---
   canSplit(): boolean {
-    const id = this.selectedClipId();
+    const id = this.timelineState.selectedClipId();
     if (!id) return false;
-    const clip = this.timelineClips().find(c => c.id === id);
+    const clip = this.timelineState.timelineClips().find(c => c.id === id);
     if (!clip) return false;
-    const time = this.currentTime();
+    const time = this.timelineState.currentTime();
     return (
       time > clip.startTime + 0.1 && time < clip.startTime + clip.duration - 0.1
     );
@@ -756,9 +1197,9 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   splitSelectedClip(): void {
     if (!this.canSplit()) return;
-    const id = this.selectedClipId();
-    const clip = this.timelineClips().find(c => c.id === id)!;
-    const splitPoint = this.currentTime() - clip.startTime;
+    const id = this.timelineState.selectedClipId();
+    const clip = this.timelineState.timelineClips().find(c => c.id === id)!;
+    const splitPoint = this.timelineState.currentTime() - clip.startTime;
 
     const clip1Duration = splitPoint;
     const clip2Duration = clip.duration - splitPoint;
@@ -772,112 +1213,180 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       startTime: clip.startTime + splitPoint,
     };
 
-    this.timelineClips.update(prev => {
+    this.timelineState.timelineClips.update(prev => {
       const updated = prev.map(c =>
         c.id === id ? {...c, duration: clip1Duration} : c,
       );
       return [...updated, clip2];
     });
 
-    this.selectedClipId.set(clip2.id);
+    this.timelineState.selectedClipId.set(clip2.id);
     this.refreshTimelineLayout();
+    this.triggerAutoSave();
   }
-
-  // --- Logic: Playback Loop ---
 
   togglePlay() {
     if (!this.isBrowser) return;
-    this.isPlaying.set(!this.isPlaying());
-    if (this.isPlaying()) {
-      this.runGameLoop();
+
+    if (this.timelineState.isPlaying()) {
+      // Pausing
+      const lastScroll = this.timelineState.scrollOffset();
+      this.timelineState.isPlaying.set(false);
+      this.playbackService.stopLoop();
+
+      if (this.dummyScrollContainer?.nativeElement) {
+        this.dummyScrollContainer.nativeElement.scrollLeft = lastScroll;
+      }
     } else {
-      cancelAnimationFrame(this.animationFrameId);
+      // Playing
+      if (
+        this.activeToolButton() === 'agent' &&
+        this.timelineState.timelineClips().length > 0
+      ) {
+        this.activeToolButton.set(null);
+      }
+      this.timelineState.isPlaying.set(true);
+      this.playbackService.runGameLoop();
     }
   }
 
-  runGameLoop() {
-    if (!this.isBrowser) return;
-    let lastTime = performance.now();
-    const loop = (now: number) => {
-      if (!this.isPlaying()) return;
-      const dt = (now - lastTime) / 1000;
-      lastTime = now;
-      const nextTime = this.currentTime() + dt;
-
-      // 1. Auto Scroll Logic
-      if (this.timelineContainer?.nativeElement) {
-        const container = this.timelineContainer.nativeElement;
-        const playheadPos = nextTime * this.pixelsPerSecond;
-        const containerWidth = container.clientWidth;
-        const scrollLeft = container.scrollLeft;
-
-        // If playhead goes past 80% of visible area, scroll forward
-        if (playheadPos > scrollLeft + containerWidth * 0.8) {
-          // Smoothly jump scroll to keep playhead at 20%
-          container.scrollLeft = playheadPos - containerWidth * 0.2;
-        }
-      }
-
-      if (nextTime >= this.totalDuration()) {
-        this.currentTime.set(this.totalDuration());
-        this.isPlaying.set(false);
-      } else {
-        this.currentTime.set(nextTime);
-        this.animationFrameId = requestAnimationFrame(loop);
-      }
-    };
-    this.animationFrameId = requestAnimationFrame(loop);
-  }
-
   onVideoEnded() {}
-  onMetadataLoaded() {}
+  onVideoMetadataLoaded(event: Event) {
+    const video = event.target as HTMLVideoElement;
+    if (video && video.videoWidth && video.videoHeight) {
+      const ratio = video.videoWidth / video.videoHeight;
+      this.videoAspectRatio.set(ratio.toString());
+    }
+  }
 
   // --- Download / Render ---
   downloadVideo() {
-    // Only allow download if there are clips and not already downloading
-    if (this.timelineClips().length === 0 || this.isDownloading()) return;
+    const timelineId = this.timelineState.loadedTimelineId();
+    const hasClips = this.timelineState.timelineClips().length > 0;
 
-    this.isDownloading.set(true);
+    if (this.isDownloading()) {
+      return;
+    }
 
-    // Map timeline clips to request format
-    const requestClips: Clip[] = this.timelineClips().map(clip => {
-      const asset = this.assets().find(a => a.id === clip.assetId);
-      return {
-        assetId: clip.assetId,
-        url: asset?.url || '',
-        startTime: clip.startTime,
-        duration: clip.duration,
-        offset: clip.offset,
-        trackIndex: clip.trackIndex,
-        type: clip.trackIndex === 0 ? 'video' : 'audio',
+    if (!timelineId && !hasClips) {
+      console.warn('Cannot download: missing timeline ID and no clips present');
+      return;
+    }
+
+    const runRender = (resolvedTimelineId: number | string) => {
+      this.isDownloading.set(true);
+
+      const request: RenderTimelineRequest = {
+        timeline_id: Number(resolvedTimelineId),
       };
-    });
 
-    const request: TimelineRequest = {
-      clips: requestClips,
+      this.workbenchService.renderVideo(request).subscribe({
+        next: (res: MediaItem) => {
+          // Poll for completion
+          const pollInterval = 2000;
+          this.lastSavedText.set('Rendering video...');
+
+          interval(pollInterval)
+            .pipe(
+              switchMap(() => this.galleryService.getMedia(res.id as number)),
+              catchError(err => {
+                console.error('Error polling rendered media', err);
+                return throwError(() => err);
+              }),
+              takeWhile(item => {
+                const status = item.status?.toUpperCase();
+                if (status === 'FAILED') {
+                  this.isDownloading.set(false);
+                  this.lastSavedText.set('Render failed');
+                  handleErrorSnackbar(
+                    this.snackBar,
+                    {message: 'Video rendering failed.'},
+                    'Video Rendering',
+                  );
+                  return false;
+                }
+                if (status === 'COMPLETED') {
+                  return false;
+                }
+                return true;
+              }, true), // inclusive to emit the last item
+            )
+            .subscribe({
+              next: item => {
+                if (item.status?.toUpperCase() === 'COMPLETED') {
+                  this.isDownloading.set(false);
+                  this.lastSavedText.set('Render complete');
+
+                  const galleryUrl = `${window.location.origin}/gallery/${item.id}`;
+                  const message = `Video rendered successfully! <a href="${galleryUrl}" target="_blank">View in Gallery</a>`;
+                  handleSuccessSnackbar(this.snackBar, message, 20000);
+
+                  if (item.presignedUrls && item.presignedUrls.length > 0) {
+                    const url = item.presignedUrls[0];
+                    this.http.get(url, {responseType: 'blob'}).subscribe({
+                      next: blob => {
+                        const localUrl = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = localUrl;
+                        a.download = `creative-studio-export-${new Date().getTime()}.mp4`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        window.URL.revokeObjectURL(localUrl);
+                      },
+                      error: err => {
+                        console.error(
+                          'Failed to download video file blob',
+                          err,
+                        );
+                        // Fallback: Open the presigned URL directly in a new tab if blob download fails (e.g., due to CORS)
+                        window.open(url, '_blank');
+                      },
+                    });
+                  }
+                }
+              },
+              error: err => {
+                console.error('Polling failed', err);
+                this.isDownloading.set(false);
+                this.lastSavedText.set('Render failed');
+                handleErrorSnackbar(this.snackBar, err, 'Video Rendering');
+              },
+            });
+        },
+        error: err => {
+          console.error('Render request failed', err);
+          this.isDownloading.set(false);
+          this.lastSavedText.set('Render failed');
+          handleErrorSnackbar(this.snackBar, err, 'Start Video Rendering');
+        },
+      });
     };
 
-    this.workbenchService.renderVideo(request).subscribe({
-      next: blob => {
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `creative-studio-export-${new Date().getTime()}.mp4`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url);
-        this.isDownloading.set(false);
-      },
-      error: err => {
-        console.error('Download failed', err);
-        this.isDownloading.set(false);
-        // Ideally show a snackbar here
-      },
-    });
-  }
+    const shouldSave = this.hasPendingSave || !timelineId;
 
-  // --- Interaction ---
+    if (shouldSave) {
+      this.isDownloading.set(true);
+      this.saveTimeline().subscribe({
+        next: savedTimeline => {
+          const newTimelineId =
+            savedTimeline?.timeline_id || this.timelineState.loadedTimelineId();
+          if (newTimelineId) {
+            runRender(newTimelineId);
+          } else {
+            console.error('Failed to resolve timeline ID after saving');
+            this.isDownloading.set(false);
+          }
+        },
+        error: err => {
+          console.error('Save failed before download, aborting render', err);
+          this.isDownloading.set(false);
+        },
+      });
+    } else if (timelineId) {
+      runRender(timelineId);
+    }
+  }
 
   // Scrubbing State
   scrubState: {active: boolean; startX: number; initialTime: number} | null =
@@ -890,22 +1399,54 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     this.scrubState = {
       active: true,
       startX: event.clientX,
-      initialTime: this.currentTime(),
+      initialTime: this.timelineState.currentTime(),
     };
-    this.isPlaying.set(false);
+    this.timelineState.isPlaying.set(false);
+
+    // Center the view on the playhead
+    if (this.timelineContainer?.nativeElement) {
+      const containerWidth = this.timelineContainer.nativeElement.clientWidth;
+      const playheadPos =
+        this.timelineState.currentTime() * this.timelineState.pixelsPerSecond();
+      const newScrollLeft = Math.max(0, playheadPos - containerWidth * 0.5);
+      this.timelineState.scrollOffset.set(newScrollLeft);
+      if (this.dummyScrollContainer?.nativeElement) {
+        this.dummyScrollContainer.nativeElement.scrollLeft = newScrollLeft;
+      }
+    }
   }
 
   onScrubMove(event: MouseEvent) {
     if (!this.scrubState?.active) return;
 
     const deltaX = event.clientX - this.scrubState.startX;
-    const deltaTime = deltaX / this.pixelsPerSecond;
+    const deltaTime = deltaX / this.timelineState.pixelsPerSecond();
     const newTime = Math.max(
       0,
-      Math.min(this.scrubState.initialTime + deltaTime, this.totalDuration()),
+      Math.min(
+        this.scrubState.initialTime + deltaTime,
+        this.timelineState.totalDuration(),
+      ),
     );
 
-    this.currentTime.set(newTime);
+    this.timelineState.currentTime.set(newTime);
+
+    // Auto-scroll logic for scrubbing
+    if (this.timelineContainer?.nativeElement) {
+      const container = this.timelineContainer.nativeElement;
+      const playheadPos = newTime * this.timelineState.pixelsPerSecond();
+      const containerWidth = container.clientWidth;
+      const scrollLeft = this.timelineState.scrollOffset();
+
+      // Scroll forward if playhead goes off screen right
+      if (playheadPos > scrollLeft + containerWidth) {
+        this.timelineState.scrollOffset.set(playheadPos - containerWidth);
+      }
+      // Scroll backward if playhead goes off screen left
+      else if (playheadPos < scrollLeft) {
+        this.timelineState.scrollOffset.set(playheadPos);
+      }
+    }
   }
 
   onScrubEnd() {
@@ -929,15 +1470,27 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       clickX = event.clientX - rect.left + currentTarget.scrollLeft;
     }
 
-    const time = Math.max(0, clickX / this.pixelsPerSecond);
-    this.currentTime.set(time);
+    const time = Math.max(0, clickX / this.timelineState.pixelsPerSecond());
+    this.timelineState.currentTime.set(time);
+
+    // Center the view on the clicked time
+    if (this.timelineContainer?.nativeElement) {
+      const containerWidth = this.timelineContainer.nativeElement.clientWidth;
+      const playheadPos = time * this.timelineState.pixelsPerSecond();
+      const newScrollLeft = Math.max(0, playheadPos - containerWidth * 0.5);
+      this.timelineState.scrollOffset.set(newScrollLeft);
+      if (this.dummyScrollContainer?.nativeElement) {
+        this.dummyScrollContainer.nativeElement.scrollLeft = newScrollLeft;
+      }
+    }
 
     this.onScrubStart(event);
-    this.selectedClipId.set(null);
+    this.timelineState.selectedClipId.set(null);
   }
 
   // --- Trimming Logic ---
   startTrim(event: MouseEvent, clip: TimelineClip, type: 'start' | 'end') {
+    if (this.isTrackLocked(clip.trackIndex)) return;
     event.stopPropagation();
     event.preventDefault();
     this.trimState = {
@@ -949,22 +1502,25 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       initialDur: clip.duration,
       initialOffset: clip.offset,
     };
-    this.isPlaying.set(false);
+    this.timelineState.isPlaying.set(false);
   }
 
   onTrimMove(event: MouseEvent) {
     if (!this.trimState || !this.trimState.active) return;
 
     const deltaX = event.clientX - this.trimState.startX;
-    const deltaTime = deltaX / this.pixelsPerSecond;
+    if (Math.abs(deltaX) < 1) return; // Ignore micro-jitters
+    this.trimState.hasMoved = true;
+
+    const deltaTime = deltaX / this.timelineState.pixelsPerSecond();
     const {clipId, type, initialDur, initialOffset} = this.trimState;
 
-    const clip = this.timelineClips().find(c => c.id === clipId);
+    const clip = this.timelineState.timelineClips().find(c => c.id === clipId);
     if (!clip) return;
-    const asset = this.assets().find(a => a.id === clip.assetId);
+    const asset = this.timelineState.assets().find(a => a.id === clip.assetId);
     const maxDuration = asset ? asset.duration : 9999;
 
-    this.timelineClips.update(clips =>
+    this.timelineState.timelineClips.update(clips =>
       clips.map(c => {
         if (c.id !== clipId) return c;
 
@@ -996,8 +1552,12 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   onTrimEnd() {
     if (this.trimState && this.trimState.active) {
+      const hasMoved = this.trimState.hasMoved;
       this.refreshTimelineLayout();
       this.trimState = null;
+      if (hasMoved) {
+        this.triggerAutoSave();
+      }
     }
   }
 
@@ -1007,20 +1567,25 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     if (!this.dragState || !this.dragState.active) return;
 
     const deltaX = event.clientX - this.dragState.startX;
-    const deltaTime = deltaX / this.pixelsPerSecond;
+    if (Math.abs(deltaX) < 1) return; // Ignore micro-jitters
+    this.dragState.hasMoved = true;
+
+    const deltaTime = deltaX / this.timelineState.pixelsPerSecond();
     let newStartTime = this.dragState.initialStartTime + deltaTime;
     if (newStartTime < 0) newStartTime = 0;
 
     // Snap to start or current playhead for nicer UX
-    const snapThreshold = 10 / this.pixelsPerSecond;
+    const snapThreshold = 10 / this.timelineState.pixelsPerSecond();
     if (Math.abs(newStartTime) < snapThreshold) {
       newStartTime = 0;
-    } else if (Math.abs(newStartTime - this.currentTime()) < snapThreshold) {
-      newStartTime = this.currentTime();
+    } else if (
+      Math.abs(newStartTime - this.timelineState.currentTime()) < snapThreshold
+    ) {
+      newStartTime = this.timelineState.currentTime();
     }
 
     const clipId = this.dragState.clipId;
-    this.timelineClips.update(clips =>
+    this.timelineState.timelineClips.update(clips =>
       clips.map(c => (c.id === clipId ? {...c, startTime: newStartTime} : c)),
     );
   }
@@ -1028,34 +1593,29 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   onDragEnd() {
     if (this.dragState && this.dragState.active) {
       const clipId = this.dragState.clipId;
+      const hasMoved = this.dragState.hasMoved;
       this.dragState = null;
-      this.resolveOverlaps(clipId);
+      if (hasMoved) {
+        this.resolveOverlaps(clipId);
+      }
     }
   }
 
   // Move-aside overlap resolution on the same track
   private resolveOverlaps(movedClipId: string) {
-    const allClips = this.timelineClips();
+    const allClips = this.timelineState.timelineClips();
     const movedClip = allClips.find(c => c.id === movedClipId);
     if (!movedClip) return;
 
     if (movedClip.trackIndex === 0) {
-      // Video Track: Magnetic / Ripple Edit
-      // 1. Sort all video clips by startTime to determine order
-      // 2. Remove gaps
-      const videoClips = allClips
-        .filter(c => c.trackIndex === 0)
-        .sort((a, b) => a.startTime - b.startTime);
-
-      let currentTime = 0;
-      const newVideoClips = videoClips.map(clip => {
-        const newClip = {...clip, startTime: currentTime};
-        currentTime += clip.duration;
-        return newClip;
-      });
+      // Video Track: Magnetic / Ripple Edit — sort by startTime and remove
+      // gaps using the shared overlap-aware layout.
+      const newVideoClips = this.layoutVideoTrack(
+        allClips.filter(c => c.trackIndex === 0),
+      );
 
       // Update state
-      this.timelineClips.update(prev => {
+      this.timelineState.timelineClips.update(prev => {
         const others = prev.filter(c => c.trackIndex !== 0);
         return [...others, ...newVideoClips];
       });
@@ -1066,42 +1626,23 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         c => c.trackIndex > 0 && c.id !== movedClipId,
       );
 
-      let targetTrack = 1;
-      let placed = false;
-      const duration = movedClip.duration;
-      const startTime = movedClip.startTime; // Keep the user's dragged time
-
-      while (!placed) {
-        const trackClips = audioClips.filter(c => c.trackIndex === targetTrack);
-        const hasOverlap = trackClips.some(c => {
-          const cEnd = c.startTime + c.duration;
-          const newEnd = startTime + duration;
-          return startTime < cEnd && newEnd > c.startTime;
-        });
-
-        if (!hasOverlap) {
-          placed = true;
-        } else {
-          targetTrack++;
-        }
-      }
+      const targetTrack = this.findNextAvailableTrackForClip(
+        movedClip.startTime,
+        movedClip.duration,
+        audioClips,
+      );
 
       // Update the clip with the new track index
-      this.timelineClips.update(prev =>
+      this.timelineState.timelineClips.update(prev =>
         prev.map(c =>
           c.id === movedClipId ? {...c, trackIndex: targetTrack} : c,
         ),
       );
     }
+    this.triggerAutoSave();
   }
 
   // --- Utilities ---
-  formatTimeRuler(seconds: number): string {
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  }
-
   formatTime(seconds: number): string {
     const fps = 30; // Assuming 30 frames per second
     const totalFrames = Math.floor(seconds * fps);
@@ -1112,17 +1653,6 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     const f = totalFrames % fps;
 
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}:${f.toString().padStart(2, '0')}`;
-  }
-
-  timeRulerTicks(): number[] {
-    const duration = Math.max(this.totalDuration(), 60);
-    const ticks = [];
-    for (let i = 0; i <= duration; i += 2) ticks.push(i);
-    return ticks;
-  }
-
-  isMajorTick(tick: number): boolean {
-    return tick % 10 === 0;
   }
 
   toggleToolButton(
@@ -1141,10 +1671,313 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   getRandomHeight(seed: number) {
     // deterministic pseudo random for waveform vis
-    return 40 + (Math.sin(seed) * 30 + 30);
+    return 30 + (Math.sin(seed) * 40 + 30);
   }
 
   getSequence(length: number): number[] {
     return [...Array(Math.floor(length)).keys()].map(i => i + 1);
+  }
+
+  // --- Audio clip gain & fades (inspector + on-clip visuals) ---
+
+  /**
+   * Waveform bar height scaled by the clip gain so a 20 % music bed visibly
+   * sits lower than a 100 % voiceover. Boosted clips stay capped at 100 %.
+   */
+  getAudioBarHeight(clip: TimelineClip, seed: number): number {
+    const gain = Math.min(1, clampGain(clip.volume));
+    return Math.max(6, this.getRandomHeight(seed) * gain);
+  }
+
+  /** Width in px of the fade ramp overlay drawn at either end of a clip. */
+  getFadeOverlayWidth(clip: TimelineClip, edge: 'in' | 'out'): number {
+    const seconds = edge === 'in' ? (clip.fadeIn ?? 0) : (clip.fadeOut ?? 0);
+    if (seconds <= 0) return 0;
+    const clipPx = clip.duration * this.timelineState.pixelsPerSecond() - 4;
+    return Math.min(clipPx, seconds * this.timelineState.pixelsPerSecond());
+  }
+
+  getAudioVolumeLabel(clip: TimelineClip): string {
+    return `${Math.round(clampGain(clip.volume) * 100)}%`;
+  }
+
+  /** Applies an inspector delta to the selected audio clip and autosaves. */
+  onAudioClipAdjust(clipId: string, change: AudioClipAdjustment): void {
+    let touched = false;
+    this.timelineState.timelineClips.update(prev =>
+      prev.map(c => {
+        if (c.id !== clipId || c.trackIndex === 0) return c;
+        const next: TimelineClip = {...c};
+        if (change.volume !== undefined) next.volume = clampGain(change.volume);
+        if (change.fadeIn !== undefined) {
+          next.fadeIn = clampFade(change.fadeIn, c.duration);
+        }
+        if (change.fadeOut !== undefined) {
+          next.fadeOut = clampFade(change.fadeOut, c.duration);
+        }
+        touched = true;
+        return next;
+      }),
+    );
+    if (touched) this.triggerAutoSave();
+  }
+
+  clearClipSelection(): void {
+    this.timelineState.selectedClipId.set(null);
+  }
+
+  getThumbnailsSequence(duration: number): number[] {
+    // add thumbnails dinamically
+    const count = Math.ceil(
+      (duration * this.timelineState.pixelsPerSecond()) / 80,
+    );
+    return this.getSequence(count);
+  }
+
+  onDummyScroll(event: Event) {
+    const target = event.target as HTMLElement;
+    this.timelineState.scrollOffset.set(target.scrollLeft);
+    this.timeRuler.setScrollLeft(target.scrollLeft);
+  }
+
+  triggerAutoSave() {
+    this.hasPendingSave = true;
+    this.lastSavedText.set('Saving...');
+    this.saveSubject.next();
+  }
+
+  /**
+   * Trim length to persist for a clip. Placeholder durations (the 5 s default
+   * before metadata arrives, 10 s when it fails) are display estimates only:
+   * persisting them turns a guess into a hard `atrim` that cuts the real file
+   * (a 10.64 s voiceover saved as 10 s lost its last word, and the Workbench
+   * then treated the 10 s as a deliberate trim on every later save). `null`
+   * tells the renderer to use the file's full length.
+   */
+  private persistedTrimDuration(clip: TimelineClip): number | null {
+    return clip.isDurationPlaceholder ? null : clip.duration;
+  }
+
+  saveTimeline(): Observable<TimelineDTO | null> {
+    this.hasPendingSave = false;
+    const sb = this.agentChatService.currentStoryboard();
+    const timelineId = this.timelineState.loadedTimelineId() || sb?.timeline_id;
+
+    if (!timelineId && this.timelineState.timelineClips().length === 0) {
+      console.warn(
+        'Cannot auto-save timeline: no timeline ID and no clips to save',
+      );
+      return of(null);
+    }
+
+    if (this.activeSaveSubscription) {
+      this.activeSaveSubscription.unsubscribe();
+    }
+
+    this.lastSavedText.set('Saving...');
+
+    const clips = this.timelineState.timelineClips();
+    const videoClips = clips
+      .filter(c => c.trackIndex === 0)
+      .map(c => {
+        const asset = this.timelineState.assets().find(a => a.id === c.assetId);
+        let assetRef = null;
+        const mediaItemId = c.mediaItemId || asset?.mediaItemId;
+        const sourceAssetId = c.sourceAssetId || asset?.sourceAssetId;
+        if (mediaItemId) {
+          assetRef = {
+            id: mediaItemId,
+            type: 'media_item' as const,
+          };
+        } else if (sourceAssetId) {
+          assetRef = {
+            id: sourceAssetId,
+            type: 'source_asset' as const,
+          };
+        }
+
+        return {
+          asset_ref: assetRef,
+          trim: {
+            offset_seconds: c.offset,
+            duration_seconds: this.persistedTrimDuration(c),
+          },
+          first_frame_asset_ref: c.first_frame_asset_ref || null,
+          last_frame_asset_ref: c.last_frame_asset_ref || null,
+          placeholder: c.placeholder || null,
+          volume: 1.0,
+          speed: 1.0,
+        };
+      });
+
+    const audioClips = clips
+      .filter(c => c.trackIndex > 0)
+      .map(c => {
+        const asset = this.timelineState.assets().find(a => a.id === c.assetId);
+        let assetRef = null;
+        const mediaItemId = c.mediaItemId || asset?.mediaItemId;
+        const sourceAssetId = c.sourceAssetId || asset?.sourceAssetId;
+        if (mediaItemId) {
+          assetRef = {
+            id: mediaItemId,
+            type: 'media_item' as const,
+          };
+        } else if (sourceAssetId) {
+          assetRef = {
+            id: sourceAssetId,
+            type: 'source_asset' as const,
+          };
+        }
+
+        return {
+          start_at: {
+            video_clip_index: -1,
+            offset_seconds: c.startTime,
+          },
+          asset_ref: assetRef,
+          trim: {
+            offset_seconds: c.offset,
+            duration_seconds: this.persistedTrimDuration(c),
+          },
+          volume: c.volume ?? 1.0,
+          fade_in_duration_seconds: c.fadeIn ?? 0,
+          fade_out_duration_seconds: c.fadeOut ?? 0,
+        };
+      });
+
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+
+    const timelineData: TimelineDTO = {
+      timeline_id: timelineId || undefined,
+      storyboard_id: sb?.id || undefined,
+      session_id:
+        sb?.session_id ||
+        this.agentChatService.selectedSessionId() ||
+        undefined,
+      workspace_id: workspaceId || 1,
+      title: 'Timeline',
+      video_clips: videoClips,
+      audio_clips: audioClips,
+      transitions: this.timelineState.transitions(),
+      transition_in: this.timelineState.transitionIn() || undefined,
+      transition_out: this.timelineState.transitionOut() || undefined,
+    };
+
+    this.isSaving = true;
+    const subject = new Subject<TimelineDTO>();
+
+    const request$ = timelineId
+      ? this.workbenchService.updateTimeline(timelineId, timelineData)
+      : this.workbenchService.createTimeline(timelineData);
+    this.activeSaveSubscription = request$.subscribe({
+      next: (res: TimelineDTO) => {
+        this.lastSavedText.set('Saved');
+        if (res.timeline_id) {
+          this.timelineState.loadedTimelineId.set(res.timeline_id);
+          if (!res.storyboard_id && !res.session_id) {
+            void this.router.navigate([], {
+              relativeTo: this.route,
+              queryParams: {
+                timelineId: res.timeline_id,
+                sessionId: null,
+                storyboardId: null,
+              },
+              queryParamsHandling: 'merge',
+            });
+          }
+        }
+        this.isSaving = false;
+        subject.next(res);
+        subject.complete();
+      },
+      error: err => {
+        console.error('Error saving timeline', err);
+        this.lastSavedText.set('Failed to save changes');
+        this.isSaving = false;
+        subject.error(err);
+      },
+    });
+    return subject.asObservable();
+  }
+
+  onTransitionChange(event: {
+    role: 'in' | 'out' | 'middle';
+    index?: number;
+    type: TransitionType;
+    duration_seconds: number;
+  }) {
+    if (event.role === 'in') {
+      this.timelineState.transitionIn.set({
+        type: event.type,
+        duration_seconds: event.duration_seconds,
+      });
+    } else if (event.role === 'out') {
+      this.timelineState.transitionOut.set({
+        type: event.type,
+        duration_seconds: event.duration_seconds,
+      });
+    } else if (event.role === 'middle' && event.index !== undefined) {
+      this.timelineState.transitions.update(transitions => {
+        const updated = [...transitions];
+        while (updated.length <= event.index!) {
+          updated.push({type: TransitionType.NONE, duration_seconds: 0});
+        }
+        updated[event.index!] = {
+          type: event.type,
+          duration_seconds: event.duration_seconds,
+        };
+        return updated;
+      });
+      // The playback engine reads in-between transitions from the clip itself
+      // (transition_to_next_*), which is only denormalised on timeline load.
+      // Mirror the change into the clips so it takes effect without a reload.
+      this.applyMiddleTransitionToClips(
+        event.index,
+        event.type,
+        event.duration_seconds,
+      );
+    }
+    this.saveTimeline().subscribe();
+  }
+
+  private applyMiddleTransitionToClips(
+    index: number,
+    type: TransitionType,
+    durationSeconds: number,
+  ) {
+    this.timelineState.timelineClips.update(prev => {
+      const videoClips = prev
+        .filter(c => c.trackIndex === 0)
+        .sort((a, b) => a.startTime - b.startTime);
+      if (index < 0 || index >= videoClips.length - 1) return prev;
+
+      const others = prev.filter(c => c.trackIndex !== 0);
+      let currentTime = 0;
+      const relaid = videoClips.map((clip, idx) => {
+        const newClip: TimelineClip =
+          idx === index
+            ? {
+                ...clip,
+                startTime: currentTime,
+                transition_to_next_type: type,
+                transition_to_next_duration:
+                  type === TransitionType.NONE ? 0 : durationSeconds,
+              }
+            : {...clip, startTime: currentTime};
+        // Back-to-back like layoutVideoTrack(): a transition annotates the
+        // clip but never moves the next one, so the timeline (and the
+        // absolute audio placed on it) keeps its total duration.
+        currentTime += clip.duration;
+        return newClip;
+      });
+      return [...others, ...relaid];
+    });
+  }
+
+  getLastVideoClipEndTime(): number {
+    const clips = this.timelineState.videoClips();
+    if (clips.length === 0) return 0;
+    const lastClip = clips[clips.length - 1];
+    return lastClip.startTime + lastClip.duration;
   }
 }

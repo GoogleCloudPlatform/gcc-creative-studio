@@ -351,7 +351,9 @@
 
     .audio-metadata {
         text-align: center;
-        
+        width: 100%;
+        min-width: 0;
+
         .audio-prompt {
             font-size: 1.75rem;
             font-weight: 500;
@@ -359,6 +361,13 @@
             color: #fff;
             line-height: 1.2;
             word-break: break-word;
+            // Truncate long prompts to two lines with an ellipsis; the full text is in the tooltip.
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            cursor: default;
         }
 
         .audio-type {

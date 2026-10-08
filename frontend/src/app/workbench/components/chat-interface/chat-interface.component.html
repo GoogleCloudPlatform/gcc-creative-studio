@@ -1,0 +1,390 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<div class="flex flex-col h-full">
+  <div class="flex items-center justify-between">
+    <h5 class="text-lg font-semibold">Izumi Agent</h5>
+    <button
+      mat-icon-button
+      (click)="startNewChat()"
+      class="text-gray-500 hover:text-gray-700"
+      title="New Chat"
+    >
+      <mat-icon>add_comment</mat-icon>
+    </button>
+  </div>
+
+  <!-- Agent Selector (Hidden for now)
+  <div class="mb-2 relative z-20">
+    <studio-dropdown [options]="availableAgents" [value]="currentAgent" (valueChange)="onAgentChange($event)"
+      placeholder="Select an Agent" size="small" class="w-full"></studio-dropdown>
+  </div>
+  -->
+
+  <!-- Session Selector (locked while a session switch is still loading) -->
+  <div
+    class="mb-4 flex items-center gap-2 relative z-10 transition-opacity"
+    [class.pointer-events-none]="isSessionLocked()"
+    [class.opacity-60]="isSessionLocked()"
+    [attr.aria-busy]="isSessionLocked()"
+    [title]="isSessionLocked() ? 'Loading conversation…' : ''"
+    *ngIf="sessions().length > 0"
+  >
+    <studio-dropdown
+      [options]="dropdownOptions()"
+      [value]="currentSessionId"
+      (valueChange)="onSessionChange($event)"
+      placeholder="Select past conversation"
+      size="small"
+      class="flex-1"
+    ></studio-dropdown>
+    <button
+      mat-icon-button
+      (click)="deleteChat()"
+      [disabled]="isSessionLocked()"
+      class="text-red-500 hover:text-red-700"
+      title="Delete Chat"
+    >
+      <mat-icon>delete</mat-icon>
+    </button>
+  </div>
+
+  <!-- Chat Messages -->
+  <div
+    class="flex-1 overflow-y-auto flex flex-col gap-3 p-2 custom-scrollbar"
+    #chatContainer
+  >
+    <div
+      *ngFor="let msg of filteredChatMessages()"
+      [class]="
+        msg.isError
+          ? 'chat-bubble agent !bg-red-950/40 !border !border-red-500/40 !text-red-100 rounded-xl p-3 shadow-md'
+          : msg.sender === 'user'
+            ? 'chat-bubble user'
+            : 'chat-bubble agent'
+      "
+    >
+      <!-- Error Card View -->
+      <div *ngIf="msg.isError" class="flex flex-col gap-2">
+        <div class="flex items-center gap-2 text-red-400 font-semibold text-xs">
+          <mat-icon class="!text-[18px] !w-[18px] !h-[18px]"
+            >error_outline</mat-icon
+          >
+          <span>{{ errorCardTitle(msg) }}</span>
+          <span
+            *ngIf="msg.errorCode"
+            class="ml-auto px-2 py-0.5 rounded text-[10px] bg-red-500/20 text-red-300 font-mono font-bold"
+          >
+            {{ msg.errorCode }}
+          </span>
+        </div>
+        <p class="text-xs text-neutral-200 leading-relaxed">{{ msg.text }}</p>
+        <div class="flex justify-end pt-1" *ngIf="isRetryableError(msg)">
+          <span
+            [matTooltip]="
+              canRetry()
+                ? ''
+                : 'Nothing to retry in this session yet. Type a new message below to continue.'
+            "
+          >
+            <button
+              type="button"
+              (click)="retryLastAction()"
+              [disabled]="!canRetry()"
+              class="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-900/60 hover:bg-red-800/80 text-red-200 text-xs font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <mat-icon class="!text-[14px] !w-[14px] !h-[14px]"
+                >refresh</mat-icon
+              >
+              <span>Retry</span>
+            </button>
+          </span>
+        </div>
+      </div>
+
+      <!-- Normal Message View (when not isError) -->
+      <ng-container *ngIf="!msg.isError">
+        <!-- Display user attached images -->
+        <div
+          *ngIf="msg.sender === 'user' && msg.images?.length > 0"
+          class="flex gap-2 mb-2 flex-wrap"
+        >
+          <ng-container *ngFor="let img of msg.images">
+            <img
+              *ngIf="getAssetUrl(img) as src; else chatImagePlaceholder"
+              [src]="src"
+              class="w-20 h-20 object-cover rounded-md border border-gray-600 shadow"
+            />
+            <!-- Shown while the presigned URL is being resolved, or for good
+                 once the asset turned out to be deleted / inaccessible. -->
+            <ng-template #chatImagePlaceholder>
+              <div
+                class="chat-image-placeholder w-20 h-20 rounded-md border border-gray-600 shadow flex items-center justify-center"
+                [class.is-unavailable]="isAssetUnavailable(img)"
+                [matTooltip]="
+                  isAssetUnavailable(img)
+                    ? 'Image no longer available'
+                    : 'Loading image…'
+                "
+                [attr.data-testid]="
+                  isAssetUnavailable(img)
+                    ? 'chat-image-unavailable'
+                    : 'chat-image-loading'
+                "
+              >
+                <mat-icon>{{
+                  isAssetUnavailable(img) ? 'broken_image' : 'image'
+                }}</mat-icon>
+              </div>
+            </ng-template>
+          </ng-container>
+        </div>
+        <div class="chat-text text-sm" (click)="onMessageClick($event)">
+          <!-- Text or Markdown -->
+          <markdown *ngIf="msg.text" [data]="msg.text"></markdown>
+
+          <!-- Structured Media Frame -->
+          <div
+            *ngIf="msg.asset"
+            (click)="viewAsset(msg.asset.id)"
+            class="asset-preview mt-2 border border-gray-700 rounded-lg overflow-hidden bg-gray-900 cursor-pointer"
+          >
+            <img
+              *ngIf="msg.asset.type === 'image'"
+              [src]="msg.asset.url"
+              class="w-full h-auto object-cover max-h-60"
+            />
+            <video
+              *ngIf="msg.asset.type === 'video'"
+              [src]="msg.asset.url"
+              controls
+              class="w-full h-auto max-h-60"
+              (click)="$event.stopPropagation()"
+            ></video>
+            <audio
+              *ngIf="msg.asset.type === 'audio'"
+              [src]="msg.asset.url"
+              controls
+              class="w-full mt-2"
+              (click)="$event.stopPropagation()"
+            ></audio>
+
+            <div
+              class="p-2 border-t border-gray-700 bg-gray-800 flex justify-between items-center text-xs"
+            >
+              <span class="text-gray-300 truncate">{{
+                msg.asset.filename
+              }}</span>
+              <span class="text-blue-400 hover:underline">View Asset</span>
+            </div>
+          </div>
+          <!-- Stage Deliverable Milestone Box -->
+          <div
+            *ngIf="msg.sender === 'agent' && (msg.milestone || msg.storyboard)"
+            class="mt-2 p-3 bg-gray-800 border border-indigo-500 rounded-lg flex items-center gap-3"
+          >
+            <mat-icon class="text-indigo-400">{{
+              msg.milestone?.icon || 'auto_awesome_motion'
+            }}</mat-icon>
+            <div class="flex flex-col">
+              <span class="text-sm font-medium text-white">{{
+                msg.milestone?.title || 'Storyboard Ready'
+              }}</span>
+              <span class="text-xs text-indigo-300">{{
+                msg.milestone?.subtitle ||
+                  'Generated ' +
+                    (msg.storyboard?.scenes?.length || 0) +
+                    ' scenes'
+              }}</span>
+            </div>
+          </div>
+        </div>
+      </ng-container>
+      <div
+        class="chat-time text-[9px] mt-1 text-right"
+        [ngClass]="{
+          'text-white': msg.sender === 'user',
+          'text-gray-500': msg.sender !== 'user' && !msg.isError,
+          'text-red-400/60': msg.isError,
+        }"
+      >
+        {{ msg.timestamp | date: 'shortTime' }}
+      </div>
+    </div>
+    <div *ngIf="isLoadingHistory()" class="chat-bubble agent">
+      <div class="text-sm text-gray-400">Loading history...</div>
+    </div>
+    <div *ngIf="isTyping()" class="chat-bubble agent">
+      <div class="typing-indicator">
+        <span></span><span></span><span></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Selected Images Preview -->
+  <div
+    *ngIf="selectedImages().length > 0"
+    class="flex gap-2 pt-4 px-2 overflow-x-auto pb-2"
+  >
+    <div
+      *ngFor="let img of selectedImages(); let i = index"
+      class="relative group shrink-0"
+    >
+      <img
+        *ngIf="getAssetUrl(img) as src; else selectedImagePlaceholder"
+        [src]="src"
+        class="w-16 h-16 object-cover rounded-lg !border !border-gray-600"
+      />
+      <ng-template #selectedImagePlaceholder>
+        <div
+          class="chat-image-placeholder w-16 h-16 rounded-lg !border !border-gray-600 flex items-center justify-center"
+          data-testid="selected-image-loading"
+        >
+          <mat-icon>image</mat-icon>
+        </div>
+      </ng-template>
+      <button
+        class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center shadow-lg hover:bg-red-600"
+        (click)="removeSelectedImage(i)"
+      >
+        <mat-icon class="!w-4 !h-4 text-[16px] leading-4">close</mat-icon>
+      </button>
+    </div>
+  </div>
+
+  <!-- Approval Gate Component (Visible only when agent is awaiting human review/approval) -->
+  <div class="mt-2" *ngIf="visibleApprovalGate() as gate">
+    <app-approval-gate
+      [gate]="gate"
+      [isSubmitting]="isBusy()"
+      (decisionSubmitted)="handleGateDecision($event)"
+    ></app-approval-gate>
+  </div>
+
+  <!-- Chat Input -->
+  <div
+    class="mt-2 flex flex-col gap-2"
+    *ngIf="!agentUnavailable() && !visibleApprovalGate()"
+  >
+    <div
+      class="flex gap-2 bg-gray-800 border border-gray-700 rounded-2xl px-3 py-2 focus-within:border-blue-500 flex items-center"
+      [class.opacity-60]="isBusy() || isSessionLocked()"
+    >
+      <button
+        (click)="openImageSelector()"
+        [disabled]="isBusy() || isSessionLocked()"
+        class="p-1.5 hover:bg-neutral-700 rounded-lg text-gray-400 hover:text-white flex items-center justify-center flex-shrink-0 h-8 w-8 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        matTooltip="Attach Reference Images"
+      >
+        <mat-icon
+          class="!text-[18px] !w-[18px] !h-[18px] flex items-center justify-center leading-none"
+          >image</mat-icon
+        >
+      </button>
+
+      <textarea
+        #chatInput
+        data-chat-input
+        [placeholder]="
+          isSessionLocked()
+            ? 'Loading conversation…'
+            : isBusy()
+              ? 'Izumi is working on your request…'
+              : 'Ask Izumi...'
+        "
+        [disabled]="isBusy() || isSessionLocked()"
+        class="flex-1 bg-transparent text-sm text-white focus:outline-none resize-none max-h-48 overflow-y-auto py-1 px-1 leading-relaxed disabled:opacity-50 disabled:cursor-not-allowed"
+        rows="1"
+        [ngModel]="chatInputValue()"
+        (input)="onInputResize($event)"
+        (keydown)="onKeyDown($event)"
+      ></textarea>
+
+      <button
+        (click)="toggleInputExpand()"
+        [disabled]="isBusy() || isSessionLocked()"
+        class="p-1.5 hover:bg-neutral-700 rounded-lg text-gray-400 hover:text-white flex items-center justify-center flex-shrink-0 h-8 w-8 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        matTooltip="Expand input"
+      >
+        <mat-icon
+          class="!text-[18px] !w-[18px] !h-[18px] flex items-center justify-center leading-none"
+          >open_in_full</mat-icon
+        >
+      </button>
+
+      <studio-button
+        variant="primary"
+        size="medium"
+        shape="circle"
+        class="flex-shrink-0 flex items-center justify-center"
+        [disabled]="
+          isBusy() ||
+          isSessionLocked() ||
+          ((!chatInputValue() || !chatInputValue().trim()) &&
+            selectedImages().length === 0)
+        "
+        (click)="submitChat()"
+      >
+        <mat-icon class="!w-5 !h-5 flex items-center justify-center"
+          >send</mat-icon
+        >
+      </studio-button>
+    </div>
+  </div>
+
+  <!-- Agent Unavailable Banner -->
+  <div class="mt-2 flex flex-col gap-2" *ngIf="agentUnavailable()">
+    <div
+      class="bg-red-900/30 border border-red-500 rounded-2xl px-4 py-3 flex items-center gap-3"
+    >
+      <mat-icon class="text-red-400 shrink-0">error_outline</mat-icon>
+      <div class="text-sm text-red-200">
+        <p class="font-semibold">Chat Unavailable</p>
+        <p class="opacity-80">
+          Izumi is currently offline. Please try again later or contact your
+          administrator.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Glassmorphic Expanded Popup Template (occupies the full independent screen via MatDialog) -->
+  <ng-template #expandDialog>
+    <div
+      class="bg-neutral-900 rounded-3xl p-6 flex flex-col h-[60vh] min-w-[400px] max-w-[900px] shadow-2xl animate-fadeIn"
+    >
+      <div class="flex justify-between items-center mb-4">
+        <h5 class="text-lg font-semibold text-white flex items-center gap-2">
+          <mat-icon class="text-blue-400">auto_awesome</mat-icon> Ask Izumi
+        </h5>
+        <button
+          mat-icon-button
+          (click)="toggleInputExpand()"
+          class="text-gray-400 hover:text-white"
+          matTooltip="Minimize"
+        >
+          <mat-icon>close_fullscreen</mat-icon>
+        </button>
+      </div>
+      <textarea
+        placeholder="Ask Izumi..."
+        class="flex-1 bg-transparent text-xl text-neutral-200 placeholder:text-neutral-600 resize-none focus:outline-none py-2 overflow-y-auto leading-relaxed custom-scrollbar"
+        [ngModel]="chatInputValue()"
+        (ngModelChange)="chatInputValue.set($event)"
+      ></textarea>
+    </div>
+  </ng-template>
+</div>

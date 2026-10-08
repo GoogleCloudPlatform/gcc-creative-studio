@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {Component, Input} from '@angular/core';
+import {Component, HostBinding, Input} from '@angular/core';
 
 @Component({
   selector: 'studio-button',
@@ -27,23 +27,17 @@ export class StudioButtonComponent {
   @Input() size: 'small' | 'medium' | 'large' | 'none' = 'none';
   @Input() disabled = false;
 
-  get classes(): string {
-    const classList = [];
+  @HostBinding('style.pointer-events')
+  get pointerEvents(): string {
+    return this.disabled ? 'none' : 'auto';
+  }
 
-    if (this.variant === 'cta') {
-      classList.push('btn-cta');
-    } else {
-      classList.push('btn-glass-primary');
+  handleHostClick(event: MouseEvent): void {
+    if (this.disabled) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      return;
     }
-
-    if (this.shape === 'circle') {
-      classList.push('btn-glass-circle');
-    }
-
-    if (this.size !== 'none') {
-      classList.push(`btn-${this.size}`);
-    }
-
-    return classList.join(' ');
   }
 }

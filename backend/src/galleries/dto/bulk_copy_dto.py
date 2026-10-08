@@ -13,14 +13,28 @@
 # limitations under the License.
 
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
+from pydantic.alias_generators import to_camel
+
+from src.folders.dto.folder_dto import ConflictStrategyEnum
 
 
 class BulkCopyItemDto(BaseModel):
     id: int
     type: str
 
+    model_config = ConfigDict(
+        populate_by_name=True,
+        alias_generator=to_camel,
+    )
+
 
 class BulkCopyDto(BaseModel):
     items: list[BulkCopyItemDto]
     target_workspace_id: int
+    conflict_strategy: ConflictStrategyEnum | None = None
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        alias_generator=to_camel,
+    )

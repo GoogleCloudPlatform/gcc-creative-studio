@@ -33,6 +33,8 @@ export type ImagenRequest = {
   enhancePrompt?: boolean;
   googleSearch?: boolean;
   resolution?: '1K' | '2K' | '4K';
+  referenceVideo?: AssetReferenceDto | null;
+  externalUrl?: string | null;
 };
 
 export type SourceMediaItemLink = {
@@ -128,11 +130,14 @@ export interface GallerySearchDto {
   status?: string;
   workspaceId?: number;
   includeDeleted?: boolean;
+  includeExternal?: boolean;
   startDate?: string;
   endDate?: string;
   itemType?: string;
   query?: string;
   tags?: string[];
+  folderId?: number;
+  isRoot?: boolean;
 }
 
 export interface GalleryFiltersState {

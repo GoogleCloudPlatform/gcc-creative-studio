@@ -1,0 +1,3625 @@
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import {
+  ComponentFixture,
+  TestBed,
+  fakeAsync,
+  tick,
+} from '@angular/core/testing';
+import {ChatInterfaceComponent} from './chat-interface.component';
+import {HttpClientTestingModule} from '@angular/common/http/testing';
+import {RouterTestingModule} from '@angular/router/testing';
+import {ActivatedRoute, Router} from '@angular/router';
+import {FormsModule} from '@angular/forms';
+import {MatDialogModule, MatDialog} from '@angular/material/dialog';
+import {MatSnackBarModule} from '@angular/material/snack-bar';
+import {MatTooltipModule} from '@angular/material/tooltip';
+import {MarkdownModule} from 'ngx-markdown';
+import {signal, CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
+import {of, Subject, BehaviorSubject, throwError} from 'rxjs';
+import {AgentChatService} from '../../services/agent-chat.service';
+import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
+import {StoryboardService} from '../../../services/storyboard/storyboard.service';
+import {TimelineStateService} from '../../services/timeline-state.service';
+import {ApprovalGateComponent} from '../approval-gate/approval-gate.component';
+import {GalleryService} from '../../../gallery/gallery.service';
+
+describe('ChatInterfaceComponent', () => {
+  let component: ChatInterfaceComponent;
+  let fixture: ComponentFixture<ChatInterfaceComponent>;
+  let agentChatService: any;
+  let sseCallbacks: any;
+  let storyboardService: any;
+  let queryParamsSubject: BehaviorSubject<any>;
+  let router: any;
+
+  beforeEach(async () => {
+    const mockAgentChatService = {
+      selectedSessionId: signal(null),
+      currentStoryboard: signal(null),
+      activeAgent: signal('director'),
+      isGeneratingStoryboard: signal(false),
+      isGeneratingVideo: signal(false),
+      finalVideoReady: signal(false),
+      campaignDetails: signal<any>(null),
+      interruptedSessionId: signal<string | null>(null),
+      sessions: signal([]),
+      chatMessages: signal([]),
+      generateVideoRequest$: new Subject<void>(),
+      videoGenerated$: new Subject<any>(),
+      // Characters tab bridge
+      campaignSession: signal<any>(null),
+      campaignStateUpdated$: new Subject<Record<string, unknown>>(),
+      isPolling: jasmine.createSpy('isPolling').and.returnValue(false),
+      streamActive: signal(false),
+      startPolling: jasmine.createSpy('startPolling'),
+      getSessions: jasmine.createSpy('getSessions').and.returnValue(of([])),
+      getSessionDetail: jasmine
+        .createSpy('getSessionDetail')
+        .and.callFake((workspaceId: number, sessionId: string) => {
+          const mockEvents = [
+            {
+              author: 'user',
+              content: {
+                parts: [{text: 'Hello, what is up?'}],
+              },
+            },
+            {
+              author: 'model',
+              content: {
+                parts: [
+                  {text: 'I am here. [System Note: ignore this]'},
+                  {
+                    functionResponse: {
+                      response: {
+                        result: JSON.stringify({
+                          asset: {
+                            id: 'a1',
+                            presignedThumbnailUrl: 'http://img.png',
+                          },
+                        }),
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+            {
+              author: 'model',
+              actions: {
+                storyboard: {
+                  scenes: [{id: 1, description: 'Brief Scene'}],
+                },
+              },
+              content: {
+                parts: [],
+              },
+            },
+          ];
+          return of({
+            session: {id: sessionId || '123', events: mockEvents},
+            storyboard: {id: 202, timeline_id: 42},
+          });
+        }),
+      createSession: jasmine
+        .createSpy('createSession')
+        .and.returnValue(of({id: 'new-session'})),
+      generateTitle: jasmine
+        .createSpy('generateTitle')
+        .and.returnValue(of({title: 'New Chat', summary: 'Summary'})),
+      deleteSession: jasmine
+        .createSpy('deleteSession')
+        .and.returnValue(of(undefined)),
+      sendMessage: jasmine
+        .createSpy('sendMessage')
+        .and.callFake(
+          (wsId: number, sessionId: string, parts: any[], callbacks: any) => {
+            sseCallbacks = callbacks;
+          },
+        ),
+      stopPolling: jasmine.createSpy('stopPolling'),
+    };
+
+    let isFirstCall = true;
+    const mockWorkspaceStateService = {
+      getActiveWorkspaceId: jasmine
+        .createSpy('getActiveWorkspaceId')
+        .and.callFake(() => {
+          if (isFirstCall) {
+            isFirstCall = false;
+            return null;
+          }
+          return 1;
+        }),
+      setActiveWorkspaceId: jasmine.createSpy('setActiveWorkspaceId'),
+      activeWorkspaceId$: of(1),
+    };
+
+    const mockStoryboardService = {
+      getStoryboardForSession: jasmine
+        .createSpy('getStoryboardForSession')
+        .and.returnValue(of([])),
+      getStoryboard: jasmine
+        .createSpy('getStoryboard')
+        .and.callFake((id: number) =>
+          of({
+            id,
+            timeline_id: 42,
+          }),
+        ),
+    };
+
+    const mockTimelineStateService = {
+      loadedTimelineId: signal<any>(undefined),
+      isLoadingTimeline: signal<boolean>(false),
+      timelineClips: signal<any>([]),
+      transitions: signal<any>([]),
+      transitionIn: signal<any>(null),
+      transitionOut: signal<any>(null),
+    };
+
+    queryParamsSubject = new BehaviorSubject<any>({});
+
+    await TestBed.configureTestingModule({
+      declarations: [ChatInterfaceComponent],
+      imports: [
+        HttpClientTestingModule,
+        RouterTestingModule,
+        FormsModule,
+        MatDialogModule,
+        MatSnackBarModule,
+        MatTooltipModule,
+        MarkdownModule.forRoot(),
+        ApprovalGateComponent,
+      ],
+      providers: [
+        {provide: AgentChatService, useValue: mockAgentChatService},
+        {provide: WorkspaceStateService, useValue: mockWorkspaceStateService},
+        {provide: StoryboardService, useValue: mockStoryboardService},
+        {provide: TimelineStateService, useValue: mockTimelineStateService},
+        {
+          provide: ActivatedRoute,
+          useValue: {
+            queryParams: queryParamsSubject.asObservable(),
+          },
+        },
+      ],
+      schemas: [CUSTOM_ELEMENTS_SCHEMA],
+    }).compileComponents();
+
+    fixture = TestBed.createComponent(ChatInterfaceComponent);
+    component = fixture.componentInstance;
+    agentChatService = TestBed.inject(AgentChatService);
+    storyboardService = TestBed.inject(StoryboardService);
+    router = TestBed.inject(Router);
+    fixture.detectChanges();
+  });
+
+  it('should create', () => {
+    expect(component).toBeTruthy();
+  });
+
+  describe('markdown link renderer', () => {
+    let linkRenderer: (arg1: any, arg2?: any, arg3?: any) => string;
+
+    beforeEach(() => {
+      linkRenderer = component['markdownService'].renderer.link;
+    });
+
+    it('should render safe relative links and resolve them against the window origin', () => {
+      const result = linkRenderer(
+        '/gallery/123',
+        'Gallery Title',
+        'Go to gallery',
+      );
+      const currentOrigin = window.location.origin;
+      expect(result).toContain(`href="${currentOrigin}/gallery/123"`);
+      expect(result).toContain('title="Gallery Title"');
+      expect(result).toContain('>Go to gallery</a>');
+    });
+
+    it('should render same-origin absolute links', () => {
+      const currentOrigin = window.location.origin;
+      const result = linkRenderer(
+        `${currentOrigin}/asset-detail/456`,
+        'Asset Detail',
+        'View Asset',
+      );
+      expect(result).toContain(`href="${currentOrigin}/asset-detail/456"`);
+      expect(result).toContain('title="Asset Detail"');
+      expect(result).toContain('>View Asset</a>');
+    });
+
+    it('should sanitize and render external absolute links as plain text', () => {
+      const result = linkRenderer(
+        'https://malicious.com/attack',
+        'Attack',
+        'Click Me',
+      );
+      expect(result).toBe('Click Me');
+    });
+
+    it('should sanitize javascript protocol links as plain text', () => {
+      const result = linkRenderer('javascript:alert(1)', 'XSS', 'Click here');
+      expect(result).toBe('Click here');
+    });
+
+    it('should sanitize javascript protocol links with leading spaces as plain text', () => {
+      const result = linkRenderer(
+        '   javascript:alert(1)  ',
+        'XSS',
+        'Click here',
+      );
+      expect(result).toBe('Click here');
+    });
+
+    it('should sanitize javascript links containing control characters (tabs, newlines, carriage returns) as plain text', () => {
+      const resultTab = linkRenderer(
+        'java\tscript:alert(1)',
+        'XSS',
+        'Click here',
+      );
+      expect(resultTab).toBe('Click here');
+
+      const resultNewline = linkRenderer(
+        'java\nscript:alert(2)',
+        'XSS',
+        'Click here',
+      );
+      expect(resultNewline).toBe('Click here');
+
+      const resultCR = linkRenderer(
+        'java\rscript:alert(3)',
+        'XSS',
+        'Click here',
+      );
+      expect(resultCR).toBe('Click here');
+    });
+
+    it('should render relative links with colons in query parameters or path', () => {
+      const currentOrigin = window.location.origin;
+      const resultQuery = linkRenderer(
+        '/gallery/view?id=abc:123',
+        'Gallery Query',
+        'View query',
+      );
+      expect(resultQuery).toContain(
+        `href="${currentOrigin}/gallery/view?id=abc:123"`,
+      );
+
+      const resultPath = linkRenderer(
+        '/assets/color:blue',
+        'Blue Assets',
+        'Blue',
+      );
+      expect(resultPath).toContain(`href="${currentOrigin}/assets/color:blue"`);
+    });
+
+    it('should escape double quotes in the title attribute', () => {
+      const result = linkRenderer(
+        '/gallery/123',
+        'A "cool" title',
+        'Go to gallery',
+      );
+      expect(result).toContain('title="A &quot;cool&quot; title"');
+    });
+  });
+
+  it('should initialize and load sessions', () => {
+    expect(agentChatService.getSessions).toHaveBeenCalledWith(
+      1,
+      false,
+      undefined,
+      undefined,
+    );
+  });
+
+  it('should start a new chat', () => {
+    component.startNewChat();
+    expect(component.currentSessionId).toBeNull();
+    expect(agentChatService.selectedSessionId()).toBeNull();
+    expect(agentChatService.currentStoryboard()).toBeNull();
+  });
+
+  it('should handle agent selection change', () => {
+    component.onAgentChange('script_writer');
+    expect(agentChatService.activeAgent()).toBe('script_writer');
+  });
+
+  it('should handle session selection change', () => {
+    spyOn(component, 'loadChatMessages').and.callThrough();
+    component.onSessionChange('session-789');
+    expect(component.currentSessionId).toBe('session-789');
+    expect(component.loadChatMessages).toHaveBeenCalledWith('session-789');
+  });
+
+  it('should handle delete chat session', () => {
+    const mockDialogRef = jasmine.createSpyObj('MatDialogRef', ['afterClosed']);
+    mockDialogRef.afterClosed.and.returnValue(of(true));
+    spyOn(component['dialog'], 'open').and.returnValue(mockDialogRef);
+
+    component.currentSessionId = 'session-123';
+    component.deleteChat();
+
+    expect(component['dialog'].open).toHaveBeenCalled();
+    expect(agentChatService.deleteSession).toHaveBeenCalledWith(
+      'session-123',
+      1,
+    );
+    expect(component.currentSessionId).toBeNull();
+  });
+
+  it('should handle image selector dialog and append selected images', () => {
+    const mockSelected = [
+      {
+        id: 'img1',
+        name: 'img1.png',
+        type: 'source_asset',
+        url: 'http://test.png',
+      },
+    ];
+    const mockDialogRef = jasmine.createSpyObj('MatDialogRef', ['afterClosed']);
+    mockDialogRef.afterClosed.and.returnValue(of(mockSelected));
+    spyOn(component['dialog'], 'open').and.returnValue(mockDialogRef);
+
+    component.openImageSelector();
+
+    expect(component['dialog'].open).toHaveBeenCalled();
+    expect(component.selectedImages()).toEqual(mockSelected as any);
+  });
+
+  it('opens the picker in first-index-only mode and pins media selections to index 0', () => {
+    // The Izumi agent always resolves the FIRST image of a media item, so the
+    // chat must never attach (or preview) another index.
+    const mockDialogRef = jasmine.createSpyObj('MatDialogRef', ['afterClosed']);
+    mockDialogRef.afterClosed.and.returnValue(
+      of([
+        {mediaItem: {id: 7, presignedUrls: ['a', 'b', 'c']}, selectedIndex: 2},
+        {id: 'src1', mimeType: 'image/png'},
+      ]),
+    );
+    const openSpy = spyOn(component['dialog'], 'open').and.returnValue(
+      mockDialogRef,
+    );
+
+    component.openImageSelector();
+
+    const dialogData = openSpy.calls.mostRecent().args[1]?.data as any;
+    expect(dialogData.firstIndexOnly).toBeTrue();
+    const [media, source] = component.selectedImages() as any[];
+    expect(media.mediaItem.id).toBe(7);
+    expect(media.selectedIndex).toBe(0);
+    expect(source.id).toBe('src1');
+  });
+
+  it('should allow removing a selected image by index', () => {
+    component.selectedImages.set([
+      {id: 'img1', name: 'img1.png'} as any,
+      {id: 'img2', name: 'img2.png'} as any,
+    ]);
+
+    component.removeSelectedImage(0);
+
+    expect(component.selectedImages().length).toBe(1);
+    expect((component.selectedImages()[0] as any).id).toBe('img2');
+  });
+
+  it('should toggle input expansion state', () => {
+    const afterClosedSubject = new Subject<void>();
+    spyOn(component['dialog'], 'open').and.returnValue({
+      afterClosed: () => afterClosedSubject.asObservable(),
+      close: () => {},
+    } as any);
+
+    component.isInputExpanded.set(false);
+    component.toggleInputExpand();
+    expect(component.isInputExpanded()).toBeTrue();
+
+    component.toggleInputExpand();
+    expect(component.isInputExpanded()).toBeFalse();
+  });
+
+  it('should handle keydown Enter to send message without shift key', () => {
+    spyOn(component, 'submitChat').and.callThrough();
+    const event = new KeyboardEvent('keydown', {key: 'Enter', shiftKey: false});
+    spyOn(event, 'preventDefault');
+
+    component.onKeyDown(event);
+
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(component.submitChat).toHaveBeenCalled();
+  });
+
+  it('should not send message on Enter if shift key is pressed', () => {
+    spyOn(component, 'submitChat');
+    const event = new KeyboardEvent('keydown', {key: 'Enter', shiftKey: true});
+
+    component.onKeyDown(event);
+
+    expect(component.submitChat).not.toHaveBeenCalled();
+  });
+
+  it('should create a session on sendChatMessage if currentSessionId is null', () => {
+    component.currentSessionId = null;
+    spyOn<any>(component, 'executeSendMessage');
+
+    component.sendChatMessage('hello');
+
+    expect(agentChatService.createSession).toHaveBeenCalledWith(1);
+    expect(component.currentSessionId).toBe('new-session' as any);
+    expect(component['executeSendMessage']).toHaveBeenCalledWith('hello');
+  });
+
+  it('should parse and extract storyboards from JSON block in parseAndExtractJSONs', () => {
+    const textWithJson =
+      'Some chat response\n```json\n{"scenes": [{"id": 1, "description": "Scene 1"}]}\n```';
+    const result = component['parseAndExtractJSONs'](textWithJson);
+
+    expect(result.storyboards.length).toBe(1);
+    expect((result.storyboards[0].scenes[0] as any).description).toBe(
+      'Scene 1',
+    );
+    expect(result.cleanText).toBe('Some chat response');
+  });
+
+  it('should parse and extract timeline clips from JSON block in parseAndExtractJSONs', () => {
+    const textWithTimeline =
+      'Timeline response\n```json\n{"clips": [{"id": "c1"}], "assets": []}\n```';
+    const result = component['parseAndExtractJSONs'](textWithTimeline);
+
+    expect(result.timelines.length).toBe(1);
+    expect((result.timelines[0] as any).clips[0].id).toBe('c1');
+    expect(result.cleanText).toBe('Timeline response');
+  });
+
+  it('should process SSE stream events onMessage, onError and onClose', () => {
+    component.currentSessionId = 'session-123';
+    component.selectedImages.set([]);
+    component.sendChatMessage('hello');
+
+    expect(agentChatService.sendMessage).toHaveBeenCalled();
+    expect(sseCallbacks).toBeDefined();
+
+    // Test text message chunk
+    sseCallbacks.onMessage({
+      content: {
+        parts: [{text: 'Hello user! Here is your story.'}],
+      },
+    });
+    expect(component.chatMessages().length).toBe(3);
+    expect(component.chatMessages()[2].text).toBe(
+      'Hello user! Here is your story.',
+    );
+
+    // Test function response with storyboard_id
+    sseCallbacks.onMessage({
+      content: {
+        parts: [
+          {
+            functionResponse: {
+              response: {
+                result: JSON.stringify({storyboard_id: 101}),
+              },
+            },
+          },
+        ],
+      },
+    });
+    expect(storyboardService.getStoryboard).toHaveBeenCalledWith(101);
+    expect(agentChatService.currentStoryboard()).toEqual({
+      id: 101,
+      timeline_id: 42,
+    } as any);
+
+    // Test error
+    spyOn(console, 'error');
+    sseCallbacks.onError('some error');
+    expect(console.error).toHaveBeenCalled();
+
+    // Test onClose
+    sseCallbacks.onClose();
+    expect(storyboardService.getStoryboardForSession).toHaveBeenCalled();
+  });
+
+  it('should open image src in window.open onMessageClick', () => {
+    spyOn(window, 'open');
+    const mockImg = document.createElement('img');
+    mockImg.setAttribute('src', 'http://example.com/test.jpg');
+    const event = {
+      target: mockImg,
+      preventDefault: jasmine.createSpy('preventDefault'),
+    } as any;
+
+    component.onMessageClick(event);
+
+    expect(window.open).toHaveBeenCalledWith(
+      'http://example.com/test.jpg',
+      '_blank',
+    );
+  });
+
+  describe('final video readiness ("See Video" CTA)', () => {
+    it('does not announce a video on stream close just because a timeline exists', () => {
+      storyboardService.getStoryboardForSession.and.returnValue(
+        of([{id: 5, timeline_id: 42, scenes: []}]),
+      );
+      spyOn(agentChatService.videoGenerated$, 'next');
+      component.currentSessionId = 'session-123';
+      component.sendChatMessage('hello');
+
+      sseCallbacks.onClose();
+
+      expect(storyboardService.getStoryboardForSession).toHaveBeenCalled();
+      expect(agentChatService.currentStoryboard()).toEqual(
+        jasmine.objectContaining({id: 5, timeline_id: 42}),
+      );
+      expect(agentChatService.videoGenerated$.next).not.toHaveBeenCalled();
+      expect(agentChatService.finalVideoReady()).toBeFalse();
+    });
+
+    it('flags the final cut and announces it when stitch_final_video succeeds mid-stream', () => {
+      spyOn(agentChatService.videoGenerated$, 'next');
+      component.currentSessionId = 'session-123';
+      component.sendChatMessage('hello');
+
+      sseCallbacks.onMessage({
+        content: {
+          parts: [
+            {
+              functionResponse: {
+                name: 'stitch_final_video',
+                response: {status: 'succeeded'},
+              },
+            },
+          ],
+        },
+      });
+
+      expect(agentChatService.finalVideoReady()).toBeTrue();
+      expect(agentChatService.videoGenerated$.next).toHaveBeenCalledWith(true);
+    });
+
+    it('follows the agent state delta, including the reset on regeneration', () => {
+      component.currentSessionId = 'session-123';
+      component.sendChatMessage('hello');
+
+      sseCallbacks.onMessage({
+        actions: {state_delta: {final_video_asset_id: '77'}},
+      });
+      expect(agentChatService.finalVideoReady()).toBeTrue();
+
+      // Unrelated delta leaves the flag alone.
+      sseCallbacks.onMessage({actions: {state_delta: {parameters: {}}}});
+      expect(agentChatService.finalVideoReady()).toBeTrue();
+
+      // regenerate_* tools null the keys out.
+      sseCallbacks.onMessage({
+        actions: {
+          state_delta: {
+            final_video_asset_id: null,
+            final_video_asset_ref: null,
+          },
+        },
+      });
+      expect(agentChatService.finalVideoReady()).toBeFalse();
+    });
+
+    it('derives the flag from session state on load and clears it on reset', () => {
+      component['syncFinalVideoReady']({final_video_asset_ref: {id: '9'}});
+      expect(agentChatService.finalVideoReady()).toBeTrue();
+
+      component['syncFinalVideoReady']({parameters: {}});
+      expect(agentChatService.finalVideoReady()).toBeFalse();
+
+      agentChatService.finalVideoReady.set(true);
+      component['clearCampaignDetails']();
+      expect(agentChatService.finalVideoReady()).toBeFalse();
+    });
+  });
+
+  describe("storyboard refresh follows the agent's current_storyboard_id", () => {
+    const records = [
+      {id: 14, session_id: 'session-123', timeline_id: 10, scenes: []},
+      {id: 13, session_id: 'session-123', timeline_id: 9, scenes: []},
+    ];
+
+    beforeEach(() => {
+      storyboardService.getStoryboardForSession.and.returnValue(of(records));
+      spyOn(router, 'navigate').and.resolveTo(true);
+      component.currentSessionId = 'session-123';
+    });
+
+    it('binds to the record the streamed state announced, not the newest', () => {
+      component.sendChatMessage('hello');
+      sseCallbacks.onMessage({
+        actions: {state_delta: {current_storyboard_id: '13'}},
+      });
+      sseCallbacks.onClose();
+
+      expect(agentChatService.currentStoryboard()?.id).toBe(13);
+      expect(router.navigate).toHaveBeenCalledWith([], {
+        relativeTo: jasmine.anything(),
+        queryParams: {sessionId: 'session-123', storyboardId: 13},
+        queryParamsHandling: 'merge',
+      });
+    });
+
+    it('falls back to the newest record when the agent has not named one', () => {
+      component['refreshStoryboardForSession']();
+      expect(agentChatService.currentStoryboard()?.id).toBe(14);
+    });
+
+    it('falls back to the newest record when the named one is not in the list', () => {
+      component['trackStreamedStoryboardId']({current_storyboard_id: '99'});
+      component['refreshStoryboardForSession']();
+      expect(agentChatService.currentStoryboard()?.id).toBe(14);
+    });
+
+    it('ignores deltas without the key and clears it on null', () => {
+      component['trackStreamedStoryboardId']({current_storyboard_id: 13});
+      component['trackStreamedStoryboardId']({parameters: {}});
+      expect(component['streamedStoryboardId']).toBe(13);
+      component['trackStreamedStoryboardId']({current_storyboard_id: null});
+      expect(component['streamedStoryboardId']).toBeNull();
+    });
+
+    it('forgets the id when a new chat starts', () => {
+      component['trackStreamedStoryboardId']({current_storyboard_id: '13'});
+      component.startNewChat();
+      expect(component['streamedStoryboardId']).toBeNull();
+    });
+  });
+
+  describe('planned beats survive the templated-mode sanitisation', () => {
+    const storyline = {
+      narrative_arc: 'Bottle → protagonist → tagline.',
+      scenes: [{visual_action: 'Light crosses the bottle.'}],
+    };
+    const extracted = {
+      campaign_name: 'Cymbal',
+      template_name: 'Feature Spotlight',
+      storyline_guidance: storyline,
+    };
+    const sanitised = {
+      campaign_name: 'Cymbal',
+      template_name: 'Feature Spotlight',
+    };
+
+    it('keeps the beats when a later parameters delta drops storyline_guidance', () => {
+      component.currentSessionId = 'session-123';
+      component.sendChatMessage('hello');
+
+      sseCallbacks.onMessage({actions: {state_delta: {parameters: extracted}}});
+      expect(agentChatService.campaignDetails()?.plannedBeats.length).toBe(1);
+
+      sseCallbacks.onMessage({
+        actions: {
+          state_delta: {parameters: sanitised, stage_completed: 'strategy'},
+        },
+      });
+      const details = agentChatService.campaignDetails()!;
+      expect(details.plannedBeats.length).toBe(1);
+      expect(details.storylineArc).toBe(storyline.narrative_arc);
+      expect(details.stage).toBe('strategy');
+    });
+
+    it('recovers the beats from the event log on session load', () => {
+      component['syncCampaignDetails']({parameters: sanitised}, false, [
+        {actions: {state_delta: {parameters: extracted}}},
+        {actions: {state_delta: {parameters: sanitised}}},
+      ]);
+      expect(agentChatService.campaignDetails()?.plannedBeats.length).toBe(1);
+    });
+
+    it('does not invent beats when the log never had any', () => {
+      component['syncCampaignDetails']({parameters: sanitised}, false, [
+        {actions: {state_delta: {parameters: sanitised}}},
+      ]);
+      expect(agentChatService.campaignDetails()?.plannedBeats).toEqual([]);
+
+      component['syncCampaignDetails']({parameters: sanitised});
+      expect(agentChatService.campaignDetails()?.plannedBeats).toEqual([]);
+    });
+  });
+
+  describe('Characters tab bridge (campaignSession / campaignStateUpdated$)', () => {
+    const creatorState = {
+      parameters: {campaign_name: 'Cymbal', generate_virtual_creator: true},
+      asset_refs: {
+        'virtual_creator_4c53.png': {
+          id: 201,
+          asset_type: 'generated',
+          workspace_id: 1,
+        },
+      },
+      virtual_creator_metadata: {
+        file_name: 'virtual_creator_4c53.png',
+        demographics: 'Female, 30-35',
+        profile: {name: 'Maya', role: 'reviewer', clothing: 'linen shirt'},
+      },
+    };
+
+    it('publishes the session the brief belongs to and clears it with the brief', () => {
+      component.currentSessionId = 'session-abc';
+      component['syncCampaignDetails'](creatorState);
+      expect(agentChatService.campaignSession()).toEqual({
+        sessionId: 'session-abc',
+        workspaceId: 1,
+      });
+      expect(agentChatService.campaignDetails()?.character).toEqual(
+        jasmine.objectContaining({
+          key: 'virtual_creator_4c53.png',
+          assetId: '201',
+          assetType: 'generated',
+          agentCast: false,
+          profile: {name: 'Maya', role: 'reviewer', clothing: 'linen shirt'},
+        }),
+      );
+
+      component['clearCampaignDetails']();
+      expect(agentChatService.campaignSession()).toBeNull();
+      expect(agentChatService.campaignDetails()).toBeNull();
+    });
+
+    it('does not publish a session when no brief is present', () => {
+      component.currentSessionId = 'session-abc';
+      component['syncCampaignDetails']({unrelated: 1});
+      expect(agentChatService.campaignDetails()).toBeNull();
+      expect(agentChatService.campaignSession()).toBeNull();
+    });
+
+    it('merges a Characters-tab state slice like a streamed delta', () => {
+      component.currentSessionId = 'session-abc';
+      component['syncCampaignDetails'](creatorState);
+
+      // Removal: the backend echoes the rewritten slice
+      agentChatService.campaignStateUpdated$.next({
+        parameters: {campaign_name: 'Cymbal', generate_virtual_creator: false},
+        asset_refs: {},
+        virtual_creator_metadata: null,
+      });
+      const details = agentChatService.campaignDetails()!;
+      expect(details.character).toBeNull();
+      expect(details.title).toBe('Cymbal');
+      expect(details.virtualCreator?.enabled).toBeFalse();
+    });
+
+    it('stops listening once destroyed', () => {
+      component.currentSessionId = 'session-abc';
+      component['syncCampaignDetails'](creatorState);
+      fixture.destroy();
+
+      agentChatService.campaignStateUpdated$.next({
+        virtual_creator_metadata: null,
+        asset_refs: {},
+      });
+      expect(agentChatService.campaignDetails()?.character).not.toBeNull();
+    });
+  });
+
+  it('should open asset links in window.open onMessageClick and prevent default', () => {
+    spyOn(window, 'open');
+    const mockLink = document.createElement('a');
+    mockLink.setAttribute(
+      'href',
+      'https://storage.googleapis.com/bucket/file.png',
+    );
+    const event = {
+      target: mockLink,
+      preventDefault: jasmine.createSpy('preventDefault'),
+    } as any;
+
+    component.onMessageClick(event);
+
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(window.open).toHaveBeenCalledWith(
+      'https://storage.googleapis.com/bucket/file.png',
+      '_blank',
+    );
+  });
+
+  it('should return asset URL for MediaItemSelection with presignedThumbnailUrls', () => {
+    const selection = {
+      mediaItem: {
+        presignedThumbnailUrls: ['http://thumb1.png'],
+        presignedUrls: ['http://url1.png'],
+      },
+      selectedIndex: 0,
+    };
+    const url = component.getAssetUrl(selection as any);
+    expect(url).toBe('http://thumb1.png');
+  });
+
+  it('should return asset URL for SourceAssetResponseDto with presignedThumbnailUrl', () => {
+    const asset = {
+      presignedThumbnailUrl: 'http://asset-thumb.png',
+      id: 'a1',
+    };
+    const url = component.getAssetUrl(asset as any);
+    expect(url).toBe('http://asset-thumb.png');
+  });
+
+  it('must NOT guess a backend download URL for an unresolved SourceAssetResponseDto', () => {
+    // `/assets/source-assets/{id}/download` never existed on the backend; the
+    // resolver effect fills in the presigned URL and the template shows a
+    // placeholder tile until then.
+    const asset = {
+      id: 'a1',
+    };
+    const url = component.getAssetUrl(asset as any);
+    expect(url).toBe('');
+  });
+
+  it('should scroll to bottom in scrollToBottom if chatContainer exists', fakeAsync(() => {
+    const mockElement = {scrollTop: 0, scrollHeight: 1500};
+    component['chatContainer'] = {nativeElement: mockElement} as any;
+
+    component['scrollToBottom']();
+    tick(50);
+
+    expect(mockElement.scrollTop).toBe(1500);
+  }));
+
+  it('should load session details from query parameters on startup if session exists in workspace', () => {
+    agentChatService.getSessions.and.returnValue(
+      of([
+        {
+          id: 'session-456',
+          state: {current_storyboard_id: 202},
+        },
+      ]),
+    );
+
+    queryParamsSubject.next({
+      sessionId: 'session-456',
+      storyboardId: '202',
+    });
+
+    expect(agentChatService.getSessionDetail).toHaveBeenCalledWith(
+      1,
+      'session-456',
+      202,
+    );
+  });
+
+  it('should trigger sendChatMessage when generateVideoRequest$ emits', () => {
+    spyOn(component, 'sendChatMessage');
+    agentChatService.currentStoryboard.set({id: 888} as any);
+
+    agentChatService.generateVideoRequest$.next();
+
+    expect(component.sendChatMessage).toHaveBeenCalledWith(
+      'Please generate the final video for storyboard ID 888.',
+    );
+  });
+
+  it('should trigger sendChatMessage when generateVideoRequest$ emits and no storyboard id exists', () => {
+    spyOn(component, 'sendChatMessage');
+    agentChatService.currentStoryboard.set(null);
+
+    agentChatService.generateVideoRequest$.next();
+
+    expect(component.sendChatMessage).toHaveBeenCalledWith(
+      "Please generate the final video matching this storyboard's approved layout.",
+    );
+  });
+
+  it('should parse and extract assets from JSON block in parseAndExtractJSONs', () => {
+    const textWithAsset =
+      'Asset response\n```json\n{"asset": {"id": "a1", "url": "http://img.png"}}\n```';
+    const result = component['parseAndExtractJSONs'](textWithAsset);
+
+    expect(result.assets.length).toBe(1);
+    expect(result.assets[0].id).toBe('a1');
+    expect(result.cleanText).toBe('Asset response');
+  });
+
+  it('should parse pure JSON response in parseAndExtractJSONs when no code blocks exist', () => {
+    const pureJson = '{"asset": {"id": "pure-a1"}}';
+    const result = component['parseAndExtractJSONs'](pureJson);
+
+    expect(result.assets.length).toBe(1);
+    expect(result.assets[0].id).toBe('pure-a1');
+    expect(result.cleanText).toBe('');
+  });
+
+  it('should extract JSON from boundary braces in parseAndExtractJSONs', () => {
+    const boundaryJson =
+      'Text before {"asset": {"id": "boundary-a1"}} Text after';
+    const result = component['parseAndExtractJSONs'](boundaryJson);
+
+    expect(result.assets.length).toBe(1);
+    expect(result.assets[0].id).toBe('boundary-a1');
+    expect(result.cleanText).toBe('Text before  Text after');
+  });
+
+  it('should perform deep search to extract storyboards in extractStoryboardData', () => {
+    const nestedData = {
+      wrapper: {
+        inner: {
+          scenes: [{id: 1, description: 'Nested Scene'}],
+        },
+      },
+    };
+    const result = component['extractStoryboardData'](nestedData);
+
+    expect(result).toBeDefined();
+    expect((result as any).scenes[0].id).toBe(1);
+  });
+
+  it('should set welcome message in addWelcomeMessage', () => {
+    component.chatMessages.set([]);
+    component.addWelcomeMessage();
+    expect(component.chatMessages()[0].text).toContain('Izumi');
+  });
+
+  it('should map selected images to partsParams correctly in executeSendMessage', () => {
+    component.currentSessionId = 'session-123';
+    component.selectedImages.set([
+      {
+        mediaItem: {id: 10, mimeType: 'image/jpeg', base64Data: 'abc'},
+        selectedIndex: 1,
+      } as any,
+      {
+        id: 'a1',
+        mimeType: 'image/png',
+        base64Data: 'xyz',
+      } as any,
+    ]);
+
+    component.sendChatMessage('hello');
+
+    expect(agentChatService.sendMessage).toHaveBeenCalledWith(
+      'session-123',
+      [
+        {text: 'hello'},
+        {sourceMediaItem: {mediaItemId: 10, mediaIndex: 1, role: 'input'}},
+        {sourceAssetId: 'a1'},
+      ],
+      1,
+      jasmine.any(Object),
+    );
+    expect(component.selectedImages().length).toBe(0);
+  });
+
+  it('should handle actions.storyboard in SSE stream onMessage', () => {
+    component.currentSessionId = 'session-123';
+    component.sendChatMessage('hello');
+
+    agentChatService.isGeneratingStoryboard.set(true);
+    sseCallbacks.onMessage({
+      actions: {storyboard: true},
+    });
+
+    expect(agentChatService.isGeneratingStoryboard()).toBeFalse();
+  });
+
+  it('should strip system notes from message text in SSE stream onMessage', () => {
+    component.currentSessionId = 'session-123';
+    component.sendChatMessage('hello');
+
+    // Send first chunk
+    sseCallbacks.onMessage({
+      content: {
+        parts: [{text: 'Actual text here '}],
+      },
+    });
+
+    // Send second chunk with system note
+    sseCallbacks.onMessage({
+      content: {
+        parts: [{text: '[System Note: ignore this info]'}],
+      },
+    });
+
+    expect(component.chatMessages()[2].text).toBe('Actual text here');
+  });
+
+  it('should call viewAsset and onInputResize placeholders without error', () => {
+    expect(() => {
+      component.viewAsset('asset-1');
+      const mockTextarea = document.createElement('textarea');
+      mockTextarea.value = 'hello';
+      component.onInputResize({target: mockTextarea} as any);
+    }).not.toThrow();
+  });
+
+  it('should handle error when preloading sessions fails', () => {
+    spyOn(console, 'error');
+    agentChatService.getSessions.and.returnValue(
+      throwError(() => new Error('Get Sessions error')),
+    );
+
+    queryParamsSubject.next({sessionId: 'session-error-test'});
+
+    expect(console.error).toHaveBeenCalled();
+  });
+
+  it('should handle error when getSessionDetail fails', () => {
+    spyOn(console, 'error');
+    agentChatService.getSessions.and.returnValue(
+      of([
+        {
+          id: 'session-456',
+          state: {current_storyboard_id: 202},
+        },
+      ]),
+    );
+    agentChatService.getSessionDetail.and.returnValue(
+      throwError(() => new Error('Get Detail error')),
+    );
+
+    queryParamsSubject.next({
+      sessionId: 'session-456',
+      storyboardId: '202',
+    });
+
+    expect(console.error).toHaveBeenCalled();
+  });
+
+  it('should map sessions to topics mapping label and tooltip correctly in dropdownOptions', () => {
+    component.sessions.set([
+      {id: 's1', lastUpdateTime: 1780000000},
+      {id: 's2', lastUpdateTime: 1780100000},
+      {id: 's3', lastUpdateTime: 1780200000},
+    ]);
+    component.topics.set({
+      s1: {title: 'Topic 1 title', summary: 'Topic 1 summary'},
+      s2: 'Topic 2 string title',
+    });
+
+    const formatted = component.dropdownOptions();
+
+    expect(formatted.length).toBe(3);
+    expect(formatted[0].label).toBe('Topic 1 title');
+    expect(formatted[0].tooltip).toBe('Topic 1 summary');
+    expect(formatted[1].label).toBe('Topic 2 string title');
+    expect(formatted[2].label).toContain('- Chat');
+  });
+
+  it('should format URL and open window on viewAsset', () => {
+    spyOn(window, 'open');
+
+    component.viewAsset('source_asset:123');
+    expect(window.open).toHaveBeenCalledWith('/asset-detail/123', '_blank');
+
+    component.viewAsset('media_item:456');
+    expect(window.open).toHaveBeenCalledWith('/gallery/456', '_blank');
+
+    component.viewAsset('simple-asset');
+    expect(window.open).toHaveBeenCalledWith('/gallery/simple-asset', '_blank');
+  });
+
+  it('should call deleteSession and clear session state on deleteChat', () => {
+    spyOn(component['dialog'], 'open').and.returnValue({
+      afterClosed: () => of(true),
+    } as any);
+    component.currentSessionId = 'session-123';
+    component.sessions.set([
+      {id: 'session-123', lastUpdateTime: 123},
+      {id: 'session-other', lastUpdateTime: 456},
+    ]);
+
+    component.deleteChat();
+
+    expect(agentChatService.deleteSession).toHaveBeenCalledWith(
+      'session-123',
+      1,
+    );
+    expect(component.currentSessionId).toBe('session-other');
+  });
+
+  it('should clear states and navigate on startNewChat', () => {
+    spyOn(router, 'navigate');
+    component.currentSessionId = 'session-123';
+
+    component.startNewChat();
+
+    expect(component.currentSessionId).toBeNull();
+    expect(agentChatService.selectedSessionId()).toBeNull();
+    expect(component.chatMessages().length).toBe(1);
+    expect(router.navigate).toHaveBeenCalledWith([], {
+      relativeTo: component['route'],
+      queryParams: {sessionId: null, storyboardId: null},
+      queryParamsHandling: 'merge',
+    });
+  });
+
+  it('should log error when deleteSession fails', () => {
+    spyOn(console, 'error');
+    spyOn(component['dialog'], 'open').and.returnValue({
+      afterClosed: () => of(true),
+    } as any);
+    agentChatService.deleteSession.and.returnValue(
+      throwError(() => new Error('Delete failed')),
+    );
+    component.currentSessionId = 'session-123';
+
+    component.deleteChat();
+
+    expect(console.error).toHaveBeenCalled();
+  });
+
+  it('should handle error when createSession fails', () => {
+    spyOn(console, 'error');
+    agentChatService.createSession.and.returnValue(
+      throwError(() => new Error('Create session failed')),
+    );
+    component.currentSessionId = null;
+
+    component.sendChatMessage('hello');
+
+    expect(console.error).toHaveBeenCalled();
+    expect(component.isTyping()).toBeFalse();
+  });
+
+  it('should generate a topic title and save it on first message', () => {
+    component.currentSessionId = 'session-123';
+    component.topics.set({});
+    agentChatService.generateTitle.and.returnValue(
+      of({title: 'Generated Title', summary: 'Generated Summary'}),
+    );
+
+    component.sendChatMessage('hello');
+
+    expect(agentChatService.generateTitle).toHaveBeenCalledWith('hello');
+    expect(component.topics()['session-123']).toEqual({
+      title: 'Generated Title',
+      summary: 'Generated Summary',
+    });
+  });
+
+  it('should fallback to message text as title if generateTitle fails', () => {
+    spyOn(console, 'error');
+    component.currentSessionId = 'session-123';
+    component.topics.set({});
+    agentChatService.generateTitle.and.returnValue(
+      throwError(() => new Error('Title generation failed')),
+    );
+
+    component.sendChatMessage('hello');
+
+    expect(console.error).toHaveBeenCalled();
+    expect(component.topics()['session-123']).toEqual({
+      title: 'hello',
+      summary: undefined,
+    });
+  });
+
+  it('should start a new conversation by default when sessionId is not provided in query params and sessions exist', () => {
+    spyOn(router, 'navigate');
+    agentChatService.getSessions.and.returnValue(
+      of([{id: 'latest-session-id', lastUpdateTime: 123}]),
+    );
+    component['lastWorkspaceId'] = 999;
+
+    queryParamsSubject.next({random: Math.random()});
+
+    expect(component.currentSessionId).toBeNull();
+    expect(agentChatService.selectedSessionId()).toBeNull();
+    expect(router.navigate).toHaveBeenCalledWith([], {
+      relativeTo: component['route'],
+      queryParams: {sessionId: null, storyboardId: null},
+      queryParamsHandling: 'merge',
+    });
+  });
+
+  it('should clear storyboard and add welcome message if loaded session storyboard is null', () => {
+    agentChatService.getSessionDetail.and.returnValue(
+      of({
+        session: {id: 'session-no-sb', events: []},
+        storyboard: null,
+      }),
+    );
+
+    queryParamsSubject.next({sessionId: 'session-no-sb'});
+
+    expect(agentChatService.currentStoryboard()).toBeNull();
+    expect(component.chatMessages().length).toBe(1);
+    expect(component.chatMessages()[0].sender).toBe('agent');
+  });
+
+  it('should validate if storyboardId query param exists in workspace sessions', () => {
+    agentChatService.getSessions.and.returnValue(
+      of([
+        {
+          id: 's1',
+          lastUpdateTime: 123,
+          state: {current_storyboard_id: 202},
+        },
+      ]),
+    );
+    agentChatService.getSessionDetail.and.returnValue(
+      of({
+        session: {id: 's1', events: []},
+        storyboard: {id: 202, timeline_id: 42, workspace_id: 1},
+      }),
+    );
+
+    queryParamsSubject.next({storyboardId: '202'});
+
+    expect(component.currentSessionId).toBe('s1');
+  });
+
+  it('should navigate to new session if query param sessionId is not in workspace sessions', () => {
+    spyOn(router, 'navigate');
+    agentChatService.getSessions.and.returnValue(
+      of([{id: 's1', lastUpdateTime: 123}]),
+    );
+
+    queryParamsSubject.next({sessionId: 'invalid-session-id'});
+
+    expect(router.navigate).toHaveBeenCalled();
+  });
+
+  it('should parse JSON block inside text chunks in SSE stream onMessage', () => {
+    component.currentSessionId = 'session-123';
+    component.sendChatMessage('hello');
+
+    sseCallbacks.onMessage({
+      content: {
+        parts: [{text: 'Some text before {\n "asset": { "id": "a1" }\n}'}],
+      },
+    });
+
+    expect(component.chatMessages().length).toBeGreaterThan(2);
+  });
+
+  it('should extract storyboard data when format has clips, assets, and scenes', () => {
+    const data = {
+      clips: [{id: 1, assetId: 'a1'}],
+      assets: {a1: {url: 'http://img.png'}},
+    };
+    expect(component['extractStoryboardData'](data)).toBeNull();
+
+    const dataWithScenes = {
+      ...data,
+      scenes: [{id: 1, description: 'nested scene'}],
+    };
+    expect(component['extractStoryboardData'](dataWithScenes)).toBeTruthy();
+  });
+
+  it('should process video asset JSON block on onClose in SSE stream', () => {
+    spyOn(agentChatService.videoGenerated$, 'next');
+    component.currentSessionId = 'session-123';
+    component.sendChatMessage('hello');
+
+    sseCallbacks.onMessage({
+      content: {
+        parts: [
+          {
+            text: 'Here is your video: {"asset": {"id": 999, "type": "video", "url": "http://example.com/video.mp4"}}',
+          },
+        ],
+      },
+    });
+
+    sseCallbacks.onClose();
+
+    expect(agentChatService.videoGenerated$.next).toHaveBeenCalledWith(
+      jasmine.objectContaining({id: 999, type: 'video'}),
+    );
+  });
+
+  it('should not broadcast non-video assets on onClose in SSE stream', () => {
+    spyOn(agentChatService.videoGenerated$, 'next');
+    component.currentSessionId = 'session-123';
+    component.sendChatMessage('hello');
+
+    sseCallbacks.onMessage({
+      content: {
+        parts: [
+          {
+            text: 'Here is your image: {"asset": {"id": 100, "type": "image", "url": "http://example.com/img.png"}}',
+          },
+        ],
+      },
+    });
+
+    sseCallbacks.onClose();
+
+    expect(agentChatService.videoGenerated$.next).not.toHaveBeenCalledWith(
+      jasmine.objectContaining({type: 'image'}),
+    );
+  });
+
+  it('should detect storyboard ID tag, fetch the storyboard, and set it on currentStoryboard', () => {
+    component.currentSessionId = 'session-123';
+    storyboardService.getStoryboard.and.returnValue(
+      of({id: 123, timeline_id: 42, scenes: []} as any),
+    );
+
+    component['checkForStoryboardId'](
+      'Here is your storyboard [ID: storyboard_123]',
+    );
+
+    expect(storyboardService.getStoryboard).toHaveBeenCalledWith(123);
+    expect(agentChatService.currentStoryboard()).toEqual(
+      jasmine.objectContaining({id: 123, timeline_id: 42}),
+    );
+  });
+
+  describe('isToolResponse', () => {
+    it('should return false if event is null or undefined', () => {
+      expect(component['isToolResponse'](null)).toBeFalse();
+      expect(component['isToolResponse'](undefined)).toBeFalse();
+    });
+
+    it('should return false if parts is not an array', () => {
+      const event = {
+        content: {
+          parts: 'not-an-array',
+        },
+      };
+      expect(component['isToolResponse'](event)).toBeFalse();
+    });
+
+    it('should return false if rawParts is not an array', () => {
+      const event = {
+        raw_event: {
+          content: {
+            parts: 'not-an-array',
+          },
+        },
+      };
+      expect(component['isToolResponse'](event)).toBeFalse();
+    });
+
+    it('should return false if parts or rawParts array contains null or undefined elements', () => {
+      const event = {
+        content: {
+          parts: [null, undefined],
+        },
+      };
+      expect(component['isToolResponse'](event)).toBeFalse();
+    });
+
+    it('should return true if content.parts has functionResponse', () => {
+      const event = {
+        content: {
+          parts: [{functionResponse: {}}],
+        },
+      };
+      expect(component['isToolResponse'](event)).toBeTrue();
+    });
+
+    it('should return true if raw_event.content.parts has tool_response', () => {
+      const event = {
+        raw_event: {
+          content: {
+            parts: [{tool_response: {}}],
+          },
+        },
+      };
+      expect(component['isToolResponse'](event)).toBeTrue();
+    });
+  });
+
+  describe('Polling lifecycle', () => {
+    it('should call stopPolling on destroy', () => {
+      component.ngOnDestroy();
+      expect(agentChatService.stopPolling).toHaveBeenCalled();
+    });
+
+    it('should call stopPolling on startNewChat', () => {
+      component.startNewChat();
+      expect(agentChatService.stopPolling).toHaveBeenCalled();
+    });
+
+    it('should call stopPolling on loadChatMessages', () => {
+      component.loadChatMessages('session-123');
+      expect(agentChatService.stopPolling).toHaveBeenCalled();
+    });
+
+    it('should call stopPolling on onAgentChange', () => {
+      component.onAgentChange('script_writer');
+      expect(agentChatService.stopPolling).toHaveBeenCalled();
+    });
+  });
+
+  describe('checkAndResumePolling (session reload)', () => {
+    const nowSeconds = () => Date.now() / 1000;
+    const gateCall = {
+      author: 'strategy_gate_agent',
+      content: {
+        role: 'model',
+        parts: [
+          {text: 'Review the strategy.'},
+          {
+            functionCall: {
+              id: 'call_1',
+              name: 'await_strategy_approval',
+              args: {},
+            },
+          },
+        ],
+      },
+      longRunningToolIds: ['call_1'],
+    };
+    // ADK's placeholder response for a long-running tool: role "user", but
+    // authored by the gate agent.
+    const gatePlaceholder = {
+      author: 'strategy_gate_agent',
+      content: {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'call_1',
+              name: 'await_strategy_approval',
+              response: {status: 'pending'},
+            },
+          },
+        ],
+      },
+    };
+    // What `PATCH …/sessions/{id}` (character edit, storyboard sync, token
+    // propagation) appends: author "user", no content at all.
+    const statePatch = {
+      author: 'user',
+      actions: {stateDelta: {virtual_creator_metadata: {}}},
+    };
+    const pendingGate = {
+      callId: 'call_1',
+      toolName: 'await_strategy_approval',
+      stage: 'strategy',
+      options: [],
+      payload: {},
+    } as any;
+
+    const detail = (events: any[]) =>
+      ({
+        session: {id: 's-stuck', lastUpdateTime: nowSeconds(), events},
+        storyboard: null,
+      }) as any;
+
+    beforeEach(() => {
+      agentChatService.activeAgent.set('ads_x');
+      agentChatService.startPolling.calls.reset();
+      component.isTyping.set(true);
+      agentChatService.isGeneratingStoryboard.set(true);
+    });
+
+    it('does not resume when a gate is pending, even if the tail is a content-less user event', () => {
+      component.checkAndResumePolling(
+        detail([gateCall, gatePlaceholder, statePatch]),
+        pendingGate,
+      );
+
+      expect(agentChatService.startPolling).not.toHaveBeenCalled();
+      expect(component.isTyping()).toBeFalse();
+      expect(agentChatService.isGeneratingStoryboard()).toBeFalse();
+    });
+
+    it('skips trailing content-less events and judges the last event that has parts', () => {
+      // No gate passed (e.g. a session past the final cut): the placeholder
+      // tool response is the last real event, so nothing is in flight.
+      component.checkAndResumePolling(
+        detail([gateCall, gatePlaceholder, statePatch, statePatch]),
+      );
+
+      expect(agentChatService.startPolling).not.toHaveBeenCalled();
+      expect(component.isTyping()).toBeFalse();
+      expect(agentChatService.isGeneratingStoryboard()).toBeFalse();
+    });
+
+    it('clears the generating state when every event is content-less', () => {
+      component.checkAndResumePolling(detail([statePatch]));
+
+      expect(agentChatService.startPolling).not.toHaveBeenCalled();
+      expect(component.isTyping()).toBeFalse();
+    });
+
+    it('still resumes when the last real event is an unanswered user message', () => {
+      const userTurn = {
+        author: 'user',
+        content: {role: 'user', parts: [{text: 'Make it punchier'}]},
+      };
+
+      component.checkAndResumePolling(
+        detail([gateCall, gatePlaceholder, userTurn, statePatch]),
+      );
+
+      expect(agentChatService.startPolling).toHaveBeenCalledWith(
+        's-stuck',
+        jasmine.any(Object),
+      );
+      expect(component.isTyping()).toBeTrue();
+      expect(agentChatService.isGeneratingStoryboard()).toBeTrue();
+    });
+
+    it('still resumes when the last real event is a pending (non-gate) tool call', () => {
+      const toolCall = {
+        author: 'media_agent',
+        content: {
+          role: 'model',
+          parts: [{functionCall: {id: 'c9', name: 'generate_all_media'}}],
+        },
+      };
+
+      component.checkAndResumePolling(detail([toolCall, statePatch]));
+
+      expect(agentChatService.startPolling).toHaveBeenCalled();
+    });
+
+    it('never resumes a session idle for more than 20 minutes', () => {
+      const res = detail([
+        {author: 'user', content: {role: 'user', parts: [{text: 'hi'}]}},
+      ]);
+      res.session.lastUpdateTime = nowSeconds() - 1300;
+
+      component.checkAndResumePolling(res);
+
+      expect(agentChatService.startPolling).not.toHaveBeenCalled();
+      expect(component.isTyping()).toBeFalse();
+    });
+  });
+
+  describe('Rapid session switching (latest click wins)', () => {
+    const detailFor = (sessionId: string, storyboardId: number | null) => ({
+      session: {id: sessionId, events: [], state: {}},
+      storyboard: storyboardId ? {id: storyboardId, timeline_id: 7} : null,
+    });
+    // Programmatic switch (URL deep link / storyboard sync): these paths set
+    // currentSessionId and call the loader directly, bypassing the picker lock.
+    const switchProgrammatically = (sessionId: string) => {
+      component.currentSessionId = sessionId;
+      component.loadChatMessages(sessionId);
+    };
+
+    it('ignores a stale response that lands after a programmatic switch', () => {
+      const first = new Subject<any>();
+      const second = new Subject<any>();
+      agentChatService.getSessionDetail.and.returnValues(first, second);
+      spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
+
+      switchProgrammatically('session-A');
+      switchProgrammatically('session-B');
+
+      // A's response arrives last (out of order). It must not be applied.
+      second.next(detailFor('session-B', 2));
+      first.next(detailFor('session-A', 1));
+
+      expect(component.currentSessionId).toBe('session-B');
+      expect(agentChatService.selectedSessionId()).toBe('session-B');
+      expect(agentChatService.currentStoryboard()?.id).toBe(2);
+      const navigatedSessions = (router.navigate as jasmine.Spy).calls
+        .allArgs()
+        .map(args => args[1]?.queryParams?.sessionId);
+      expect(navigatedSessions).not.toContain('session-A');
+    });
+
+    it('cancels the previous in-flight request on a programmatic switch', () => {
+      const first = new Subject<any>();
+      const second = new Subject<any>();
+      agentChatService.getSessionDetail.and.returnValues(first, second);
+
+      switchProgrammatically('session-A');
+      expect(first.observers.length).toBe(1);
+
+      switchProgrammatically('session-B');
+      expect(first.observers.length).toBe(0);
+      expect(second.observers.length).toBe(1);
+    });
+
+    it('drops a picker click while the previous switch is still loading', () => {
+      const pending = new Subject<any>();
+      agentChatService.getSessionDetail.and.returnValue(pending);
+      agentChatService.getSessionDetail.calls.reset();
+
+      component.onSessionChange('session-A');
+      expect(component.isSessionLocked()).toBeTrue();
+
+      component.onSessionChange('session-B');
+
+      expect(component.currentSessionId).toBe('session-A');
+      expect(agentChatService.getSessionDetail).toHaveBeenCalledTimes(1);
+      expect(pending.observers.length).toBe(1);
+    });
+
+    it('drops a picker click while the Workbench timeline is still loading', () => {
+      const timelineState = TestBed.inject(TimelineStateService) as any;
+      agentChatService.getSessionDetail.calls.reset();
+      timelineState.isLoadingTimeline.set(true);
+
+      component.onSessionChange('session-A');
+
+      expect(component.isSessionLocked()).toBeTrue();
+      expect(component.currentSessionId).toBeNull();
+      expect(agentChatService.getSessionDetail).not.toHaveBeenCalled();
+      timelineState.isLoadingTimeline.set(false);
+    });
+
+    it('unlocks once both the history and the timeline have settled', () => {
+      const timelineState = TestBed.inject(TimelineStateService) as any;
+      const pending = new Subject<any>();
+      agentChatService.getSessionDetail.and.returnValue(pending);
+      timelineState.isLoadingTimeline.set(true);
+
+      component.onSessionChange('session-A');
+      pending.next(detailFor('session-A', 1));
+      pending.complete();
+      expect(component.isLoadingHistory()).toBeFalse();
+      expect(component.isSessionLocked()).toBeTrue();
+
+      timelineState.isLoadingTimeline.set(false);
+      expect(component.isSessionLocked()).toBeFalse();
+
+      agentChatService.getSessionDetail.and.returnValue(
+        of(detailFor('session-B', 2)),
+      );
+      component.onSessionChange('session-B');
+      expect(component.currentSessionId).toBe('session-B');
+    });
+
+    it('ignores delete and send while locked', () => {
+      const dialog = TestBed.inject(MatDialog);
+      spyOn(dialog, 'open');
+      agentChatService.getSessionDetail.and.returnValue(new Subject<any>());
+
+      component.onSessionChange('session-A');
+      expect(component.isSessionLocked()).toBeTrue();
+
+      component.deleteChat();
+      expect(dialog.open).not.toHaveBeenCalled();
+
+      component.sendChatMessage('hello while loading');
+      expect(agentChatService.sendMessage).not.toHaveBeenCalled();
+      expect(component.isTyping()).toBeFalse();
+    });
+
+    it('keeps "New Chat" available as the escape hatch while locked', () => {
+      agentChatService.getSessionDetail.and.returnValue(new Subject<any>());
+      spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
+
+      component.onSessionChange('session-A');
+      expect(component.isLoadingHistory()).toBeTrue();
+
+      component.startNewChat();
+
+      expect(component.isLoadingHistory()).toBeFalse();
+      expect(component.currentSessionId).toBeNull();
+    });
+
+    it('treats a URL that echoes the current session/storyboard as a no-op', () => {
+      component['lastWorkspaceId'] = 1;
+      component.currentSessionId = 'session-A';
+      agentChatService.sessions.set([{id: 'session-A'}] as any);
+      agentChatService.currentStoryboard.set({id: 1} as any);
+      agentChatService.getSessions.calls.reset();
+      agentChatService.getSessionDetail.calls.reset();
+
+      queryParamsSubject.next({sessionId: 'session-A', storyboardId: '1'});
+
+      expect(agentChatService.getSessions).not.toHaveBeenCalled();
+      expect(agentChatService.getSessionDetail).not.toHaveBeenCalled();
+      expect(component.isLoadingHistory()).toBeFalse();
+    });
+
+    it('routes a session-first deep link through loadChatMessages', () => {
+      const loadSpy = spyOn(component, 'loadChatMessages').and.callThrough();
+      agentChatService.getSessions.and.returnValue(
+        of([{id: 'session-X', lastUpdateTime: 1}]),
+      );
+      agentChatService.getSessionDetail.and.returnValue(
+        of(detailFor('session-X', 3)),
+      );
+
+      queryParamsSubject.next({sessionId: 'session-X', storyboardId: '3'});
+
+      expect(loadSpy).toHaveBeenCalledWith('session-X', 3);
+      expect(component.currentSessionId).toBe('session-X');
+      expect(agentChatService.currentStoryboard()?.id).toBe(3);
+    });
+
+    it('cancels the in-flight request on destroy', () => {
+      const pending = new Subject<any>();
+      agentChatService.getSessionDetail.and.returnValue(pending);
+
+      component.onSessionChange('session-A');
+      expect(pending.observers.length).toBe(1);
+
+      component.ngOnDestroy();
+      expect(pending.observers.length).toBe(0);
+    });
+
+    it('does not navigate when the URL already carries the loaded session and storyboard', () => {
+      const route = TestBed.inject(ActivatedRoute) as any;
+      route.snapshot = {
+        queryParams: {sessionId: 'session-A', storyboardId: '1'},
+      };
+      agentChatService.getSessionDetail.and.returnValue(
+        of(detailFor('session-A', 1)),
+      );
+      spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
+
+      component.onSessionChange('session-A');
+
+      expect(router.navigate).not.toHaveBeenCalled();
+      delete route.snapshot;
+    });
+
+    it('navigates when the URL differs from the loaded session', () => {
+      const route = TestBed.inject(ActivatedRoute) as any;
+      route.snapshot = {queryParams: {sessionId: 'session-old'}};
+      agentChatService.getSessionDetail.and.returnValue(
+        of(detailFor('session-A', 1)),
+      );
+      spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
+
+      component.onSessionChange('session-A');
+
+      expect(router.navigate).toHaveBeenCalledWith([], {
+        relativeTo: route,
+        queryParams: {sessionId: 'session-A', storyboardId: 1},
+        queryParamsHandling: 'merge',
+      });
+      delete route.snapshot;
+    });
+
+    it('loads a session set from outside (URL / storyboard) without NG0600', () => {
+      // Writing signals inside the selector effect used to throw NG0600
+      // *after* currentSessionId was overwritten, leaving the chat stuck.
+      agentChatService.getSessionDetail.calls.reset();
+      agentChatService.getSessionDetail.and.returnValue(
+        of(detailFor('session-ext', null)),
+      );
+
+      expect(() => {
+        agentChatService.selectedSessionId.set('session-ext');
+        fixture.detectChanges();
+      }).not.toThrow();
+
+      expect(agentChatService.getSessionDetail).toHaveBeenCalledWith(
+        1,
+        'session-ext',
+        undefined,
+      );
+      expect(component.currentSessionId).toBe('session-ext');
+      expect(component.isLoadingHistory()).toBeFalse();
+    });
+
+    it('syncs selectedSessionId from a storyboard without NG0600', () => {
+      agentChatService.getSessionDetail.and.returnValue(
+        of(detailFor('session-from-sb', 9)),
+      );
+
+      expect(() => {
+        agentChatService.currentStoryboard.set({
+          id: 9,
+          session_id: 'session-from-sb',
+        } as any);
+        fixture.detectChanges();
+      }).not.toThrow();
+
+      expect(agentChatService.selectedSessionId()).toBe('session-from-sb');
+      expect(component.currentSessionId).toBe('session-from-sb');
+    });
+  });
+
+  describe('Attached image resolution (no phantom download URL)', () => {
+    const userMessageWithAsset = (id: number) => ({
+      sender: 'user' as const,
+      text: 'look at this',
+      images: [{id}] as any,
+      timestamp: new Date(),
+    });
+
+    it('getAssetUrl returns an empty string instead of guessing a backend URL', () => {
+      expect(component.getAssetUrl({id: 107} as any)).toBe('');
+      expect(
+        component.getAssetUrl({id: 107, presignedUrl: 'https://p/full'} as any),
+      ).toBe('https://p/full');
+      expect(
+        component.getAssetUrl({
+          id: 107,
+          presignedUrl: 'https://p/full',
+          presignedThumbnailUrl: 'https://p/thumb',
+        } as any),
+      ).toBe('https://p/thumb');
+    });
+
+    it('renders a loading tile (no <img>) until the presigned URL is resolved, then swaps to the image', () => {
+      const gallery = TestBed.inject(GalleryService);
+      const pending = new Subject<any>();
+      spyOn(gallery, 'getAsset').and.returnValue(pending);
+
+      component.chatMessages.set([userMessageWithAsset(107)] as any);
+      fixture.detectChanges();
+
+      const host: HTMLElement = fixture.nativeElement;
+      expect(
+        host.querySelector('[data-testid="chat-image-loading"]'),
+      ).not.toBeNull();
+      expect(host.querySelector('img[src*="download"]')).toBeNull();
+      expect(host.querySelector('img[src=""]')).toBeNull();
+
+      pending.next({
+        presignedUrls: ['https://p/107'],
+        presignedThumbnailUrls: ['https://p/107-thumb'],
+      });
+      fixture.detectChanges();
+
+      expect(
+        host.querySelector('[data-testid="chat-image-loading"]'),
+      ).toBeNull();
+      const img = host.querySelector(
+        'img[src="https://p/107-thumb"]',
+      ) as HTMLImageElement | null;
+      expect(img).not.toBeNull();
+    });
+
+    it('shows an unavailable tile for a deleted asset and does not re-fetch it', () => {
+      const gallery = TestBed.inject(GalleryService);
+      const getAsset = spyOn(gallery, 'getAsset').and.returnValue(
+        throwError(() => ({status: 404})),
+      );
+      spyOn(console, 'error');
+
+      component.chatMessages.set([userMessageWithAsset(999)] as any);
+      fixture.detectChanges();
+
+      const host: HTMLElement = fixture.nativeElement;
+      const tile = host.querySelector('[data-testid="chat-image-unavailable"]');
+      expect(tile).not.toBeNull();
+      expect(tile?.textContent).toContain('broken_image');
+      expect(host.querySelector('img')).toBeNull();
+      expect(
+        component.isAssetUnavailable({id: 999, unavailable: true} as any),
+      ).toBeTrue();
+
+      // Any later re-render must not trigger another lookup.
+      component.chatMessages.update(msgs => [...msgs]);
+      fixture.detectChanges();
+      expect(getAsset).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('Approval Gate Checkpoints', () => {
+    it('should detect approval gate function calls from stream event', () => {
+      const event = {
+        content: {
+          parts: [
+            {
+              functionCall: {
+                id: 'call_999',
+                name: 'await_strategy_approval',
+              },
+            },
+          ],
+        },
+      };
+      const gate = component['extractGateFromEvent'](event);
+      expect(gate).toBeTruthy();
+      expect(gate?.callId).toBe('call_999');
+      expect(gate?.toolName).toBe('await_strategy_approval');
+      expect(gate?.stage).toBe('strategy');
+    });
+
+    it('should detect unresolved gate in session events', () => {
+      const events = [
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  id: 'call_sb_1',
+                  name: 'await_storyboard_approval',
+                },
+              },
+            ],
+          },
+        },
+      ];
+      const gate = component['checkUnresolvedGate'](events);
+      expect(gate).toBeTruthy();
+      expect(gate?.callId).toBe('call_sb_1');
+      expect(gate?.stage).toBe('storyboard');
+    });
+
+    it('keeps a re-opened gate visible after a regeneration (stage_completed stays "generation")', () => {
+      // After a `regenerate` decision the agent re-runs and opens the
+      // final-cut gate again; `stage_completed` is monotonic and still says
+      // `generation`, while the agent nulls `final_cut_decision`.
+      const events = [
+        {
+          author: 'final_cut_gate_agent',
+          content: {
+            role: 'model',
+            parts: [
+              {
+                functionCall: {
+                  id: 'call_final_2',
+                  name: 'await_final_cut_approval',
+                },
+              },
+            ],
+          },
+        },
+      ];
+      const reopened = component['checkUnresolvedGate'](events, {
+        stage_completed: 'generation',
+        frame_decision: {decision: 'accept', guidance: ''},
+        final_cut_decision: null,
+      });
+      expect(reopened?.callId).toBe('call_final_2');
+      expect(reopened?.stage).toBe('final_cut');
+
+      // The per-stage decision is still authoritative.
+      expect(
+        component['checkUnresolvedGate'](events, {
+          stage_completed: 'generation',
+          final_cut_decision: {decision: 'accept', guidance: ''},
+        }),
+      ).toBeNull();
+      expect(
+        component['checkUnresolvedGate'](events, {stage_completed: 'complete'}),
+      ).toBeNull();
+    });
+
+    it('should ignore gate if already resolved by user function response', () => {
+      const events = [
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  id: 'call_sb_1',
+                  name: 'await_storyboard_approval',
+                },
+              },
+            ],
+          },
+        },
+        {
+          author: 'user',
+          content: {
+            parts: [
+              {
+                functionResponse: {
+                  id: 'call_sb_1',
+                  name: 'await_storyboard_approval',
+                },
+              },
+            ],
+          },
+        },
+      ];
+      const gate = component['checkUnresolvedGate'](events);
+      expect(gate).toBeNull();
+    });
+
+    it('should detect unresolved gate for await_frame_approval as frames stage', () => {
+      const events = [
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  id: 'call_frame_1',
+                  name: 'await_frame_approval',
+                },
+              },
+            ],
+          },
+        },
+      ];
+      const gate = component['checkUnresolvedGate'](events);
+      expect(gate).toBeTruthy();
+      expect(gate?.callId).toBe('call_frame_1');
+      expect(gate?.stage).toBe('frames');
+      expect(gate?.toolName).toBe('await_frame_approval');
+    });
+
+    it('should resolve await_frame_approval when record_frame_decision or frame_decision delta is emitted', () => {
+      const events = [
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  id: 'call_frame_1',
+                  name: 'await_frame_approval',
+                },
+              },
+            ],
+          },
+        },
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  id: 'call_rec_1',
+                  name: 'record_frame_decision',
+                },
+              },
+            ],
+          },
+          actions: {
+            state_delta: {
+              frame_decision: {decision: 'accept'},
+            },
+          },
+        },
+      ];
+      const gate = component['checkUnresolvedGate'](events);
+      expect(gate).toBeNull();
+    });
+
+    it('should extract payload from functionResponse event', () => {
+      const event = {
+        content: {
+          parts: [
+            {
+              functionResponse: {
+                id: 'call_999',
+                name: 'await_strategy_approval',
+                response: {
+                  result: JSON.stringify({
+                    status: 'awaiting_human_review',
+                    stage: 'strategy',
+                    message: 'Please review the strategy before proceeding.',
+                  }),
+                },
+              },
+            },
+          ],
+        },
+      };
+      const gate = component['extractGateFromEvent'](event);
+      expect(gate).toBeTruthy();
+      expect(gate?.toolName).toBe('await_strategy_approval');
+      expect(gate?.payload?.message).toBe(
+        'Please review the strategy before proceeding.',
+      );
+    });
+
+    it('should drive visibleApprovalGate directly from activeApprovalGate', () => {
+      expect(component.visibleApprovalGate()).toBeNull();
+
+      component.activeApprovalGate.set({
+        callId: 'call_123',
+        toolName: 'await_strategy_approval',
+        stage: 'strategy',
+        payload: {
+          message: 'Check the campaign brief',
+        },
+      });
+
+      expect(component.visibleApprovalGate()).toEqual({
+        callId: 'call_123',
+        toolName: 'await_strategy_approval',
+        stage: 'strategy',
+        payload: {
+          message: 'Check the campaign brief',
+        },
+      });
+    });
+
+    it('should send function_response when handleGateDecision is called', () => {
+      component.currentSessionId = 'sess-123';
+      component.activeApprovalGate.set({
+        callId: 'call_gate_1',
+        toolName: 'await_storyboard_approval',
+        stage: 'storyboard',
+      });
+      agentChatService.sendMessage = jasmine
+        .createSpy('sendMessage')
+        .and.returnValue(Promise.resolve());
+
+      component.handleGateDecision({
+        decision: 'modify',
+        guidance: 'Make scene 1 shorter',
+      });
+
+      expect(agentChatService.stopPolling).toHaveBeenCalled();
+      expect(
+        (component as any).submittedGateCallIds.has('call_gate_1'),
+      ).toBeTrue();
+      expect(component.isSubmittingGate()).toBeTrue();
+      expect(component.activeApprovalGate()).toBeNull();
+      expect(agentChatService.sendMessage).toHaveBeenCalledWith(
+        'sess-123',
+        [
+          {
+            function_response: {
+              id: 'call_gate_1',
+              name: 'await_storyboard_approval',
+              response: {
+                decision: 'modify',
+                guidance: 'Make scene 1 shorter',
+              },
+            },
+          },
+        ],
+        1,
+        jasmine.any(Object),
+      );
+    });
+
+    it('should filter out user authored events in extractGateFromEvent', () => {
+      const userEvent = {
+        author: 'user',
+        content: {
+          parts: [
+            {
+              functionResponse: {
+                id: 'call_1',
+                name: 'await_storyboard_approval',
+                response: {
+                  result: JSON.stringify({
+                    status: 'awaiting_human_review',
+                    stage: 'storyboard',
+                  }),
+                },
+              },
+            },
+          ],
+        },
+      };
+      expect(component['extractGateFromEvent'](userEvent)).toBeNull();
+
+      const userRoleEvent = {
+        author: 'user',
+        content: {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'call_1',
+                name: 'await_storyboard_approval',
+                response: {
+                  result: JSON.stringify({
+                    status: 'awaiting_human_review',
+                    stage: 'storyboard',
+                  }),
+                },
+              },
+            },
+          ],
+        },
+      };
+      expect(component['extractGateFromEvent'](userRoleEvent)).toBeNull();
+    });
+
+    it('should ignore already submitted callIds in extractGateFromEvent', () => {
+      (component as any).submittedGateCallIds.add('call_already_submitted');
+      const event = {
+        content: {
+          parts: [
+            {
+              functionCall: {
+                id: 'call_already_submitted',
+                name: 'await_storyboard_approval',
+              },
+            },
+          ],
+        },
+      };
+      expect(component['extractGateFromEvent'](event)).toBeNull();
+    });
+
+    it('should ignore events containing a decision key in extractGateFromEvent', () => {
+      const event = {
+        content: {
+          parts: [
+            {
+              functionResponse: {
+                id: 'call_decided',
+                name: 'await_storyboard_approval',
+                response: {
+                  result: JSON.stringify({
+                    status: 'awaiting_human_review',
+                    decision: 'accept',
+                  }),
+                },
+              },
+            },
+          ],
+        },
+      };
+      expect(component['extractGateFromEvent'](event)).toBeNull();
+    });
+
+    it('should extract gate from functionResponse with pending_approval and message', () => {
+      const event = {
+        content: {
+          parts: [
+            {
+              functionResponse: {
+                id: 'call_strategy_1',
+                name: 'await_strategy_approval',
+                response: {
+                  result: {
+                    campaign: {visual_look: 'Outdoor Adventure'},
+                    message:
+                      'A 12s product-only ad for general audience, shot in the "Outdoor Adventure" style. Accept to continue, or tell me what to change.',
+                    stage: 'strategy',
+                    status: 'pending_approval',
+                  },
+                },
+              },
+            },
+          ],
+        },
+      };
+      const gate = component['extractGateFromEvent'](event);
+      expect(gate).not.toBeNull();
+      expect(gate?.callId).toBe('call_strategy_1');
+      expect(gate?.toolName).toBe('await_strategy_approval');
+      expect(gate?.stage).toBe('strategy');
+      expect(gate?.payload?.message).toBe(
+        'A 12s product-only ad for general audience, shot in the "Outdoor Adventure" style. Accept to continue, or tell me what to change.',
+      );
+    });
+
+    it('should preserve tool response payload message when reconstructing gate in checkUnresolvedGate', () => {
+      const events = [
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  id: 'call_979062',
+                  args: {},
+                  name: 'await_strategy_approval',
+                },
+              },
+            ],
+          },
+        },
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionResponse: {
+                  id: 'call_979062',
+                  name: 'await_strategy_approval',
+                  response: {
+                    result: {
+                      campaign: {
+                        aspect_ratio: '16:9',
+                        brand: 'Brand',
+                        visual_look: 'Outdoor Adventure',
+                      },
+                      message:
+                        'A 12s product-only ad for general audience, shot in the "Outdoor Adventure" style. Accept to continue, or tell me what to change.',
+                      stage: 'strategy',
+                      status: 'pending_approval',
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      ];
+
+      const gate = component['checkUnresolvedGate'](events);
+      expect(gate).not.toBeNull();
+      expect(gate?.callId).toBe('call_979062');
+      expect(gate?.toolName).toBe('await_strategy_approval');
+      expect(gate?.stage).toBe('strategy');
+      expect(gate?.payload?.message).toBe(
+        'A 12s product-only ad for general audience, shot in the "Outdoor Adventure" style. Accept to continue, or tell me what to change.',
+      );
+    });
+
+    it('should support iterative re-gating after a modify loop in checkUnresolvedGate', () => {
+      const events = [
+        // 1. Initial Gate 2 candidate
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  id: 'call_sb_initial',
+                  name: 'await_storyboard_approval',
+                },
+              },
+            ],
+          },
+        },
+        // 2. User modify response
+        {
+          author: 'user',
+          content: {
+            parts: [
+              {
+                functionResponse: {
+                  name: 'await_storyboard_approval',
+                  response: {decision: 'modify', guidance: 'Change scene 2'},
+                },
+              },
+            ],
+          },
+        },
+        // 3. Agent modifies scenes
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  name: 'generate_scene_frames',
+                  args: {scene_num: 2},
+                },
+              },
+            ],
+          },
+        },
+        // 4. Agent emits NEW Gate 2 candidate
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  id: 'call_sb_revised',
+                  name: 'await_storyboard_approval',
+                },
+              },
+            ],
+          },
+        },
+      ];
+
+      const gate = component['checkUnresolvedGate'](events);
+      expect(gate).toBeTruthy();
+      expect(gate?.callId).toBe('call_sb_revised');
+      expect(gate?.stage).toBe('storyboard');
+    });
+
+    it('should block submitChat when isBusy is true', () => {
+      component.chatInputValue.set('Hello test');
+      agentChatService.sendMessage = jasmine.createSpy('sendMessage');
+
+      // Case 1: isTyping is true
+      component.isTyping.set(true);
+      expect(component.isBusy()).toBeTrue();
+      component.submitChat();
+      expect(agentChatService.sendMessage).not.toHaveBeenCalled();
+
+      // Case 2: isSubmittingGate is true
+      component.isTyping.set(false);
+      component.isSubmittingGate.set(true);
+      expect(component.isBusy()).toBeTrue();
+      component.submitChat();
+      expect(agentChatService.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('should reset isSubmittingGate on SSE onError and onClose', () => {
+      const callbacks = component['setupCallbacks']();
+
+      component.isSubmittingGate.set(true);
+      expect(component.isSubmittingGate()).toBeTrue();
+
+      callbacks.onError!({status: 500, message: 'Server error'});
+      expect(component.isSubmittingGate()).toBeFalse();
+
+      component.isSubmittingGate.set(true);
+      expect(component.isSubmittingGate()).toBeTrue();
+
+      callbacks.onClose!();
+      expect(component.isSubmittingGate()).toBeFalse();
+    });
+
+    it('should clear submittedGateCallIds when session changes', () => {
+      component['submittedGateCallIds'].add('call_123');
+      expect(component['submittedGateCallIds'].has('call_123')).toBeTrue();
+
+      // Trigger session change
+      component.currentSessionId = 'old_session';
+      agentChatService.selectedSessionId.set('new_session');
+      TestBed.flushEffects();
+
+      expect(component['submittedGateCallIds'].size).toBe(0);
+    });
+
+    it('should extract payload and options from functionCall.args in extractGateFromEvent', () => {
+      const eventWithObjArgs = {
+        content: {
+          parts: [
+            {
+              functionCall: {
+                id: 'call_args_1',
+                name: 'await_strategy_approval',
+                args: {
+                  message: 'Custom strategy proposal from args',
+                  options: ['accept', 'modify'],
+                },
+              },
+            },
+          ],
+        },
+      };
+
+      const gate = component['extractGateFromEvent'](eventWithObjArgs);
+      expect(gate).toBeTruthy();
+      expect(gate?.callId).toBe('call_args_1');
+      expect(gate?.toolName).toBe('await_strategy_approval');
+      expect(gate?.stage).toBe('strategy');
+      expect(gate?.payload?.message).toBe('Custom strategy proposal from args');
+      expect(gate?.options).toEqual(['accept', 'modify']);
+
+      const eventWithStringArgs = {
+        content: {
+          parts: [
+            {
+              functionCall: {
+                id: 'call_args_2',
+                name: 'await_storyboard_approval',
+                args: JSON.stringify({
+                  message: 'Stringified storyboard proposal',
+                }),
+              },
+            },
+          ],
+        },
+      };
+
+      const gate2 = component['extractGateFromEvent'](eventWithStringArgs);
+      expect(gate2).toBeTruthy();
+      expect(gate2?.payload?.message).toBe('Stringified storyboard proposal');
+      expect(gate2?.options).toEqual(['accept', 'modify', 'regenerate']);
+    });
+
+    it('should fail explicitly in handleGateDecision if callId is missing', () => {
+      component.currentSessionId = 'sess-123';
+      component.activeApprovalGate.set({
+        callId: '',
+        toolName: 'await_storyboard_approval',
+        stage: 'storyboard',
+      });
+      agentChatService.sendMessage = jasmine.createSpy('sendMessage');
+
+      component.handleGateDecision({
+        decision: 'accept',
+        guidance: '',
+      });
+
+      expect(agentChatService.sendMessage).not.toHaveBeenCalled();
+      expect(component.activeApprovalGate()).toBeNull();
+    });
+
+    it('should not resolve storyboard gate when storyboard_agent_creative or director_agent is called', () => {
+      const events = [
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  id: 'call_sb_subagent',
+                  name: 'await_storyboard_approval',
+                },
+              },
+            ],
+          },
+        },
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  name: 'storyboard_agent_creative',
+                },
+              },
+            ],
+          },
+        },
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  name: 'director_agent',
+                },
+              },
+            ],
+          },
+        },
+      ];
+
+      const gate = component['checkUnresolvedGate'](events);
+      expect(gate).toBeTruthy();
+      expect(gate?.callId).toBe('call_sb_subagent');
+      expect(gate?.stage).toBe('storyboard');
+    });
+
+    it('should ignore candidate gates with missing or empty callId in checkUnresolvedGate', () => {
+      const events = [
+        {
+          author: 'model',
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  id: '',
+                  name: 'await_storyboard_approval',
+                },
+              },
+            ],
+          },
+        },
+      ];
+
+      const gate = component['checkUnresolvedGate'](events);
+      expect(gate).toBeNull();
+    });
+
+    it('should sync sessionId to router queryParams when creating session on first message', () => {
+      component.currentSessionId = null;
+      component.chatInputValue.set('Start campaign');
+      spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
+
+      const newSession: any = {
+        id: 'new_session_999',
+        user_id: 'user1',
+        created_at: new Date().toISOString(),
+        title: 'New Session',
+        session_id: 'new_session_999',
+      };
+      (agentChatService.createSession as jasmine.Spy).and.returnValue(
+        of(newSession),
+      );
+      agentChatService.sendMessage = jasmine
+        .createSpy('sendMessage')
+        .and.returnValue(Promise.resolve());
+
+      component.sendChatMessage('Start campaign');
+
+      expect(router.navigate).toHaveBeenCalledWith([], {
+        relativeTo: (component as any).route,
+        queryParams: {
+          sessionId: 'new_session_999',
+        },
+        queryParamsHandling: 'merge',
+      });
+    });
+
+    describe('Error Handling & In-Chat Recovery', () => {
+      it('should translate error codes into friendly user messages in getFriendlyErrorMessage', () => {
+        const err429 = {
+          status: 429,
+          message: 'ResourceExhausted quota exceeded',
+        };
+        const res429 = component.getFriendlyErrorMessage(err429);
+        expect(res429.code).toBe(429);
+        expect(res429.text).toContain('AI Model Quota Exceeded');
+
+        const err503 = {status: 503, message: 'Service UNAVAILABLE'};
+        const res503 = component.getFriendlyErrorMessage(err503);
+        expect(res503.code).toBe(503);
+        expect(res503.text).toContain('Agent Service Unavailable');
+
+        const err504 = {status: 504, message: 'DeadlineExceeded timeout'};
+        const res504 = component.getFriendlyErrorMessage(err504);
+        expect(res504.code).toBe(504);
+        expect(res504.text).toContain('Request Timed Out');
+
+        const err400 = {status: 400, message: 'InvalidArgument'};
+        const res400 = component.getFriendlyErrorMessage(err400);
+        expect(res400.code).toBe(400);
+        expect(res400.text).toContain('Invalid Request');
+
+        const errGeneric = new Error('Something broke');
+        const resGeneric = component.getFriendlyErrorMessage(errGeneric);
+        expect(resGeneric.code).toBe(500);
+        expect(resGeneric.text).toContain('Agent Execution Failed');
+      });
+
+      it('should append an in-chat error message card and reset isTyping when onError fires', () => {
+        component.currentSessionId = 's_err_test';
+        component.isTyping.set(true);
+        component.isSubmittingGate.set(true);
+
+        const callbacks = component['setupCallbacks']();
+        callbacks.onError!({code: 429, message: 'ResourceExhausted'});
+
+        expect(component.isTyping()).toBeFalse();
+        expect(component.isSubmittingGate()).toBeFalse();
+
+        const messages = component.chatMessages();
+        const lastMsg = messages[messages.length - 1];
+        expect(lastMsg).toBeTruthy();
+        expect(lastMsg.isError).toBeTrue();
+        expect(lastMsg.errorCode).toBe(429);
+        expect(lastMsg.sender).toBe('agent');
+        expect(lastMsg.text).toContain('AI Model Quota Exceeded');
+      });
+
+      it('should remove error message and re-send chat payload when retryLastAction is called', () => {
+        component.currentSessionId = 's_retry_test';
+        agentChatService.sendMessage = jasmine
+          .createSpy('sendMessage')
+          .and.returnValue(Promise.resolve());
+
+        // Simulate sending a chat message
+        component['executeSendMessage']('Create a campaign');
+        expect(component['lastExecutedAction']).toEqual({
+          type: 'chat',
+          text: 'Create a campaign',
+          partsParams: [{text: 'Create a campaign'}],
+        });
+
+        // Trigger onError
+        const callbacks = component['setupCallbacks']();
+        callbacks.onError!({code: 429, message: 'ResourceExhausted'});
+        expect(component.chatMessages().some(m => m.isError)).toBeTrue();
+
+        // Retry
+        component.retryLastAction();
+        expect(component.chatMessages().some(m => m.isError)).toBeFalse();
+        expect(component.isTyping()).toBeTrue();
+        expect(agentChatService.sendMessage).toHaveBeenCalledWith(
+          's_retry_test',
+          [{text: 'Create a campaign'}],
+          jasmine.anything(),
+          jasmine.anything(),
+        );
+      });
+
+      it('should remove error message and re-send gate payload when retryLastAction is called for gate decision', () => {
+        component.currentSessionId = 's_retry_gate';
+        agentChatService.sendMessage = jasmine
+          .createSpy('sendMessage')
+          .and.returnValue(Promise.resolve());
+
+        component.activeApprovalGate.set({
+          callId: 'call_gate_retry',
+          toolName: 'await_storyboard_approval',
+          stage: 'storyboard',
+          options: ['accept', 'modify', 'regenerate'],
+        });
+
+        component.handleGateDecision({decision: 'accept', guidance: ''});
+        expect(component['lastExecutedAction']?.type).toBe('gate');
+
+        // Trigger onError
+        const callbacks = component['setupCallbacks']();
+        callbacks.onError!({code: 503, message: 'Unavailable'});
+        expect(component.chatMessages().some(m => m.isError)).toBeTrue();
+
+        // Retry
+        component.retryLastAction();
+        expect(component.chatMessages().some(m => m.isError)).toBeFalse();
+        expect(component.isSubmittingGate()).toBeTrue();
+        expect(agentChatService.sendMessage).toHaveBeenCalled();
+      });
+
+      it('should map 401 / auth_expired errors to a sign-in-expired message', () => {
+        const byType = component.getFriendlyErrorMessage({
+          code: 401,
+          type: 'auth_expired',
+          message: 'boom',
+        });
+        expect(byType.code).toBe(401);
+        expect(byType.type).toBe('auth_expired');
+        expect(byType.text).toContain('sign-in expired');
+
+        const byText = component.getFriendlyErrorMessage(
+          new Error('401 Unauthorized: token expired'),
+        );
+        expect(byText.code).toBe(401);
+        expect(byText.type).toBe('auth_expired');
+      });
+
+      describe('one run per session (stale last_update_time)', () => {
+        it('keeps isBusy true for the whole run via streamActive, not just the typing dots', () => {
+          component.isTyping.set(false);
+          component.isSubmittingGate.set(false);
+          expect(component.isBusy()).toBeFalse();
+
+          agentChatService.streamActive.set(true);
+          expect(component.isBusy()).toBeTrue();
+          expect(component.canRetry()).toBeFalse();
+
+          agentChatService.streamActive.set(false);
+          expect(component.isBusy()).toBeFalse();
+        });
+
+        it('maps agent_busy and concurrent_run to non-retryable 409 messages', () => {
+          const busy = component.getFriendlyErrorMessage({
+            status: 409,
+            type: 'agent_busy',
+            message: 'Izumi is still working',
+          });
+          expect(busy.code).toBe(409);
+          expect(busy.type).toBe('agent_busy');
+          expect(busy.text).toContain('was not sent');
+
+          const stale = component.getFriendlyErrorMessage({
+            code: 409,
+            type: 'concurrent_run',
+            message:
+              'The last_update_time provided in the session object is stale.',
+          });
+          expect(stale.code).toBe(409);
+          expect(stale.type).toBe('concurrent_run');
+          expect(stale.text).toContain('still running');
+
+          expect(
+            component.isRetryableError({errorType: 'agent_busy'} as any),
+          ).toBeFalse();
+          expect(
+            component.isRetryableError({errorType: 'concurrent_run'} as any),
+          ).toBeFalse();
+          expect(
+            component.isRetryableError({errorType: 'quota_exceeded'} as any),
+          ).toBeTrue();
+          expect(
+            component.errorCardTitle({errorType: 'concurrent_run'} as any),
+          ).toBe('Agent Busy');
+          expect(component.errorCardTitle({errorType: 'timeout'} as any)).toBe(
+            'Agent Execution Failed',
+          );
+        });
+
+        it('rolls back an unsent chat turn on 409 and re-attaches to the live run', () => {
+          component.currentSessionId = 's_busy_chat';
+          agentChatService.sendMessage = jasmine
+            .createSpy('sendMessage')
+            .and.returnValue(Promise.resolve());
+          agentChatService.startPolling.calls.reset();
+          // The TestBed has no animations provider; a real toast would throw.
+          const snackSpy = spyOn(component['snackBar'], 'open').and.stub();
+
+          component['executeSendMessage']('Proceed');
+          expect(
+            component.chatMessages().some(m => m.text === 'Proceed'),
+          ).toBeTrue();
+
+          const callbacks = component['setupCallbacks']();
+          callbacks.onError!({
+            status: 409,
+            type: 'agent_busy',
+            message: 'Izumi is still working on the previous step',
+          });
+
+          // No error card, user bubble removed, text back in the composer.
+          expect(component.chatMessages().some(m => m.isError)).toBeFalse();
+          expect(
+            component.chatMessages().some(m => m.text === 'Proceed'),
+          ).toBeFalse();
+          expect(component.chatInputValue()).toBe('Proceed');
+          expect(component['lastExecutedAction']).toBeNull();
+          expect(snackSpy).toHaveBeenCalledWith(
+            jasmine.stringContaining('was not sent'),
+            'OK',
+            jasmine.anything(),
+          );
+          // Re-attached to the run that is actually executing.
+          expect(agentChatService.startPolling).toHaveBeenCalledWith(
+            's_busy_chat',
+            jasmine.anything(),
+          );
+        });
+
+        it('re-opens the gate card when a gate decision is refused with 409', () => {
+          component.currentSessionId = 's_busy_gate';
+          agentChatService.sendMessage = jasmine
+            .createSpy('sendMessage')
+            .and.returnValue(Promise.resolve());
+          const snackSpy = spyOn(component['snackBar'], 'open').and.stub();
+
+          const gate = {
+            callId: 'call_busy_gate',
+            toolName: 'await_storyboard_approval',
+            stage: 'storyboard',
+            options: ['accept', 'modify', 'regenerate'],
+          };
+          component.activeApprovalGate.set(gate as any);
+          component.handleGateDecision({decision: 'accept', guidance: ''});
+          expect(component.activeApprovalGate()).toBeNull();
+
+          const callbacks = component['setupCallbacks']();
+          callbacks.onError!({
+            status: 409,
+            type: 'agent_busy',
+            message: 'busy',
+          });
+
+          expect(component.activeApprovalGate()?.callId).toBe('call_busy_gate');
+          expect(component['submittedGateCallIds'].has('call_busy_gate')).toBe(
+            false,
+          );
+          expect(component.isSubmittingGate()).toBeFalse();
+          expect(component.chatMessages().some(m => m.isError)).toBeFalse();
+          expect(snackSpy).toHaveBeenCalled();
+        });
+
+        it('shows a non-retryable card and re-attaches on concurrent_run', () => {
+          component.currentSessionId = 's_stale';
+          agentChatService.startPolling.calls.reset();
+
+          const callbacks = component['setupCallbacks']();
+          callbacks.onError!({
+            code: 409,
+            type: 'concurrent_run',
+            message:
+              'Local Izumi agent error: The last_update_time provided in the session object is stale.',
+          });
+
+          const messages = component.chatMessages();
+          const last = messages[messages.length - 1];
+          expect(last.isError).toBeTrue();
+          expect(last.errorType).toBe('concurrent_run');
+          expect(component.isRetryableError(last)).toBeFalse();
+          expect(agentChatService.startPolling).toHaveBeenCalledWith(
+            's_stale',
+            jasmine.anything(),
+          );
+        });
+      });
+
+      it('should recover the last user message from history when lastExecutedAction is null (new component after re-login)', () => {
+        component.currentSessionId = 's_retry_history';
+        component['lastExecutedAction'] = null;
+        agentChatService.sendMessage = jasmine
+          .createSpy('sendMessage')
+          .and.returnValue(Promise.resolve());
+
+        component.chatMessages.set([
+          {sender: 'agent', text: 'Hi!'},
+          {
+            sender: 'user',
+            text: 'Make an ad for my sneakers',
+            images: [{id: 11}, {mediaItem: {id: 22}}],
+          },
+          {sender: 'agent', text: 'Working on it...'},
+          {sender: 'agent', text: 'Agent Execution Failed', isError: true},
+        ] as any);
+
+        expect(component.canRetry()).toBeTrue();
+        component.retryLastAction();
+
+        expect(component.chatMessages().some(m => m.isError)).toBeFalse();
+        expect(component.isTyping()).toBeTrue();
+        expect(agentChatService.sendMessage).toHaveBeenCalledWith(
+          's_retry_history',
+          [
+            {text: 'Make an ad for my sneakers'},
+            {sourceAssetId: 11},
+            {
+              sourceMediaItem: {mediaItemId: 22, mediaIndex: 0, role: 'input'},
+            },
+          ],
+          jasmine.anything(),
+          jasmine.anything(),
+        );
+      });
+
+      it('should send a natural-language continuation instead of replaying a gate decision recovered from history', () => {
+        component.currentSessionId = 's_retry_history_gate';
+        component['lastExecutedAction'] = null;
+        agentChatService.sendMessage = jasmine
+          .createSpy('sendMessage')
+          .and.returnValue(Promise.resolve());
+
+        component.chatMessages.set([
+          {sender: 'user', text: 'Make an ad'},
+          {sender: 'agent', text: 'Here is the storyboard'},
+          {sender: 'user', text: '✅ Approved (Storyboard)'},
+          {sender: 'agent', text: 'Failed', isError: true},
+        ] as any);
+
+        component.retryLastAction();
+
+        const payload = (
+          agentChatService.sendMessage as jasmine.Spy
+        ).calls.mostRecent().args[1];
+        expect(payload.length).toBe(1);
+        expect(payload[0].text).toContain('continue from where you left off');
+        expect(payload[0].text).toContain('✅ Approved (Storyboard)');
+        expect(payload[0].function_response).toBeUndefined();
+        expect(component.isSubmittingGate()).toBeFalse();
+      });
+
+      it('should report canRetry() false and do nothing when there is no user turn to replay', () => {
+        component.currentSessionId = 's_retry_nothing';
+        component['lastExecutedAction'] = null;
+        agentChatService.sendMessage = jasmine
+          .createSpy('sendMessage')
+          .and.returnValue(Promise.resolve());
+
+        component.chatMessages.set([
+          {sender: 'agent', text: 'Welcome'},
+          {sender: 'agent', text: 'Failed', isError: true},
+        ] as any);
+
+        expect(component.canRetry()).toBeFalse();
+        component.retryLastAction();
+
+        expect(agentChatService.sendMessage).not.toHaveBeenCalled();
+        expect(component.chatMessages().some(m => m.isError)).toBeTrue();
+        expect(component.isTyping()).toBeFalse();
+      });
+
+      it('should detect Gate 4 even when content.role is "user" in extractGateFromEvent and checkUnresolvedGate', () => {
+        const gate4Event = {
+          author: 'final_cut_gate_agent',
+          content: {
+            role: 'user',
+            parts: [
+              {
+                functionResponse: {
+                  id: 'call_final_cut_123',
+                  name: 'await_final_cut_approval',
+                  response: {
+                    status: 'awaiting_human_review',
+                    stage: 'final_cut',
+                    options: ['accept', 'modify', 'regenerate'],
+                  },
+                },
+              },
+            ],
+          },
+        };
+
+        const extracted = component['extractGateFromEvent'](gate4Event);
+        expect(extracted).toBeTruthy();
+        expect(extracted?.callId).toBe('call_final_cut_123');
+        expect(extracted?.toolName).toBe('await_final_cut_approval');
+        expect(extracted?.stage).toBe('final_cut');
+
+        const unresolved = component['checkUnresolvedGate']([gate4Event]);
+        expect(unresolved).toBeTruthy();
+        expect(unresolved?.callId).toBe('call_final_cut_123');
+        expect(unresolved?.stage).toBe('final_cut');
+      });
+    });
+
+    describe('mapEventsToMessages gate decisions', () => {
+      it('should reconstruct user message when event has functionResponse with decision=accept', () => {
+        const events = [
+          {
+            author: 'user',
+            content: {
+              role: 'user',
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'call_strategy_1',
+                    name: 'await_strategy_approval',
+                    response: {
+                      decision: 'accept',
+                      guidance: '',
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        ];
+
+        const messages = component['mapEventsToMessages'](events);
+        expect(messages.length).toBe(1);
+        expect(messages[0].sender).toBe('user');
+        expect(messages[0].text).toBe('✅ Approved (Campaign Strategy)');
+      });
+
+      it('should reconstruct user message with guidance when decision=modify', () => {
+        const events = [
+          {
+            author: 'user',
+            content: {
+              role: 'user',
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'call_sb_1',
+                    name: 'await_storyboard_approval',
+                    response: {
+                      decision: 'modify',
+                      guidance: 'Make scene 2 shorter',
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        ];
+
+        const messages = component['mapEventsToMessages'](events);
+        expect(messages.length).toBe(1);
+        expect(messages[0].sender).toBe('user');
+        expect(messages[0].text).toBe(
+          '✏️ Requested Modifications (Storyboard): "Make scene 2 shorter"',
+        );
+      });
+
+      it('should reconstruct user message when decision=regenerate', () => {
+        const events = [
+          {
+            author: 'user',
+            content: {
+              role: 'user',
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'call_frames_1',
+                    name: 'await_frame_approval',
+                    response: {
+                      decision: 'regenerate',
+                      guidance: 'Redo all frames',
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        ];
+
+        const messages = component['mapEventsToMessages'](events);
+        expect(messages.length).toBe(1);
+        expect(messages[0].sender).toBe('user');
+        expect(messages[0].text).toBe(
+          '🔄 Requested Regeneration (First Frames): "Redo all frames"',
+        );
+      });
+
+      it('should handle snake_case function_response and stringified JSON response', () => {
+        const events = [
+          {
+            author: 'user',
+            content: {
+              parts: [
+                {
+                  function_response: {
+                    id: 'call_final_cut_1',
+                    name: 'await_final_cut_approval',
+                    response: JSON.stringify({
+                      decision: 'accept',
+                    }),
+                  },
+                },
+              ],
+            },
+          },
+        ];
+
+        const messages = component['mapEventsToMessages'](events);
+        expect(messages.length).toBe(1);
+        expect(messages[0].sender).toBe('user');
+        expect(messages[0].text).toBe('✅ Approved (Final Cut)');
+      });
+
+      it('should format decision text consistently in handleGateDecision', () => {
+        component.currentSessionId = 'test-session';
+        component.activeApprovalGate.set({
+          callId: 'call_strat_99',
+          toolName: 'await_strategy_approval',
+          stage: 'strategy',
+        });
+
+        component.handleGateDecision({
+          decision: 'accept',
+          guidance: '',
+        });
+
+        const msgs = component.chatMessages();
+        const lastMsg = msgs[msgs.length - 1];
+        expect(lastMsg.sender).toBe('user');
+        expect(lastMsg.text).toBe('✅ Approved (Campaign Strategy)');
+      });
+    });
+
+    describe('chat bubble CSS class rendering', () => {
+      it('should apply chat-bubble and user classes to user messages', () => {
+        component.chatMessages.set([
+          {
+            sender: 'user',
+            text: 'Hello from user',
+            timestamp: new Date(),
+          },
+        ]);
+        fixture.detectChanges();
+
+        const bubble = fixture.nativeElement.querySelector('.chat-bubble');
+        expect(bubble).not.toBeNull();
+        expect(bubble.classList.contains('chat-bubble')).toBeTrue();
+        expect(bubble.classList.contains('user')).toBeTrue();
+        expect(bubble.classList.contains('agent')).toBeFalse();
+      });
+
+      it('should apply chat-bubble and agent classes to agent messages', () => {
+        component.chatMessages.set([
+          {
+            sender: 'agent',
+            text: 'Hello from agent',
+            timestamp: new Date(),
+          },
+        ]);
+        fixture.detectChanges();
+
+        const bubble = fixture.nativeElement.querySelector('.chat-bubble');
+        expect(bubble).not.toBeNull();
+        expect(bubble.classList.contains('chat-bubble')).toBeTrue();
+        expect(bubble.classList.contains('agent')).toBeTrue();
+        expect(bubble.classList.contains('user')).toBeFalse();
+      });
+
+      it('should apply error classes when message is an error', () => {
+        component.chatMessages.set([
+          {
+            sender: 'agent',
+            text: 'Error occurred',
+            isError: true,
+            timestamp: new Date(),
+          },
+        ]);
+        fixture.detectChanges();
+
+        const bubble = fixture.nativeElement.querySelector('.chat-bubble');
+        expect(bubble).not.toBeNull();
+        expect(bubble.classList.contains('chat-bubble')).toBeTrue();
+        expect(bubble.classList.contains('agent')).toBeTrue();
+      });
+    });
+
+    describe('pipeline gate milestone cards', () => {
+      it('should return correct milestone metadata from getMilestoneForStage', () => {
+        const strat = component.getMilestoneForStage(
+          'strategy',
+          'await_strategy_approval',
+        );
+        expect(strat?.stage).toBe('strategy');
+        expect(strat?.title).toBe('Campaign Strategy Ready');
+        expect(strat?.icon).toBe('psychology');
+
+        const sb = component.getMilestoneForStage(
+          'storyboard',
+          'await_storyboard_approval',
+          {
+            scenes: [{}, {}, {}],
+          },
+        );
+        expect(sb?.stage).toBe('storyboard');
+        expect(sb?.title).toBe('Storyboard Ready');
+        expect(sb?.subtitle).toBe('Generated 3 scenes');
+        expect(sb?.icon).toBe('auto_awesome_motion');
+
+        const frames = component.getMilestoneForStage(
+          'frames',
+          'await_frame_approval',
+        );
+        expect(frames?.stage).toBe('frames');
+        expect(frames?.title).toBe('Scene Frames & Audio Ready');
+        expect(frames?.icon).toBe('burst_mode');
+
+        const finalCut = component.getMilestoneForStage(
+          'final_cut',
+          'await_final_cut_approval',
+        );
+        expect(finalCut?.stage).toBe('final_cut');
+        expect(finalCut?.title).toBe('Final Cut Ready');
+        expect(finalCut?.icon).toBe('movie');
+      });
+
+      it('should extract milestone cards for each gate in mapEventsToMessages', () => {
+        const events = [
+          {
+            author: 'model',
+            content: {
+              parts: [
+                {text: 'Here is the campaign strategy.'},
+                {functionCall: {id: 'c1', name: 'await_strategy_approval'}},
+              ],
+            },
+          },
+          {
+            author: 'user',
+            content: {
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'c1',
+                    name: 'await_strategy_approval',
+                    response: {decision: 'accept'},
+                  },
+                },
+              ],
+            },
+          },
+          {
+            author: 'model',
+            content: {
+              parts: [
+                {text: 'Here is the storyboard.'},
+                {functionCall: {id: 'c2', name: 'await_storyboard_approval'}},
+              ],
+            },
+            actions: {
+              storyboard: {scenes: [{}, {}, {}, {}]},
+            },
+          },
+          {
+            author: 'model',
+            content: {
+              parts: [
+                {text: 'Opening frames are ready.'},
+                {functionCall: {id: 'c3', name: 'await_frame_approval'}},
+              ],
+            },
+          },
+          {
+            author: 'model',
+            content: {
+              parts: [
+                {text: 'Final video is ready.'},
+                {functionCall: {id: 'c4', name: 'await_final_cut_approval'}},
+              ],
+            },
+          },
+        ];
+
+        const msgs = component['mapEventsToMessages'](events);
+        expect(msgs.length).toBe(5);
+
+        // Gate 1: Strategy
+        expect(msgs[0].milestone?.title).toBe('Campaign Strategy Ready');
+        expect(msgs[0].milestone?.icon).toBe('psychology');
+
+        // User Decision
+        expect(msgs[1].sender).toBe('user');
+        expect(msgs[1].text).toContain('✅ Approved (Campaign Strategy)');
+
+        // Gate 2: Storyboard
+        expect(msgs[2].milestone?.title).toBe('Storyboard Ready');
+        expect(msgs[2].milestone?.icon).toBe('auto_awesome_motion');
+
+        // Gate 3: First Frames
+        expect(msgs[3].milestone?.title).toBe('Scene Frames & Audio Ready');
+        expect(msgs[3].milestone?.icon).toBe('burst_mode');
+
+        // Gate 4: Final Cut
+        expect(msgs[4].milestone?.title).toBe('Final Cut Ready');
+        expect(msgs[4].milestone?.icon).toBe('movie');
+      });
+
+      it('should render milestone card in DOM when message has milestone', () => {
+        component.chatMessages.set([
+          {
+            sender: 'agent',
+            text: 'Strategy proposal text',
+            milestone: {
+              stage: 'strategy',
+              title: 'Campaign Strategy Ready',
+              subtitle: 'Theme, tone, and visual direction defined',
+              icon: 'psychology',
+            },
+            timestamp: new Date(),
+          },
+        ]);
+        fixture.detectChanges();
+
+        const card = fixture.nativeElement.querySelector('.border-indigo-500');
+        expect(card).not.toBeNull();
+        expect(card.textContent).toContain('Campaign Strategy Ready');
+        expect(card.textContent).toContain(
+          'Theme, tone, and visual direction defined',
+        );
+        const icon = card.querySelector('mat-icon');
+        expect(icon?.textContent?.trim()).toBe('psychology');
+      });
+
+      describe('storyboard card scene count is never fabricated', () => {
+        // Event tail captured from session 7d968d1a (Feature Spotlight run
+        // whose storyboard really had 2 scenes): the chat used to announce
+        // "Generated 4 scenes" from a hardcoded placeholder.
+        const agentStoryboard = {
+          campaign_title: 'Cymbal: The Lasting Note',
+          template_name: 'Feature Spotlight',
+          scenes: [
+            {
+              scene_id: 'full_reveal',
+              topic: 'Full Reveal',
+              duration_seconds: 6,
+            },
+            {scene_id: 'cta', topic: 'Brand Anchor.', duration_seconds: 4},
+          ],
+        };
+        const routerEvent = {
+          id: 'ev-router',
+          author: 'storyboard_router',
+          content: {
+            role: 'model',
+            parts: [
+              {
+                text: '🎬 **Creative Perspective Synced!** Storyboard generated and ready for media production.',
+              },
+            ],
+          },
+          actions: {
+            stateDelta: {
+              storyboard: agentStoryboard,
+              stage_completed: 'storyboard',
+            },
+          },
+        };
+        const gateCallEvent = {
+          id: 'ev-gate-call',
+          author: 'storyboard_gate_agent',
+          content: {
+            role: 'model',
+            parts: [
+              {
+                text: 'Here is the generated storyboard for "Cymbal: The Lasting Note" for your review before media generation begins.',
+              },
+              {
+                functionCall: {
+                  id: 'call_1744888',
+                  name: 'await_storyboard_approval',
+                  args: {},
+                },
+              },
+            ],
+          },
+          longRunningToolIds: ['call_1744888'],
+        };
+        const gatePlaceholderEvent = {
+          id: 'ev-gate-resp',
+          author: 'storyboard_gate_agent',
+          content: {
+            role: 'user',
+            parts: [
+              {
+                functionResponse: {
+                  id: 'call_1744888',
+                  name: 'await_storyboard_approval',
+                  response: {
+                    status: 'succeeded',
+                    result: {
+                      stage: 'storyboard',
+                      message:
+                        '2 scenes, 10 seconds in total. Accept to continue, or tell me what to change.',
+                      storyboard_id: '16',
+                    },
+                  },
+                },
+              },
+            ],
+          },
+          actions: {
+            stateDelta: {
+              storyboard: agentStoryboard,
+              current_storyboard_id: 16,
+              storyboard_decision: null,
+            },
+          },
+        };
+        const withoutStoryboardDelta = (ev: any) => {
+          const copy = JSON.parse(JSON.stringify(ev));
+          delete copy.actions;
+          return copy;
+        };
+        const storyboardSubtitles = (msgs: any[]) =>
+          msgs
+            .filter(m => m.milestone?.title === 'Storyboard Ready')
+            .map(m => m.milestone.subtitle as string);
+
+        it('history: every "Storyboard Ready" card quotes the scene count of the agent storyboard', () => {
+          const msgs = component['mapEventsToMessages']([
+            routerEvent,
+            gateCallEvent,
+            gatePlaceholderEvent,
+          ]);
+
+          const subtitles = storyboardSubtitles(msgs);
+          expect(subtitles.length).toBeGreaterThan(0);
+          for (const subtitle of subtitles) {
+            expect(subtitle).toBe('Generated 2 scenes');
+          }
+        });
+
+        it('history: shows no number at all when no storyboard data was published', () => {
+          const msgs = component['mapEventsToMessages']([
+            withoutStoryboardDelta(routerEvent),
+            withoutStoryboardDelta(gateCallEvent),
+            withoutStoryboardDelta(gatePlaceholderEvent),
+          ]);
+
+          const subtitles = storyboardSubtitles(msgs);
+          expect(subtitles.length).toBeGreaterThan(0);
+          for (const subtitle of subtitles) {
+            expect(subtitle).toBe('Ready for review');
+            expect(subtitle).not.toMatch(/\d/);
+          }
+        });
+
+        it('stream: the gate card quotes the count from the storyboard delta streamed in the same run', () => {
+          component.currentSessionId = 'session-123';
+          component.sendChatMessage('accept');
+
+          sseCallbacks.onMessage(routerEvent);
+          sseCallbacks.onMessage(gateCallEvent);
+          sseCallbacks.onMessage(gatePlaceholderEvent);
+
+          const subtitles = storyboardSubtitles(component.chatMessages());
+          expect(subtitles.length).toBeGreaterThan(0);
+          for (const subtitle of subtitles) {
+            expect(subtitle).toBe('Generated 2 scenes');
+          }
+        });
+
+        it('stream: a gate that arrives without any storyboard delta shows no number', () => {
+          component.currentSessionId = 'session-123';
+          component.sendChatMessage('accept');
+
+          // Same order as the real run (router text first, then the gate);
+          // the gate milestone attaches to the preceding agent bubble.
+          sseCallbacks.onMessage(withoutStoryboardDelta(routerEvent));
+          sseCallbacks.onMessage(withoutStoryboardDelta(gateCallEvent));
+
+          const subtitles = storyboardSubtitles(component.chatMessages());
+          expect(subtitles.length).toBeGreaterThan(0);
+          for (const subtitle of subtitles) {
+            expect(subtitle).toBe('Ready for review');
+            expect(subtitle).not.toMatch(/\d/);
+          }
+        });
+
+        it('getMilestoneForStage never invents a count and pluralises correctly', () => {
+          expect(component.getMilestoneForStage('storyboard')?.subtitle).toBe(
+            'Ready for review',
+          );
+          expect(
+            component.getMilestoneForStage('storyboard', undefined, {
+              scenes: [],
+            })?.subtitle,
+          ).toBe('Ready for review');
+          for (let n = 1; n <= 6; n++) {
+            const subtitle = component.getMilestoneForStage(
+              'storyboard',
+              undefined,
+              {scenes: new Array(n).fill({})},
+            )?.subtitle;
+            expect(subtitle).toBe(`Generated ${n} scene${n === 1 ? '' : 's'}`);
+          }
+        });
+
+        it('a storyboard passed for another gate does not relabel it as "Storyboard Ready"', () => {
+          const frames = component.getMilestoneForStage(
+            undefined,
+            'await_frame_approval',
+            agentStoryboard,
+          );
+          expect(frames?.title).toBe('Scene Frames & Audio Ready');
+
+          const finalCut = component.getMilestoneForStage(
+            'final_cut',
+            undefined,
+            agentStoryboard,
+          );
+          expect(finalCut?.title).toBe('Final Cut Ready');
+
+          // Stage-less, tool-less calls that only carry a storyboard still map
+          // to the storyboard milestone (tool-result path).
+          expect(
+            component.getMilestoneForStage(
+              undefined,
+              undefined,
+              agentStoryboard,
+            )?.subtitle,
+          ).toBe('Generated 2 scenes');
+        });
+      });
+
+      it('should not create duplicate milestone cards or user bubbles when intermediate tool suspension event is present in history', () => {
+        const events = [
+          {
+            author: 'model',
+            content: {
+              parts: [
+                {
+                  text: 'Here is the proposed campaign strategy and visual direction for your review.',
+                },
+                {
+                  functionCall: {
+                    id: 'call_strat_1',
+                    name: 'await_strategy_approval',
+                  },
+                },
+              ],
+            },
+          },
+          {
+            author: 'user',
+            content: {
+              role: 'user',
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'call_strat_1',
+                    name: 'await_strategy_approval',
+                    response: {
+                      status: 'awaiting_human_review',
+                      stage: 'strategy',
+                      message: 'Here is the proposed campaign strategy',
+                    },
+                  },
+                },
+              ],
+            },
+          },
+          {
+            author: 'user',
+            content: {
+              role: 'user',
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'call_strat_1',
+                    name: 'await_strategy_approval',
+                    response: {decision: 'accept'},
+                  },
+                },
+              ],
+            },
+          },
+        ];
+
+        const msgs = component['mapEventsToMessages'](events);
+        expect(msgs.length).toBe(2);
+
+        // First message: Agent proposal with milestone card
+        expect(msgs[0].sender).toBe('agent');
+        expect(msgs[0].text).toBe(
+          'Here is the proposed campaign strategy and visual direction for your review.',
+        );
+        expect(msgs[0].milestone?.title).toBe('Campaign Strategy Ready');
+
+        // Second message: User decision only, no duplicate card
+        expect(msgs[1].sender).toBe('user');
+        expect(msgs[1].text).toBe('✅ Approved (Campaign Strategy)');
+        expect(msgs[1].milestone).toBeUndefined();
+      });
+
+      it('should not render milestone card in DOM when message sender is user', () => {
+        component.chatMessages.set([
+          {
+            sender: 'user',
+            text: 'User message',
+            milestone: {
+              stage: 'strategy',
+              title: 'Campaign Strategy Ready',
+              subtitle: 'Theme, tone, and visual direction defined',
+              icon: 'psychology',
+            },
+            timestamp: new Date(),
+          },
+        ]);
+        fixture.detectChanges();
+
+        const card = fixture.nativeElement.querySelector('.border-indigo-500');
+        expect(card).toBeNull();
+      });
+    });
+  });
+});

@@ -20,6 +20,7 @@ from pydantic import Field, field_validator, model_validator
 
 from src.common.base_dto import (
     AspectRatioEnum,
+    AssetReferenceDto,
     BaseDto,
     ColorAndToneEnum,
     CompositionEnum,
@@ -43,17 +44,6 @@ class ReferenceImageDto(BaseDto):
     )
 
 
-class AssetReferenceDto(BaseDto):
-    id: int = Field(description="The ID of the asset.")
-    type: str = Field(
-        description="The type of asset: 'source_asset' or 'media_item'."
-    )
-    index: int | None = Field(
-        default=0,
-        description="The index of the media in the media item (if applicable).",
-    )
-
-
 class CreateVeoDto(BaseDto):
     """The refactored request model. Defaults are defined here to make the API
     contract explicit and self-documenting.
@@ -66,6 +56,20 @@ class CreateVeoDto(BaseDto):
         ge=1,
         description="The ID of the workspace for this generation.",
     )
+
+    metadata_generation_model: GenerationModelEnum | str | None = Field(
+        default=GenerationModelEnum.GEMINI_3_5_FLASH,
+        description="The Gemini model to use for synchronous metadata generation.",
+    )
+    titles: list[str] | None = Field(
+        default=None,
+        description="Optional titles for the generated video.",
+    )
+    descriptions: list[str] | None = Field(
+        default=None,
+        description="Optional descriptions for the generated video.",
+    )
+
     generation_model: GenerationModelEnum = Field(
         default=GenerationModelEnum.VEO_3_1_GENERATE_001,
         description="Model used for image generation.",
@@ -149,6 +153,10 @@ class CreateVeoDto(BaseDto):
     parent_media_item_id: int | None = Field(
         default=None,
         description="The ID of the parent media item for multi-turn conversation editing.",
+    )
+    file_name: str | None = Field(
+        default=None,
+        description="Optional name for the generated media.",
     )
     resolution: Literal["1K", "2K", "4K"] = Field(
         default="1K",
@@ -274,6 +282,7 @@ class CreateVeoDto(BaseDto):
         return self
 
     @field_validator("aspect_ratio")
+    @classmethod
     def validate_video_aspect_ratio(
         cls, value: AspectRatioEnum
     ) -> AspectRatioEnum:
@@ -289,6 +298,7 @@ class CreateVeoDto(BaseDto):
         return value
 
     @field_validator("generation_model")
+    @classmethod
     def validate_video_generation_model(
         cls,
         value: GenerationModelEnum,

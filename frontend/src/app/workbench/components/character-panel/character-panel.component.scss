@@ -1,0 +1,773 @@
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+// Same dark tokens as the storyboard (the panel renders inside its main area)
+$bg-surface: #262626;
+$bg-card: #2c2c2c;
+$bg-input: #1f1f1f;
+$border-color: rgba(255, 255, 255, 0.1);
+$border-light: rgba(255, 255, 255, 0.15);
+$glow-color: #5e99ff;
+$text-primary: #ffffff;
+$text-secondary: #aaaaaa;
+$text-body: #e3e3e3;
+$radius-lg: 16px;
+$radius-md: 12px;
+$radius-sm: 8px;
+$radius-pill: 99px;
+$cs-brand-blue: #3186ff;
+$cs-brand-violet: #8b5cf6;
+$cs-brand-coral: #f87171;
+$cs-brand-gradient: linear-gradient(
+  90deg,
+  $cs-brand-blue 0%,
+  $cs-brand-violet 55%,
+  $cs-brand-coral 100%
+);
+$cs-warning: #fdd663;
+$cs-danger: #f28b82;
+
+:host {
+  display: block;
+  flex: 1 0 100%;
+  min-width: 100%;
+  height: 100%;
+  min-height: 0;
+  color: $text-primary;
+}
+* {
+  box-sizing: border-box;
+}
+
+@keyframes cp-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes cp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes cp-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.cp-panel {
+  height: 100%;
+  overflow-y: auto;
+  padding-right: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  animation: cp-enter 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  > * {
+    flex-shrink: 0;
+  }
+  &::-webkit-scrollbar {
+    width: 8px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: $radius-pill;
+  }
+  h2,
+  h3,
+  p {
+    margin: 0;
+  }
+  p {
+    font-size: 14px;
+    line-height: 1.55;
+    color: $text-secondary;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    &,
+    .cp-card,
+    .cp-spin,
+    .cp-headshot-placeholder.is-loading mat-icon {
+      animation: none;
+    }
+  }
+}
+
+.cp-icon-sm {
+  font-size: 18px;
+  width: 18px;
+  height: 18px;
+  line-height: 18px;
+}
+.cp-spin {
+  animation: cp-spin 1s linear infinite;
+}
+
+// --- Intro ------------------------------------------------------------------
+.cp-intro {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.125rem 1.25rem;
+  border-radius: $radius-lg;
+  border: 1px solid $border-light;
+  background:
+    radial-gradient(
+      120% 140% at 0% 0%,
+      rgba(49, 134, 255, 0.18) 0%,
+      rgba(49, 134, 255, 0) 55%
+    ),
+    $bg-surface;
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 3px;
+    background: $cs-brand-gradient;
+  }
+  h2 {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+  }
+}
+.cp-intro-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 60ch;
+}
+.cp-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: $text-secondary;
+}
+.cp-count-chip {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: $radius-pill;
+  background: rgba(94, 153, 255, 0.15);
+  color: $glow-color;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+// --- Notices ----------------------------------------------------------------
+.cp-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 0.7rem 0.9rem;
+  border-radius: $radius-md;
+  border: 1px solid $border-color;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 13px;
+  line-height: 1.45;
+  color: $text-secondary;
+  b {
+    color: $text-primary;
+    font-weight: 600;
+  }
+  mat-icon {
+    flex-shrink: 0;
+    margin-top: 1px;
+    color: $cs-brand-blue;
+  }
+  &.is-busy {
+    border-color: rgba(253, 214, 99, 0.3);
+    background: rgba(253, 214, 99, 0.07);
+    mat-icon {
+      color: $cs-warning;
+    }
+  }
+  &.is-error {
+    border-color: rgba(242, 139, 130, 0.4);
+    background: rgba(242, 139, 130, 0.08);
+    color: $text-body;
+    mat-icon {
+      color: $cs-danger;
+    }
+    .cp-link {
+      margin-left: auto;
+    }
+  }
+}
+.cp-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: $cs-brand-blue;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  &:hover,
+  &:focus-visible {
+    text-decoration: underline;
+    outline: none;
+  }
+  &[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+    text-decoration: none;
+  }
+}
+
+// --- Cards ------------------------------------------------------------------
+.cp-card {
+  background: $bg-surface;
+  border: 1px solid $border-color;
+  border-radius: $radius-md;
+  padding: 1rem 1.05rem;
+  animation: cp-enter 0.3s ease-out both;
+  transition: border-color 0.2s ease;
+  &:hover {
+    border-color: $border-light;
+  }
+  h3 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    color: $text-primary;
+  }
+}
+.cp-muted {
+  color: $text-secondary;
+  font-size: 12px;
+  b {
+    color: $text-body;
+    font-weight: 600;
+  }
+}
+
+// --- Character card ---------------------------------------------------------
+.cp-character {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 1.1rem;
+  @media (max-width: 720px) {
+    grid-template-columns: 1fr;
+  }
+}
+.cp-headshot {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 9 / 16;
+  max-height: 320px;
+  padding: 0;
+  border: 1px solid $border-color;
+  border-radius: $radius-md;
+  background: $bg-card;
+  overflow: hidden;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(94, 153, 255, 0.55);
+  transition:
+    border-color 0.2s ease,
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+  img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  &:hover,
+  &:focus-visible {
+    border-color: $border-light;
+    transform: translateY(-1px);
+    box-shadow:
+      inset 0 0 0 1px rgba(94, 153, 255, 0.55),
+      0 8px 24px rgba(0, 0, 0, 0.25);
+    outline: none;
+  }
+  &.is-unavailable {
+    cursor: not-allowed;
+    opacity: 0.7;
+  }
+}
+.cp-headshot-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  height: 100%;
+  color: $text-secondary;
+  mat-icon {
+    font-size: 40px;
+    width: 40px;
+    height: 40px;
+  }
+  small {
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  &.is-loading mat-icon {
+    animation: cp-pulse 1.4s ease-in-out infinite;
+  }
+}
+.cp-badge {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px 2px 5px;
+  border-radius: $radius-pill;
+  background: rgba(15, 17, 22, 0.78);
+  backdrop-filter: blur(4px);
+  color: $text-body;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  pointer-events: none;
+  mat-icon {
+    color: $glow-color;
+  }
+}
+
+.cp-profile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+.cp-profile-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem 1rem;
+}
+.cp-profile-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  h3 {
+    font-size: 20px;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+  }
+}
+.cp-role-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: $radius-pill;
+  border: 1px solid rgba(139, 92, 246, 0.45);
+  background: rgba(139, 92, 246, 0.14);
+  font-size: 12px;
+  font-weight: 500;
+  color: $text-primary;
+  mat-icon {
+    color: #c4b5fd;
+  }
+}
+
+.cp-rows {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 0.9rem;
+  row-gap: 0.4rem;
+  font-size: 13px;
+  dt {
+    color: $text-secondary;
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding-top: 2px;
+  }
+  dd {
+    margin: 0;
+    color: $text-body;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+}
+.cp-demographics {
+  padding: 0.6rem 0.8rem;
+  border-radius: $radius-sm;
+  background: $bg-card;
+  border-left: 2px solid rgba(94, 153, 255, 0.5);
+}
+
+// References the headshot was generated from (outfits, garments)
+.cp-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cp-sources-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: $text-secondary;
+  mat-icon {
+    color: $cs-brand-blue;
+  }
+}
+.cp-sources-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  li {
+    width: 64px;
+    height: 64px;
+    border-radius: $radius-sm;
+    border: 1px solid $border-color;
+    background: $bg-card;
+    overflow: hidden;
+  }
+  img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+
+// --- Actions ----------------------------------------------------------------
+.cp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.cp-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: $radius-pill;
+  border: 1px solid $border-color;
+  background: rgba(255, 255, 255, 0.05);
+  color: $text-primary;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease,
+    opacity 0.2s ease;
+  &:hover:not([disabled]) {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: $border-light;
+  }
+  &:focus-visible {
+    outline: 2px solid rgba(94, 153, 255, 0.6);
+    outline-offset: 1px;
+  }
+  &[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  &.is-primary {
+    background: $text-primary;
+    color: #000;
+    border-color: transparent;
+    font-weight: 600;
+    &:hover:not([disabled]) {
+      background: $text-primary;
+      opacity: 0.9;
+    }
+  }
+  &.is-danger {
+    color: $cs-danger;
+    &:hover:not([disabled]) {
+      border-color: rgba(242, 139, 130, 0.5);
+      background: rgba(242, 139, 130, 0.1);
+    }
+  }
+}
+
+// --- Empty state / coming soon ---------------------------------------------
+.cp-empty,
+.cp-soon {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+}
+.cp-empty-icon {
+  flex-shrink: 0;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid $border-color;
+  color: $text-secondary;
+  mat-icon {
+    font-size: 26px;
+    width: 26px;
+    height: 26px;
+  }
+}
+.cp-empty-text {
+  flex: 1 1 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.cp-soon {
+  border-style: dashed;
+  opacity: 0.85;
+  &:hover {
+    border-color: $border-color;
+  }
+}
+.cp-soon-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: $radius-pill;
+  border: 1px solid rgba(253, 214, 99, 0.35);
+  background: rgba(253, 214, 99, 0.1);
+  color: $cs-warning;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+// --- Forms ------------------------------------------------------------------
+.cp-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.cp-form-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  h3 mat-icon {
+    color: $cs-brand-blue;
+  }
+}
+.cp-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem 1rem;
+  @media (max-width: 640px) {
+    grid-template-columns: 1fr;
+  }
+}
+.cp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  input,
+  select,
+  textarea {
+    width: 100%;
+    padding: 9px 11px;
+    border-radius: $radius-sm;
+    border: 1px solid $border-color;
+    background: $bg-input;
+    color: $text-primary;
+    font: inherit;
+    font-size: 14px;
+    transition: border-color 0.2s ease;
+    &::placeholder {
+      color: rgba(255, 255, 255, 0.35);
+    }
+    &:focus {
+      outline: none;
+      border-color: $glow-color;
+    }
+    &[disabled] {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+  }
+  select {
+    appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, $text-secondary 50%),
+      linear-gradient(135deg, $text-secondary 50%, transparent 50%);
+    background-position:
+      calc(100% - 16px) 50%,
+      calc(100% - 11px) 50%;
+    background-size:
+      5px 5px,
+      5px 5px;
+    background-repeat: no-repeat;
+    padding-right: 30px;
+    option {
+      background: $bg-surface;
+    }
+  }
+  textarea {
+    resize: vertical;
+    min-height: 88px;
+    line-height: 1.5;
+  }
+}
+.cp-field-wide {
+  grid-column: 1 / -1;
+}
+.cp-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: $text-secondary;
+  small {
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
+  }
+}
+.cp-form-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 0.25rem;
+  border-top: 1px solid $border-color;
+}
+.cp-cast-hint {
+  text-align: right;
+}
+
+// Reference image strip in the cast form
+.cp-ref-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.cp-ref {
+  position: relative;
+  width: 84px;
+  height: 84px;
+  border-radius: $radius-sm;
+  border: 1px solid $border-color;
+  background: $bg-card;
+  overflow: hidden;
+  img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+.cp-ref-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(15, 17, 22, 0.8);
+  color: $text-primary;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  mat-icon {
+    font-size: 14px;
+    width: 14px;
+    height: 14px;
+  }
+  &:hover:not([disabled]) {
+    background: rgba(242, 139, 130, 0.9);
+  }
+  &[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+.cp-ref-add {
+  width: 84px;
+  height: 84px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border-radius: $radius-sm;
+  border: 1px dashed $border-light;
+  background: transparent;
+  color: $text-secondary;
+  font: inherit;
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    color 0.2s ease;
+  small {
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  &:hover:not([disabled]) {
+    border-color: $glow-color;
+    color: $text-primary;
+  }
+  &[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}

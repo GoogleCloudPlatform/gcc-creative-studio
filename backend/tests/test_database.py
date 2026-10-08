@@ -221,10 +221,18 @@ async def test_worker_database_cloud_sql():
             mock_create_engine.return_value = AsyncMock()
             mock_connector_inst = MagicMock()
             mock_connector_inst.close_async = AsyncMock()
+            mock_connector_inst.connect_async = AsyncMock()
             mock_connector_cls.return_value = mock_connector_inst
 
             async with WorkerDatabase() as sessionmaker:
                 assert sessionmaker is not None
+                creator = mock_create_engine.call_args.kwargs["async_creator"]
+                await creator()
+                from src.database import IPTypes
+
+                mock_connector_inst.connect_async.assert_called_once()
+                call_kwargs = mock_connector_inst.connect_async.call_args.kwargs
+                assert call_kwargs.get("ip_type") == IPTypes.PRIVATE
 
 
 def test_database_connector_singleton():
@@ -237,3 +245,40 @@ def test_get_db_yields():
     # get_db is AsyncGenerator
     gen = get_db()
     assert gen is not None
+
+
+def test_pool_settings():
+    from src.database import POOL_SETTINGS
+
+    assert POOL_SETTINGS["pool_pre_ping"] is True
+    assert POOL_SETTINGS["pool_recycle"] == 1800
+    assert POOL_SETTINGS["pool_size"] == 10
+    assert POOL_SETTINGS["max_overflow"] == 20
+    assert POOL_SETTINGS["pool_timeout"] == 30.0
+
+
+@pytest.mark.anyio
+async def test_worker_database_pool_settings():
+    with (
+        patch.object(config_service, "INSTANCE_CONNECTION_NAME", "inst"),
+        patch.object(config_service, "USE_CLOUD_SQL_AUTH_PROXY", False),
+    ):
+        with (
+            patch("src.database.create_async_engine") as mock_create_engine,
+            patch("src.database.Connector") as mock_connector_cls,
+        ):
+            mock_create_engine.return_value = AsyncMock()
+            mock_connector_inst = MagicMock()
+            mock_connector_inst.close_async = AsyncMock()
+            mock_connector_cls.return_value = mock_connector_inst
+
+            async with WorkerDatabase():
+                pass
+
+            mock_create_engine.assert_called_once()
+            kwargs = mock_create_engine.call_args.kwargs
+            assert kwargs.get("pool_pre_ping") is True
+            assert kwargs.get("pool_recycle") == 1800
+            assert kwargs.get("pool_size") == 5
+            assert kwargs.get("max_overflow") == 10
+            assert kwargs.get("pool_timeout") == 30.0

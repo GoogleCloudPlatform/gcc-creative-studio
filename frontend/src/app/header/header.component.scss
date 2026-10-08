@@ -14,13 +14,18 @@
  * limitations under the License.
  */
 
+// Single source of truth for the vertical rhythm of the desktop menu:
+// avatar → first tab and tab → tab both use this value, so the pills are
+// evenly spaced (the tabs must NOT carry their own margin utilities).
+$desktop-menu-gap: 10px;
+
 // --- Start: Mobile Fix ---
 :host {
   // This positions the workspace switcher at the top on mobile
   app-workspace-switcher {
     position: fixed;
-    bottom: 10vh;
-    left: 20vw;
+    bottom: 12vh;
+      left: 0;
     transform: translateX(-10%);
     z-index: 100;
     width: 80vw;
@@ -73,6 +78,8 @@
     app-workspace-switcher {
       position: static;
       transform: none;
+      left: 20vw;
+        bottom: 10vh;
     }
   }
   // --- End: Mobile Fix ---
@@ -86,7 +93,10 @@
     justify-content: flex-start;
     align-items: center;
     flex-direction: column;
-    padding: 7px 0 8px 0;
+    // 8px on every side: 56px avatar + 2×8px = 72px = width, so the collapsed
+    // pill is a true circle with the avatar dead-centre.
+    padding: 8px 0;
+    gap: $desktop-menu-gap; // avatar → first tab
     max-height: 4.5rem;
     transition: max-height 0.4s ease-in-out;
 
@@ -97,7 +107,7 @@
     .menu-items {
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: $desktop-menu-gap; // tab → tab
     }
 
     &:hover,
@@ -135,7 +145,7 @@
     .menu-items {
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: $desktop-menu-gap;
     }
 
     &:hover,

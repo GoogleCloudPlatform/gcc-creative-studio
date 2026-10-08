@@ -51,3 +51,37 @@ class RandomPromptRequestDto(BaseDto):
 
 class RewrittenOrRandomPromptResponse(BaseDto):
     prompt: str
+
+
+class GenerateTitleRequestDto(BaseDto):
+    """Request body for the /generate-title endpoint."""
+
+    text: Annotated[
+        str,
+        Field(
+            description="The text to generate a title for.",
+            min_length=1,
+        ),
+    ]
+
+
+class GenerateTitleResponseDto(BaseDto):
+    title: str
+    summary: str | None = None
+
+
+class MediaItemMetadataItemDto(BaseDto):
+    title: str = Field(description="Title for this specific media variation.")
+    description: str = Field(
+        description="Description for this specific media variation."
+    )
+
+
+class GenerateMediaMetadataResponseDto(BaseDto):
+    items: list[MediaItemMetadataItemDto] = Field(
+        default_factory=list,
+        description=(
+            "List of title and description objects corresponding to each media"
+            " item in order."
+        ),
+    )
