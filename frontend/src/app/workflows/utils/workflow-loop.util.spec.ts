@@ -16,6 +16,7 @@
 
 import {NodeTypes} from '../workflow.models';
 import {
+  collectReferenceEdges,
   getLoopBodies,
   getLoopEndingVisibleStepIds,
   hasForwardCycle,
@@ -29,6 +30,7 @@ import {
   OVERLAPPING_LOOP_BODIES_ERROR,
   SHARED_LOOP_END_ERROR,
   validateLoopTopology,
+  workflowHasLoopStep,
 } from './workflow-loop.util';
 
 const ref = (step: string, output: string) => ({step, output});
@@ -335,6 +337,104 @@ describe('WorkflowLoopUtil', () => {
           targetInput: 'input_images',
         }),
       ).toBeTrue();
+    });
+  });
+
+  describe('Loop linked_items', () => {
+    /** Two upstream images linked into the Loop's linked_items, in order. */
+    function buildLinkedLoop(): LoopGraphStep[] {
+      const steps = buildValidLoop();
+      steps.push(
+        {stepId: 'img_a', type: NodeTypes.IMAGE, inputs: {}},
+        {stepId: 'img_b', type: NodeTypes.IMAGE, inputs: {}},
+      );
+      const loop = steps.find(s => s.stepId === 'loop_1');
+      if (loop) {
+        loop.inputs = {
+          loop_ending: ref('image_1', 'loop_ending'),
+          linked_items: [
+            ref('img_a', 'generated_image'),
+            ref('img_b', 'generated_image'),
+          ],
+        };
+      }
+      return steps;
+    }
+
+    it('allows an upstream step to feed linked_items', () => {
+      const steps = buildValidLoop();
+      steps.push({stepId: 'img_c', type: NodeTypes.IMAGE, inputs: {}});
+      expect(
+        isLoopConnectionAllowed(steps, {
+          sourceStepId: 'img_c',
+          sourceOutput: 'generated_image',
+          targetStepId: 'loop_1',
+          targetInput: 'linked_items',
+        }),
+      ).toBeTrue();
+    });
+
+    it('lists every linked ref as an edge, in link order', () => {
+      const linkedEdges = collectReferenceEdges(buildLinkedLoop()).filter(
+        edge => edge.targetInput === 'linked_items',
+      );
+      expect(linkedEdges.map(edge => edge.sourceStepId)).toEqual([
+        'img_a',
+        'img_b',
+      ]);
+    });
+
+    it('keeps the topology valid with linked upstreams', () => {
+      expect(validateLoopTopology(buildLinkedLoop())).toBeNull();
+    });
+
+    it('rejects a body step of another loop feeding linked_items', () => {
+      const steps = buildValidLoop();
+      steps.push({stepId: 'loop_2', type: NodeTypes.LOOP, inputs: {}});
+      expect(
+        isLoopConnectionAllowed(steps, {
+          sourceStepId: 'image_1',
+          sourceOutput: 'generated_image',
+          targetStepId: 'loop_2',
+          targetInput: 'linked_items',
+        }),
+      ).toBeFalse();
+    });
+  });
+
+  describe('workflowHasLoopStep', () => {
+    const step = (type: NodeTypes | string) => ({type});
+
+    it('is false for a missing workflow or missing steps', () => {
+      expect(workflowHasLoopStep(null)).toBeFalse();
+      expect(workflowHasLoopStep(undefined)).toBeFalse();
+      expect(workflowHasLoopStep({})).toBeFalse();
+      expect(workflowHasLoopStep({steps: null})).toBeFalse();
+    });
+
+    it('is false when no step is a Loop', () => {
+      expect(
+        workflowHasLoopStep({
+          steps: [step(NodeTypes.USER_INPUT), step(NodeTypes.IMAGE)],
+        }),
+      ).toBeFalse();
+    });
+
+    it('is true for one or several Loop steps', () => {
+      expect(
+        workflowHasLoopStep({
+          steps: [step(NodeTypes.IMAGE), step(NodeTypes.LOOP)],
+        }),
+      ).toBeTrue();
+      expect(
+        workflowHasLoopStep({
+          steps: [step(NodeTypes.LOOP), step(NodeTypes.LOOP)],
+        }),
+      ).toBeTrue();
+    });
+
+    it('accepts the Loop type as the enum or as a plain string', () => {
+      expect(workflowHasLoopStep({steps: [step('loop')]})).toBeTrue();
     });
   });
 });

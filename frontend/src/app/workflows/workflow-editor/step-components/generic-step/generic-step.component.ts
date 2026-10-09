@@ -27,7 +27,7 @@ import {
   inject,
   signal,
 } from '@angular/core';
-import {FormBuilder, FormGroup, Validators} from '@angular/forms';
+import {FormBuilder, FormGroup, ValidatorFn, Validators} from '@angular/forms';
 import {MatDialog} from '@angular/material/dialog';
 import {MatSelectChange} from '@angular/material/select';
 import {Subscription, take} from 'rxjs';
@@ -71,11 +71,18 @@ import {
   LOOP_ITEMS_TEXT_INPUT,
   LOOP_ITEM_TYPE_MIME_MAP,
   LOOP_ITEM_TYPE_SETTING,
+  LOOP_LINKED_ITEMS_INPUT,
+  LOOP_MODE_FOLDER,
+  LOOP_MODE_LINKED_ITEMS,
+  LOOP_MODE_SETTING,
   LOOP_MODE_TEXT_INPUT,
   LoopFolderChooseValue,
   MAX_LOOP_ITEMS,
   getLoopCurrentItemType,
+  getLoopLinkedItemsInputType,
   loopFolderIdValidator,
+  loopItemsTextValidator,
+  loopLinkedItemsRequiredValidator,
   toLoopFolderId,
   toLoopItemType,
   toLoopMode,
@@ -224,6 +231,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
   localConfig!: StepConfig;
   isLoopStep = false;
   readonly loopFolderSettingName = LOOP_FOLDER_SETTING;
+  readonly loopLinkedItemsInputName = LOOP_LINKED_ITEMS_INPUT;
   readonly loopFolderChooseValue: LoopFolderChooseValue =
     LOOP_FOLDER_CHOOSE_VALUE;
   readonly loopFolderMissingTooltip = LOOP_FOLDER_MISSING_TOOLTIP;
@@ -1009,7 +1017,8 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
 
   /**
    * Toggles Loop settings/inputs for the active source mode and keeps the
-   * `current_item` output port type in sync (`text` or the folder `item_type`).
+   * dynamic port types in sync: `current_item` (`text` or `item_type`) and the
+   * `linked_items` input (`item_type`).
    */
   private updateLoopModeConfig(): void {
     if (!this.isLoopStep) return;
@@ -1017,14 +1026,15 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     // valueChanges fires before the parent group's `value` is refreshed.
     const settingsGroup = this.stepForm.get('settings') as FormGroup | null;
     const settingsValue: DynamicStepRecord = settingsGroup?.getRawValue() ?? {};
-    const isTextMode =
-      toLoopMode(settingsValue['mode']) === LOOP_MODE_TEXT_INPUT;
+    const mode = toLoopMode(settingsValue[LOOP_MODE_SETTING]);
+    const isTextMode = mode === LOOP_MODE_TEXT_INPUT;
+    const isFolderMode = mode === LOOP_MODE_FOLDER;
+    const isLinkedMode = mode === LOOP_MODE_LINKED_ITEMS;
 
     this.localConfig.settings.forEach(setting => {
-      if (
-        setting.name === LOOP_FOLDER_SETTING ||
-        setting.name === LOOP_ITEM_TYPE_SETTING
-      ) {
+      if (setting.name === LOOP_FOLDER_SETTING) {
+        setting.hidden = !isFolderMode;
+      } else if (setting.name === LOOP_ITEM_TYPE_SETTING) {
         setting.hidden = isTextMode;
       }
     });
@@ -1032,38 +1042,30 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     // A folder is only required when looping over a Media Gallery folder.
     const folderControl = settingsGroup?.get(LOOP_FOLDER_SETTING);
     if (folderControl) {
-      if (isTextMode) {
-        folderControl.clearValidators();
-      } else {
+      if (isFolderMode) {
         folderControl.setValidators([
           Validators.required,
           loopFolderIdValidator,
         ]);
+      } else {
+        folderControl.clearValidators();
       }
       folderControl.updateValueAndValidity({emitEvent: false});
     }
 
-    const itemsTextInput = this.localConfig.inputs.find(
-      i => i.name === LOOP_ITEMS_TEXT_INPUT,
+    this.applyLoopSourceInput(LOOP_ITEMS_TEXT_INPUT, isTextMode, [
+      Validators.required,
+      loopItemsTextValidator,
+    ]);
+    this.applyLoopSourceInput(LOOP_LINKED_ITEMS_INPUT, isLinkedMode, [
+      loopLinkedItemsRequiredValidator,
+    ]);
+
+    const linkedItemsInput = this.localConfig.inputs.find(
+      i => i.name === LOOP_LINKED_ITEMS_INPUT,
     );
-    const itemsTextControl = this.stepForm
-      .get('inputs')
-      ?.get(LOOP_ITEMS_TEXT_INPUT);
-    if (itemsTextInput) {
-      itemsTextInput.hidden = !isTextMode;
-      itemsTextInput.required = isTextMode;
-    }
-    if (itemsTextControl) {
-      if (isTextMode) {
-        itemsTextControl.setValidators([Validators.required]);
-        if (!this.stepForm.disabled) {
-          itemsTextControl.enable({emitEvent: false});
-        }
-      } else {
-        itemsTextControl.clearValidators();
-        itemsTextControl.disable({emitEvent: false});
-      }
-      itemsTextControl.updateValueAndValidity({emitEvent: false});
+    if (linkedItemsInput) {
+      linkedItemsInput.type = getLoopLinkedItemsInputType(settingsValue);
     }
 
     const currentItemType = getLoopCurrentItemType(settingsValue);
@@ -1079,6 +1081,35 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
       ?.setValue({type: currentItemType}, {emitEvent: false});
 
     this.updateCompatibleOutputs();
+  }
+
+  /**
+   * Shows, requires, validates and enables a Loop source input only while its
+   * mode is active; otherwise hides, clears and disables it. Disabled controls
+   * are also skipped as magnetic wiring candidates.
+   */
+  private applyLoopSourceInput(
+    inputName: string,
+    isActive: boolean,
+    validators: ValidatorFn[],
+  ): void {
+    const input = this.localConfig.inputs.find(i => i.name === inputName);
+    if (input) {
+      input.hidden = !isActive;
+      input.required = isActive;
+    }
+    const control = this.stepForm.get('inputs')?.get(inputName);
+    if (!control) return;
+    if (isActive) {
+      control.setValidators(validators);
+      if (!this.stepForm.disabled) {
+        control.enable({emitEvent: false});
+      }
+    } else {
+      control.clearValidators();
+      control.disable({emitEvent: false});
+    }
+    control.updateValueAndValidity({emitEvent: false});
   }
 
   /** Indexes the active workspace's folders to resolve the saved folder name/path. */

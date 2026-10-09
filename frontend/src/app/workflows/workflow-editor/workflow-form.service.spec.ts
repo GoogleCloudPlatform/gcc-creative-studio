@@ -16,8 +16,9 @@
 
 import {PLATFORM_ID} from '@angular/core';
 import {TestBed} from '@angular/core/testing';
-import {FormBuilder, ReactiveFormsModule} from '@angular/forms';
+import {FormBuilder, FormGroup, ReactiveFormsModule} from '@angular/forms';
 import {
+  DynamicStepRecord,
   NodeTypes,
   StepOutputReference,
   StepStatusEnum,
@@ -341,6 +342,257 @@ describe('WorkflowFormService', () => {
       expect(service.workflowForm.get('userInput.collapsed')?.value).toBeTrue();
       expect(service.stepsArray.at(0).get('collapsed')?.value).toBeTrue();
       expect(service.stepsArray.at(1).get('collapsed')?.value).toBeFalse();
+    });
+  });
+
+  describe('Loop source cleanup', () => {
+    const imgA: StepOutputReference = {
+      step: 'img_a',
+      output: 'generated_image',
+    };
+    const imgB: StepOutputReference = {
+      step: 'img_b',
+      output: 'generated_image',
+    };
+    const vidA: StepOutputReference = {
+      step: 'vid_a',
+      output: 'generated_video',
+    };
+    const textRef: StepOutputReference = {
+      step: 'txt_1',
+      output: 'generated_text',
+    };
+    const loopItemRef: StepOutputReference = {
+      step: 'loop_1',
+      output: 'current_item',
+    };
+
+    const buildStep = (
+      stepId: string,
+      type: NodeTypes,
+      inputs: DynamicStepRecord = {},
+      settings: DynamicStepRecord = {},
+    ) => ({
+      stepId,
+      type,
+      status: StepStatusEnum.IDLE,
+      position: {x: 0, y: 0},
+      collapsed: false,
+      inputs,
+      outputs: {},
+      settings,
+    });
+
+    const buildLoop = (mode: string, inputs: DynamicStepRecord) =>
+      buildStep(
+        'loop_1',
+        NodeTypes.LOOP,
+        {items_text: null, linked_items: null, loop_ending: null, ...inputs},
+        {mode, folder_id: null, item_type: 'image'},
+      );
+
+    function addSources(): void {
+      service.addStep(NodeTypes.IMAGE, buildStep('img_a', NodeTypes.IMAGE));
+      service.addStep(NodeTypes.IMAGE, buildStep('img_b', NodeTypes.IMAGE));
+      service.addStep(
+        NodeTypes.GENERATE_VIDEO,
+        buildStep('vid_a', NodeTypes.GENERATE_VIDEO),
+      );
+      service.addStep(
+        NodeTypes.GENERATE_TEXT,
+        buildStep('txt_1', NodeTypes.GENERATE_TEXT),
+      );
+    }
+
+    function addLoop(mode: string, inputs: DynamicStepRecord): FormGroup {
+      addSources();
+      service.addStep(NodeTypes.LOOP, buildLoop(mode, inputs));
+      return loopGroup();
+    }
+
+    const loopGroup = (): FormGroup =>
+      service.stepsArray.controls.find(
+        c => c.get('stepId')?.value === 'loop_1',
+      ) as FormGroup;
+
+    let removedCount: number;
+    let availableOutputsEmissions: number;
+
+    beforeEach(() => {
+      removedCount = 0;
+      availableOutputsEmissions = 0;
+      service.loopLinksRemoved$.subscribe(() => removedCount++);
+    });
+
+    function countAvailableOutputs(): void {
+      service.availableOutputsPerStep$.subscribe(
+        () => availableOutputsEmissions++,
+      );
+      availableOutputsEmissions = 0;
+    }
+
+    it('clears linked_items and marks it dirty when leaving Linked Items mode', () => {
+      const loop = addLoop('linked_items', {linked_items: [imgA, imgB]});
+      countAvailableOutputs();
+
+      loop.get('settings.mode')?.setValue('folder');
+
+      const linkedItems = loop.get('inputs.linked_items');
+      expect(linkedItems?.value).toBeNull();
+      expect(linkedItems?.dirty).toBeTrue();
+      expect(removedCount).toBe(1);
+      expect(availableOutputsEmissions).toBeGreaterThan(0);
+    });
+
+    it('prunes only the incoming refs of the wrong type on item_type change', () => {
+      const loop = addLoop('linked_items', {linked_items: [imgA, vidA, imgB]});
+
+      loop.get('settings.item_type')?.setValue('video');
+
+      expect(loop.get('inputs.linked_items')?.value).toEqual([vidA]);
+      expect(loop.get('inputs.linked_items')?.dirty).toBeTrue();
+      expect(removedCount).toBe(1);
+    });
+
+    it('prunes gallery picks on item_type change and keeps matching wires in order', () => {
+      const assetPick = {sourceAssetId: 7, previewUrl: ''};
+      const mediaPick = {
+        previewUrl: '',
+        sourceMediaItem: {mediaItemId: 103, mediaIndex: 0, role: 'input'},
+      };
+      const loop = addLoop('linked_items', {
+        linked_items: [assetPick, vidA, mediaPick, imgA],
+      });
+
+      loop.get('settings.item_type')?.setValue('video');
+
+      expect(loop.get('inputs.linked_items')?.value).toEqual([vidA]);
+      expect(removedCount).toBe(1);
+    });
+
+    it('clears wires and gallery picks when leaving Linked Items mode', () => {
+      const loop = addLoop('linked_items', {
+        linked_items: [{sourceAssetId: 7, previewUrl: ''}, imgA],
+      });
+
+      loop.get('settings.mode')?.setValue('text_input');
+
+      expect(loop.get('inputs.linked_items')?.value).toBeNull();
+      expect(removedCount).toBe(1);
+    });
+
+    it('sets linked_items to null when every ref has the wrong type', () => {
+      const loop = addLoop('linked_items', {linked_items: [imgA]});
+
+      loop.get('settings.item_type')?.setValue('audio');
+
+      expect(loop.get('inputs.linked_items')?.value).toBeNull();
+    });
+
+    it('still prunes outgoing current_item links on item_type change', () => {
+      const loop = addLoop('linked_items', {linked_items: [imgA]});
+      service.addStep(
+        NodeTypes.IMAGE,
+        buildStep('edit_1', NodeTypes.IMAGE, {input_images: [loopItemRef]}),
+      );
+      const editStep = service.stepsArray.controls.find(
+        c => c.get('stepId')?.value === 'edit_1',
+      );
+
+      loop.get('settings.item_type')?.setValue('video');
+
+      expect(editStep?.get('inputs.input_images')?.value).toEqual([]);
+    });
+
+    ['folder', 'linked_items'].forEach(nextMode => {
+      it(`clears a linked items_text when switching text_input -> ${nextMode}`, () => {
+        const loop = addLoop('text_input', {items_text: textRef});
+
+        loop.get('settings.mode')?.setValue(nextMode);
+
+        const itemsText = loop.get('inputs.items_text');
+        expect(itemsText?.value).toBeNull();
+        expect(itemsText?.dirty).toBeTrue();
+        expect(removedCount).toBe(1);
+      });
+
+      it(`keeps a fixed items_text when switching text_input -> ${nextMode}`, () => {
+        const loop = addLoop('text_input', {items_text: 'cat, dog'});
+
+        loop.get('settings.mode')?.setValue(nextMode);
+
+        expect(loop.get('inputs.items_text')?.value).toBe('cat, dog');
+        expect(removedCount).toBe(0);
+      });
+    });
+
+    it('leaves items_text untouched when switching folder -> linked_items', () => {
+      const loop = addLoop('folder', {items_text: textRef});
+
+      loop.get('settings.mode')?.setValue('linked_items');
+
+      expect(loop.get('inputs.items_text')?.value).toEqual(textRef);
+      expect(removedCount).toBe(0);
+    });
+
+    it('clears nothing on a read-only form', () => {
+      const loop = addLoop('linked_items', {linked_items: [imgA]});
+      service.workflowForm.disable();
+
+      loop.get('settings.mode')?.setValue('folder');
+      loop.get('settings.item_type')?.setValue('video');
+
+      expect(loop.getRawValue().inputs.linked_items).toEqual([imgA]);
+      expect(removedCount).toBe(0);
+    });
+
+    it('clears nothing and stays pristine when a saved workflow is loaded', () => {
+      addSources();
+      const savedSteps = service.stepsArray.getRawValue();
+
+      service.patchData({
+        id: 'wf-1',
+        name: 'Saved',
+        description: '',
+        userInput: service.workflowForm.getRawValue().userInput,
+        steps: [
+          ...savedSteps,
+          buildLoop('linked_items', {linked_items: [imgA, imgB]}),
+        ],
+      });
+
+      expect(loopGroup().get('inputs.linked_items')?.value).toEqual([
+        imgA,
+        imgB,
+      ]);
+      expect(service.workflowForm.pristine).toBeTrue();
+      expect(removedCount).toBe(0);
+    });
+
+    it('restores the removed links from an undo snapshot', () => {
+      addLoop('text_input', {items_text: textRef});
+      const snapshot = service.workflowForm.getRawValue();
+
+      loopGroup().get('settings.mode')?.setValue('folder');
+      expect(loopGroup().get('inputs.items_text')?.value).toBeNull();
+
+      service.patchData(snapshot);
+
+      const restoredLoop = loopGroup();
+      expect(restoredLoop.get('settings.mode')?.value).toBe('text_input');
+      expect(restoredLoop.get('inputs.items_text')?.value).toEqual(textRef);
+    });
+
+    it('resolves output types for user inputs, Loop items and static outputs', () => {
+      addLoop('linked_items', {linked_items: [imgA]});
+
+      expect(service.getOutputType('img_a', 'generated_image')).toBe('image');
+      expect(service.getOutputType('vid_a', 'generated_video')).toBe('video');
+      expect(service.getOutputType('loop_1', 'current_item')).toBe('image');
+      expect(service.getOutputType('user_input', 'User Image Input')).toBe(
+        'image',
+      );
+      expect(service.getOutputType('missing', 'x')).toBe('');
     });
   });
 });

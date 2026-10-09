@@ -437,7 +437,7 @@ describe('StepExecutionDetailsComponent', () => {
       fixture.detectChanges();
 
       expect(component.filteredInputs).toEqual({
-        mode: 'folder',
+        mode: 'Media Gallery Folder',
         folder_name: 'Product Photos',
         item_type: 'video',
       });
@@ -452,6 +452,52 @@ describe('StepExecutionDetailsComponent', () => {
       expect(query('#loop-truncation-banner-loop_1')).toBeNull();
     });
 
+    it('surfaces linked items metadata and renders items as media in linked items mode', () => {
+      component.inputs = {
+        mode: 'linked_items',
+        item_type: 'image',
+        source_count: 3,
+        skipped_count: 1,
+        folder_name: 'Stale folder',
+        items_text: 'stale, text',
+      };
+      component.outputs = {
+        items: [201, 202],
+        total_iterations: 2,
+        total_found: 2,
+        truncated: false,
+      };
+      component.mediaUrlMap = new Map([
+        ['media:201', 'https://media/201.png'],
+        ['media:202', 'https://media/202.png'],
+      ]);
+      fixture.detectChanges();
+
+      expect(component.filteredInputs).toEqual({
+        mode: 'Linked Items',
+        item_type: 'image',
+        source_count: 3,
+        skipped_count: 1,
+      });
+      expect(component.loopMediaType()).toBe('image');
+      expect(component.isImageOutput('items')).toBeTrue();
+      expect(component.isVideoOutput('items')).toBeFalse();
+      expect(component.isLoopTextMode()).toBeFalse();
+      const srcs = Array.from(
+        fixture.nativeElement.querySelectorAll('img[alt="Generated Image"]'),
+      ).map(img => (img as HTMLImageElement).getAttribute('src'));
+      expect(srcs).toEqual(['https://media/201.png', 'https://media/202.png']);
+      expect(query('.loop-text-list')).toBeNull();
+    });
+
+    it('does not treat a Loop without a recorded mode as media', () => {
+      component.inputs = {item_type: 'image'};
+      component.outputs = {items: [1]};
+
+      expect(component.loopMediaType()).toBeNull();
+      expect(component.isImageOutput('items')).toBeFalse();
+    });
+
     it('renders text items as a numbered list in text_input mode', () => {
       component.inputs = {mode: 'text_input', items_text: 'cat, dog, rabbit'};
       component.outputs = {
@@ -463,10 +509,11 @@ describe('StepExecutionDetailsComponent', () => {
       fixture.detectChanges();
 
       expect(component.filteredInputs).toEqual({
-        mode: 'text_input',
+        mode: 'Text Input',
         items_text: 'cat, dog, rabbit',
       });
       expect(component.isImageOutput('items')).toBeFalse();
+      expect(component.loopMediaType()).toBeNull();
       expect(component.loopTextItems()).toEqual(['cat', 'dog', 'rabbit']);
       const listItems =
         fixture.nativeElement.querySelectorAll('.loop-text-item');

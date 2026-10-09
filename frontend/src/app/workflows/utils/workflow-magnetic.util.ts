@@ -17,6 +17,10 @@
 import {MODEL_CONFIGS} from '../../common/config/model-config';
 import {ReferenceImage} from '../../common/models/search.model';
 import {StepInputValue, StepOutputReference} from '../workflow.models';
+import {
+  LOOP_LINKED_ITEMS_INPUT,
+  MAX_LOOP_LINKED_ITEMS,
+} from '../workflow-editor/step-components/step-configs/loop-step.config';
 
 export {StepInputValue, StepOutputReference};
 
@@ -243,6 +247,9 @@ export function getMaxAllowedInputs(
       }
     }
     return 14;
+  }
+  if (inputName === LOOP_LINKED_ITEMS_INPUT) {
+    return MAX_LOOP_LINKED_ITEMS;
   }
   return 1;
 }

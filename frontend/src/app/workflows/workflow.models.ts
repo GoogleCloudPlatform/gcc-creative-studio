@@ -80,14 +80,19 @@ export type WorkflowStep = BaseStep;
 // --- Loop Step ---
 
 /** Source of the items iterated by a Loop step. */
-export type LoopMode = 'folder' | 'text_input';
+export type LoopMode = 'folder' | 'text_input' | 'linked_items';
 
-/** Media type iterated by a Loop step in `folder` mode. */
+/** Media type iterated by a Loop step in `folder` and `linked_items` modes. */
 export type LoopItemType = 'image' | 'video' | 'audio';
+
+/** One Linked Items entry: a wired upstream output or a Media Gallery pick. */
+export type LoopLinkedItem = StepOutputReference | ReferenceImage;
 
 export interface LoopInputs {
   /** Comma-separated items (fixed text or a linked text output). Used in `text_input` mode. */
   items_text: string | StepOutputReference | null;
+  /** Linked Items mode: wired outputs and gallery picks, in iteration order. */
+  linked_items: LoopLinkedItem[] | null;
   /** Back-edge from the loop end step's `loop_ending` output. */
   loop_ending: StepOutputReference | null;
 }

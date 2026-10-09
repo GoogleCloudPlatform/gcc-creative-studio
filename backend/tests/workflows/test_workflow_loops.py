@@ -30,8 +30,11 @@ from src.workflows.schema.workflow_model import (
     LoopInputs,
     LoopSettings,
     LoopStep,
+    ReferenceMediaOrAsset,
     StepOutputReference,
     StepStatusEnum,
+    UserInputDefinition,
+    UserInputSettings,
     UserInputStep,
     WorkflowBase,
 )
@@ -59,11 +62,13 @@ def _loop(
     end: str | None = "gen_image",
     mode: str = "folder",
     items_text: Any = None,
+    linked_items: Any = None,
 ) -> LoopStep:
     return LoopStep(
         step_id=step_id,
         inputs=LoopInputs(
             items_text=items_text,
+            linked_items=linked_items,
             loop_ending=_ref(end, "loop_ending") if end else None,
         ),
         settings=LoopSettings(
@@ -80,6 +85,23 @@ def _image(step_id: str = "gen_image", source: str = "loop_1") -> ImageStep:
             input_images=_ref(source, "current_item"),
         ),
         settings=ImageSettings(),
+    )
+
+
+def _upstream_image(step_id: str) -> ImageStep:
+    return ImageStep(
+        step_id=step_id,
+        inputs=ImageInputs(prompt="A product photo"),
+        settings=ImageSettings(),
+    )
+
+
+def _photo_input() -> UserInputStep:
+    return UserInputStep(
+        step_id="user_in",
+        settings=UserInputSettings(
+            definitions=[UserInputDefinition(name="photo", type="image")]
+        ),
     )
 
 
@@ -105,6 +127,12 @@ def _step_map(steps: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
 def _run_steps(definition: dict[str, Any]) -> list[dict[str, Any]]:
     main = _step_map(definition["main"]["steps"])
     return main["run_steps"]["try"]["steps"]
+
+
+def _resolve_body(steps: list[Any]) -> dict[str, Any]:
+    """Body of the ``/resolve-loop-items`` call of ``loop_1``."""
+    definition = build_workflow_definition(steps, executor_url=EXECUTOR_URL)
+    return _step_map(_run_steps(definition))["loop_1"]["try"]["args"]["body"]
 
 
 class TestStepIdValidation:
@@ -135,6 +163,106 @@ class TestStepIdValidation:
         )
         assert isinstance(workflow.steps[0], LoopStep)
         assert workflow.steps[0].settings.mode == "folder"
+
+    def test_linked_loop_round_trips_through_union(self):
+        linked_loop = _loop(
+            mode="linked_items",
+            linked_items=[
+                _ref("img_a", "generated_image"),
+                _ref("user_in", "photo"),
+            ],
+        )
+
+        workflow = WorkflowBase.model_validate(
+            {
+                "name": "wf",
+                "steps": [
+                    linked_loop.model_dump(mode="json"),
+                    _image().model_dump(mode="json"),
+                ],
+            }
+        )
+
+        loop_step = workflow.steps[0]
+        assert isinstance(loop_step, LoopStep)
+        assert loop_step.settings.mode == "linked_items"
+        assert loop_step.inputs.linked_items == [
+            _ref("img_a", "generated_image"),
+            _ref("user_in", "photo"),
+        ]
+
+    def test_linked_items_accepts_single_reference(self):
+        inputs = LoopInputs.model_validate(
+            {"linked_items": {"step": "img_a", "output": "generated_image"}}
+        )
+
+        assert inputs.linked_items == _ref("img_a", "generated_image")
+
+    def test_linked_items_round_trip_mixed_refs_and_picks(self):
+        linked_items = [
+            {"step": "img_a", "output": "generated_image"},
+            {
+                "previewUrl": "https://signed",
+                "sourceMediaItem": {
+                    "mediaItemId": 103,
+                    "mediaIndex": 2,
+                    "role": "input",
+                },
+            },
+            {"previewUrl": "", "sourceAssetId": 7},
+            101,
+        ]
+
+        loop_step = LoopStep.model_validate(
+            {
+                "step_id": "loop_1",
+                "type": "loop",
+                "inputs": {"linked_items": linked_items},
+                "settings": {"mode": "linked_items"},
+            }
+        )
+        parsed = loop_step.inputs.linked_items
+
+        assert [type(entry) for entry in parsed] == [
+            StepOutputReference,
+            ReferenceMediaOrAsset,
+            ReferenceMediaOrAsset,
+            int,
+        ]
+        round_tripped = LoopStep.model_validate(
+            loop_step.model_dump(mode="json")
+        )
+        assert round_tripped.inputs.linked_items == parsed
+
+    def test_linked_items_accepts_single_gallery_pick(self):
+        inputs = LoopInputs.model_validate(
+            {"linked_items": {"previewUrl": "", "sourceAssetId": 7}}
+        )
+
+        assert inputs.linked_items == ReferenceMediaOrAsset(
+            previewUrl="", sourceAssetId=7
+        )
+
+    def test_linked_items_rejects_text(self):
+        with pytest.raises(ValidationError):
+            LoopInputs.model_validate({"linked_items": ["hello"]})
+
+    def test_old_loop_payload_still_validates(self):
+        loop_step = LoopStep.model_validate(
+            {
+                "step_id": "loop_1",
+                "type": "loop",
+                "inputs": {"items_text": "a,b"},
+                "settings": {"mode": "text_input"},
+            }
+        )
+
+        assert loop_step.inputs.linked_items is None
+        assert loop_step.settings.mode == "text_input"
+
+    def test_unknown_loop_mode_is_rejected(self):
+        with pytest.raises(ValidationError):
+            LoopSettings(mode="everything")
 
 
 class TestAnalyzeLoops:
@@ -302,6 +430,183 @@ class TestLoopYaml:
         body = run_steps["loop_1"]["try"]["args"]["body"]
         assert body["inputs"] == {"items_text": "${pre_out.generated_text}"}
         assert body["config"]["mode"] == "text_input"
+
+    def test_linked_loop_sends_linked_items_in_link_order(self):
+        linked_loop = _loop(
+            mode="linked_items",
+            linked_items=[
+                _ref("img_b", "generated_image"),
+                _ref("user_in", "photo"),
+                _ref("img_a", "generated_image"),
+            ],
+        )
+        steps = [
+            _photo_input(),
+            _upstream_image("img_a"),
+            _upstream_image("img_b"),
+            linked_loop,
+            _image(),
+        ]
+
+        definition = build_workflow_definition(steps, executor_url=EXECUTOR_URL)
+        run_steps = _step_map(_run_steps(definition))
+
+        body = run_steps["loop_1"]["try"]["args"]["body"]
+        assert body["inputs"] == {
+            "linked_items": [
+                "${img_b_out.generated_image}",
+                "${args.photo}",
+                "${img_a_out.generated_image}",
+            ]
+        }
+        assert body["config"]["mode"] == "linked_items"
+        # Upstreams are top-level, gated steps that run before the loop.
+        assert "img_a_gate" in run_steps
+        img_b_gate = run_steps["img_b_gate"]["switch"][0]
+        assert img_b_gate["next"] == "loop_1_mark"
+
+    def test_linked_loop_single_reference_is_sent_as_list(self):
+        steps = [
+            _upstream_image("img_a"),
+            _loop(
+                mode="linked_items",
+                linked_items=_ref("img_a", "generated_image"),
+            ),
+            _image(),
+        ]
+
+        body = _resolve_body(steps)
+
+        assert body["inputs"] == {
+            "linked_items": ["${img_a_out.generated_image}"]
+        }
+
+    def test_linked_loop_mixes_expressions_and_gallery_picks(self):
+        linked_loop = _loop(
+            mode="linked_items",
+            linked_items=[
+                ReferenceMediaOrAsset(
+                    previewUrl="https://signed", sourceAssetId=7
+                ),
+                _ref("img_a", "generated_image"),
+                ReferenceMediaOrAsset(
+                    previewUrl="https://signed",
+                    sourceMediaItem={
+                        "mediaItemId": 103,
+                        "mediaIndex": 2,
+                        "role": "${sys.get_env('SECRET')}",
+                    },
+                ),
+                _ref("user_in", "photo"),
+                101,
+            ],
+        )
+        steps = [
+            _photo_input(),
+            _upstream_image("img_a"),
+            linked_loop,
+            _image(),
+        ]
+
+        body = _resolve_body(steps)
+
+        assert body["inputs"] == {
+            "linked_items": [
+                {"sourceAssetId": 7},
+                "${img_a_out.generated_image}",
+                {"sourceMediaItem": {"mediaItemId": 103, "mediaIndex": 2}},
+                "${args.photo}",
+                101,
+            ]
+        }
+
+    def test_linked_loop_id_less_pick_stays_non_empty(self):
+        linked_loop = _loop(
+            mode="linked_items",
+            linked_items=[ReferenceMediaOrAsset(previewUrl="https://x")],
+        )
+
+        body = _resolve_body([linked_loop, _image()])
+
+        assert body["inputs"] == {"linked_items": [{"sourceAssetId": None}]}
+
+    def test_gallery_picks_add_no_dependencies(self):
+        linked_loop = _loop(
+            mode="linked_items",
+            linked_items=[
+                ReferenceMediaOrAsset(previewUrl="", sourceAssetId=7),
+                _ref("img_a", "generated_image"),
+                101,
+            ],
+        )
+
+        graph = analyze_steps([_upstream_image("img_a"), linked_loop, _image()])
+
+        assert graph.dependencies["loop_1"] == frozenset({"img_a"})
+        assert graph.loops["loop_1"].body == ("gen_image",)
+
+    def test_linked_loop_without_links_sends_empty_list(self):
+        steps = [_loop(mode="linked_items"), _image()]
+
+        body = _resolve_body(steps)
+
+        assert body["inputs"] == {"linked_items": []}
+
+    @pytest.mark.parametrize(
+        ("mode", "expected_inputs"),
+        [
+            ("folder", {}),
+            ("text_input", {"items_text": "a, b"}),
+        ],
+    )
+    def test_linked_items_not_sent_in_other_modes(self, mode, expected_inputs):
+        stale_loop = _loop(
+            mode=mode,
+            items_text="a, b",
+            linked_items=[_ref("img_a", "generated_image")],
+        )
+        steps = [_upstream_image("img_a"), stale_loop, _image()]
+
+        body = _resolve_body(steps)
+
+        assert body["inputs"] == expected_inputs
+
+    def test_linked_upstreams_are_top_level_and_referenced(self):
+        steps = [
+            _photo_input(),
+            _upstream_image("img_a"),
+            _loop(
+                mode="linked_items",
+                linked_items=[
+                    _ref("img_a", "generated_image"),
+                    _ref("user_in", "photo"),
+                ],
+            ),
+            _image(),
+        ]
+
+        graph = analyze_steps(steps)
+
+        assert graph.dependencies["loop_1"] == frozenset({"img_a", "user_in"})
+        assert graph.loops["loop_1"].body == ("gen_image",)
+        assert [step.step_id for step in graph.top_level_call_steps] == [
+            "img_a"
+        ]
+        assert graph.referenced_outputs["img_a"] == frozenset(
+            {"generated_image"}
+        )
+
+    def test_body_step_linked_into_other_loop_is_nested(self):
+        other_loop = _loop(
+            "loop_2",
+            end="other",
+            mode="linked_items",
+            linked_items=[_ref("gen_image", "generated_image")],
+        )
+        steps = [_loop(), _image(), other_loop, _image("other", "loop_2")]
+
+        with pytest.raises(ValueError, match="Nested loops"):
+            analyze_steps(steps)
 
     def test_yaml_is_valid_and_within_limit(self):
         yaml_text = build_workflow_yaml(

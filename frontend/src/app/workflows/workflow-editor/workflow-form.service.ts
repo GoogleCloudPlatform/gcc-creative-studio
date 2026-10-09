@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {Injectable, PLATFORM_ID, inject} from '@angular/core';
+import {Injectable, PLATFORM_ID, inject, signal} from '@angular/core';
 import {isPlatformBrowser} from '@angular/common';
 import {
   AbstractControl,
@@ -23,13 +23,19 @@ import {
   FormGroup,
   Validators,
 } from '@angular/forms';
-import {BehaviorSubject} from 'rxjs';
+import {BehaviorSubject, Observable, Subject} from 'rxjs';
 import {distinctUntilChanged, map, pairwise, startWith} from 'rxjs/operators';
 import {STEP_CONFIGS_MAP} from '../shared/step-configs.map';
 import {isPortTypeCompatible} from '../utils/workflow-magnetic.util';
-import {labelToName, nameToLabel} from '../utils/workflow-step.util';
+import {
+  isStepOutputReference,
+  labelToName,
+  nameToLabel,
+} from '../utils/workflow-step.util';
 import {
   DynamicStepRecord,
+  LoopItemType,
+  LoopMode,
   NodeTypes,
   ParameterDefinition,
   ParameterRemapEntry,
@@ -43,7 +49,15 @@ import {
 import {
   DEFAULT_LOOP_SETTINGS,
   LOOP_CURRENT_ITEM_PORT,
+  LOOP_ITEMS_TEXT_INPUT,
+  LOOP_ITEM_TYPE_SETTING,
+  LOOP_LINKED_ITEMS_INPUT,
+  LOOP_MODE_LINKED_ITEMS,
+  LOOP_MODE_SETTING,
+  LOOP_MODE_TEXT_INPUT,
   getLoopCurrentItemType,
+  toLoopItemType,
+  toLoopMode,
 } from './step-components/step-configs/loop-step.config';
 import {
   StepConfig,
@@ -59,6 +73,12 @@ type NodePort = {
   step: NodeTypes;
 };
 
+/** Loop settings that decide which source input may hold links. */
+interface LoopSourceState {
+  mode: LoopMode;
+  itemType: LoopItemType;
+}
+
 @Injectable()
 export class WorkflowFormService {
   private platformId = inject(PLATFORM_ID);
@@ -67,6 +87,14 @@ export class WorkflowFormService {
   private _availableOutputsPerStep = new BehaviorSubject<any[][]>([]);
   public availableOutputsPerStep$ =
     this._availableOutputsPerStep.asObservable();
+
+  /** True while a workflow (or a history snapshot) is being patched into the form. */
+  private readonly isPatchingData = signal<boolean>(false);
+
+  private readonly loopLinksRemovedSubject = new Subject<void>();
+  /** Emits after hidden Loop source links were removed, so wires can be redrawn. */
+  readonly loopLinksRemoved$: Observable<void> =
+    this.loopLinksRemovedSubject.asObservable();
 
   constructor(private fb: FormBuilder) {}
 
@@ -158,8 +186,39 @@ export class WorkflowFormService {
     this.stepsArray.push(stepGroup);
     if (safeStepData.type === NodeTypes.LOOP) {
       this.watchLoopOutputType(stepGroup);
+      this.watchLoopSourceCleanup(stepGroup);
     }
     this.updateAvailableOutputs();
+  }
+
+  /**
+   * Resolves the port type of a step output: user input definitions, the
+   * dynamic Loop `current_item` type, or the static step config type.
+   */
+  getOutputType(stepId: string, outputName: string): string {
+    if (stepId === NodeTypes.USER_INPUT) {
+      const def = this.outputDefinitionsArray.controls.find(
+        c => c.get('name')?.value === outputName,
+      );
+      return def?.get('type')?.value || 'text';
+    }
+    const stepControl = this.findStepControl(stepId);
+    const type = stepControl?.get('type')?.value as NodeTypes | undefined;
+    if (!type) return '';
+    if (type === NodeTypes.LOOP && outputName === LOOP_CURRENT_ITEM_PORT) {
+      return getLoopCurrentItemType(stepControl?.get('settings')?.value);
+    }
+    const config = (STEP_CONFIGS_MAP as Partial<Record<NodeTypes, StepConfig>>)[
+      type
+    ];
+    return config?.outputs.find(o => o.name === outputName)?.type || '';
+  }
+
+  private findStepControl(stepId: string): AbstractControl | null {
+    return (
+      this.stepsArray.controls.find(c => c.get('stepId')?.value === stepId) ??
+      null
+    );
   }
 
   /**
@@ -181,6 +240,120 @@ export class WorkflowFormService {
         );
         this.updateAvailableOutputs();
       });
+  }
+
+  /**
+   * Removes hidden Loop source links that would otherwise stay as invisible
+   * dependencies when the user changes the source mode or `item_type`.
+   * Only user edits are handled: nothing is touched in read-only mode or while
+   * a workflow is being loaded. Undo restores the links from the history
+   * snapshot.
+   */
+  private watchLoopSourceCleanup(stepGroup: FormGroup): void {
+    const settings = stepGroup.get('settings') as FormGroup;
+    const readSource = (): LoopSourceState => {
+      const raw: DynamicStepRecord = settings.getRawValue();
+      return {
+        mode: toLoopMode(raw[LOOP_MODE_SETTING]),
+        itemType: toLoopItemType(raw[LOOP_ITEM_TYPE_SETTING]),
+      };
+    };
+    settings.valueChanges
+      .pipe(
+        map(() => readSource()),
+        startWith(readSource()),
+        distinctUntilChanged(
+          (a, b) => a.mode === b.mode && a.itemType === b.itemType,
+        ),
+        pairwise(),
+      )
+      .subscribe(([previous, current]) => {
+        if (this.isPatchingData() || stepGroup.disabled) return;
+        if (this.cleanupLoopSource(stepGroup, previous, current)) {
+          this.updateAvailableOutputs();
+          this.loopLinksRemovedSubject.next();
+        }
+      });
+  }
+
+  /** Applies the Loop source cleanup rules. Returns true when a link was removed. */
+  private cleanupLoopSource(
+    stepGroup: FormGroup,
+    previous: LoopSourceState,
+    current: LoopSourceState,
+  ): boolean {
+    const inputs = stepGroup.get('inputs') as FormGroup | null;
+    if (!inputs) return false;
+    let removed = false;
+    if (
+      previous.mode === LOOP_MODE_LINKED_ITEMS &&
+      current.mode !== LOOP_MODE_LINKED_ITEMS
+    ) {
+      removed = this.clearLoopLinkedItems(inputs) || removed;
+    }
+    if (
+      previous.mode === LOOP_MODE_TEXT_INPUT &&
+      current.mode !== LOOP_MODE_TEXT_INPUT
+    ) {
+      removed = this.clearStaleLoopTextLink(inputs) || removed;
+    }
+    if (
+      current.mode === LOOP_MODE_LINKED_ITEMS &&
+      previous.itemType !== current.itemType
+    ) {
+      removed =
+        this.pruneIncompatibleLoopInputs(inputs, current.itemType) || removed;
+    }
+    return removed;
+  }
+
+  /** Clears every `linked_items` entry, wires and gallery picks (leaving Linked Items mode). */
+  private clearLoopLinkedItems(inputs: FormGroup): boolean {
+    const control = inputs.get(LOOP_LINKED_ITEMS_INPUT);
+    if (!control || control.value === null) return false;
+    control.setValue(null);
+    control.markAsDirty();
+    return true;
+  }
+
+  /**
+   * Clears a linked `items_text` (leaving Text Input mode). A fixed string is
+   * kept: it creates no dependency and is only sent in Text Input mode.
+   */
+  private clearStaleLoopTextLink(inputs: FormGroup): boolean {
+    const control = inputs.get(LOOP_ITEMS_TEXT_INPUT);
+    if (!control || !isStepOutputReference(control.value)) return false;
+    control.setValue(null);
+    control.markAsDirty();
+    return true;
+  }
+
+  /**
+   * Drops `linked_items` entries that no longer match `item_type`: wired refs
+   * whose source output type differs, and every gallery pick. A pick stores no
+   * media type, but the gallery picker only offers media of the `item_type`
+   * active when it was picked, so after an `item_type` change every pick is of
+   * the previous, now wrong, type.
+   */
+  private pruneIncompatibleLoopInputs(
+    inputs: FormGroup,
+    itemType: LoopItemType,
+  ): boolean {
+    const control = inputs.get(LOOP_LINKED_ITEMS_INPUT);
+    const value: unknown = control?.value;
+    if (!control || !Array.isArray(value)) return false;
+    const kept = value.filter(
+      item =>
+        isStepOutputReference(item) &&
+        isPortTypeCompatible(
+          this.getOutputType(item.step, item.output),
+          itemType,
+        ),
+    );
+    if (kept.length === value.length) return false;
+    control.setValue(kept.length > 0 ? kept : null);
+    control.markAsDirty();
+    return true;
   }
 
   /** Removes links to a Loop's `current_item` whose target type no longer matches. */
@@ -403,6 +576,15 @@ export class WorkflowFormService {
   // --- Data Patching ---
 
   patchData(data: any): void {
+    this.isPatchingData.set(true);
+    try {
+      this.applyPatchData(data);
+    } finally {
+      this.isPatchingData.set(false);
+    }
+  }
+
+  private applyPatchData(data: any): void {
     const userInputStep =
       data.userInput ||
       data.steps?.find((s: any) => s.type === NodeTypes.USER_INPUT);

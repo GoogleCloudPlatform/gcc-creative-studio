@@ -14,6 +14,8 @@
 
 """Request bodies of the workflows executor step routes."""
 
+from typing import Any
+
 from pydantic import BaseModel, Field, model_validator
 
 from src.workflows.schema.workflow_model import (
@@ -36,6 +38,9 @@ _KEY_MAX_LENGTH = 128
 MAX_ITERATION_INDEX = 1000
 # Bound of the raw comma-separated text of a text_input Loop step.
 MAX_LOOP_ITEMS_TEXT_LENGTH = 100_000
+# Bound of the raw resolved values of a linked_items Loop step, before
+# flattening (the MAX_LOOP_ITEMS iteration cap still applies afterwards).
+MAX_LOOP_LINKED_RAW_VALUES = 1000
 
 
 class StepCallContext(BaseModel):
@@ -94,6 +99,13 @@ class ResolveLoopItemsInputs(BaseModel):
 
     items_text: str | None = Field(
         default=None, max_length=MAX_LOOP_ITEMS_TEXT_LENGTH
+    )
+    # Upstream outputs resolved by the workflow engine and Media Gallery
+    # picks (ints, media / asset reference dicts, nested lists or null).
+    # Parsed by the service so one malformed entry fails the step with a
+    # clear INVALID_INPUT error.
+    linked_items: list[Any] | None = Field(
+        default=None, max_length=MAX_LOOP_LINKED_RAW_VALUES
     )
 
 

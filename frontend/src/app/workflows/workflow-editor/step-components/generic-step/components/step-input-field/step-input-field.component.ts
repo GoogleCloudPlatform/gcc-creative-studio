@@ -17,6 +17,7 @@
 import {Component, EventEmitter, Input, Output} from '@angular/core';
 import {FormControl} from '@angular/forms';
 import {StepInput} from '../../step.model';
+import {LOOP_ITEMS_TEXT_EMPTY_MESSAGE} from '../../../step-configs/loop-step.config';
 
 @Component({
   selector: 'app-step-input-field',
@@ -31,6 +32,8 @@ export class StepInputFieldComponent {
   @Input() showValidationErrors = false;
   @Input() maxMediaItems = 1;
   @Input() disabledMessage = '';
+
+  readonly loopItemsTextEmptyMessage = LOOP_ITEMS_TEXT_EMPTY_MESSAGE;
 
   @Output() modeChange = new EventEmitter<'fixed' | 'linked' | 'mixed'>();
   @Output() fieldBlur = new EventEmitter<void>();

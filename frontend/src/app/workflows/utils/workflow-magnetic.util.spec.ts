@@ -457,4 +457,24 @@ describe('WorkflowMagneticUtil', () => {
       expect(isInputPortFull(null, 'prompt', 'gemini-2.5-pro')).toBeFalse();
     });
   });
+
+  describe('Loop linked_items port capacity', () => {
+    const buildRefs = (count: number) =>
+      Array.from({length: count}, (_, index) => ({
+        step: `img_${index}`,
+        output: 'generated_image',
+      }));
+
+    it('allows up to 100 links, whatever the model', () => {
+      expect(getMaxAllowedInputs('linked_items')).toBe(100);
+      expect(
+        getMaxAllowedInputs('linked_items', 'gemini-2.5-flash-image'),
+      ).toBe(100);
+    });
+
+    it('is not full at 99 links and full at 100', () => {
+      expect(isInputPortFull(buildRefs(99), 'linked_items')).toBeFalse();
+      expect(isInputPortFull(buildRefs(100), 'linked_items')).toBeTrue();
+    });
+  });
 });

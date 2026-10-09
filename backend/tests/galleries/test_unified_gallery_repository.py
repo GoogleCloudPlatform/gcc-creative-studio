@@ -214,3 +214,89 @@ async def test_list_folder_loop_items_is_scoped_and_ordered(mock_db):
         assert "external_url" in sql
     assert "created_at ASC" in sqls[1]
     assert "LIMIT 100" in sqls[1]
+
+
+def _compiled_sql(statement) -> str:
+    return str(statement.compile(compile_kwargs={"literal_binds": True}))
+
+
+@pytest.mark.anyio
+async def test_filter_linked_loop_items_is_one_scoped_query(mock_db):
+    repo = UnifiedGalleryRepository(db=mock_db)
+    result = MagicMock()
+    result.__iter__.return_value = iter(
+        [("media_item", 3), ("source_asset", 4)]
+    )
+    mock_db.execute.return_value = result
+
+    found = await repo.filter_linked_loop_items(
+        workspace_id=10,
+        media_item_ids=[3, 9, 3],
+        source_asset_ids=[4],
+        mime_type_prefix="audio",
+    )
+
+    assert found == {("media_item", 3), ("source_asset", 4)}
+    mock_db.execute.assert_awaited_once()
+    sql = _compiled_sql(mock_db.execute.await_args.args[0])
+    assert "workspace_id = 10" in sql
+    assert "deleted_at IS NULL" in sql
+    assert "'audio/%'" in sql
+    assert "external_url" in sql
+    assert "'completed'" in sql
+    assert "IN (3, 9)" in sql
+    assert "IN (4)" in sql
+    assert "folder_id" not in sql
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("media_item_ids", "source_asset_ids", "expected_filter"),
+    [
+        (
+            [5],
+            [],
+            "item_type = 'media_item' AND unified_gallery_view.id IN (5)",
+        ),
+        (
+            [],
+            [6],
+            "item_type = 'source_asset' AND unified_gallery_view.id IN (6)",
+        ),
+    ],
+    ids=["media-items-only", "source-assets-only"],
+)
+async def test_filter_linked_loop_items_filters_only_given_kinds(
+    mock_db, media_item_ids, source_asset_ids, expected_filter
+):
+    repo = UnifiedGalleryRepository(db=mock_db)
+    result = MagicMock()
+    result.__iter__.return_value = iter([])
+    mock_db.execute.return_value = result
+
+    found = await repo.filter_linked_loop_items(
+        workspace_id=10,
+        media_item_ids=media_item_ids,
+        source_asset_ids=source_asset_ids,
+        mime_type_prefix="image",
+    )
+
+    assert found == set()
+    sql = _compiled_sql(mock_db.execute.await_args.args[0])
+    assert expected_filter in sql
+    assert sql.count(" IN (") == 1
+
+
+@pytest.mark.anyio
+async def test_filter_linked_loop_items_without_ids_skips_query(mock_db):
+    repo = UnifiedGalleryRepository(db=mock_db)
+
+    found = await repo.filter_linked_loop_items(
+        workspace_id=10,
+        media_item_ids=[],
+        source_asset_ids=[],
+        mime_type_prefix="image",
+    )
+
+    assert found == set()
+    mock_db.execute.assert_not_awaited()

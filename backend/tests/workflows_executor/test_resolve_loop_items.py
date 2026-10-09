@@ -30,6 +30,7 @@ from src.galleries.repository.unified_gallery_repository import (
 from src.workflows.queue.failure_classifier import ErrorCategory
 from src.workflows.schema.workflow_model import ImageInputs
 from src.workflows_executor.dto.workflows_executor_dto import (
+    MAX_LOOP_LINKED_RAW_VALUES,
     GenerateTextRequest,
     GenerateVideoRequest,
     ImageStepRequest,
@@ -38,6 +39,10 @@ from src.workflows_executor.dto.workflows_executor_dto import (
 from src.workflows_executor.step_errors import StepError
 from src.workflows_executor.workflows_executor_service import (
     FOLDER_NOT_FOUND_DETAIL,
+    LINKED_ITEMS_NOT_ACCESSIBLE_DETAIL,
+    LINKED_ITEMS_REQUIRED_DETAIL,
+    LINKED_ITEMS_UNSUPPORTED_DETAIL,
+    LOOP_EMPTY_DETAILS,
     MAX_LOOP_ITEMS,
     WorkflowsExecutorService,
     _loop_item,
@@ -184,18 +189,43 @@ async def test_folder_mode_truncates_and_logs_warning(service, deps, caplog):
     assert "found 250 items" in caplog.text
 
 
+def _assert_invalid_input(exc_info, detail: str) -> None:
+    error = exc_info.value
+    assert error.status_code == 422
+    assert error.error_category is ErrorCategory.INVALID_INPUT
+    assert error.detail == detail
+
+
 @pytest.mark.anyio
-async def test_folder_mode_empty_folder_is_zero_iterations(service, deps):
+async def test_folder_mode_empty_folder_is_422(service, deps):
     deps.gallery_repository.list_folder_loop_items.return_value = ([], 0)
+    guard = _guard()
 
-    outputs = await _resolve(service, deps, _request())
+    with pytest.raises(StepError) as exc_info:
+        await _resolve(service, deps, _request(), guard)
 
-    assert outputs == {
-        "items": [],
-        "total_iterations": 0,
-        "total_found": 0,
-        "truncated": False,
-    }
+    _assert_invalid_input(exc_info, LOOP_EMPTY_DETAILS["folder"])
+    guard.record_failure.assert_awaited_once()
+    guard.complete.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_folder_mode_all_items_filtered_is_422(service, deps):
+    """Type / external-URL filtering happens in SQL: nothing matches."""
+    deps.gallery_repository.list_folder_loop_items.return_value = ([], 0)
+    guard = _guard()
+
+    with pytest.raises(StepError) as exc_info:
+        await _resolve(service, deps, _request(item_type="audio"), guard)
+
+    _assert_invalid_input(exc_info, LOOP_EMPTY_DETAILS["folder"])
+    deps.gallery_repository.list_folder_loop_items.assert_awaited_once_with(
+        workspace_id=1,
+        folder_id=42,
+        mime_type_prefix="audio",
+        limit=MAX_LOOP_ITEMS,
+    )
+    guard.complete.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -274,11 +304,22 @@ async def test_text_mode_truncates_keeping_order(service, deps):
 
 
 @pytest.mark.anyio
-async def test_text_mode_empty_text_is_zero_iterations(service, deps):
-    outputs = await _resolve(service, deps, _request(mode="text_input"))
+@pytest.mark.parametrize(
+    "items_text",
+    [None, "", "   ", " , ,, "],
+    ids=["null", "empty", "blank", "separators-only"],
+)
+async def test_text_mode_empty_text_is_422(service, deps, items_text):
+    guard = _guard()
+    request = _request(mode="text_input", folder_id=None)
+    request["inputs"] = {"items_text": items_text}
 
-    assert outputs["items"] == []
-    assert outputs["total_iterations"] == 0
+    with pytest.raises(StepError) as exc_info:
+        await _resolve(service, deps, request, guard)
+
+    _assert_invalid_input(exc_info, LOOP_EMPTY_DETAILS["text_input"])
+    guard.record_failure.assert_awaited_once()
+    guard.complete.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -296,6 +337,460 @@ async def test_cached_snapshot_is_returned_without_queries(service, deps):
     assert outputs == cached
     deps.folder_repository.get_folder_by_id.assert_not_awaited()
     guard.complete.assert_not_awaited()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("mode", ["folder", "text_input", "linked_items"])
+async def test_cached_empty_snapshot_is_returned(service, deps, mode):
+    """Snapshots stored before empty loops started failing still resume."""
+    cached = {
+        "items": [],
+        "total_iterations": 0,
+        "total_found": 0,
+        "truncated": False,
+    }
+    guard = _guard(cached=cached)
+
+    outputs = await _resolve(service, deps, _request(mode=mode), guard)
+
+    assert outputs == cached
+    guard.record_failure.assert_not_awaited()
+    guard.complete.assert_not_awaited()
+
+
+# --- Linked Items mode -------------------------------------------------
+
+
+def _linked_request(linked_items, *, item_type="image", with_inputs=True):
+    request = _request(mode="linked_items", folder_id=None, item_type=item_type)
+    if with_inputs:
+        request["inputs"] = {"linked_items": linked_items}
+    return request
+
+
+def _found(*pairs):
+    return set(pairs)
+
+
+@pytest.mark.anyio
+async def test_linked_mode_keeps_order_and_shapes(service, deps):
+    deps.gallery_repository.filter_linked_loop_items = AsyncMock(
+        return_value=_found(
+            ("media_item", 101),
+            ("media_item", 102),
+            ("media_item", 103),
+            ("source_asset", 7),
+        )
+    )
+    guard = _guard()
+    linked_items = [
+        101,
+        {"sourceAssetId": 7, "previewUrl": "https://evil"},
+        {
+            "sourceMediaItem": {
+                "mediaItemId": 103,
+                "mediaIndex": 2,
+                "role": "input",
+            },
+            "previewUrl": "",
+        },
+        "102",
+        {"sourceMediaItem": {"mediaItemId": 102, "mediaIndex": 0}},
+    ]
+
+    outputs = await _resolve(
+        service, deps, _linked_request(linked_items), guard
+    )
+
+    assert outputs == {
+        "items": [
+            101,
+            {"sourceAssetId": 7, "previewUrl": ""},
+            {
+                "sourceMediaItem": {
+                    "mediaItemId": 103,
+                    "mediaIndex": 2,
+                    "role": "input",
+                },
+                "previewUrl": "",
+            },
+            102,
+            102,
+        ],
+        "total_iterations": 5,
+        "total_found": 5,
+        "truncated": False,
+    }
+    deps.workspace_auth.authorize.assert_awaited_once_with(
+        workspace_id=1, user=deps.user
+    )
+    filter_kwargs = (
+        deps.gallery_repository.filter_linked_loop_items.await_args.kwargs
+    )
+    assert filter_kwargs["workspace_id"] == 1
+    assert filter_kwargs["mime_type_prefix"] == "image"
+    assert sorted(filter_kwargs["media_item_ids"]) == [101, 102, 103]
+    assert filter_kwargs["source_asset_ids"] == [7]
+    guard.complete.assert_awaited_once_with(
+        outputs,
+        step_inputs={
+            "mode": "linked_items",
+            "item_type": "image",
+            "source_count": 5,
+            "skipped_count": 0,
+        },
+    )
+    deps.folder_repository.get_folder_by_id.assert_not_awaited()
+    deps.gallery_repository.list_folder_loop_items.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_linked_mode_flattens_nested_and_skips_empty(service, deps):
+    deps.gallery_repository.filter_linked_loop_items = AsyncMock(
+        return_value=_found(("media_item", 104), ("media_item", 105))
+    )
+    guard = _guard()
+
+    outputs = await _resolve(
+        service,
+        deps,
+        _linked_request(
+            [None, [104, [105]], "", {}, [], [[]]], item_type="video"
+        ),
+        guard,
+    )
+
+    assert outputs["items"] == [104, 105]
+    step_inputs = guard.complete.await_args.kwargs["step_inputs"]
+    assert step_inputs == {
+        "mode": "linked_items",
+        "item_type": "video",
+        "source_count": 6,
+        "skipped_count": 5,
+    }
+
+
+@pytest.mark.anyio
+async def test_linked_mode_keeps_duplicates(service, deps):
+    deps.gallery_repository.filter_linked_loop_items = AsyncMock(
+        return_value=_found(("media_item", 101))
+    )
+
+    outputs = await _resolve(service, deps, _linked_request([101, 101]))
+
+    assert outputs["items"] == [101, 101]
+    assert outputs["total_iterations"] == 2
+    filter_kwargs = (
+        deps.gallery_repository.filter_linked_loop_items.await_args.kwargs
+    )
+    assert filter_kwargs["media_item_ids"] == [101]
+
+
+# Media Gallery picks as sent by the YAML (ids only) and as stored by the
+# editor (with previewUrl, role and empty keys).
+GALLERY_PICKS = [
+    {"sourceAssetId": 7},
+    {
+        "previewUrl": "https://signed",
+        "sourceAssetId": None,
+        "sourceMediaItem": {
+            "mediaItemId": 103,
+            "mediaIndex": 1,
+            "role": "input",
+            "extra": "ignored",
+        },
+    },
+    {"sourceMediaItem": {"mediaItemId": 104}},
+]
+GALLERY_PICK_VALUES = [
+    {"sourceAssetId": 7, "previewUrl": ""},
+    {
+        "sourceMediaItem": {
+            "mediaItemId": 103,
+            "mediaIndex": 1,
+            "role": "input",
+        },
+        "previewUrl": "",
+    },
+    104,
+]
+GALLERY_PICK_FOUND = _found(
+    ("source_asset", 7), ("media_item", 103), ("media_item", 104)
+)
+
+
+@pytest.mark.anyio
+async def test_linked_mode_gallery_picks_only(service, deps):
+    deps.gallery_repository.filter_linked_loop_items = AsyncMock(
+        return_value=GALLERY_PICK_FOUND
+    )
+
+    outputs = await _resolve(service, deps, _linked_request(GALLERY_PICKS))
+
+    assert outputs["items"] == GALLERY_PICK_VALUES
+    filter_kwargs = (
+        deps.gallery_repository.filter_linked_loop_items.await_args.kwargs
+    )
+    assert sorted(filter_kwargs["media_item_ids"]) == [103, 104]
+    assert filter_kwargs["source_asset_ids"] == [7]
+    deps.workspace_auth.authorize.assert_awaited_once_with(
+        workspace_id=1, user=deps.user
+    )
+
+
+@pytest.mark.anyio
+async def test_linked_mode_mixes_upstream_values_and_picks(service, deps):
+    deps.gallery_repository.filter_linked_loop_items = AsyncMock(
+        return_value=GALLERY_PICK_FOUND | _found(("media_item", 101))
+    )
+    guard = _guard()
+    linked_items = [101, *GALLERY_PICKS, None]
+
+    outputs = await _resolve(
+        service, deps, _linked_request(linked_items), guard
+    )
+
+    assert outputs["items"] == [101, *GALLERY_PICK_VALUES]
+    assert guard.complete.await_args.kwargs["step_inputs"] == {
+        "mode": "linked_items",
+        "item_type": "image",
+        "source_count": 5,
+        "skipped_count": 1,
+    }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "found",
+    [
+        GALLERY_PICK_FOUND - _found(("media_item", 103)),
+        GALLERY_PICK_FOUND - _found(("source_asset", 7)),
+    ],
+    ids=["deleted-or-foreign-media-item", "wrong-type-or-foreign-asset"],
+)
+async def test_linked_mode_inaccessible_gallery_pick_is_422(
+    service, deps, found
+):
+    deps.gallery_repository.filter_linked_loop_items = AsyncMock(
+        return_value=found
+    )
+    guard = _guard()
+
+    with pytest.raises(StepError) as exc_info:
+        await _resolve(service, deps, _linked_request(GALLERY_PICKS), guard)
+
+    _assert_invalid_input(
+        exc_info, LINKED_ITEMS_NOT_ACCESSIBLE_DETAIL.format(item_type="image")
+    )
+    guard.complete.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_linked_mode_id_less_pick_is_422(service, deps):
+    deps.gallery_repository.filter_linked_loop_items = AsyncMock()
+
+    with pytest.raises(StepError) as exc_info:
+        await _resolve(
+            service, deps, _linked_request([101, {"sourceAssetId": None}])
+        )
+
+    _assert_invalid_input(exc_info, LINKED_ITEMS_UNSUPPORTED_DETAIL)
+    deps.gallery_repository.filter_linked_loop_items.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_linked_mode_truncates_to_max_items(service, deps, caplog):
+    total = MAX_LOOP_ITEMS + 20
+    linked_items = list(range(1, total + 1))
+    deps.gallery_repository.filter_linked_loop_items = AsyncMock(
+        return_value=_found(*(("media_item", n) for n in linked_items))
+    )
+
+    with caplog.at_level(logging.WARNING):
+        outputs = await _resolve(service, deps, _linked_request(linked_items))
+
+    assert outputs["items"] == linked_items[:MAX_LOOP_ITEMS]
+    assert outputs["total_found"] == total
+    assert outputs["truncated"] is True
+    assert f"found {total} items" in caplog.text
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "linked_items",
+    [[None], ["", {}, []], [[], [[]]], [None, [None, [None]]]],
+    ids=["null", "empty-values", "nested-empty-lists", "nested-nulls"],
+)
+async def test_linked_mode_zero_resolved_items_is_422(
+    service, deps, linked_items
+):
+    deps.gallery_repository.filter_linked_loop_items = AsyncMock()
+    guard = _guard()
+
+    with pytest.raises(StepError) as exc_info:
+        await _resolve(service, deps, _linked_request(linked_items), guard)
+
+    _assert_invalid_input(exc_info, LOOP_EMPTY_DETAILS["linked_items"])
+    deps.workspace_auth.authorize.assert_not_awaited()
+    deps.gallery_repository.filter_linked_loop_items.assert_not_awaited()
+    guard.record_failure.assert_awaited_once()
+    guard.complete.assert_not_awaited()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "request_body",
+    [
+        _linked_request(None, with_inputs=False),
+        _linked_request(None),
+        _linked_request([]),
+    ],
+    ids=["inputs-missing", "null", "empty-list"],
+)
+async def test_linked_mode_without_links_is_422(service, deps, request_body):
+    guard = _guard()
+
+    with pytest.raises(StepError) as exc_info:
+        await _resolve(service, deps, request_body, guard)
+
+    _assert_invalid_input(exc_info, LINKED_ITEMS_REQUIRED_DETAIL)
+    deps.workspace_auth.authorize.assert_not_awaited()
+    guard.complete.assert_not_awaited()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "linked_value",
+    [
+        "hello",
+        "  ",
+        True,
+        0,
+        -3,
+        1.5,
+        {"foo": 1},
+        {"sourceAssetId": "abc"},
+        {"sourceMediaItem": {"mediaItemId": 5, "mediaIndex": -1}},
+        {"sourceMediaItem": {"mediaItemId": 5, "mediaIndex": True}},
+        {"sourceMediaItem": {"mediaItemId": None}},
+        {"sourceMediaItem": "5", "sourceAssetId": 7},
+        [[[1]]],
+    ],
+    ids=[
+        "text",
+        "blank-text",
+        "bool",
+        "zero",
+        "negative",
+        "float",
+        "unknown-dict",
+        "bad-asset-id",
+        "negative-index",
+        "bool-index",
+        "missing-media-id",
+        "bad-media-ref",
+        "too-deep",
+    ],
+)
+async def test_linked_mode_unsupported_value_is_422(
+    service, deps, linked_value
+):
+    deps.gallery_repository.filter_linked_loop_items = AsyncMock()
+
+    with pytest.raises(StepError) as exc_info:
+        await _resolve(service, deps, _linked_request([101, linked_value]))
+
+    _assert_invalid_input(exc_info, LINKED_ITEMS_UNSUPPORTED_DETAIL)
+    deps.workspace_auth.authorize.assert_not_awaited()
+    deps.gallery_repository.filter_linked_loop_items.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_linked_mode_accepts_max_nesting_depth(service, deps):
+    deps.gallery_repository.filter_linked_loop_items = AsyncMock(
+        return_value=_found(("media_item", 1))
+    )
+
+    outputs = await _resolve(service, deps, _linked_request([[[1]]]))
+
+    assert outputs["items"] == [1]
+
+
+@pytest.mark.anyio
+async def test_linked_mode_workspace_auth_failure_is_generic_422(service, deps):
+    deps.workspace_auth.authorize.side_effect = HTTPException(403, "nope")
+    deps.gallery_repository.filter_linked_loop_items = AsyncMock()
+    guard = _guard()
+
+    with pytest.raises(StepError) as exc_info:
+        await _resolve(service, deps, _linked_request([101]), guard)
+
+    _assert_invalid_input(
+        exc_info, LINKED_ITEMS_NOT_ACCESSIBLE_DETAIL.format(item_type="image")
+    )
+    deps.gallery_repository.filter_linked_loop_items.assert_not_awaited()
+    guard.complete.assert_not_awaited()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "found",
+    [
+        _found(("media_item", 101)),
+        _found(("media_item", 101), ("media_item", 7)),
+        set(),
+    ],
+    ids=["one-missing", "asset-id-matched-as-media-item", "none-found"],
+)
+async def test_linked_mode_inaccessible_items_are_generic_422(
+    service, deps, found, caplog
+):
+    """Missing, deleted, foreign or wrong-type items share one message."""
+    deps.gallery_repository.filter_linked_loop_items = AsyncMock(
+        return_value=found
+    )
+    guard = _guard()
+    request_body = _linked_request(
+        [101, {"sourceAssetId": 987654, "previewUrl": ""}], item_type="audio"
+    )
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(StepError) as exc_info:
+            await _resolve(service, deps, request_body, guard)
+
+    detail = LINKED_ITEMS_NOT_ACCESSIBLE_DETAIL.format(item_type="audio")
+    _assert_invalid_input(exc_info, detail)
+    assert "987654" not in detail
+    assert "987654" not in caplog.text
+    guard.record_failure.assert_awaited_once()
+    guard.complete.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_linked_mode_second_call_returns_checkpoint(service, deps):
+    deps.gallery_repository.filter_linked_loop_items = AsyncMock(
+        return_value=_found(("media_item", 101))
+    )
+    first_guard = _guard()
+    request_body = _linked_request([101])
+
+    first_outputs = await _resolve(service, deps, request_body, first_guard)
+    second_guard = _guard(cached=first_outputs)
+    second_outputs = await _resolve(service, deps, request_body, second_guard)
+
+    assert second_outputs == first_outputs
+    deps.gallery_repository.filter_linked_loop_items.assert_awaited_once()
+    second_guard.complete.assert_not_awaited()
+
+
+def test_request_bounds_linked_items():
+    at_bound = _linked_request([1] * MAX_LOOP_LINKED_RAW_VALUES)
+    request = ResolveLoopItemsRequest.model_validate(at_bound)
+    assert len(request.inputs.linked_items) == MAX_LOOP_LINKED_RAW_VALUES
+    with pytest.raises(ValidationError):
+        ResolveLoopItemsRequest.model_validate(
+            _linked_request([1] * (MAX_LOOP_LINKED_RAW_VALUES + 1))
+        )
 
 
 def test_request_rejects_oversized_text_and_bad_iteration():

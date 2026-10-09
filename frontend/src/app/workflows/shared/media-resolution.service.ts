@@ -23,7 +23,7 @@ import {
 } from '../../common/services/source-asset.service';
 import {GalleryService} from '../../gallery/gallery.service';
 import {getLatestStepOutputs} from '../utils/step-history.util';
-import {LOOP_MODE_FOLDER} from '../workflow-editor/step-components/step-configs/loop-step.config';
+import {isLoopMediaMode} from '../workflow-editor/step-components/step-configs/loop-step.config';
 import {
   DynamicStepRecord,
   NodeTypes,
@@ -76,7 +76,7 @@ export class MediaResolutionService {
 
       if (type === NodeTypes.LOOP) {
         history
-          .filter(entry => entry.step_inputs?.['mode'] === LOOP_MODE_FOLDER)
+          .filter(entry => isLoopMediaMode(entry.step_inputs?.['mode']))
           .forEach(entry => collect(entry.step_outputs?.['items']));
         return;
       }

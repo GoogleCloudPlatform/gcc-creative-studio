@@ -52,6 +52,22 @@ export const SHARED_LOOP_END_ERROR = 'A step cannot end more than one loop';
 export const OVERLAPPING_LOOP_BODIES_ERROR =
   'A step cannot belong to more than one loop';
 
+/** Minimal workflow shape needed to look for Loop steps. */
+export interface LoopStepsSource {
+  steps?: ReadonlyArray<Pick<LoopGraphStep, 'type'>> | null;
+}
+
+/**
+ * True when the workflow contains at least one Loop step. Nested loops are
+ * rejected by the editor and the backend, so top-level steps are enough.
+ * A missing workflow (e.g. absent dialog data) has no Loop.
+ */
+export function workflowHasLoopStep(
+  workflow: LoopStepsSource | null | undefined,
+): boolean {
+  return workflow?.steps?.some(step => step.type === NodeTypes.LOOP) ?? false;
+}
+
 /** Extracts every step-to-step reference wire declared in the steps' inputs. */
 export function collectReferenceEdges(
   steps: ReadonlyArray<LoopGraphStep>,

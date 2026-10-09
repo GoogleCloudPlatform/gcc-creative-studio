@@ -40,6 +40,7 @@
       [inputName]="config.name"
       [type]="$any(config.type)"
       [maxItems]="maxMediaItems"
+      [linkedOnly]="!!config.linkedOnly"
       [compatibleOutputs]="compatibleOutputs"
       [showValidationErrors]="showValidationErrors"
       [disabledMessage]="disabledMessage"
@@ -103,6 +104,16 @@
     />
     <mat-error *ngIf="showValidationErrors && control.hasError('required')">
       {{ config.label }} is required
+    </mat-error>
+    <mat-error
+      *ngIf="
+        showValidationErrors &&
+        !control.hasError('required') &&
+        control.hasError('loopItemsTextEmpty')
+      "
+      data-testid="loop-items-text-empty-error"
+    >
+      {{ loopItemsTextEmptyMessage }}
     </mat-error>
   </mat-form-field>
 

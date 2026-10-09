@@ -96,8 +96,9 @@ import {
   mergeLiveStepEntries,
 } from '../utils/step-history.util';
 import {
-  getLoopCurrentItemType,
-  LOOP_CURRENT_ITEM_PORT,
+  getLoopLinkedItemsInputType,
+  getLoopSourceErrorMessage,
+  LOOP_LINKED_ITEMS_INPUT,
 } from './step-components/step-configs/loop-step.config';
 import {WorkflowService} from '../workflow.service';
 import {AddStepModalComponent} from './add-step-modal/add-step-modal.component';
@@ -450,6 +451,10 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     this.formService.availableOutputsPerStep$.subscribe(outputs => {
       this.availableOutputsPerStep = outputs;
     });
+
+    this.formService.loopLinksRemoved$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => this.updateEdges());
 
     this.route.queryParamMap
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -942,8 +947,10 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
           }
         }
 
+        const inputType = this.getInputType(stepControl, input);
+
         // Skip candidate if type is incompatible
-        if (sourceType && !isPortTypeCompatible(sourceType, input.type)) {
+        if (sourceType && !isPortTypeCompatible(sourceType, inputType)) {
           return;
         }
 
@@ -970,7 +977,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             return;
           }
 
-          if (isInputPortFull(currentVal, input.name, modelValue, input.type)) {
+          if (isInputPortFull(currentVal, input.name, modelValue, inputType)) {
             return;
           }
         }
@@ -984,7 +991,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             candidates.push({
               stepId,
               portName: input.name,
-              type: input.type,
+              type: inputType,
               position: pos,
             });
           }
@@ -1035,6 +1042,9 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
               type: 'text',
             };
           }
+          const inputType = inputConfig
+            ? this.getInputType(stepForm, inputConfig)
+            : null;
 
           // Type Compatibility Check: Reject incompatible connections (e.g. TXT source to IMG target)
           const sourceType =
@@ -1043,7 +1053,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
               this.dragSourcePort.stepId,
               this.dragSourcePort.outputName,
             );
-          if (!isPortTypeCompatible(sourceType, inputConfig?.type)) {
+          if (!isPortTypeCompatible(sourceType, inputType)) {
             this.dragSourcePort = null;
             this.activeDragWire = null;
             this.magneticTargetPort = null;
@@ -1075,12 +1085,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
           const modelValue = stepForm.get('settings.model')?.value;
           // Block connection if target input port is already full
           if (
-            isInputPortFull(
-              currentVal,
-              event.inputName,
-              modelValue,
-              inputConfig?.type,
-            )
+            isInputPortFull(currentVal, event.inputName, modelValue, inputType)
           ) {
             this.dragSourcePort = null;
             this.activeDragWire = null;
@@ -1092,7 +1097,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
           const maxAllowed = getMaxAllowedInputs(
             event.inputName,
             modelValue,
-            inputConfig?.type,
+            inputType,
           );
           if (maxAllowed > 1) {
             if (Array.isArray(currentVal)) {
@@ -1191,26 +1196,25 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   }
 
   private getOutputType(stepId: string, outputName: string): string {
-    if (stepId === NodeTypes.USER_INPUT) {
-      const def = this.outputDefinitionsArray.controls.find(
-        c => c.get('name')?.value === outputName,
-      );
-      return def?.get('type')?.value || 'text';
-    } else {
-      const type = this.getStepType(stepId) as string;
-      if (type === NodeTypes.LOOP && outputName === LOOP_CURRENT_ITEM_PORT) {
-        const stepControl = this.stepsArray.controls.find(
-          c => c.get('stepId')?.value === stepId,
-        );
-        return getLoopCurrentItemType(stepControl?.get('settings')?.value);
-      }
-      if (type) {
-        const config = this.getStepConfig(type);
-        const output = config?.outputs?.find((o: any) => o.name === outputName);
-        return output?.type || '';
-      }
+    return this.formService.getOutputType(stepId, outputName);
+  }
+
+  /**
+   * Resolves the port type of a step input. The Loop `linked_items` port is
+   * typed by the step's `item_type`; every other input uses its static config.
+   */
+  private getInputType(
+    stepControl: AbstractControl,
+    input: {name: string; type: string},
+  ): string {
+    if (
+      stepControl.get('type')?.value === NodeTypes.LOOP &&
+      input.name === LOOP_LINKED_ITEMS_INPUT
+    ) {
+      const settings = stepControl.get('settings') as FormGroup | null;
+      return getLoopLinkedItemsInputType(settings?.getRawValue() ?? null);
     }
-    return '';
+    return input.type;
   }
 
   private getPortPosition(
@@ -1528,9 +1532,16 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     this.submitted = true;
     if (this.workflowForm.invalid) {
       this.workflowForm.markAllAsTouched();
+      const loopSourceError =
+        this.stepsArray.controls
+          .map(stepControl => getLoopSourceErrorMessage(stepControl))
+          .find(message => message !== null) ?? null;
       handleErrorSnackbar(
         this.snackBar,
-        new Error('Please fill in all required workflow fields before saving.'),
+        new Error(
+          loopSourceError ??
+            'Please fill in all required workflow fields before saving.',
+        ),
         'Save workflow',
       );
       return of(null);

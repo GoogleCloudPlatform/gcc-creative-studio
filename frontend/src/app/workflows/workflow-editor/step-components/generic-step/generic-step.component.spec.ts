@@ -23,6 +23,7 @@ import {
   FormGroup,
   FormsModule,
   ReactiveFormsModule,
+  Validators,
 } from '@angular/forms';
 import {By} from '@angular/platform-browser';
 import {MatCheckboxModule} from '@angular/material/checkbox';
@@ -60,6 +61,8 @@ import {
   LOOP_STEP_CONFIG,
   MAX_LOOP_ITEMS,
   loopFolderIdValidator,
+  loopItemsTextValidator,
+  loopLinkedItemsRequiredValidator,
   toLoopFolderId,
 } from '../step-configs/loop-step.config';
 
@@ -1438,6 +1441,151 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       initLoopStep('folder');
       expect(findInput('loop_ending')?.linkedOnly).toBeTrue();
       expect(component.inputModes['loop_ending']).toBe('linked');
+    });
+
+    describe('Linked Items mode', () => {
+      const imageRef = {step: 'img_a', output: 'generated_image'};
+      const linkedItemsControl = (): AbstractControl =>
+        component.stepForm.get('inputs.linked_items') as AbstractControl;
+      const itemsTextControl = (): AbstractControl =>
+        component.stepForm.get('inputs.items_text') as AbstractControl;
+      const folderIdControl = (): AbstractControl =>
+        component.stepForm.get('settings.folder_id') as AbstractControl;
+
+      it('shows item_type and the linked_items port, hides folder_id', () => {
+        initLoopStep('linked_items', 'video');
+
+        const linkedItemsInput = findInput('linked_items');
+        expect(findSetting('folder_id')?.hidden).toBeTrue();
+        expect(findSetting('item_type')?.hidden).toBeFalse();
+        expect(findInput('items_text')?.hidden).toBeTrue();
+        expect(linkedItemsInput?.hidden).toBeFalse();
+        expect(linkedItemsInput?.required).toBeTrue();
+        expect(linkedItemsInput?.type).toBe('video');
+        expect(currentItemType()).toBe('video');
+        expect(linkedItemsInput?.linkedOnly).toBeFalsy();
+        if (linkedItemsInput) {
+          expect(component.getMaxMediaItems(linkedItemsInput)).toBe(100);
+        }
+      });
+
+      it('applies only the linked_items validator', () => {
+        initLoopStep('linked_items');
+
+        const linkedItems = linkedItemsControl();
+        const folderId = folderIdControl();
+        expect(linkedItems.enabled).toBeTrue();
+        expect(linkedItems.hasError('linkedItemsRequired')).toBeTrue();
+        expect(itemsTextControl().disabled).toBeTrue();
+        expect(folderId.hasValidator(Validators.required)).toBeFalse();
+        expect(folderId.valid).toBeTrue();
+
+        linkedItems.setValue([imageRef]);
+        expect(linkedItems.valid).toBeTrue();
+
+        linkedItems.setValue([{sourceAssetId: 7, previewUrl: ''}]);
+        expect(linkedItems.valid).toBeTrue();
+      });
+
+      it('renders the port with its E2E test id', () => {
+        initLoopStep('linked_items');
+        const port = query('[data-testid="loop-linked-items-port"]');
+        expect(port?.getAttribute('data-port-name')).toBe('linked_items');
+      });
+
+      it('keeps the port type in sync with item_type', () => {
+        const loopForm = initLoopStep('linked_items');
+        loopForm.get('settings.item_type')?.setValue('audio');
+
+        expect(findInput('linked_items')?.type).toBe('audio');
+        expect(currentItemType()).toBe('audio');
+      });
+
+      it('uses the dynamic port type for drag compatibility', () => {
+        const loopForm = initLoopStep('linked_items', 'image');
+        component.dragSourcePort = {
+          stepId: 'img_a',
+          outputName: 'generated_image',
+          type: 'image',
+        };
+        const linkedItemsInput = findInput('linked_items');
+        expect(linkedItemsInput).toBeDefined();
+        if (!linkedItemsInput) return;
+        expect(
+          component.isCompatibleWithActiveDrag(linkedItemsInput),
+        ).toBeTrue();
+
+        loopForm.get('settings.item_type')?.setValue('video');
+        expect(
+          component.isCompatibleWithActiveDrag(linkedItemsInput),
+        ).toBeFalse();
+      });
+
+      it('applies the right validators when switching through every mode', () => {
+        const loopForm = initLoopStep('linked_items');
+        const modeControl = loopForm.get('settings.mode');
+
+        modeControl?.setValue('text_input');
+        const itemsText = itemsTextControl();
+        expect(linkedItemsControl().disabled).toBeTrue();
+        expect(findInput('linked_items')?.hidden).toBeTrue();
+        expect(itemsText.enabled).toBeTrue();
+        expect(itemsText.hasValidator(Validators.required)).toBeTrue();
+        expect(itemsText.hasValidator(loopItemsTextValidator)).toBeTrue();
+        itemsText.setValue(' , ');
+        expect(itemsText.hasError('loopItemsTextEmpty')).toBeTrue();
+        itemsText.setValue({step: 'txt_1', output: 'generated_text'});
+        expect(itemsText.valid).toBeTrue();
+
+        modeControl?.setValue('folder');
+        const folderId = folderIdControl();
+        expect(itemsTextControl().disabled).toBeTrue();
+        expect(linkedItemsControl().disabled).toBeTrue();
+        expect(folderId.hasValidator(Validators.required)).toBeTrue();
+        expect(findSetting('folder_id')?.hidden).toBeFalse();
+
+        modeControl?.setValue('linked_items');
+        expect(linkedItemsControl().enabled).toBeTrue();
+        expect(
+          linkedItemsControl().hasValidator(loopLinkedItemsRequiredValidator),
+        ).toBeTrue();
+        expect(folderIdControl().hasValidator(Validators.required)).toBeFalse();
+      });
+
+      it('keeps every source input disabled on a read-only form', () => {
+        const loopForm = fb.group({
+          stepId: ['loop_1'],
+          type: [NodeTypes.LOOP],
+          status: ['idle'],
+          collapsed: [false],
+          inputs: fb.group({
+            items_text: [''],
+            linked_items: [[imageRef]],
+            loop_ending: [null],
+          }),
+          settings: fb.group({
+            mode: ['linked_items'],
+            folder_id: [null],
+            item_type: ['image'],
+          }),
+          outputs: fb.group({current_item: [{type: 'image'}]}),
+        });
+        loopForm.disable();
+        component.stepForm = loopForm;
+        component.config = LOOP_STEP_CONFIG;
+        component.ngOnChanges({
+          stepForm: {
+            currentValue: loopForm,
+            previousValue: null,
+            firstChange: false,
+            isFirstChange: () => false,
+          },
+        });
+
+        expect(linkedItemsControl().disabled).toBeTrue();
+        expect(itemsTextControl().disabled).toBeTrue();
+        expect(linkedItemsControl().value).toEqual([imageRef]);
+      });
     });
 
     describe('Media Gallery folder select', () => {

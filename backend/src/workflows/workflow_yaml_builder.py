@@ -763,6 +763,33 @@ def _call_steps(
     return steps
 
 
+def _linked_loop_entry(entry: Any, user_input_ids: frozenset[str]) -> Any:
+    """One ``linked_items`` value of a Linked Items ``Loop`` call.
+
+    A wire becomes its ``${...}`` expression. A Media Gallery pick stays a
+    literal holding only the ids the executor reads (``sourceMediaItem``
+    ``mediaItemId`` / ``mediaIndex``, ``sourceAssetId``): signed preview
+    URLs would bloat the YAML, and free-form strings (``role``) could be
+    evaluated as workflow expressions.
+    """
+    if _as_reference(entry) is not None or not isinstance(entry, Mapping):
+        return _resolve_value(entry, user_input_ids)
+    pick: dict[str, Any] = {}
+    source_media_item = entry.get("sourceMediaItem")
+    if isinstance(source_media_item, Mapping):
+        pick["sourceMediaItem"] = {
+            key: source_media_item[key]
+            for key in ("mediaItemId", "mediaIndex")
+            if source_media_item.get(key) is not None
+        }
+    source_asset_id = entry.get("sourceAssetId")
+    if source_asset_id is not None or not pick:
+        # An id-less pick stays non-empty so the executor rejects it
+        # instead of skipping it like an empty upstream output.
+        pick["sourceAssetId"] = source_asset_id
+    return pick
+
+
 def _loop_steps(
     loop_step: Any,
     body_steps: Sequence[Any],
@@ -774,17 +801,30 @@ def _loop_steps(
     """``/resolve-loop-items`` call and ``for`` loop of one ``Loop`` step.
 
     The ``Loop`` step is never gated: on resume ``/resolve-loop-items``
-    returns its cached snapshot. An empty ``items`` list runs the loop body
-    zero times. Each iteration exposes ``<loop>_out.current_item`` to the
-    body steps, which overwrite their ``<step>_out`` (O(1) memory).
+    returns its cached snapshot. Only the inputs of the configured mode are
+    sent: ``items_text`` in text mode, the ``linked_items`` list in Linked
+    Items mode (one expression per wire and one literal per Media Gallery
+    pick, in insertion order). A source that resolves to zero items fails
+    the resolver call, so the ``for`` loop is never reached. Each iteration
+    exposes ``<loop>_out.current_item`` to the body steps, which overwrite
+    their ``<step>_out`` (O(1) memory).
     """
     loop_id = loop_step.step_id
     settings = _dump_model(loop_step.settings)
+    raw_inputs = _dump_model(loop_step.inputs)
+    mode = settings.get("mode")
     inputs: dict[str, Any] = {}
-    if settings.get("mode") == "text_input":
+    if mode == "text_input":
         inputs["items_text"] = _resolve_value(
-            _dump_model(loop_step.inputs).get("items_text"), user_input_ids
+            raw_inputs.get("items_text"), user_input_ids
         )
+    elif mode == "linked_items":
+        linked = raw_inputs.get("linked_items")
+        if not isinstance(linked, list):
+            linked = [] if linked is None else [linked]
+        inputs["linked_items"] = [
+            _linked_loop_entry(entry, user_input_ids) for entry in linked
+        ]
     body = {
         "run_id": "${run_id}",
         "step_id": loop_id,

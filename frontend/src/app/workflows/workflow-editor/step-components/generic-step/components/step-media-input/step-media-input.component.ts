@@ -31,9 +31,12 @@ import {
   getPreviewUrl,
   isVideoUrl,
 } from '../../../../../utils/workflow-step.util';
+import {LOOP_LINKED_ITEMS_REQUIRED_MESSAGE} from '../../../step-configs/loop-step.config';
 
 export type StepMediaType = 'image' | 'video' | 'audio';
 export type StepMediaMimeType = 'image/*' | 'video/*' | 'audio/*';
+
+const DEFAULT_EMPTY_MEDIA_MESSAGE = 'At least one input is required';
 
 @Component({
   selector: 'app-step-media-input',
@@ -50,6 +53,15 @@ export class StepMediaInputComponent implements OnInit {
   @Input() compatibleOutputs: any[] = [];
   @Input() showValidationErrors = false;
   @Input() disabledMessage = '';
+  /** When true, only output references can be added (no gallery picks or uploads). */
+  @Input() linkedOnly = false;
+
+  /** Message shown when the input has no items and is invalid. */
+  get emptyErrorMessage(): string {
+    return this.control?.hasError('linkedItemsRequired')
+      ? LOOP_LINKED_ITEMS_REQUIRED_MESSAGE
+      : DEFAULT_EMPTY_MEDIA_MESSAGE;
+  }
 
   // Helpers
   get items(): (ReferenceImage | StepOutputReference)[] {
@@ -112,7 +124,7 @@ export class StepMediaInputComponent implements OnInit {
   }
 
   openImageSelectorForReference(): void {
-    if (this.control?.disabled) return;
+    if (this.control?.disabled || this.linkedOnly) return;
     const remainingSlots = this.maxItems - this.items.length;
     if (remainingSlots <= 0) return;
 
@@ -188,7 +200,7 @@ export class StepMediaInputComponent implements OnInit {
 
   onReferenceImageDrop(event: DragEvent) {
     event.preventDefault();
-    if (this.control?.disabled) return;
+    if (this.control?.disabled || this.linkedOnly) return;
     if (this.items.length >= this.maxItems) return;
 
     if (this.type !== 'image' && this.type !== 'video') return;

@@ -270,13 +270,16 @@ class ImageStep(BaseStep[ImageInputs, ImageSettings]):
 
 
 # --- Loop ---
-LoopMode = Literal["folder", "text_input"]
+LoopMode = Literal["folder", "text_input", "linked_items"]
 LoopItemType = Literal["image", "video", "audio"]
 
 
 class LoopInputs(BaseModel):
     # Comma-separated items (text_input mode): fixed text or a reference.
     items_text: StepOutputReference | str | None = None
+    # Linked Items mode: upstream media output references and Media Gallery
+    # picks (same values as the other media inputs), in iteration order.
+    linked_items: WorkflowInputItem | None = None
     # Loop-closing back-edge from the last step of the loop body.
     loop_ending: StepOutputReference | None = None
 

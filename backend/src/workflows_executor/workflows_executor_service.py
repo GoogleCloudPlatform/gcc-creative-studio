@@ -32,6 +32,7 @@ from src.common.secret_redaction import install_secret_redaction
 from src.config.config_service import config_service
 from src.folders.repository.folder_repository import FolderRepository
 from src.galleries.repository.unified_gallery_repository import (
+    LOOP_MEDIA_ITEM,
     LOOP_SOURCE_ASSET,
     UnifiedGalleryRepository,
 )
@@ -72,10 +73,36 @@ logger = install_secret_redaction(logging.getLogger(__name__))
 MAX_LOOP_ITEMS = 100
 # Same message for missing, deleted and foreign folders (no enumeration).
 FOLDER_NOT_FOUND_DETAIL = "Folder not found or deleted"
+# A Loop step that resolves zero items fails, with one message per source.
+LOOP_EMPTY_DETAILS: dict[str, str] = {
+    "text_input": (
+        "Loop resolved 0 items from the text input; at least 1 is required."
+    ),
+    "folder": (
+        "Loop resolved 0 items from the Media Gallery folder; at least 1 is "
+        "required."
+    ),
+    "linked_items": (
+        "Loop resolved 0 items from the linked items; at least 1 is required."
+    ),
+}
+LINKED_ITEMS_REQUIRED_DETAIL = "Add at least one item in Linked Items mode."
+LINKED_ITEMS_UNSUPPORTED_DETAIL = "Linked Items received an unsupported value."
+# Same message for missing, deleted, foreign and wrong-type linked items, and
+# for a workspace the user cannot access (no enumeration, no ids).
+LINKED_ITEMS_NOT_ACCESSIBLE_DETAIL = (
+    "Some linked items are missing, deleted, not accessible or not of type "
+    "{item_type}."
+)
+# Maximum list nesting of the raw linked values, the request list included.
+MAX_LINKED_NESTING_DEPTH = 3
+
+# One flattened linked item: ``(gallery item type, id, media index)``.
+LinkedItem = tuple[str, int, int]
 
 
 def _loop_item(item_type: str, item_id: int) -> int | dict[str, Any]:
-    """Media input of one folder ``Loop`` iteration.
+    """Media input of one folder or linked ``Loop`` iteration.
 
     A single value, like the outputs of the media steps, so it can feed a
     single-media input directly or be one entry of a multi-media input
@@ -86,6 +113,124 @@ def _loop_item(item_type: str, item_id: int) -> int | dict[str, Any]:
     if item_type == LOOP_SOURCE_ASSET:
         return {"sourceAssetId": item_id, "previewUrl": ""}
     return item_id
+
+
+def _require_items(mode: str, count: int) -> None:
+    """Fails a ``Loop`` step whose source resolved zero items."""
+    if count <= 0:
+        raise StepError(
+            422, ErrorCategory.INVALID_INPUT, LOOP_EMPTY_DETAILS[mode]
+        )
+
+
+def _unsupported_linked_value() -> StepError:
+    return StepError(
+        422, ErrorCategory.INVALID_INPUT, LINKED_ITEMS_UNSUPPORTED_DETAIL
+    )
+
+
+def _is_empty_linked_value(value: Any) -> bool:
+    """Whether a linked value carries no item (skipped upstream output)."""
+    return value is None or (
+        isinstance(value, (str, dict, list)) and len(value) == 0
+    )
+
+
+def _linked_id(value: Any) -> int | None:
+    """Positive id from an ``int`` or a digit string; ``None`` otherwise."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str) and value.isascii() and value.isdigit():
+        value = int(value)
+    if isinstance(value, int) and value > 0:
+        return value
+    return None
+
+
+def _linked_loop_item(value: Any) -> LinkedItem:
+    """Parses one non-empty, non-list linked value.
+
+    Accepts a media item id (``int`` or digit string), a
+    ``ReferenceMediaOrAsset``-like dict with ``sourceMediaItem`` (its
+    ``mediaIndex`` is kept) or with ``sourceAssetId``. Any ``previewUrl``
+    is ignored.
+
+    Raises:
+        StepError: 422 ``INVALID_INPUT`` for any other value.
+    """
+    media_item_id = _linked_id(value)
+    if media_item_id is not None:
+        return (LOOP_MEDIA_ITEM, media_item_id, 0)
+    if isinstance(value, dict):
+        source_media_item = value.get("sourceMediaItem")
+        if isinstance(source_media_item, dict):
+            media_item_id = _linked_id(source_media_item.get("mediaItemId"))
+            media_index = source_media_item.get("mediaIndex", 0)
+            if (
+                media_item_id is not None
+                and isinstance(media_index, int)
+                and not isinstance(media_index, bool)
+                and media_index >= 0
+            ):
+                return (LOOP_MEDIA_ITEM, media_item_id, media_index)
+        elif source_media_item is None:
+            source_asset_id = _linked_id(value.get("sourceAssetId"))
+            if source_asset_id is not None:
+                return (LOOP_SOURCE_ASSET, source_asset_id, 0)
+    raise _unsupported_linked_value()
+
+
+def _flatten_linked_values(values: list[Any]) -> tuple[list[LinkedItem], int]:
+    """Flattens the raw linked values, keeping their order.
+
+    Nested lists are flattened recursively up to
+    :data:`MAX_LINKED_NESTING_DEPTH` list levels (the request list
+    included). ``None``, ``""``, ``{}`` and ``[]`` are skipped.
+
+    Returns:
+        ``(items, skipped_count)``.
+
+    Raises:
+        StepError: 422 ``INVALID_INPUT`` for an unsupported or too deeply
+            nested value.
+    """
+    items: list[LinkedItem] = []
+    skipped_count = 0
+
+    def visit(value: Any, depth: int) -> None:
+        nonlocal skipped_count
+        if _is_empty_linked_value(value):
+            skipped_count += 1
+        elif isinstance(value, list):
+            if depth >= MAX_LINKED_NESTING_DEPTH:
+                raise _unsupported_linked_value()
+            for entry in value:
+                visit(entry, depth + 1)
+        else:
+            items.append(_linked_loop_item(value))
+
+    for raw_value in values:
+        visit(raw_value, 1)
+    return items, skipped_count
+
+
+def _linked_loop_value(item: LinkedItem) -> int | dict[str, Any]:
+    """Iteration value of a linked item, in the existing loop item shapes.
+
+    A media item with a non-zero ``mediaIndex`` stays a
+    ``ReferenceMediaOrAsset`` so the index is not lost.
+    """
+    item_type, item_id, media_index = item
+    if media_index > 0:
+        return {
+            "sourceMediaItem": {
+                "mediaItemId": item_id,
+                "mediaIndex": media_index,
+                "role": AssetRoleEnum.INPUT.value,
+            },
+            "previewUrl": "",
+        }
+    return _loop_item(item_type, item_id)
 
 
 # Below the 300 s Cloud Run request / YAML step timeout.
@@ -1217,28 +1362,43 @@ class WorkflowsExecutorService:
 
         Checkpointed under ``"<loop_step_id>"``: retries and resumes return
         the stored snapshot (items, folder name, truncation), so iterations
-        stay deterministic even if the folder changes mid-run.
+        stay deterministic even if the source changes mid-run. A stored
+        snapshot is returned as is, even an empty one.
 
         Returns:
             ``{"items", "total_iterations", "total_found", "truncated"}``.
-            At most :data:`MAX_LOOP_ITEMS` items are kept (the first ones);
-            an empty list means zero iterations.
+            At most :data:`MAX_LOOP_ITEMS` items are kept (the first ones).
 
         Raises:
-            StepError: 422 ``INVALID_INPUT`` when the folder is missing,
-                deleted or outside the workspace (same message for all).
+            StepError: 422 ``INVALID_INPUT`` when the source resolves zero
+                items (any mode, see :data:`LOOP_EMPTY_DETAILS`), when the
+                folder is missing, deleted or outside the workspace (same
+                message for all), or when the linked items are missing,
+                unsupported, inaccessible or of another type.
         """
         # Filled by the work function before the guard checkpoints it.
         step_inputs: dict[str, Any] = {}
 
         async def work() -> StepOutputs:
-            if request.config.mode == "text_input":
+            mode = request.config.mode
+            if mode == "text_input":
                 raw_text = request.inputs.items_text or ""
                 step_inputs.update(mode="text_input", items_text=raw_text)
                 tokens = [token.strip() for token in raw_text.split(",")]
                 return self._loop_outputs(
                     request, [token for token in tokens if token]
                 )
+            if mode == "linked_items":
+                items, skipped_count = await self._resolve_linked_items(
+                    request, user, gallery_repository, workspace_auth
+                )
+                step_inputs.update(
+                    mode="linked_items",
+                    item_type=request.config.item_type,
+                    source_count=len(request.inputs.linked_items or []),
+                    skipped_count=skipped_count,
+                )
+                return self._loop_outputs(request, items)
             folder = await self._authorized_folder(
                 request, user, folder_repository, workspace_auth
             )
@@ -1281,6 +1441,25 @@ class WorkflowsExecutorService:
                 ErrorCategory.INVALID_INPUT,
                 "A Media Gallery folder is required in folder mode.",
             )
+        await WorkflowsExecutorService._authorize_loop_workspace(
+            request, user, workspace_auth, denied=not_found
+        )
+        folder = await folder_repository.get_folder_by_id(
+            request.config.folder_id
+        )
+        if folder is None or folder.workspace_id != request.workspace_id:
+            raise not_found
+        return folder
+
+    @staticmethod
+    async def _authorize_loop_workspace(
+        request: ResolveLoopItemsRequest,
+        user: UserModel,
+        workspace_auth: WorkspaceAuth,
+        *,
+        denied: StepError,
+    ) -> None:
+        """Raises ``denied`` if the user may not read the run's workspace."""
         try:
             await workspace_auth.authorize(
                 workspace_id=request.workspace_id, user=user
@@ -1293,13 +1472,80 @@ class WorkflowsExecutorService:
                 request.step_id,
                 error.status_code,
             )
-            raise not_found from error
-        folder = await folder_repository.get_folder_by_id(
-            request.config.folder_id
+            raise denied from error
+
+    @staticmethod
+    async def _resolve_linked_items(
+        request: ResolveLoopItemsRequest,
+        user: UserModel,
+        gallery_repository: UnifiedGalleryRepository,
+        workspace_auth: WorkspaceAuth,
+    ) -> tuple[list[Any], int]:
+        """Iteration values of a Linked Items ``Loop`` step, in link order.
+
+        Flattens the upstream outputs resolved by the workflow engine and
+        the Media Gallery picks, in insertion order (empty values are
+        skipped). Both kinds are then validated the same way: the user must
+        be able to read the workspace and every
+        distinct linked id is an eligible gallery item of the workspace with
+        the configured ``item_type``. Duplicates are kept.
+
+        Returns:
+            ``(values, skipped_count)``: the values use the folder loop item
+            shapes (a media item with ``mediaIndex > 0`` stays a
+            ``ReferenceMediaOrAsset``).
+
+        Raises:
+            StepError: 422 ``INVALID_INPUT`` when no item is linked, a value
+                is unsupported, nothing resolves, or any item is not
+                accessible (one generic message, without ids).
+        """
+        raw_values = request.inputs.linked_items
+        if not raw_values:
+            raise StepError(
+                422, ErrorCategory.INVALID_INPUT, LINKED_ITEMS_REQUIRED_DETAIL
+            )
+        items, skipped_count = _flatten_linked_values(raw_values)
+        # Fails before any authorization or query work when nothing resolved.
+        _require_items("linked_items", len(items))
+        item_type = request.config.item_type
+        not_accessible = StepError(
+            422,
+            ErrorCategory.INVALID_INPUT,
+            LINKED_ITEMS_NOT_ACCESSIBLE_DETAIL.format(item_type=item_type),
         )
-        if folder is None or folder.workspace_id != request.workspace_id:
-            raise not_found
-        return folder
+        await WorkflowsExecutorService._authorize_loop_workspace(
+            request, user, workspace_auth, denied=not_accessible
+        )
+        requested = {(kind, item_id) for kind, item_id, _ in items}
+        found = await gallery_repository.filter_linked_loop_items(
+            workspace_id=request.workspace_id,
+            media_item_ids=[
+                item_id
+                for kind, item_id in requested
+                if kind == LOOP_MEDIA_ITEM
+            ],
+            source_asset_ids=[
+                item_id
+                for kind, item_id in requested
+                if kind == LOOP_SOURCE_ASSET
+            ],
+            mime_type_prefix=item_type,
+        )
+        missing_count = len(requested - found)
+        if missing_count:
+            logger.warning(
+                "Loop step %s of run %s: %s of %s linked items are not "
+                "accessible %s items of workspace %s.",
+                request.step_id,
+                request.run_id,
+                missing_count,
+                len(requested),
+                item_type,
+                request.workspace_id,
+            )
+            raise not_accessible
+        return [_linked_loop_value(item) for item in items], skipped_count
 
     @staticmethod
     def _loop_outputs(
@@ -1308,8 +1554,13 @@ class WorkflowsExecutorService:
         *,
         total_found: int | None = None,
     ) -> StepOutputs:
-        """Loop snapshot keeping the first :data:`MAX_LOOP_ITEMS` items."""
+        """Loop snapshot keeping the first :data:`MAX_LOOP_ITEMS` items.
+
+        Raises:
+            StepError: 422 ``INVALID_INPUT`` when no item was found.
+        """
         found = len(items) if total_found is None else max(total_found, 0)
+        _require_items(request.config.mode, found)
         truncated = found > MAX_LOOP_ITEMS
         kept = items[:MAX_LOOP_ITEMS]
         if truncated:

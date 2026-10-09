@@ -30,6 +30,9 @@ from src.workflows.repository.workflow_run_repository import (
     RunStepContext,
     WorkflowRunRepository,
 )
+from src.workflows_executor.dto.workflows_executor_dto import (
+    MAX_LOOP_LINKED_RAW_VALUES,
+)
 from src.workflows_executor.idempotency import StepIdempotencyGuard
 from src.workflows_executor.step_errors import StepError
 from src.workflows_executor.workflows_executor_controller import router
@@ -504,6 +507,75 @@ def test_resolve_loop_items_rejects_invalid_config(fake_service):
             "workspace_id": 1,
             "config": {"mode": "folder", "item_type": "pdf"},
         },
+        headers={"Authorization": AUTH},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error_category"] == "INVALID_INPUT"
+
+
+def _linked_loop_body(linked_items, mode="linked_items"):
+    return {
+        **CONTEXT,
+        "step_id": "loop_1",
+        "workspace_id": 1,
+        "inputs": {"linked_items": linked_items},
+        "config": {"mode": mode, "item_type": "video"},
+    }
+
+
+def test_resolve_loop_items_accepts_linked_items_mode():
+    from src.folders.repository.folder_repository import FolderRepository
+    from src.galleries.repository.unified_gallery_repository import (
+        UnifiedGalleryRepository,
+    )
+    from src.workspaces.workspace_auth_guard import WorkspaceAuth
+
+    service = MagicMock()
+    service.resolve_loop_items = AsyncMock(
+        return_value={
+            "items": [101],
+            "total_iterations": 1,
+            "total_found": 1,
+            "truncated": False,
+        }
+    )
+    app, client = _build_client(service)
+    for dependency in (
+        FolderRepository,
+        UnifiedGalleryRepository,
+        WorkspaceAuth,
+    ):
+        app.dependency_overrides[dependency] = lambda: MagicMock()
+    linked_items = [101, None, [102], {"sourceAssetId": 7, "previewUrl": ""}]
+
+    response = client.post(
+        f"{PREFIX}/resolve-loop-items",
+        json=_linked_loop_body(linked_items),
+        headers={"Authorization": AUTH},
+    )
+
+    assert response.status_code == 200
+    request = service.resolve_loop_items.await_args.args[0]
+    assert request.config.mode == "linked_items"
+    assert request.config.item_type == "video"
+    assert request.inputs.linked_items == linked_items
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        _linked_loop_body([1] * (MAX_LOOP_LINKED_RAW_VALUES + 1)),
+        _linked_loop_body([1], mode="everything"),
+    ],
+    ids=["too-many-linked-values", "unknown-mode"],
+)
+def test_resolve_loop_items_rejects_invalid_linked_body(fake_service, body):
+    _, client = _build_client(fake_service)
+
+    response = client.post(
+        f"{PREFIX}/resolve-loop-items",
+        json=body,
         headers={"Authorization": AUTH},
     )
 

@@ -19,9 +19,22 @@ import {MatDialogRef, MAT_DIALOG_DATA} from '@angular/material/dialog';
 import {MatButtonModule} from '@angular/material/button';
 import {MatDialogModule} from '@angular/material/dialog'; // Import MatDialogModule
 
+/** Material palette used for the confirm button. */
+export type ConfirmationDialogColor = 'primary' | 'accent' | 'warn';
+
+export const DEFAULT_CONFIRM_LABEL = 'Delete';
+export const DEFAULT_CONFIRM_COLOR: ConfirmationDialogColor = 'warn';
+export const DEFAULT_CANCEL_LABEL = 'Cancel';
+
 export interface ConfirmationDialogData {
   title: string;
   message: string;
+  /** Confirm button text. Defaults to "Delete". */
+  confirmLabel?: string;
+  /** Confirm button colour. Defaults to "warn". */
+  confirmColor?: ConfirmationDialogColor;
+  /** Cancel button text. Defaults to "Cancel". */
+  cancelLabel?: string;
 }
 
 @Component({
@@ -30,10 +43,18 @@ export interface ConfirmationDialogData {
   styleUrl: './confirmation-dialog.component.scss',
 })
 export class ConfirmationDialogComponent {
+  readonly confirmLabel: string;
+  readonly confirmColor: ConfirmationDialogColor;
+  readonly cancelLabel: string;
+
   constructor(
     public dialogRef: MatDialogRef<ConfirmationDialogComponent>,
     @Inject(MAT_DIALOG_DATA) public data: ConfirmationDialogData,
-  ) {}
+  ) {
+    this.confirmLabel = data?.confirmLabel ?? DEFAULT_CONFIRM_LABEL;
+    this.confirmColor = data?.confirmColor ?? DEFAULT_CONFIRM_COLOR;
+    this.cancelLabel = data?.cancelLabel ?? DEFAULT_CANCEL_LABEL;
+  }
 
   onConfirm(): void {
     this.dialogRef.close(true);

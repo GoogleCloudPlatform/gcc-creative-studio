@@ -107,6 +107,84 @@ describe('MediaResolutionService', () => {
     expect(requestedIds()).toEqual([101, 102, 103]);
   });
 
+  it('resolves Loop items in linked items mode', () => {
+    const entries: StepEntry[] = [
+      {
+        step_id: 'loop_1',
+        state: 'COMPLETED',
+        history: [
+          {
+            step_inputs: {
+              mode: 'linked_items',
+              item_type: 'image',
+              source_count: 2,
+              skipped_count: 0,
+            },
+            step_outputs: {items: [201, 202], total_iterations: 2},
+          },
+        ],
+      },
+    ];
+
+    service.resolveMediaUrls(
+      entries,
+      new Map([['loop_1', NodeTypes.LOOP]]),
+      mediaUrlMap,
+    );
+
+    expect(requestedIds()).toEqual([201, 202]);
+    expect(mediaUrlMap.get('media:202')).toBe('https://media/202');
+  });
+
+  it('resolves gallery-picked Loop items in linked items mode', () => {
+    const sourceAssetService = TestBed.inject(
+      SourceAssetService,
+    ) as jasmine.SpyObj<SourceAssetService>;
+    sourceAssetService.getAsset.and.callFake(
+      (id: number) =>
+        of({presignedUrl: `https://asset/${id}`}) as unknown as ReturnType<
+          SourceAssetService['getAsset']
+        >,
+    );
+    const entries: StepEntry[] = [
+      {
+        step_id: 'loop_1',
+        state: 'COMPLETED',
+        history: [
+          {
+            step_inputs: {mode: 'linked_items', item_type: 'image'},
+            step_outputs: {
+              items: [
+                201,
+                {sourceAssetId: 9, previewUrl: ''},
+                {
+                  sourceMediaItem: {
+                    mediaItemId: 303,
+                    mediaIndex: 2,
+                    role: 'input',
+                  },
+                  previewUrl: '',
+                },
+              ],
+              total_iterations: 3,
+            },
+          },
+        ],
+      },
+    ];
+
+    service.resolveMediaUrls(
+      entries,
+      new Map([['loop_1', NodeTypes.LOOP]]),
+      mediaUrlMap,
+    );
+
+    expect(requestedIds()).toEqual([201, 303]);
+    expect(sourceAssetService.getAsset).toHaveBeenCalledOnceWith(9);
+    expect(mediaUrlMap.get('asset:9')).toBe('https://asset/9');
+    expect(mediaUrlMap.get('media:303')).toBe('https://media/303');
+  });
+
   it('does not resolve Loop text items as media', () => {
     const entries: StepEntry[] = [
       {

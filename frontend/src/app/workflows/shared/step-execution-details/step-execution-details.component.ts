@@ -19,21 +19,34 @@ import {Router} from '@angular/router';
 import {
   DynamicStepRecord,
   LoopItemType,
+  LoopMode,
   NodeTypes,
   StepErrorInfo,
 } from '../../workflow.models';
 import {IMAGE_MODE_ALLOWED_INPUTS} from '../../workflow-editor/step-components/step-configs/image-step.config';
 import {
-  LOOP_MODE_FOLDER,
+  LOOP_MODE_LABELS,
   LOOP_MODE_TEXT_INPUT,
   buildLoopTruncationMessage,
+  isLoopMediaMode,
   toLoopItemType,
+  toLoopMode,
 } from '../../workflow-editor/step-components/step-configs/loop-step.config';
 import {isVideoUrl} from '../../utils/workflow-step.util';
 import {STEP_CONFIGS_MAP} from '../step-configs.map';
 
 /** Output key holding a Loop step's resolved items. */
 const LOOP_ITEMS_KEY = 'items';
+
+/** Input key holding a Loop step's source mode. */
+const LOOP_MODE_KEY = 'mode';
+
+/** Recorded Loop inputs shown in run details, per source mode. */
+const LOOP_INPUT_KEYS_BY_MODE: Readonly<Record<LoopMode, readonly string[]>> = {
+  folder: [LOOP_MODE_KEY, 'folder_name', 'item_type'],
+  text_input: [LOOP_MODE_KEY, 'items_text'],
+  linked_items: [LOOP_MODE_KEY, 'item_type', 'source_count', 'skipped_count'],
+};
 
 /** `mediaUrlMap` key prefixes (see MediaResolutionService). */
 const MEDIA_KEY_PREFIX = 'media:';
@@ -84,11 +97,12 @@ export class StepExecutionDetailsComponent implements OnInit {
   /** True when rendering a Loop step's run data. */
   readonly isLoopStep = computed(() => this.stepTypeState() === NodeTypes.LOOP);
 
-  /** Media type of a Loop's items in folder mode, otherwise `null`. */
+  /** Media type of a Loop's items in a media mode, otherwise `null`. */
   readonly loopMediaType = computed<LoopItemType | null>(() => {
     if (!this.isLoopStep()) return null;
     const inputs = this.inputsState();
-    return inputs['mode'] === LOOP_MODE_FOLDER
+    // The raw value is compared on purpose: a missing mode is not a media mode.
+    return isLoopMediaMode(inputs[LOOP_MODE_KEY])
       ? toLoopItemType(inputs['item_type'])
       : null;
   });
@@ -96,7 +110,8 @@ export class StepExecutionDetailsComponent implements OnInit {
   /** True when a Loop iterates comma-separated text items. */
   readonly isLoopTextMode = computed(
     () =>
-      this.isLoopStep() && this.inputsState()['mode'] === LOOP_MODE_TEXT_INPUT,
+      this.isLoopStep() &&
+      this.inputsState()[LOOP_MODE_KEY] === LOOP_MODE_TEXT_INPUT,
   );
 
   /** Resolved Loop text items rendered as a numbered list. */
@@ -172,13 +187,13 @@ export class StepExecutionDetailsComponent implements OnInit {
     const result: Record<string, any> = {};
 
     if (this.isLoopStep()) {
-      const loopKeys =
-        this.inputs['mode'] === LOOP_MODE_TEXT_INPUT
-          ? ['mode', 'items_text']
-          : ['mode', 'folder_name', 'item_type'];
-      loopKeys
+      const loopMode = toLoopMode(this.inputs['mode']);
+      LOOP_INPUT_KEYS_BY_MODE[loopMode]
         .filter(key => this.hasValue(this.inputs[key]))
         .forEach(key => (result[key] = this.inputs[key]));
+      if (LOOP_MODE_KEY in result) {
+        result[LOOP_MODE_KEY] = LOOP_MODE_LABELS[loopMode];
+      }
       return result;
     }
 
