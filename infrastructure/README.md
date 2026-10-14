@@ -49,8 +49,14 @@ If you do NOT pass the flag, and the script doesn't detect a legacy database, it
 
 ## Troubleshooting
 
+The full list of known deployment failures and their fixes (Cloud Build connection `409 already exists`, half-failed migrations and `--use-existing-backup`, Cloud Run deadlocks, stale secrets, …) lives in the [Deployment Guide → Troubleshooting](../DEPLOYMENT.md#6-troubleshooting-known-errors-and-fixes).
+
+### Cloud Build host connection
+
+Terraform only **links the repository** (`google_cloudbuildv2_repository.source_repo` in `ci_cd.tf`) to a host connection that must already exist in the deploy region under the name passed as `repo_conn_name`; it never creates the connection. If the console wizard cannot create it (`Error processing oauth callback: Structured justification provided is incorrect`), create it programmatically with a classic GitHub token — the commands are in the [main README](../README.md#cant-create-the-cloud-build-host-connection-in-the-console) and, with a token-free pre-flight and the fork fallback, in [Deployment Guide §6.16](../DEPLOYMENT.md#616-the-console-cannot-create-the-host-connection-error-processing-oauth-callback-structured-justification-provided-is-incorrect). Never link the repository by hand: a pre-linked repository makes `terraform apply` fail with `409 … already exists`.
+
 ### Manual Database Import
-If a migration was interrupted, your data is always safe in your project's Terraform state bucket (`gs://[PROJECT_ID]-terraform-state/migration_backup.sql.gz`). You can manually restore it via the GCP Console or CLI:
+If a migration was interrupted, your data is always safe in your project's Terraform state bucket (`gs://[PROJECT_ID]-cstudio-[ENV_NAME]-tfstate/migration_backup.sql.gz`). You can manually restore it via the GCP Console or CLI (drop and recreate `creative_studio` first, see the caution above):
 ```bash
 gcloud sql import sql YOUR_NEW_DB_INSTANCE_NAME \
   gs://YOUR_TF_BUCKET_NAME/migration_backup.sql.gz \

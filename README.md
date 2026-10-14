@@ -78,6 +78,34 @@ Just run this script which has a step by step approach for you to deploy the inf
 curl https://raw.githubusercontent.com/GoogleCloudPlatform/gcc-creative-studio/refs/heads/main/bootstrap.sh | bash
 ```
 
+> 📘 For a step-by-step explanation of every prompt, what Terraform creates, how to resume/upgrade, and the **fixes for known deployment errors** (Cloud Build connection `409 already exists`, the console wizard failing with `Structured justification provided is incorrect`, half-failed DB migrations → `--use-existing-backup`, …), read the [Deployment Guide](./DEPLOYMENT.md).
+
+### Can't create the Cloud Build host connection in the console?
+
+Step 6 of the script asks for a **Cloud Build host connection** to GitHub. Some organisations block the console wizard: right after *"Project N is requesting your GitHub OAuth token…"* it fails with `Error processing oauth callback: Structured justification provided is incorrect`. Nothing is wrong with your project — only the wizard's internal OAuth callback is blocked — so create the connection **programmatically** instead (a five-minute detour, no code changes):
+
+1. Make sure the [Cloud Build GitHub App](https://github.com/apps/google-cloud-build/installations/new) is installed on the GitHub account/organisation that owns your fork. The installation ID is the number at the end of `https://github.com/settings/installations/<ID>` (or copy it from a working connection in another project with `gcloud builds connections describe <conn> --region=<r> --format='value(githubConfig.appInstallationId)'`).
+2. Create a **classic** personal access token at <https://github.com/settings/tokens/new> with exactly the scopes `repo`, `read:user` and `read:org` (fine-grained tokens are not supported by Cloud Build; if your organisation enforces SAML, authorise the token for it via *Configure SSO*).
+3. Store the token yourself and point the connection at it — the token is only ever pasted into the hidden `read` prompt, never into a command line:
+
+   ```bash
+   PROJECT_ID=<project>; REGION=<deploy region>; CONN=<connection name>; INSTALLATION_ID=<id>
+   PN=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
+   read -rs GITHUB_PAT   # paste the token, press Enter (nothing is echoed)
+   echo -n "$GITHUB_PAT" | gcloud secrets create github-pat-cloudbuild --data-file=- \
+     --replication-policy=user-managed --locations="$REGION" --project="$PROJECT_ID"; unset GITHUB_PAT
+   gcloud secrets add-iam-policy-binding github-pat-cloudbuild --project="$PROJECT_ID" \
+     --member="serviceAccount:service-${PN}@gcp-sa-cloudbuild.iam.gserviceaccount.com" --role=roles/secretmanager.secretAccessor
+   gcloud builds connections create github "$CONN" --region="$REGION" --project="$PROJECT_ID" \
+     --authorizer-token-secret-version="projects/${PROJECT_ID}/secrets/github-pat-cloudbuild/versions/1" \
+     --app-installation-id="$INSTALLATION_ID"
+   gcloud builds connections describe "$CONN" --region="$REGION" --project="$PROJECT_ID" --format='value(installationState.stage)'   # COMPLETE
+   ```
+
+4. Do **not** link the repository by hand — Terraform does that. Run the script, answer `y` to *"Do you already have a Cloud Build Host Connection…?"* and give it the connection name. When the token expires, add a new secret version and update the connection with `gcloud builds connections update github "$CONN" --authorizer-token-secret-version=…`.
+
+The [Deployment Guide §6.16](./DEPLOYMENT.md#616-the-console-cannot-create-the-host-connection-error-processing-oauth-callback-structured-justification-provided-is-incorrect) adds a token-free **pre-flight** that proves this path works in your project before you create any token, a 30-second check of the token against GitHub, and the fork-based fallback for organisations that refuse classic tokens.
+
 ### Advanced Automation (CI/CD & Headless)
 
 The `bootstrap.sh` script supports several command-line flags to enable fully automated, non-interactive deployments. This is especially useful for CI/CD pipelines or rapid redeployments.
