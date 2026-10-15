@@ -477,6 +477,59 @@ async def test_generate_video_skips_unsupported_references_for_veo(service):
         mock_poll.assert_called_once_with(9999, None)
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "model, expect_refs",
+    [
+        ("gemini-omni-1.1-flash-preview", True),
+        ("gemini-omni-flash-preview", True),
+        ("not-a-real-model", False),
+    ],
+)
+async def test_generate_video_reference_passthrough_by_model(
+    service, model, expect_refs
+):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "A running dog with music"
+    request.inputs.input_images = None
+    request.inputs.input_video = 888
+    request.inputs.input_audio = 999
+    request.inputs.start_frame = None
+    request.inputs.end_frame = None
+    request.config.model = model
+    request.config.aspect_ratio = "16:9"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+    request.config.duration_seconds = 8
+
+    service.mock_rest_client.post.return_value = Response(
+        200, json={"id": 4321}
+    )
+
+    with patch.object(
+        service,
+        "_poll_job_status",
+        AsyncMock(return_value=True),
+    ):
+        await service.generate_video(request)
+        _, kwargs = service.mock_rest_client.post.call_args
+        if expect_refs:
+            assert kwargs["json"]["reference_video"] == {
+                "id": 888,
+                "type": "media_item",
+                "index": 0,
+            }
+            assert kwargs["json"]["reference_audio"] == {
+                "id": 999,
+                "type": "media_item",
+                "index": 0,
+            }
+        else:
+            assert kwargs["json"]["reference_video"] is None
+            assert kwargs["json"]["reference_audio"] is None
+
+
 def test_map_to_asset_reference_helper(service):
     from src.workflows.schema.workflow_model import (
         ReferenceMediaOrAsset,

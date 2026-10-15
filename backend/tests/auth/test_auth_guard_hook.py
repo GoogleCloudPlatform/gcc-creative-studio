@@ -321,3 +321,50 @@ async def test_handle_post_auth_session_skips_db_writes_for_same_token(
         )
     assert session_opens == 2
     assert fake_db.execute.await_count == 4
+
+
+async def test_handle_post_auth_session_caches_only_token_hash(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    import hashlib
+
+    from src.workflows.queue import workflow_dispatcher
+
+    key = Fernet.generate_key().decode("ascii")
+    monkeypatch.setattr(
+        "src.config.config_service.config_service.WORKFLOW_TOKEN_ENCRYPTION_KEY",
+        key,
+    )
+    exp_ts = int((FIXED_NOW + datetime.timedelta(hours=1)).timestamp())
+    jwt_token = _make_jwt(exp_ts)
+    user = UserModel(
+        id=7,
+        email="u@example.com",
+        name="User",
+        roles=[UserRoleEnum.USER],
+    )
+
+    fake_db = AsyncMock()
+    unpark_result = MagicMock()
+    unpark_result.scalars.return_value.all.return_value = []
+    no_due_result = MagicMock()
+    no_due_result.scalar_one_or_none.return_value = None
+    fake_db.execute = AsyncMock(
+        side_effect=[MagicMock(), unpark_result, no_due_result]
+    )
+
+    @asynccontextmanager
+    async def fake_session_factory():
+        yield fake_db
+
+    await handle_post_auth_session(
+        user,
+        f"  {jwt_token}  ",
+        exp_ts,
+        session_factory=fake_session_factory,
+        clock=lambda: FIXED_NOW,
+    )
+
+    cache = workflow_dispatcher._LAST_STORED_USER_TOKEN_HASH
+    assert cache[7] == hashlib.sha256(jwt_token.encode()).hexdigest()
+    assert jwt_token not in cache.values()

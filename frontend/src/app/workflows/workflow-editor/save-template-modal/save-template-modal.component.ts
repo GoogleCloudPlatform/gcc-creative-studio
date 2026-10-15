@@ -89,14 +89,20 @@ export class SaveTemplateModalComponent {
   }
 
   onSave(): void {
+    const raw = this.templateForm.getRawValue();
+    const trimmedName = (typeof raw.name === 'string' ? raw.name : '').trim();
+    if (!trimmedName || trimmedName.length < 2) {
+      this.templateForm.get('name')?.setErrors({required: true});
+      this.templateForm.markAllAsTouched();
+      return;
+    }
     if (this.templateForm.invalid || this.isSubmitting()) {
       this.templateForm.markAllAsTouched();
       return;
     }
 
-    const raw = this.templateForm.getRawValue();
     const templateDto: WorkflowTemplateCreateDto = {
-      name: (raw.name as string).trim(),
+      name: trimmedName,
       description: ((raw.description as string) || '').trim(),
       steps: this.data?.steps || [],
     };

@@ -17,14 +17,16 @@
 import {Component, Input, OnInit} from '@angular/core';
 import {AbstractControl, FormBuilder} from '@angular/forms';
 import {MatDialog} from '@angular/material/dialog';
-import {iif} from 'rxjs';
+import {MatSnackBar} from '@angular/material/snack-bar';
 import {AssetTypeEnum} from '../../../../../../admin/source-assets-management/source-asset.model';
 import {ImageSelectorComponent} from '../../../../../../common/components/image-selector/image-selector.component';
 import {ReferenceImage} from '../../../../../../common/models/search.model';
 import {
+  SourceAssetOptionsDto,
   SourceAssetResponseDto,
   SourceAssetService,
 } from '../../../../../../common/services/source-asset.service';
+import {handleErrorSnackbar} from '../../../../../../utils/handleMessageSnackbar';
 import {StepOutputReference} from '../../../../../workflow.models';
 import {isInputAlreadyLinked} from '../../../../../utils/workflow-magnetic.util';
 import {
@@ -99,6 +101,7 @@ export class StepMediaInputComponent implements OnInit {
     private fb: FormBuilder,
     private dialog: MatDialog,
     private sourceAssetService: SourceAssetService,
+    private snackBar: MatSnackBar,
   ) {}
 
   ngOnInit(): void {}
@@ -213,22 +216,22 @@ export class StepMediaInputComponent implements OnInit {
 
     if (!isImage && !isVideo) return;
 
-    iif(
-      () => isImage,
-      this.sourceAssetService.uploadAsset(file, {
-        aspectRatio: 'other',
-        assetType: AssetTypeEnum.GENERIC_IMAGE,
-      }),
-      this.sourceAssetService.uploadAsset(file, {
-        assetType: AssetTypeEnum.GENERIC_VIDEO,
-      }),
-    ).subscribe((result: SourceAssetResponseDto) => {
-      if (result && result.id) {
-        this.addItem({
-          sourceAssetId: result.id,
-          previewUrl: getPreviewUrl(result),
-        });
-      }
+    const options: SourceAssetOptionsDto = isImage
+      ? {aspectRatio: 'other', assetType: AssetTypeEnum.GENERIC_IMAGE}
+      : {assetType: AssetTypeEnum.GENERIC_VIDEO};
+
+    this.sourceAssetService.uploadAsset(file, options).subscribe({
+      next: (result: SourceAssetResponseDto) => {
+        if (result && result.id) {
+          this.addItem({
+            sourceAssetId: result.id,
+            previewUrl: getPreviewUrl(result),
+          });
+        }
+      },
+      error: (err: unknown) => {
+        handleErrorSnackbar(this.snackBar, err, 'Upload dropped media');
+      },
     });
   }
 

@@ -139,6 +139,7 @@ class _InMemoryQueueHarness:
         self.run_repo.find_active_for_reconciliation = AsyncMock(
             return_value=[]
         )
+        self.run_repo.find_expired_session_waits = AsyncMock(return_value=[])
 
         self.token_store = MagicMock()
         self.token_store.get_valid_token = AsyncMock(
@@ -559,6 +560,124 @@ async def test_reconcile_pass_fetches_gcp_state_and_handles_stale_claims():
     assert state_svc.reconcile_run.await_count == 2
 
 
+def _session_waiting_run(run_id: str) -> WorkflowRunModel:
+    return _make_run(
+        run_id, queue_reason=QueueReasonEnum.WAITING_FOR_SESSION
+    ).model_copy(
+        update={
+            "waiting_for_session_since": FIXED_NOW - datetime.timedelta(days=8)
+        }
+    )
+
+
+def _stale_running_run(run_id: str) -> WorkflowRunModel:
+    return _make_run(run_id).model_copy(
+        update={
+            "status": WorkflowRunStatusEnum.RUNNING,
+            "dispatched_at": FIXED_NOW - datetime.timedelta(minutes=5),
+            "execution_ids": [],
+        }
+    )
+
+
+async def test_reconcile_queries_active_runs_and_expired_session_waits():
+    """reconcile() loads both candidate sets with independent budgets."""
+    harness = _InMemoryQueueHarness()
+    active_run = _stale_running_run("r-running")
+    expired_run = _session_waiting_run("r-expired")
+    harness.run_repo.find_active_for_reconciliation = AsyncMock(
+        return_value=[active_run]
+    )
+    harness.run_repo.find_expired_session_waits = AsyncMock(
+        return_value=[expired_run]
+    )
+    state_svc = MagicMock()
+    state_svc.max_session_wait_seconds = 7 * 86400
+    state_svc.reconcile_run = AsyncMock(side_effect=lambda r, **_kw: r)
+
+    dispatcher = WorkflowDispatcher(
+        run_repository=harness.run_repo,
+        token_store=harness.token_store,
+        run_state_service=state_svc,
+        clock=lambda: FIXED_NOW,
+        reconcile_limit=7,
+    )
+    reconciled = await dispatcher.reconcile()
+
+    assert [r.id for r in reconciled] == ["r-running", "r-expired"]
+    harness.run_repo.find_active_for_reconciliation.assert_awaited_once_with(
+        limit=7
+    )
+    harness.run_repo.find_expired_session_waits.assert_awaited_once_with(
+        FIXED_NOW, max_wait_seconds=7 * 86400, limit=7
+    )
+
+
+async def test_reconcile_still_handles_running_runs_with_session_wait_backlog():
+    """A full page of expired session waits does not displace running runs."""
+    harness = _InMemoryQueueHarness()
+    reconcile_limit = 50
+    parked_runs = [
+        _session_waiting_run(f"r-parked-{idx:02d}")
+        for idx in range(reconcile_limit)
+    ]
+    active_run = _stale_running_run("r-running")
+    harness.run_repo.find_active_for_reconciliation = AsyncMock(
+        return_value=[active_run]
+    )
+    harness.run_repo.find_expired_session_waits = AsyncMock(
+        return_value=parked_runs
+    )
+    state_svc = MagicMock()
+    state_svc.reconcile_run = AsyncMock(side_effect=lambda r, **_kw: r)
+
+    dispatcher = WorkflowDispatcher(
+        run_repository=harness.run_repo,
+        token_store=harness.token_store,
+        run_state_service=state_svc,
+        clock=lambda: FIXED_NOW,
+        reconcile_limit=reconcile_limit,
+    )
+    reconciled = await dispatcher.reconcile()
+
+    reconciled_ids = {r.id for r in reconciled}
+    assert "r-running" in reconciled_ids
+    assert len(reconciled_ids) == reconcile_limit + 1
+
+
+@pytest.mark.parametrize("failing_query", ["active", "expired"])
+async def test_reconcile_query_failure_does_not_drop_other_candidates(
+    failing_query: str,
+):
+    """A failing candidate query is rolled back and the other still runs."""
+    harness = _InMemoryQueueHarness()
+    active_run = _stale_running_run("r-running")
+    expired_run = _session_waiting_run("r-expired")
+    query_error = RuntimeError("query failed")
+    harness.run_repo.find_active_for_reconciliation = AsyncMock(
+        side_effect=query_error if failing_query == "active" else None,
+        return_value=[active_run],
+    )
+    harness.run_repo.find_expired_session_waits = AsyncMock(
+        side_effect=query_error if failing_query == "expired" else None,
+        return_value=[expired_run],
+    )
+    state_svc = MagicMock()
+    state_svc.reconcile_run = AsyncMock(side_effect=lambda r, **_kw: r)
+
+    dispatcher = WorkflowDispatcher(
+        run_repository=harness.run_repo,
+        token_store=harness.token_store,
+        run_state_service=state_svc,
+        clock=lambda: FIXED_NOW,
+    )
+    reconciled = await dispatcher.reconcile()
+
+    expected_id = "r-expired" if failing_query == "active" else "r-running"
+    assert [r.id for r in reconciled] == [expected_id]
+    harness.run_repo.db.rollback.assert_awaited_once()
+
+
 async def test_default_gcp_hooks_with_mocked_clients():
     """Tests default _create_execution, _fetch_gcp_execution, and run_default_dispatch paths."""
     from contextlib import asynccontextmanager
@@ -693,9 +812,11 @@ async def test_reconcile_concurrent_fetch_and_submit_skip():
     await dispatcher.dispatch("submit", run_reconciler=True)
     await dispatcher.dispatch("batch_submit", run_reconciler=True)
     harness.run_repo.find_active_for_reconciliation.assert_not_awaited()
+    harness.run_repo.find_expired_session_waits.assert_not_awaited()
 
     # tick runs reconcile and fetches both GCP executions concurrently
     await dispatcher.dispatch("tick", run_reconciler=True)
     harness.run_repo.find_active_for_reconciliation.assert_awaited_once()
+    harness.run_repo.find_expired_session_waits.assert_awaited_once()
     assert max_in_flight == 2
     assert state_svc.reconcile_run.await_count == 2

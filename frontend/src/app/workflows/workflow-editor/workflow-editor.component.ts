@@ -1854,19 +1854,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     this.selectedStepIndex = null;
     this.selectedNodeId = null;
     this.saveHistoryState();
-    if (isAppendToWorkflow) {
-      const templateStepIds = (template.steps || [])
-        .filter(s => s.type !== NodeTypes.USER_INPUT)
-        .map(s => s.stepId);
-      this.triggerHighlight(templateStepIds);
-
-      setTimeout(() => {
-        //this.updateEdges();
-        this.fitView();
-      }, 100);
-    } else {
-      setTimeout(() => this.updateEdges(), 100);
-    }
+    setTimeout(() => this.updateEdges(), 100);
   }
 
   insertTemplateIntoCanvas(template: WorkflowTemplate): void {

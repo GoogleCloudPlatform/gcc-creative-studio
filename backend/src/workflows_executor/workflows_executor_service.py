@@ -954,9 +954,13 @@ class WorkflowsExecutorService:
         end_image_asset_id = end_assets[0] if end_assets else None
 
         # 4. Process Reference Video & Audio (Only for models that support them)
-        supports_audio_video_refs = request.config.model in (
-            GenerationModelEnum.GEMINI_OMNI,
-            GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+        # config.model is a plain str; unknown values support no refs.
+        try:
+            video_model = GenerationModelEnum(request.config.model)
+        except ValueError:
+            video_model = None
+        supports_audio_video_refs = bool(
+            video_model and video_model.is_gemini_omni_model
         )
 
         reference_video = (

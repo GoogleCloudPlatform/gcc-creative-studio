@@ -20,7 +20,16 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from fastapi import Depends
-from sqlalchemy import Text, and_, func, literal, or_, select, update
+from sqlalchemy import (
+    DateTime,
+    Text,
+    and_,
+    func,
+    literal,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -335,35 +344,77 @@ class WorkflowRunRepository(
         *,
         limit: int = 50,
     ) -> list[WorkflowRunModel]:
-        """Returns active or session-waiting runs for reconciler inspection."""
+        """Returns ``RUNNING`` / ``STEP_FAILED`` runs, oldest first.
+
+        Session-waiting runs are fetched separately by
+        ``find_expired_session_waits`` so a backlog of parked runs can never
+        consume this budget.
+        """
         result = await self.db.execute(
             select(WorkflowRun)
             .where(
-                or_(
-                    WorkflowRun.status.in_(
-                        [
-                            WorkflowRunStatusEnum.RUNNING.value,
-                            WorkflowRunStatusEnum.STEP_FAILED.value,
-                        ]
-                    ),
-                    (WorkflowRun.status == WorkflowRunStatusEnum.QUEUED.value)
-                    & (
-                        WorkflowRun.queue_reason
-                        == QueueReasonEnum.WAITING_FOR_SESSION.value
-                    ),
+                WorkflowRun.status.in_(
+                    [
+                        WorkflowRunStatusEnum.RUNNING.value,
+                        WorkflowRunStatusEnum.STEP_FAILED.value,
+                    ]
                 )
             )
             .order_by(WorkflowRun.started_at.asc())
             .limit(limit)
             .execution_options(populate_existing=True)
         )
+        return self._to_models(result.scalars().all())
+
+    async def find_expired_session_waits(
+        self,
+        now: datetime.datetime,
+        *,
+        max_wait_seconds: int,
+        limit: int = 50,
+    ) -> list[WorkflowRunModel]:
+        """Returns ``WAITING_FOR_SESSION`` runs whose total wait has expired.
+
+        The total wait mirrors ``fold_session_wait``: the accumulated
+        ``session_wait_seconds`` plus the whole seconds elapsed since
+        ``waiting_for_session_since`` (0 when that column is NULL), each
+        clamped at 0. Most overdue runs come first.
+        """
+        elapsed_seconds = func.greatest(
+            func.trunc(
+                func.extract(
+                    "epoch",
+                    literal(now, DateTime(timezone=True))
+                    - WorkflowRun.waiting_for_session_since,
+                )
+            ),
+            0,
+        )
+        folded_wait = func.greatest(
+            func.coalesce(WorkflowRun.session_wait_seconds, 0), 0
+        ) + func.coalesce(elapsed_seconds, 0)
+        result = await self.db.execute(
+            select(WorkflowRun)
+            .where(
+                WorkflowRun.status == WorkflowRunStatusEnum.QUEUED.value,
+                WorkflowRun.queue_reason
+                == QueueReasonEnum.WAITING_FOR_SESSION.value,
+                folded_wait >= max_wait_seconds,
+            )
+            .order_by(folded_wait.desc(), WorkflowRun.started_at.asc())
+            .limit(limit)
+            .execution_options(populate_existing=True)
+        )
+        return self._to_models(result.scalars().all())
+
+    def _to_models(self, items: Sequence[Any]) -> list[WorkflowRunModel]:
         return [
             (
                 item
                 if isinstance(item, WorkflowRunModel)
                 else self.schema.model_validate(item)
             )
-            for item in result.scalars().all()
+            for item in items
         ]
 
     async def append_execution_id(
@@ -440,21 +491,30 @@ class WorkflowRunRepository(
         wanted = set(run_ids)
         if not wanted:
             return {}
-        result = await self.db.execute(
-            select(WorkflowRun.id)
+        subq = (
+            select(
+                WorkflowRun.id,
+                func.row_number()
+                .over(
+                    order_by=(
+                        func.coalesce(
+                            WorkflowRun.queued_at, WorkflowRun.started_at
+                        ).asc(),
+                        WorkflowRun.id.asc(),
+                    )
+                )
+                .label("position"),
+            )
             .where(WorkflowRun.status == WorkflowRunStatusEnum.QUEUED.value)
-            .order_by(
-                func.coalesce(
-                    WorkflowRun.queued_at, WorkflowRun.started_at
-                ).asc(),
-                WorkflowRun.id.asc(),
+            .subquery()
+        )
+        # Filter outside the subquery so positions stay global to the queue.
+        result = await self.db.execute(
+            select(subq.c.id, subq.c.position).where(
+                subq.c.id.in_(list(wanted))
             )
         )
-        positions: dict[str, int] = {}
-        for index, queued_id in enumerate(result.scalars().all(), start=1):
-            if queued_id in wanted:
-                positions[queued_id] = index
-        return positions
+        return {run_id: int(pos) for run_id, pos in result.all()}
 
     claim_dispatchable = lock_due_queued_runs
     find_stale_running = find_active_for_reconciliation

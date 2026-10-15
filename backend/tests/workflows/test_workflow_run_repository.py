@@ -265,10 +265,71 @@ async def test_list_by_workflow_and_compute_queue_positions():
 
     assert await repository.compute_queue_positions([]) == {}
     pos_res = MagicMock()
-    pos_res.scalars.return_value.all.return_value = ["other", RUN_ID]
+    pos_res.all.return_value = [(RUN_ID, 2)]
     db.execute.side_effect = [pos_res]
     positions = await repository.compute_queue_positions([RUN_ID])
     assert positions == {RUN_ID: 2}
+    positions_sql = str(_compiled(db))
+    assert "row_number" in positions_sql
+
+
+async def test_find_active_for_reconciliation_excludes_session_waits():
+    repository, db = _repository()
+    db.execute.return_value.scalars.return_value.all.return_value = []
+
+    assert await repository.find_active_for_reconciliation(limit=5) == []
+
+    compiled = _compiled(db)
+    sql = str(compiled)
+    params = list(compiled.params.values())
+    where_clause = sql.split("WHERE", 1)[1]
+    assert "workflow_runs.status IN" in where_clause
+    assert "queue_reason" not in where_clause
+    assert "ORDER BY workflow_runs.started_at ASC" in sql
+    assert ["running", "step_failed"] in params
+    assert 5 in params
+    assert repository.find_stale_running == (
+        repository.find_active_for_reconciliation
+    )
+
+
+async def test_find_expired_session_waits_filters_on_folded_wait_in_sql():
+    import datetime
+
+    now = datetime.datetime(2026, 6, 15, 12, 0, 0, tzinfo=datetime.UTC)
+    repository, db = _repository()
+    expired_row = {
+        "id": RUN_ID,
+        "workflow_id": "wf-1",
+        "user_id": 7,
+        "workspace_id": 1,
+        "status": "queued",
+        "started_at": now - datetime.timedelta(days=9),
+        "queue_reason": "WAITING_FOR_SESSION",
+        "waiting_for_session_since": now - datetime.timedelta(days=8),
+        "workflow_snapshot": {},
+    }
+    db.execute.return_value.scalars.return_value.all.return_value = [
+        expired_row
+    ]
+
+    runs = await repository.find_expired_session_waits(
+        now, max_wait_seconds=604800, limit=3
+    )
+
+    assert [run.id for run in runs] == [RUN_ID]
+    compiled = _compiled(db)
+    sql = str(compiled)
+    params = list(compiled.params.values())
+    assert "coalesce(workflow_runs.session_wait_seconds" in sql
+    assert "EXTRACT(epoch FROM" in sql
+    assert "- workflow_runs.waiting_for_session_since" in sql
+    assert "workflow_runs.queue_reason = " in sql
+    assert "DESC, workflow_runs.started_at ASC" in sql
+    assert "WAITING_FOR_SESSION" in params
+    assert now in params
+    assert 604800 in params
+    assert 3 in params
 
 
 def test_alembic_import_order_has_no_circular_import():

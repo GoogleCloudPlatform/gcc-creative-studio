@@ -345,6 +345,11 @@ class RunStateService:
         )
         self._continuation_delay_seconds = float(continuation_delay_seconds)
 
+    @property
+    def max_session_wait_seconds(self) -> int:
+        """Session-wait cap after which a parked run is expired."""
+        return self._max_session_wait_days * SECONDS_PER_DAY
+
     async def get_checkpoint(
         self,
         run_id: str,
@@ -634,7 +639,7 @@ class RunStateService:
         try:
             run = await self._lock_and_authorize(run_id, user_id)
             folded_wait = fold_session_wait(run, now)
-            max_wait_seconds = self._max_session_wait_days * SECONDS_PER_DAY
+            max_wait_seconds = self.max_session_wait_seconds
             if (
                 WorkflowRunStatusEnum(run.status)
                 is not WorkflowRunStatusEnum.QUEUED

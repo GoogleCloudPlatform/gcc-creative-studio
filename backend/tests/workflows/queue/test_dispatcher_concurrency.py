@@ -29,6 +29,7 @@ import asyncpg
 from cryptography.fernet import Fernet
 import pytest
 import pytest_asyncio
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -39,7 +40,10 @@ from sqlalchemy.ext.asyncio import (
 from src.config.config_service import config_service
 from src.database import Base
 from src.users.user_model import User  # noqa: F401
-from src.workflows.queue.run_state_service import RunStateService
+from src.workflows.queue.run_state_service import (
+    RunStateService,
+    fold_session_wait,
+)
 from src.workflows.queue.workflow_dispatcher import WorkflowDispatcher
 from src.workflows.repository.workflow_run_repository import (
     WorkflowRunRepository,
@@ -365,3 +369,186 @@ async def test_for_update_skip_locked_skips_rows_locked_by_concurrent_tx(
 
         await session_a.rollback()
         await session_b.rollback()
+
+
+MAX_SESSION_WAIT_SECONDS = 7 * 86400
+PARKED_BACKLOG_SIZE = 60
+
+
+def _run_row(run_id: str, **overrides: Any) -> WorkflowRun:
+    values: dict[str, Any] = {
+        "id": run_id,
+        "workflow_id": "wf-conc",
+        "user_id": 1,
+        "workspace_id": 1,
+        "status": WorkflowRunStatusEnum.QUEUED.value,
+        "started_at": FIXED_NOW - datetime.timedelta(hours=1),
+        "workflow_snapshot": _snapshot(),
+        "input_args": {"workspace_id": 1},
+        "execution_ids": [],
+        "step_states": {},
+        **overrides,
+    }
+    return WorkflowRun(**values)
+
+
+def _session_wait_row(
+    run_id: str,
+    *,
+    waiting_for: datetime.timedelta | None,
+    accumulated_seconds: int = 0,
+    started_at: datetime.datetime | None = None,
+) -> WorkflowRun:
+    return _run_row(
+        run_id,
+        started_at=started_at or FIXED_NOW - datetime.timedelta(days=30),
+        queue_reason=QueueReasonEnum.WAITING_FOR_SESSION.value,
+        waiting_for_session_since=(
+            None if waiting_for is None else FIXED_NOW - waiting_for
+        ),
+        session_wait_seconds=accumulated_seconds,
+    )
+
+
+async def _seed_reconciliation_runs(
+    factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Seeds an old non-expired session-wait backlog plus edge-case runs."""
+    await _seed_users_and_runs(factory, user_run_counts={1: 0})
+    async with factory() as session:
+        for idx in range(PARKED_BACKLOG_SIZE):
+            session.add(
+                _session_wait_row(
+                    f"parked-{idx:02d}",
+                    waiting_for=datetime.timedelta(days=1),
+                    started_at=(
+                        FIXED_NOW
+                        - datetime.timedelta(days=30)
+                        + datetime.timedelta(seconds=idx)
+                    ),
+                )
+            )
+        session.add_all(
+            [
+                _run_row(
+                    "running-stale",
+                    status=WorkflowRunStatusEnum.RUNNING.value,
+                    dispatched_at=FIXED_NOW - datetime.timedelta(minutes=10),
+                ),
+                _session_wait_row(
+                    "expired-by-span",
+                    waiting_for=datetime.timedelta(days=8),
+                ),
+                _session_wait_row(
+                    "expired-by-accumulated",
+                    waiting_for=datetime.timedelta(days=1),
+                    accumulated_seconds=6 * 86400 + 1,
+                ),
+                _session_wait_row(
+                    "expired-accumulated-only",
+                    waiting_for=None,
+                    accumulated_seconds=MAX_SESSION_WAIT_SECONDS,
+                ),
+                _session_wait_row(
+                    "one-second-short",
+                    waiting_for=datetime.timedelta(
+                        seconds=MAX_SESSION_WAIT_SECONDS - 1
+                    ),
+                ),
+                _run_row(
+                    "waiting-for-slot",
+                    queue_reason=QueueReasonEnum.WAITING_FOR_SLOT.value,
+                    session_wait_seconds=MAX_SESSION_WAIT_SECONDS * 2,
+                ),
+            ]
+        )
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_queries_isolate_running_runs_from_parked_backlog(
+    session_factory: async_sessionmaker[AsyncSession],
+):
+    """Old parked runs never fill the active budget; only expired waits load."""
+    await _seed_reconciliation_runs(session_factory)
+
+    async with session_factory() as session:
+        repo = WorkflowRunRepository(db=session)
+        active_runs = await repo.find_active_for_reconciliation(limit=50)
+        expired_runs = await repo.find_expired_session_waits(
+            FIXED_NOW, max_wait_seconds=MAX_SESSION_WAIT_SECONDS, limit=50
+        )
+        parked_runs = (
+            (
+                await session.execute(
+                    select(WorkflowRun).where(
+                        WorkflowRun.queue_reason
+                        == QueueReasonEnum.WAITING_FOR_SESSION.value
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    assert [run.id for run in active_runs] == ["running-stale"]
+    expired_ids = [run.id for run in expired_runs]
+    assert expired_ids == [
+        "expired-by-span",
+        "expired-by-accumulated",
+        "expired-accumulated-only",
+    ]
+    # The SQL filter agrees with the Python fold for every parked run.
+    python_expired_ids = {
+        run.id
+        for run in map(WorkflowRunModel.model_validate, parked_runs)
+        if fold_session_wait(run, FIXED_NOW) >= MAX_SESSION_WAIT_SECONDS
+    }
+    assert python_expired_ids == set(expired_ids)
+
+
+@pytest.mark.asyncio
+async def test_reconcile_handles_running_run_despite_parked_backlog(
+    session_factory: async_sessionmaker[AsyncSession],
+):
+    """reconcile() requeues a stale claim and expires overdue session waits."""
+    await _seed_reconciliation_runs(session_factory)
+
+    async with session_factory() as session:
+        run_repo = WorkflowRunRepository(db=session)
+        state_svc = RunStateService(
+            repository=run_repo,
+            dispatch_hook=None,
+            clock=lambda: FIXED_NOW,
+            max_session_wait_days=7,
+        )
+        dispatcher = WorkflowDispatcher(
+            run_repository=run_repo,
+            token_store=MagicMock(),
+            run_state_service=state_svc,
+            clock=lambda: FIXED_NOW,
+            reconcile_limit=50,
+        )
+        reconciled = await dispatcher.reconcile()
+
+    reconciled_by_id = {run.id: run for run in reconciled}
+    assert set(reconciled_by_id) == {
+        "running-stale",
+        "expired-by-span",
+        "expired-by-accumulated",
+        "expired-accumulated-only",
+    }
+
+    async with session_factory() as verify_session:
+        repo = WorkflowRunRepository(db=verify_session)
+        requeued = await repo.get_by_id("running-stale")
+        assert requeued is not None
+        assert requeued.status == WorkflowRunStatusEnum.QUEUED
+        assert requeued.queue_reason == QueueReasonEnum.WAITING_FOR_SLOT
+        expired = await repo.get_by_id("expired-accumulated-only")
+        assert expired is not None
+        assert expired.status == WorkflowRunStatusEnum.NEEDS_ATTENTION
+        still_parked = await repo.get_by_id("parked-00")
+        assert still_parked is not None
+        assert still_parked.status == WorkflowRunStatusEnum.QUEUED
+        assert still_parked.queue_reason == QueueReasonEnum.WAITING_FOR_SESSION

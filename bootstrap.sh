@@ -1116,6 +1116,23 @@ update_oauth_client() {
     success "OAuth Client URIs configured automatically."
 }
 
+# Prints a Fernet key (32 random bytes, URL-safe base64: 44 chars ending in "=").
+# Tries openssl, then python3, then /dev/urandom + base64, so hosts without openssl
+# still work. Prints nothing if every source fails or yields a malformed key.
+generate_fernet_key() {
+    local key=""
+    if command -v openssl >/dev/null 2>&1; then
+        key=$(openssl rand -base64 32 2>/dev/null | tr '+/' '-_') || key=""
+    fi
+    if [ -z "$key" ] && command -v python3 >/dev/null 2>&1; then
+        key=$(python3 -c "import base64,secrets;print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())" 2>/dev/null) || key=""
+    fi
+    if [ -z "$key" ] && [ -r /dev/urandom ] && command -v base64 >/dev/null 2>&1; then
+        key=$(head -c 32 /dev/urandom | base64 | tr -d '\n' | tr '+/' '-_') || key=""
+    fi
+    if [[ "$key" =~ ^[A-Za-z0-9_-]{43}=$ ]]; then echo "$key"; fi
+}
+
 update_secrets() {
     step 12 "Updating Remaining Secrets"; info "Navigating to $REPO_ROOT/infrastructure..."; cd "$REPO_ROOT/infrastructure"
     info "Populating values in Secret Manager..."; local TERRAFORM_OUTPUTS=$(terraform output -json 2>/dev/null || echo "{}")
@@ -1179,7 +1196,12 @@ update_secrets() {
                     info "  Existing encryption key found in Secret Manager. Preserving current key without rotating."
                     continue
                 fi
-                SECRET_VALUE=$(openssl rand -base64 32 | tr '+/' '-_')
+                SECRET_VALUE=$(generate_fernet_key)
+                if [ -z "$SECRET_VALUE" ]; then
+                    warn "  Could not auto-generate a Fernet key (no openssl, python3 or /dev/urandom + base64 available)."
+                    info "  Paste a 44-char URL-safe base64 key (32 random bytes), generated on any machine with e.g.:"
+                    info "  python3 -c \"import base64,secrets;print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())\""
+                fi
                 AUTO_DISCOVERED=true
                 ;;
             "agent_engine_resource_name") 

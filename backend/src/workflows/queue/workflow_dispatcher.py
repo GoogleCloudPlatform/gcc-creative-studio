@@ -37,6 +37,7 @@ from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
 import dataclasses
 import datetime
+import hashlib
 import inspect
 import json
 import logging
@@ -359,10 +360,13 @@ class WorkflowDispatcher:
         return dispatched_runs
 
     async def reconcile(self) -> list[WorkflowRunModel]:
-        """Synchronizes active runs with GCP and expires stale claims."""
-        active_runs = await self._run_repo.find_active_for_reconciliation(
-            limit=self._reconcile_limit
-        )
+        """Synchronizes active runs with GCP and expires stale claims.
+
+        Active (``RUNNING`` / ``STEP_FAILED``) runs and expired session waits
+        are loaded by separate queries, each with its own ``reconcile_limit``
+        budget, so parked runs cannot starve active-run reconciliation.
+        """
+        active_runs = await self._load_runs_for_reconciliation()
         if not active_runs:
             return []
 
@@ -424,6 +428,42 @@ class WorkflowDispatcher:
                     exc_info=True,
                 )
         return reconciled
+
+    async def _load_runs_for_reconciliation(self) -> list[WorkflowRunModel]:
+        """Returns active runs followed by expired session waits.
+
+        A failing query is logged and rolled back so the other one still runs.
+        """
+        now = _normalize_dt(self._clock()) or _utcnow()
+        runs: list[WorkflowRunModel] = []
+        try:
+            runs.extend(
+                await self._run_repo.find_active_for_reconciliation(
+                    limit=self._reconcile_limit
+                )
+            )
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "Failed to load active runs for reconciliation.", exc_info=True
+            )
+            await self._rollback()
+        try:
+            runs.extend(
+                await self._run_repo.find_expired_session_waits(
+                    now,
+                    max_wait_seconds=(
+                        self._run_state_service.max_session_wait_seconds
+                    ),
+                    limit=self._reconcile_limit,
+                )
+            )
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "Failed to load expired session waits for reconciliation.",
+                exc_info=True,
+            )
+            await self._rollback()
+        return runs
 
     # --- Claim phase (inside advisory-locked DB transaction) --------------
 
@@ -735,17 +775,19 @@ class WorkflowDispatcher:
             )
 
 
-# --- Process-wide throttled tick & post-auth hook wiring (§8.2, §8.5) -----
+# --- Process-wide throttled tick & post-auth hook wiring -----
 
 _last_tick_monotonic: float | None = None
-_LAST_STORED_USER_TOKEN: dict[int, str] = {}
+# SHA-256 digests (never raw tokens) of the last ID token persisted per user;
+# only used to detect token changes without keeping credentials in memory.
+_LAST_STORED_USER_TOKEN_HASH: dict[int, str] = {}
 
 
 def reset_dispatch_tick_throttle() -> None:
     """Resets the per-instance dispatch tick throttle (used by tests)."""
     global _last_tick_monotonic  # pylint: disable=global-statement
     _last_tick_monotonic = None
-    _LAST_STORED_USER_TOKEN.clear()
+    _LAST_STORED_USER_TOKEN_HASH.clear()
 
 
 def should_run_throttled_tick(
@@ -803,8 +845,13 @@ async def handle_post_auth_session(
     if user.id is None:
         return
     raw_id_token = (token or "").strip()
+    token_hash = (
+        hashlib.sha256(raw_id_token.encode()).hexdigest()
+        if raw_id_token
+        else ""
+    )
     token_changed = bool(raw_id_token) and (
-        _LAST_STORED_USER_TOKEN.get(user.id) != raw_id_token
+        _LAST_STORED_USER_TOKEN_HASH.get(user.id) != token_hash
     )
     run_tick = should_run_throttled_tick()
     if not token_changed and not run_tick:
@@ -827,7 +874,7 @@ async def handle_post_auth_session(
                 )
             await db.commit()
             if stored:
-                _LAST_STORED_USER_TOKEN[user.id] = raw_id_token
+                _LAST_STORED_USER_TOKEN_HASH[user.id] = token_hash
 
         should_dispatch = unparked > 0
         if not should_dispatch and run_tick:

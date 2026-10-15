@@ -247,10 +247,7 @@ class CreateVeoDto(BaseDto):
             item.role == AssetRoleEnum.AUDIO_REFERENCE
             for item in (self.source_media_items or [])
         )
-        if has_audio_reference and model not in (
-            GenerationModelEnum.GEMINI_OMNI,
-            GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
-        ):
+        if has_audio_reference and not model.is_gemini_omni_model:
             raise ValueError(
                 f"Model '{model.value}' does not support Audio as reference. "
                 "Audio reference is only supported by Gemini Omni models."
@@ -264,10 +261,7 @@ class CreateVeoDto(BaseDto):
             )
             for item in (self.source_media_items or [])
         )
-        if has_video_reference and model not in (
-            GenerationModelEnum.GEMINI_OMNI,
-            GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
-        ):
+        if has_video_reference and not model.is_gemini_omni_model:
             raise ValueError(
                 f"Model '{model.value}' does not support Video as reference. "
                 "Video reference is only supported by Gemini Omni models."

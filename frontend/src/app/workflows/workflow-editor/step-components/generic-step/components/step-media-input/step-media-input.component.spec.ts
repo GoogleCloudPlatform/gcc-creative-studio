@@ -19,7 +19,9 @@ import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {FormControl, ReactiveFormsModule} from '@angular/forms';
 import {MatDialog} from '@angular/material/dialog';
 import {MatMenuModule} from '@angular/material/menu';
-import {of} from 'rxjs';
+import {MatSnackBar} from '@angular/material/snack-bar';
+import {of, throwError} from 'rxjs';
+import {AssetTypeEnum} from '../../../../../../admin/source-assets-management/source-asset.model';
 import {SourceAssetService} from '../../../../../../common/services/source-asset.service';
 import {StepMediaInputComponent} from './step-media-input.component';
 
@@ -62,6 +64,10 @@ describe('StepMediaInputComponent', () => {
       providers: [
         {provide: SourceAssetService, useValue: mockSourceAssetService},
         {provide: MatDialog, useValue: mockDialog},
+        {
+          provide: MatSnackBar,
+          useValue: jasmine.createSpyObj('MatSnackBar', ['open']),
+        },
       ],
       schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();
@@ -393,11 +399,9 @@ describe('StepMediaInputComponent', () => {
 
       component.onReferenceImageDrop(mockDropEvent);
 
-      expect(mockSourceAssetService.uploadAsset).toHaveBeenCalledWith(
+      expect(mockSourceAssetService.uploadAsset).toHaveBeenCalledOnceWith(
         mockFile,
-        jasmine.objectContaining({
-          assetType: 'generic_image',
-        }),
+        {aspectRatio: 'other', assetType: AssetTypeEnum.GENERIC_IMAGE},
       );
       expect(component.control.value).toEqual([
         {
@@ -428,11 +432,9 @@ describe('StepMediaInputComponent', () => {
 
       component.onReferenceImageDrop(mockDropEvent);
 
-      expect(mockSourceAssetService.uploadAsset).toHaveBeenCalledWith(
+      expect(mockSourceAssetService.uploadAsset).toHaveBeenCalledOnceWith(
         mockFile,
-        jasmine.objectContaining({
-          assetType: 'generic_video',
-        }),
+        {assetType: AssetTypeEnum.GENERIC_VIDEO},
       );
       expect(component.control.value).toEqual([
         {
@@ -440,6 +442,32 @@ describe('StepMediaInputComponent', () => {
           previewUrl: 'https://example.com/video_thumb.png',
         },
       ]);
+    });
+
+    it('should log the error and not add an item when the upload fails', () => {
+      component.type = 'image';
+      component.control.setValue(null);
+      const mockFile = new File(['image content'], 'test.png', {
+        type: 'image/png',
+      });
+      const mockDropEvent = {
+        preventDefault: jasmine.createSpy('preventDefault'),
+        dataTransfer: {files: [mockFile]},
+      } as unknown as DragEvent;
+      const uploadError = new Error('Upload failed');
+      const consoleErrorSpy = spyOn(console, 'error');
+      mockSourceAssetService.uploadAsset.and.returnValue(
+        throwError(() => uploadError),
+      );
+
+      component.onReferenceImageDrop(mockDropEvent);
+
+      expect(mockSourceAssetService.uploadAsset).toHaveBeenCalledTimes(1);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        'Upload dropped media error:',
+        uploadError,
+      );
+      expect(component.control.value).toBeNull();
     });
   });
 

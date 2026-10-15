@@ -300,7 +300,7 @@ export class StepExecutionDetailsComponent implements OnInit {
     const id = key.slice(MEDIA_KEY_PREFIX.length);
     const urlTree = this.router.createUrlTree(['/gallery', id]);
     const url = this.router.serializeUrl(urlTree);
-    window.open(url, '_blank');
+    window.open(url, '_blank', 'noopener,noreferrer');
   }
 
   private getKeyFromValue(value: any): string | null {

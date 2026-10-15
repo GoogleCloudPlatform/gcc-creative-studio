@@ -276,3 +276,40 @@ def test_validate_video_reference_by_model():
     assert "Video reference is only supported by Gemini Omni models" in str(
         exc_info.value
     )
+
+
+OMNI_MODELS = [
+    GenerationModelEnum.GEMINI_OMNI,
+    GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+    GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+]
+
+
+@pytest.mark.parametrize("model", OMNI_MODELS)
+def test_audio_and_video_references_accepted_for_every_omni_model(model):
+    dto = CreateVeoDto(
+        prompt="Test Omni with audio and video",
+        workspace_id=1,
+        generation_model=model,
+        reference_video={"id": 102, "type": "media_item"},
+        reference_audio={"id": 101, "type": "media_item"},
+    )
+    assert dto.reference_video.id == 102
+    assert dto.reference_audio.id == 101
+
+
+@pytest.mark.parametrize("model", OMNI_MODELS)
+def test_is_gemini_omni_model_true_for_omni(model):
+    assert model.is_gemini_omni_model
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        GenerationModelEnum.VEO_3_1_GENERATE_001,
+        GenerationModelEnum.VEO_3_1_LITE_PREVIEW,
+        GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE,
+    ],
+)
+def test_is_gemini_omni_model_false_for_non_omni(model):
+    assert not model.is_gemini_omni_model
