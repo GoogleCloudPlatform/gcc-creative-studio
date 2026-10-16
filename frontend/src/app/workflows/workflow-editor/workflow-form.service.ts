@@ -14,18 +14,70 @@
  * limitations under the License.
  */
 
-import {Injectable, PLATFORM_ID, inject} from '@angular/core';
+import {Injectable, PLATFORM_ID, inject, signal} from '@angular/core';
 import {isPlatformBrowser} from '@angular/common';
-import {FormArray, FormBuilder, FormGroup, Validators} from '@angular/forms';
-import {BehaviorSubject} from 'rxjs';
-import {pairwise, startWith} from 'rxjs/operators';
-import {STEP_CONFIGS_MAP} from '../shared/step-configs.map';
 import {
+  AbstractControl,
+  FormArray,
+  FormBuilder,
+  FormGroup,
+  Validators,
+} from '@angular/forms';
+import {BehaviorSubject, Observable, Subject} from 'rxjs';
+import {distinctUntilChanged, map, pairwise, startWith} from 'rxjs/operators';
+import {STEP_CONFIGS_MAP} from '../shared/step-configs.map';
+import {isPortTypeCompatible} from '../utils/workflow-magnetic.util';
+import {
+  isStepOutputReference,
+  labelToName,
+  nameToLabel,
+} from '../utils/workflow-step.util';
+import {
+  DynamicStepRecord,
+  LoopItemType,
+  LoopMode,
   NodeTypes,
+  ParameterDefinition,
+  ParameterRemapEntry,
+  Point,
   StepStatusEnum,
+  TemplateInsertionResult,
   WorkflowBase,
   WorkflowModel,
+  WorkflowTemplate,
 } from '../workflow.models';
+import {
+  DEFAULT_LOOP_SETTINGS,
+  LOOP_CURRENT_ITEM_PORT,
+  LOOP_ITEMS_TEXT_INPUT,
+  LOOP_ITEM_TYPE_SETTING,
+  LOOP_LINKED_ITEMS_INPUT,
+  LOOP_MODE_LINKED_ITEMS,
+  LOOP_MODE_SETTING,
+  LOOP_MODE_TEXT_INPUT,
+  getLoopCurrentItemType,
+  toLoopItemType,
+  toLoopMode,
+} from './step-components/step-configs/loop-step.config';
+import {
+  StepConfig,
+  StepOutputType,
+} from './step-components/generic-step/step.model';
+
+const DEFAULT_NODE_POSITION: Point = {x: 100, y: 100};
+
+type NodePort = {
+  stepId: string;
+  output: string;
+  _definitionId: string;
+  step: NodeTypes;
+};
+
+/** Loop settings that decide which source input may hold links. */
+interface LoopSourceState {
+  mode: LoopMode;
+  itemType: LoopItemType;
+}
 
 @Injectable()
 export class WorkflowFormService {
@@ -36,6 +88,14 @@ export class WorkflowFormService {
   public availableOutputsPerStep$ =
     this._availableOutputsPerStep.asObservable();
 
+  /** True while a workflow (or a history snapshot) is being patched into the form. */
+  private readonly isPatchingData = signal<boolean>(false);
+
+  private readonly loopLinksRemovedSubject = new Subject<void>();
+  /** Emits after hidden Loop source links were removed, so wires can be redrawn. */
+  readonly loopLinksRemoved$: Observable<void> =
+    this.loopLinksRemovedSubject.asObservable();
+
   constructor(private fb: FormBuilder) {}
 
   /**
@@ -45,7 +105,10 @@ export class WorkflowFormService {
   initForm(data?: WorkflowModel | WorkflowBase): FormGroup {
     this.workflowForm = this.fb.group({
       id: [data && 'id' in data ? data.id : ''],
-      name: [data?.name || 'Untitled Workflow', Validators.required],
+      name: [
+        data?.name ?? 'Untitled Workflow',
+        [Validators.required, Validators.pattern(/.*\S.*/)],
+      ],
       description: [data?.description || ''],
       userId: [data && 'userId' in data ? data.userId : ''],
       // User Input Step is special, so we initialize it specifically
@@ -53,6 +116,8 @@ export class WorkflowFormService {
         stepId: [NodeTypes.USER_INPUT],
         type: [NodeTypes.USER_INPUT],
         status: [StepStatusEnum.IDLE],
+        position: [{...DEFAULT_NODE_POSITION}],
+        collapsed: [false],
         outputs: this.fb.group({}),
         settings: this.fb.group({
           definitions: this.fb.array([]),
@@ -65,8 +130,8 @@ export class WorkflowFormService {
       this.patchData(data);
     } else {
       // Default initialization for new workflows
-      this.addOutputDefinition('User_Text_Input', 'text');
-      this.addOutputDefinition('User_Image_Input', 'image');
+      this.addOutputDefinition('User Text Input', 'text');
+      this.addOutputDefinition('User Image Input', 'image');
     }
 
     // Subscribe to output definition changes for renaming
@@ -111,13 +176,226 @@ export class WorkflowFormService {
       stepId: [safeStepData.stepId],
       type: [safeStepData.type],
       status: [safeStepData.status || StepStatusEnum.IDLE],
+      position: [safeStepData.position || {...DEFAULT_NODE_POSITION}],
+      collapsed: [!!safeStepData.collapsed],
       inputs: this.createFormGroupFromData(safeStepData.inputs),
       outputs: this.createFormGroupFromData(safeStepData.outputs),
       settings: this.createFormGroupFromData(safeStepData.settings),
     });
 
     this.stepsArray.push(stepGroup);
+    if (safeStepData.type === NodeTypes.LOOP) {
+      this.watchLoopOutputType(stepGroup);
+      this.watchLoopSourceCleanup(stepGroup);
+    }
     this.updateAvailableOutputs();
+  }
+
+  /**
+   * Resolves the port type of a step output: user input definitions, the
+   * dynamic Loop `current_item` type, or the static step config type.
+   */
+  getOutputType(stepId: string, outputName: string): string {
+    if (stepId === NodeTypes.USER_INPUT) {
+      const def = this.outputDefinitionsArray.controls.find(
+        c => c.get('name')?.value === outputName,
+      );
+      return def?.get('type')?.value || 'text';
+    }
+    const stepControl = this.findStepControl(stepId);
+    const type = stepControl?.get('type')?.value as NodeTypes | undefined;
+    if (!type) return '';
+    if (type === NodeTypes.LOOP && outputName === LOOP_CURRENT_ITEM_PORT) {
+      return getLoopCurrentItemType(stepControl?.get('settings')?.value);
+    }
+    const config = (STEP_CONFIGS_MAP as Partial<Record<NodeTypes, StepConfig>>)[
+      type
+    ];
+    return config?.outputs.find(o => o.name === outputName)?.type || '';
+  }
+
+  private findStepControl(stepId: string): AbstractControl | null {
+    return (
+      this.stepsArray.controls.find(c => c.get('stepId')?.value === stepId) ??
+      null
+    );
+  }
+
+  /**
+   * The Loop `current_item` output type depends on its settings (mode and
+   * item_type). Whenever it changes, refresh available outputs and drop
+   * downstream links that are no longer type-compatible (spec §5.2.9).
+   */
+  private watchLoopOutputType(stepGroup: FormGroup): void {
+    const settings = stepGroup.get('settings') as FormGroup;
+    settings.valueChanges
+      .pipe(
+        map((value: DynamicStepRecord) => getLoopCurrentItemType(value)),
+        distinctUntilChanged(),
+      )
+      .subscribe(newType => {
+        this.pruneIncompatibleLoopLinks(
+          stepGroup.get('stepId')?.value as string,
+          newType,
+        );
+        this.updateAvailableOutputs();
+      });
+  }
+
+  /**
+   * Removes hidden Loop source links that would otherwise stay as invisible
+   * dependencies when the user changes the source mode or `item_type`.
+   * Only user edits are handled: nothing is touched in read-only mode or while
+   * a workflow is being loaded. Undo restores the links from the history
+   * snapshot.
+   */
+  private watchLoopSourceCleanup(stepGroup: FormGroup): void {
+    const settings = stepGroup.get('settings') as FormGroup;
+    const readSource = (): LoopSourceState => {
+      const raw: DynamicStepRecord = settings.getRawValue();
+      return {
+        mode: toLoopMode(raw[LOOP_MODE_SETTING]),
+        itemType: toLoopItemType(raw[LOOP_ITEM_TYPE_SETTING]),
+      };
+    };
+    settings.valueChanges
+      .pipe(
+        map(() => readSource()),
+        startWith(readSource()),
+        distinctUntilChanged(
+          (a, b) => a.mode === b.mode && a.itemType === b.itemType,
+        ),
+        pairwise(),
+      )
+      .subscribe(([previous, current]) => {
+        if (this.isPatchingData() || stepGroup.disabled) return;
+        if (this.cleanupLoopSource(stepGroup, previous, current)) {
+          this.updateAvailableOutputs();
+          this.loopLinksRemovedSubject.next();
+        }
+      });
+  }
+
+  /** Applies the Loop source cleanup rules. Returns true when a link was removed. */
+  private cleanupLoopSource(
+    stepGroup: FormGroup,
+    previous: LoopSourceState,
+    current: LoopSourceState,
+  ): boolean {
+    const inputs = stepGroup.get('inputs') as FormGroup | null;
+    if (!inputs) return false;
+    let removed = false;
+    if (
+      previous.mode === LOOP_MODE_LINKED_ITEMS &&
+      current.mode !== LOOP_MODE_LINKED_ITEMS
+    ) {
+      removed = this.clearLoopLinkedItems(inputs) || removed;
+    }
+    if (
+      previous.mode === LOOP_MODE_TEXT_INPUT &&
+      current.mode !== LOOP_MODE_TEXT_INPUT
+    ) {
+      removed = this.clearStaleLoopTextLink(inputs) || removed;
+    }
+    if (
+      current.mode === LOOP_MODE_LINKED_ITEMS &&
+      previous.itemType !== current.itemType
+    ) {
+      removed =
+        this.pruneIncompatibleLoopInputs(inputs, current.itemType) || removed;
+    }
+    return removed;
+  }
+
+  /** Clears every `linked_items` entry, wires and gallery picks (leaving Linked Items mode). */
+  private clearLoopLinkedItems(inputs: FormGroup): boolean {
+    const control = inputs.get(LOOP_LINKED_ITEMS_INPUT);
+    if (!control || control.value === null) return false;
+    control.setValue(null);
+    control.markAsDirty();
+    return true;
+  }
+
+  /**
+   * Clears a linked `items_text` (leaving Text Input mode). A fixed string is
+   * kept: it creates no dependency and is only sent in Text Input mode.
+   */
+  private clearStaleLoopTextLink(inputs: FormGroup): boolean {
+    const control = inputs.get(LOOP_ITEMS_TEXT_INPUT);
+    if (!control || !isStepOutputReference(control.value)) return false;
+    control.setValue(null);
+    control.markAsDirty();
+    return true;
+  }
+
+  /**
+   * Drops `linked_items` entries that no longer match `item_type`: wired refs
+   * whose source output type differs, and every gallery pick. A pick stores no
+   * media type, but the gallery picker only offers media of the `item_type`
+   * active when it was picked, so after an `item_type` change every pick is of
+   * the previous, now wrong, type.
+   */
+  private pruneIncompatibleLoopInputs(
+    inputs: FormGroup,
+    itemType: LoopItemType,
+  ): boolean {
+    const control = inputs.get(LOOP_LINKED_ITEMS_INPUT);
+    const value: unknown = control?.value;
+    if (!control || !Array.isArray(value)) return false;
+    const kept = value.filter(
+      item =>
+        isStepOutputReference(item) &&
+        isPortTypeCompatible(
+          this.getOutputType(item.step, item.output),
+          itemType,
+        ),
+    );
+    if (kept.length === value.length) return false;
+    control.setValue(kept.length > 0 ? kept : null);
+    control.markAsDirty();
+    return true;
+  }
+
+  /** Removes links to a Loop's `current_item` whose target type no longer matches. */
+  private pruneIncompatibleLoopLinks(
+    loopStepId: string,
+    newType: StepOutputType,
+  ): void {
+    const isLoopItemRef = (v: unknown): boolean => {
+      if (!v || typeof v !== 'object') return false;
+      const ref = v as Record<string, unknown>;
+      return (
+        ref['step'] === loopStepId && ref['output'] === LOOP_CURRENT_ITEM_PORT
+      );
+    };
+
+    this.stepsArray.controls.forEach(stepControl => {
+      const stepType = stepControl.get('type')?.value as NodeTypes;
+      const config = (
+        STEP_CONFIGS_MAP as Partial<Record<NodeTypes, StepConfig>>
+      )[stepType];
+      const inputs = stepControl.get('inputs') as FormGroup | null;
+      if (!config || !inputs) return;
+
+      Object.keys(inputs.controls).forEach(inputKey => {
+        const inputConfig = config.inputs.find(i => i.name === inputKey);
+        if (!inputConfig || isPortTypeCompatible(newType, inputConfig.type)) {
+          return;
+        }
+        const control = inputs.get(inputKey);
+        const value: unknown = control?.value;
+        if (Array.isArray(value)) {
+          const filtered = value.filter(v => !isLoopItemRef(v));
+          if (filtered.length !== value.length) {
+            control?.setValue(filtered);
+            control?.markAsDirty();
+          }
+        } else if (isLoopItemRef(value)) {
+          control?.setValue(null);
+          control?.markAsDirty();
+        }
+      });
+    });
   }
 
   deleteStep(index: number): string | null {
@@ -186,30 +464,57 @@ export class WorkflowFormService {
     currentDefinitions.forEach(newDef => {
       const oldDef = prevMap.get(newDef.id);
       if (oldDef && oldDef.name && newDef.name && oldDef.name !== newDef.name) {
-        this.updateStepReferences(newDef.id, newDef.name);
+        this.updateStepReferences(
+          this.stepsArray.controls,
+          newDef.id,
+          newDef.name,
+        );
       }
     });
   }
 
-  private updateStepReferences(definitionId: string, newName: string) {
-    this.stepsArray.controls.forEach(stepControl => {
+  public updateStepReferences(
+    controls: AbstractControl[],
+    definitionId: string,
+    newName: string,
+  ) {
+    controls.forEach(stepControl => {
       const inputs = stepControl.get('inputs') as FormGroup;
       if (!inputs) return;
 
       Object.keys(inputs.controls).forEach(inputKey => {
         const control = inputs.get(inputKey);
-        const value = control?.value;
-        if (
-          value &&
-          typeof value === 'object' &&
-          value.step === NodeTypes.USER_INPUT &&
-          value._definitionId === definitionId
-        ) {
-          // Update the output name in the reference
+        const value = control?.value as NodePort | NodePort[];
+        if (Array.isArray(value)) {
+          let updated = false;
+          const newValue = value.map((item: NodePort) => {
+            if (this.isUserInputAndHasDefinitionId(item, definitionId)) {
+              updated = true;
+              return {...item, output: newName};
+            }
+            return item;
+          });
+          if (updated) {
+            control?.setValue(newValue);
+          }
+        } else if (this.isUserInputAndHasDefinitionId(value, definitionId)) {
           control?.setValue({...value, output: newName});
         }
       });
     });
+  }
+
+  private isUserInputAndHasDefinitionId(
+    item: NodePort,
+    definitionId: string,
+  ): boolean {
+    return this.isUserInput(item) && item._definitionId === definitionId;
+  }
+
+  private isUserInput(item: NodePort): boolean {
+    return (
+      item && typeof item === 'object' && item.step === NodeTypes.USER_INPUT
+    );
   }
 
   private updateAvailableOutputs(): void {
@@ -220,7 +525,7 @@ export class WorkflowFormService {
       const val = control.value;
       if (val.name && val.type) {
         userInputOutputs.push({
-          label: `User Input: ${val.name} `,
+          label: `User Input: ${nameToLabel(val.name)} `,
           value: {
             step: 'user_input',
             output: val.name,
@@ -233,24 +538,31 @@ export class WorkflowFormService {
 
     const steps = this.stepsArray.controls;
     const availableOutputsPerStep = steps.map((_, currentStepIndex) => {
-      const previousSteps = steps.slice(0, currentStepIndex);
+      // Allow connecting to any node except itself to avoid immediate self-loops
+      const otherSteps = steps.filter((_, idx) => idx !== currentStepIndex);
       const availableOutputs: any[] = [...userInputOutputs];
 
-      previousSteps.forEach((stepControl, stepIndex) => {
+      otherSteps.forEach(stepControl => {
         const step = stepControl.value;
+        const stepIndex = steps.indexOf(stepControl);
 
         // Access static config
         const stepConfig = (STEP_CONFIGS_MAP as any)[step.type];
         if (!stepConfig) return;
 
         stepConfig.outputs.forEach((output: any) => {
+          const isLoopItem =
+            step.type === NodeTypes.LOOP &&
+            output.name === LOOP_CURRENT_ITEM_PORT;
           availableOutputs.push({
             label: `Step ${stepIndex + 1}: ${output.label} `,
             value: {
               step: step.stepId,
               output: output.name,
             },
-            type: output.type,
+            type: isLoopItem
+              ? getLoopCurrentItemType(step.settings ?? null)
+              : output.type,
           });
         });
       });
@@ -264,6 +576,15 @@ export class WorkflowFormService {
   // --- Data Patching ---
 
   patchData(data: any): void {
+    this.isPatchingData.set(true);
+    try {
+      this.applyPatchData(data);
+    } finally {
+      this.isPatchingData.set(false);
+    }
+  }
+
+  private applyPatchData(data: any): void {
     const userInputStep =
       data.userInput ||
       data.steps?.find((s: any) => s.type === NodeTypes.USER_INPUT);
@@ -278,27 +599,45 @@ export class WorkflowFormService {
       userInput: {
         ...(userInputStep || {}),
         status: StepStatusEnum.IDLE,
+        collapsed: !!userInputStep?.collapsed,
       },
     });
 
     // 2. Rebuild User Input Definitions & Map IDs
     this.outputDefinitionsArray.clear();
     const outputIdMap = new Map<string, string>();
+    const outputNameMap = new Map<string, string>();
 
     if (
       userInputStep?.settings?.definitions &&
       userInputStep.settings.definitions.length > 0
     ) {
       userInputStep.settings.definitions.forEach((def: any) => {
-        this.addOutputDefinition(def.name, def.type, def.id);
+        const id = def.id || this.generateId();
+        const displayName = nameToLabel(def.name);
+        const identifier = labelToName(displayName);
+        outputIdMap.set(identifier, id);
+        outputIdMap.set(displayName, id);
+        outputIdMap.set(def.name, id);
+        outputNameMap.set(identifier, displayName);
+        outputNameMap.set(displayName, displayName);
+        outputNameMap.set(def.name, displayName);
+        this.addOutputDefinition(displayName, def.type, id);
       });
     } else if (userInputStep?.outputs) {
       Object.entries(userInputStep.outputs).forEach(
         ([key, value]: [string, any]) => {
           // Reverse engineer the ID and Name from the stored output
           const id = this.generateId();
+          const displayName = nameToLabel(key);
+          const identifier = labelToName(displayName);
           outputIdMap.set(key, id);
-          this.addOutputDefinition(this.toDisplay(key), value.type, id);
+          outputIdMap.set(identifier, id);
+          outputIdMap.set(displayName, id);
+          outputNameMap.set(key, displayName);
+          outputNameMap.set(identifier, displayName);
+          outputNameMap.set(displayName, displayName);
+          this.addOutputDefinition(displayName, value.type, id);
         },
       );
     }
@@ -306,28 +645,32 @@ export class WorkflowFormService {
     // 3. Rebuild Steps
     this.stepsArray.clear();
     otherSteps.forEach((step: any) => {
-      const stepData = {...step, status: StepStatusEnum.IDLE};
+      const stepData = {
+        ...step,
+        status: StepStatusEnum.IDLE,
+        collapsed: !!step.collapsed,
+      };
 
       // Backfill _definitionId into inputs and transform output names to display names
       // if they reference user input
       if (stepData.inputs) {
         const newInputs = {...stepData.inputs};
         let changed = false;
-        Object.values(newInputs).forEach((input: any) => {
-          // Check if it's a user input reference
-          if (
-            input &&
-            typeof input === 'object' &&
-            input.step === NodeTypes.USER_INPUT &&
-            input.output
-          ) {
-            // If we have a mapped ID for this user output
-            if (outputIdMap.has(input.output)) {
-              input._definitionId = outputIdMap.get(input.output);
-              input.output = this.toDisplay(input.output);
-              changed = true;
-            }
+
+        const transformRef = (item: NodePort) => {
+          if (this.isUserInput(item) && item.output) {
+            const definitionId = outputIdMap.get(item.output);
+            const newName = outputNameMap.get(item.output);
+            if (definitionId) item._definitionId = definitionId;
+            item.output = newName ? newName : nameToLabel(item.output);
+            changed = true;
           }
+        };
+
+        Object.keys(newInputs).forEach(key => {
+          const val = newInputs[key];
+          const values = Array.isArray(val) ? val : [val];
+          values.forEach(item => transformRef(item));
         });
         if (changed) {
           stepData.inputs = newInputs;
@@ -341,6 +684,258 @@ export class WorkflowFormService {
     this.syncOutputs();
   }
 
+  /**
+   * Merges a WorkflowTemplate into the current active workflow form state.
+   * Deduplicates user input parameter names (e.g., user_param_2) and step IDs (e.g., step_id_2),
+   * remaps internal step references, and appends the newly inserted steps.
+   */
+  insertTemplateData(
+    template: WorkflowTemplate,
+    existingStepIds: Set<string>,
+  ): TemplateInsertionResult {
+    const insertedStepIds: string[] = [];
+    const addedDefinitionIds: string[] = [];
+    const stepPositionMap: Record<string, Point> = {};
+
+    const userInputStep = template.steps?.find(
+      s => s.type === NodeTypes.USER_INPUT,
+    );
+    const templateSteps =
+      template.steps?.filter(s => s.type !== NodeTypes.USER_INPUT) || [];
+
+    // 1. Merge & Deduplicate User Input Definitions
+    const paramRemapTable = new Map<string, ParameterRemapEntry>();
+
+    if (
+      userInputStep?.settings?.['definitions'] &&
+      Array.isArray(userInputStep.settings['definitions']) &&
+      userInputStep.settings['definitions'].length > 0
+    ) {
+      const definitions = userInputStep.settings[
+        'definitions'
+      ] as ParameterDefinition[];
+      definitions.forEach(def => {
+        const rawName = def.name;
+        const displayName = nameToLabel(rawName);
+        const finalName = this.getUniqueParamName(displayName);
+        const newDefId = this.generateId();
+
+        this.addOutputDefinition(finalName, def.type || 'text', newDefId);
+        addedDefinitionIds.push(newDefId);
+
+        const remapEntry: ParameterRemapEntry = {
+          newDefId,
+          finalName,
+        };
+        if (def.id) {
+          paramRemapTable.set(def.id, remapEntry);
+        }
+        paramRemapTable.set(rawName, remapEntry);
+        paramRemapTable.set(displayName, remapEntry);
+        paramRemapTable.set(labelToName(displayName), remapEntry);
+        paramRemapTable.set(rawName.trim().toLowerCase(), remapEntry);
+      });
+    } else if (userInputStep?.outputs) {
+      Object.entries(userInputStep.outputs).forEach(([key, value]) => {
+        const displayName = nameToLabel(key);
+        const finalName = this.getUniqueParamName(displayName);
+        const newDefId = this.generateId();
+        const type =
+          value && typeof value === 'object' && 'type' in value
+            ? String((value as {type: unknown}).type)
+            : 'text';
+
+        this.addOutputDefinition(finalName, type, newDefId);
+        addedDefinitionIds.push(newDefId);
+
+        const remapEntry: ParameterRemapEntry = {
+          newDefId,
+          finalName,
+        };
+        paramRemapTable.set(key, remapEntry);
+        paramRemapTable.set(displayName, remapEntry);
+        paramRemapTable.set(labelToName(displayName), remapEntry);
+        paramRemapTable.set(key.trim().toLowerCase(), remapEntry);
+      });
+    }
+
+    // 2. Deduplicate Step IDs
+    const stepIdRemap = new Map<string, string>();
+    const allKnownStepIds = new Set<string>(existingStepIds);
+
+    templateSteps.forEach((step, idx) => {
+      const originalStepId = step.stepId || `${step.type}_${idx + 1}`;
+      const uniqueStepId = this.getUniqueStepId(
+        originalStepId,
+        allKnownStepIds,
+      );
+      allKnownStepIds.add(uniqueStepId);
+      stepIdRemap.set(originalStepId, uniqueStepId);
+    });
+
+    // 3. Clone, Remap Inputs, and Add Each Step
+    templateSteps.forEach((step, idx) => {
+      const originalStepId = step.stepId || `${step.type}_${idx + 1}`;
+      const newStepId = stepIdRemap.get(originalStepId) || originalStepId;
+      insertedStepIds.push(newStepId);
+
+      const fallbackPos: Point = {x: 100 + idx * 300, y: 100};
+      const originalPos: Point =
+        step.position &&
+        typeof step.position.x === 'number' &&
+        typeof step.position.y === 'number'
+          ? {x: step.position.x, y: step.position.y}
+          : fallbackPos;
+
+      stepPositionMap[newStepId] = originalPos;
+
+      const remappedInputs: Record<string, unknown> = {};
+      if (step.inputs && typeof step.inputs === 'object') {
+        Object.entries(step.inputs).forEach(([inputKey, inputVal]) => {
+          remappedInputs[inputKey] = this.remapStepInputValue(
+            inputVal,
+            paramRemapTable,
+            stepIdRemap,
+          );
+        });
+      }
+
+      const newStepData = {
+        ...step,
+        stepId: newStepId,
+        status: StepStatusEnum.IDLE,
+        position: {...originalPos},
+        collapsed: !!step.collapsed,
+        inputs: remappedInputs,
+      };
+
+      this.addStep(step.type, newStepData);
+    });
+
+    this.syncOutputs();
+
+    return {
+      insertedStepIds,
+      addedDefinitionIds,
+      stepPositionMap,
+    };
+  }
+
+  getUniqueParamName(baseName: string): string {
+    const existingNames = new Set<string>();
+    if (this.outputDefinitionsArray) {
+      this.outputDefinitionsArray.controls.forEach(control => {
+        const rawName = control.get('name')?.value as string | null;
+        if (rawName) {
+          existingNames.add(rawName.trim().toLowerCase());
+          existingNames.add(labelToName(rawName).toLowerCase());
+          existingNames.add(nameToLabel(rawName).trim().toLowerCase());
+        }
+      });
+    }
+
+    const isCollision = (candidate: string): boolean => {
+      const lower = candidate.trim().toLowerCase();
+      const normalized = labelToName(candidate).toLowerCase();
+      const label = nameToLabel(candidate).trim().toLowerCase();
+      return (
+        existingNames.has(lower) ||
+        existingNames.has(normalized) ||
+        existingNames.has(label)
+      );
+    };
+
+    if (!isCollision(baseName)) {
+      return baseName;
+    }
+
+    const cleanBase = baseName.replace(/_\d+$/, '');
+    let k = 2;
+    let candidate = `${cleanBase}_${k}`;
+    while (isCollision(candidate)) {
+      k++;
+      candidate = `${cleanBase}_${k}`;
+    }
+    return candidate;
+  }
+
+  getUniqueStepId(rawStepId: string, existingStepIds: Set<string>): string {
+    // '#' is reserved for loop iteration keys ("<step_id>#<n>").
+    const baseStepId = rawStepId.replace(/#/g, '_');
+    if (!existingStepIds.has(baseStepId)) {
+      return baseStepId;
+    }
+
+    const cleanBase = baseStepId.replace(/_\d+$/, '');
+    let k = 2;
+    let candidate = `${cleanBase}_${k}`;
+    while (existingStepIds.has(candidate)) {
+      k++;
+      candidate = `${cleanBase}_${k}`;
+    }
+    return candidate;
+  }
+
+  private remapStepInputValue(
+    inputVal: unknown,
+    paramRemapTable: Map<string, ParameterRemapEntry>,
+    stepIdRemap: Map<string, string>,
+  ): unknown {
+    if (Array.isArray(inputVal)) {
+      return inputVal.map(item =>
+        this.remapSingleInputItem(item, paramRemapTable, stepIdRemap),
+      );
+    }
+    return this.remapSingleInputItem(inputVal, paramRemapTable, stepIdRemap);
+  }
+
+  private remapSingleInputItem(
+    item: unknown,
+    paramRemapTable: Map<string, ParameterRemapEntry>,
+    stepIdRemap: Map<string, string>,
+  ): unknown {
+    if (!item || typeof item !== 'object') {
+      return item;
+    }
+    const ref = item as Record<string, unknown>;
+    if (ref['step'] === NodeTypes.USER_INPUT) {
+      const defIdKey =
+        typeof ref['_definitionId'] === 'string' ? ref['_definitionId'] : '';
+      const outputKey = typeof ref['output'] === 'string' ? ref['output'] : '';
+
+      const remapped =
+        (defIdKey ? paramRemapTable.get(defIdKey) : null) ||
+        (outputKey ? paramRemapTable.get(outputKey) : null) ||
+        (outputKey ? paramRemapTable.get(nameToLabel(outputKey)) : null) ||
+        (outputKey ? paramRemapTable.get(labelToName(outputKey)) : null) ||
+        (outputKey
+          ? paramRemapTable.get(outputKey.trim().toLowerCase())
+          : null);
+
+      if (remapped) {
+        return {
+          ...ref,
+          step: NodeTypes.USER_INPUT,
+          output: remapped.finalName,
+          _definitionId: remapped.newDefId,
+        };
+      }
+      return {
+        ...ref,
+        output: outputKey ? nameToLabel(outputKey) : ref['output'],
+      };
+    }
+
+    if (typeof ref['step'] === 'string' && stepIdRemap.has(ref['step'])) {
+      return {
+        ...ref,
+        step: stepIdRemap.get(ref['step']),
+      };
+    }
+
+    return item;
+  }
+
   // --- Helpers ---
 
   private generateDefaultStepData(type: string): any {
@@ -348,26 +943,25 @@ export class WorkflowFormService {
       stepId: `${type}_${Date.now()}`,
       type: type,
       status: StepStatusEnum.IDLE,
+      position: {...DEFAULT_NODE_POSITION},
+      collapsed: false,
       inputs: {},
       outputs: {},
       settings: {},
     };
 
-    const config = (STEP_CONFIGS_MAP as any)[type];
-    if (config?.settings) {
-      config.settings.forEach((s: any) => {
-        if (s.defaultValue !== undefined) {
-          base.settings[s.name] = s.defaultValue;
-        }
-      });
+    // Default settings logic
+    if (type === NodeTypes.IMAGE) {
+      base.settings = {
+        mode: 'generate_image',
+        model: 'gemini-3.1-flash-image',
+        aspect_ratio: '1:1',
+        resolution: '1K',
+        brand_guidelines: false,
+      };
+    } else if (type === NodeTypes.LOOP) {
+      base.settings = {...DEFAULT_LOOP_SETTINGS};
     }
-
-    if (config?.inputs) {
-      config.inputs.forEach((input: any) => {
-        base.inputs[input.name] = null;
-      });
-    }
-
     return base;
   }
 
@@ -387,9 +981,5 @@ export class WorkflowFormService {
       Math.random().toString(36).substring(2, 15) +
       Math.random().toString(36).substring(2, 15)
     );
-  }
-
-  private toDisplay(name: string): string {
-    return name ? name.replace(/_/g, ' ') : name;
   }
 }

@@ -307,10 +307,17 @@ async def test_upload_asset_with_upscale(
         workspace_id=1,
         mime_type="image/png",
         upscale_factor="x2",
+        enhance_input_image=True,
+        image_preservation_factor=0.8,
     )
 
     assert response.id == 30
     mock_dependencies["imagen_service"].upscale_image.assert_called_once()
+    called_dto = mock_dependencies[
+        "imagen_service"
+    ].upscale_image.call_args.args[0]
+    assert called_dto.enhance_input_image is True
+    assert called_dto.image_preservation_factor == 0.8
 
 
 @pytest.mark.anyio

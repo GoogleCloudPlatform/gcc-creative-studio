@@ -31,6 +31,12 @@ import {
   SourceAssetResponseDto,
   SourceAssetService,
 } from '../../../common/services/source-asset.service';
+import {
+  getPreviewUrl,
+  isVideoUrl,
+  labelToName,
+  nameToLabel,
+} from '../../utils/workflow-step.util';
 import {WorkflowStep} from '../../workflow.models';
 
 @Component({
@@ -41,8 +47,9 @@ import {WorkflowStep} from '../../workflow.models';
 export class RunWorkflowModalComponent implements OnInit {
   runForm!: FormGroup;
   userInputStep: WorkflowStep;
-  inputDefinitions: {name: string; type: string}[] = [];
+  inputDefinitions: {name: string; label: string; type: string}[] = [];
   referenceImages: {[key: string]: ReferenceImage | null} = {};
+  readonly isVideoUrl = isVideoUrl;
 
   constructor(
     private fb: FormBuilder,
@@ -58,11 +65,25 @@ export class RunWorkflowModalComponent implements OnInit {
     this.runForm = this.fb.group({});
 
     if (this.userInputStep && this.userInputStep.outputs) {
+      const definitions = this.userInputStep.settings['definitions'] || [];
+      const defMap = new Map<string, string>();
+      definitions.forEach((def: any) => {
+        if (def && def.name) {
+          defMap.set(labelToName(def.name), def.name);
+          defMap.set(def.name, def.name);
+        }
+      });
+
       Object.entries(this.userInputStep.outputs).forEach(
         ([key, value]: [string, any]) => {
-          this.inputDefinitions.push({name: key, type: value.type});
+          const rawLabel = defMap.get(key) || key;
+          this.inputDefinitions.push({
+            name: key,
+            label: nameToLabel(rawLabel),
+            type: value.type,
+          });
 
-          if (value.type === 'image') {
+          if (value.type === 'image' || value.type === 'video') {
             this.runForm.addControl(
               key,
               this.fb.control(null, Validators.required),
@@ -89,14 +110,26 @@ export class RunWorkflowModalComponent implements OnInit {
     }
   }
 
-  openImageSelectorForReference(inputName: string): void {
+  openMediaSelectorForReference(inputName: string, inputType = 'image'): void {
     if (this.referenceImages[inputName]) return;
+
+    let mimeType = 'image/*';
+    let assetType = AssetTypeEnum.GENERIC_IMAGE;
+    let role = 'image_reference_asset';
+
+    if (inputType === 'video') {
+      mimeType = 'video/*';
+      assetType = AssetTypeEnum.GENERIC_VIDEO;
+      role = 'reference_video';
+    }
+
     const dialogRef = this.dialog.open(ImageSelectorComponent, {
       width: '90vw',
       height: '80vh',
       maxWidth: '90vw',
       data: {
-        mimeType: 'image/*',
+        mimeType: mimeType,
+        assetType: assetType,
         showFooter: true,
         maxSelection: 1,
       },
@@ -109,21 +142,20 @@ export class RunWorkflowModalComponent implements OnInit {
         if (result && !this.referenceImages[inputName]) {
           let newImage: ReferenceImage | null = null;
 
-          if ('gcsUri' in result) {
+          if ('id' in result) {
             newImage = {
               sourceAssetId: result.id,
-              previewUrl: result.presignedUrl || '',
+              previewUrl: getPreviewUrl(result),
             };
           } else {
-            const previewUrl =
-              result.mediaItem.presignedUrls?.[result.selectedIndex];
+            const previewUrl = getPreviewUrl(result);
             if (previewUrl) {
               newImage = {
                 previewUrl: previewUrl,
                 sourceMediaItem: {
                   mediaItemId: result.mediaItem.id,
                   mediaIndex: result.selectedIndex,
-                  role: 'image_reference_asset',
+                  role: role,
                 },
               };
             }
@@ -137,25 +169,47 @@ export class RunWorkflowModalComponent implements OnInit {
       });
   }
 
+  openImageSelectorForReference(inputName: string): void {
+    const def = this.inputDefinitions.find(d => d.name === inputName);
+    this.openMediaSelectorForReference(inputName, def?.type || 'image');
+  }
+
   // Called when DROPPING a file on the new drop zone
-  onReferenceImageDrop(event: DragEvent, inputName: string) {
+  onReferenceMediaDrop(
+    event: DragEvent,
+    inputName: string,
+    inputType = 'image',
+  ) {
     event.preventDefault();
     if (this.referenceImages[inputName]) return;
     const file = event.dataTransfer?.files[0];
-    if (file && file.type.startsWith('image/')) {
-      // Upload directly
-      this.sourceAssetService
-        .uploadAsset(file, {assetType: AssetTypeEnum.GENERIC_IMAGE})
-        .subscribe((result: SourceAssetResponseDto) => {
-          if (result && result.id) {
-            this.referenceImages[inputName] = {
-              sourceAssetId: result.id,
-              previewUrl: result.presignedUrl || '',
-            };
-            this.updateInputControlWithError(inputName);
-          }
-        });
-    }
+    if (!file) return;
+
+    const isImage = inputType === 'image' && file.type.startsWith('image/');
+    const isVideo = inputType === 'video' && file.type.startsWith('video/');
+
+    if (!isImage && !isVideo) return;
+
+    const uploadOptions = isImage
+      ? {assetType: AssetTypeEnum.GENERIC_IMAGE}
+      : {assetType: AssetTypeEnum.GENERIC_VIDEO};
+
+    this.sourceAssetService
+      .uploadAsset(file, uploadOptions)
+      .subscribe((result: SourceAssetResponseDto) => {
+        if (result && result.id) {
+          this.referenceImages[inputName] = {
+            sourceAssetId: result.id,
+            previewUrl: getPreviewUrl(result),
+          };
+          this.updateInputControlWithError(inputName);
+        }
+      });
+  }
+
+  onReferenceImageDrop(event: DragEvent, inputName: string) {
+    const def = this.inputDefinitions.find(d => d.name === inputName);
+    this.onReferenceMediaDrop(event, inputName, def?.type || 'image');
   }
 
   clearReferenceImage(inputName: string) {

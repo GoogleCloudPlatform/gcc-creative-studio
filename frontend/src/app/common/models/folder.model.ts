@@ -34,6 +34,22 @@ export interface FolderBreadcrumb {
   parentId?: number | null;
 }
 
+/** Folder currently open in a gallery view. */
+export interface GalleryFolderLocation {
+  /** null = root ("All Media"). */
+  folderId: number | null;
+  /** Ordered root → current; empty at root. */
+  breadcrumbs: FolderBreadcrumb[];
+}
+
+/** Folder chosen in the folder selector dialog. */
+export interface FolderSelectionResult {
+  folderId: number;
+  folderName: string;
+  /** Full path joined with ' / ' (e.g. "Marketing / Summer"). */
+  path: string;
+}
+
 export interface FolderTreeNode {
   id: number;
   name: string;

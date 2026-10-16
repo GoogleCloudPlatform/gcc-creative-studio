@@ -17,6 +17,7 @@
 import {MODEL_CONFIGS} from '../../../../common/config/model-config';
 import {NodeTypes} from '../../../workflow.models';
 import {StepConfig} from '../generic-step/step.model';
+import {LOOP_ENDING_OUTPUT} from './loop-step.config';
 
 const model_options = MODEL_CONFIGS.filter(model => model.type === 'VIDEO').map(
   model => ({
@@ -41,6 +42,20 @@ export const GENERATE_VIDEO_STEP_CONFIG: StepConfig = {
       label: 'Input Images (Reference)',
       type: 'image',
       required: false,
+    },
+    {
+      name: 'input_video',
+      label: 'Video (Reference)',
+      type: 'video',
+      required: false,
+      hidden: true,
+    },
+    {
+      name: 'input_audio',
+      label: 'Audio (Reference)',
+      type: 'audio',
+      required: false,
+      hidden: true,
     },
     {
       name: 'start_frame',
@@ -80,6 +95,17 @@ export const GENERATE_VIDEO_STEP_CONFIG: StepConfig = {
       defaultValue: '16:9',
     },
     {
+      name: 'duration_seconds',
+      label: 'Duration',
+      type: 'select',
+      options: [
+        {value: 4, label: '4s'},
+        {value: 6, label: '6s'},
+        {value: 8, label: '8s'},
+      ],
+      defaultValue: 8,
+    },
+    {
       name: 'brand_guidelines',
       label: 'Use Brand Guidelines',
       type: 'checkbox',
@@ -92,5 +118,6 @@ export const GENERATE_VIDEO_STEP_CONFIG: StepConfig = {
       label: 'generated_video',
       type: 'video',
     },
+    LOOP_ENDING_OUTPUT,
   ],
 };

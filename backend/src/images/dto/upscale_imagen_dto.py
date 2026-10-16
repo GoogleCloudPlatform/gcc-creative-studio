@@ -25,7 +25,7 @@ class UpscaleImagenDto(BaseDto):
     """
 
     generation_model: GenerationModelEnum = Field(
-        default=GenerationModelEnum.IMAGEN_4_UPSCALE_PREVIEW,
+        default=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE,
         description="Model used for image generation.",
     )
     user_image: str = Field(
@@ -63,12 +63,12 @@ class UpscaleImagenDto(BaseDto):
         cls,
         value: GenerationModelEnum,
     ) -> GenerationModelEnum:
-        """Ensures that only supported generation models for imagen are used."""
-        valid_video_ratios = [
-            GenerationModelEnum.IMAGEN_4_UPSCALE_PREVIEW,
+        """Ensures that only supported generation models for upscaling are used."""
+        valid_models = [
+            GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE,
         ]
-        if value not in valid_video_ratios:
-            raise ValueError("Invalid generation model for imagen.")
+        if value not in valid_models:
+            raise ValueError("Invalid generation model for upscaling.")
         return value
 
     @field_validator("mime_type")
@@ -80,4 +80,16 @@ class UpscaleImagenDto(BaseDto):
         ]
         if value not in valid_mime_types:
             raise ValueError("Invalid mime type for imagen.")
+        return value
+
+    @field_validator("image_preservation_factor")
+    def validate_imagen_preservation_factor(
+        cls,
+        value: float | None,
+    ) -> float | None:
+        """Ensures that image_preservation_factor is between 0.0 and 1.0."""
+        if value is not None and not (0.0 <= value <= 1.0):
+            raise ValueError(
+                "image_preservation_factor must be between 0.0 and 1.0."
+            )
         return value
