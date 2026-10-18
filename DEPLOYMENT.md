@@ -6,7 +6,7 @@ Related documents:
 
 - [`README.md`](./README.md) — product overview and the 20‑minute quick start.
 - [`DEVELOPMENT.md`](./DEVELOPMENT.md) — running Creative Studio locally with Docker Compose.
-- [`infrastructure/README.md`](./infrastructure/README.md) — the database **migration flow** (legacy public‑IP → private‑IP) in detail.
+- [`infrastructure/README.md`](./infrastructure/README.md) — the **in-depth infrastructure diagram** (every GCP resource and how traffic, data and CI/CD flow between them) and the database **migration flow** (legacy public‑IP → private‑IP) in detail.
 - [`docs/local-izumi/`](./docs/local-izumi) — running the Izumi agent locally.
 
 ---
@@ -79,7 +79,7 @@ Terraform also enables the required APIs (`infrastructure/variables.tf` → `api
 - A Google Cloud project with **billing enabled** (the script can also create one for you if you provide a Billing Account ID).
 - Your Google account needs **Owner** on the project (or an equivalent set of admin roles: Service Usage, IAM, Cloud SQL, Cloud Run, Cloud Build, Secret Manager, Storage, Firebase, Artifact Registry, Vertex AI).
 - A **fork** of this repository on GitHub (or GitLab): <https://github.com/GoogleCloudPlatform/gcc-creative-studio/fork>. Cloud Build needs to install its app on that fork, so you must be allowed to install GitHub Apps on it.
-- Google sign-in for the application is Firebase Authentication with the **Google provider**. You will enable it in the Firebase console during Step 6 (see below); doing so also creates the OAuth Web Client the script asks for.
+- Google sign-in for the application is Firebase Authentication **with Identity Platform** and the **Google provider**. You enable the provider and click **Upgrade** (to Identity Platform) in the Firebase console during Step 6 (see below); the upgrade also creates the OAuth Web Client the script asks for, so there is nothing to create by hand in *APIs & Services → Credentials*.
 
 ### 2.2 Tools
 
@@ -139,7 +139,7 @@ Plan for roughly **20–40 minutes** of wall-clock time: the first `terraform ap
 | 4 | Step 3 — Configuring Google Cloud Project | Uses the stored project, else offers the active `gcloud` project, else asks for an existing/new project ID (+ billing account for a new one). | — |
 | 5 | Step 4 — Configuring Git Repository | Asks for **your fork URL** (validated with `git ls-remote`) and the **branch** (default `main`); sparse-clones it or pulls it. | Use the HTTPS URL of your fork, e.g. `https://github.com/<you>/gcc-creative-studio.git`. |
 | 6 | Step 5 — Configuring Terraform Environment | Scans the project for an existing `<project>-cstudio-*-tfstate` bucket (auto-fills env name + state bucket so an existing deployment is updated, not duplicated) and for a legacy `<project>-cs-*-bucket` (reused as asset bucket). Asks environment name, region, DB tier, DB availability. Creates the state bucket and writes `<env>.backend.tfvars` + `<env>.tfvars`. | Enter the decisions from §2.3. The region must match `^[a-z]+-[a-z]+[0-9]+$` (e.g. `europe-west1`). |
-| 7 | Step 6 — Manual Steps Required | Enables APIs. Then three manual items: **(a)** Cloud Build host connection, **(b)** Firebase terms, **(c)** OAuth Web Client ID. | See the detailed instructions right below this table. |
+| 7 | Step 6 — Manual Steps Required | Enables APIs. Then three manual items: **(a)** Cloud Build host connection, **(b)** Firebase terms + Authentication (Google provider, **Upgrade** to Identity Platform), **(c)** OAuth Web Client ID. | See the detailed instructions right below this table. |
 | 8 | Step 7 — Automating Firebase Web App Configuration | Creates the Firebase web app `cs-<env>-frontend` if missing, reads its SDK config, resolves the Hosting site ID (the project's default site, else the first site, else the project ID) and writes it into the tfvars. | Fails with *"Could not automatically fetch Firebase API Key"* if Firebase is not linked to the project yet → finish Step 6 (b) and re-run. |
 | 9 | Step 8 — Database Backup & Export | **No-op on a fresh project.** If a legacy V1 instance (`creative-studio-db[-<hex>]`) exists it offers to export it to `gs://<state-bucket>/migration_backup.sql.gz`. `--migrate-db` forces an export of whatever DB exists; `--use-existing-backup` skips the export and reuses the file. | Answer `y` only if you are upgrading a legacy V1 deployment. Details in [§5.4](#54-migrating-a-legacy-v1-public-ip-database). |
 | 10 | Step 9 — Checking Migration Intent & Preparing Safe State | If a migration is planned (or an orphaned `migration_backup.sql.gz` is found and you accept), deploys the dummy image `us-docker.pkg.dev/cloudrun/container/hello` to the existing backend service(s) so Terraform's network changes cannot deadlock Cloud Run. | On the happy path it prints "No migration intent detected" and moves on. |
@@ -162,17 +162,48 @@ Plan for roughly **20–40 minutes** of wall-clock time: the first `terraform ap
 - **Stop when the wizard offers to "Link repositories".** Terraform creates the repository link itself (`google_cloudbuildv2_repository.source_repo` in [`infrastructure/ci_cd.tf`](./infrastructure/ci_cd.tf)). If you link the fork in the wizard, `terraform apply` fails with a `409 already exists` — see [§6.1](#61-terraform-fails-the-cloud-build-repository--connection-already-exists-409).
 - Paste the connection name back into the script; it is stored in the profile (`REPO_CONN_NAME`) and written to `repo_conn_name` in the tfvars. Terraform looks for `projects/<project>/locations/<region>/connections/<name>` — a connection created in another region is "not found" ([§6.2](#62-terraform-fails-cloud-build-connection-not-found-404)).
 
-**(b) Firebase terms.** Open `https://console.firebase.google.com/?project=<project>`, click **Add Firebase** to the existing project and accept the terms. While you are there, enable the sign-in provider the app uses: **Build → Authentication → Get started → Sign-in method → Google → Enable** (provide the support email it asks for). Press Enter in the script when done; it remembers this (`FIREBASE_TERMS_ACCEPTED`).
+**(b) Firebase terms and Authentication.** Open `https://console.firebase.google.com/?project=<project>`, click **Add Firebase** to the existing project and accept the terms. Then set up the sign-in the app uses, in this order:
 
-**(c) OAuth Web Client ID.** Open `https://console.cloud.google.com/apis/credentials?project=<project>` and copy the Client ID of the **OAuth 2.0 Client ID of type "Web application"**. Enabling Google sign-in in (b) creates one named *"Web client (auto created by Google Service)"*; if there is none, create a Web application client manually. The script stores it as `AUTO_OAUTH_CLIENT_ID` and later writes it to the `GOOGLE_CLIENT_ID` / `GOOGLE_TOKEN_AUDIENCE` secrets.
+1. **Build → Authentication → Get started → Sign-in method → Google → Enable** (provide the support email it asks for) → **Save**.
+2. Scroll to the bottom of the Authentication page and click **Upgrade** (*"Upgrade to Firebase Authentication with Identity Platform"*), then confirm. This switches the project to **Identity Platform** (the `identitytoolkit.googleapis.com` API the script already enabled) and — the reason it matters here — **automatically creates the OAuth 2.0 Web client** in *APIs & Services → Credentials*, named *"Web client (auto created by Google Service)"*. You do not have to create or configure an OAuth client yourself.
 
-### 3.3 Verify the deployment
+Press Enter in the script when done; it remembers this (`FIREBASE_TERMS_ACCEPTED`).
+
+**(c) OAuth Web Client ID.** Open `https://console.cloud.google.com/apis/credentials?project=<project>`: after the upgrade in (b) the **OAuth 2.0 Client ID of type "Web application"** is already there — copy its Client ID into the script. Only if the list is empty (the upgrade was skipped) create a Web application client manually. The script stores it as `AUTO_OAUTH_CLIENT_ID` and later writes it to the `GOOGLE_CLIENT_ID` / `GOOGLE_TOKEN_AUDIENCE` secrets. The authorized origins of this client are configured **after** the deployment, in [§3.3](#33-open-the-app-to-your-users-before-verifying).
+
+### 3.3 Open the app to your users (before verifying)
+
+Step 16 prints the frontend URL, `https://<site>.web.app` (`<site>` is the Hosting site ID, usually the project ID). Three settings decide who can actually use it; do them right after the script finishes, otherwise sign-in fails with `redirect_uri_mismatch` / *"The given origin is not allowed"*, or the app loads and every API call returns **403**.
+
+**1. Authorized JavaScript origins of the OAuth Web client.** Open `https://console.cloud.google.com/apis/credentials?project=<project>` → the *Web client (auto created by Google Service)* from Step 6 (c) and add:
+
+| Field | Values |
+| --- | --- |
+| Authorized JavaScript origins | `https://<site>.web.app`, `https://<project>.firebaseapp.com` (and `https://<custom-domain>` if you set `custom_domain`) |
+| Authorized redirect URIs | `https://<project>.firebaseapp.com/__/auth/handler` |
+
+Step 11 tries to add these automatically, but it can only edit IAP-managed clients, so in practice this is manual. Changes take a few minutes to propagate.
+
+**2. Audience — who is allowed to sign in.** Open `https://console.cloud.google.com/auth/audience?project=<project>` (*Google Auth Platform → Audience*). Set **User type = Internal** to restrict sign-in to the accounts of your own Google Workspace / Cloud Identity organisation (the normal choice for an internal deployment). **External** lets any Google account sign in and requires test users while the app is unverified. Two further, application-side gates exist as backend environment variables if you need them: `IDENTITY_PLATFORM_ALLOWED_ORGS` (comma-separated hosted domains, checked against the token's `hd` claim) and `ALLOWED_EMAILS`; they are read by [`backend/src/auth/auth_guard.py`](./backend/src/auth/auth_guard.py) and can be added to `container_env_vars` in [`infrastructure/app.tf`](./infrastructure/app.tf) of your fork.
+
+**3. Cloud Run Invoker for the people who will use the app.** The backend service is **private**: Terraform grants `roles/run.invoker` only to the Izumi agent service account, and Cloud Build deploys without `--allow-unauthenticated`. Browser requests reach it through the Hosting `/api/**` rewrite carrying the signed-in user's Google ID token, and Cloud Run's IAM check requires that user to hold an invoker role — without it every request fails with **403** right after sign-in. Grant it to a **Google Group** (recommended; add/remove people in the group afterwards) or to individual users, on the service itself:
+
+```bash
+gcloud run services add-iam-policy-binding cs-<env>-backend --region=<DEPLOY_REGION> --project=<project> \
+  --member="group:<creative-studio-users@your-domain.com>" --role=roles/run.invoker
+# individual user instead of a group: --member="user:<someone@your-domain.com>"
+```
+
+The same can be done in **IAM & Admin → IAM → Grant access** at project level with the roles **Cloud Run Invoker** (`roles/run.invoker`) and/or **Cloud Run Service Invoker** (`roles/run.servicesInvoker`, the services-only variant) — either is enough to invoke the service. The account that ran the script already has access through its Owner role.
+
+### 3.4 Verify the deployment
 
 1. Open the frontend URL and sign in **with the same Google account you ran the script with** — it is the seeded admin.
 2. `curl -s https://<backend-url>/` returns the backend health response.
 3. Cloud Build → History shows both pipelines green; Cloud Run → `cs-<env>-backend` serves a revision whose image comes from `cs-<env>-repo` (not `cloudrun/container/hello`).
 4. `gcloud secrets versions access latest --secret=agent_engine_resource_name --project=<project>` prints a `projects/…/reasoningEngines/…` name (not `placeholder_value_waiting_for_bootstrap_sh`).
 5. Open the Workbench and send a message to the agent.
+6. Sign in with a second account that is a member of the invoker group from §3.3 — it must get past the login screen and load the gallery.
 
 ---
 
@@ -403,7 +434,8 @@ Never rotate `agent_engine_user_auth_token_key` by hand: both sides must read th
 ### 6.9 Google sign-in fails (`auth/unauthorized-domain`, `redirect_uri_mismatch`, origin not allowed)
 
 - `auth/unauthorized-domain` — Firebase console → **Authentication → Settings → Authorized domains** → add your Hosting domain (e.g. `<site>.web.app`). This happens when the Hosting site ID differs from the project ID.
-- `redirect_uri_mismatch` / *"The given origin is not allowed"* — Step 11 could not update the OAuth client automatically. Open **APIs & Services → Credentials → your Web client** and add Authorized JavaScript origins `https://<site>.web.app`, `https://<project>.firebaseapp.com` and Authorized redirect URI `https://<project>.firebaseapp.com/__/auth/handler`.
+- `redirect_uri_mismatch` / *"The given origin is not allowed"* — the OAuth Web client is missing the Hosting origins (Step 11 can only update IAP-managed clients). Add them as described in [§3.3 item 1](#33-open-the-app-to-your-users-before-verifying).
+- The login succeeds but every API call returns **403** — the user has no Cloud Run invoker role on `cs-<env>-backend`; see [§3.3 item 3](#33-open-the-app-to-your-users-before-verifying).
 - `auth/operation-not-allowed` — the Google provider is disabled; enable it (Step 6 (b)).
 
 ### 6.10 *"Could not automatically fetch Firebase API Key"*
@@ -420,7 +452,7 @@ Errors mentioning `constraints/gcp.resourceLocations` (or a resource "not availa
 
 ### 6.13 Export/import fails with an IAM binding error
 
-Step 8/10 print `IAM Binding Error` when they cannot grant the Cloud SQL instance's service account access to the state bucket (`roles/storage.objectAdmin` for export, `roles/storage.objectViewer` for import). Your account needs `roles/storage.admin` on the project (Owner has it). Grant it and re-run.
+Step 8/10 print `IAM Binding Error` when they cannot grant the Cloud SQL instance's service account access to the state bucket (`roles/storage.objectAdmin` for export, `roles/storage.objectViewer` for import). Your account needs `roles/storage.admin` on the project (Owner has it). Grant it and re-run. If you **are** Owner and the error says `storage.buckets.setIamPolicy … (or it may not exist)` only for buckets that already existed, an organisation guardrail is blocking you — see [§6.17](#617-a-project-owner-gets-storagebucketssetiampolicy--getiampolicy-denied-on-the-existing-buckets).
 
 ### 6.14 `Error acquiring the state lock`
 
@@ -553,6 +585,60 @@ gcloud builds submit . --config=frontend/cloudbuild-deploy.yaml --project="$PROJ
 ```
 
 Run the script with `--skip-builds` in that mode (Step 14 waits for a non-dummy backend image, so run the backend build first or add `--skip-seeding` and re-run afterwards). Manual builds are strict about substitutions: pass exactly the keys used in the YAML, no more.
+
+### 6.17 A project Owner gets `storage.buckets.setIamPolicy` / `getIamPolicy` denied on the *existing* buckets
+
+**Symptom** — Step 8 prints `IAM Binding Error: … does not have permission to access b instance [<project>-cstudio-<env>-tfstate] (or it may not exist): <you> does not have storage.buckets.setIamPolicy access …`, although you are **Owner** of the project: you can create buckets, list/read/write objects, edit project IAM, and `get-iam-policy` works on a bucket you create right now — only the buckets that already existed (Terraform state bucket, legacy asset bucket) refuse `getIamPolicy`/`setIamPolicy`. The export then fails for the same reason (the Cloud SQL service account never got write access), Terraform would fail on `google_storage_bucket_iam_member.*` of the reused asset bucket, and Step 10 could not grant the new instance read access for the import.
+
+**Why** — an organisation-level **IAM deny policy** (or similar guardrail) that targets human principals on those buckets. You cannot see it from the project: the GA troubleshooter (`gcloud policy-troubleshoot iam`) evaluates allow policies only, and the v3 API (`POST https://policytroubleshooter.googleapis.com/v3/iam:troubleshoot` with `x-goog-user-project`) answers `denyAccessState: UNKNOWN_INFO` without org permissions. Service accounts are not covered by it — which is the way out.
+
+**Fix — run everything as a deployer service account (no code change).** Terraform and `gcloud` read *different* environment variables, so both must be set:
+
+```bash
+PROJECT_ID=<project>; REGION=<DEPLOY_REGION>; ME=$(gcloud config get-value account)
+DEPLOYER="cs-deployer@${PROJECT_ID}.iam.gserviceaccount.com"
+
+# 1. one-time: deployer SA with Owner, you may mint tokens for it (wait ~60 s for propagation)
+gcloud services enable iamcredentials.googleapis.com --project="$PROJECT_ID"
+gcloud iam service-accounts create cs-deployer --display-name="Creative Studio deployer" --project="$PROJECT_ID"
+gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:$DEPLOYER" --role=roles/owner
+gcloud iam service-accounts add-iam-policy-binding "$DEPLOYER" --project="$PROJECT_ID" \
+  --member="user:$ME" --role=roles/iam.serviceAccountTokenCreator
+
+# 2. proof: the SA can read AND write bucket IAM where you cannot
+gcloud storage buckets get-iam-policy "gs://${PROJECT_ID}-cstudio-<env>-tfstate" --impersonate-service-account="$DEPLOYER" --format='value(bindings.role)'
+
+# 3. every later bootstrap.sh / terraform run in this project, in the same shell:
+export GOOGLE_IMPERSONATE_SERVICE_ACCOUNT="$DEPLOYER"                          # Terraform provider + GCS backend
+export CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT="$GOOGLE_IMPERSONATE_SERVICE_ACCOUNT"   # every gcloud call inside the script
+bash ./bootstrap.sh --profile <name> [--use-existing-backup]
+```
+
+Cloud Shell's Application Default Credentials are your user, so Terraform impersonates through them; `gcloud` prints a one-line impersonation warning per command, which the script tolerates (it never parses gcloud's stderr). Keep the deployer SA: it is needed for every future Terraform run in that project.
+
+**If a legacy migration is in flight** (Step 8 had already failed once):
+
+1. Do the export yourself, with the instance SA granted through impersonation (replace `<v1-instance>` with the `creative-studio-db-<hex>` name the script printed):
+   ```bash
+   V1_SA=$(gcloud sql instances describe <v1-instance> --project="$PROJECT_ID" --format='value(serviceAccountEmailAddress)')
+   gcloud storage buckets add-iam-policy-binding "gs://${PROJECT_ID}-cstudio-<env>-tfstate" \
+     --member="serviceAccount:$V1_SA" --role=roles/storage.objectAdmin --impersonate-service-account="$DEPLOYER"
+   gcloud sql export sql <v1-instance> "gs://${PROJECT_ID}-cstudio-<env>-tfstate/migration_backup.sql.gz" \
+     --database=creative_studio --project="$PROJECT_ID"
+   gcloud storage ls -l "gs://${PROJECT_ID}-cstudio-<env>-tfstate/migration_backup.sql.gz"     # size > 0
+   gcloud storage cp "gs://${PROJECT_ID}-cstudio-<env>-tfstate/migration_backup.sql.gz" \
+     "gs://${PROJECT_ID}-cstudio-<env>-tfstate/backups/migration_backup-$(date +%F-%H%M).sql.gz"   # second copy, never touched by the script
+   ```
+   Interrupting the script's own export with Ctrl‑C leaves no file behind (`gcloud sql operations list --instance=<v1-instance>` shows whether an export is still running).
+2. Re-run with the two `export`s above and `--use-existing-backup` — Step 8 only verifies the file, Step 10's grant for the new instance now succeeds through impersonation, and nothing is ever re-exported.
+3. If the Terraform state still holds the V1 resources (`module.creative_studio_platform.*` in `terraform state list`), check `deletion_protection` of the V1 instance before applying — Terraform refuses to destroy an instance that has it set and the apply fails after the dummy image is already live:
+   ```bash
+   gcloud storage cat "gs://${PROJECT_ID}-cstudio-<env>-tfstate/infra/<env>/state/default.tfstate" \
+     | jq -r '.resources[] | select(.type=="google_sql_database_instance") | .instances[0].attributes | "deletion_protection=\(.deletion_protection) name=\(.name)"'
+   ```
+   `false` → nothing to do. `true` → remove the V1 database module from state so the instance is left alone (it keeps running as your rollback until you delete it by hand): `cd infrastructure && terraform init -reconfigure -backend-config=<env>.backend.tfvars && terraform state rm 'module.creative_studio_platform.module.postgresql'`. The same `state rm` is a reasonable choice for any production migration even when the flag is `false`.
+
+Afterwards remove any temporary project-level grant you gave the V1 instance SA (`gcloud projects remove-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:$V1_SA" --role=roles/storage.objectAdmin`) and, once the new instance is verified, delete the V1 instance.
 
 ---
 
