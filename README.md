@@ -78,15 +78,22 @@ Just run this script which has a step by step approach for you to deploy the inf
 curl https://raw.githubusercontent.com/GoogleCloudPlatform/gcc-creative-studio/refs/heads/main/bootstrap.sh | bash
 ```
 
+> 📘 For a step-by-step explanation of every prompt, what Terraform creates, how to open the app to your users, how to resume/upgrade, and the **fixes for known deployment errors** (Cloud Build connection `409 already exists`, half-failed DB migrations → `--use-existing-backup`, organisation guardrails on bucket IAM, …), read the [Deployment Guide](./DEPLOYMENT.md).
+
+### Can't create the Cloud Build host connection in the console?
+
+Some organisations block the console wizard (`Error processing oauth callback: Structured justification provided is incorrect`). Nothing is wrong with your project — create the connection **programmatically** with a classic GitHub token instead, then answer `y` to *"Do you already have a Cloud Build Host Connection…?"* in the script. The token-free pre-flight, the exact commands and the fork-based fallback live in one place: [Deployment Guide §6.16](./DEPLOYMENT.md#616-the-console-cannot-create-the-host-connection-error-processing-oauth-callback-structured-justification-provided-is-incorrect).
+
 ### Advanced Automation (CI/CD & Headless)
 
-The `bootstrap.sh` script supports several command-line flags to enable fully automated, non-interactive deployments. This is especially useful for CI/CD pipelines or rapid redeployments.
+The `bootstrap.sh` script supports several command-line flags to enable fully automated, non-interactive deployments. This is especially useful for CI/CD pipelines or rapid redeployments. The most used ones (full table with every flag in the [Deployment Guide §4.1](./DEPLOYMENT.md#41-flags)):
 
-- **`--profile <profile_name>`** (`-p`): Bypasses the profile selection prompt by automatically loading a saved configuration (e.g., `--profile dev-infra.cstudio_bootstrap.conf`).
+- **`--profile <profile_name>`** (`-p`): Bypasses the profile selection prompt by automatically loading a saved configuration (e.g., `--profile dev-infra`).
 - **`--auto-approve`** (`-a`): Skips the interactive `yes/no` confirmation prompt during `terraform apply`.
 - **`--skip-builds`**: Prevents the script from automatically triggering Cloud Build for the frontend/backend and skips the wait loops. Ideal if you only want to update infrastructure (Terraform).
 - **`--force-builds`**: Forces the Cloud Build triggers to run without asking for interactive confirmation.
-- **`--skip-migrations`**: Performs an automated SQL dump of the database to GCS, but skips executing the Alembic schema migrations. Use this if you want to delay database changes.
+- **`--skip-migrations`** / **`--skip-seeding`**: Skips the Cloud Run Job that runs the Alembic schema migrations and the seeders.
+- **`--migrate-db`**, **`--use-existing-backup`**, **`--skip-db-import`**: Control the safe database migration flow (export → dummy image → apply → import); see [Deployment Guide §5.4](./DEPLOYMENT.md#54-migrating-a-legacy-v1-public-ip-database).
 - **`--help`** (`-h`): Prints the usage menu.
 
 
@@ -135,6 +142,13 @@ The backend follows a **Modular, Feature-Driven Architecture**, heavily inspired
   - **Scalability:** This approach prevents individual directories from becoming unwieldy as the application grows.
   - **Maintainability:** All code related to a single feature is co-located, making it easier to understand, modify, and test.
   - **High Cohesion, Low Coupling:** Modules are self-contained and interact through well-defined interfaces (services and DTOs), making the system robust and flexible.
+
+### Going deeper: infrastructure and data model diagrams
+
+The picture above is the high-level overview. Two comprehensive, always-current Mermaid diagrams complement it (kept next to the code they describe, so they are maintained in one place):
+
+- **Infrastructure deep-dive** — [`infrastructure/README.md` → Architecture](./infrastructure/README.md#architecture): every GCP resource Terraform creates (Firebase Hosting, Identity Platform, the private Cloud Run backend, the VPC / Private Service Access / Cloud SQL private-IP path, buckets, Secret Manager, Vertex AI and Agent Engine, Cloud Build triggers and Artifact Registry) and how requests, data, the Izumi agent, CI/CD and `bootstrap.sh` flow between them. The resource names and sizes are tabulated in the [Deployment Guide §1.1](./DEPLOYMENT.md#11-what-gets-created).
+- **Database schema** — [`backend/README.md` → Database schema](./backend/README.md#database-schema-er-diagram): the ER diagram of all tables, generated from the SQLAlchemy models.
 
 ### Technology Stack
 
@@ -281,9 +295,3 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-
-
-
-### Flags and Overrides
-You can run `./bootstrap.sh` with the following flags:
-* `--skip-db-import`: Silences the legacy database recovery prompt and skips checking the GCS bucket for pending SQL dumps.
