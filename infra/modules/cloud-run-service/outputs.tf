@@ -36,3 +36,8 @@ output "run_sa_email" {
   description = "The service account the Cloud Run service runs as."
   value       = google_service_account.run_sa.email
 }
+
+output "ingress" {
+  description = "Where the Cloud Run service accepts traffic from."
+  value       = google_cloud_run_v2_service.this.ingress
+}

@@ -199,8 +199,8 @@ module "frontend_service" {
   db_user                   = module.postgresql.db_user
   db_secret_id              = "creative-studio-db-password"
 
-  # Restrict ingress to Internal + GCLB
-  ingress                   = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+  # Restrict ingress to Internal + GCLB if IAP is enabled, matching the backend
+  ingress                   = var.iap_oauth2_client_id != "" ? "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER" : "INGRESS_TRAFFIC_ALL"
 }
 
 
