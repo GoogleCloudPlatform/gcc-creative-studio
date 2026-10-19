@@ -46,10 +46,7 @@ You need to register the Creative Studio application in your Microsoft Entra Ten
 2.  Browse to **Identity** > **Applications** > **App registrations** and select **New registration**.
 3.  Enter a name for the application (e.g., `Creative Studio Dev`).
 4.  Under **Supported account types**, select **Accounts in this organizational directory only (Single tenant)**.
-5.  Under **Redirect URI**, select **Single-page application (SPA)** (for MSAL frontend login) and enter the URL where the app will be hosted:
-    *   For local testing: `http://localhost:4200/`
-    *   For deployed app: `https://[YOUR_DOMAIN_OR_IP]/` (or your custom domain).
-    *   *Note: You can add multiple redirect URIs later.*
+5.  Leave **Redirect URI** empty for now. Sign-in goes through Google's Workforce Identity Federation, whose callback address is only known after deployment. You will add it as a **Web** redirect URI in Step 4.
 6.  Select **Register**.
 
 ### 2. Collect Client and Tenant IDs
@@ -224,29 +221,17 @@ After you complete the manual steps, the script will:
 2.  **Populate Secrets:** Automatically fetch Firebase configuration values and write them as secrets to Secret Manager.
 3.  **Database Migration & Seeding:** Start a secure Cloud SQL proxy locally, run database migrations, and seed initial templates, VTO models, and assets into the database and GCS bucket.
 
-The script execution is complete when you see a green success message with the **Load Balancer IP** and **IAP Expected Audience**. Keep these values handy for the next steps.
+The script execution is complete when you see a green success message with the **Load Balancer IP** and the **Entra Redirect URI**. Keep these values handy for the next steps.
+
+**Register the Entra redirect URI.** In the **Microsoft Entra admin center**, open **App registrations** > your app > **Authentication** > **Add a platform** > **Web**, paste the **Entra Redirect URI**, and select **Configure**. It looks like `https://auth.cloud.google/signin-callback/locations/global/workforcePools/<POOL_ID>/providers/entra-provider`. You can print it again with `terraform output entra_redirect_uri` in your environment directory. Users cannot sign in until this is registered.
 
 ---
 
-## 🔒 Step 4.5: Configure IAP Expected Audience
+## 🔒 Step 4.5: IAP Expected Audience (Automatic)
 
-For security, the Backend API explicitly verifies that all incoming requests securely passed through your exact Load Balancer via Identity-Aware Proxy. Because Terraform generates this unique ID dynamically during deployment, you must manually provide it to the backend after the first run.
+The backend checks that every request came through your own load balancer and Identity-Aware Proxy. It does this by matching the token's audience ID against `IAP_EXPECTED_AUDIENCE`. **Terraform sets this for you on the first apply; no action is needed.** Leave `iap_expected_audience` empty in your `.tfvars`.
 
-1. Locate your Load Balancer's unique Audience ID. You can find it:
-    * In the green success box at the end of the `bootstrap.sh` script execution (labeled **IAP Expected Audience**).
-    * By running `terraform output iap_expected_audience` in your environment directory.
-    * Or, from the application error page (it looks like `/projects/12345/global/backendServices/67890`).
-2. Open your environment's `.tfvars` file (e.g., `infra/environments/dev-infra/dev-infra.tfvars`).
-3. Search for the `iap_expected_audience` variable.
-4. Replace the placeholder with your unique Audience ID:
-   ```hcl
-   iap_expected_audience = "/projects/123456789/global/backendServices/987654321"
-   ```
-5. Apply the changes to safely push this key to your Backend Service:
-   ```bash
-   cd infra/environments/dev-infra
-   terraform apply -var-file="dev-infra.tfvars"
-   ```
+To see the value, run `terraform output iap_expected_audience` in your environment directory. Set `iap_expected_audience` in `.tfvars` only to override it, for example when the backend sits behind a load balancer that this Terraform does not manage.
 
 ---
 
@@ -315,7 +300,7 @@ You must access the deployed application over HTTPS for authentication protocols
 3.  **Update the App Configurations**: 
     *   Re-run the `./bootstrap.sh` script (from outside the repository).
     *   When prompted for the **Domain Name**, enter your new custom domain. This triggers Terraform to provision a managed SSL certificate for your domain (this can take 15-60 minutes to propagate).
-4.  **Update Microsoft Entra ID**: Return to the **Microsoft Entra admin center** > **App registrations** > your app > **Authentication**. Add a new Redirect URI for your custom domain: `https://studio.yourdomain.com/` (ensure it has a trailing slash).
+4.  **Microsoft Entra ID**: No change is needed. The Entra redirect URI points at Google's sign-in service, not at your domain.
 
 ### Option B: No Custom Domain (Using nip.io for testing)
 
@@ -327,4 +312,4 @@ If you do not own a domain but want to test the deployment securely over HTTPS, 
     *   Re-run the `./bootstrap.sh` script (from outside the repository).
     *   When prompted for the **Domain Name**, enter your newly formatted `nip.io` domain (e.g., `34.120.24.5.nip.io`).
     *   Terraform will detect the change and provision a managed SSL certificate for `34.120.24.5.nip.io`. (This usually provisions quickly, but can take up to 15 minutes).
-4.  **Update Microsoft Entra ID**: Return to the **Microsoft Entra admin center** > **App registrations** > your app > **Authentication**. Add a new Redirect URI matching your nip.io domain: `https://34.120.24.5.nip.io/` (ensure it has a trailing slash).
+4.  **Microsoft Entra ID**: No change is needed. The Entra redirect URI points at Google's sign-in service, not at your domain.
