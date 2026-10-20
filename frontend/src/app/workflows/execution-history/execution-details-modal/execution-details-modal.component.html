@@ -222,15 +222,13 @@
           [id]="'modal-step-card-' + step.stepId"
           class="glass-card !p-0 overflow-hidden"
         >
-          <!-- Step Header (opens the step history sidebar) -->
+          <!-- Step Header: a mouse click anywhere on the row opens the step
+               history sidebar; the keyboard-accessible trigger is the
+               history button, kept as a sibling of the chevron toggle. -->
           <div
             class="p-3 flex justify-between items-center cursor-pointer hover:bg-white/5 transition-colors"
             [id]="'modal-step-header-' + step.stepId"
-            role="button"
-            tabindex="0"
-            matTooltip="View execution history"
             (click)="openStepHistory(step)"
-            (keydown.enter)="onStepHeaderKeydown($event, step)"
           >
             <div class="flex items-center gap-3">
               <button
@@ -248,15 +246,23 @@
                   chevron_right
                 </mat-icon>
               </button>
-              <span class="font-medium text-neutral-200">{{
-                step.stepId
-              }}</span>
-              <span *ngIf="step.attempts > 0" class="step-attempt-pill">
-                Attempts: {{ step.attempts }}
-              </span>
-              <span *ngIf="step.lastError as stepErr" class="step-error-pill">
-                {{ stepErr.category }}
-              </span>
+              <!-- No click handler: the native click bubbles to the header row. -->
+              <button
+                type="button"
+                class="modal-step-history-btn"
+                [id]="'modal-step-history-' + step.stepId"
+                matTooltip="View execution history"
+              >
+                <span class="font-medium text-neutral-200">{{
+                  step.stepId
+                }}</span>
+                <span *ngIf="step.attempts > 0" class="step-attempt-pill">
+                  Attempts: {{ step.attempts }}
+                </span>
+                <span *ngIf="step.lastError as stepErr" class="step-error-pill">
+                  {{ stepErr.category }}
+                </span>
+              </button>
             </div>
             <div
               class="status-chip"

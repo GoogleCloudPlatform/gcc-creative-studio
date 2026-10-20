@@ -282,10 +282,11 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   get activeDragWireColor(): string {
     if (this.dragSourcePort) {
       return this.getTypeColor(
-        this.getOutputType(
-          this.dragSourcePort.stepId,
-          this.dragSourcePort.outputName,
-        ),
+        this.dragSourcePort.type ||
+          this.getOutputType(
+            this.dragSourcePort.stepId,
+            this.dragSourcePort.outputName,
+          ),
       );
     }
     return '#63b3ed';
@@ -1029,6 +1030,17 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             step: this.dragSourcePort.stepId,
             output: this.dragSourcePort.outputName,
           };
+          if (this.dragSourcePort.stepId === NodeTypes.USER_INPUT) {
+            const sourceOutputName = this.dragSourcePort.outputName;
+            const definitionControl = this.outputDefinitionsArray.controls.find(
+              def => def.get('name')?.value === sourceOutputName,
+            );
+            const definitionId: string | null =
+              definitionControl?.get('id')?.value ?? null;
+            if (definitionId) {
+              newValue._definitionId = definitionId;
+            }
+          }
 
           const stepType = stepForm.get('type')?.value;
           const config = this.getStepConfig(stepType);
@@ -1116,6 +1128,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
           }
           control?.markAsDirty();
           this.updateEdges();
+          this.saveHistoryState();
         }
       }
       this.dragSourcePort = null;
@@ -1683,11 +1696,6 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     snackRef?.onAction?.()?.subscribe(() => {
       this.navigateToExecutionHistory();
     });
-    handleErrorSnackbar(
-      this.snackBar,
-      {message: conflictMsg},
-      'Workflow runs in flight',
-    );
   }
 
   saveAsNewTemplate(): void {
@@ -2366,7 +2374,10 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
 
       const rawState = statusByStep.get(stepId);
       if (rawState) {
-        control.patchValue({status: this.mapStepStateToUiStatus(rawState)});
+        control.patchValue(
+          {status: this.mapStepStateToUiStatus(rawState)},
+          {emitEvent: false},
+        );
       }
 
       const stepOutputs = outputsByStep.get(stepId);
@@ -2375,13 +2386,15 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
         if (outputsCtrl instanceof FormGroup) {
           for (const [key, val] of Object.entries(stepOutputs)) {
             if (outputsCtrl.contains(key)) {
-              outputsCtrl.get(key)?.setValue(val);
+              outputsCtrl.get(key)?.setValue(val, {emitEvent: false});
             } else {
-              outputsCtrl.addControl(key, new FormControl(val));
+              outputsCtrl.addControl(key, new FormControl(val), {
+                emitEvent: false,
+              });
             }
           }
         } else {
-          control.patchValue({outputs: stepOutputs});
+          control.patchValue({outputs: stepOutputs}, {emitEvent: false});
         }
       }
     });

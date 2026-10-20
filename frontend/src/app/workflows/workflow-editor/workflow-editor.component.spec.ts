@@ -40,6 +40,7 @@ import {
   StepOutputReference,
   StepStatusEnum,
   WorkflowTemplate,
+  WorkflowRunStatusEnum,
 } from '../workflow.models';
 import {WorkflowStatusPipe} from '../workflow-status.pipe';
 import {WorkflowService} from '../workflow.service';
@@ -368,6 +369,51 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
     });
   });
 
+  it('should keep a canvas-linked user input reference in sync when the parameter is renamed', () => {
+    const definitionId = 'def-city';
+    const originalName = 'City';
+    const renamedName = 'Destination City';
+    formService.addOutputDefinition(originalName, 'text', definitionId);
+
+    const promptControl = fb.control<StepOutputReference | null>(null);
+    const stepTargetForm = fb.group({
+      stepId: ['step_image_node'],
+      type: ['image'],
+      inputs: fb.group({
+        prompt: promptControl,
+        input_images: [null],
+      }),
+    });
+    component.stepsArray.push(stepTargetForm);
+
+    component.dragSourcePort = {
+      stepId: NodeTypes.USER_INPUT,
+      outputName: originalName,
+      type: 'text',
+    };
+
+    component.onPortDrop(
+      {stepId: 'step_image_node', inputName: 'prompt'},
+      'step_image_node',
+    );
+
+    expect(promptControl.value).toEqual({
+      step: NodeTypes.USER_INPUT,
+      output: originalName,
+      _definitionId: definitionId,
+    });
+
+    const definitionControl = component.outputDefinitionsArray.controls.find(
+      def => def.get('id')?.value === definitionId,
+    );
+    expect(component.isLoading).toBeFalse();
+    definitionControl?.get('name')?.setValue(renamedName);
+
+    const renamedValue = promptControl.value;
+    expect(renamedValue?.output).toBe(renamedName);
+    expect(renamedValue?._definitionId).toBe(definitionId);
+  });
+
   it('should allow connection from image source to image input in onPortDrop', () => {
     const stepTargetForm = fb.group({
       stepId: ['step_image_node'],
@@ -633,6 +679,7 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
     ).toEqual({
       step: 'user_input',
       output: 'User Video',
+      _definitionId: lastDef.get('id')?.value,
     });
   });
 
@@ -1530,6 +1577,50 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
       discardPeriodicTasks();
     }));
 
+    it('should save history immediately when a wire is successfully connected', () => {
+      spyOn(component, 'saveHistoryState');
+      const promptControl = fb.control<StepOutputReference | null>(null);
+      const stepTargetForm = fb.group({
+        stepId: ['step_image_node'],
+        type: ['image'],
+        inputs: fb.group({
+          prompt: promptControl,
+          input_images: [null],
+        }),
+      });
+      component.stepsArray.push(stepTargetForm);
+      component.dragSourcePort = {
+        stepId: 'step_text_node',
+        outputName: 'generated_text',
+        type: 'text',
+      };
+
+      component.onPortDrop(
+        {stepId: 'step_image_node', inputName: 'prompt'},
+        'step_image_node',
+      );
+
+      expect(promptControl.value).toEqual({
+        step: 'step_text_node',
+        output: 'generated_text',
+      });
+      expect(component.saveHistoryState).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not save history when a wire drop is rejected', () => {
+      spyOn(component, 'saveHistoryState');
+      component.dragSourcePort = {
+        stepId: 'step_1',
+        outputName: 'out1',
+        type: 'text',
+      };
+
+      component.onPortDrop({stepId: 'step_1', inputName: 'in1'}, 'step_1');
+
+      expect(component.dragSourcePort).toBeNull();
+      expect(component.saveHistoryState).not.toHaveBeenCalled();
+    });
+
     it('should serialize collapsed state for user_input and generic steps in prepareSteps', () => {
       component.workflowForm.get('userInput.collapsed')?.setValue(true);
 
@@ -1787,6 +1878,50 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
         generated_image: 999,
       });
     });
+
+    it('should keep terminal run status and not push history when polling updates step statuses', fakeAsync(() => {
+      const workflowService = TestBed.inject(WorkflowService);
+      component.mode = EditorMode.Edit;
+      component.workflowId = 'wf-run-terminal';
+      formService.addStep(NodeTypes.GENERATE_TEXT, {
+        stepId: 'step_text_1',
+        type: NodeTypes.GENERATE_TEXT,
+        status: StepStatusEnum.IDLE,
+        inputs: {},
+        outputs: {},
+        settings: {},
+      });
+      tick(600);
+
+      (workflowService.getRunDetails as jasmine.Spy).and.returnValue(
+        of({
+          id: 'run-terminal',
+          workflow_id: 'wf-run-terminal',
+          status: WorkflowRunStatusEnum.COMPLETED,
+          step_states: {
+            step_text_1: {
+              status: 'COMPLETED',
+              attempts: 1,
+              outputs: {generated_text: 'Final text'},
+              last_error: null,
+            },
+          },
+        }),
+      );
+      const historyLengthBeforeUpdate = component.historyStack.length;
+
+      component.onExecutionSelected('run-terminal');
+      tick(600);
+
+      const textStepCtrl = component.stepsArray.controls.find(
+        c => c.get('stepId')?.value === 'step_text_1',
+      );
+      expect(component.currentExecutionState).toBe(
+        WorkflowRunStatusEnum.COMPLETED,
+      );
+      expect(component.historyStack.length).toBe(historyLengthBeforeUpdate);
+      expect(textStepCtrl?.get('status')?.value).toBe(StepStatusEnum.COMPLETED);
+    }));
 
     describe('Loop workflows', () => {
       function addLoopWorkflow(): void {

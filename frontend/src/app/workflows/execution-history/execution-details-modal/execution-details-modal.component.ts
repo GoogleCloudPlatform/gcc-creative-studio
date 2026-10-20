@@ -64,6 +64,18 @@ import {
   StepHistorySidebarDialogData,
 } from '../../workflow-editor/step-history-sidebar/step-history-sidebar.models';
 
+/**
+ * System-managed run arguments that must never be exposed as editable
+ * resume inputs nor sent back in the resume override payload.
+ */
+const RESUME_SYSTEM_ARG_KEYS: ReadonlySet<string> = new Set<string>([
+  'workspace_id',
+  'run_id',
+  'user_auth_header',
+  'prior_outputs',
+  'fetch_checkpoint',
+]);
+
 export interface ExecutionDetailsDialogData {
   workflowId: string;
   runId?: string;
@@ -486,12 +498,6 @@ export class ExecutionDetailsModalComponent implements OnInit {
     this.toggleStep(stepId);
   }
 
-  /** Enter on the focused header opens the sidebar (ignores nested buttons). */
-  onStepHeaderKeydown(event: Event, step: RunStepViewModel): void {
-    if (event.target !== event.currentTarget) return;
-    this.openStepHistory(step);
-  }
-
   /**
    * Opens the step history sidebar for `step` as an overlay stacked above this
    * modal (which stays open behind it). The entry is a live computed signal,
@@ -609,7 +615,9 @@ export class ExecutionDetailsModalComponent implements OnInit {
     }
 
     const controls: Record<string, FormControl> = {};
-    const orderedNames = Array.from(fieldSet);
+    const orderedNames = Array.from(fieldSet).filter(
+      name => !RESUME_SYSTEM_ARG_KEYS.has(name),
+    );
     for (const name of orderedNames) {
       const rawVal = inputArgs[name];
       const strVal =
