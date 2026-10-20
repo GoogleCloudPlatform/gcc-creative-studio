@@ -29,6 +29,18 @@ When you click **Run**, your workflow doesn't just fire blindly—it goes throug
 3. **Execute (`RUNNING`):** Steps run in order. The UI polls run progress and updates each step's state live.
 4. **Finish (`COMPLETED`):** All generated media and text outputs are saved and viewable in **Execution History**.
 
+### Generate Text
+
+#### Google Search
+
+The Generate Text step has a **"Google search"** checkbox (persisted as `settings.google_search`).
+
+- **What it does:** when checked, the step's Gemini call enables the Google Search grounding tool, so the model can answer with up-to-date web information. The output is still only `generated_text` (no citations or grounding metadata).
+- **Off by default:** new steps, predefined templates and older workflows without the key all behave exactly as before (`google_search: false`).
+- **Data egress:** when enabled, the model may send queries derived from your prompt to public Google Search. Avoid enabling it for prompts containing PII or secrets.
+- **Cost & latency:** grounded requests are billed separately by Vertex AI and add some latency to each call (the normal step timeout still applies).
+- **Restricted environments:** grounding may be unavailable under VPC Service Controls or data-residency restrictions; the step then fails like any other generation error.
+
 ---
 
 ## 2. How Step Retry & Resume Works

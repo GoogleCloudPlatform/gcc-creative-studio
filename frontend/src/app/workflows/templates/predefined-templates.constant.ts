@@ -93,6 +93,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         settings: {
           model: 'gemini-3.8-flash',
           temperature: 0.7,
+          google_search: true,
         },
         type: NodeTypes.GENERATE_TEXT,
       },
@@ -134,6 +135,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         settings: {
           model: 'gemini-3.8-flash',
           temperature: 0.7,
+          google_search: false,
         },
         type: NodeTypes.GENERATE_TEXT,
       },
@@ -235,6 +237,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         settings: {
           model: 'gemini-3.8-flash',
           temperature: 0.7,
+          google_search: true,
         },
         type: NodeTypes.GENERATE_TEXT,
       },
@@ -271,6 +274,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         settings: {
           model: 'gemini-3.8-flash',
           temperature: 0.7,
+          google_search: false,
         },
         type: NodeTypes.GENERATE_TEXT,
       },
@@ -297,6 +301,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         settings: {
           model: 'gemini-3.8-flash',
           temperature: 0.7,
+          google_search: false,
         },
         type: NodeTypes.GENERATE_TEXT,
       },
@@ -398,6 +403,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         settings: {
           model: 'gemini-3.8-flash',
           temperature: 0.7,
+          google_search: true,
         },
         type: NodeTypes.GENERATE_TEXT,
       },
@@ -434,6 +440,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         settings: {
           model: 'gemini-3.8-flash',
           temperature: 0.7,
+          google_search: false,
         },
         type: NodeTypes.GENERATE_TEXT,
       },
@@ -470,6 +477,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         settings: {
           model: 'gemini-3.8-flash',
           temperature: 0.7,
+          google_search: false,
         },
         type: NodeTypes.GENERATE_TEXT,
       },

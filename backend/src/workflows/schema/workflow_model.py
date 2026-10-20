@@ -175,6 +175,7 @@ class GenerateTextInputs(BaseModel):
 class GenerateTextSettings(BaseModel):
     model: str
     temperature: float
+    google_search: bool = False
 
 
 class GenerateTextStep(BaseStep[GenerateTextInputs, GenerateTextSettings]):

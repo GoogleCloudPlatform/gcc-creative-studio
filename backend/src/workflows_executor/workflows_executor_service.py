@@ -39,6 +39,7 @@ from src.galleries.repository.unified_gallery_repository import (
 from src.users.user_model import UserModel
 from src.workflows.queue.failure_classifier import ErrorCategory
 from src.workflows.schema.workflow_model import (
+    GenerateTextSettings,
     ReferenceMediaOrAsset,
 )
 from src.workflows.workflow_constants import (
@@ -730,11 +731,24 @@ class WorkflowsExecutorService:
             request.inputs, IMAGE_MODE_ALLOWED_INPUTS.get(mode, ["prompt"])
         )
 
+    @staticmethod
+    def _text_tools(config: GenerateTextSettings) -> list[types.Tool] | None:
+        """Gemini tools for a text step: Google Search grounding when opted in.
+
+        Strict ``is True`` so a missing or non-boolean flag never enables it.
+        """
+        if config.google_search is True:
+            return [types.Tool(google_search=types.GoogleSearch())]
+        return None
+
     async def _generate_text(
         self,
         request: GenerateTextRequest,
         authorization: str | None = None,
     ) -> StepOutputs:
+        # If structured output (response_schema) is ever added here, check the
+        # model supports combining it with the google_search tool first.
+        tools = self._text_tools(request.config)
         generate_content_config = types.GenerateContentConfig(
             temperature=request.config.temperature,
             top_p=0.95,
@@ -757,6 +771,7 @@ class WorkflowsExecutorService:
                     threshold=types.HarmBlockThreshold.OFF,
                 ),
             ],
+            tools=tools,
         )
 
         contents = []

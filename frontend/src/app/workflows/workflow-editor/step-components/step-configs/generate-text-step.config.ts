@@ -67,6 +67,12 @@ export const GENERATE_TEXT_STEP_CONFIG: StepConfig = {
       max: 1,
       step: 0.1,
     },
+    {
+      name: 'google_search',
+      label: 'Google search',
+      type: 'checkbox',
+      defaultValue: false,
+    },
   ],
   outputs: [
     {

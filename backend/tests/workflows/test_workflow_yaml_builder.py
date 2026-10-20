@@ -59,6 +59,7 @@ def _text_step(
     prompt: Any = "Write a story",
     *,
     extra_inputs: dict[str, Any] | None = None,
+    google_search: bool = False,
 ) -> GenerateTextStep:
     inputs_data: dict[str, Any] = {"prompt": prompt}
     if extra_inputs:
@@ -67,7 +68,9 @@ def _text_step(
         step_id=step_id,
         inputs=GenerateTextInputs(**inputs_data),
         settings=GenerateTextSettings(
-            model="gemini-2.5-flash", temperature=0.7
+            model="gemini-2.5-flash",
+            temperature=0.7,
+            google_search=google_search,
         ),
     )
 
@@ -434,6 +437,22 @@ class TestBuildWorkflowYaml:
             "prompt"
         ]
         assert prompt_expr == '${step_a_out["weird key"]}'
+
+    @pytest.mark.parametrize("google_search", [True, False])
+    def test_text_step_body_config_carries_google_search(self, google_search):
+        defn = build_workflow_definition(
+            [_text_step("step_a", google_search=google_search)],
+            executor_url=EXECUTOR_URL,
+        )
+        try_steps = _step_map(
+            _step_map(defn["main"]["steps"])["run_steps"]["try"]["steps"]
+        )
+        body_config = try_steps["step_a"]["try"]["args"]["body"]["config"]
+        assert body_config == {
+            "model": "gemini-2.5-flash",
+            "temperature": 0.7,
+            "google_search": google_search,
+        }
 
     def test_many_steps_split_assignments_into_chunks_of_50(self):
         steps = [_text_step(f"step_{i}") for i in range(55)]

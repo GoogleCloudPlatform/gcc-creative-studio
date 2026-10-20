@@ -22,8 +22,11 @@ import {
   NodeTypes,
   StepOutputReference,
   StepStatusEnum,
+  WorkflowStep,
   WorkflowTemplate,
 } from '../workflow.models';
+import {PREDEFINED_WORKFLOW_TEMPLATES} from '../templates/predefined-templates.constant';
+import {EXPECTED_TEMPLATE_GOOGLE_SEARCH} from '../templates/predefined-templates.constant.spec';
 import {WorkflowFormService} from './workflow-form.service';
 
 describe('WorkflowFormService', () => {
@@ -593,6 +596,73 @@ describe('WorkflowFormService', () => {
         'image',
       );
       expect(service.getOutputType('missing', 'x')).toBe('');
+    });
+  });
+
+  describe('Generate Text google_search serialisation', () => {
+    const buildTextStep = (settings: DynamicStepRecord): WorkflowStep => ({
+      stepId: 'search_step',
+      type: NodeTypes.GENERATE_TEXT,
+      status: StepStatusEnum.IDLE,
+      position: {x: 0, y: 0},
+      collapsed: false,
+      inputs: {prompt: 'Weather today?'},
+      outputs: {generated_text: {type: 'text'}},
+      settings,
+    });
+
+    const firstStepSettings = (): DynamicStepRecord =>
+      service.workflowForm.getRawValue().steps[0].settings;
+
+    it('includes a persisted google_search value in the save payload', () => {
+      service.patchData({
+        name: 'Search workflow',
+        description: '',
+        steps: [
+          buildTextStep({
+            model: 'gemini-3.8-flash',
+            temperature: 0.7,
+            google_search: true,
+          }),
+        ],
+      });
+
+      expect(firstStepSettings()['google_search']).toBeTrue();
+    });
+
+    it('reflects an edited google_search value in the save payload', () => {
+      service.addStep(
+        NodeTypes.GENERATE_TEXT,
+        buildTextStep({
+          model: 'gemini-3.8-flash',
+          temperature: 0.7,
+          google_search: false,
+        }),
+      );
+
+      service.stepsArray.at(0).get('settings.google_search')?.setValue(true);
+
+      expect(firstStepSettings()['google_search']).toBeTrue();
+    });
+
+    it('preserves the predefined google_search value of every inserted Generate Text step', () => {
+      const existingIds = new Set<string>(['user_input']);
+      PREDEFINED_WORKFLOW_TEMPLATES.forEach(template =>
+        service.insertTemplateData(template, existingIds),
+      );
+
+      const textSteps = (
+        service.workflowForm.getRawValue().steps as WorkflowStep[]
+      ).filter(step => step.type === NodeTypes.GENERATE_TEXT);
+
+      expect(textSteps.length).toBe(
+        Object.keys(EXPECTED_TEMPLATE_GOOGLE_SEARCH).length,
+      );
+      textSteps.forEach(step => {
+        expect(step.settings['google_search'])
+          .withContext(step.stepId)
+          .toBe(EXPECTED_TEMPLATE_GOOGLE_SEARCH[step.stepId]);
+      });
     });
   });
 });

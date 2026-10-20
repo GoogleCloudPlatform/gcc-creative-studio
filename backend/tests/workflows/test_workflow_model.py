@@ -17,7 +17,8 @@ import datetime
 import importlib
 import json
 
-from pydantic import TypeAdapter
+import pytest
+from pydantic import TypeAdapter, ValidationError
 
 from src.workflows.queue.failure_classifier import ErrorCategory
 from src.workflows.schema.workflow_model import (
@@ -687,6 +688,83 @@ def test_legacy_step_translation_preserves_collapsed():
     }
     wf = WorkflowBase.model_validate(legacy_data)
     assert wf.steps[0].collapsed is True
+
+
+def _generate_text_step_dict(settings: dict) -> dict:
+    return {
+        "stepId": "text_search_1",
+        "type": "generate_text",
+        "inputs": {"prompt": "What's the weather in Paris today?"},
+        "settings": settings,
+        "outputs": {"generated_text": {"type": "text"}},
+    }
+
+
+def test_generate_text_settings_google_search_defaults_to_false():
+    settings = GenerateTextSettings(
+        model="gemini-3-flash-preview", temperature=0.7
+    )
+    assert settings.google_search is False
+
+
+def test_legacy_generate_text_step_without_google_search_is_false():
+    from src.workflows.schema.workflow_model import WorkflowBase
+
+    legacy_settings = {"model": "gemini-3-flash-preview", "temperature": 0.7}
+    wf = WorkflowBase.model_validate(
+        {
+            "name": "Legacy text workflow",
+            "steps": [_generate_text_step_dict(legacy_settings)],
+        }
+    )
+    step = wf.steps[0]
+    assert isinstance(step, GenerateTextStep)
+    assert step.settings.google_search is False
+
+
+def test_generate_text_google_search_true_round_trips():
+    adapter = TypeAdapter(WorkflowStep)
+    parsed = adapter.validate_python(
+        _generate_text_step_dict(
+            {
+                "model": "gemini-3-flash-preview",
+                "temperature": 0.7,
+                "google_search": True,
+            }
+        )
+    )
+    assert isinstance(parsed, GenerateTextStep)
+    assert parsed.settings.google_search is True
+
+    dumped = parsed.model_dump(by_alias=True)
+    assert dumped["settings"]["google_search"] is True
+    reparsed = adapter.validate_python(dumped)
+    assert reparsed.settings.google_search is True
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [("true", True), ("false", False), (1, True), (0, False)],
+)
+def test_generate_text_google_search_coerces_boolean_like_values(
+    raw_value, expected
+):
+    settings = GenerateTextSettings(
+        model="gemini-3-flash-preview",
+        temperature=0.7,
+        google_search=raw_value,
+    )
+    assert settings.google_search is expected
+
+
+@pytest.mark.parametrize("raw_value", [{"a": 1}, None, "yes-please", [True]])
+def test_generate_text_google_search_rejects_non_boolean_values(raw_value):
+    with pytest.raises(ValidationError):
+        GenerateTextSettings(
+            model="gemini-3-flash-preview",
+            temperature=0.7,
+            google_search=raw_value,
+        )
 
 
 # --- Workflow runs: statuses and queue / checkpoint columns -----

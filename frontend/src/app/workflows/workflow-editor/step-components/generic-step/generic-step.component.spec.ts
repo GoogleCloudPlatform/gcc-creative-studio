@@ -1217,6 +1217,142 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
     });
   });
 
+  describe('Generate Text Google search setting', () => {
+    const GOOGLE_SEARCH_LABEL = 'Google search';
+
+    let fb: FormBuilder;
+
+    const buildTextStepForm = (googleSearch: boolean | null): FormGroup => {
+      const settings: FormGroup = fb.group({
+        model: ['gemini-3.8-flash'],
+        temperature: [0.7],
+      });
+      if (googleSearch !== null) {
+        settings.addControl('google_search', fb.control(googleSearch));
+      }
+      return fb.group({
+        stepId: ['text_step_search'],
+        type: [NodeTypes.GENERATE_TEXT],
+        status: ['idle'],
+        inputs: fb.group({
+          prompt: ['What is the weather today?'],
+          input_images: [null],
+          input_videos: [null],
+        }),
+        settings,
+        outputs: fb.group({
+          generated_text: [{type: 'text'}],
+        }),
+      });
+    };
+
+    const mountStep = (
+      stepForm: FormGroup,
+    ): ComponentFixture<GenericStepComponent> => {
+      const stepFixture = TestBed.createComponent(GenericStepComponent);
+      const stepComponent = stepFixture.componentInstance;
+      stepComponent.stepForm = stepForm;
+      stepComponent.config = GENERATE_TEXT_STEP_CONFIG;
+      stepComponent.stepIndex = 0;
+      stepFixture.detectChanges();
+      return stepFixture;
+    };
+
+    const findGoogleSearchCheckbox = (
+      stepFixture: ComponentFixture<GenericStepComponent>,
+    ): HTMLElement | null => {
+      const checkbox = stepFixture.debugElement
+        .queryAll(By.css('mat-checkbox'))
+        .find(
+          el =>
+            (el.nativeElement as HTMLElement).textContent?.trim() ===
+            GOOGLE_SEARCH_LABEL,
+        );
+      return checkbox ? (checkbox.nativeElement as HTMLElement) : null;
+    };
+
+    const findNativeInput = (checkbox: HTMLElement | null): HTMLInputElement =>
+      checkbox?.querySelector('input[type="checkbox"]') as HTMLInputElement;
+
+    beforeEach(() => {
+      fb = TestBed.inject(FormBuilder);
+    });
+
+    it('declares google_search as an unchecked checkbox after temperature', () => {
+      const settingNames = GENERATE_TEXT_STEP_CONFIG.settings.map(s => s.name);
+      const googleSearchSetting = GENERATE_TEXT_STEP_CONFIG.settings.find(
+        s => s.name === 'google_search',
+      );
+
+      expect(settingNames).toEqual(['model', 'temperature', 'google_search']);
+      expect(googleSearchSetting?.type).toBe('checkbox');
+      expect(googleSearchSetting?.label).toBe(GOOGLE_SEARCH_LABEL);
+      expect(googleSearchSetting?.defaultValue).toBeFalse();
+    });
+
+    it('renders an unchecked "Google search" checkbox for a new step', () => {
+      const stepForm = buildTextStepForm(false);
+      const stepFixture = mountStep(stepForm);
+      const checkbox = findGoogleSearchCheckbox(stepFixture);
+
+      expect(checkbox).not.toBeNull();
+      expect(findNativeInput(checkbox).checked).toBeFalse();
+      expect(stepForm.get('settings.google_search')?.value).toBeFalse();
+    });
+
+    it('adds google_search as false to a legacy step without the key', () => {
+      const stepForm = buildTextStepForm(null);
+      const settings = stepForm.get('settings') as FormGroup;
+      expect(settings.contains('google_search')).toBeFalse();
+
+      const stepFixture = mountStep(stepForm);
+
+      expect(settings.contains('google_search')).toBeTrue();
+      expect(settings.get('google_search')?.value).toBeFalse();
+      expect(
+        findNativeInput(findGoogleSearchCheckbox(stepFixture)).checked,
+      ).toBeFalse();
+    });
+
+    it('does not mark a legacy step or its parent form dirty when backfilling google_search', () => {
+      const stepForm = buildTextStepForm(null);
+      const parentForm = fb.group({steps: fb.array([stepForm])});
+      parentForm.markAsPristine();
+
+      mountStep(stepForm);
+
+      expect(stepForm.get('settings.google_search')?.value).toBeFalse();
+      expect(stepForm.pristine).toBeTrue();
+      expect(parentForm.pristine).toBeTrue();
+    });
+
+    it('renders a persisted true value as checked', () => {
+      const stepFixture = mountStep(buildTextStepForm(true));
+
+      expect(
+        findNativeInput(findGoogleSearchCheckbox(stepFixture)).checked,
+      ).toBeTrue();
+    });
+
+    it('updates settings.google_search when the checkbox is clicked', () => {
+      const stepForm = buildTextStepForm(false);
+      const stepFixture = mountStep(stepForm);
+      const nativeInput = findNativeInput(
+        findGoogleSearchCheckbox(stepFixture),
+      );
+      const googleSearchControl = stepForm.get('settings.google_search');
+
+      nativeInput.click();
+      stepFixture.detectChanges();
+      expect(googleSearchControl?.value).toBeTrue();
+      expect(stepForm.value.settings.google_search).toBeTrue();
+
+      nativeInput.click();
+      stepFixture.detectChanges();
+      expect(googleSearchControl?.value).toBeFalse();
+    });
+  });
+
   describe('Image node resolution and aspect ratio features', () => {
     it('should include auto in aspect ratio options, disabled in generate_image and enabled in edit_image mode', () => {
       const aspectRatioSetting = component.localConfig.settings.find(
