@@ -24,7 +24,7 @@ When you click **Run**, your workflow doesn't just fire blindly—it goes throug
                     └──► (Needs user fix)  ──► [ NEEDS_ATTENTION (Paused) ] ──► Resume!
 ```
 
-1. **Build:** Add steps (`user_input`, `generate_text`, `image`, `crop_image`, `generate_video`, `generate_audio`, `loop`) and link their inputs/outputs in the **Workflow Editor**.
+1. **Build:** Add steps (`user_input`, `generate_text`, `image`, `crop_image`, `generate_video`, `generate_audio`, `loop`) and link their inputs/outputs in the **Workflow Editor**. A brand-new workflow must be **saved once** before **Run** is enabled (the button shows a "Save the workflow before running it" tooltip until then); after that, Run auto-saves any pending edits before starting.
 2. **Queue (`QUEUED`):** Submitted runs enter a fair round-robin queue across users so no single user hogs capacity.
 3. **Execute (`RUNNING`):** Steps run in order. The UI polls run progress and updates each step's state live.
 4. **Finish (`COMPLETED`):** All generated media and text outputs are saved and viewable in **Execution History**.

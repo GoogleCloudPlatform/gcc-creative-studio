@@ -175,9 +175,19 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
     const name = this.workflowForm?.get('name')?.value;
     return typeof name === 'string' && name.trim().length > 0;
   }
+  /**
+   * True while the workflow has never been persisted (no saved id yet).
+   * Running is blocked in that state because the first save navigates from
+   * `/workflows/new` to `/workflows/edit/:id`, which destroys this editor
+   * instance before the run could be tracked.
+   */
+  get isUnsavedWorkflow(): boolean {
+    return !this.workflowId;
+  }
   get isRunDisabled(): boolean {
     return (
       this.isLoading ||
+      this.isUnsavedWorkflow ||
       !this.stepsArray ||
       this.stepsArray.length === 0 ||
       !this.hasWorkflowName

@@ -29,6 +29,8 @@ import {MatInputModule} from '@angular/material/input';
 import {MatMenuModule} from '@angular/material/menu';
 import {MatSelectModule} from '@angular/material/select';
 import {MatSnackBar} from '@angular/material/snack-bar';
+import {MatTooltip, MatTooltipModule} from '@angular/material/tooltip';
+import {By} from '@angular/platform-browser';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {ActivatedRoute, Router} from '@angular/router';
 import {of, throwError} from 'rxjs';
@@ -137,6 +139,7 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
         MatSelectModule,
         MatInputModule,
         MatMenuModule,
+        MatTooltipModule,
         NoopAnimationsModule,
         WorkflowStatusPipe,
       ],
@@ -1175,10 +1178,19 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
       expect(component.isRunDisabled).toBeTrue();
       expect(runBtn.disabled).toBeTrue();
 
-      // Set valid name
+      // Set valid name: still disabled while the workflow has never been saved
       component.workflowForm.get('name')?.setValue('My Brand New Workflow');
       fixture.detectChanges();
       expect(component.hasWorkflowName).toBeTrue();
+      expect(component.isUnsavedWorkflow).toBeTrue();
+      expect(component.isRunDisabled).toBeTrue();
+      expect(runBtn.disabled).toBeTrue();
+
+      // Once persisted, Run becomes available
+      component.mode = EditorMode.Edit;
+      component.workflowId = 'wf-saved-1';
+      fixture.detectChanges();
+      expect(component.isUnsavedWorkflow).toBeFalse();
       expect(component.isRunDisabled).toBeFalse();
       expect(runBtn.disabled).toBeFalse();
     });
@@ -1194,6 +1206,79 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
 
       expect(component.saveWorkflow).not.toHaveBeenCalled();
       expect(workflowService.createWorkflow).not.toHaveBeenCalled();
+    });
+
+    describe('Run on unsaved workflows', () => {
+      const runnableTemplate: WorkflowTemplate = {
+        id: 'tpl-run-guard',
+        name: 'Run Guard Template',
+        description: '',
+        steps: [
+          {
+            stepId: 'gen_text',
+            type: NodeTypes.GENERATE_TEXT,
+            inputs: {prompt: 'Prompt'},
+            outputs: {generated_text: {type: 'text'}},
+            settings: {model: 'gemini-3.8-flash', temperature: 0.7},
+          },
+        ],
+      } as unknown as WorkflowTemplate;
+
+      beforeEach(() => {
+        component.onTemplateSelected(runnableTemplate);
+        component.workflowForm.get('name')?.setValue('Unsaved Workflow');
+        fixture.detectChanges();
+      });
+
+      it('should disable Run in Create mode even with steps and a name', () => {
+        expect(component.mode).toBe(EditorMode.Create);
+        expect(component.stepsArray.length).toBeGreaterThan(0);
+        expect(component.hasWorkflowName).toBeTrue();
+        expect(component.isUnsavedWorkflow).toBeTrue();
+        expect(component.isRunDisabled).toBeTrue();
+        const runBtn = fixture.nativeElement.querySelector('#workflow-run-btn');
+        expect(runBtn.disabled).toBeTrue();
+      });
+
+      it('should enable Run in Edit mode once the workflow has an id', () => {
+        component.mode = EditorMode.Edit;
+        component.workflowId = 'wf-existing-1';
+        fixture.detectChanges();
+
+        expect(component.isUnsavedWorkflow).toBeFalse();
+        expect(component.isRunDisabled).toBeFalse();
+        const runBtn = fixture.nativeElement.querySelector('#workflow-run-btn');
+        expect(runBtn.disabled).toBeFalse();
+      });
+
+      it('should not save, create or navigate when run is called on an unsaved workflow', () => {
+        const workflowService = TestBed.inject(WorkflowService);
+        const createSpy = workflowService.createWorkflow as jasmine.Spy;
+        createSpy.calls.reset();
+        const navigateSpy = TestBed.inject(Router).navigate as jasmine.Spy;
+        navigateSpy.calls.reset();
+        const saveSpy = spyOn(component, 'saveWorkflow').and.callThrough();
+
+        component.run();
+
+        expect(saveSpy).not.toHaveBeenCalled();
+        expect(createSpy).not.toHaveBeenCalled();
+        expect(navigateSpy).not.toHaveBeenCalled();
+      });
+
+      it('should only enable the explanatory tooltip while the workflow is unsaved', () => {
+        const tooltipWrapper = fixture.debugElement.query(
+          By.css('#workflow-run-btn-wrapper'),
+        );
+        const tooltip = tooltipWrapper.injector.get(MatTooltip);
+        expect(tooltip.message).toBe('Save the workflow before running it');
+        expect(tooltip.disabled).toBeFalse();
+
+        component.mode = EditorMode.Edit;
+        component.workflowId = 'wf-existing-2';
+        fixture.detectChanges();
+        expect(tooltip.disabled).toBeTrue();
+      });
     });
 
     it('should open SaveTemplateModalComponent with workflow steps when saveAsNewTemplate succeeds without saving workflow', () => {

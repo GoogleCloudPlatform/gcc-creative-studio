@@ -84,18 +84,26 @@
           <mat-icon class="mr-1">auto_awesome</mat-icon>
           Templates
         </studio-button>
-        <studio-button
-          variant="cta"
-          size="medium"
+        <!-- Wrapper hosts the tooltip: disabled buttons swallow hover events -->
+        <span
           *ngIf="!isReadOnly"
-          mat-raised-button
-          id="workflow-run-btn"
-          (click)="run()"
-          [disabled]="isRunDisabled"
+          class="inline-flex"
+          id="workflow-run-btn-wrapper"
+          matTooltip="Save the workflow before running it"
+          [matTooltipDisabled]="!isUnsavedWorkflow"
         >
-          <mat-icon>play_arrow</mat-icon>
-          Run
-        </studio-button>
+          <studio-button
+            variant="cta"
+            size="medium"
+            mat-raised-button
+            id="workflow-run-btn"
+            (click)="run()"
+            [disabled]="isRunDisabled"
+          >
+            <mat-icon>play_arrow</mat-icon>
+            Run
+          </studio-button>
+        </span>
 
         <!-- Save button with dropdown -->
         <div class="save-dropdown-group" *ngIf="!isReadOnly">
