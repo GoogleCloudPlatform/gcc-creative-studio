@@ -2,7 +2,355 @@
 
 ## System Architecture and DB Schema
 ![](../screenshots/creative-studio-architecture.png)
-![](../screenshots/creative-studio-db-architecture.png)
+
+The infrastructure behind this picture (Cloud Run, the private Cloud SQL path, buckets, Agent Engine, CI/CD) is drawn in detail in [`infrastructure/README.md` → Architecture](../infrastructure/README.md#architecture).
+
+### Database schema (ER diagram)
+
+PostgreSQL (Cloud SQL in the cloud, the `creative-studio-postgres` container locally), managed by Alembic migrations in [`alembic/`](./alembic). The diagram below is generated from the SQLAlchemy metadata (`Base.metadata.sorted_tables` after importing `main`, exactly what `alembic/env.py` autogenerates from), so it reflects the models in `src/**/schema/*_model.py`. Every `*_id` column that ends a relationship line is a foreign key; `|o` means the FK is nullable, `||` that it is required.
+
+| Domain | Tables | Models |
+| --- | --- | --- |
+| Identity & tenancy | `users`, `workspaces`, `workspace_members` | `src/users/user_model.py`, `src/workspaces/schema/workspace_model.py` |
+| Library | `folders`, `media_items`, `source_assets`, `tags`, `media_item_tags`, `source_asset_tags`, `media_templates`, `brand_guidelines`, `unified_gallery_view` (a **view** unioning `media_items` and `source_assets` for the gallery) | `src/folders/…`, `src/common/schema/media_item_model.py`, `src/source_assets/…`, `src/tags/…`, `src/media_templates/…`, `src/brand_guidelines/…`, `src/common/schema/unified_gallery_view.py` |
+| Workbench & Izumi agent | `storyboards`, `scenes`, `timelines`, `video_clips`, `audio_clips`, `agent_chat_events` | `src/projects/schema/project_model.py`, `src/workbench/schema/timeline_model.py`, `src/agents/agent_chat_event_model.py` |
+| Automation | `workflows`, `workflow_runs` | `src/workflows/schema/workflow_model.py`, `src/workflows/schema/workflow_run_model.py` |
+
+```mermaid
+erDiagram
+    users {
+        int id PK
+        varchar email UK
+        varchar[] roles
+        varchar name
+        varchar picture
+        timestamp created_at
+        timestamp updated_at
+        timestamp deleted_at
+        int deleted_by
+    }
+    workspaces {
+        int id PK
+        varchar name
+        int owner_id FK
+        varchar scope
+        timestamp created_at
+        timestamp updated_at
+    }
+    workspace_members {
+        int workspace_id PK, FK
+        int user_id PK, FK
+        varchar role
+    }
+    folders {
+        int id PK
+        int workspace_id FK
+        int user_id FK
+        varchar user_email
+        varchar name
+        int parent_id FK
+        varchar color
+        timestamp created_at
+        timestamp updated_at
+        timestamp deleted_at
+        int deleted_by FK
+    }
+    media_items {
+        int id PK
+        int workspace_id FK
+        int folder_id FK
+        varchar user_email
+        int user_id FK
+        varchar mime_type
+        varchar model
+        varchar[] titles
+        varchar[] descriptions
+        varchar prompt
+        varchar original_prompt
+        varchar rewritten_prompt
+        int num_media
+        float generation_time
+        varchar error_message
+        varchar[] thumbnail_uris
+        varchar aspect_ratio
+        varchar style
+        varchar lighting
+        varchar color_and_tone
+        varchar composition
+        varchar negative_prompt
+        bool add_watermark
+        varchar status
+        jsonb source_assets
+        jsonb source_media_items
+        varchar[] gcs_uris
+        varchar[] original_gcs_uris
+        float duration_seconds
+        varchar comment
+        int seed
+        varchar critique
+        bool google_search
+        varchar resolution
+        jsonb grounding_metadata
+        jsonb audio_analysis
+        varchar voice_name
+        varchar language_code
+        jsonb raw_data
+        int created_from_template_id FK
+        timestamp created_at
+        timestamp updated_at
+        timestamp deleted_at
+        int deleted_by FK
+    }
+    source_assets {
+        int id PK
+        int workspace_id FK
+        int folder_id FK
+        int user_id FK
+        varchar gcs_uri
+        varchar original_filename
+        varchar[] titles
+        varchar[] descriptions
+        varchar mime_type
+        varchar aspect_ratio
+        varchar file_hash
+        varchar scope
+        varchar asset_type
+        varchar thumbnail_gcs_uri
+        varchar original_gcs_uri
+        varchar external_url
+        timestamp created_at
+        timestamp updated_at
+        timestamp deleted_at
+        int deleted_by FK
+    }
+    tags {
+        int id PK
+        varchar name
+        varchar color
+        int workspace_id FK
+        int user_id FK
+        timestamp created_at
+        timestamp updated_at
+    }
+    media_item_tags {
+        int media_item_id PK, FK
+        int tag_id PK, FK
+    }
+    source_asset_tags {
+        int source_asset_id PK, FK
+        int tag_id PK, FK
+    }
+    media_templates {
+        int id PK
+        varchar name
+        varchar description
+        varchar mime_type
+        varchar industry
+        varchar brand
+        varchar[] tags
+        varchar[] gcs_uris
+        varchar[] thumbnail_uris
+        jsonb generation_parameters
+        jsonb source_assets
+        timestamp created_at
+        timestamp updated_at
+    }
+    brand_guidelines {
+        int id PK
+        varchar name
+        varchar status
+        varchar error_message
+        int workspace_id FK
+        varchar[] source_pdf_gcs_uris
+        varchar[] color_palette
+        int logo_asset_id FK
+        varchar guideline_text
+        varchar tone_of_voice_summary
+        varchar visual_style_summary
+        timestamp created_at
+        timestamp updated_at
+    }
+    unified_gallery_view {
+        int id PK
+        text item_type PK
+        int workspace_id
+        int user_id
+        int folder_id
+        timestamp created_at
+        varchar status
+        varchar workspace_name
+        varchar user_picture
+        varchar user_email
+        varchar[] titles
+        varchar[] descriptions
+        varchar[] gcs_uris
+        varchar[] thumbnail_uris
+        timestamp deleted_at
+        jsonb metadata
+    }
+    storyboards {
+        int id PK
+        int user_id FK
+        int workspace_id FK
+        varchar session_id
+        varchar template_name
+        varchar bg_music_description
+        int bg_music_asset_id FK
+    }
+    scenes {
+        int id PK
+        int storyboard_id FK
+        int order
+        varchar scene_id
+        varchar topic
+        float duration_seconds
+        varchar first_frame_description
+        int first_frame_media_item_id FK
+        int first_frame_source_asset_id FK
+        varchar first_frame_generated_url
+        varchar video_description
+        float video_duration_seconds
+        int video_media_item_id FK
+        int video_source_asset_id FK
+        varchar video_generated_url
+        varchar voiceover_text
+        varchar voiceover_gender
+        varchar voiceover_description
+        int voiceover_media_item_id FK
+        int voiceover_source_asset_id FK
+        varchar transition_type
+        float transition_duration
+        varchar audio_ambient_description
+        varchar audio_sfx_description
+    }
+    timelines {
+        int id PK
+        int storyboard_id FK
+        varchar workspace_id
+        varchar user_id
+        varchar session_id
+        varchar title
+        varchar transition_in_type
+        float transition_in_duration
+        varchar transition_out_type
+        float transition_out_duration
+    }
+    video_clips {
+        int id PK
+        int timeline_id FK
+        int clip_index
+        int media_item_id FK
+        int source_asset_id FK
+        float trim_offset_seconds
+        float trim_duration_seconds
+        float volume
+        float speed
+        int first_frame_media_item_id FK
+        int first_frame_source_asset_id FK
+        int last_frame_media_item_id FK
+        int last_frame_source_asset_id FK
+        varchar placeholder
+        varchar transition_to_next_type
+        float transition_to_next_duration
+    }
+    audio_clips {
+        int id PK
+        int timeline_id FK
+        int clip_index
+        int placement_video_clip_index
+        float placement_offset_seconds
+        int media_item_id FK
+        int source_asset_id FK
+        float trim_offset_seconds
+        float trim_duration_seconds
+        float volume
+        float speed
+        float fade_in_duration_seconds
+        float fade_out_duration_seconds
+        varchar placeholder
+    }
+    agent_chat_events {
+        int id PK
+        varchar user_id
+        varchar session_id
+        jsonb payload
+        timestamp created_at
+    }
+    workflows {
+        varchar id PK
+        int user_id FK
+        varchar name
+        varchar description
+        jsonb steps
+        timestamp created_at
+        timestamp updated_at
+    }
+    workflow_runs {
+        varchar id PK
+        varchar workflow_id FK
+        int user_id FK
+        int workspace_id
+        varchar status
+        jsonb workflow_snapshot
+        timestamp started_at
+        timestamp completed_at
+    }
+
+    users ||--o{ workspaces : owner_id
+    users ||--o{ workspace_members : user_id
+    workspaces ||--o{ workspace_members : workspace_id
+    workspaces ||--o{ folders : workspace_id
+    workspaces ||--o{ media_items : workspace_id
+    workspaces ||--o{ source_assets : workspace_id
+    workspaces ||--o{ tags : workspace_id
+    workspaces ||--o{ storyboards : workspace_id
+    workspaces |o--o{ brand_guidelines : workspace_id
+    users |o--o{ folders : user_id
+    users |o--o{ folders : deleted_by
+    users |o--o{ media_items : user_id
+    users |o--o{ media_items : deleted_by
+    users ||--o{ source_assets : user_id
+    users |o--o{ source_assets : deleted_by
+    users |o--o{ tags : user_id
+    users ||--o{ storyboards : user_id
+    users ||--o{ workflows : user_id
+    users ||--o{ workflow_runs : user_id
+    folders |o--o{ folders : parent_id
+    folders |o--o{ media_items : folder_id
+    folders |o--o{ source_assets : folder_id
+    media_templates |o--o{ media_items : created_from_template_id
+    media_items ||--o{ media_item_tags : media_item_id
+    tags ||--o{ media_item_tags : tag_id
+    source_assets ||--o{ source_asset_tags : source_asset_id
+    tags ||--o{ source_asset_tags : tag_id
+    source_assets |o--o{ brand_guidelines : logo_asset_id
+    media_items |o--o{ storyboards : bg_music_asset_id
+    storyboards ||--o{ scenes : storyboard_id
+    storyboards |o--o{ timelines : storyboard_id
+    media_items |o--o{ scenes : first_frame_media_item_id
+    media_items |o--o{ scenes : video_media_item_id
+    media_items |o--o{ scenes : voiceover_media_item_id
+    source_assets |o--o{ scenes : first_frame_source_asset_id
+    source_assets |o--o{ scenes : video_source_asset_id
+    source_assets |o--o{ scenes : voiceover_source_asset_id
+    timelines ||--o{ video_clips : timeline_id
+    timelines ||--o{ audio_clips : timeline_id
+    media_items |o--o{ video_clips : media_item_id
+    media_items |o--o{ video_clips : first_frame_media_item_id
+    media_items |o--o{ video_clips : last_frame_media_item_id
+    source_assets |o--o{ video_clips : source_asset_id
+    source_assets |o--o{ video_clips : first_frame_source_asset_id
+    source_assets |o--o{ video_clips : last_frame_source_asset_id
+    media_items |o--o{ audio_clips : media_item_id
+    source_assets |o--o{ audio_clips : source_asset_id
+    workflows ||--o{ workflow_runs : workflow_id
+```
+
+Notes:
+
+- `unified_gallery_view` is a database **view** (`__table_args__ = {"info": {"is_view": True}}`), not a table: `item_type` tells whether a row comes from `media_items` or `source_assets`, and its `workspace_id` / `user_id` / `folder_id` columns are plain columns of the view, so they are not drawn as foreign keys.
+- `agent_chat_events` and `timelines` store the agent's `session_id` / `user_id` as strings (they mirror the Izumi agent session, not the `users` table).
+- `projects` and `canvases` in `src/projects/schema/project_model.py` are commented out and do not exist in the database.
 
 The backend follows a **Modular, Feature-Driven Architecture**, heavily inspired by the principles of Hexagonal Architecture (Ports & Adapters).
 
