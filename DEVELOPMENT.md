@@ -55,6 +55,12 @@ DB_HOST="postgres"
 DB_PORT="5432"
 USE_CLOUD_SQL_AUTH_PROXY=false
 ADMIN_USER_EMAIL="your-user-email"
+
+# --- Workflows ---
+# Fernet key that encrypts the stored session tokens of queued workflow runs.
+# Generate with: openssl rand -base64 32 | tr '+/' '-_'
+# Optional: if empty, token storage is disabled (with a warning) and queued runs wait for your next request.
+WORKFLOW_TOKEN_ENCRYPTION_KEY=""
 ```
 
 > 💡 **Best Practice Tip: Local PostgreSQL Container**

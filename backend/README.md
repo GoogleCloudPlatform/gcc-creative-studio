@@ -14,7 +14,7 @@ PostgreSQL (Cloud SQL in the cloud, the `creative-studio-postgres` container loc
 | Identity & tenancy | `users`, `workspaces`, `workspace_members` | `src/users/user_model.py`, `src/workspaces/schema/workspace_model.py` |
 | Library | `folders`, `media_items`, `source_assets`, `tags`, `media_item_tags`, `source_asset_tags`, `media_templates`, `brand_guidelines`, `unified_gallery_view` (a **view** unioning `media_items` and `source_assets` for the gallery) | `src/folders/…`, `src/common/schema/media_item_model.py`, `src/source_assets/…`, `src/tags/…`, `src/media_templates/…`, `src/brand_guidelines/…`, `src/common/schema/unified_gallery_view.py` |
 | Workbench & Izumi agent | `storyboards`, `scenes`, `timelines`, `video_clips`, `audio_clips`, `agent_chat_events` | `src/projects/schema/project_model.py`, `src/workbench/schema/timeline_model.py`, `src/agents/agent_chat_event_model.py` |
-| Automation | `workflows`, `workflow_runs` | `src/workflows/schema/workflow_model.py`, `src/workflows/schema/workflow_run_model.py` |
+| Automation | `workflows`, `workflow_runs`, `workflow_templates`, `workflow_user_sessions` | `src/workflows/schema/workflow_model.py`, `src/workflows/schema/workflow_run_model.py` (runs + user sessions), `src/workflows/schema/workflow_template_model.py` |
 
 ```mermaid
 erDiagram
@@ -294,6 +294,37 @@ erDiagram
         jsonb workflow_snapshot
         timestamp started_at
         timestamp completed_at
+        jsonb input_args
+        varchar definition_hash
+        timestamp queued_at
+        timestamp dispatched_at
+        varchar queue_reason
+        timestamp waiting_for_session_since
+        int session_wait_seconds
+        varchar current_step_id
+        int attempt_count
+        timestamp next_retry_at
+        varchar last_error_category
+        text last_error_detail
+        jsonb execution_ids
+        jsonb step_states
+        bool canceled_by_user
+    }
+    workflow_templates {
+        varchar id PK
+        int user_id FK
+        varchar name
+        varchar description
+        jsonb steps
+        timestamp created_at
+        timestamp updated_at
+    }
+    workflow_user_sessions {
+        int user_id PK, FK
+        text encrypted_token
+        timestamp token_expires_at
+        timestamp updated_at
+        timestamp last_dispatched_at
     }
 
     users ||--o{ workspaces : owner_id
@@ -315,6 +346,8 @@ erDiagram
     users ||--o{ storyboards : user_id
     users ||--o{ workflows : user_id
     users ||--o{ workflow_runs : user_id
+    users ||--o{ workflow_templates : user_id
+    users ||--o| workflow_user_sessions : user_id
     folders |o--o{ folders : parent_id
     folders |o--o{ media_items : folder_id
     folders |o--o{ source_assets : folder_id
@@ -350,6 +383,8 @@ Notes:
 
 - `unified_gallery_view` is a database **view** (`__table_args__ = {"info": {"is_view": True}}`), not a table: `item_type` tells whether a row comes from `media_items` or `source_assets`, and its `workspace_id` / `user_id` / `folder_id` columns are plain columns of the view, so they are not drawn as foreign keys.
 - `agent_chat_events` and `timelines` store the agent's `session_id` / `user_id` as strings (they mirror the Izumi agent session, not the `users` table).
+- `workflow_runs` doubles as the workflow **queue**: the `queued_at` … `canceled_by_user` columns hold the dispatch state, retry counters and per-step checkpoints (`step_states`). Its `workspace_id` is a plain column, not a foreign key.
+- `workflow_user_sessions` keeps at most one row per user (`user_id` is the primary key) with the user's short-lived Google ID token **encrypted** with `WORKFLOW_TOKEN_ENCRYPTION_KEY`, so queued runs can start after the browser request that created them has finished.
 - `projects` and `canvases` in `src/projects/schema/project_model.py` are commented out and do not exist in the database.
 
 The backend follows a **Modular, Feature-Driven Architecture**, heavily inspired by the principles of Hexagonal Architecture (Ports & Adapters).
@@ -392,6 +427,11 @@ GENMEDIA_BUCKET="creative-studio-deploy-cs-development-bucket"
 SIGNING_SA_EMAIL="cs-development-read@creative-studio-deploy.iam.gserviceaccount.com"
 GOOGLE_TOKEN_AUDIENCE="XXXX-XXXXXXXXXXX.apps.googleusercontent.com"
 IDENTITY_PLATFORM_ALLOWED_ORGS=""
+
+# Workflows: Fernet key used to encrypt the stored session tokens of queued runs.
+# Generate with: openssl rand -base64 32 | tr '+/' '-_'
+# Optional locally: if empty, token storage is disabled (with a warning) and queued runs wait for your next request.
+WORKFLOW_TOKEN_ENCRYPTION_KEY=""
 ```
 
 ### 2. Running the Application

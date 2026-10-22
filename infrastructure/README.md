@@ -35,7 +35,7 @@ flowchart TB
 
         subgraph Data["Storage & secrets"]
             Bucket[("GCS PROJECT-cs-ENV-bucket<br/>generated media & uploads · CORS<br/>signed URLs via SA cs-ENV-bkt-reader")]
-            Secrets["Secret Manager<br/>FIREBASE_* · GOOGLE_CLIENT_ID · GOOGLE_TOKEN_AUDIENCE<br/>agent_engine_resource_name · agent_engine_user_auth_token_key<br/>cs-ENV-db-password"]
+            Secrets["Secret Manager<br/>FIREBASE_* · GOOGLE_CLIENT_ID · GOOGLE_TOKEN_AUDIENCE<br/>agent_engine_resource_name · agent_engine_user_auth_token_key<br/>workflow_token_encryption_key · cs-ENV-db-password"]
             Firestore[("Firestore<br/>agent session state")]
             TfState[("GCS PROJECT-cstudio-ENV-tfstate<br/>Terraform state · migration_backup.sql.gz · manual")]
         end
