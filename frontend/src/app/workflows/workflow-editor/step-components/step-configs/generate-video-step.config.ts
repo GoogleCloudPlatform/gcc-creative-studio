@@ -29,7 +29,7 @@ const model_options = MODEL_CONFIGS.filter(model => model.type === 'VIDEO').map(
 
 export const GENERATE_VIDEO_STEP_CONFIG: StepConfig = {
   type: NodeTypes.GENERATE_VIDEO,
-  title: 'Generate Video',
+  title: 'Video',
   icon: 'movie',
   inputs: [
     {

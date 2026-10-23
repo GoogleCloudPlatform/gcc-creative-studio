@@ -28,7 +28,7 @@ const model_options = MODEL_CONFIGS.filter(model => model.type === 'TEXT').map(
 
 export const GENERATE_TEXT_STEP_CONFIG: StepConfig = {
   type: NodeTypes.GENERATE_TEXT,
-  title: 'Generate Text',
+  title: 'Text',
   icon: 'edit_note',
   inputs: [
     {

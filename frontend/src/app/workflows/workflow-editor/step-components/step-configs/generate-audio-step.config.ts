@@ -51,7 +51,7 @@ const LANGUAGE_OPTIONS = [
 
 export const GENERATE_AUDIO_STEP_CONFIG: StepConfig = {
   type: NodeTypes.GENERATE_AUDIO,
-  title: 'Generate Audio',
+  title: 'Audio',
   icon: 'music_note',
   inputs: [
     {

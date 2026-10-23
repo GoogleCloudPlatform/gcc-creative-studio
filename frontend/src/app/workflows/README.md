@@ -9,8 +9,8 @@ Welcome to the **Workflows** module! A workflow lets you chain multiple AI gener
 A workflow is a chain of connected **Steps** (nodes). Each step can use outputs from previous steps as its inputs.
 
 ```text
-[ User Input ] ──► [ Generate Text ] ──► [ Generate Image ] ──► [ Generate Video ]
-  (prompt)           (script/idea)         (keyframe img)         (final video)
+[ User Input ] ───► [ Text ] ────► [ Image ] ────► [ Video ]
+   (prompt)      (script/idea)   (keyframe img)  (final video)
 ```
 
 ### Lifecycle of a Run
@@ -29,11 +29,11 @@ When you click **Run**, your workflow doesn't just fire blindly—it goes throug
 3. **Execute (`RUNNING`):** Steps run in order. The UI polls run progress and updates each step's state live.
 4. **Finish (`COMPLETED`):** All generated media and text outputs are saved and viewable in **Execution History**.
 
-### Generate Text
+### Text
 
 #### Google Search
 
-The Generate Text step has a **"Google search"** checkbox (persisted as `settings.google_search`).
+The Text step has a **"Google search"** checkbox (persisted as `settings.google_search`).
 
 - **What it does:** when checked, the step's Gemini call enables the Google Search grounding tool, so the model can answer with up-to-date web information. The output is still only `generated_text` (no citations or grounding metadata).
 - **Off by default:** new steps, predefined templates and older workflows without the key all behave exactly as before (`google_search: false`).
@@ -115,9 +115,9 @@ To prevent one user's huge batch from blocking everyone else, the system uses a 
 Need to run the same steps for every image in a folder or every word in a list? The **Loop** node repeats its body once per item—inside a single run.
 
 ```text
-[ Loop ] ──current_item──► [ Generate Text ] ──► [ Generate Image ]
-    ▲       (1 per iteration)                            │
-    └──────────────────── loop_ending ◄──────────────────┘
+[ Loop ] ──current_item──► [ Text ] ──► [ Image ]
+    ▲       (1 per iteration)               │
+    └──────────── loop_ending ◄─────────────┘
 ```
 
 ### Step-by-Step
@@ -162,7 +162,7 @@ Every step in a run (loop or not) exposes its data through a single **`history`*
 
 ---
 
-## 7. Output Folder (Image, Generate Video, Generate Audio)
+## 7. Output Folder (Image, Video, Audio)
 
 The **Output folder** setting (`settings.output_folder_id`) picks the Media Gallery folder where the node saves what it generates.
 
