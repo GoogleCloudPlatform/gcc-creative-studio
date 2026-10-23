@@ -243,6 +243,30 @@ class CreateVeoDto(BaseDto):
                     "Reference media cannot be used at the same time as a start frame, end frame, or source video.",
                 )
 
+        has_audio_reference = bool(self.reference_audio) or any(
+            item.role == AssetRoleEnum.AUDIO_REFERENCE
+            for item in (self.source_media_items or [])
+        )
+        if has_audio_reference and not model.is_gemini_omni_model:
+            raise ValueError(
+                f"Model '{model.value}' does not support Audio as reference. "
+                "Audio reference is only supported by Gemini Omni models."
+            )
+
+        has_video_reference = bool(self.reference_video) or any(
+            item.role
+            in (
+                AssetRoleEnum.VIDEO_REFERENCE,
+                AssetRoleEnum.YOUTUBE_VIDEO_REFERENCE,
+            )
+            for item in (self.source_media_items or [])
+        )
+        if has_video_reference and not model.is_gemini_omni_model:
+            raise ValueError(
+                f"Model '{model.value}' does not support Video as reference. "
+                "Video reference is only supported by Gemini Omni models."
+            )
+
         # Validate model-specific resolution limits
         if model in (
             GenerationModelEnum.GEMINI_OMNI,

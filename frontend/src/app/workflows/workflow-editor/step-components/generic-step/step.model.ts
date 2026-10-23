@@ -14,20 +14,47 @@
  * limitations under the License.
  */
 
+interface Option {
+  value: string | number;
+  label: string;
+  disabled?: boolean;
+}
+
+/** Data type of a step input port. `loop_ending` only accepts a `loop_ending` output. */
+export type StepInputType =
+  | 'text'
+  | 'textarea'
+  | 'select'
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'loop_ending';
+
+/** Data type of a step output port. */
+export type StepOutputType =
+  | 'text'
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'loop_ending';
+
 export interface StepInput {
   name: string;
   label: string;
-  type: 'text' | 'textarea' | 'select' | 'image' | 'video' | 'audio';
-  options?: {value: string; label: string}[];
+  type: StepInputType;
+  options?: Option[];
   required: boolean;
   hidden?: boolean;
+  isVariable?: boolean;
+  /** When true, the input can only be wired from another step (no fixed value). */
+  linkedOnly?: boolean;
 }
 
 export interface StepSetting {
   name: string;
   label: string;
   type: 'text' | 'textarea' | 'select' | 'checkbox' | 'slider' | 'radio';
-  options?: {value: string; label: string}[];
+  options?: Option[];
   defaultValue: any;
   hidden?: boolean;
   min?: number;
@@ -38,7 +65,7 @@ export interface StepSetting {
 export interface StepOutput {
   name: string;
   label: string;
-  type: 'text' | 'image' | 'video' | 'audio';
+  type: StepOutputType;
 }
 
 export interface StepConfig {

@@ -31,9 +31,78 @@ defaults:
     shell: 'bash'
 
 jobs:
-  review:
+  # GitHub refuses PR diffs above 20,000 lines (HTTP 406 "too_large"), and one
+  # agent session cannot review tens of thousands of lines within the timeout.
+  # This job builds the diff locally and splits big PRs into passes by area
+  # (backend / frontend / infrastructure / other), sources before tests.
+  # Tunables: REVIEW_CHUNK_LINES (lines per pass), REVIEW_MAX_CHUNKS (passes).
+  plan:
     runs-on: 'ubuntu-latest'
-    timeout-minutes: 15
+    timeout-minutes: 5
+    permissions:
+      contents: 'read'
+      pull-requests: 'write'
+    env:
+      REVIEW_CHUNK_LINES: '5000'
+      REVIEW_MAX_CHUNKS: '8'
+    outputs:
+      chunks: '${{ steps.plan.outputs.chunks }}'
+      has_chunks: '${{ steps.plan.outputs.has_chunks }}'
+    steps:
+      - name: 'Checkout repository'
+        uses: 'actions/checkout@v4'
+        with:
+          ref: '${{ github.event.pull_request.head.sha }}'
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 'Plan review passes'
+        id: 'plan'
+        env:
+          BASE_SHA: '${{ github.event.pull_request.base.sha }}'
+          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
+        run: |-
+          python3 .github/scripts/gemini_review_chunks.py plan \
+            --base "${BASE_SHA}" --head "${HEAD_SHA}" \
+            --chunk-lines "${REVIEW_CHUNK_LINES}" --max-chunks "${REVIEW_MAX_CHUNKS}" \
+            --report "${RUNNER_TEMP}/review-scope.md"
+          cat "${RUNNER_TEMP}/review-scope.md" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: 'Post review scope on the PR'
+        # Never block the review because of a comment hiccup.
+        continue-on-error: true
+        env:
+          GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          REPO: '${{ github.repository }}'
+          SPLIT: '${{ steps.plan.outputs.split }}'
+        run: |-
+          existing="$(gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- gemini-review-scope -->"))) | .id' \
+            | head -n 1)"
+          if [ -n "${existing}" ]; then
+            gh api -X PATCH "repos/${REPO}/issues/comments/${existing}" -F "body=@${RUNNER_TEMP}/review-scope.md" > /dev/null
+            echo "Updated review scope comment ${existing}."
+          elif [ "${SPLIT}" = "true" ]; then
+            gh pr comment "${PR_NUMBER}" --repo "${REPO}" --body-file "${RUNNER_TEMP}/review-scope.md"
+          else
+            echo "Single review pass: no scope comment needed."
+          fi
+
+  review:
+    needs: 'plan'
+    if: "needs.plan.outputs.has_chunks == 'true'"
+    name: 'review (${{ matrix.chunk.label }})'
+    runs-on: 'ubuntu-latest'
+    # Applies per pass (matrix job), not to the whole workflow.
+    timeout-minutes: 60
+    strategy:
+      # Sequential on purpose: GitHub allows one pending review per user per PR,
+      # so parallel passes would clobber each other's pending review.
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        chunk: '${{ fromJSON(needs.plan.outputs.chunks) }}'
     permissions:
       contents: 'read'
       issues: 'write'
@@ -49,6 +118,22 @@ jobs:
     steps:
       - name: 'Checkout repository'
         uses: 'actions/checkout@v4'
+        with:
+          ref: '${{ github.event.pull_request.head.sha }}'
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 'Build diff for this pass'
+        env:
+          BASE_SHA: '${{ github.event.pull_request.base.sha }}'
+          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
+          # Passed through env (never interpolated into the script): file
+          # names come from the PR author.
+          CHUNK_FILES: '${{ toJSON(matrix.chunk.files) }}'
+        run: |-
+          python3 .github/scripts/gemini_review_chunks.py build-diff \
+            --base "${BASE_SHA}" --head "${HEAD_SHA}" \
+            --output .gemini-review/pr.diff
 
       - name: 'Run Gemini pull request review'
         uses: 'google-github-actions/run-gemini-cli@v0'
@@ -60,7 +145,7 @@ jobs:
           settings: |-
             {
               "model": {
-                "name": "gemini-3.5-flash",
+                "name": "gemini-3.8-flash",
                 "maxSessionTurns": 100
               },
               "mcpServers": {
@@ -117,8 +202,8 @@ jobs:
             - Retrieve the GitHub repository name from the environment variable "${REPOSITORY}".
             - Retrieve the GitHub pull request number from the environment variable "${PULL_REQUEST_NUMBER}".
             - Use `pull_request_read` (method: `get`) to get the title, body, and metadata about the pull request.
-            - Use `pull_request_read` (method: `get_files`) to get the list of files that were added, removed, and changed in the pull request.
-            - Use `pull_request_read` (method: `get_diff`) to get the diff from the pull request. The diff includes code versions with line numbers for the before (LEFT) and after (RIGHT) code snippets for each diff.
+            - **Do NOT call `pull_request_read` with method `get_files` or `get_diff`.** The diff to review has already been written to the local file `.gemini-review/pr.diff` (standard unified `git diff` of the pull request, with `@@ -LEFT +RIGHT @@` hunk headers giving the before (LEFT) and after (RIGHT) line numbers). Read it with your file reading tool. The file can be long: keep reading with offset/limit pagination until you reach its end.
+            - **Review scope:** this run is review pass "${{ matrix.chunk.label }}" (${{ matrix.chunk.changes }} changed lines). Large pull requests are split into several passes, each reviewed separately. Only review and comment on files present in `.gemini-review/pr.diff`; other files are covered by other passes. You may read other repository files for context only.
 
             -----
 
@@ -230,7 +315,7 @@ jobs:
             3. **Submit Final Review:** Call `pull_request_review_write` (method: `submit_pending`) with a summary comment. **DO NOT** approve the pull request. **DO NOT** request changes. The summary comment **MUST** use this exact markdown format:
 
                 <SUMMARY>
-                ## 📋 Review Summary
+                ## 📋 Review Summary (${{ matrix.chunk.label }})
 
                 A brief, high-level assessment of the Pull Request's objective and quality (2-3 sentences).
 

@@ -15,7 +15,10 @@
 
 
 import asyncio
+from collections.abc import Awaitable, Callable
+import inspect
 import logging
+from typing import Any
 
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
@@ -25,16 +28,56 @@ from firebase_admin import auth
 from google.auth.transport import requests as google_auth_requests
 from google.oauth2 import id_token
 
+from src.common.request_context import is_agent_request
+from src.common.secret_redaction import install_secret_redaction
 from src.config.config_service import config_service
 from src.users.user_model import UserModel, UserRoleEnum
 from src.users.user_service import UserService
-from src.common.request_context import is_agent_request
 
 # Initialize the scheme without auto_error so we can handle fallback internal auth
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 
 
-logger = logging.getLogger(__name__)
+logger = install_secret_redaction(logging.getLogger(__name__))
+
+PostAuthHook = Callable[[UserModel, str, Any], Awaitable[Any] | Any]
+_post_auth_hooks: list[PostAuthHook] = []
+
+
+def register_post_auth_hook(hook: PostAuthHook) -> None:
+    """Registers a callback invoked with ``(user, token, exp)`` after ID token auth.
+
+    Hooks are only called for direct user JWT ID tokens (never for ``ya29.*``
+    OAuth access tokens or ``X-User-Authorization`` agent requests, Q14).
+    """
+    if hook not in _post_auth_hooks:
+        _post_auth_hooks.append(hook)
+
+
+def clear_post_auth_hooks() -> None:
+    """Removes all registered post-auth hooks (used by tests)."""
+    _post_auth_hooks.clear()
+
+
+def get_post_auth_hooks() -> tuple[PostAuthHook, ...]:
+    """Returns a snapshot of the registered post-auth hooks."""
+    return tuple(_post_auth_hooks)
+
+
+async def _run_post_auth_hooks(user: UserModel, token: str, exp: Any) -> None:
+    """Invokes registered post-auth hooks without failing authentication."""
+    for hook in tuple(_post_auth_hooks):
+        try:
+            result = hook(user, token, exp)
+            if inspect.isawaitable(result):
+                await result
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "Post-auth hook %s failed for user_id=%s",
+                getattr(hook, "__name__", repr(hook)),
+                user.id,
+                exc_info=True,
+            )
 
 
 async def get_current_user(
@@ -190,6 +233,11 @@ async def get_current_user(
                 await user_service.user_repo.update(
                     user_doc.id, {"picture": picture}
                 )
+
+        if not user_auth_header and not token.startswith("ya29."):
+            await _run_post_auth_hooks(
+                user_doc, token, decoded_token.get("exp")
+            )
 
         return user_doc
 

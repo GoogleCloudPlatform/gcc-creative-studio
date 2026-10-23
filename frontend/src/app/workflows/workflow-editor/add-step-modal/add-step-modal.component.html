@@ -27,9 +27,10 @@
       <button
         *ngFor="let step of stepTypes"
         class="node-card"
+        [id]="'add-step-option-' + step.type"
         [disabled]="step.disabled"
-        (click)="!step.disabled && selectStep(step.type)">
-
+        (click)="!step.disabled && selectStep(step.type)"
+      >
         <div class="icon-container">
           <mat-icon>{{ step.icon }}</mat-icon>
         </div>
@@ -37,7 +38,9 @@
           <div class="header-row">
             <h3>{{ step.label }}</h3>
           </div>
-          <span *ngIf="step.disabled" class="coming-soon-badge">Coming Soon</span>
+          <span *ngIf="step.disabled" class="coming-soon-badge"
+            >Coming Soon</span
+          >
           <p *ngIf="!step.disabled">{{ step.description }}</p>
         </div>
       </button>

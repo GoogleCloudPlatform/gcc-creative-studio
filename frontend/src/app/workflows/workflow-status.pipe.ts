@@ -16,34 +16,57 @@
 
 import {Pipe, PipeTransform} from '@angular/core';
 
+export type WorkflowStatusTransformType = 'icon' | 'class';
+
+export interface WorkflowStatusStyle {
+  icon: string;
+  class: string;
+}
+
+const STATUS_STYLE_CONFIG: Readonly<Record<string, WorkflowStatusStyle>> = {
+  QUEUED: {icon: 'schedule', class: '!bg-amber-500/20 !text-amber-300'},
+  RUNNING: {icon: 'hourglass_top', class: '!bg-blue-500/20 !text-blue-300'},
+  IN_PROGRESS: {icon: 'hourglass_top', class: '!bg-blue-500/20 !text-blue-300'},
+  ACTIVE: {icon: 'hourglass_top', class: '!bg-blue-500/20 !text-blue-300'},
+  STEP_FAILED: {
+    icon: 'sync_problem',
+    class: '!bg-orange-500/20 !text-orange-300',
+  },
+  NEEDS_ATTENTION: {
+    icon: 'warning',
+    class: '!bg-amber-500/20 !text-amber-300',
+  },
+  COMPLETED: {
+    icon: 'check_circle',
+    class: '!bg-green-500/20 !text-green-300',
+  },
+  SUCCEEDED: {
+    icon: 'check_circle',
+    class: '!bg-green-500/20 !text-green-300',
+  },
+  FAILED: {icon: 'error', class: '!bg-red-500/20 !text-red-300'},
+  PENDING: {icon: 'schedule', class: '!bg-gray-500/20 !text-gray-300'},
+  SKIPPED: {icon: 'skip_next', class: '!bg-amber-500/20 !text-amber-300'},
+  CANCELED: {icon: 'cancel', class: '!bg-red-500/20 !text-red-300'},
+  CANCELLED: {icon: 'cancel', class: '!bg-red-500/20 !text-red-300'},
+};
+
+const DEFAULT_STATUS_STYLE: WorkflowStatusStyle = {
+  icon: 'help_outline',
+  class: '!bg-gray-500/20 !text-gray-300',
+};
+
 @Pipe({name: 'workflowStatus', standalone: true})
 export class WorkflowStatusPipe implements PipeTransform {
-  transform(status: string | undefined | null, type: 'icon' | 'class'): string {
-    let s = status?.toUpperCase();
-    if (s?.startsWith('STATE_')) {
-      s = s.replace('STATE_', '');
+  transform(
+    status: string | undefined | null,
+    type: WorkflowStatusTransformType,
+  ): string {
+    let normalized = status?.toUpperCase();
+    if (normalized?.startsWith('STATE_')) {
+      normalized = normalized.replace('STATE_', '');
     }
-    const config: any = {
-      RUNNING: {icon: 'hourglass_top', class: '!bg-blue-500/20 !text-blue-300'},
-      ACTIVE: {icon: 'hourglass_top', class: '!bg-blue-500/20 !text-blue-300'}, // Map ACTIVE to RUNNING style
-      COMPLETED: {
-        icon: 'check_circle',
-        class: '!bg-green-500/20 !text-green-300',
-      },
-      SUCCEEDED: {
-        icon: 'check_circle',
-        class: '!bg-green-500/20 !text-green-300',
-      },
-      FAILED: {icon: 'error', class: '!bg-red-500/20 !text-red-300'},
-      PENDING: {icon: 'schedule', class: '!bg-gray-500/20 !text-gray-300'},
-      SKIPPED: {icon: 'skip_next', class: '!bg-amber-500/20 !text-amber-300'},
-      CANCELLED: {icon: 'cancel', class: '!bg-red-500/20 !text-red-300'},
-    };
-
-    const def = config[s || ''] || {
-      icon: 'help_outline',
-      class: '!bg-gray-500/20 !text-gray-300',
-    };
+    const def = STATUS_STYLE_CONFIG[normalized || ''] || DEFAULT_STATUS_STYLE;
     return type === 'icon' ? def.icon : def.class;
   }
 }
