@@ -23,7 +23,13 @@ from typing import (
     Union,
 )
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PositiveInt,
+    field_validator,
+)
 from sqlalchemy import DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -175,6 +181,7 @@ class GenerateTextInputs(BaseModel):
 class GenerateTextSettings(BaseModel):
     model: str
     temperature: float
+    google_search: bool = False
 
 
 class GenerateTextStep(BaseStep[GenerateTextInputs, GenerateTextSettings]):
@@ -201,6 +208,8 @@ class GenerateVideoSettings(BaseModel):
     duration_seconds: int = 8
     input_mode: str | None = None
     resolution: Literal["1K", "2K", "4K"] = "1K"
+    # Gallery folder for the generated media; None means the root folder.
+    output_folder_id: PositiveInt | None = None
 
 
 class GenerateVideoStep(BaseStep[GenerateVideoInputs, GenerateVideoSettings]):
@@ -220,6 +229,8 @@ class GenerateAudioSettings(BaseModel):
     language_code: str | None = None
     negative_prompt: str | None = None
     seed: int | None = None
+    # Gallery folder for the generated media; None means the root folder.
+    output_folder_id: PositiveInt | None = None
 
     @field_validator("seed", mode="before")
     @classmethod
@@ -261,6 +272,8 @@ class ImageSettings(BaseModel):
     upscale_factor: Literal["x2", "x3", "x4"] = "x2"
     enhance_input_image: bool = False
     image_preservation_factor: float | None = None
+    # Gallery folder for the generated media (all modes); None means root.
+    output_folder_id: PositiveInt | None = None
 
 
 class ImageStep(BaseStep[ImageInputs, ImageSettings]):

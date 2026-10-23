@@ -160,6 +160,109 @@ def test_upload_upscale_success(client, mock_service, mock_workspace_auth):
     kwargs = mock_service.start_upload_upscale_job.call_args.kwargs
     assert kwargs["enhance_input_image"] is True
     assert kwargs["image_preservation_factor"] == 0.85
+    assert kwargs["folder_id"] is None
+
+
+def _processing_image_response(media_id: int) -> MediaItemResponse:
+    return MediaItemResponse(
+        id=media_id,
+        workspace_id=1,
+        user_id=1,
+        user_email="test@example.com",
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+        status=JobStatusEnum.PROCESSING,
+        model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE,
+        gcs_uris=[],
+        presigned_urls=[],
+        aspect_ratio="1:1",
+    )
+
+
+def test_upload_upscale_passes_folder_id(client, mock_service):
+    mock_service.start_upload_upscale_job.return_value = (
+        _processing_image_response(335)
+    )
+    files = {"file": ("test.png", b"fake_bytes", "image/png")}
+    data = {"workspaceId": "1", "folderId": "42"}
+
+    response = client.post("/api/images/upload-upscale", files=files, data=data)
+
+    assert response.status_code == 200
+    kwargs = mock_service.start_upload_upscale_job.call_args.kwargs
+    assert kwargs["folder_id"] == 42
+
+
+@pytest.mark.parametrize("folder_id", ["0", "-1", "abc"])
+def test_upload_upscale_rejects_invalid_folder_id(
+    client, mock_service, folder_id
+):
+    files = {"file": ("test.png", b"fake_bytes", "image/png")}
+    data = {"workspaceId": "1", "folderId": folder_id}
+
+    response = client.post("/api/images/upload-upscale", files=files, data=data)
+
+    assert response.status_code == 422
+    mock_service.start_upload_upscale_job.assert_not_called()
+
+
+GENERATE_IMAGES_PAYLOAD = {
+    "prompt": "A sunset",
+    "workspace_id": 1,
+    "generation_model": "gemini-3.1-flash-image",
+}
+VTO_PAYLOAD = {
+    "workspace_id": 1,
+    "person_image": {"source_asset_id": 101},
+    "top_image": {"source_asset_id": 102},
+}
+IMAGE_GENERATION_ROUTES = [
+    ("/api/images/generate-images", GENERATE_IMAGES_PAYLOAD, "image"),
+    ("/api/images/generate-images-for-vto", VTO_PAYLOAD, "vto"),
+]
+
+
+def _start_job_mock(mock_service, kind: str) -> AsyncMock:
+    if kind == "vto":
+        return mock_service.start_vto_generation_job
+    return mock_service.start_image_generation_job
+
+
+@pytest.mark.parametrize("folder_key", ["folderId", "folder_id"])
+@pytest.mark.parametrize("url, payload, kind", IMAGE_GENERATION_ROUTES)
+def test_image_generation_accepts_folder_id(
+    client, mock_service, url, payload, kind, folder_key
+):
+    start_job = _start_job_mock(mock_service, kind)
+    start_job.return_value = _processing_image_response(336)
+
+    response = client.post(url, json={**payload, folder_key: 42})
+
+    assert response.status_code == 200
+    assert start_job.call_args.kwargs["request_dto"].folder_id == 42
+
+
+@pytest.mark.parametrize("url, payload, kind", IMAGE_GENERATION_ROUTES)
+def test_image_generation_without_folder_id_defaults_to_root(
+    client, mock_service, url, payload, kind
+):
+    start_job = _start_job_mock(mock_service, kind)
+    start_job.return_value = _processing_image_response(337)
+
+    response = client.post(url, json=payload)
+
+    assert response.status_code == 200
+    assert start_job.call_args.kwargs["request_dto"].folder_id is None
+
+
+@pytest.mark.parametrize("folder_id", [0, -1, "abc"])
+@pytest.mark.parametrize("url, payload, kind", IMAGE_GENERATION_ROUTES)
+def test_image_generation_rejects_invalid_folder_id(
+    client, mock_service, url, payload, kind, folder_id
+):
+    response = client.post(url, json={**payload, "folderId": folder_id})
+
+    assert response.status_code == 422
+    _start_job_mock(mock_service, kind).assert_not_called()
 
 
 def test_upload_upscale_snake_case_params(

@@ -16,7 +16,7 @@
 from typing import Annotated, Literal
 
 from fastapi import Query
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, PositiveInt, field_validator, model_validator
 
 from src.common.base_dto import (
     AspectRatioEnum,
@@ -162,6 +162,10 @@ class CreateVeoDto(BaseDto):
         default="1K",
         description="Resolution of the generated videos.",
     )
+    folder_id: PositiveInt | None = Field(
+        default=None,
+        description="Optional gallery folder (same workspace) to save the generated media into. Defaults to the root folder.",
+    )
 
     @model_validator(mode="after")
     def validate_cross_fields(self) -> "CreateVeoDto":
@@ -243,24 +247,14 @@ class CreateVeoDto(BaseDto):
                     "Reference media cannot be used at the same time as a start frame, end frame, or source video.",
                 )
 
-        has_audio_reference = bool(self.reference_audio) or any(
-            item.role == AssetRoleEnum.AUDIO_REFERENCE
-            for item in (self.source_media_items or [])
-        )
+        has_audio_reference = bool(self.reference_audio)
         if has_audio_reference and not model.is_gemini_omni_model:
             raise ValueError(
                 f"Model '{model.value}' does not support Audio as reference. "
                 "Audio reference is only supported by Gemini Omni models."
             )
 
-        has_video_reference = bool(self.reference_video) or any(
-            item.role
-            in (
-                AssetRoleEnum.VIDEO_REFERENCE,
-                AssetRoleEnum.YOUTUBE_VIDEO_REFERENCE,
-            )
-            for item in (self.source_media_items or [])
-        )
+        has_video_reference = bool(self.reference_video)
         if has_video_reference and not model.is_gemini_omni_model:
             raise ValueError(
                 f"Model '{model.value}' does not support Video as reference. "

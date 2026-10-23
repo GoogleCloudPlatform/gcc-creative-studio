@@ -481,6 +481,25 @@ div {
   }
 }
 
+.modal-step-history-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 2px solid hsla(215, 90%, 70%, 0.7);
+    outline-offset: 4px;
+  }
+}
+
 .modal-step-iteration-label {
   display: inline-flex;
   align-items: center;
