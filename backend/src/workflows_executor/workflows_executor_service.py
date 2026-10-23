@@ -843,6 +843,18 @@ class WorkflowsExecutorService:
             )
         return text
 
+    @staticmethod
+    def _add_output_folder(
+        body: dict[str, Any], output_folder_id: int | None
+    ) -> None:
+        """Adds the node's output folder to a JSON generation body.
+
+        The key is omitted for the root folder (``None``), so root runs send
+        exactly the same body as before the setting existed.
+        """
+        if output_folder_id is not None:
+            body["folder_id"] = output_folder_id
+
     async def _generate_image(
         self,
         workspace_id: int,
@@ -853,6 +865,7 @@ class WorkflowsExecutorService:
         resolution: str | None = None,
         authorization: str | None = None,
         guard: StepIdempotencyGuard | None = None,
+        output_folder_id: int | None = None,
     ) -> int:
         logger.info("Generate image execution")
 
@@ -867,6 +880,7 @@ class WorkflowsExecutorService:
             "number_of_media": 1,
             "resolution": resolution,
         }
+        self._add_output_folder(body, output_folder_id)
 
         # Creates the job and polls it for completion.
         return await self._submit_job(
@@ -888,6 +902,7 @@ class WorkflowsExecutorService:
         resolution: str | None = None,
         authorization: str | None = None,
         guard: StepIdempotencyGuard | None = None,
+        output_folder_id: int | None = None,
     ) -> int:
         logger.info("Edit image execution")
 
@@ -906,6 +921,7 @@ class WorkflowsExecutorService:
             "source_asset_ids": asset_ids,
             "resolution": resolution,
         }
+        self._add_output_folder(body, output_folder_id)
 
         # Creates the job and polls it for completion.
         return await self._submit_job(
@@ -1005,6 +1021,7 @@ class WorkflowsExecutorService:
             "number_of_media": 1,
             "duration_seconds": request.config.duration_seconds,
         }
+        self._add_output_folder(body, request.config.output_folder_id)
 
         # Creates the job and polls it for completion.
         video_id = await self._submit_job(
@@ -1135,6 +1152,7 @@ class WorkflowsExecutorService:
         shoes_image: Any = None,
         authorization: str | None = None,
         guard: StepIdempotencyGuard | None = None,
+        output_folder_id: int | None = None,
     ) -> int:
         logger.info("Virtual Try On execution")
 
@@ -1160,6 +1178,7 @@ class WorkflowsExecutorService:
             "dress_image": dress_link,
             "shoe_image": shoes_link,
         }
+        self._add_output_folder(body, output_folder_id)
 
         # Creates the job and polls it for completion.
         return await self._submit_job(
@@ -1202,6 +1221,7 @@ class WorkflowsExecutorService:
             "language_code": request.config.language_code,
             "negative_prompt": request.config.negative_prompt,
             "seed": request.config.seed,
+            "folder_id": request.config.output_folder_id,
         }
 
         # Filter None values to let DTO defaults take over if needed
@@ -1227,6 +1247,7 @@ class WorkflowsExecutorService:
         image_preservation_factor: float | None = None,
         authorization: str | None = None,
         guard: StepIdempotencyGuard | None = None,
+        output_folder_id: int | None = None,
     ) -> int:
         logger.info("Upscale image execution")
         media_items, asset_ids = self._normalize_asset_inputs(input_image)
@@ -1254,6 +1275,8 @@ class WorkflowsExecutorService:
             data["enhance_input_image"] = str(enhance_input_image).lower()
         if image_preservation_factor is not None:
             data["image_preservation_factor"] = str(image_preservation_factor)
+        if output_folder_id is not None:
+            data["folderId"] = str(output_folder_id)
 
         # Creates the job and polls it for completion.
         return await self._submit_job(
@@ -1286,6 +1309,7 @@ class WorkflowsExecutorService:
     ) -> StepOutputs:
         logger.info("Execute unified image step, mode: %s", request.config.mode)
         mode = request.config.mode or "generate_image"
+        output_folder_id = request.config.output_folder_id
 
         if mode == "generate_image":
             if not request.inputs.prompt:
@@ -1304,6 +1328,7 @@ class WorkflowsExecutorService:
                 resolution=request.config.resolution or "1K",
                 authorization=authorization,
                 guard=guard,
+                output_folder_id=output_folder_id,
             )
             return {"generated_image": image_id}
 
@@ -1326,6 +1351,7 @@ class WorkflowsExecutorService:
                 resolution=request.config.resolution or "1K",
                 authorization=authorization,
                 guard=guard,
+                output_folder_id=output_folder_id,
             )
             return {"generated_image": image_id}
 
@@ -1342,6 +1368,7 @@ class WorkflowsExecutorService:
                 image_preservation_factor=request.config.image_preservation_factor,
                 authorization=authorization,
                 guard=guard,
+                output_folder_id=output_folder_id,
             )
             return {"generated_image": image_id}
 
@@ -1359,6 +1386,7 @@ class WorkflowsExecutorService:
                 shoes_image=request.inputs.shoes_image,
                 authorization=authorization,
                 guard=guard,
+                output_folder_id=output_folder_id,
             )
             return {"generated_image": image_id}
 

@@ -102,6 +102,40 @@ def test_generate_videos_success(client, mock_veo_service, mock_workspace_auth):
     mock_veo_service.start_video_generation_job.assert_called_once()
 
 
+def test_generate_videos_passes_folder_id(client, mock_veo_service):
+    mock_veo_service.start_video_generation_job.return_value = (
+        MediaItemResponse(
+            id=124,
+            workspace_id=1,
+            user_id=1,
+            user_email="test@example.com",
+            mime_type=MimeTypeEnum.VIDEO_MP4,
+            status="processing",
+            gcs_uris=[],
+            aspect_ratio="16:9",
+            model="veo-3.1-generate-001",
+        )
+    )
+    payload = {"prompt": "A running horse", "workspace_id": 1, "folderId": 42}
+
+    response = client.post("/api/videos/generate-videos", json=payload)
+
+    assert response.status_code == 200
+    request_dto = mock_veo_service.start_video_generation_job.call_args.kwargs[
+        "request_dto"
+    ]
+    assert request_dto.folder_id == 42
+
+
+def test_generate_videos_rejects_invalid_folder_id(client, mock_veo_service):
+    payload = {"prompt": "A running horse", "workspace_id": 1, "folderId": 0}
+
+    response = client.post("/api/videos/generate-videos", json=payload)
+
+    assert response.status_code == 422
+    mock_veo_service.start_video_generation_job.assert_not_called()
+
+
 def test_concatenate_videos_success(
     client, mock_veo_service, mock_workspace_auth
 ):

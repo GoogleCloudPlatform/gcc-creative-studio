@@ -160,3 +160,15 @@ Every step in a run (loop or not) exposes its data through a single **`history`*
 * **History Sidebar:** Clicking a step opens a sidebar. With more than 1 entry, a left column lists `Iteration 1`, `Iteration 2`, ...; the right column shows collapsible **Inputs** (collapsed) and **Outputs** (expanded).
 * **Node Card Preview:** Cards only preview the **latest** entry (`history.at(-1)`), and only when none of the step's outputs are linked.
 
+---
+
+## 7. Output Folder (Image, Generate Video, Generate Audio)
+
+The **Output folder** setting (`settings.output_folder_id`) picks the Media Gallery folder where the node saves what it generates.
+
+* **Default = root:** `null` always means the root, shown as **All Media (root)**. The predefined value is save into the root. While a folder is selected, the select still offers **All Media (root)** to go back.
+* **Choosing a folder:** **Choose folder…** opens the same folder picker as the Loop node (full path on hover). The picker never returns the root; use the **All Media (root)** option for that.
+* **Same workspace only:** the folder must belong to the workspace the run executes in. Any workspace member may save into any folder of that workspace (same rule as moving items into a folder).
+* **Missing folder:** in the editor, a deleted, foreign or inaccessible folder shows as `Folder #<id>` with a warning icon. At run time the step fails with `INVALID_INPUT` before generating anything and the run pauses in `NEEDS_ATTENTION`; pick another folder (or the root) and resume.
+* **Folder names in the editor:** the folder tree is loaded lazily (only when a node has a folder or its select is opened), once per workspace, and shared by every node of the editor. It is refreshed after the folder picker closes; folders changed elsewhere (another tab or user) show after reloading the editor.
+

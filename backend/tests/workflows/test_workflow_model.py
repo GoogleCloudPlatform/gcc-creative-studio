@@ -158,6 +158,53 @@ def test_workflow_step_discriminated_union_image_parsing():
     assert parsed.settings.mode == "generate_image"
 
 
+MEDIA_STEP_PAYLOADS = [
+    {"type": "image", "inputs": {"prompt": "A cat"}, "settings": {}},
+    {
+        "type": "generate_video",
+        "inputs": {"prompt": "A dog"},
+        "settings": {"model": "veo-3.1-generate-001"},
+    },
+    {
+        "type": "generate_audio",
+        "inputs": {"prompt": "Birds"},
+        "settings": {"model": "lyria-002"},
+    },
+]
+
+
+def _media_step(payload: dict, **settings) -> dict:
+    return {
+        "stepId": f"{payload['type']}_1",
+        **payload,
+        "settings": {**payload["settings"], **settings},
+    }
+
+
+@pytest.mark.parametrize("payload", MEDIA_STEP_PAYLOADS)
+def test_media_step_without_output_folder_defaults_to_root(payload):
+    """Saved workflows from before the setting existed keep using root."""
+    step = TypeAdapter(WorkflowStep).validate_python(_media_step(payload))
+    assert step.settings.output_folder_id is None
+
+
+@pytest.mark.parametrize("payload", MEDIA_STEP_PAYLOADS)
+def test_media_step_parses_output_folder(payload):
+    step = TypeAdapter(WorkflowStep).validate_python(
+        _media_step(payload, output_folder_id=42)
+    )
+    assert step.settings.output_folder_id == 42
+
+
+@pytest.mark.parametrize("folder_id", [0, -3])
+@pytest.mark.parametrize("payload", MEDIA_STEP_PAYLOADS)
+def test_media_step_rejects_non_positive_output_folder(payload, folder_id):
+    with pytest.raises(ValidationError):
+        TypeAdapter(WorkflowStep).validate_python(
+            _media_step(payload, output_folder_id=folder_id)
+        )
+
+
 def test_workflow_base_translate_legacy_generate_image():
     """Verify legacy generate_image step is translated to ImageStep with mode=generate_image."""
     from src.workflows.schema.workflow_model import WorkflowBase

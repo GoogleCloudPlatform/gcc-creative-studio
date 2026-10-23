@@ -62,4 +62,22 @@ describe('PREDEFINED_WORKFLOW_TEMPLATES', () => {
         .toBe(EXPECTED_TEMPLATE_GOOGLE_SEARCH[step.stepId]);
     });
   });
+
+  it('declares a root output folder on every image, video and audio step', () => {
+    const mediaTypes: ReadonlyArray<string> = [
+      NodeTypes.IMAGE,
+      NodeTypes.GENERATE_VIDEO,
+      NodeTypes.GENERATE_AUDIO,
+    ];
+    const mediaSteps = PREDEFINED_WORKFLOW_TEMPLATES.flatMap(
+      template => template.steps,
+    ).filter(step => mediaTypes.includes(step.type));
+
+    expect(mediaSteps.length).toBeGreaterThan(0);
+    mediaSteps.forEach(step => {
+      expect(step.settings)
+        .withContext(step.stepId)
+        .toEqual(jasmine.objectContaining({output_folder_id: null}));
+    });
+  });
 });

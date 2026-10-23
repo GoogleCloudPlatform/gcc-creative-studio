@@ -454,6 +454,24 @@ class TestBuildWorkflowYaml:
             "google_search": google_search,
         }
 
+    @pytest.mark.parametrize("output_folder_id", [42, None])
+    def test_image_step_body_config_carries_output_folder(
+        self, output_folder_id
+    ):
+        image_step = ImageStep(
+            step_id="step_a",
+            inputs=ImageInputs(prompt="A cat"),
+            settings=ImageSettings(output_folder_id=output_folder_id),
+        )
+        defn = build_workflow_definition(
+            [image_step], executor_url=EXECUTOR_URL
+        )
+        try_steps = _step_map(
+            _step_map(defn["main"]["steps"])["run_steps"]["try"]["steps"]
+        )
+        body_config = try_steps["step_a"]["try"]["args"]["body"]["config"]
+        assert body_config["output_folder_id"] == output_folder_id
+
     def test_many_steps_split_assignments_into_chunks_of_50(self):
         steps = [_text_step(f"step_{i}") for i in range(55)]
         defn = build_workflow_definition(steps, executor_url=EXECUTOR_URL)

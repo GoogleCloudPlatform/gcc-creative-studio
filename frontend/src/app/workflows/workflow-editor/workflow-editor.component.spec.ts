@@ -53,6 +53,8 @@ import {
 import {SaveTemplateModalComponent} from './save-template-modal/save-template-modal.component';
 import {EditorMode, WorkflowEditorComponent} from './workflow-editor.component';
 import {WorkflowFormService} from './workflow-form.service';
+import {WorkflowFolderTreeStore} from './workflow-folder-tree.store';
+import {FolderService} from '../../common/services/folder.service';
 
 describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
   let component: WorkflowEditorComponent;
@@ -153,6 +155,12 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
         {provide: MatDialog, useValue: dialogMock},
         {provide: MatSnackBar, useValue: snackBarMock},
         {provide: MediaResolutionService, useValue: mediaResolutionMock},
+        {
+          provide: FolderService,
+          useValue: jasmine.createSpyObj<FolderService>('FolderService', [
+            'getFolderTree',
+          ]),
+        },
       ],
       schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();
@@ -168,6 +176,14 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
     expect(component).toBeTruthy();
     expect(component.dragSourcePort).toBeNull();
     expect(component.magneticTargetPort).toBeNull();
+  });
+
+  it('provides the folder tree store at the editor level only', () => {
+    const editorStore = fixture.debugElement.injector.get(
+      WorkflowFolderTreeStore,
+    );
+    expect(editorStore).toBeInstanceOf(WorkflowFolderTreeStore);
+    expect(TestBed.inject(WorkflowFolderTreeStore, null)).toBeNull();
   });
 
   it('should initialize dragSourcePort and candidateMagneticPorts on onPortDragStart', () => {

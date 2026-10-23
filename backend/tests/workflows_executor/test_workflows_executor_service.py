@@ -25,13 +25,23 @@ from httpx import Response
 from src.common import retry as retry_module
 from src.common.schema.media_item_model import AssetRoleEnum
 from src.config.config_service import ConfigService, config_service
+from src.folders.output_folder import OUTPUT_FOLDER_NOT_FOUND_DETAIL
 from src.workflows.queue.failure_classifier import ErrorCategory
 from src.workflows.schema.workflow_model import (
+    GenerateAudioInputs,
+    GenerateAudioSettings,
     GenerateTextSettings,
+    GenerateVideoInputs,
+    GenerateVideoSettings,
+    ImageInputs,
+    ImageSettings,
     ReferenceMediaOrAsset,
 )
 from src.workflows_executor.dto.workflows_executor_dto import (
+    GenerateAudioRequest,
     GenerateTextRequest,
+    GenerateVideoRequest,
+    ImageStepRequest,
 )
 from src.workflows_executor.step_errors import StepError, to_step_error
 from src.workflows_executor.workflows_executor_service import (
@@ -300,6 +310,7 @@ async def test_generate_video(service):
     request.config.brand_guidelines = False
     request.config.resolution = "1K"
     request.config.duration_seconds = 6
+    request.config.output_folder_id = None
 
     service.mock_rest_client.post.return_value = Response(200, json={"id": 777})
 
@@ -334,6 +345,7 @@ async def test_generate_vertical_video(service):
     request.config.brand_guidelines = False
     request.config.resolution = "1K"
     request.config.duration_seconds = 8
+    request.config.output_folder_id = None
 
     service.mock_rest_client.post.return_value = Response(200, json={"id": 888})
 
@@ -366,6 +378,7 @@ async def test_generate_video_with_reference_video_and_audio(service):
     request.config.brand_guidelines = False
     request.config.resolution = "1K"
     request.config.duration_seconds = 8
+    request.config.output_folder_id = None
 
     service.mock_rest_client.post.return_value = Response(
         200, json={"id": 1234}
@@ -425,6 +438,7 @@ async def test_generate_video_with_source_asset_video_and_audio(service):
     request.config.brand_guidelines = False
     request.config.resolution = "1K"
     request.config.duration_seconds = 8
+    request.config.output_folder_id = None
 
     service.mock_rest_client.post.return_value = Response(
         200, json={"id": 5678}
@@ -466,6 +480,7 @@ async def test_generate_video_skips_unsupported_references_for_veo(service):
     request.config.brand_guidelines = False
     request.config.resolution = "1K"
     request.config.duration_seconds = 8
+    request.config.output_folder_id = None
 
     service.mock_rest_client.post.return_value = Response(
         200, json={"id": 9999}
@@ -510,6 +525,7 @@ async def test_generate_video_reference_passthrough_by_model(
     request.config.brand_guidelines = False
     request.config.resolution = "1K"
     request.config.duration_seconds = 8
+    request.config.output_folder_id = None
 
     service.mock_rest_client.post.return_value = Response(
         200, json={"id": 4321}
@@ -645,6 +661,7 @@ async def test_generate_audio(service):
     request.config.language_code = "en"
     request.config.negative_prompt = None
     request.config.seed = None
+    request.config.output_folder_id = None
 
     service.mock_rest_client.post.return_value = Response(200, json={"id": 555})
 
@@ -712,6 +729,7 @@ async def test_execute_image_generate_mode(service):
     request.config.aspect_ratio = "1:1"
     request.config.brand_guidelines = False
     request.config.resolution = "1K"
+    request.config.output_folder_id = None
 
     with patch.object(
         service,
@@ -755,6 +773,7 @@ async def test_execute_image_generate_mode_auto_aspect_ratio_fallback(service):
     request.config.aspect_ratio = "auto"
     request.config.brand_guidelines = False
     request.config.resolution = "2K"
+    request.config.output_folder_id = None
 
     with patch.object(
         service,
@@ -772,6 +791,7 @@ async def test_execute_image_generate_mode_auto_aspect_ratio_fallback(service):
             resolution="2K",
             authorization=None,
             guard=None,
+            output_folder_id=None,
         )
 
 
@@ -786,6 +806,7 @@ async def test_execute_image_edit_mode_auto_aspect_ratio_preserved(service):
     request.config.aspect_ratio = "auto"
     request.config.brand_guidelines = False
     request.config.resolution = "4K"
+    request.config.output_folder_id = None
 
     with patch.object(
         service,
@@ -804,6 +825,7 @@ async def test_execute_image_edit_mode_auto_aspect_ratio_preserved(service):
             resolution="4K",
             authorization=None,
             guard=None,
+            output_folder_id=None,
         )
 
 
@@ -816,6 +838,7 @@ async def test_execute_image_upscale_mode(service):
     request.config.upscale_factor = "x2"
     request.config.enhance_input_image = False
     request.config.image_preservation_factor = None
+    request.config.output_folder_id = None
 
     with patch.object(
         service,
@@ -837,6 +860,7 @@ async def test_execute_image_vto_mode(service):
     request.inputs.dress_image = None
     request.inputs.shoes_image = None
     request.config.mode = "virtual_try_on"
+    request.config.output_folder_id = None
 
     with patch.object(
         service,
@@ -1053,6 +1077,7 @@ def _image_request() -> MagicMock:
     request.config.aspect_ratio = "1:1"
     request.config.brand_guidelines = False
     request.config.resolution = "1K"
+    request.config.output_folder_id = None
     return request
 
 
@@ -1563,3 +1588,126 @@ async def test_text_with_google_search_rejected_fails_without_fallback(
     step_error = to_step_error(exc.value)
     assert step_error.error_category is ErrorCategory.INVALID_INPUT
     assert step_error.status_code == 400
+
+
+# --- Output folder ----------------------------------------------------------
+
+OUTPUT_FOLDER_ID = 42
+
+IMAGE_MODE_INPUTS = {
+    "generate_image": {"prompt": "A cat"},
+    "edit_image": {"prompt": "Add a hat", "input_images": [10]},
+    "upscale_image": {"input_image": 20},
+    "virtual_try_on": {"model_image": 30, "top_image": 31},
+}
+
+
+def _image_step_request(
+    mode: str, output_folder_id: int | None
+) -> ImageStepRequest:
+    return ImageStepRequest(
+        workspace_id=1,
+        inputs=ImageInputs(**IMAGE_MODE_INPUTS[mode]),
+        config=ImageSettings(mode=mode, output_folder_id=output_folder_id),
+    )
+
+
+def _video_request(output_folder_id: int | None) -> GenerateVideoRequest:
+    return GenerateVideoRequest(
+        workspace_id=1,
+        inputs=GenerateVideoInputs(prompt="A running dog"),
+        config=GenerateVideoSettings(
+            model="veo-3.1-generate-001", output_folder_id=output_folder_id
+        ),
+    )
+
+
+def _audio_request(output_folder_id: int | None) -> GenerateAudioRequest:
+    return GenerateAudioRequest(
+        workspace_id=1,
+        inputs=GenerateAudioInputs(prompt="Birds chirping"),
+        config=GenerateAudioSettings(
+            model="lyria-002", output_folder_id=output_folder_id
+        ),
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("output_folder_id", [OUTPUT_FOLDER_ID, None])
+@pytest.mark.parametrize("mode", list(IMAGE_MODE_INPUTS))
+async def test_image_modes_send_output_folder_only_when_set(
+    service, mode, output_folder_id
+):
+    service.mock_rest_client.post.return_value = Response(200, json={"id": 5})
+
+    with patch.object(
+        service, "_poll_job_status", AsyncMock(return_value=True)
+    ):
+        result = await service.execute_image(
+            _image_step_request(mode, output_folder_id)
+        )
+
+    assert result == {"generated_image": 5}
+    post_kwargs = service.mock_rest_client.post.call_args.kwargs
+    # Upscale posts form data (string values); the other modes post JSON.
+    if mode == "upscale_image":
+        payload, key, expected = (
+            post_kwargs["data"],
+            "folderId",
+            str(OUTPUT_FOLDER_ID),
+        )
+    else:
+        payload, key, expected = (
+            post_kwargs["json"],
+            "folder_id",
+            OUTPUT_FOLDER_ID,
+        )
+    if output_folder_id is None:
+        assert key not in payload
+    else:
+        assert payload[key] == expected
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("output_folder_id", [OUTPUT_FOLDER_ID, None])
+@pytest.mark.parametrize(
+    "step_call, build_request",
+    [
+        ("generate_video", _video_request),
+        ("generate_audio", _audio_request),
+    ],
+)
+async def test_video_and_audio_send_output_folder_only_when_set(
+    service, step_call, build_request, output_folder_id
+):
+    service.mock_rest_client.post.return_value = Response(200, json={"id": 6})
+
+    with patch.object(
+        service, "_poll_job_status", AsyncMock(return_value=True)
+    ):
+        await getattr(service, step_call)(build_request(output_folder_id))
+
+    body = service.mock_rest_client.post.call_args.kwargs["json"]
+    if output_folder_id is None:
+        assert "folder_id" not in body
+    else:
+        assert body["folder_id"] == OUTPUT_FOLDER_ID
+
+
+@pytest.mark.anyio
+async def test_rejected_output_folder_is_invalid_input(service):
+    service.mock_rest_client.post.return_value = Response(
+        422, json={"detail": OUTPUT_FOLDER_NOT_FOUND_DETAIL}
+    )
+
+    with pytest.raises(StepError) as exc:
+        await service.execute_image(
+            _image_step_request("generate_image", OUTPUT_FOLDER_ID),
+            USER_AUTH,
+        )
+
+    error = exc.value
+    assert error.status_code == 422
+    assert error.error_category is ErrorCategory.INVALID_INPUT
+    assert OUTPUT_FOLDER_NOT_FOUND_DETAIL in error.detail
+    service.mock_rest_client.post.assert_awaited_once()

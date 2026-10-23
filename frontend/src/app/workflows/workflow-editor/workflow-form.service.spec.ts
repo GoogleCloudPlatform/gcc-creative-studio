@@ -291,6 +291,15 @@ describe('WorkflowFormService', () => {
       expect(service.stepsArray.at(0).get('collapsed')?.value).toBeFalse();
     });
 
+    it('should default a new Image step to the root output folder', () => {
+      service.addStep(NodeTypes.IMAGE);
+      const outputFolderControl = service.stepsArray
+        .at(0)
+        .get('settings.output_folder_id');
+      expect(outputFolderControl).not.toBeNull();
+      expect(outputFolderControl?.value).toBeNull();
+    });
+
     it('should preserve collapsed true when adding step with existingData', () => {
       service.addStep(NodeTypes.GENERATE_TEXT, {
         stepId: 'text_1',

@@ -50,6 +50,7 @@ from src.common.schema.media_item_model import (
 from src.common.storage_service import GcsService
 from src.config.config_service import config_service
 from src.folders.agent_output_folder import resolve_agent_output_folder_id
+from src.folders.output_folder import resolve_output_folder_id
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.images.repository.media_item_repository import MediaRepository
 from src.multimodal.gemini_service import GeminiService, PromptTargetEnum
@@ -1397,8 +1398,11 @@ class VeoService:
                 )
 
         # 1. Create a placeholder MediaItem (without ID, let DB generate it)
-        folder_id = await resolve_agent_output_folder_id(
-            self.media_repo.db, request_dto.workspace_id, user
+        folder_id = await resolve_output_folder_id(
+            self.media_repo.db,
+            request_dto.workspace_id,
+            user,
+            request_dto.folder_id,
         )
         placeholder_item = MediaItemModel(
             workspace_id=request_dto.workspace_id,

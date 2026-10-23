@@ -313,3 +313,24 @@ def test_is_gemini_omni_model_true_for_omni(model):
 )
 def test_is_gemini_omni_model_false_for_non_omni(model):
     assert not model.is_gemini_omni_model
+
+
+def test_folder_id_defaults_to_root():
+    assert CreateVeoDto(prompt="Test", workspace_id=1).folder_id is None
+
+
+@pytest.mark.parametrize("folder_key", ["folderId", "folder_id"])
+def test_folder_id_accepts_camel_and_snake_case(folder_key):
+    dto = CreateVeoDto.model_validate(
+        {"prompt": "Test", "workspace_id": 1, folder_key: 42}
+    )
+    assert dto.folder_id == 42
+
+
+@pytest.mark.parametrize("folder_id", [0, -1, "abc"])
+def test_folder_id_rejects_non_positive_and_non_numeric(folder_id):
+    with pytest.raises(ValidationError) as exc_info:
+        CreateVeoDto.model_validate(
+            {"prompt": "Test", "workspace_id": 1, "folderId": folder_id}
+        )
+    assert "folderId" in str(exc_info.value)

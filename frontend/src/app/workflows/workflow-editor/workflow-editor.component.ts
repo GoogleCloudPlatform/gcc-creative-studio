@@ -106,6 +106,7 @@ import {RunWorkflowModalComponent} from './run-workflow-modal/run-workflow-modal
 import {SaveTemplateModalComponent} from './save-template-modal/save-template-modal.component';
 
 import {WorkflowFormService} from './workflow-form.service';
+import {WorkflowFolderTreeStore} from './workflow-folder-tree.store';
 import * as d3 from 'd3';
 
 export {Point} from '../workflow.models';
@@ -131,7 +132,7 @@ export type Edge = {
   selector: 'app-workflow-editor',
   templateUrl: './workflow-editor.component.html',
   styleUrls: ['./workflow-editor.component.scss'],
-  providers: [WorkflowFormService],
+  providers: [WorkflowFormService, WorkflowFolderTreeStore],
 })
 export class WorkflowEditorComponent implements OnInit, OnDestroy {
   private platformId = inject(PLATFORM_ID);

@@ -16,7 +16,7 @@
 from typing import Annotated, Literal
 
 from fastapi import Query
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, PositiveInt, field_validator, model_validator
 
 from src.common.base_dto import (
     AspectRatioEnum,
@@ -161,6 +161,10 @@ class CreateVeoDto(BaseDto):
     resolution: Literal["1K", "2K", "4K"] = Field(
         default="1K",
         description="Resolution of the generated videos.",
+    )
+    folder_id: PositiveInt | None = Field(
+        default=None,
+        description="Optional gallery folder (same workspace) to save the generated media into. Defaults to the root folder.",
     )
 
     @model_validator(mode="after")
