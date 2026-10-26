@@ -1506,6 +1506,27 @@ async def test_text_with_google_search_sends_google_search_tool(service):
 
 
 @pytest.mark.anyio
+async def test_text_with_argon_model_sends_argon_model(service):
+    stream = service.mock_genai_client.models.generate_content_stream
+    stream.return_value = [_text_chunk("Sunny, "), _text_chunk("21°C.")]
+
+    generate_text_request = GenerateTextRequest(
+        inputs={"prompt": "Hello is argon there?"},
+        config={
+            "model": "gemini-4-argon",
+            "temperature": 0.4,
+        },
+    )
+    result = await service.generate_text(generate_text_request)
+
+    assert result == {"generated_text": "Sunny, 21°C."}
+    stream.assert_called_once()
+    call_kwargs = stream.call_args.kwargs
+    assert call_kwargs["model"] == "gemini-4-argon"
+    assert len(call_kwargs["contents"]) == 1
+
+
+@pytest.mark.anyio
 async def test_text_with_google_search_keeps_media_parts(service):
     stream = service.mock_genai_client.models.generate_content_stream
     stream.return_value = [_text_chunk("A rainy street in Paris.")]
