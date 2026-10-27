@@ -15,6 +15,7 @@
 
 from fastapi import status
 import asyncio
+import datetime
 import json
 import logging
 import time
@@ -32,6 +33,7 @@ from src.projects.project_repository import StoryboardRepository
 from src.projects.project_service import ProjectService
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
 from src.agents.agent_repository import AgentRepository
+from src.agents.agent_session_repository import AgentSessionRepository
 from src.agents.local_adk_client import LocalAdkAgentClient
 from src.agents.agent_dtos import (
     ChatRequestDto,
@@ -88,6 +90,10 @@ ACTIVE_RUN_TTL_SECONDS = 30 * 60
 AGENT_BUSY_DETAIL = (
     "Izumi is still working on the previous step in this conversation. "
     "Wait for it to finish before sending another message."
+)
+RESTORED_CHAT_DETAIL = (
+    "This chat was restored after it expired: Izumi does not remember the "
+    "conversation and cannot continue it. Start a new chat to work with Izumi."
 )
 _active_runs: dict[str, float] = {}
 
@@ -169,6 +175,108 @@ def safe_cast(val, to_type, default=None):
         return default
 
 
+# Session-state keys holding the end user's bearer token: ``create_session``
+# and ``chat`` store it so the agent can call Creative Studio on the user's
+# behalf. It must never travel back to a browser.
+_SECRET_STATE_KEYS = frozenset(
+    {"user_auth_token", config_service.AGENT_ENGINE_USER_AUTH_TOKEN_KEY}
+)
+
+
+def _without_secrets(values: dict) -> dict:
+    """``values`` minus the bearer-token keys."""
+    return {k: v for k, v in values.items() if k not in _SECRET_STATE_KEYS}
+
+
+def _redact_event(event: Any) -> Any:
+    """Drops the bearer token from an event's ``state_delta``/``stateDelta``.
+
+    It reaches the event log through the token-propagation deltas
+    (``_append_state_delta``) and the local ADK state PATCH.
+    """
+    if not isinstance(event, dict):
+        return event
+    actions = event.get("actions")
+    if not isinstance(actions, dict):
+        return event
+    redacted = {
+        key: (
+            _without_secrets(value)
+            if key in ("state_delta", "stateDelta") and isinstance(value, dict)
+            else value
+        )
+        for key, value in actions.items()
+    }
+    return {**event, "actions": redacted}
+
+
+def _session_owner_id(session: Any) -> str | None:
+    """The user id the agent backend files a session under, if it has one."""
+    if isinstance(session, dict):
+        owner = session.get("user_id") or session.get("userId")
+    else:
+        owner = getattr(session, "user_id", None) or getattr(
+            session, "userId", None
+        )
+    if isinstance(owner, bool) or not isinstance(owner, (str, int)):
+        return None
+    return str(owner) or None
+
+
+def _is_session_not_found(error: Exception) -> bool:
+    """True for the agent backend's "this session does not exist" errors.
+
+    The status code decides when the error carries one (``google.genai``'s
+    ``APIError`` and ``google.api_core``'s ``NotFound`` expose an int
+    ``code``); the message is only the fallback for errors without one.
+    """
+    code = getattr(error, "code", None)
+    if isinstance(code, int) and not isinstance(code, bool):
+        return code == 404
+    message = str(error).lower()
+    return "not found" in message or "404" in message
+
+
+def _listed_activity(
+    sessions: List[SessionResponseDto],
+) -> dict[str, datetime.datetime]:
+    """Each listed chat's last activity, as the agent backend reports it.
+
+    ``lastUpdateTime`` is in seconds (see ``_map_session_to_dto``). An
+    unusable value is skipped: it must never fail the listing.
+    """
+    activity: dict[str, datetime.datetime] = {}
+    for dto in sessions:
+        seconds = dto.lastUpdateTime
+        if not isinstance(seconds, (int, float)) or seconds <= 0:
+            continue
+        try:
+            activity[dto.id] = datetime.datetime.fromtimestamp(
+                seconds, tz=datetime.timezone.utc
+            )
+        except (OverflowError, OSError, ValueError):
+            continue
+    return activity
+
+
+# A project delete removes its chats this many at a time.
+_SESSION_DELETE_CONCURRENCY = 4
+
+
+class ForeignSessionError(HTTPException):
+    """A chat filed under another user: always answered with a 403.
+
+    A subclass, so the best-effort session-detail path (which logs and
+    swallows most errors) can re-raise it.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to access this chat.",
+        )
+
+
 class AgentService:
     def __init__(
         self,
@@ -177,12 +285,14 @@ class AgentService:
         storyboard_repo: StoryboardRepository = Depends(),
         workspace_auth: WorkspaceAuth = Depends(),
         project_service: ProjectService = Depends(),
+        agent_session_repo: AgentSessionRepository = Depends(),
     ):
         self.agent_repo = agent_repo
         self.workspace_service = workspace_service
         self.storyboard_repo = storyboard_repo
         self.workspace_auth = workspace_auth
         self.project_service = project_service
+        self.agent_session_repo = agent_session_repo
         # ENVIRONMENT=local (or USE_LOCAL_IZUMI_AGENT=true) routes the agent
         # chat to the Izumi container started from
         # genmedia-izumi-agent/demos/backend/ads_x/docker-compose.yml.
@@ -319,7 +429,9 @@ class AgentService:
     # --- Session backend helpers -------------------------------------------
     # Each helper hides whether sessions live in Vertex AI Agent Engine (the
     # default) or in the local Izumi container (ENVIRONMENT=local). The Vertex
-    # branches are the original inline calls, kept verbatim.
+    # branches are the original inline calls, kept verbatim, except that
+    # ``_sessions_delete`` runs in a worker thread: a project delete issues
+    # one per chat, and the Vertex client is synchronous.
 
     async def _sessions_list(
         self, agent_name: str, app_name: str, user_id: str
@@ -362,8 +474,9 @@ class AgentService:
                 app_name, user_id, session_id
             )
             return
-        self.client.agent_engines.sessions.delete(
-            name=f"{agent_name}/sessions/{session_id}"
+        await asyncio.to_thread(
+            self.client.agent_engines.sessions.delete,
+            name=f"{agent_name}/sessions/{session_id}",
         )
 
     async def _events_list(
@@ -402,8 +515,6 @@ class AgentService:
                 app_name, user_id, session_id, state_delta
             )
             return
-        import datetime
-
         self.client.agent_engines.sessions.events.append(
             name=f"{agent_name}/sessions/{session_id}",
             author="system",
@@ -411,6 +522,67 @@ class AgentService:
             timestamp=datetime.datetime.now(datetime.timezone.utc),
             config={"actions": {"state_delta": state_delta}},
         )
+
+    @staticmethod
+    def _ensure_session_owner(session: Any, user_id: str) -> None:
+        """Refuses a session the agent backend files under another user.
+
+        Agent Engine addresses sessions as ``{agent}/sessions/{id}`` with no
+        user scoping, so whoever knew an id could read another user's chat
+        (state, events, the stored bearer token) or write into it. The local
+        ADK API is user-scoped, so this never fires there.
+        """
+        owner = _session_owner_id(session)
+        if owner is not None and owner != user_id:
+            raise ForeignSessionError()
+
+    async def _get_session_or_none(
+        self, agent_name: str, app_name: str, user_id: str, session_id: str
+    ) -> Any:
+        """The session, or ``None`` when the agent backend does not know it.
+
+        Any other failure raises: no authorization decision is taken on a
+        session that could not be read.
+        """
+        try:
+            return await self._sessions_get(
+                agent_name, app_name, user_id, session_id
+            )
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            if _is_session_not_found(e):
+                return None
+            logger.error("Could not read session %s: %s", session_id, e)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Could not verify the chat. Try again.",
+            ) from e
+
+    async def _ensure_chat_owner(
+        self, app_name: str, user_id: str, session_id: str
+    ) -> Any:
+        """Refuses (403) to run a chat filed under another user.
+
+        ``chat()`` appends the caller's bearer token to the session before
+        the agent validates the run's user, and Agent Engine addresses
+        ``{agent}/sessions/{id}`` with no user scoping: without this check,
+        a known id let a caller plant their token in someone else's chat.
+        The registry answers for every chat created or listed here (one
+        indexed lookup); only an unregistered chat costs a session read. An
+        unknown session passes: the run itself then fails. Returns the
+        chat's registry row, or None for an unregistered chat.
+        """
+        row = await self.agent_session_repo.get(session_id)
+        if row is not None:
+            if str(row.user_id) != user_id:
+                raise ForeignSessionError()
+            return row
+        agent_name = self._get_validated_agent_name(app_name)
+        session = await self._get_session_or_none(
+            agent_name, app_name, user_id, session_id
+        )
+        if session is not None:
+            self._ensure_session_owner(session, user_id)
+        return None
 
     def _map_session_to_dto(
         self,
@@ -456,6 +628,7 @@ class AgentService:
                 mapped_events.append(sanitize_serializable(e))
             else:
                 mapped_events.append(str(e))
+        mapped_events = [_redact_event(e) for e in mapped_events]
 
         if isinstance(session, dict):
             s_state = session.get("session_state") or session.get("state", {})
@@ -481,7 +654,11 @@ class AgentService:
                     or fallback_user_id
                     or ""
                 ),
-                state=s_state if isinstance(s_state, dict) else {},
+                state=(
+                    _without_secrets(s_state)
+                    if isinstance(s_state, dict)
+                    else {}
+                ),
                 lastUpdateTime=(
                     s_time if isinstance(s_time, (int, float)) else None
                 ),
@@ -512,7 +689,7 @@ class AgentService:
         s_state = getattr(session, "session_state", None) or getattr(
             session, "state", {}
         )
-        s_state = s_state if isinstance(s_state, dict) else {}
+        s_state = _without_secrets(s_state) if isinstance(s_state, dict) else {}
 
         s_time = getattr(session, "update_time", None) or getattr(
             session, "last_update_time", None
@@ -536,8 +713,22 @@ class AgentService:
         request: Request,
         workspace_id: int | None = None,
         appName: str = APP_NAME,
+        project_id: int | None = None,
+        include_expired: bool = False,
     ) -> List[SessionResponseDto]:
         try:
+            if project_id is not None:
+                # Owner-only: authorizes the project (and its workspace).
+                project = await self.project_service.get_project(
+                    current_user, project_id
+                )
+                if workspace_id is None:
+                    workspace_id = project.workspace_id
+                elif project.workspace_id != workspace_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="The project belongs to another workspace.",
+                    )
             if workspace_id is not None:
                 await self.workspace_auth.authorize(
                     workspace_id=workspace_id,
@@ -572,6 +763,15 @@ class AgentService:
                             self._map_session_to_dto(s, appName, user_id)
                         )
 
+            if workspace_id is not None:
+                mapped_sessions = await self._apply_session_registry(
+                    current_user,
+                    workspace_id,
+                    mapped_sessions,
+                    project_id,
+                    include_expired=include_expired,
+                    app_name=appName,
+                )
             return mapped_sessions
         except HTTPException:
             raise
@@ -588,12 +788,26 @@ class AgentService:
         request: Request,
         workspace_id: int | None = None,
         appName: str = APP_NAME,
+        project_id: int | None = None,
     ) -> SessionResponseDto:
         try:
             if workspace_id is not None:
                 await self.workspace_auth.authorize(
                     workspace_id=workspace_id,
                     user=current_user,
+                )
+
+            # Pick the chat's project before creating the agent session, so a
+            # refused project never leaves an orphan session behind.
+            project = None
+            if project_id is not None and workspace_id is None:
+                project = await self.project_service.get_project(
+                    current_user, project_id
+                )
+                workspace_id = project.workspace_id
+            elif workspace_id is not None:
+                project = await self.project_service.resolve_project_for_write(
+                    current_user, workspace_id, project_id=project_id
                 )
 
             agent_name = self._get_validated_agent_name(appName)
@@ -609,7 +823,14 @@ class AgentService:
                 agent_name, appName, user_id, state_data
             )
             session = getattr(op, "response", None) or op
-            return self._map_session_to_dto(session, appName, user_id)
+            dto = self._map_session_to_dto(session, appName, user_id)
+            if project is not None:
+                row = await self.agent_session_repo.register(
+                    dto.id, project.id, current_user.id, workspace_id, appName
+                )
+                if row is not None:
+                    self._apply_registry_row(dto, row)
+            return dto
         except HTTPException:
             raise
         except Exception as e:
@@ -663,7 +884,9 @@ class AgentService:
 
         elif resolved_session_id is not None:
             storyboards = await self.project_service.list_storyboards(
-                workspace_id=workspace_id, session_id=resolved_session_id
+                workspace_id=workspace_id,
+                session_id=resolved_session_id,
+                user_id=current_user.id,
             )
             if storyboards:
                 storyboard = storyboards[0]
@@ -710,9 +933,20 @@ class AgentService:
                             )
                             storyboard.session_id = new_session_id
                         if new_session_id:
+                            await self._register_recreated_session(
+                                current_user,
+                                workspace_id,
+                                resolved_session_id,
+                                new_session_id,
+                                storyboard,
+                                appName,
+                            )
                             resolved_session_id = new_session_id
                     else:
                         raise inner_e
+
+                # Owner-only chats: Agent Engine reads sessions by id alone.
+                self._ensure_session_owner(session, user_id)
 
                 events_list = []
                 try:
@@ -731,7 +965,11 @@ class AgentService:
                 session_dto = self._map_session_to_dto(
                     session, appName, user_id, events=events_list
                 )
+                await self._attach_session_registry(current_user, session_dto)
             except Exception as e:
+                # Refusing another user's chat is not a best-effort failure.
+                if isinstance(e, ForeignSessionError):
+                    raise
                 logger.error(
                     f"Unexpected error fetching session {resolved_session_id} details: {e}",
                     exc_info=True,
@@ -803,6 +1041,8 @@ class AgentService:
             )
             if session is None:
                 raise HTTPException(status_code=404, detail="Session not found")
+            # Owner-only chats: Agent Engine reads sessions by id alone.
+            self._ensure_session_owner(session, user_id)
 
             # Extract workspace_id from session state and authorize
             s_state = getattr(session, "session_state", None)
@@ -858,33 +1098,50 @@ class AgentService:
 
             agent_name = self._get_validated_agent_name(appName)
 
-            # Fetch session to extract workspace_id and authorize
-            try:
-                session = await self._sessions_get(
-                    agent_name, appName, user_id, session_id
-                )
-                if session:
-                    s_state = getattr(session, "session_state", None)
-                    if isinstance(session, dict):
-                        s_state = session.get("session_state") or s_state
-
-                    s_workspace_id = None
-                    if isinstance(s_state, dict):
-                        s_workspace_id = s_state.get("workspace_id")
-
-                    if s_workspace_id is not None:
-                        await self.workspace_auth.authorize(
-                            workspace_id=int(s_workspace_id),
-                            user=current_user,
-                        )
-            except Exception as e_err:
-                logger.warning(
-                    f"Could not retrieve session for delete authorization: {e_err}"
+            # Chats are owner-only: the registry knows who created this one.
+            registry_row = await self.agent_session_repo.get(session_id)
+            if (
+                registry_row is not None
+                and registry_row.user_id != current_user.id
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You do not have permission to delete this chat.",
                 )
 
-            await self._sessions_delete(
+            # The session itself is checked too, and nothing is deleted after
+            # a failed read: Agent Engine addresses sessions by id alone, so a
+            # chat the registry does not know yet has no other owner check.
+            session = await self._get_session_or_none(
                 agent_name, appName, user_id, session_id
             )
+            if session is None:
+                if registry_row is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Session not found",
+                    )
+            else:
+                self._ensure_session_owner(session, user_id)
+                s_state = getattr(session, "session_state", None)
+                if isinstance(session, dict):
+                    s_state = session.get("session_state") or s_state
+                s_workspace_id = (
+                    s_state.get("workspace_id")
+                    if isinstance(s_state, dict)
+                    else None
+                )
+                if s_workspace_id is not None:
+                    await self.workspace_auth.authorize(
+                        workspace_id=int(s_workspace_id),
+                        user=current_user,
+                    )
+                await self._sessions_delete(
+                    agent_name, appName, user_id, session_id
+                )
+            # A chat already gone from the agent backend only loses its row.
+            if registry_row is not None:
+                await self.agent_session_repo.delete(session_id)
             return {"status": "success"}
         except HTTPException:
             raise
@@ -893,6 +1150,415 @@ class AgentService:
                 f"Unexpected error deleting session: {e}", exc_info=True
             )
             raise HTTPException(status_code=500, detail=str(e))
+
+    # --- Session registry (projects) ---------------------------------------
+    # ``agent_sessions`` maps every chat to a project and stores its title.
+    # Agent Engine stays the source of truth for the conversation itself.
+
+    @staticmethod
+    def _apply_registry_row(
+        dto: SessionResponseDto, row: Any
+    ) -> SessionResponseDto:
+        dto.projectId = row.project_id
+        dto.title = row.title
+        dto.summary = row.summary
+        dto.restored = row.restored_at is not None
+        return dto
+
+    async def _apply_session_registry(
+        self,
+        current_user: UserModel,
+        workspace_id: int,
+        sessions: List[SessionResponseDto],
+        project_id: int | None = None,
+        include_expired: bool = False,
+        app_name: str = APP_NAME,
+    ) -> List[SessionResponseDto]:
+        """Places every listed chat in a project and attaches its metadata.
+
+        Chats Creative Studio has never registered (created before projects
+        existed, or through the ADK dev UI) are adopted into the user's
+        default project. Registry rows whose chat is missing from the
+        listing are kept: a partial Agent Engine listing must never erase
+        titles or project membership. A registered chat without recorded
+        activity takes the listing's update time: it orders
+        ``latest_session_id``, which otherwise picked an arbitrary chat
+        (possibly one that no longer exists). ``project_id`` then narrows
+        the result. With ``include_expired``, the kept rows of ``app_name``
+        are appended as expired chats (see ``_expired_session_dtos``).
+        """
+        registry = await self.agent_session_repo.map_for_user_workspace(
+            current_user.id, workspace_id
+        )
+        listed_activity = _listed_activity(sessions)
+        orphans = [s.id for s in sessions if s.id not in registry]
+        if orphans:
+            default_project = (
+                await self.project_service.resolve_project_for_write(
+                    current_user, workspace_id
+                )
+            )
+            await self.agent_session_repo.adopt(
+                orphans,
+                default_project.id,
+                current_user.id,
+                workspace_id,
+                last_used=listed_activity,
+            )
+            registry = await self.agent_session_repo.map_for_user_workspace(
+                current_user.id, workspace_id
+            )
+        unseeded = {
+            session_id: used_at
+            for session_id, used_at in listed_activity.items()
+            if session_id in registry
+            and registry[session_id].last_used_at is None
+        }
+        if unseeded:
+            await self.agent_session_repo.seed_last_used(
+                current_user.id, unseeded
+            )
+        result: List[SessionResponseDto] = []
+        for dto in sessions:
+            row = registry.get(dto.id)
+            if row is None:
+                # Registered under another workspace: unfiltered lists only.
+                if project_id is None:
+                    result.append(dto)
+                continue
+            if project_id is not None and row.project_id != project_id:
+                continue
+            result.append(self._apply_registry_row(dto, row))
+        if include_expired:
+            expired = self._expired_session_dtos(
+                registry, sessions, project_id, app_name
+            )
+            if expired:
+                # Only a chat that still owns a storyboard can be restored.
+                restorable = (
+                    await self.storyboard_repo.session_ids_with_storyboards(
+                        current_user.id, [dto.id for dto in expired]
+                    )
+                )
+                for dto in expired:
+                    dto.restorable = dto.id in restorable
+            result.extend(expired)
+        return result
+
+    @staticmethod
+    def _expired_session_dtos(
+        registry: dict[str, Any],
+        listed: List[SessionResponseDto],
+        project_id: int | None,
+        app_name: str,
+    ) -> List[SessionResponseDto]:
+        """The registered chats the agent backend no longer has, newest first.
+
+        Agent Engine sessions expire and a local Izumi store can be reset,
+        while the chat's registry row (project, title, activity) survives.
+        Only rows with recorded activity count: Creative Studio saw those
+        chats alive. Rows without any are the dead ids the projects backfill
+        took from old storyboards (chats deleted before projects existed),
+        which must not come back. A chat deleted outside the Workbench after
+        it was listed cannot be told apart and shows as expired too. Rows of
+        another agent app belong to that app's listing.
+        """
+        listed_ids = {dto.id for dto in listed}
+        rows = [
+            row
+            for session_id, row in registry.items()
+            if session_id not in listed_ids
+            and row.last_used_at is not None
+            and (row.app_name or APP_NAME) == app_name
+            and (project_id is None or row.project_id == project_id)
+        ]
+        rows.sort(key=lambda row: row.last_used_at, reverse=True)
+        return [
+            SessionResponseDto(
+                id=row.session_id,
+                appName=row.app_name or app_name,
+                userId=str(row.user_id),
+                lastUpdateTime=row.last_used_at.timestamp(),
+                projectId=row.project_id,
+                title=row.title,
+                summary=row.summary,
+                expired=True,
+            )
+            for row in rows
+        ]
+
+    async def _attach_session_registry(
+        self, current_user: UserModel, dto: SessionResponseDto
+    ) -> None:
+        """Best effort: the session detail must not fail over its metadata."""
+        try:
+            row = await self.agent_session_repo.get(dto.id)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "[Projects] Could not read the registry for session %s: %s",
+                dto.id,
+                e,
+            )
+            return
+        if row is not None and row.user_id == current_user.id:
+            self._apply_registry_row(dto, row)
+
+    async def _register_recreated_session(
+        self,
+        current_user: UserModel,
+        workspace_id: int,
+        old_session_id: str | None,
+        new_session_id: str,
+        storyboard: StoryboardResponse | None,
+        app_name: str,
+    ) -> None:
+        """Keeps a chat the detail endpoint re-created in its project.
+
+        A chat that comes back with a storyboard is marked restored: the new
+        session has no memory of it, and an agent run would reuse, and
+        overwrite, that storyboard. Without one there is nothing to protect.
+        Best effort, like the recovery path that calls it.
+        """
+        restored = storyboard is not None
+        try:
+            if (
+                old_session_id
+                and await self.agent_session_repo.replace_session_id(
+                    old_session_id,
+                    new_session_id,
+                    current_user.id,
+                    restored=restored,
+                )
+            ):
+                return
+            project_id = storyboard.project_id if storyboard else None
+            if project_id is None:
+                project = await self.project_service.resolve_project_for_write(
+                    current_user, workspace_id
+                )
+                project_id = project.id
+            await self.agent_session_repo.register(
+                new_session_id,
+                project_id,
+                current_user.id,
+                workspace_id,
+                app_name,
+                restored=restored,
+            )
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "[Projects] Could not register re-created session %s: %s",
+                new_session_id,
+                e,
+            )
+
+    async def restore_session(
+        self,
+        current_user: UserModel,
+        user_id: str,
+        session_id: str,
+        request: Request,
+        workspace_id: int | None = None,
+        app_name: str = APP_NAME,
+    ) -> SessionResponseDto:
+        """Restores an expired chat: the same chat on a new agent session.
+
+        The chat's registry row (project, title) and its storyboards move to
+        a re-created session, and the row is marked restored. Izumi has no
+        memory of the conversation, so ``chat()`` refuses to run there: the
+        storyboard and timeline are edited by hand, and no new agent run can
+        reuse, and overwrite, them.
+
+        Owner-only: 404 for an unknown chat, 409 while the agent still has
+        the session or when the chat owns no storyboard (nothing to
+        restore). Nothing is created before these checks pass. A concurrent
+        restore that loses the race gets 409 and leaves nothing behind.
+        """
+        row = await self.agent_session_repo.get(session_id)
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found"
+            )
+        if row.user_id != current_user.id:
+            raise ForeignSessionError()
+        if workspace_id is not None and row.workspace_id != workspace_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The chat belongs to another workspace.",
+            )
+        await self.workspace_auth.authorize(
+            workspace_id=row.workspace_id, user=current_user
+        )
+
+        chat_app = row.app_name or app_name
+        agent_name = self._get_validated_agent_name(chat_app)
+        if (
+            await self._get_session_or_none(
+                agent_name, chat_app, user_id, session_id
+            )
+            is not None
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This chat has not expired.",
+            )
+        owned = await self.storyboard_repo.session_ids_with_storyboards(
+            current_user.id, [session_id]
+        )
+        if session_id not in owned:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This chat has no storyboard to restore.",
+            )
+
+        auth_key = self._get_agent_config(chat_app).get(
+            "token_key", "user_auth_token"
+        )
+        state_data = {
+            "workspace_id": row.workspace_id,
+            auth_key: request.headers.get("Authorization", ""),
+        }
+        op = await self._sessions_create(
+            agent_name, chat_app, user_id, state_data
+        )
+        session = getattr(op, "response", None) or op
+        dto = self._map_session_to_dto(session, chat_app, user_id)
+        # Moving the registry row claims the chat: a concurrent restore (a
+        # double click) finds it gone and drops its own session.
+        if not await self.agent_session_repo.replace_session_id(
+            session_id, dto.id, current_user.id, restored=True
+        ):
+            await self.delete_sessions_best_effort(
+                current_user, {dto.id: chat_app}
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This chat was already restored.",
+            )
+        await self.storyboard_repo.reassign_session(
+            session_id, dto.id, current_user.id
+        )
+        # A fresh read: the bulk UPDATE expired the row's timestamps.
+        restored_row = await self.agent_session_repo.get(dto.id)
+        if restored_row is not None:
+            self._apply_registry_row(dto, restored_row)
+        logger.info(
+            "[Projects] Restored expired chat %s as %s", session_id, dto.id
+        )
+        return dto
+
+    async def update_session_metadata(
+        self,
+        current_user: UserModel,
+        session_id: str,
+        title: str | None = None,
+        summary: str | None = None,
+        app_name: str = APP_NAME,
+    ) -> SessionResponseDto:
+        """Sets a chat's server-side title/summary (owner only)."""
+        row = await self.agent_session_repo.get(session_id)
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found"
+            )
+        if row.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to modify this chat.",
+            )
+        clean_title = title.strip() if title else None
+        clean_summary = summary.strip() if summary else None
+        updated = await self.agent_session_repo.update_metadata(
+            session_id,
+            title=clean_title or None,
+            summary=clean_summary or None,
+        )
+        row = updated or row
+        return SessionResponseDto(
+            id=row.session_id,
+            appName=row.app_name or app_name,
+            userId=str(row.user_id),
+            projectId=row.project_id,
+            title=row.title,
+            summary=row.summary,
+            restored=row.restored_at is not None,
+        )
+
+    def ensure_sessions_idle(self, session_ids: List[str]) -> None:
+        """409 while any of the chats has an agent run in progress.
+
+        Used before deleting a project: removing a session under a live run
+        kills the run mid-way. Same per-process registry as ``chat()``.
+        """
+        busy = [sid for sid in session_ids if _is_run_active(sid)]
+        if busy:
+            logger.warning(
+                "[Projects] Refusing to delete chats %s: a run is still active",
+                busy,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "A chat in this project is still running. Wait for Izumi "
+                    "to finish before deleting the project."
+                ),
+            )
+
+    async def delete_sessions_best_effort(
+        self,
+        current_user: UserModel,
+        sessions: dict[str, str],
+    ) -> List[str]:
+        """Deletes agent sessions, logging (never raising) individual failures.
+
+        ``sessions`` maps each session id to the agent (``app_name``) that
+        holds it. At most ``_SESSION_DELETE_CONCURRENCY`` deletes run at a
+        time, off the event loop (see ``_sessions_delete``). Returns the ids
+        that could not be deleted. A survivor is adopted into the default
+        project on the next listing: a visible, harmless failure mode.
+        """
+        targets = {sid: app or APP_NAME for sid, app in sessions.items()}
+        if not targets:
+            return []
+        agent_names: dict[str, str | None] = {}
+        for app_name in set(targets.values()):
+            try:
+                agent_names[app_name] = self._get_validated_agent_name(app_name)
+            except HTTPException as e:
+                logger.warning(
+                    "[Projects] Agent %s unavailable, its chats are not "
+                    "deleted: %s",
+                    app_name,
+                    e.detail,
+                )
+                agent_names[app_name] = None
+        user_id = str(current_user.id)
+        limit = asyncio.Semaphore(_SESSION_DELETE_CONCURRENCY)
+
+        async def delete(session_id: str, app_name: str) -> bool:
+            agent_name = agent_names[app_name]
+            if agent_name is None:
+                return False
+            async with limit:
+                try:
+                    await self._sessions_delete(
+                        agent_name, app_name, user_id, session_id
+                    )
+                except Exception as e:  # pylint: disable=broad-exception-caught
+                    if _is_session_not_found(e):
+                        return True  # Already gone.
+                    logger.warning(
+                        "[Projects] Could not delete agent session %s: %s",
+                        session_id,
+                        e,
+                    )
+                    return False
+            return True
+
+        deleted = await asyncio.gather(
+            *(delete(sid, app) for sid, app in targets.items())
+        )
+        return [sid for sid, ok in zip(targets, deleted) if not ok]
 
     # --- Characters tab -----------------------------------------------------
 
@@ -927,6 +1593,9 @@ class AgentService:
         )
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
+        # Owner-only chats: Agent Engine reads sessions by id alone, and this
+        # state is about to be rewritten (characters, storyboard sync).
+        self._ensure_session_owner(session, user_id)
         if isinstance(session, dict):
             s_state = session.get("session_state") or session.get("state")
         else:
@@ -1155,6 +1824,20 @@ class AgentService:
 
         session_id = body.get("sessionId")
         workspace_id = body.get("workspaceId")
+
+        if session_id:
+            # First: nothing below may read the session or, in
+            # ``process_stream``, write the caller's token into it.
+            row = await self._ensure_chat_owner(
+                body["appName"], user_id, session_id
+            )
+            # A restored chat has no agent memory: a run there would start a
+            # new campaign that reuses, and overwrites, its storyboard.
+            if row is not None and row.restored_at is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=RESTORED_CHAT_DETAIL,
+                )
 
         if workspace_id is not None:
             injections.append(f"Active Workspace ID: {workspace_id}")
@@ -1538,6 +2221,19 @@ class AgentService:
             finally:
                 if session_id:
                     _mark_run_finished(session_id)
+
+        # Chat activity orders a project's chats (``latest_session_id``).
+        # Recorded before the run lock below, so no await can separate the
+        # lock's check from its mark.
+        if session_id:
+            try:
+                await self.agent_session_repo.touch(session_id, current_user.id)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                logger.warning(
+                    "[Agent Stream] Could not record activity for %s: %s",
+                    session_id,
+                    e,
+                )
 
         # Refuse to start a second run on a session that is still executing:
         # it would corrupt the agent's session (see the registry docstring).

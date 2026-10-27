@@ -26,9 +26,9 @@ import {HttpClientTestingModule} from '@angular/common/http/testing';
 import {RouterTestingModule} from '@angular/router/testing';
 import {MatDialogModule} from '@angular/material/dialog';
 import {MatSnackBar} from '@angular/material/snack-bar';
-import {signal, CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
+import {signal, CUSTOM_ELEMENTS_SCHEMA, WritableSignal} from '@angular/core';
 import {ActivatedRoute, Router} from '@angular/router';
-import {Subject, of} from 'rxjs';
+import {Observable, Subject, of} from 'rxjs';
 import {AgentChatService} from './services/agent-chat.service';
 import {TimelineStateService} from './services/timeline-state.service';
 import {PlayheadSyncService} from './services/playhead-sync.service';
@@ -44,16 +44,27 @@ import {StoryboardService} from '../services/storyboard/storyboard.service';
 import {WorkbenchService} from './workbench.service';
 import {SourceAssetService} from '../common/services/source-asset.service';
 import {GalleryService} from '../gallery/gallery.service';
+import {ProjectStateService} from './services/project-state.service';
+
+/** The parts of `ProjectStateService` the Workbench uses. */
+interface ProjectStateStub {
+  init: jasmine.Spy;
+  registerBeforeLeave: jasmine.Spy;
+  activeProjectId: WritableSignal<number | null>;
+}
 
 describe('WorkbenchComponent', () => {
   let component: WorkbenchComponent;
   let fixture: ComponentFixture<WorkbenchComponent>;
+  let projectState: ProjectStateStub;
+  let mockQueryParams: Subject<any>;
 
   beforeEach(async () => {
     const mockAgentChatService = {
       currentStoryboard: signal<any>(null),
       selectedSessionId: signal<any>(null),
       chatMessages: signal<any[]>([]),
+      resetConversation: jasmine.createSpy('resetConversation'),
     };
 
     const mockMatSnackBar = {
@@ -62,12 +73,18 @@ describe('WorkbenchComponent', () => {
       }),
     };
 
-    const mockQueryParams = new Subject<any>();
+    mockQueryParams = new Subject<any>();
     const mockActivatedRoute = {
       queryParams: mockQueryParams.asObservable(),
       snapshot: {
         queryParams: {},
       },
+    };
+
+    projectState = {
+      init: jasmine.createSpy('init'),
+      registerBeforeLeave: jasmine.createSpy('registerBeforeLeave'),
+      activeProjectId: signal<number | null>(null),
     };
 
     await TestBed.configureTestingModule({
@@ -79,7 +96,14 @@ describe('WorkbenchComponent', () => {
         {provide: ActivatedRoute, useValue: mockActivatedRoute},
       ],
       schemas: [CUSTOM_ELEMENTS_SCHEMA],
-    }).compileComponents();
+    })
+      // `ProjectStateService` is provided by the component itself.
+      .overrideComponent(WorkbenchComponent, {
+        set: {
+          providers: [{provide: ProjectStateService, useValue: projectState}],
+        },
+      })
+      .compileComponents();
 
     fixture = TestBed.createComponent(WorkbenchComponent);
     component = fixture.componentInstance;
@@ -1411,6 +1435,62 @@ describe('WorkbenchComponent', () => {
       expect(stateService.isLoadingTimeline()).toBeFalse();
     }));
 
+    it('never applies a superseded timeline response', fakeAsync(() => {
+      const first = new Subject<TimelineDTO>();
+      const second = new Subject<TimelineDTO>();
+      spyOn(workbenchService, 'getTimeline').and.returnValues(first, second);
+      const apply = spyOn(component, 'processGeneratedData');
+      spyOn(console, 'error');
+      const dto = (id: number) =>
+        ({
+          timeline_id: id,
+          workspace_id: 1,
+          title: 'T',
+          video_clips: [],
+          audio_clips: [],
+        }) as TimelineDTO;
+
+      stateService.loadedTimelineId.set(1);
+      fixture.detectChanges();
+      tick();
+      stateService.loadedTimelineId.set(2);
+      fixture.detectChanges();
+      tick();
+
+      first.error(new Error('stale'));
+      expect(component.lastSavedText()).not.toBe('Failed to load timeline');
+
+      second.next(dto(2));
+      expect(apply).toHaveBeenCalledOnceWith(dto(2));
+    }));
+
+    it('drops the in-flight timeline once a project entry reset the editor', fakeAsync(() => {
+      const pending = new Subject<TimelineDTO>();
+      spyOn(workbenchService, 'getTimeline').and.returnValue(pending);
+      const apply = spyOn(component, 'processGeneratedData');
+
+      stateService.loadedTimelineId.set(1);
+      fixture.detectChanges();
+      tick();
+      // `resetForProjectSwitch()` while the previous project's fetch runs.
+      stateService.loadedTimelineId.set(undefined);
+      fixture.detectChanges();
+      tick();
+
+      pending.next({
+        timeline_id: 1,
+        session_id: 'left-project-chat',
+        workspace_id: 1,
+        title: 'T',
+        video_clips: [],
+        audio_clips: [],
+      } as TimelineDTO);
+
+      expect(apply).not.toHaveBeenCalled();
+      expect(component.activeToolButton()).toBeNull();
+      expect(component.lastSavedText()).toBe('');
+    }));
+
     it('clears isLoadingTimeline on fetch error and when the timeline is unset', fakeAsync(() => {
       const failing = new Subject<TimelineDTO>();
       const hanging = new Subject<TimelineDTO>();
@@ -1454,5 +1534,249 @@ describe('WorkbenchComponent', () => {
 
     expect(stateService.isPlaying()).toBeFalse();
     expect(playbackService.stopLoop).toHaveBeenCalled();
+  });
+
+  describe('Projects', () => {
+    const clip = {
+      id: 'c1',
+      assetId: 'a1',
+      startTime: 0,
+      duration: 5,
+      offset: 0,
+      trackIndex: 0,
+    } as TimelineClip;
+    const saved = {
+      timeline_id: 99,
+      workspace_id: 1,
+      title: 'Timeline',
+      video_clips: [],
+    } as unknown as TimelineDTO;
+
+    const beforeLeave = (): (() => Observable<unknown>) =>
+      projectState.registerBeforeLeave.calls.mostRecent().args[0];
+
+    it('initializes the project state and registers the autosave flush', () => {
+      expect(projectState.init).toHaveBeenCalledTimes(1);
+      expect(projectState.registerBeforeLeave).toHaveBeenCalledWith(
+        jasmine.any(Function),
+      );
+    });
+
+    it('flushes a pending autosave before a project is left', () => {
+      const save = spyOn(component, 'saveTimeline').and.returnValue(of(saved));
+
+      beforeLeave()().subscribe();
+      expect(save).not.toHaveBeenCalled();
+
+      component['hasPendingSave'] = true;
+      const emitted: unknown[] = [];
+      beforeLeave()().subscribe(value => emitted.push(value));
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(emitted).toEqual([null]);
+    });
+
+    it('never blocks a project switch on a failed flush', () => {
+      const failed = new Subject<TimelineDTO | null>();
+      spyOn(component, 'saveTimeline').and.returnValue(failed);
+      component['hasPendingSave'] = true;
+      const emitted: unknown[] = [];
+
+      beforeLeave()().subscribe(value => emitted.push(value));
+      failed.error(new Error('Network down'));
+
+      expect(emitted).toEqual([null]);
+    });
+
+    it('never flushes edits queued in another project', () => {
+      // E.g. a deleted project, or one a deep link left without a flush:
+      // the editor now shows another project's timeline.
+      const save = spyOn(component, 'saveTimeline').and.returnValue(of(saved));
+      component['hasPendingSave'] = true;
+      component['pendingSaveProjectId'] = 7;
+      projectState.activeProjectId.set(8);
+      const emitted: unknown[] = [];
+
+      beforeLeave()().subscribe(value => emitted.push(value));
+
+      expect(save).not.toHaveBeenCalled();
+      expect(emitted).toEqual([null]);
+    });
+
+    it('sends the active project with a save', () => {
+      const create = spyOn(
+        TestBed.inject(WorkbenchService),
+        'createTimeline',
+      ).and.returnValue(new Subject<TimelineDTO>());
+      projectState.activeProjectId.set(7);
+      TestBed.inject(TimelineStateService).timelineClips.set([clip]);
+
+      component.saveTimeline();
+
+      expect(create.calls.mostRecent().args[0].project_id).toBe(7);
+    });
+
+    it('ignores a save that lands after a project switch', () => {
+      const response = new Subject<TimelineDTO>();
+      spyOn(TestBed.inject(WorkbenchService), 'createTimeline').and.returnValue(
+        response,
+      );
+      const navigate = spyOn(
+        TestBed.inject(Router),
+        'navigate',
+      ).and.returnValue(Promise.resolve(true));
+      const state = TestBed.inject(TimelineStateService);
+      projectState.activeProjectId.set(7);
+      state.timelineClips.set([clip]);
+
+      component.saveTimeline();
+      projectState.activeProjectId.set(8);
+      response.next(saved);
+
+      expect(state.loadedTimelineId()).toBeUndefined();
+      expect(navigate).not.toHaveBeenCalled();
+    });
+
+    it('loads the saved timeline when the project did not change', () => {
+      const response = new Subject<TimelineDTO>();
+      spyOn(TestBed.inject(WorkbenchService), 'createTimeline').and.returnValue(
+        response,
+      );
+      spyOn(TestBed.inject(WorkbenchService), 'getTimeline').and.returnValue(
+        new Subject<TimelineDTO>(),
+      );
+      const navigate = spyOn(
+        TestBed.inject(Router),
+        'navigate',
+      ).and.returnValue(Promise.resolve(true));
+      const state = TestBed.inject(TimelineStateService);
+      projectState.activeProjectId.set(7);
+      state.timelineClips.set([clip]);
+
+      component.saveTimeline();
+      response.next(saved);
+
+      expect(state.loadedTimelineId()).toBe(99);
+      expect(navigate).toHaveBeenCalledWith(
+        [],
+        jasmine.objectContaining({
+          queryParams: {timelineId: 99, sessionId: null, storyboardId: null},
+        }),
+      );
+    });
+
+    it('skips a stale debounced autosave once the save was flushed', fakeAsync(() => {
+      const save = spyOn(component, 'saveTimeline').and.callFake(() => {
+        component['hasPendingSave'] = false;
+        return of(null);
+      });
+
+      component.triggerAutoSave();
+      component.saveTimeline(); // The flush before a project switch.
+      tick(10000);
+      expect(save).toHaveBeenCalledTimes(1);
+
+      component.triggerAutoSave();
+      tick(10000);
+      expect(save).toHaveBeenCalledTimes(2);
+    }));
+
+    describe('while a save is in flight', () => {
+      let getTimeline: jasmine.Spy;
+      let state: TimelineStateService;
+
+      beforeEach(() => {
+        const service = TestBed.inject(WorkbenchService);
+        spyOn(service, 'updateTimeline').and.returnValue(
+          new Subject<TimelineDTO>(), // Never answers: the save stays open.
+        );
+        getTimeline = spyOn(service, 'getTimeline').and.returnValue(
+          new Subject<TimelineDTO>(),
+        );
+        state = TestBed.inject(TimelineStateService);
+        state.loadedTimelineId.set(41);
+        TestBed.flushEffects();
+        state.timelineClips.set([clip]);
+        component.saveTimeline();
+        getTimeline.calls.reset();
+      });
+
+      it('still loads another timeline (a project switch)', () => {
+        state.loadedTimelineId.set(42);
+        TestBed.flushEffects();
+
+        expect(getTimeline).toHaveBeenCalledOnceWith(42);
+      });
+
+      it('does not reload the timeline being saved', () => {
+        // Same timeline, as the storyboard refresh reports it (a number
+        // where the URL gave a string): reloading would drop newer edits.
+        state.loadedTimelineId.set('41');
+        TestBed.flushEffects();
+
+        expect(getTimeline).not.toHaveBeenCalled();
+      });
+    });
+
+    it('drops an autosave queued in a project that was left', fakeAsync(() => {
+      const save = spyOn(component, 'saveTimeline').and.returnValue(of(null));
+      projectState.activeProjectId.set(7);
+      component.triggerAutoSave();
+
+      projectState.activeProjectId.set(8); // A deep link: no flush.
+      tick(10000);
+
+      expect(save).not.toHaveBeenCalled();
+    }));
+
+    it('still autosaves the edits of the active project', fakeAsync(() => {
+      const save = spyOn(component, 'saveTimeline').and.returnValue(of(null));
+      projectState.activeProjectId.set(7);
+      component.triggerAutoSave();
+
+      tick(10000);
+
+      expect(save).toHaveBeenCalledTimes(1);
+    }));
+  });
+
+  describe('Entering the Workbench', () => {
+    it('starts every visit from a clean slate, before its effects first run', () => {
+      // The root services still hold the previous visit's state.
+      const agentChat = TestBed.inject(AgentChatService) as unknown as {
+        currentStoryboard: WritableSignal<any>;
+        resetConversation: jasmine.Spy;
+      };
+      const state = TestBed.inject(TimelineStateService);
+      const getTimeline = spyOn(
+        TestBed.inject(WorkbenchService),
+        'getTimeline',
+      ).and.returnValue(new Subject<TimelineDTO>());
+      agentChat.resetConversation.and.callFake(() =>
+        agentChat.currentStoryboard.set(null),
+      );
+      agentChat.resetConversation.calls.reset();
+      agentChat.currentStoryboard.set({id: 7, timeline_id: 42});
+      state.loadedTimelineId.set(42);
+      state.timelineClips.set([{id: 'stale'} as TimelineClip]);
+
+      TestBed.createComponent(WorkbenchComponent);
+      // Like the router: the effects run in a microtask, i.e. before the
+      // first change detection (`ngOnInit`).
+      TestBed.flushEffects();
+
+      expect(agentChat.resetConversation).toHaveBeenCalledTimes(1);
+      expect(state.loadedTimelineId()).toBeUndefined();
+      expect(state.timelineClips()).toEqual([]);
+      expect(getTimeline).not.toHaveBeenCalled();
+    });
+
+    it('opens the agent panel for a URL session without pre-selecting it', () => {
+      mockQueryParams.next({projectId: '1', sessionId: 's1'});
+
+      expect(component.activeToolButton()).toBe('agent');
+      // A chat panel created after this point takes `selectedSessionId` as
+      // "already loaded": pre-selecting it left the chat empty on entry.
+      expect(TestBed.inject(AgentChatService).selectedSessionId()).toBeNull();
+    });
   });
 });

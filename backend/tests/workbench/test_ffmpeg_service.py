@@ -157,6 +157,62 @@ async def test_stitch_timeline_wipe_left_transition(ffmpeg_service):
 
 
 @pytest.mark.anyio
+async def test_stitch_timeline_wipe_intro_outro_use_the_clip_timebase(
+    ffmpeg_service,
+):
+    """xfade refuses inputs whose timebases differ: the black sources of a
+    non-fade intro/outro must use the clips' AVTB timebase."""
+    timeline = VideoTimeline(
+        timeline_id=5,
+        workspace_id="1",
+        title="Wipe Intro/Outro Timeline",
+        video_clips=[
+            VideoClip(
+                presigned_url="http://example.com/v1.mp4",
+                trim=Trim(offset_seconds=0.0, duration_seconds=2.0),
+            )
+        ],
+        transition_in=Transition(
+            type=TransitionType.WIPE_LEFT, duration_seconds=0.5
+        ),
+        transition_out=Transition(
+            type=TransitionType.WIPE_LEFT, duration_seconds=0.5
+        ),
+    )
+
+    with patch.object(
+        ffmpeg_service, "get_media_info", new_callable=AsyncMock
+    ) as mock_info:
+        mock_info.return_value = {
+            "format": {"duration": "4.0"},
+            "streams": [
+                {
+                    "codec_type": "video",
+                    "width": 1280,
+                    "height": 720,
+                    "r_frame_rate": "24/1",
+                }
+            ],
+        }
+        with patch("src.workbench.ffmpeg_service.subprocess.run") as mock_sub:
+            mock_sub.return_value = MagicMock(
+                returncode=0, stdout=b"", stderr=b""
+            )
+            _, temp_dir = await ffmpeg_service.stitch_timeline(
+                timeline, AsyncMock()
+            )
+            called_args = mock_sub.call_args[0][0]
+            filter_str = called_args[called_args.index("-filter_complex") + 1]
+            assert "format=yuv420p,settb=AVTB[v_in_black]" in filter_str
+            assert "format=yuv420p,settb=AVTB[v_out_black]" in filter_str
+            assert "transition=wipeleft:duration=0.5:offset=0[v_fadein]" in (
+                filter_str
+            )
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+
+
+@pytest.mark.anyio
 async def test_stitch_timeline_applies_audio_clip_volume(ffmpeg_service):
     """Background music at 0.2 must be attenuated in the ffmpeg graph.
 

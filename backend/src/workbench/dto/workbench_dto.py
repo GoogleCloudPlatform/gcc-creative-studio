@@ -125,6 +125,10 @@ class VideoTimeline(BaseModel):
 
     timeline_id: Optional[str | int] = None
     storyboard_id: Optional[str | int] = None
+    # Owning project. On create the server resolves it (storyboard ->
+    # explicit hint -> chat -> default); ``workspace_id`` and ``user_id``
+    # are likewise stamped server-side and client values are ignored.
+    project_id: Optional[int] = None
     workspace_id: str | int
     user_id: Optional[str | int] = None
     session_id: Optional[str] = None

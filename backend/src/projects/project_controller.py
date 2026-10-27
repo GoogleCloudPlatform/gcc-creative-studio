@@ -21,6 +21,9 @@ from src.users.user_model import UserModel
 from src.agents.agent_service import AgentService
 from src.projects.project_service import ProjectService
 from src.projects.dto.project_dto import (
+    ProjectCreate,
+    ProjectResponse,
+    ProjectUpdate,
     StoryboardCreate,
     StoryboardUpdate,
     StoryboardResponse,
@@ -30,13 +33,122 @@ from src.projects.dto.project_dto import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(
+storyboards_router = APIRouter(
     prefix="/api/storyboards",
     tags=["Storyboards"],
 )
 
+projects_router = APIRouter(
+    prefix="/api/projects",
+    tags=["Projects"],
+)
 
-@router.post(
+
+# --- Projects ---------------------------------------------------------------
+# Owner-only (see ``ProjectAuth``). ``/default`` and ``/resolve`` are declared
+# before ``/{project_id}``: otherwise the path parameter would capture them
+# and reject the literal segment with a 422.
+
+
+@projects_router.get("", response_model=list[ProjectResponse])
+async def list_projects(
+    workspace_id: int,
+    current_user: UserModel = Depends(get_current_user),
+    project_service: ProjectService = Depends(),
+):
+    """The caller's own projects in a workspace, default first."""
+    return await project_service.list_projects(current_user, workspace_id)
+
+
+@projects_router.post(
+    "", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED
+)
+async def create_project(
+    project_create: ProjectCreate,
+    current_user: UserModel = Depends(get_current_user),
+    project_service: ProjectService = Depends(),
+):
+    return await project_service.create_project(current_user, project_create)
+
+
+@projects_router.post("/default", response_model=ProjectResponse)
+async def ensure_default_project(
+    workspace_id: int,
+    current_user: UserModel = Depends(get_current_user),
+    project_service: ProjectService = Depends(),
+):
+    """Idempotently returns (creating it on first use) the default project."""
+    return await project_service.ensure_default_project(
+        current_user, workspace_id
+    )
+
+
+@projects_router.get("/resolve", response_model=ProjectResponse)
+async def resolve_project(
+    session_id: str | None = None,
+    storyboard_id: int | None = None,
+    timeline_id: int | None = None,
+    current_user: UserModel = Depends(get_current_user),
+    project_service: ProjectService = Depends(),
+):
+    """The project of a deep-linked chat, storyboard or timeline (one id)."""
+    return await project_service.resolve_project_from_child(
+        current_user,
+        session_id=session_id,
+        storyboard_id=storyboard_id,
+        timeline_id=timeline_id,
+    )
+
+
+@projects_router.get("/{project_id}", response_model=ProjectResponse)
+async def get_project(
+    project_id: int,
+    current_user: UserModel = Depends(get_current_user),
+    project_service: ProjectService = Depends(),
+):
+    return await project_service.get_project(current_user, project_id)
+
+
+@projects_router.patch("/{project_id}", response_model=ProjectResponse)
+async def rename_project(
+    project_id: int,
+    project_update: ProjectUpdate,
+    current_user: UserModel = Depends(get_current_user),
+    project_service: ProjectService = Depends(),
+):
+    return await project_service.rename_project(
+        current_user, project_id, project_update.name
+    )
+
+
+@projects_router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_project(
+    project_id: int,
+    current_user: UserModel = Depends(get_current_user),
+    project_service: ProjectService = Depends(),
+    agent_service: AgentService = Depends(),
+):
+    """Deletes the project with its chats, storyboards and timelines.
+
+    Refused with 409 for the default project, and while one of its chats
+    has an agent run in progress: deleting the session under a live run
+    would kill it mid-way. The agent sessions live in Agent Engine (or the
+    local Izumi container), so they are deleted on a best-effort basis
+    before the database rows cascade away.
+    """
+    sessions = await project_service.prepare_project_delete(
+        current_user, project_id
+    )
+    agent_service.ensure_sessions_idle(list(sessions))
+    await agent_service.delete_sessions_best_effort(current_user, sessions)
+    await project_service.delete_project(current_user, project_id)
+    return None
+
+
+# --- Storyboards ------------------------------------------------------------
+
+
+@storyboards_router.post(
     "/",
     response_model=StoryboardCreateResponse,
     status_code=status.HTTP_201_CREATED,
@@ -48,43 +160,46 @@ async def create_storyboard(
 ):
     storyboard = await project_service.create_storyboard(
         storyboard_create,
-        current_user.id,
+        current_user,
         reuse_session_record=is_agent_request.get(),
     )
     return storyboard
 
 
-@router.get("/{storyboard_id}", response_model=StoryboardResponse)
+# The by-id routes authorize first (owner, then the project and workspace
+# rules of ``ProjectAuth``): loading a storyboard presigns a URL per scene.
+
+
+@storyboards_router.get("/{storyboard_id}", response_model=StoryboardResponse)
 async def get_storyboard(
     storyboard_id: int,
     current_user: UserModel = Depends(get_current_user),
     project_service: ProjectService = Depends(),
 ):
+    await project_service.authorize_storyboard(current_user, storyboard_id)
     storyboard = await project_service.get_storyboard(storyboard_id)
     if not storyboard:
         raise HTTPException(status_code=404, detail="Storyboard not found")
-    if storyboard.user_id != current_user.id:
-        raise HTTPException(
-            status_code=403, detail="Not authorized to access this storyboard"
-        )
-
     return storyboard
 
 
-@router.get("", response_model=list[StoryboardResponse])
+@storyboards_router.get("", response_model=list[StoryboardResponse])
 async def list_storyboards(
     workspace_id: int,
     session_id: str | None = None,
     current_user: UserModel = Depends(get_current_user),
     project_service: ProjectService = Depends(),
 ):
-    storyboards = await project_service.list_storyboards(
-        workspace_id, session_id
+    """The caller's own storyboards in a workspace they can access."""
+    storyboards = await project_service.list_storyboards_for_user(
+        current_user, workspace_id, session_id
     )
     return storyboards
 
 
-@router.put("/{storyboard_id}", response_model=StoryboardUpdateResponse)
+@storyboards_router.put(
+    "/{storyboard_id}", response_model=StoryboardUpdateResponse
+)
 async def update_storyboard(
     storyboard_id: int,
     storyboard_update: StoryboardUpdate,
@@ -92,14 +207,7 @@ async def update_storyboard(
     project_service: ProjectService = Depends(),
     agent_service: AgentService = Depends(),
 ):
-    storyboard = await project_service.get_storyboard(storyboard_id)
-    if not storyboard:
-        raise HTTPException(status_code=404, detail="Storyboard not found")
-    if storyboard.user_id != current_user.id:
-        raise HTTPException(
-            status_code=403, detail="Not authorized to modify this storyboard"
-        )
-
+    await project_service.authorize_storyboard(current_user, storyboard_id)
     updated_storyboard = await project_service.update_storyboard(
         storyboard_id, storyboard_update
     )
@@ -148,19 +256,14 @@ async def _persist_agent_scene_ids(
         )
 
 
-@router.delete("/{storyboard_id}", status_code=status.HTTP_204_NO_CONTENT)
+@storyboards_router.delete(
+    "/{storyboard_id}", status_code=status.HTTP_204_NO_CONTENT
+)
 async def delete_storyboard(
     storyboard_id: int,
     current_user: UserModel = Depends(get_current_user),
     project_service: ProjectService = Depends(),
 ):
-    storyboard = await project_service.get_storyboard(storyboard_id)
-    if not storyboard:
-        raise HTTPException(status_code=404, detail="Storyboard not found")
-    if storyboard.user_id != current_user.id:
-        raise HTTPException(
-            status_code=403, detail="Not authorized to delete this storyboard"
-        )
-
+    await project_service.authorize_storyboard(current_user, storyboard_id)
     await project_service.delete_storyboard(storyboard_id)
     return None

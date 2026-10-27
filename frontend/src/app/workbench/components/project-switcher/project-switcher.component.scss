@@ -1,0 +1,384 @@
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+$accent: #8ab4f8;
+$text: #e8eaed;
+$muted: #9aa0a6;
+$success: #81c995;
+$danger: #f28b82;
+
+:host {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.switcher-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 280px;
+  height: 34px;
+  padding: 0 10px 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 99px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.08),
+    rgba(255, 255, 255, 0.02)
+  );
+  backdrop-filter: blur(8px);
+  color: $text;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
+
+  &:hover:not(:disabled) {
+    border-color: rgba($accent, 0.45);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+    transform: translateY(-1px);
+  }
+
+  &:focus-visible {
+    outline: 2px solid $accent;
+    outline-offset: 2px;
+  }
+
+  &:disabled {
+    cursor: progress;
+    opacity: 0.65;
+  }
+
+  &[aria-expanded='true'] {
+    border-color: rgba($accent, 0.6);
+
+    .trigger-caret {
+      transform: rotate(180deg);
+    }
+  }
+
+  &.is-loading .trigger-icon {
+    animation: project-switcher-pulse 1.2s ease-in-out infinite;
+  }
+}
+
+.trigger-icon,
+.trigger-caret {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  font-size: 18px;
+}
+
+.trigger-icon {
+  color: $accent;
+}
+
+.trigger-caret {
+  color: $muted;
+  transition: transform 0.2s ease;
+}
+
+.trigger-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes project-switcher-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .switcher-trigger,
+  .trigger-caret {
+    transition: none;
+  }
+
+  .switcher-trigger.is-loading .trigger-icon {
+    animation: none;
+  }
+}
+
+// The menu panel is rendered in the CDK overlay, outside this component.
+::ng-deep .project-switcher-menu.mat-mdc-menu-panel {
+  // The row buttons are `mat-menu-item`s for the keyboard support (arrow
+  // keys, typeahead, initial focus) only: Material's item look is undone
+  // here and below, so the menu keeps its own.
+  --mat-menu-item-hover-state-layer-color: transparent;
+  --mat-menu-item-focus-state-layer-color: transparent;
+
+  min-width: 280px;
+  max-width: 340px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  background: rgba(28, 30, 36, 0.94);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  color: $text;
+
+  .mat-mdc-menu-content {
+    padding: 6px;
+  }
+
+  .mat-mdc-menu-item {
+    min-height: 0;
+
+    // Beats Material's and the global `styles.scss` menu-icon margins.
+    .mat-icon {
+      margin: 0;
+    }
+
+    // Material wraps the item's text in this span with its own typography.
+    .mat-mdc-menu-item-text {
+      font: inherit;
+      letter-spacing: inherit;
+    }
+  }
+
+  .menu-title {
+    padding: 8px 10px 6px;
+    color: $muted;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .project-list {
+    max-height: 320px;
+    overflow-y: auto;
+  }
+
+  .project-row {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    border-radius: 10px;
+    transition: background 0.15s ease;
+
+    &:hover,
+    &:focus-within {
+      background: rgba(255, 255, 255, 0.06);
+
+      .row-actions {
+        opacity: 1;
+      }
+    }
+
+    &.is-active {
+      background: rgba($accent, 0.12);
+
+      .project-name {
+        color: #fff;
+        font-weight: 500;
+      }
+    }
+
+    &.is-editing {
+      padding: 4px 4px 4px 8px;
+      background: rgba(255, 255, 255, 0.04);
+    }
+  }
+
+  .project-option {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 9px 8px;
+    border: 0;
+    border-radius: 10px;
+    background: none;
+    color: inherit;
+    font: inherit;
+    font-size: 0.875rem;
+    text-align: left;
+    cursor: pointer;
+
+    &:focus-visible {
+      outline: 2px solid $accent;
+      outline-offset: -2px;
+    }
+
+    // Holds the name and the badge, laid out as the button's children were.
+    .mat-mdc-menu-item-text {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+  }
+
+  .check-icon {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    font-size: 18px;
+    color: $success;
+  }
+
+  .project-name {
+    min-width: 0;
+    overflow: hidden;
+    color: #dadce0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .default-badge {
+    flex: none;
+    margin-left: auto;
+    padding: 1px 8px;
+    border-radius: 99px;
+    background: rgba(255, 255, 255, 0.08);
+    color: $muted;
+    font-size: 0.6875rem;
+  }
+
+  .row-actions {
+    display: flex;
+    padding-right: 4px;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+
+  .icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    color: $muted;
+    cursor: pointer;
+    transition:
+      background 0.15s ease,
+      color 0.15s ease;
+
+    mat-icon {
+      width: 18px;
+      height: 18px;
+      font-size: 18px;
+      color: inherit;
+    }
+
+    // Icon only: Material's (empty) text span would push the icon aside.
+    .mat-mdc-menu-item-text {
+      display: none;
+    }
+
+    &:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+    }
+
+    &.danger:hover:not(:disabled) {
+      background: rgba($danger, 0.14);
+      color: $danger;
+    }
+
+    &.confirm {
+      color: $success;
+    }
+
+    &:focus-visible {
+      outline: 2px solid $accent;
+      outline-offset: -2px;
+    }
+
+    &:disabled {
+      cursor: default;
+      opacity: 0.4;
+    }
+  }
+
+  .inline-input {
+    flex: 1;
+    min-width: 0;
+    height: 30px;
+    padding: 0 10px;
+    border: 1px solid rgba($accent, 0.6);
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.25);
+    color: #fff;
+    font: inherit;
+    font-size: 0.875rem;
+    outline: none;
+
+    &:focus {
+      border-color: $accent;
+      box-shadow: 0 0 0 3px rgba($accent, 0.18);
+    }
+  }
+
+  .menu-footer {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .new-project-button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 9px 8px;
+    border: 0;
+    border-radius: 10px;
+    background: none;
+    color: $accent;
+    font: inherit;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s ease;
+
+    mat-icon {
+      width: 18px;
+      height: 18px;
+      font-size: 18px;
+      color: inherit;
+    }
+
+    &:hover {
+      background: rgba($accent, 0.1);
+    }
+
+    &:focus-visible {
+      outline: 2px solid $accent;
+      outline-offset: -2px;
+    }
+  }
+
+  // Touch screens have no hover: keep the row actions visible.
+  @media (hover: none) {
+    .row-actions {
+      opacity: 1;
+    }
+  }
+}

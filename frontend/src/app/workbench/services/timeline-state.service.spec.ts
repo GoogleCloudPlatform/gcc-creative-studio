@@ -39,6 +39,38 @@ describe('TimelineStateService', () => {
     expect(service.selectedClipId()).toBeNull();
   });
 
+  it('clears the editor for a project switch but keeps the zoom', () => {
+    service.loadedTimelineId.set(42);
+    service.timelineClips.set([
+      {
+        id: 'c1',
+        assetId: 'a1',
+        startTime: 0,
+        duration: 5,
+        offset: 0,
+      } as TimelineClip,
+    ]);
+    service.selectedClipId.set('c1');
+    service.currentTime.set(3);
+    service.isPlaying.set(true);
+    service.scrollOffset.set(120);
+    service.pixelsPerSecond.set(40);
+
+    service.resetForProjectSwitch();
+
+    expect(service.loadedTimelineId()).toBeUndefined();
+    expect(service.timelineClips()).toEqual([]);
+    expect(service.transitions()).toEqual([]);
+    expect(service.transitionIn()).toBeNull();
+    expect(service.transitionOut()).toBeNull();
+    expect(service.selectedClipId()).toBeNull();
+    expect(service.assets()).toEqual([]);
+    expect(service.currentTime()).toBe(0);
+    expect(service.isPlaying()).toBeFalse();
+    expect(service.scrollOffset()).toBe(0);
+    expect(service.pixelsPerSecond()).toBe(40);
+  });
+
   it('should calculate totalDuration correctly', () => {
     const clips: TimelineClip[] = [
       {

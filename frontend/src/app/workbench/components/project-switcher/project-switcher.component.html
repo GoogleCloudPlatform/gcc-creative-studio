@@ -1,0 +1,177 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<button
+  type="button"
+  id="project-switcher-trigger"
+  class="switcher-trigger"
+  [class.is-loading]="projectState.loading()"
+  [disabled]="projectState.loading()"
+  [matMenuTriggerFor]="projectMenu"
+  [matTooltip]="triggerTooltip()"
+  matTooltipPosition="below"
+  [attr.aria-label]="triggerLabel()"
+>
+  <mat-icon class="trigger-icon">folder_open</mat-icon>
+  <span class="trigger-name">{{ triggerName() }}</span>
+  <mat-icon class="trigger-caret">expand_more</mat-icon>
+</button>
+
+<!-- The rows' buttons are `mat-menu-item`s: the menu then provides the arrow
+     keys, Home / End, typeahead and the initial focus. -->
+<mat-menu
+  #projectMenu="matMenu"
+  class="project-switcher-menu"
+  xPosition="after"
+  (closed)="resetDraft()"
+>
+  <div class="menu-title" (click)="keepMenuOpen($event)">Projects</div>
+
+  <div class="project-list" role="group" aria-label="Your projects">
+    @for (project of projectState.projects(); track project.id) {
+      @if (editingId() === project.id) {
+        <div class="project-row is-editing" (click)="keepMenuOpen($event)">
+          <input
+            #nameInput
+            type="text"
+            class="inline-input"
+            [id]="'project-rename-' + project.id"
+            [maxlength]="maxLength"
+            [(ngModel)]="draftName"
+            [disabled]="saving()"
+            aria-label="Project name"
+            (keydown)="onDraftKeydown($event)"
+          />
+          <button
+            type="button"
+            class="icon-button confirm"
+            aria-label="Save name"
+            [disabled]="saving()"
+            (click)="submitDraft($event)"
+          >
+            <mat-icon>check</mat-icon>
+          </button>
+          <button
+            type="button"
+            class="icon-button"
+            aria-label="Cancel renaming"
+            (click)="cancelDraft($event)"
+          >
+            <mat-icon>close</mat-icon>
+          </button>
+        </div>
+      } @else {
+        <div
+          class="project-row"
+          [class.is-active]="project.id === projectState.activeProjectId()"
+        >
+          <button
+            mat-menu-item
+            type="button"
+            class="project-option"
+            role="menuitemradio"
+            [id]="'project-option-' + project.id"
+            [attr.aria-checked]="project.id === projectState.activeProjectId()"
+            (click)="selectProject(project)"
+          >
+            <mat-icon class="check-icon" aria-hidden="true">{{
+              project.id === projectState.activeProjectId() ? 'check' : ''
+            }}</mat-icon>
+            <span class="project-name">{{ project.name }}</span>
+            @if (project.is_default) {
+              <span class="default-badge">Default</span>
+            }
+          </button>
+          <div class="row-actions">
+            <button
+              mat-menu-item
+              type="button"
+              class="icon-button"
+              [id]="'project-edit-' + project.id"
+              matTooltip="Rename"
+              [attr.aria-label]="'Rename ' + project.name"
+              (click)="startRename($event, project)"
+            >
+              <mat-icon>edit</mat-icon>
+            </button>
+            <!-- The default project cannot be deleted (the backend answers
+                 409): it is where chats without a project land. -->
+            @if (!project.is_default) {
+              <button
+                mat-menu-item
+                type="button"
+                class="icon-button danger"
+                [id]="'project-delete-' + project.id"
+                matTooltip="Delete"
+                [attr.aria-label]="'Delete ' + project.name"
+                (click)="confirmDelete($event, project)"
+              >
+                <mat-icon>delete_outline</mat-icon>
+              </button>
+            }
+          </div>
+        </div>
+      }
+    }
+  </div>
+
+  <div class="menu-footer" (click)="keepMenuOpen($event)">
+    @if (isCreating()) {
+      <div class="project-row is-editing">
+        <input
+          #nameInput
+          type="text"
+          id="project-new-input"
+          class="inline-input"
+          placeholder="Project name"
+          [maxlength]="maxLength"
+          [(ngModel)]="draftName"
+          [disabled]="saving()"
+          aria-label="New project name"
+          (keydown)="onDraftKeydown($event)"
+        />
+        <button
+          type="button"
+          class="icon-button confirm"
+          aria-label="Create project"
+          [disabled]="saving()"
+          (click)="submitDraft($event)"
+        >
+          <mat-icon>check</mat-icon>
+        </button>
+        <button
+          type="button"
+          class="icon-button"
+          aria-label="Cancel"
+          (click)="cancelDraft($event)"
+        >
+          <mat-icon>close</mat-icon>
+        </button>
+      </div>
+    } @else {
+      <button
+        mat-menu-item
+        type="button"
+        id="project-new-button"
+        class="new-project-button"
+        (click)="startCreate($event)"
+      >
+        <mat-icon>add</mat-icon>
+        New project
+      </button>
+    }
+  </div>
+</mat-menu>

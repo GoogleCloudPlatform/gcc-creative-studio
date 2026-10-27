@@ -28,15 +28,21 @@ import {
   OnDestroy,
   untracked,
 } from '@angular/core';
+import {toObservable} from '@angular/core/rxjs-interop';
 import {
   AgentChatService,
   ChatMessageUI,
   StageMilestone,
   SSECallbacks,
+  readLegacyTopics,
 } from '../../services/agent-chat.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
 import {StoryboardService} from '../../../services/storyboard/storyboard.service';
 import {TimelineStateService} from '../../services/timeline-state.service';
+import {
+  ProjectStateService,
+  parseId,
+} from '../../services/project-state.service';
 import {ActivatedRoute, Router} from '@angular/router';
 import {combineLatest, Subscription} from 'rxjs';
 import {CommonModule} from '@angular/common';
@@ -55,6 +61,7 @@ import {GalleryService} from '../../../gallery/gallery.service';
 import {SourceAssetResponseDto} from '../../../common/services/source-asset.service';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {handleErrorSnackbar} from '../../../utils/handleMessageSnackbar';
+import {StudioDropdownComponent} from '../../../common/components/studio-dropdown/studio-dropdown.component';
 
 import {
   StoryboardResponse,
@@ -77,7 +84,23 @@ interface DropdownOption {
   value: string;
   label: string;
   tooltip?: string;
+  disabled?: boolean;
+  badge?: string;
 }
+
+/** Tooltip of an expired chat in the picker. */
+const EXPIRED_CHAT_TOOLTIP =
+  'This chat has expired: its conversation is no longer available.';
+
+/** Tooltip of an expired chat that still owns a storyboard. */
+const RESTORABLE_CHAT_TOOLTIP =
+  'This chat has expired. Select it to restore its storyboard and timeline: ' +
+  'its messages are gone, and Izumi will not remember it.';
+
+/** Tooltip of a chat restored after it expired. */
+const RESTORED_CHAT_TOOLTIP =
+  'Restored chat: its storyboard and timeline are back, but Izumi does not ' +
+  'remember it. Start a new chat to keep working with Izumi.';
 
 /**
  * Prefixes emitted by `formatGateDecisionText` for user gate decisions
@@ -89,6 +112,60 @@ const GATE_DECISION_MARKERS: readonly string[] = [
   '✏️ Requested Modifications',
   '🔄 Requested Regeneration',
 ];
+
+/**
+ * The listed chat with the latest activity, i.e. the one a project resumes
+ * when the chat its URL names is gone. The listing's order breaks ties.
+ */
+function mostRecentSession(sessions: ChatSession[]): ChatSession | null {
+  let latest: ChatSession | null = null;
+  for (const session of sessions) {
+    if (
+      !latest ||
+      (session.lastUpdateTime ?? 0) > (latest.lastUpdateTime ?? 0)
+    ) {
+      latest = session;
+    }
+  }
+  return latest;
+}
+
+/**
+ * A chat's picker entry: its server-side title, else its legacy local title,
+ * else its date.
+ */
+function sessionOption(
+  s: ChatSession,
+  topics: {[key: string]: any},
+): DropdownOption {
+  const topic = topics[s.id];
+  const date = s.lastUpdateTime
+    ? new Date(s.lastUpdateTime * 1000).toLocaleDateString()
+    : '';
+
+  let label = 'New Chat';
+  let tooltip = '';
+
+  if (s.title) {
+    label = s.title;
+    tooltip = s.summary || tooltip;
+  } else if (topic) {
+    if (typeof topic === 'string') {
+      label = topic;
+    } else {
+      label = topic.title || label;
+      tooltip = topic.summary || tooltip;
+    }
+  } else if (date) {
+    label = `${date} - Chat`;
+  }
+
+  return {
+    value: s.id,
+    label: label,
+    tooltip: tooltip,
+  };
+}
 
 @Component({
   selector: 'app-chat-interface',
@@ -108,8 +185,28 @@ export class ChatInterfaceComponent
   private timelineState = inject(TimelineStateService);
   private galleryService = inject(GalleryService);
   private markdownService = inject(MarkdownService);
+  private projectState = inject(ProjectStateService);
+  /**
+   * Re-runs the session loader when the project gate opens: adopting the
+   * URL's project can leave the URL itself unchanged.
+   */
+  private activeProjectId$ = toObservable(this.projectState.activeProjectId);
+
+  private lastProjectId: number | null = null;
+  /** URL state the session loader last handled (see `loadChatSessions`). */
+  private lastGatedParams: unknown = null;
+  private lastGatedWorkspaceId: number | null = null;
+  /** Latest `getSessions` request; responses to older ones are dropped. */
+  private sessionsLoadSeq = 0;
 
   sessions = this.agentChatService.sessions;
+  /**
+   * Expired chats: listed in the picker, never opened. A `restorable` one
+   * (it owns a storyboard) is restored when picked.
+   */
+  expiredSessions = this.agentChatService.expiredSessions;
+  /** The open chat is restored: Izumi cannot continue it (see service). */
+  isRestoredChat = this.agentChatService.chatRestored;
   topics = signal<{[key: string]: any}>({});
   chatMessages = this.agentChatService.chatMessages;
   filteredChatMessages = computed(() => {
@@ -165,7 +262,9 @@ export class ChatInterfaceComponent
 
   /**
    * Reacts to `selectedSessionId` being changed by someone other than this
-   * component (URL query params, a storyboard pick, ...). The picker calls
+   * component (a storyboard pick, ...). URL changes do not come through here:
+   * the Workbench no longer mirrors `sessionId` into `selectedSessionId`, the
+   * gated `loadChatSessions` handles them. The picker calls
    * `loadChatMessages` directly and sets `currentSessionId` first, so it never
    * re-enters here. `allowSignalWrites` is required: without it Angular 18
    * throws NG0600 at the first `.set()` inside `loadChatMessages`, *after*
@@ -290,35 +389,26 @@ export class ChatInterfaceComponent
 
   @ViewChild('chatContainer') private chatContainer!: ElementRef;
   @ViewChild('expandDialog') expandDialog!: TemplateRef<unknown>;
+  @ViewChild('sessionPicker', {read: StudioDropdownComponent})
+  private sessionPicker?: StudioDropdownComponent;
   private dialogRef: MatDialogRef<unknown> | null = null;
 
   dropdownOptions = computed<DropdownOption[]>(() => {
     const currentTopics = this.topics();
-    return this.sessions().map(s => {
-      const topic = currentTopics[s.id];
-      const date = s.lastUpdateTime
-        ? new Date(s.lastUpdateTime * 1000).toLocaleDateString()
-        : '';
-
-      let label = 'New Chat';
-      let tooltip = '';
-      if (topic) {
-        if (typeof topic === 'string') {
-          label = topic;
-        } else {
-          label = topic.title || label;
-          tooltip = topic.summary || tooltip;
-        }
-      } else if (date) {
-        label = `${date} - Chat`;
-      }
-
-      return {
-        value: s.id,
-        label: label,
-        tooltip: tooltip,
-      };
+    const live = this.sessions().map(s => {
+      const option = sessionOption(s, currentTopics);
+      return s.restored
+        ? {...option, tooltip: RESTORED_CHAT_TOOLTIP, badge: 'Restored'}
+        : option;
     });
+    // Expired chats come last, marked. Only a restorable one is selectable.
+    const expired = this.expiredSessions().map(s => ({
+      ...sessionOption(s, currentTopics),
+      tooltip: s.restorable ? RESTORABLE_CHAT_TOOLTIP : EXPIRED_CHAT_TOOLTIP,
+      badge: 'Expired',
+      disabled: !s.restorable,
+    }));
+    return [...live, ...expired];
   });
 
   ngOnInit() {
@@ -401,19 +491,22 @@ export class ChatInterfaceComponent
     this.initializeAgentChat();
     this.loadChatSessions();
 
-    // Listen for cross-component triggers
-    this.agentChatService.generateVideoRequest$.subscribe(() => {
-      const sb = this.agentChatService.currentStoryboard();
-      if (sb && sb.id) {
-        this.sendChatMessage(
-          `Please generate the final video for storyboard ID ${sb.id}.`,
-        );
-      } else {
-        this.sendChatMessage(
-          "Please generate the final video matching this storyboard's approved layout.",
-        );
-      }
-    });
+    // Listen for cross-component triggers. Torn down in `ngOnDestroy`: the
+    // chat is destroyed whenever its panel closes, and every listener left
+    // behind sent the request again.
+    this.generateVideoSubscription =
+      this.agentChatService.generateVideoRequest$.subscribe(() => {
+        const sb = this.agentChatService.currentStoryboard();
+        if (sb && sb.id) {
+          this.sendChatMessage(
+            `Please generate the final video for storyboard ID ${sb.id}.`,
+          );
+        } else {
+          this.sendChatMessage(
+            "Please generate the final video matching this storyboard's approved layout.",
+          );
+        }
+      });
 
     // The Characters tab rewrites session state outside an agent run; merge
     // the returned slice exactly like a streamed `state_delta`.
@@ -424,6 +517,9 @@ export class ChatInterfaceComponent
   }
 
   private campaignStateSubscription: Subscription | null = null;
+  /** URL listener of `loadChatSessions()`: one per instance. */
+  private sessionsSubscription: Subscription | null = null;
+  private generateVideoSubscription: Subscription | null = null;
 
   ngOnDestroy() {
     // The chat is torn down whenever the user switches side panels. Remember an
@@ -439,6 +535,12 @@ export class ChatInterfaceComponent
     this.loadSubscription = null;
     this.campaignStateSubscription?.unsubscribe();
     this.campaignStateSubscription = null;
+    // A closed panel's listeners must not react to later URL changes or
+    // video requests: they reset the shared chat and timeline state.
+    this.sessionsSubscription?.unsubscribe();
+    this.sessionsSubscription = null;
+    this.generateVideoSubscription?.unsubscribe();
+    this.generateVideoSubscription = null;
   }
 
   ngAfterViewChecked() {
@@ -449,78 +551,116 @@ export class ChatInterfaceComponent
   }
 
   saveSessionTopic(sessionId: string, title: string, summary?: string) {
-    this.topics.update(t => {
-      const newTopics = {...t, [sessionId]: {title, summary}};
-      if (this.isBrowser) {
-        localStorage.setItem('izumi_topics', JSON.stringify(newTopics));
-      }
-      return newTopics;
-    });
+    // Shown at once and remembered for this visit; the server-side title (the
+    // session registry) is the persistent one and replaces `izumi_topics`.
+    this.topics.update(t => ({...t, [sessionId]: {title, summary}}));
+    this.agentChatService
+      .updateSessionMetadata(sessionId, {title, summary})
+      .subscribe({
+        next: updated => {
+          this.sessions.update(sessions =>
+            sessions.map(s =>
+              s.id === sessionId
+                ? {...s, title: updated.title, summary: updated.summary}
+                : s,
+            ),
+          );
+        },
+        error: err => console.error('Failed to save the chat title', err),
+      });
+  }
+
+  /**
+   * Clears the conversation shown for the workspace or project being left.
+   * `keepTimeline` leaves the editor alone when the URL names the timeline
+   * of the project being entered: the Workbench, subscribed before this
+   * component, has already pointed `loadedTimelineId` at it.
+   */
+  resetConversationState({keepTimeline = false} = {}) {
+    if (!keepTimeline) {
+      this.timelineState.loadedTimelineId.set(undefined);
+      this.timelineState.timelineClips.set([]);
+      this.timelineState.transitions.set([]);
+      this.timelineState.transitionIn.set(null);
+      this.timelineState.transitionOut.set(null);
+    }
+
+    this.agentChatService.stopPolling();
+    this.isLoadingHistory.set(false);
+    this.currentSessionId = null;
+    this.agentChatService.selectedSessionId.set(null);
+    this.chatMessages.set([]);
+    this.sessions.set([]);
+    this.expiredSessions.set([]);
+    this.isRestoredChat.set(false);
+    this.activeApprovalGate.set(null);
+    this.agentChatService.currentStoryboard.set(null);
+    this.clearCampaignDetails();
+    this.agentChatService.interruptedSessionId.set(null);
+    this.addWelcomeMessage();
+    this.shouldScrollToBottom = true;
   }
 
   initializeAgentChat() {
-    let savedTopics = {};
-    if (this.isBrowser) {
-      savedTopics = JSON.parse(localStorage.getItem('izumi_topics') || '{}');
-    }
-    this.topics.set(savedTopics);
+    // Old local titles, until the service imports them. Corrupted storage
+    // yields `{}` instead of breaking the chat.
+    this.topics.set(this.isBrowser ? readLegacyTopics() : {});
   }
 
   loadChatSessions() {
     this.isLoadingHistory.set(true);
+    // One URL listener per chat, torn down in `ngOnDestroy`. Re-subscribing
+    // (`onAgentChange`) must also forget the last handled URL: the replayed
+    // one would otherwise be skipped as already handled.
+    this.sessionsSubscription?.unsubscribe();
+    this.lastGatedParams = null;
+    this.lastGatedWorkspaceId = null;
 
-    combineLatest([
+    this.sessionsSubscription = combineLatest([
       this.route.queryParams,
       this.workspaceStateService.activeWorkspaceId$,
+      this.activeProjectId$,
     ]).subscribe(([params, workspaceId]) => {
       if (!workspaceId) return;
 
       const storyboardId = params['storyboardId'];
       const sessionId = params['sessionId'];
+      const projectId = parseId(params['projectId']);
+
+      // Nothing loads until `ProjectStateService` (the owner of `projectId`)
+      // made the URL's project the active one of this workspace. Opening the
+      // gate re-emits an unchanged URL, so each URL state is handled once.
+      if (!this.projectState.isReadyFor(workspaceId, projectId)) {
+        return;
+      }
+      if (
+        params === this.lastGatedParams &&
+        workspaceId === this.lastGatedWorkspaceId
+      ) {
+        return;
+      }
+      this.lastGatedParams = params;
+      this.lastGatedWorkspaceId = workspaceId;
 
       const isWorkspaceChanged =
         this.lastWorkspaceId !== null && this.lastWorkspaceId !== workspaceId;
+      const isProjectChanged =
+        this.lastProjectId !== null && this.lastProjectId !== projectId;
 
-      if (isWorkspaceChanged) {
-        if (this.isProgrammaticWorkspaceSwitch) {
+      if (isWorkspaceChanged || isProjectChanged) {
+        // `ProjectStateService` owns the entry navigation: this branch only
+        // resets, then loads whatever the URL now names.
+        if (isWorkspaceChanged && this.isProgrammaticWorkspaceSwitch) {
           this.isProgrammaticWorkspaceSwitch = false;
-          this.lastWorkspaceId = workspaceId;
         } else {
-          // Clean timeline
-          this.timelineState.loadedTimelineId.set(undefined);
-          this.timelineState.timelineClips.set([]);
-          this.timelineState.transitions.set([]);
-          this.timelineState.transitionIn.set(null);
-          this.timelineState.transitionOut.set(null);
-
-          // Reset chat interface
-          this.agentChatService.stopPolling();
-          this.isLoadingHistory.set(false);
-          this.currentSessionId = null;
-          this.agentChatService.selectedSessionId.set(null);
-          this.chatMessages.set([]);
-          this.sessions.set([]);
-          this.activeApprovalGate.set(null);
-          this.agentChatService.currentStoryboard.set(null);
-          this.clearCampaignDetails();
-          this.agentChatService.interruptedSessionId.set(null);
-          this.addWelcomeMessage();
-          this.shouldScrollToBottom = true;
-          this.lastWorkspaceId = workspaceId;
-
-          if (storyboardId || sessionId) {
-            void this.router.navigate([], {
-              relativeTo: this.route,
-              queryParams: {
-                sessionId: null,
-                storyboardId: null,
-              },
-              queryParamsHandling: 'merge',
-            });
-            return;
-          }
+          // A timeline the URL names belongs to the project being entered,
+          // and the Workbench is already loading it for this same emission:
+          // clearing it here left a manual-timeline project empty.
+          this.resetConversationState({keepTimeline: !!params['timelineId']});
         }
+        this.lastWorkspaceId = workspaceId;
       }
+      this.lastProjectId = projectId;
 
       // A previous chat instance was torn down mid-stream (panel switch). The
       // shared chatMessages signal still holds the conversation and the missing
@@ -562,10 +702,21 @@ export class ChatInterfaceComponent
       this.isLoadingHistory.set(true);
 
       // Always load sessions first to populate the sessions dropdown
+      const seq = ++this.sessionsLoadSeq;
       this.agentChatService
-        .getSessions(workspaceId, false, sessionId, storyboardId)
+        .getSessions(
+          workspaceId,
+          false,
+          sessionId,
+          storyboardId,
+          projectId ?? undefined,
+        )
         .subscribe({
           next: (sessions: ChatSession[]) => {
+            if (seq !== this.sessionsLoadSeq) {
+              return;
+            }
+            this.agentChatService.importLegacyTitles(sessions || []);
             this.sessions.set(sessions || []);
 
             // Check if the query parameter sessionId or storyboardId belongs to this workspace
@@ -591,8 +742,13 @@ export class ChatInterfaceComponent
               (sessionId && sessionExistsInWorkspace) || !!storyboardId;
 
             if (shouldLoadDetail) {
+              // `currentSessionId` survives `resetConversation()` (project
+              // entry), which only clears the shared selection: a session is
+              // already loaded only while both still name it.
               const isDifferentSession =
-                (sessionId && sessionId !== this.currentSessionId) ||
+                (sessionId &&
+                  (sessionId !== this.currentSessionId ||
+                    sessionId !== this.agentChatService.selectedSessionId())) ||
                 (storyboardId &&
                   Number(storyboardId) !==
                     Number(this.agentChatService.currentStoryboard()?.id));
@@ -648,6 +804,9 @@ export class ChatInterfaceComponent
                         res.session?.events,
                       );
                       this.syncFinalVideoReady(res.session?.state);
+                      // A storyboard link re-creates an expired chat's
+                      // session: the backend then flags it `restored`.
+                      this.isRestoredChat.set(!!res.session?.restored);
                       if (res.session && res.session.id) {
                         this.currentSessionId = res.session.id;
                         this.agentChatService.selectedSessionId.set(
@@ -714,24 +873,33 @@ export class ChatInterfaceComponent
                 this.isLoadingHistory.set(false);
               }
             } else {
-              if (
-                (sessionId || storyboardId) &&
-                this.lastWorkspaceId === null
-              ) {
-                handleErrorSnackbar(
-                  this.snackBar,
-                  new Error(
-                    'The requested session or storyboard does not exist in this workspace.',
-                  ),
-                  'Workspace Sync',
-                );
-              }
-
               this.lastWorkspaceId = workspaceId;
+              // The URL names a chat this project's listing lacks: one
+              // deleted outside the Workbench, or a dead id the projects
+              // migration registered from an old storyboard (entering a
+              // project resumes its `latest_session_id`). Resume the
+              // project's most recent chat rather than reporting an error;
+              // a project without chats starts a new one.
+              const fallback = sessionId
+                ? mostRecentSession(sessions || [])
+                : null;
+              if (fallback) {
+                console.warn(
+                  `Chat ${sessionId} is not in this project; opening ${fallback.id} instead.`,
+                );
+                this.currentSessionId = fallback.id;
+                this.submittedGateCallIds.clear();
+                this.lastExecutedAction = null;
+                this.loadChatMessages(fallback.id);
+                return;
+              }
               this.startNewChat();
             }
           },
           error: err => {
+            if (seq !== this.sessionsLoadSeq) {
+              return;
+            }
             console.error('Error fetching sessions:', err);
             if ((err as any)?.status === 503) {
               console.warn(
@@ -788,6 +956,8 @@ export class ChatInterfaceComponent
             );
             this.syncFinalVideoReady(res.session?.state);
             this.trackStreamedStoryboardId(res.session?.state);
+            const restored = !!res.session?.restored;
+            this.isRestoredChat.set(restored);
 
             const messages = (res.session && res.session.events) || [];
             const mappedMessages = this.mapEventsToMessages(messages);
@@ -798,7 +968,9 @@ export class ChatInterfaceComponent
             );
             this.activeApprovalGate.set(pendingGate);
             this.checkAndResumePolling(res, pendingGate);
-            if (mappedMessages.length === 0) {
+            // A restored chat has no messages, and Izumi cannot take one:
+            // its banner replaces the welcome message.
+            if (mappedMessages.length === 0 && !restored) {
               this.addWelcomeMessage();
             }
             this.isLoadingHistory.set(false);
@@ -1178,6 +1350,7 @@ export class ChatInterfaceComponent
     this.activeApprovalGate.set(null);
     this.agentChatService.currentStoryboard.set(null);
     this.streamedStoryboardId = null;
+    this.isRestoredChat.set(false);
     this.clearCampaignDetails();
     this.addWelcomeMessage();
     this.shouldScrollToBottom = true;
@@ -1197,6 +1370,13 @@ export class ChatInterfaceComponent
     // backstop for keyboard / programmatic calls. Dropping the click (instead
     // of queueing it) is what keeps a rapid A→B→C from stacking requests.
     if (this.isSessionLocked()) return;
+    // Expired chats are never opened: a restorable one is restored instead
+    // (the picker does not emit the others).
+    const expired = this.expiredSessions().find(s => s.id === sessionId);
+    if (expired) {
+      if (expired.restorable) this.restoreExpiredChat(expired);
+      return;
+    }
     if (sessionId && sessionId !== this.currentSessionId) {
       this.activeApprovalGate.set(null);
       this.currentSessionId = sessionId;
@@ -1204,6 +1384,59 @@ export class ChatInterfaceComponent
       this.loadChatMessages(sessionId);
     }
   }
+
+  /**
+   * Restores an expired chat: the same chat (project, title) on a new agent
+   * session, with its storyboards moved over. Izumi does not remember it, so
+   * the backend refuses to run it: the chat opens read-only for the agent,
+   * and its storyboard and timeline load like any other chat's.
+   */
+  private restoreExpiredChat(chat: ChatSession) {
+    // The picker already shows the clicked chat; until the restore succeeds
+    // it must keep naming the open one.
+    this.resetSessionPicker();
+    const openChatId = this.currentSessionId;
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    // Tracked like a session detail: torn down with the component.
+    this.loadSubscription?.unsubscribe();
+    this.isLoadingHistory.set(true);
+    this.loadSubscription = this.agentChatService
+      .restoreSession(chat.id, workspaceId ?? undefined)
+      .subscribe({
+        next: (restored: ChatSession) => {
+          // Restored either way: it now belongs with the live chats.
+          this.expiredSessions.update(list =>
+            list.filter(s => s.id !== chat.id),
+          );
+          this.sessions.update(list => [
+            restored,
+            ...list.filter(s => s.id !== restored.id),
+          ]);
+          if (this.currentSessionId !== openChatId) {
+            return; // The user moved on (New Chat) while it was in flight.
+          }
+          this.isRestoredChat.set(true);
+          this.activeApprovalGate.set(null);
+          this.currentSessionId = restored.id;
+          this.lastExecutedAction = null;
+          this.loadChatMessages(restored.id);
+        },
+        error: err => {
+          if (this.currentSessionId === openChatId) {
+            this.isLoadingHistory.set(false);
+          }
+          handleErrorSnackbar(this.snackBar, err, 'Restore Chat');
+        },
+      });
+  }
+
+  /** Points the picker back at the open chat (it tracks its own value). */
+  private resetSessionPicker() {
+    if (this.sessionPicker) {
+      this.sessionPicker.value = this.currentSessionId;
+    }
+  }
+
   onAgentChange(agentValue: string) {
     this.agentChatService.stopPolling();
     this.agentChatService.activeAgent.set(agentValue);
@@ -1212,6 +1445,8 @@ export class ChatInterfaceComponent
     this.activeApprovalGate.set(null);
     this.chatMessages.set([]);
     this.sessions.set([]);
+    this.expiredSessions.set([]);
+    this.isRestoredChat.set(false);
     this.loadChatSessions();
   }
   deleteChat() {
@@ -1232,13 +1467,13 @@ export class ChatInterfaceComponent
               this.sessions.update(s =>
                 s.filter(sess => sess.id !== this.currentSessionId),
               );
+              const deletedId = this.currentSessionId!;
               this.topics.update(topics => {
-                delete topics[this.currentSessionId!];
-                if (this.isBrowser) {
-                  localStorage.setItem('izumi_topics', JSON.stringify(topics));
-                }
-                return {...topics};
+                const rest = {...topics};
+                delete rest[deletedId];
+                return rest;
               });
+              this.agentChatService.forgetLegacyTitle(deletedId);
               this.currentSessionId = null;
               this.chatMessages.set([]);
               if (this.sessions().length > 0) {
@@ -1255,34 +1490,40 @@ export class ChatInterfaceComponent
   }
   sendChatMessage(text: string) {
     if (this.isBusy() || this.isSessionLocked()) return;
+    // Izumi cannot continue a restored chat (the backend answers 409). This
+    // also covers the storyboard's "generate video" request.
+    if (this.isRestoredChat()) return;
     if ((!text || !text.trim()) && this.selectedImages().length === 0) return;
 
     if (!this.currentSessionId) {
       this.isTyping.set(true);
       const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
-      this.agentChatService.createSession(workspaceId ?? undefined).subscribe({
-        next: (session: ChatSession) => {
-          this.sessions.update(s => [session, ...s]);
-          this.currentSessionId = session.id;
-          this.agentChatService.selectedSessionId.set(session.id);
-          void this.router.navigate([], {
-            relativeTo: this.route,
-            queryParams: {
-              sessionId: session.id,
-            },
-            queryParamsHandling: 'merge',
-          });
-          this.executeSendMessage(text);
-        },
-        error: err => {
-          console.error(
-            'Error starting new chat session on first message:',
-            err,
-          );
-          this.isTyping.set(false);
-          handleErrorSnackbar(this.snackBar, err, 'Start Chat');
-        },
-      });
+      const projectId = this.projectState.activeProjectId() ?? undefined;
+      this.agentChatService
+        .createSession(workspaceId ?? undefined, projectId)
+        .subscribe({
+          next: (session: ChatSession) => {
+            this.sessions.update(s => [session, ...s]);
+            this.currentSessionId = session.id;
+            this.agentChatService.selectedSessionId.set(session.id);
+            void this.router.navigate([], {
+              relativeTo: this.route,
+              queryParams: {
+                sessionId: session.id,
+              },
+              queryParamsHandling: 'merge',
+            });
+            this.executeSendMessage(text);
+          },
+          error: err => {
+            console.error(
+              'Error starting new chat session on first message:',
+              err,
+            );
+            this.isTyping.set(false);
+            handleErrorSnackbar(this.snackBar, err, 'Start Chat');
+          },
+        });
       return;
     }
 
@@ -1298,19 +1539,18 @@ export class ChatInterfaceComponent
       timestamp: new Date(),
     };
     this.chatMessages.update(msgs => [...msgs, userMessage]);
-    const hasNoTopic = !this.topics()[this.currentSessionId!];
+    const sessionId = this.currentSessionId!;
+    const hasNoTopic =
+      !this.topics()[sessionId] &&
+      !this.sessions().find(s => s.id === sessionId)?.title;
     if (hasNoTopic) {
       this.agentChatService.generateTitle(text).subscribe({
         next: (response: any) => {
-          this.saveSessionTopic(
-            this.currentSessionId!,
-            response.title,
-            response.summary,
-          );
+          this.saveSessionTopic(sessionId, response.title, response.summary);
         },
         error: err => {
           console.error('Error generating title:', err);
-          this.saveSessionTopic(this.currentSessionId!, text);
+          this.saveSessionTopic(sessionId, text);
         },
       });
     }
@@ -2967,6 +3207,7 @@ export class ChatInterfaceComponent
    */
   canRetry(): boolean {
     if (this.isBusy() || !this.currentSessionId) return false;
+    if (this.isRestoredChat()) return false;
     return (
       this.lastExecutedAction !== null ||
       this.recoverLastActionFromHistory() !== null

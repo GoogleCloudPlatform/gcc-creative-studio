@@ -29,7 +29,7 @@ import {MatDialogModule, MatDialog} from '@angular/material/dialog';
 import {MatSnackBarModule} from '@angular/material/snack-bar';
 import {MatTooltipModule} from '@angular/material/tooltip';
 import {MarkdownModule} from 'ngx-markdown';
-import {signal, CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
+import {signal, CUSTOM_ELEMENTS_SCHEMA, WritableSignal} from '@angular/core';
 import {of, Subject, BehaviorSubject, throwError} from 'rxjs';
 import {AgentChatService} from '../../services/agent-chat.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
@@ -37,6 +37,17 @@ import {StoryboardService} from '../../../services/storyboard/storyboard.service
 import {TimelineStateService} from '../../services/timeline-state.service';
 import {ApprovalGateComponent} from '../approval-gate/approval-gate.component';
 import {GalleryService} from '../../../gallery/gallery.service';
+import {ProjectStateService} from '../../services/project-state.service';
+import {
+  ChatSession,
+  TimelineClip,
+} from '../../../common/models/workbench.model';
+
+/** The parts of `ProjectStateService` the chat uses. */
+interface ProjectStateStub {
+  activeProjectId: WritableSignal<number | null>;
+  isReadyFor: jasmine.Spy;
+}
 
 describe('ChatInterfaceComponent', () => {
   let component: ChatInterfaceComponent;
@@ -55,9 +66,11 @@ describe('ChatInterfaceComponent', () => {
       isGeneratingStoryboard: signal(false),
       isGeneratingVideo: signal(false),
       finalVideoReady: signal(false),
+      chatRestored: signal(false),
       campaignDetails: signal<any>(null),
       interruptedSessionId: signal<string | null>(null),
       sessions: signal([]),
+      expiredSessions: signal<ChatSession[]>([]),
       chatMessages: signal([]),
       generateVideoRequest$: new Subject<void>(),
       videoGenerated$: new Subject<any>(),
@@ -68,6 +81,11 @@ describe('ChatInterfaceComponent', () => {
       streamActive: signal(false),
       startPolling: jasmine.createSpy('startPolling'),
       getSessions: jasmine.createSpy('getSessions').and.returnValue(of([])),
+      updateSessionMetadata: jasmine
+        .createSpy('updateSessionMetadata')
+        .and.returnValue(of({})),
+      importLegacyTitles: jasmine.createSpy('importLegacyTitles'),
+      forgetLegacyTitle: jasmine.createSpy('forgetLegacyTitle'),
       getSessionDetail: jasmine
         .createSpy('getSessionDetail')
         .and.callFake((workspaceId: number, sessionId: string) => {
@@ -124,6 +142,9 @@ describe('ChatInterfaceComponent', () => {
       deleteSession: jasmine
         .createSpy('deleteSession')
         .and.returnValue(of(undefined)),
+      restoreSession: jasmine
+        .createSpy('restoreSession')
+        .and.returnValue(of({id: 's-restored', restored: true})),
       sendMessage: jasmine
         .createSpy('sendMessage')
         .and.callFake(
@@ -174,6 +195,12 @@ describe('ChatInterfaceComponent', () => {
 
     queryParamsSubject = new BehaviorSubject<any>({});
 
+    // Permissive by default: the project gate is open for every URL.
+    const projectStateStub: ProjectStateStub = {
+      activeProjectId: signal<number | null>(1),
+      isReadyFor: jasmine.createSpy('isReadyFor').and.returnValue(true),
+    };
+
     await TestBed.configureTestingModule({
       declarations: [ChatInterfaceComponent],
       imports: [
@@ -191,6 +218,7 @@ describe('ChatInterfaceComponent', () => {
         {provide: WorkspaceStateService, useValue: mockWorkspaceStateService},
         {provide: StoryboardService, useValue: mockStoryboardService},
         {provide: TimelineStateService, useValue: mockTimelineStateService},
+        {provide: ProjectStateService, useValue: projectStateStub},
         {
           provide: ActivatedRoute,
           useValue: {
@@ -323,6 +351,7 @@ describe('ChatInterfaceComponent', () => {
     expect(agentChatService.getSessions).toHaveBeenCalledWith(
       1,
       false,
+      undefined,
       undefined,
       undefined,
     );
@@ -459,7 +488,7 @@ describe('ChatInterfaceComponent', () => {
 
     component.sendChatMessage('hello');
 
-    expect(agentChatService.createSession).toHaveBeenCalledWith(1);
+    expect(agentChatService.createSession).toHaveBeenCalledWith(1, 1);
     expect(component.currentSessionId).toBe('new-session' as any);
     expect(component['executeSendMessage']).toHaveBeenCalledWith('hello');
   });
@@ -1255,14 +1284,25 @@ describe('ChatInterfaceComponent', () => {
     expect(component.currentSessionId).toBe('s1');
   });
 
-  it('should navigate to new session if query param sessionId is not in workspace sessions', () => {
+  it('should open the most recent chat if query param sessionId is not in workspace sessions', () => {
+    (
+      TestBed.inject(WorkspaceStateService).getActiveWorkspaceId as jasmine.Spy
+    ).and.returnValue(1);
     spyOn(router, 'navigate');
+    spyOn(console, 'warn');
     agentChatService.getSessions.and.returnValue(
       of([{id: 's1', lastUpdateTime: 123}]),
     );
+    agentChatService.getSessionDetail.calls.reset();
 
     queryParamsSubject.next({sessionId: 'invalid-session-id'});
 
+    expect(component.currentSessionId).toBe('s1');
+    expect(agentChatService.getSessionDetail).toHaveBeenCalledOnceWith(
+      1,
+      's1',
+      undefined,
+    );
     expect(router.navigate).toHaveBeenCalled();
   });
 
@@ -3620,6 +3660,677 @@ describe('ChatInterfaceComponent', () => {
         const card = fixture.nativeElement.querySelector('.border-indigo-500');
         expect(card).toBeNull();
       });
+    });
+  });
+
+  describe('Projects', () => {
+    let projectState: ProjectStateStub;
+
+    beforeEach(() => {
+      projectState = TestBed.inject(
+        ProjectStateService,
+      ) as unknown as ProjectStateStub;
+      agentChatService.getSessions.calls.reset();
+    });
+
+    it('loads nothing until the project gate opens, then loads once', () => {
+      projectState.isReadyFor.and.returnValue(false);
+      queryParamsSubject.next({projectId: '7'});
+      expect(agentChatService.getSessions).not.toHaveBeenCalled();
+
+      // Adopting the URL's project leaves the URL unchanged: the active
+      // project signal alone must re-run the loader.
+      projectState.isReadyFor.and.returnValue(true);
+      projectState.activeProjectId.set(7);
+      TestBed.flushEffects();
+
+      expect(agentChatService.getSessions).toHaveBeenCalledOnceWith(
+        1,
+        false,
+        undefined,
+        undefined,
+        7,
+      );
+    });
+
+    it('handles each URL state once', () => {
+      queryParamsSubject.next({projectId: '1'});
+      projectState.activeProjectId.set(2);
+      TestBed.flushEffects();
+
+      expect(agentChatService.getSessions).toHaveBeenCalledTimes(1);
+    });
+
+    it('resets the conversation on a project change without navigating', () => {
+      queryParamsSubject.next({projectId: '1', sessionId: 's1'});
+      // Keep the second load pending: an empty list would start a new chat,
+      // which legitimately clears the URL.
+      agentChatService.getSessions.and.returnValue(
+        new Subject<ChatSession[]>(),
+      );
+      const reset = spyOn(
+        component,
+        'resetConversationState',
+      ).and.callThrough();
+      const navigate = spyOn(router, 'navigate').and.returnValue(
+        Promise.resolve(true),
+      );
+
+      queryParamsSubject.next({projectId: '2'});
+
+      expect(reset).toHaveBeenCalledTimes(1);
+      expect(navigate).not.toHaveBeenCalled();
+      expect(agentChatService.getSessions).toHaveBeenCalledWith(
+        1,
+        false,
+        undefined,
+        undefined,
+        2,
+      );
+    });
+
+    it('does not reset when only the chat changes inside a project', () => {
+      queryParamsSubject.next({projectId: '1'});
+      const reset = spyOn(component, 'resetConversationState');
+
+      queryParamsSubject.next({projectId: '1', sessionId: 's9'});
+
+      expect(reset).not.toHaveBeenCalled();
+    });
+
+    it('keeps the timeline the URL names when a project is entered', () => {
+      const timelineState = TestBed.inject(TimelineStateService);
+      queryParamsSubject.next({projectId: '1', sessionId: 's1'});
+      // Keep the next load pending: an empty list would start a new chat.
+      agentChatService.getSessions.and.returnValue(
+        new Subject<ChatSession[]>(),
+      );
+
+      // Entering a project whose latest item is a manual timeline: the
+      // Workbench, subscribed first, already pointed the editor at it.
+      timelineState.loadedTimelineId.set('42');
+      queryParamsSubject.next({projectId: '2', timelineId: '42'});
+
+      expect(timelineState.loadedTimelineId()).toBe('42');
+    });
+
+    it('still clears the timeline when the URL names none', () => {
+      const timelineState = TestBed.inject(TimelineStateService);
+      queryParamsSubject.next({projectId: '1', sessionId: 's1'});
+      agentChatService.getSessions.and.returnValue(
+        new Subject<ChatSession[]>(),
+      );
+      timelineState.loadedTimelineId.set('41');
+      timelineState.timelineClips.set([{id: 'c1'} as TimelineClip]);
+
+      queryParamsSubject.next({projectId: '2', sessionId: 's2'});
+
+      expect(timelineState.loadedTimelineId()).toBeUndefined();
+      expect(timelineState.timelineClips()).toEqual([]);
+    });
+
+    it('drops a late sessions response of a previous project', () => {
+      const first = new Subject<ChatSession[]>();
+      const second = new Subject<ChatSession[]>();
+      agentChatService.getSessions.and.returnValues(first, second);
+      spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
+
+      queryParamsSubject.next({projectId: '1'});
+      queryParamsSubject.next({projectId: '2'});
+      second.next([{id: 'p2-chat'}]);
+      first.next([{id: 'p1-chat'}]);
+
+      expect(agentChatService.sessions().map((s: ChatSession) => s.id)).toEqual(
+        ['p2-chat'],
+      );
+    });
+
+    it('reloads the chat when the project it shows is entered again', () => {
+      agentChatService.getSessions.and.returnValue(of([{id: 's1'}]));
+      spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
+      queryParamsSubject.next({projectId: '1', sessionId: 's1'});
+      agentChatService.getSessionDetail.calls.reset();
+
+      // `ProjectStateService.enter()` on the same project (e.g. the header
+      // "Workbench" link): shared reset, then ONE navigation to its chat.
+      agentChatService.selectedSessionId.set(null);
+      agentChatService.sessions.set([]);
+      agentChatService.chatMessages.set([]);
+      agentChatService.currentStoryboard.set(null);
+      queryParamsSubject.next({projectId: '1', sessionId: 's1'});
+
+      expect(agentChatService.getSessionDetail).toHaveBeenCalledOnceWith(
+        1,
+        's1',
+        undefined,
+      );
+    });
+
+    it('loads the chat when the panel was opened before the project entry', () => {
+      // Opened early with the previous visit's session, then the entry reset
+      // the shared state: only the component's own record still names it.
+      component.currentSessionId = 's1';
+      agentChatService.selectedSessionId.set(null);
+      agentChatService.getSessions.and.returnValue(of([{id: 's1'}]));
+      spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
+      agentChatService.getSessionDetail.calls.reset();
+
+      queryParamsSubject.next({projectId: '1', sessionId: 's1'});
+
+      expect(agentChatService.getSessionDetail).toHaveBeenCalledOnceWith(
+        1,
+        's1',
+        undefined,
+      );
+    });
+
+    it('does not fetch a chat that is already loaded again', () => {
+      component.currentSessionId = 's1';
+      agentChatService.selectedSessionId.set('s1');
+      agentChatService.getSessions.and.returnValue(of([{id: 's1'}]));
+      agentChatService.getSessionDetail.calls.reset();
+
+      queryParamsSubject.next({projectId: '1', sessionId: 's1'});
+
+      expect(agentChatService.getSessions).toHaveBeenCalledTimes(1);
+      expect(agentChatService.getSessionDetail).not.toHaveBeenCalled();
+      expect(component.isLoadingHistory()).toBeFalse();
+    });
+
+    // Entering a project resumes its `latest_session_id`, which can name a
+    // chat deleted outside the Workbench (or a dead id the migration took
+    // from an old storyboard): the project's listing does not contain it.
+    describe('when the chat the URL names is gone', () => {
+      beforeEach(() => {
+        (
+          TestBed.inject(WorkspaceStateService)
+            .getActiveWorkspaceId as jasmine.Spy
+        ).and.returnValue(1);
+        spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
+        spyOn(console, 'error');
+        spyOn(console, 'warn');
+        // First load: this is where the chat used to report an error.
+        component['lastWorkspaceId'] = null;
+        agentChatService.getSessionDetail.calls.reset();
+      });
+
+      it('resumes the most recent chat of the project', () => {
+        agentChatService.getSessions.and.returnValue(
+          of([
+            {id: 'old', lastUpdateTime: 100},
+            {id: 'recent', lastUpdateTime: 300},
+            {id: 'middle', lastUpdateTime: 200},
+          ]),
+        );
+
+        queryParamsSubject.next({projectId: '1', sessionId: 'deleted'});
+
+        expect(agentChatService.getSessionDetail).toHaveBeenCalledOnceWith(
+          1,
+          'recent',
+          undefined,
+        );
+        expect(component.currentSessionId).toBe('recent');
+        expect(console.error).not.toHaveBeenCalled();
+      });
+
+      it('starts a new chat, without an error, when the project has none', () => {
+        agentChatService.getSessions.and.returnValue(of([]));
+
+        queryParamsSubject.next({projectId: '1', sessionId: 'deleted'});
+
+        expect(agentChatService.getSessionDetail).not.toHaveBeenCalled();
+        expect(component.currentSessionId).toBeNull();
+        expect(router.navigate).toHaveBeenCalledWith([], {
+          relativeTo: component['route'],
+          queryParams: {sessionId: null, storyboardId: null},
+          queryParamsHandling: 'merge',
+        });
+        expect(console.error).not.toHaveBeenCalled();
+      });
+    });
+
+    it('imports legacy titles after a sessions load', () => {
+      agentChatService.getSessions.and.returnValue(of([{id: 's1'}]));
+      spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
+
+      queryParamsSubject.next({projectId: '1'});
+
+      expect(agentChatService.importLegacyTitles).toHaveBeenCalledWith([
+        {id: 's1'},
+      ]);
+    });
+
+    it('prefers the server-side title, then the legacy local one', () => {
+      component.topics.set({s2: 'Legacy title'});
+      agentChatService.sessions.set([
+        {id: 's1', title: 'Server title', summary: 'From the server'},
+        {id: 's2', title: null},
+      ]);
+
+      const [server, legacy] = component.dropdownOptions();
+
+      expect(server.label).toBe('Server title');
+      expect(server.tooltip).toBe('From the server');
+      expect(legacy.label).toBe('Legacy title');
+    });
+
+    it('starts without legacy titles when their storage is corrupted', () => {
+      for (const stored of ['{not json', 'null', '42']) {
+        localStorage.setItem('izumi_topics', stored);
+        component.topics.set({stale: 'x'});
+
+        expect(() => component.initializeAgentChat()).not.toThrow();
+        expect(component.topics()).toEqual({});
+      }
+      localStorage.removeItem('izumi_topics');
+    });
+
+    it('saves chat titles on the server', () => {
+      localStorage.removeItem('izumi_topics');
+      agentChatService.sessions.set([{id: 's1'}]);
+      agentChatService.updateSessionMetadata.and.returnValue(
+        of({id: 's1', title: 'Launch', summary: 'Teaser'}),
+      );
+
+      component.saveSessionTopic('s1', 'Launch', 'Teaser');
+
+      expect(agentChatService.updateSessionMetadata).toHaveBeenCalledWith(
+        's1',
+        {title: 'Launch', summary: 'Teaser'},
+      );
+      expect(agentChatService.sessions()[0].title).toBe('Launch');
+      expect(component.topics()['s1']).toEqual({
+        title: 'Launch',
+        summary: 'Teaser',
+      });
+      expect(localStorage.getItem('izumi_topics')).toBeNull();
+    });
+
+    it('generates a title only for the first message of a chat', () => {
+      component.topics.set({});
+      agentChatService.sessions.set([{id: 's1'}]);
+      component.currentSessionId = 's1';
+      agentChatService.generateTitle.calls.reset();
+
+      component['executeSendMessage']('first');
+      component['executeSendMessage']('second');
+
+      expect(agentChatService.generateTitle).toHaveBeenCalledOnceWith('first');
+    });
+
+    it('keeps the server-side title of a chat', () => {
+      // Titles saved by this build never reach localStorage.
+      component.topics.set({});
+      agentChatService.sessions.set([{id: 's1', title: 'Server title'}]);
+      component.currentSessionId = 's1';
+      agentChatService.generateTitle.calls.reset();
+
+      component['executeSendMessage']('hello again');
+
+      expect(agentChatService.generateTitle).not.toHaveBeenCalled();
+    });
+
+    it('saves a late title on the chat the message was sent in', () => {
+      const title$ = new Subject<{title: string; summary: string}>();
+      agentChatService.generateTitle.and.returnValue(title$);
+      component.topics.set({});
+      component.currentSessionId = 's1';
+
+      component['executeSendMessage']('hello');
+      component.currentSessionId = 's2'; // The user switched chats meanwhile.
+      title$.next({title: 'Launch', summary: 'Teaser'});
+
+      expect(agentChatService.updateSessionMetadata).toHaveBeenCalledOnceWith(
+        's1',
+        {title: 'Launch', summary: 'Teaser'},
+      );
+      expect(component.topics()['s2']).toBeUndefined();
+    });
+
+    it('forgets only the deleted chat title', () => {
+      spyOn(component['dialog'], 'open').and.returnValue({
+        afterClosed: () => of(true),
+      } as ReturnType<MatDialog['open']>);
+      component.topics.set({s1: 'Deleted', s2: 'Kept'});
+      component.currentSessionId = 's1';
+      component.sessions.set([{id: 's1'}, {id: 's2'}]);
+
+      component.deleteChat();
+
+      expect(agentChatService.forgetLegacyTitle).toHaveBeenCalledOnceWith('s1');
+      expect(component.topics()).toEqual({s2: 'Kept'});
+    });
+  });
+
+  describe('expired chats', () => {
+    const gone: ChatSession = {
+      id: 'gone',
+      title: 'Spring launch',
+      summary: 'Teaser',
+      lastUpdateTime: 1780000000,
+      expired: true,
+    };
+
+    it('lists them after the live chats, marked and not selectable', () => {
+      agentChatService.sessions.set([{id: 's1', title: 'Live'}]);
+      agentChatService.expiredSessions.set([gone]);
+
+      const [live, expired] = component.dropdownOptions();
+
+      expect(live).toEqual({value: 's1', label: 'Live', tooltip: ''});
+      expect(expired.value).toBe('gone');
+      expect(expired.label).toBe('Spring launch');
+      expect(expired.badge).toBe('Expired');
+      expect(expired.disabled).toBeTrue();
+      expect(expired.tooltip).toContain('expired');
+    });
+
+    it('never opens one', () => {
+      agentChatService.expiredSessions.set([gone]);
+      agentChatService.getSessionDetail.calls.reset();
+      component.currentSessionId = 's1';
+
+      component.onSessionChange('gone');
+
+      expect(component.currentSessionId).toBe('s1');
+      expect(agentChatService.getSessionDetail).not.toHaveBeenCalled();
+      expect(agentChatService.restoreSession).not.toHaveBeenCalled();
+
+      // Control: the picker itself is not locked, a live chat still opens.
+      component.onSessionChange('s2');
+
+      expect(component.currentSessionId).toBe('s2');
+      expect(agentChatService.getSessionDetail.calls.mostRecent().args[1]).toBe(
+        's2',
+      );
+    });
+
+    it('shows the picker when a project only has expired chats', () => {
+      agentChatService.sessions.set([]);
+      agentChatService.expiredSessions.set([gone]);
+
+      fixture.detectChanges();
+
+      expect(
+        fixture.nativeElement.querySelector('studio-dropdown'),
+      ).not.toBeNull();
+    });
+
+    it('are cleared with the conversation of a project being left', () => {
+      agentChatService.expiredSessions.set([gone]);
+
+      component.resetConversationState();
+
+      expect(agentChatService.expiredSessions()).toEqual([]);
+    });
+
+    it('a URL naming one resumes the latest live chat instead', () => {
+      (
+        TestBed.inject(WorkspaceStateService)
+          .getActiveWorkspaceId as jasmine.Spy
+      ).and.returnValue(1);
+      spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
+      spyOn(console, 'warn');
+      component['lastWorkspaceId'] = null;
+      agentChatService.getSessionDetail.calls.reset();
+      // The service keeps expired chats out of what `getSessions` emits.
+      agentChatService.expiredSessions.set([gone]);
+      agentChatService.getSessions.and.returnValue(
+        of([{id: 'live', lastUpdateTime: 300}]),
+      );
+
+      queryParamsSubject.next({projectId: '1', sessionId: 'gone'});
+
+      expect(agentChatService.getSessionDetail).toHaveBeenCalledOnceWith(
+        1,
+        'live',
+        undefined,
+      );
+    });
+
+    describe('with a storyboard (restorable)', () => {
+      const restorable: ChatSession = {...gone, restorable: true};
+      const restored: ChatSession = {
+        id: 's-new',
+        title: 'Spring launch',
+        projectId: 1,
+        restored: true,
+      };
+
+      beforeEach(() => {
+        spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
+        agentChatService.sessions.set([{id: 's1', title: 'Live'}]);
+        agentChatService.expiredSessions.set([restorable]);
+        agentChatService.restoreSession.and.returnValue(of(restored));
+        agentChatService.getSessionDetail.and.returnValue(
+          of({
+            session: {id: 's-new', events: [], restored: true},
+            storyboard: {id: 202, timeline_id: 42, session_id: 's-new'},
+          }),
+        );
+        agentChatService.getSessionDetail.calls.reset();
+        component.currentSessionId = 's1';
+        agentChatService.selectedSessionId.set('s1');
+      });
+
+      it('is selectable, with a tooltip that explains the restore', () => {
+        const expired = component.dropdownOptions()[1];
+
+        expect(expired.badge).toBe('Expired');
+        expect(expired.disabled).toBeFalse();
+        expect(expired.tooltip).toContain('restore its storyboard');
+      });
+
+      it('is restored when picked, then opened like any chat', () => {
+        component.onSessionChange('gone');
+
+        expect(agentChatService.restoreSession).toHaveBeenCalledOnceWith(
+          'gone',
+          1,
+        );
+        expect(agentChatService.expiredSessions()).toEqual([]);
+        expect(
+          agentChatService.sessions().map((s: ChatSession) => s.id),
+        ).toEqual(['s-new', 's1']);
+        expect(component.currentSessionId).toBe('s-new');
+        expect(agentChatService.getSessionDetail).toHaveBeenCalledOnceWith(
+          1,
+          's-new',
+          undefined,
+        );
+        expect(agentChatService.currentStoryboard()?.id).toBe(202);
+        expect(component.isRestoredChat()).toBeTrue();
+        // Its banner replaces the welcome message.
+        expect(component.chatMessages()).toEqual([]);
+      });
+
+      it('keeps the open chat when the restore fails', () => {
+        agentChatService.restoreSession.and.returnValue(
+          throwError(() => ({
+            status: 409,
+            error: {detail: 'This chat has not expired.'},
+          })),
+        );
+        // The picker shows what was clicked until it is pointed back.
+        const picker = {value: 'gone'};
+        component['sessionPicker'] = picker as any;
+
+        component.onSessionChange('gone');
+
+        expect(picker.value).toBe('s1');
+        expect(component.currentSessionId).toBe('s1');
+        expect(component.isLoadingHistory()).toBeFalse();
+        expect(component.isRestoredChat()).toBeFalse();
+        expect(agentChatService.expiredSessions()).toEqual([restorable]);
+        expect(agentChatService.getSessionDetail).not.toHaveBeenCalled();
+      });
+
+      it('is listed, not opened, when the user moved on meanwhile', () => {
+        const response = new Subject<ChatSession>();
+        agentChatService.restoreSession.and.returnValue(response);
+
+        component.onSessionChange('gone');
+        expect(component.isLoadingHistory()).toBeTrue();
+        component.startNewChat();
+        response.next(restored);
+
+        expect(component.currentSessionId).toBeNull();
+        expect(agentChatService.sessions()[0].id).toBe('s-new');
+        expect(agentChatService.expiredSessions()).toEqual([]);
+        expect(agentChatService.getSessionDetail).not.toHaveBeenCalled();
+      });
+
+      it('is ignored while a session switch is still loading', () => {
+        component.isLoadingHistory.set(true);
+
+        component.onSessionChange('gone');
+
+        expect(agentChatService.restoreSession).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  describe('restored chats', () => {
+    beforeEach(() => {
+      spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
+    });
+
+    it('are badged in the picker', () => {
+      agentChatService.sessions.set([
+        {id: 's-new', title: 'Spring launch', restored: true},
+      ]);
+
+      const [option] = component.dropdownOptions();
+
+      expect(option.badge).toBe('Restored');
+      expect(option.disabled).toBeUndefined();
+      expect(option.tooltip).toContain('Izumi does not remember');
+    });
+
+    it('take the flag from the session detail, and lose it on a new chat', () => {
+      agentChatService.getSessionDetail.and.returnValue(
+        of({session: {id: 's-new', events: [], restored: true}}),
+      );
+      component.currentSessionId = 's-new';
+
+      component.loadChatMessages('s-new');
+      expect(component.isRestoredChat()).toBeTrue();
+
+      component.startNewChat();
+      expect(component.isRestoredChat()).toBeFalse();
+    });
+
+    it('a live chat detail clears the flag', () => {
+      agentChatService.chatRestored.set(true);
+      component.currentSessionId = 's1';
+
+      component.loadChatMessages('s1');
+
+      expect(component.isRestoredChat()).toBeFalse();
+    });
+
+    it('a storyboard link that re-created an expired chat opens it restored', () => {
+      agentChatService.getSessions.and.returnValue(
+        of([{id: 'live', lastUpdateTime: 1}]),
+      );
+      agentChatService.getSessionDetail.and.returnValue(
+        of({
+          session: {id: 's-new', events: [], restored: true},
+          storyboard: {id: 202, timeline_id: 42, workspace_id: 1},
+        }),
+      );
+
+      queryParamsSubject.next({storyboardId: '202'});
+
+      expect(component.currentSessionId).toBe('s-new');
+      expect(component.isRestoredChat()).toBeTrue();
+    });
+
+    it('never send anything to Izumi', () => {
+      agentChatService.chatRestored.set(true);
+      component.currentSessionId = 's-new';
+      component['lastExecutedAction'] = {type: 'chat', partsParams: []};
+
+      component.sendChatMessage('Make it longer');
+      agentChatService.generateVideoRequest$.next();
+
+      expect(agentChatService.sendMessage).not.toHaveBeenCalled();
+      expect(agentChatService.createSession).not.toHaveBeenCalled();
+      expect(component.canRetry()).toBeFalse();
+    });
+
+    it('swap the composer for a banner with a new-chat action', () => {
+      agentChatService.chatRestored.set(true);
+      component.isLoadingHistory.set(false);
+
+      fixture.detectChanges();
+      const el: HTMLElement = fixture.nativeElement;
+
+      expect(
+        el.querySelector('[data-testid="restored-chat-banner"]'),
+      ).not.toBeNull();
+      expect(el.querySelector('textarea[data-chat-input]')).toBeNull();
+
+      const startNewChat = spyOn(component, 'startNewChat');
+      (
+        el.querySelector(
+          '[data-testid="restored-chat-new-chat"]',
+        ) as HTMLElement
+      ).click();
+      expect(startNewChat).toHaveBeenCalled();
+    });
+
+    it('keep the disabled composer while a chat is loading', () => {
+      agentChatService.chatRestored.set(true);
+      component.isLoadingHistory.set(true);
+
+      fixture.detectChanges();
+      const el: HTMLElement = fixture.nativeElement;
+
+      expect(
+        el.querySelector('[data-testid="restored-chat-banner"]'),
+      ).toBeNull();
+      expect(el.querySelector('textarea[data-chat-input]')).not.toBeNull();
+    });
+
+    it('are cleared with the conversation of a project being left', () => {
+      agentChatService.chatRestored.set(true);
+
+      component.resetConversationState();
+
+      expect(component.isRestoredChat()).toBeFalse();
+    });
+  });
+
+  describe('listener lifecycle', () => {
+    // The chat is destroyed whenever its panel closes: nothing it subscribed
+    // to may keep writing the shared chat and timeline state afterwards.
+    it('stops reacting to URL changes once destroyed', () => {
+      fixture.destroy();
+      agentChatService.getSessions.calls.reset();
+
+      queryParamsSubject.next({projectId: '3'});
+
+      expect(agentChatService.getSessions).not.toHaveBeenCalled();
+    });
+
+    it('stops answering video requests once destroyed', () => {
+      const send = spyOn(component, 'sendChatMessage');
+      fixture.destroy();
+
+      agentChatService.generateVideoRequest$.next();
+
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it('reloads the sessions when the loader restarts', () => {
+      queryParamsSubject.next({projectId: '1'});
+      agentChatService.getSessions.calls.reset();
+
+      component.loadChatSessions(); // e.g. `onAgentChange`
+
+      expect(agentChatService.getSessions).toHaveBeenCalledTimes(1);
     });
   });
 });
