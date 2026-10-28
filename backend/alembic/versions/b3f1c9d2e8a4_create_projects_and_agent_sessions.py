@@ -149,7 +149,7 @@ def _backfill() -> None:
               FROM (SELECT DISTINCT ON (session_id) session_id, project_id,
                            user_id
                       FROM storyboards
-                     WHERE session_id IS NOT NULL
+                     WHERE session_id IS NOT NULL AND session_id <> ''
                      ORDER BY session_id, id DESC) x
              WHERE t.project_id IS NULL
                AND t.session_id = x.session_id
