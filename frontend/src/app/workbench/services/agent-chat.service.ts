@@ -46,7 +46,7 @@ export function readLegacyTopics(): Record<string, LegacyTopic> {
     const parsed: unknown = JSON.parse(
       localStorage.getItem(LEGACY_TOPICS_KEY) || '{}',
     );
-    return parsed && typeof parsed === 'object'
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
       ? (parsed as Record<string, LegacyTopic>)
       : {};
   } catch {

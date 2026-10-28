@@ -3916,7 +3916,7 @@ describe('ChatInterfaceComponent', () => {
     });
 
     it('starts without legacy titles when their storage is corrupted', () => {
-      for (const stored of ['{not json', 'null', '42']) {
+      for (const stored of ['{not json', 'null', '42', '["Old title"]']) {
         localStorage.setItem('izumi_topics', stored);
         component.topics.set({stale: 'x'});
 

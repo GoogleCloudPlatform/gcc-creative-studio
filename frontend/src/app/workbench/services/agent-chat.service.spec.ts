@@ -326,6 +326,16 @@ describe('AgentChatService projects and chat titles', () => {
     });
   });
 
+  it('discards legacy titles stored as an array', () => {
+    // Old builds always wrote an object: an array is corrupted storage, so it
+    // is removed instead of being written back unchanged.
+    localStorage.setItem('izumi_topics', JSON.stringify(['Old title']));
+
+    service.forgetLegacyTitle('s1');
+
+    expect(localStorage.getItem('izumi_topics')).toBeNull();
+  });
+
   it('resets every shared conversation signal and the cache', () => {
     spyOn(service, 'stopPolling');
     service.sessions.set([{id: 's1'}]);
