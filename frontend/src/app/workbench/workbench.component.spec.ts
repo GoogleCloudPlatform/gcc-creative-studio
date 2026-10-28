@@ -143,6 +143,7 @@ describe('WorkbenchComponent', () => {
   });
 
   it('should delete selected clip', () => {
+    spyOn(console, 'warn');
     const stateService = TestBed.inject(TimelineStateService);
     const clip = {
       id: 'clip1',
@@ -160,6 +161,13 @@ describe('WorkbenchComponent', () => {
 
     expect(stateService.timelineClips()).toEqual([]);
     expect(stateService.selectedClipId()).toBeNull();
+
+    // Leaving the Workbench flushes the autosave the deletion queued: with
+    // nothing left to save, it stops at the empty-editor guard.
+    fixture.destroy();
+    expect(console.warn).toHaveBeenCalledWith(
+      'Cannot auto-save timeline: no timeline ID and no clips to save',
+    );
   });
 
   describe('Video track layout (transitions never shift clips)', () => {
@@ -635,9 +643,17 @@ describe('WorkbenchComponent', () => {
     });
 
     it('should set status to Saving... in triggerAutoSave', () => {
+      spyOn(console, 'warn');
       component.triggerAutoSave();
       expect(component.lastSavedText()).toBe('Saving...');
       expect(component['hasPendingSave']).toBeTrue();
+
+      // Leaving the Workbench flushes the pending save: with nothing to save,
+      // it stops at the empty-editor guard.
+      fixture.destroy();
+      expect(console.warn).toHaveBeenCalledWith(
+        'Cannot auto-save timeline: no timeline ID and no clips to save',
+      );
     });
 
     it('should cancel previous in-flight save request when a new save is triggered', () => {
@@ -1124,24 +1140,33 @@ describe('WorkbenchComponent', () => {
     });
 
     it('should not call renderVideo if storyboard is null', () => {
+      spyOn(console, 'warn');
       agentChatService.currentStoryboard.set(null);
       spyOn(workbenchService, 'renderVideo');
 
       component.downloadVideo();
 
       expect(workbenchService.renderVideo).not.toHaveBeenCalled();
+      expect(console.warn).toHaveBeenCalledWith(
+        'Cannot download: missing timeline ID and no clips present',
+      );
     });
 
     it('should not call renderVideo if storyboard.timeline_id is null', () => {
+      spyOn(console, 'warn');
       agentChatService.currentStoryboard.set({id: 1} as any);
       spyOn(workbenchService, 'renderVideo');
 
       component.downloadVideo();
 
       expect(workbenchService.renderVideo).not.toHaveBeenCalled();
+      expect(console.warn).toHaveBeenCalledWith(
+        'Cannot download: missing timeline ID and no clips present',
+      );
     });
 
     it('should call renderVideo and then getAsset to trigger file download', fakeAsync(() => {
+      spyOn(console, 'error');
       const stateService = TestBed.inject(TimelineStateService);
       stateService.loadedTimelineId.set(2);
 
@@ -1191,9 +1216,16 @@ describe('WorkbenchComponent', () => {
       // expect(mockAnchor.download).toBe('video_rendered.mp4'); // Filename is dynamic now
       expect(mockAnchor.click).toHaveBeenCalled();
       expect(component.isDownloading()).toBeFalse();
+      // The success notification was attempted: the AppInjector is not wired
+      // to this TestBed, so the snackbar helper reports it as unavailable.
+      expect(console.error).toHaveBeenCalledWith(
+        'NotificationService not available',
+        jasmine.any(Error),
+      );
     }));
 
     it('should call saveTimeline first if hasPendingSave is true before rendering', fakeAsync(() => {
+      spyOn(console, 'error');
       const stateService = TestBed.inject(TimelineStateService);
       stateService.loadedTimelineId.set(2);
 
@@ -1247,6 +1279,12 @@ describe('WorkbenchComponent', () => {
       // expect(mockAnchor.download).toBe('video_rendered.mp4');
       expect(mockAnchor.click).toHaveBeenCalled();
       expect(component.isDownloading()).toBeFalse();
+      // The success notification was attempted: the AppInjector is not wired
+      // to this TestBed, so the snackbar helper reports it as unavailable.
+      expect(console.error).toHaveBeenCalledWith(
+        'NotificationService not available',
+        jasmine.any(Error),
+      );
     }));
   });
 
@@ -1782,6 +1820,7 @@ describe('WorkbenchComponent', () => {
     });
 
     it('drops an autosave queued in a project that was left', fakeAsync(() => {
+      spyOn(console, 'warn');
       const save = spyOn(component, 'saveTimeline').and.returnValue(of(null));
       projectState.activeProjectId.set(7);
       component.triggerAutoSave();
@@ -1790,6 +1829,9 @@ describe('WorkbenchComponent', () => {
       tick(10000);
 
       expect(save).not.toHaveBeenCalled();
+      expect(console.warn).toHaveBeenCalledWith(
+        'Dropped the autosave of a project that was left',
+      );
     }));
 
     it('still autosaves the edits of the active project', fakeAsync(() => {
