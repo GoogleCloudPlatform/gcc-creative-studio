@@ -4163,6 +4163,7 @@ describe('ChatInterfaceComponent', () => {
       });
 
       it('keeps the open chat when the restore fails', () => {
+        spyOn(console, 'error');
         agentChatService.restoreSession.and.returnValue(
           throwError(() => ({
             status: 409,
@@ -4181,6 +4182,7 @@ describe('ChatInterfaceComponent', () => {
         expect(component.isRestoredChat()).toBeFalse();
         expect(agentChatService.expiredSessions()).toEqual([restorable]);
         expect(agentChatService.getSessionDetail).not.toHaveBeenCalled();
+        expect(console.error).toHaveBeenCalled();
       });
 
       it('is listed, not opened, when the user moved on meanwhile', () => {
