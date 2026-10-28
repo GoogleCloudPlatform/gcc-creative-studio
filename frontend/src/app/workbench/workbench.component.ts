@@ -446,7 +446,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           console.warn('Dropped the autosave of a project that was left');
           return;
         }
-        this.saveTimeline().subscribe();
+        // saveTimeline() has already logged the failure and shown it in the
+        // status text: without a callback, RxJS rethrows it as unhandled.
+        this.saveTimeline().subscribe({
+          error: () => {},
+        });
       });
 
     this.route.queryParams.subscribe(params => {

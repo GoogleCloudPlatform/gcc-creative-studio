@@ -18,6 +18,7 @@ import {
   ComponentFixture,
   TestBed,
   fakeAsync,
+  flush,
   tick,
 } from '@angular/core/testing';
 import {WorkbenchComponent} from './workbench.component';
@@ -732,6 +733,34 @@ describe('WorkbenchComponent', () => {
       });
       expect(component.lastSavedText()).toBe('Saved');
     });
+
+    it('handles a failed debounced autosave instead of rethrowing it', fakeAsync(() => {
+      const response = new Subject<TimelineDTO>();
+      spyOn(workbenchService, 'createTimeline').and.returnValue(response);
+      spyOn(console, 'error');
+      stateService.timelineClips.set([
+        {
+          id: 'c1',
+          assetId: 'a1',
+          startTime: 0,
+          duration: 5,
+          offset: 0,
+          trackIndex: 0,
+        } as TimelineClip,
+      ]);
+
+      component.triggerAutoSave();
+      tick(10000);
+      response.error(new Error('Network down'));
+
+      // RxJS rethrows an error no subscriber handles from a timer.
+      expect(() => flush()).not.toThrow();
+      expect(console.error).toHaveBeenCalledWith(
+        'Error saving timeline',
+        jasmine.any(Error),
+      );
+      expect(component.lastSavedText()).toBe('Failed to save changes');
+    }));
   });
 
   describe('Audio clip gain & fades', () => {

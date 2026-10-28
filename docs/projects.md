@@ -152,6 +152,7 @@ The chat spec's `getActiveWorkspaceId` mock returns `null` on its first call, wh
 - A save that lands after a switch (`projectAtSave`) touches neither `loadedTimelineId` nor the URL.
 - The debounced autosave is skipped once the flush has cleared `hasPendingSave`. Otherwise it would save the still-empty timeline of the project just entered.
 - Edits queued in a project that is no longer active (`pendingSaveIsStale()`) are neither autosaved nor flushed. That covers a project left through a deep link, and a deleted project, which `deleteProject` leaves via `enter(next, {flush: false})`.
+- The debounced autosave subscribes with an empty `error` callback. When a save fails, `saveTimeline()` logs it, shows `Failed to save changes`, then errors its Subject. Without a callback, RxJS rethrew that error from a timer, and Angular's `ErrorHandler` logged it a second time.
 
 ### Project switcher (`app-project-switcher`, standalone)
 
@@ -174,6 +175,7 @@ The chat spec's `getActiveWorkspaceId` mock returns `null` on its first call, wh
   - `Entering the Workbench`;
   - `while a save is in flight`;
   - `drops an autosave queued in a project that was left`;
+  - `handles a failed debounced autosave instead of rethrowing it`;
   - `never applies a superseded timeline response`;
   - `drops the in-flight timeline once a project entry reset the editor`.
 - **Chat, under `Projects`:**
