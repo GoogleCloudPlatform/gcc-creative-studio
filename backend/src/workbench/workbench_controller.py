@@ -169,6 +169,7 @@ async def update_timeline(
     access = await timeline_auth.authorize(timeline_id, current_user)
     # A timeline may only be re-linked to a storyboard of its own project.
     target_project_id = None
+    target_workspace_id = None
     new_storyboard_id = _as_int(timeline_update.storyboard_id)
     if (
         new_storyboard_id is not None
@@ -183,10 +184,15 @@ async def update_timeline(
                 detail="The storyboard belongs to another project.",
             )
         target_project_id = target.id
+        target_workspace_id = target.workspace_id
     timeline_update.project_id = access.project_id or target_project_id
     timeline_update.user_id = access.user_id or str(current_user.id)
-    if access.workspace_id is not None:
-        timeline_update.workspace_id = str(access.workspace_id)
+    # The workspace follows the owning project: a legacy row claimed through
+    # the storyboard takes its project's workspace. Only a row that stays
+    # unattributed keeps the payload's value (no project to follow).
+    project_workspace_id = access.workspace_id or target_workspace_id
+    if project_workspace_id is not None:
+        timeline_update.workspace_id = str(project_workspace_id)
     timeline = await service.update_timeline(timeline_id, timeline_update)
     if not timeline:
         raise HTTPException(status_code=404, detail="Timeline not found")

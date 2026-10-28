@@ -31,7 +31,7 @@ There are deliberately no ORM relationships on `Project`. Deletes rely on the fo
 - `TimelineAuth` guards every timeline-by-id route, and both render routes, through the timeline's project.
 - The storyboard GET/PUT/DELETE-by-id routes call `ProjectService.authorize_storyboard` (owner, then `ProjectAuth`) **before anything else**. Loading a storyboard presigns a URL per scene, so that work must never run for a caller who is then refused.
 - `GET /api/storyboards` returns only the caller's storyboards, in a workspace they may access.
-- On timeline create, the server stamps `user_id`, `workspace_id` and `project_id`; client values are ignored. A timeline PUT never moves `project_id` (it may only claim a `NULL`), and it may only re-link a storyboard of the same project.
+- On timeline create, the server stamps `user_id`, `workspace_id` and `project_id`; client values are ignored. A timeline PUT never moves `project_id` (it may only claim a `NULL`), and it may only re-link a storyboard of the same project. Its `workspace_id` follows the owning project, including the one a legacy row claims through the storyboard; only a row that stays unattributed keeps the payload's value.
 - Name guard methods `authorize` or `ensure_*`, never `assert_*`. Tests replace these classes with mocks, and `unittest.mock` rejects attributes whose names start with `assert`.
 
 ## Filing records into projects

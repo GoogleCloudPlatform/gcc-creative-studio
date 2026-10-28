@@ -409,9 +409,11 @@ class TestTimelineAuthorization:
             user_id=None,
             workspace_id=None,
         )
-        mock_project_service.authorize_storyboard.return_value = _project(8)
+        mock_project_service.authorize_storyboard.return_value = _project(
+            8, workspace_id=5
+        )
         mock_workbench_service.update_timeline.return_value = TimelineResponse(
-            timeline_id=4, workspace_id="1", title="T"
+            timeline_id=4, workspace_id="5", title="T"
         )
         body = {"storyboard_id": 11, "workspace_id": "3", "title": "T"}
 
@@ -420,5 +422,33 @@ class TestTimelineAuthorization:
         assert response.status_code == status.HTTP_200_OK
         updated = mock_workbench_service.update_timeline.await_args.args[1]
         assert updated.project_id == 8
-        # No project workspace to impose: the payload's value is kept.
+        # The claimed project's workspace wins over the payload's.
+        assert updated.workspace_id == "5"
+
+    def test_update_of_an_unattributed_legacy_timeline_keeps_the_payload(
+        self,
+        admin_client,
+        mock_workbench_service,
+        mock_project_service,
+        mock_timeline_auth,
+    ):
+        mock_timeline_auth.authorize.return_value = TimelineAccess(
+            timeline_id=4,
+            project_id=None,
+            storyboard_id=None,
+            user_id=None,
+            workspace_id=None,
+        )
+        mock_workbench_service.update_timeline.return_value = TimelineResponse(
+            timeline_id=4, workspace_id="3", title="T"
+        )
+        body = {"workspace_id": "3", "title": "T"}
+
+        response = admin_client.put("/api/workbench/timelines/4", json=body)
+
+        assert response.status_code == status.HTTP_200_OK
+        updated = mock_workbench_service.update_timeline.await_args.args[1]
+        assert updated.project_id is None
+        # No owning project to follow: the payload's value is kept.
         assert updated.workspace_id == "3"
+        mock_project_service.authorize_storyboard.assert_not_called()
