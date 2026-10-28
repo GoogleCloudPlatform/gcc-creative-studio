@@ -194,6 +194,20 @@ describe('ProjectStateService', () => {
       ).toEqual({10: 1});
     });
 
+    it('ignores a stored array and rewrites it as a record', () => {
+      // `typeof [] === 'object'`: slot 10 must not pass for workspace 10.
+      const stale: number[] = [];
+      stale[10] = 2;
+      localStorage.setItem(LAST_PROJECT_STORAGE_KEY, JSON.stringify(stale));
+
+      start();
+
+      expect(navigate).toHaveBeenCalledOnceWith([], entry(1));
+      expect(
+        JSON.parse(localStorage.getItem(LAST_PROJECT_STORAGE_KEY)!),
+      ).toEqual({10: 1});
+    });
+
     it('waits for a workspace', () => {
       start({}, null);
 

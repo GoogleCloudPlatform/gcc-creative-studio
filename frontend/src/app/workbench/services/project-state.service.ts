@@ -81,7 +81,7 @@ function readLastProjects(): Record<string, number> {
   try {
     const stored = localStorage.getItem(LAST_PROJECT_STORAGE_KEY);
     const parsed: unknown = stored ? JSON.parse(stored) : {};
-    return parsed && typeof parsed === 'object'
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
       ? (parsed as Record<string, number>)
       : {};
   } catch {
