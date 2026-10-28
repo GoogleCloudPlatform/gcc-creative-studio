@@ -84,14 +84,14 @@ async def test_generate_text_blocks_event_loop(service):
 
     # Run them "concurrently"
     bg_promise = asyncio.create_task(background_task())
-    
+
     # This call is expected to block the event loop because it's sync under the hood
     result = await service.generate_text(request)
 
     await bg_promise
 
     assert result["generated_text"] == "Hello World!"
-    
+
     # If it blocked, the background task (which needs 0.25s total, but yields every 0.05s)
     # won't have had a chance to run intermediate steps during the 0.4s blocking of generate_text.
     # Actually, because we await generate_text, if it blocks, it blocks the whole loop.
@@ -108,30 +108,33 @@ async def test_generate_text_blocks_event_loop(service):
     # Alternatively, we can check if the total time is ~ 0.4s (sequential) vs ~0.4s (concurrent).
     # Since background task is 0.25s, if concurrent it should take max(0.4, 0.25) = 0.4s.
     # If blocking, it takes 0.4 (generate_text) + 0.25 (bg_task) = 0.65s.
-    
+
     # Let's verify interleaving by having the bg task record timestamps.
     bg_runs = []
+
     async def background_task_with_timestamps():
         for _ in range(4):
             await asyncio.sleep(0.05)
             bg_runs.append(time.time())
 
     bg_promise = asyncio.create_task(background_task_with_timestamps())
-    
+
     start_time = time.time()
     await service.generate_text(request)
     generate_text_end = time.time()
-    
+
     await bg_promise
     end_time = time.time()
 
     # If blocked, all bg_runs timestamps will be AFTER generate_text_end
     # (or very close to it, allowing for scheduler latency)
     blocked_runs = [t for t in bg_runs if t > generate_text_end]
-    
+
     # Since generate_text takes 0.4s, and bg task runs every 0.05s,
     # if it was non-blocking, we should have runs at 0.05, 0.10, 0.15, 0.20 (before 0.4s end).
     # So blocked_runs should be empty or small if non-blocking.
     # If blocked, ALL runs will be after generate_text_end.
-    
-    assert len(blocked_runs) == len(bg_runs), "Expected event loop to be blocked, so all background tasks run after generate_text"
+
+    assert len(blocked_runs) == len(
+        bg_runs
+    ), "Expected event loop to be blocked, so all background tasks run after generate_text"

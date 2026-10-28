@@ -630,6 +630,4 @@ class TestWorkflowCallbackIdentity:
             f"{internal}/api/workflows-executor/generate_text"
         )
         assert args["auth"] == {"type": "OIDC", "audience": internal}
-        assert args["headers"] == {
-            "X-Acting-User-Id": "${args.acting_user_id}"
-        }
+        assert args["headers"] == {"X-Acting-User-Id": "${args.acting_user_id}"}

@@ -282,5 +282,3 @@ def test_store_to_gcs_custom_bucket_bug(gcs_service):
 
     # It should have called blob on the other bucket
     mock_other_bucket.blob.assert_called_once_with("folder/file.txt")
-
-

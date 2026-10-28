@@ -181,6 +181,7 @@ class TestImagenServiceMethods:
     @pytest.mark.anyio
     async def test_upscale_image_base64_success(self, imagen_service):
         import base64
+
         base64_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
         request_dto = UpscaleImagenDto(
             user_image=base64_image,

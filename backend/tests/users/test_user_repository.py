@@ -200,7 +200,9 @@ async def test_query_with_filters():
     mock_count_result.scalar_one.return_value = 1
 
     mock_users_result = MagicMock()
-    mock_user = get_dummy_user(id=2, email="admin@example.com", roles=[UserRoleEnum.ADMIN.value])
+    mock_user = get_dummy_user(
+        id=2, email="admin@example.com", roles=[UserRoleEnum.ADMIN.value]
+    )
     mock_users_result.scalars().all.return_value = [mock_user]
 
     mock_db.execute.side_effect = [mock_count_result, mock_users_result]

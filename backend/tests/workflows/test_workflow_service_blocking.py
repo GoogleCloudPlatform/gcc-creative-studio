@@ -88,7 +88,7 @@ async def test_get_execution_details_blocks_event_loop(
     # Mock ExecutionsClient to block on get_execution
     mock_client = MagicMock()
     mock_exec_client_class.return_value = mock_client
-    
+
     def blocking_get_execution(*args, **kwargs):
         time.sleep(0.2)  # Blocking sleep
         mock_execution = MagicMock()
@@ -108,7 +108,7 @@ async def test_get_execution_details_blocks_event_loop(
     mock_auth_default.return_value = (MagicMock(), "project-id")
     mock_session = MagicMock()
     mock_auth_session_class.return_value = mock_session
-    
+
     def blocking_session_get(*args, **kwargs):
         time.sleep(0.2)  # Blocking sleep
         mock_response = MagicMock()
@@ -123,26 +123,23 @@ async def test_get_execution_details_blocks_event_loop(
     # Mock DB Snapshot (no block)
     mock_run = MagicMock()
     mock_run.id = "e-123"
-    mock_run.workflow_snapshot = sample_workflow_model.model_dump(
-        mode="json"
-    )
+    mock_run.workflow_snapshot = sample_workflow_model.model_dump(mode="json")
     mock_run.status = WorkflowRunStatusEnum.RUNNING.value
     mock_run_repo.get_by_id.return_value = mock_run
 
     # Setup mock get_by_id in service fallback
-    workflow_service.get_by_id = AsyncMock(
-        return_value=sample_workflow_model
-    )
+    workflow_service.get_by_id = AsyncMock(return_value=sample_workflow_model)
 
     # Background task to check for interleaving
     bg_runs = []
+
     async def background_task():
         for _ in range(8):
             await asyncio.sleep(0.05)
             bg_runs.append(time.time())
 
     bg_promise = asyncio.create_task(background_task())
-    
+
     start_time = time.time()
     # This should block for ~0.4s total (0.2s in get_execution, 0.2s in session.get)
     details = await workflow_service.get_execution_details(
@@ -150,12 +147,14 @@ async def test_get_execution_details_blocks_event_loop(
         execution_id="e-123",
     )
     get_details_end = time.time()
-    
+
     await bg_promise
-    
+
     assert details is not None
-    
+
     # If blocked, all bg runs should be after get_details_end
     blocked_runs = [t for t in bg_runs if t > get_details_end]
-    
-    assert len(blocked_runs) == len(bg_runs), "Expected event loop to be blocked during get_execution_details"
+
+    assert len(blocked_runs) == len(
+        bg_runs
+    ), "Expected event loop to be blocked during get_execution_details"

@@ -69,6 +69,7 @@ async def test_list_executions_endpoint_blocks_event_loop(app, mock_service):
 
     # Background task to check for interleaving
     bg_runs = []
+
     async def background_task():
         for _ in range(4):
             await asyncio.sleep(0.05)
@@ -76,14 +77,16 @@ async def test_list_executions_endpoint_blocks_event_loop(app, mock_service):
 
     # We need to run the client and the background task in the same event loop.
     # httpx.AsyncClient with ASGITransport runs the app in the same event loop.
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
         bg_promise = asyncio.create_task(background_task())
-        
+
         start_time = time.time()
         # This request will trigger the blocking list_executions
         response = await ac.get("/api/workflows/wf1/executions")
         request_end = time.time()
-        
+
         await bg_promise
 
     assert response.status_code == 200
@@ -91,5 +94,7 @@ async def test_list_executions_endpoint_blocks_event_loop(app, mock_service):
 
     # If blocked, all bg runs should be after request_end
     blocked_runs = [t for t in bg_runs if t > request_end]
-    
-    assert len(blocked_runs) == len(bg_runs), "Expected event loop to be blocked during list_executions request"
+
+    assert len(blocked_runs) == len(
+        bg_runs
+    ), "Expected event loop to be blocked during list_executions request"

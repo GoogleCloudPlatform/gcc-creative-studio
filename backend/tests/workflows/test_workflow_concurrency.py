@@ -49,7 +49,9 @@ class ConcurrencyDetectingSession:
     async def execute(self, *args, **kwargs):
         await self._enter_call()
         try:
-            await asyncio.sleep(0.05)  # Simulate network latency to ensure overlap
+            await asyncio.sleep(
+                0.05
+            )  # Simulate network latency to ensure overlap
             mock_result = MagicMock()
             mock_result.scalar_one_or_none.return_value = (
                 self.mock_workflow_db_item
@@ -104,6 +106,7 @@ async def test_batch_execute_concurrency_issue(
 
     # 2. Setup mock Workflow DB item for get_by_id
     import datetime
+
     now = datetime.datetime.now(datetime.UTC)
     db_workflow = Workflow(
         id="id-123",
@@ -120,7 +123,6 @@ async def test_batch_execute_concurrency_issue(
         created_at=now,
         updated_at=now,
     )
-
 
     # 3. Setup Concurrency Detecting Session
     detecting_session = ConcurrencyDetectingSession(db_workflow)
@@ -148,7 +150,7 @@ async def test_batch_execute_concurrency_issue(
     # 7. Execute
     # We expect this to fail because ConcurrencyDetectingSession will raise RuntimeError
     # when the second task tries to call execute/commit/refresh while the first is sleeping.
-    
+
     # Actually, batch_execute_workflow catches exceptions inside process_row and returns them in results.
     # So we should check the results for failures.
     response = await service.batch_execute_workflow(
@@ -159,13 +161,17 @@ async def test_batch_execute_concurrency_issue(
 
     assert response is not None
     assert len(response.results) == 2
-    
+
     # If concurrency issue exists, at least one of them should have failed with our RuntimeError
     failed_results = [r for r in response.results if r.status == "FAILED"]
-    
+
     print("\nBatch execution results:")
     for r in response.results:
         print(f"Row {r.row_index}: {r.status} (Error: {r.error})")
-        
-    assert len(failed_results) > 0, "Expected at least one failure due to concurrency"
-    assert any("CONCURRENCY DETECTED" in str(r.error) for r in failed_results), "Expected concurrency error in results"
+
+    assert (
+        len(failed_results) > 0
+    ), "Expected at least one failure due to concurrency"
+    assert any(
+        "CONCURRENCY DETECTED" in str(r.error) for r in failed_results
+    ), "Expected concurrency error in results"
