@@ -965,6 +965,27 @@ class TestUpdateSessionMetadata:
 
         assert dto.restored is True
 
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "last_used_at, expected",
+        [
+            (_at(1_780_000_000), 1_780_000_000),
+            # A chat without recorded activity: no time is made up.
+            (None, None),
+        ],
+    )
+    async def test_the_chat_keeps_its_activity_time(
+        self, service, registry, last_used_at, expected
+    ):
+        registry.get.return_value = _row("s1")
+        registry.update_metadata.return_value = _row(
+            "s1", title="New", last_used_at=last_used_at
+        )
+
+        dto = await service.update_session_metadata(USER, "s1", title="New")
+
+        assert dto.lastUpdateTime == expected
+
 
 class TestRestoreSession:
     """``restore_session``: an expired chat on a new agent session."""

@@ -389,7 +389,7 @@ async def test_delete_session_success(mock_remote_agent, client):
     assert response.json() == {"status": "success"}
 
 
-def _registry_row(user_id=1, title=None, summary=None):
+def _registry_row(user_id=1, title=None, summary=None, last_used_at=None):
     return MagicMock(
         session_id="session_1",
         project_id=7,
@@ -397,6 +397,7 @@ def _registry_row(user_id=1, title=None, summary=None):
         app_name="ads_x",
         title=title,
         summary=summary,
+        last_used_at=last_used_at,
         restored_at=None,
     )
 
@@ -406,8 +407,9 @@ def _registry_row(user_id=1, title=None, summary=None):
 async def test_update_session_metadata_route(client):
     repo = _registry_stub()
     repo.get.return_value = _registry_row()
+    last_used_at = datetime.datetime(2026, 10, 1, tzinfo=datetime.UTC)
     repo.update_metadata.return_value = _registry_row(
-        title="Spring launch", summary="Teaser"
+        title="Spring launch", summary="Teaser", last_used_at=last_used_at
     )
     client.app.dependency_overrides[AgentSessionRepository] = lambda: repo
 
@@ -424,6 +426,7 @@ async def test_update_session_metadata_route(client):
         "Spring launch",
         "Teaser",
     )
+    assert body["lastUpdateTime"] == last_used_at.timestamp()
     repo.update_metadata.assert_awaited_once_with(
         "session_1", title="Spring launch", summary="Teaser"
     )

@@ -1501,6 +1501,9 @@ class AgentService:
             id=row.session_id,
             appName=row.app_name or app_name,
             userId=str(row.user_id),
+            lastUpdateTime=(
+                row.last_used_at.timestamp() if row.last_used_at else None
+            ),
             projectId=row.project_id,
             title=row.title,
             summary=row.summary,
