@@ -1750,6 +1750,23 @@ describe('ChatInterfaceComponent', () => {
       expect(component.isLoadingHistory()).toBeFalse();
     });
 
+    it('keeps the lock on a URL echo while that session is still loading', () => {
+      const pending = new Subject<any>();
+      agentChatService.getSessionDetail.and.returnValue(pending);
+      spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
+      component['lastWorkspaceId'] = 1;
+      agentChatService.sessions.set([{id: 'session-A'}] as any);
+      agentChatService.currentStoryboard.set({id: 1} as any);
+
+      component.onSessionChange('session-A');
+      queryParamsSubject.next({sessionId: 'session-A', storyboardId: '1'});
+      expect(component.isLoadingHistory()).toBeTrue();
+
+      pending.next(detailFor('session-A', 1));
+      pending.complete();
+      expect(component.isLoadingHistory()).toBeFalse();
+    });
+
     it('routes a session-first deep link through loadChatMessages', () => {
       const loadSpy = spyOn(component, 'loadChatMessages').and.callThrough();
       agentChatService.getSessions.and.returnValue(
@@ -4331,6 +4348,79 @@ describe('ChatInterfaceComponent', () => {
       component.loadChatSessions(); // e.g. `onAgentChange`
 
       expect(agentChatService.getSessions).toHaveBeenCalledTimes(1);
+    });
+
+    // The agent button destroys the panel; reopening it builds a new chat on
+    // the conversation the service still holds. It must show that chat as it
+    // was: no reload, and no "Loading history..." that never clears.
+    describe('when the panel is reopened', () => {
+      const reopenPanel = () => {
+        fixture.destroy();
+        agentChatService.getSessions.calls.reset();
+        agentChatService.getSessionDetail.calls.reset();
+        fixture = TestBed.createComponent(ChatInterfaceComponent);
+        component = fixture.componentInstance;
+        fixture.detectChanges();
+        // The loader's first emission waits for `toObservable(activeProjectId)`,
+        // an effect that runs after this first render: render again, as the
+        // app's next change detection does.
+        fixture.detectChanges();
+      };
+
+      beforeEach(() => {
+        spyOn(router, 'navigate').and.returnValue(Promise.resolve(true));
+      });
+
+      it('keeps a restored chat restored, with its banner', () => {
+        agentChatService.getSessions.and.returnValue(
+          of([{id: 's-new', title: 'Spring launch', restored: true}]),
+        );
+        agentChatService.getSessionDetail.and.returnValue(
+          of({
+            session: {id: 's-new', events: [], restored: true},
+            storyboard: {id: 202, timeline_id: 42, session_id: 's-new'},
+          }),
+        );
+        queryParamsSubject.next({sessionId: 's-new'});
+        queryParamsSubject.next({sessionId: 's-new', storyboardId: '202'});
+        expect(component.isRestoredChat()).toBeTrue();
+
+        reopenPanel();
+
+        expect(agentChatService.getSessions).not.toHaveBeenCalled();
+        expect(agentChatService.getSessionDetail).not.toHaveBeenCalled();
+        expect(component.isLoadingHistory()).toBeFalse();
+        expect(component.isRestoredChat()).toBeTrue();
+        const el: HTMLElement = fixture.nativeElement;
+        expect(
+          el.querySelector('[data-testid="restored-chat-banner"]'),
+        ).not.toBeNull();
+        expect(el.textContent).not.toContain('Loading history...');
+        expect(el.querySelector('textarea[data-chat-input]')).toBeNull();
+      });
+
+      it('keeps a live chat unlocked, with its history', () => {
+        agentChatService.getSessions.and.returnValue(
+          of([{id: 's1', lastUpdateTime: 1}]),
+        );
+        queryParamsSubject.next({sessionId: 's1'});
+        queryParamsSubject.next({sessionId: 's1', storyboardId: '202'});
+        const history = component.chatMessages();
+        expect(history.length).toBeGreaterThan(0);
+
+        reopenPanel();
+
+        expect(agentChatService.getSessions).not.toHaveBeenCalled();
+        expect(agentChatService.getSessionDetail).not.toHaveBeenCalled();
+        expect(component.isSessionLocked()).toBeFalse();
+        expect(component.chatMessages()).toEqual(history);
+        const el: HTMLElement = fixture.nativeElement;
+        expect(el.textContent).not.toContain('Loading history...');
+        const input = el.querySelector(
+          'textarea[data-chat-input]',
+        ) as HTMLTextAreaElement;
+        expect(input.placeholder).toBe('Ask Izumi...');
+      });
     });
   });
 });

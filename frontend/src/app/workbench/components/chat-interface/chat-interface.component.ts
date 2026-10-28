@@ -696,6 +696,14 @@ export class ChatInterfaceComponent
         (storyboardId ? Number(storyboardId) : null) ===
           (this.agentChatService.currentStoryboard()?.id ?? null);
       if (urlMatchesCurrentState) {
+        // Nothing to load, so drop the "Loading history..." raised by
+        // `loadChatSessions()`: a reopened agent panel lands here on its first
+        // emission (the service still holds the chat) and stayed locked for
+        // good, hiding a restored chat's banner. A history request still in
+        // flight keeps the lock; its own handlers clear it.
+        if (!this.loadSubscription || this.loadSubscription.closed) {
+          this.isLoadingHistory.set(false);
+        }
         return;
       }
 
