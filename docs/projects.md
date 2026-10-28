@@ -159,6 +159,7 @@ The chat spec's `getActiveWorkspaceId` mock returns `null` on its first call, wh
 
 - The rows are `mat-menu-item`s, for keyboard support: arrow keys, Home/End, typeahead, initial focus. The SCSS undoes Material's item look: state-layer tokens, the 48px min-height, label typography, icon colours, and the global `styles.scss` menu-icon margins. Compare computed styles before and after touching it.
 - Leaving an inline editor puts the focus back on the item that opened it (`afterNextRender`).
+- Saving a rename whose trimmed name is unchanged just closes the editor, without a `PATCH` (it would only bump `updated_at`). The check comes before `saving` is set: returning after it would leave the flag on, and lock every later rename and create.
 - The trigger's `aria-label` starts with the visible project name (WCAG 2.5.3).
 - The default project has no Delete, and a refused delete shows the backend `detail`.
 - Keystrokes in the inline inputs never reach `mat-menu`: its typeahead would steal the focus, and Escape would close the menu.

@@ -243,6 +243,18 @@ describe('ProjectSwitcherComponent', () => {
     expect(component.editingId()).toBeNull();
   });
 
+  it('closes a rename without a request when the name is unchanged', () => {
+    component.startRename(new Event('click'), project(2, 'Launch'));
+    component.draftName.set('  Launch ');
+
+    component.submitDraft();
+
+    expect(state.renameProject).not.toHaveBeenCalled();
+    expect(component.editingId()).toBeNull();
+    // Not left saving: that would disable every later rename and create.
+    expect(component.saving()).toBeFalse();
+  });
+
   it('creates a project and closes the menu', () => {
     openMenu();
     inMenu<HTMLElement>('#project-new-button')!.click();

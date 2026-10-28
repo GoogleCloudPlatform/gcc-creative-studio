@@ -141,6 +141,15 @@ export class ProjectSwitcherComponent {
       }
       return;
     }
+    // Nothing to save: a PATCH would only bump the project's `updated_at`.
+    // Checked before `saving` is set, which an early return would leave on.
+    if (
+      editingId !== null &&
+      this.projectState.projects().find(p => p.id === editingId)?.name === name
+    ) {
+      this.cancelDraft();
+      return;
+    }
     this.saving.set(true);
     if (editingId !== null) {
       this.projectState.renameProject(editingId, name).subscribe({
