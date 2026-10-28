@@ -133,6 +133,11 @@ export class ProjectStateService {
   readonly loading = computed(() => this.pendingOperations() > 0);
 
   private readonly activeWorkspaceId = signal<number | null>(null);
+  /**
+   * Workspace of the active project, set together with it. It lags the
+   * workspace switcher while a switch flushes the project being left.
+   */
+  readonly activeProjectWorkspaceId = this.activeWorkspaceId.asReadonly();
   /** Workspace whose projects `projects` holds. */
   private listedWorkspaceId: number | null = null;
   private settledOnce = false;

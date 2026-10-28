@@ -1920,7 +1920,12 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         };
       });
 
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    // The workspace of the project being saved, not the switcher's: a
+    // workspace switch flushes this save after the switcher has moved on,
+    // and the backend rejects a project of another workspace (400).
+    const workspaceId =
+      this.projectState.activeProjectWorkspaceId() ??
+      this.workspaceStateService.getActiveWorkspaceId();
     const activeProjectId = this.projectState.activeProjectId();
 
     const timelineData: TimelineDTO = {

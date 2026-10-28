@@ -251,5 +251,6 @@ To maintain a pristine codebase, AI Agents **MUST** follow these rules:
   7. `latest_session_id` follows `agent_sessions.last_used_at`, which is seeded from the Agent Engine listing when missing. If the URL names a chat the project's listing lacks, the chat falls back to the project's most recent chat, without an error.
   8. Expired chats (registered, seen alive, missing from the agent's listing) are listed only with `include_expired=true` and live in `AgentChatService.expiredSessions`, never in `sessions`: every resume and fallback path reads `sessions`, so none of them can pick a chat that cannot be opened. Only a click on a `restorable` one (it owns a storyboard) restores it (`POST /api/agent/sessions/{id}/restore`).
   9. A restored chat (`agent_sessions.restored_at`) is never run by Izumi: `chat()` answers 409 and the chat UI swaps the composer for a banner. Izumi does not remember it, and a new run would reuse, and overwrite, its storyboard and timeline (`reuse_session_record`). Do not lift the lock without solving that reuse.
+  10. A Workbench save sends the active project's workspace (`ProjectStateService.activeProjectWorkspaceId`), never `WorkspaceStateService`'s: a workspace switch flushes the pending autosave after the switcher has moved on, and `resolve_project_for_write` answers 400 to a `project_id` from another workspace.
 
 ---

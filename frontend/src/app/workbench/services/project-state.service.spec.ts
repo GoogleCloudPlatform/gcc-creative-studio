@@ -367,6 +367,27 @@ describe('ProjectStateService', () => {
     expect(service.projects()).toEqual([FAR_DEFAULT]);
   });
 
+  it('reports the left project workspace while a workspace switch flushes', () => {
+    // The Workbench flush pairs the project with this workspace: the
+    // switcher has already moved on when the hook runs.
+    start({projectId: '2'});
+    let atFlush: unknown;
+    service.registerBeforeLeave(() => {
+      atFlush = [
+        workspaceState.getActiveWorkspaceId(),
+        service.activeProjectId(),
+        service.activeProjectWorkspaceId(),
+      ];
+      return of(null);
+    });
+
+    workspaceState.setActiveWorkspaceId(20);
+
+    expect(atFlush).toEqual([20, 2, 10]);
+    expect(service.activeProjectId()).toBe(30);
+    expect(service.activeProjectWorkspaceId()).toBe(20);
+  });
+
   it('survives an error and recovers on the next emission', () => {
     spyOn(console, 'error');
     projectService.list.and.returnValue(

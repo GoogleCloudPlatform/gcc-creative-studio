@@ -46,12 +46,14 @@ import {WorkbenchService} from './workbench.service';
 import {SourceAssetService} from '../common/services/source-asset.service';
 import {GalleryService} from '../gallery/gallery.service';
 import {ProjectStateService} from './services/project-state.service';
+import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
 
 /** The parts of `ProjectStateService` the Workbench uses. */
 interface ProjectStateStub {
   init: jasmine.Spy;
   registerBeforeLeave: jasmine.Spy;
   activeProjectId: WritableSignal<number | null>;
+  activeProjectWorkspaceId: WritableSignal<number | null>;
 }
 
 describe('WorkbenchComponent', () => {
@@ -86,6 +88,7 @@ describe('WorkbenchComponent', () => {
       init: jasmine.createSpy('init'),
       registerBeforeLeave: jasmine.createSpy('registerBeforeLeave'),
       activeProjectId: signal<number | null>(null),
+      activeProjectWorkspaceId: signal<number | null>(null),
     };
 
     await TestBed.configureTestingModule({
@@ -1642,6 +1645,38 @@ describe('WorkbenchComponent', () => {
       component.saveTimeline();
 
       expect(create.calls.mostRecent().args[0].project_id).toBe(7);
+    });
+
+    it('sends the workspace of the active project, not of the switcher', () => {
+      // A workspace switch flushes the pending autosave after the switcher
+      // moved on: the backend answers 400 to a project of another workspace.
+      const create = spyOn(
+        TestBed.inject(WorkbenchService),
+        'createTimeline',
+      ).and.returnValue(new Subject<TimelineDTO>());
+      TestBed.inject(WorkspaceStateService).setActiveWorkspaceId(20);
+      projectState.activeProjectId.set(7);
+      projectState.activeProjectWorkspaceId.set(10);
+      TestBed.inject(TimelineStateService).timelineClips.set([clip]);
+
+      component.saveTimeline();
+
+      expect(create.calls.mostRecent().args[0]).toEqual(
+        jasmine.objectContaining({project_id: 7, workspace_id: 10}),
+      );
+    });
+
+    it('falls back to the switcher workspace while no project is active', () => {
+      const create = spyOn(
+        TestBed.inject(WorkbenchService),
+        'createTimeline',
+      ).and.returnValue(new Subject<TimelineDTO>());
+      TestBed.inject(WorkspaceStateService).setActiveWorkspaceId(20);
+      TestBed.inject(TimelineStateService).timelineClips.set([clip]);
+
+      component.saveTimeline();
+
+      expect(create.calls.mostRecent().args[0].workspace_id).toBe(20);
     });
 
     it('ignores a save that lands after a project switch', () => {

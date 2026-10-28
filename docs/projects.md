@@ -115,6 +115,7 @@ Provided by `WorkbenchComponent` (not root), it is the only writer of `projectId
 **Entering a project is ONE merge navigation:** `{projectId, sessionId: latest_session_id, storyboardId: null, timelineId: latest_session_id ? null : latest_timeline_id}`. Several merge navigations in one tick are computed from the same old URL and cancel each other, so never add a second navigate for the same transition. The navigation happens after two steps:
 
 - `beforeLeave`, in which the Workbench flushes its pending autosave. The wait ends at the hook's first value, completion or error, or after `BEFORE_LEAVE_TIMEOUT_MS`. The timeout matters because `saveTimeline()` returns a hot Subject that never settles when a newer save cancels its request; without it, `loading` stayed true and the switcher stayed disabled.
+  - The flushed save belongs to the project being left, but on a workspace switch `WorkspaceStateService` has already moved on. `saveTimeline()` therefore sends `activeProjectWorkspaceId`, which `activate()` sets together with `activeProjectId`, and falls back to the switcher's workspace only while no project is active. Pairing the old project with the new workspace made `resolve_project_for_write` answer 400 to the first save of a timeline without a storyboard, and the flush dropped its edits.
 - The shared resets: `AgentChatService.resetConversation` and `TimelineStateService.resetForProjectSwitch`.
 
 With rapid switches, only the latest entry applies (`entrySeq`).
