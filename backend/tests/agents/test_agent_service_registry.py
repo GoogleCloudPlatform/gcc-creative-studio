@@ -33,6 +33,7 @@ from src.agents import agent_service as module
 from src.agents.agent_dtos import SessionResponseDto
 from src.agents.agent_service import AgentService
 from src.agents.agent_session_repository import AgentSessionRepository
+from src.agents.local_adk_client import LocalAgentError
 from src.projects.dto.project_dto import ProjectResponse
 from src.projects.project_service import ProjectService
 from src.users.user_model import UserModel
@@ -1258,6 +1259,12 @@ class TestProjectDeleteHelpers:
             # No status code: the message decides.
             (RuntimeError("Session not found"), True),
             (RuntimeError("boom"), False),
+            # A bare "404" in a code-less error is a port or an id, not a 404.
+            (
+                LocalAgentError("Local Izumi agent is not reachable at :4040"),
+                False,
+            ),
+            (RuntimeError("get session failed (500): asset_4045"), False),
         ],
     )
     def test_not_found_is_decided_by_the_status_code(self, error, gone):

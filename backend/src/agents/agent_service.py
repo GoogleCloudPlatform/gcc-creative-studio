@@ -233,12 +233,16 @@ def _is_session_not_found(error: Exception) -> bool:
     The status code decides when the error carries one (``google.genai``'s
     ``APIError`` and ``google.api_core``'s ``NotFound`` expose an int
     ``code``); the message is only the fallback for errors without one.
+    That fallback never matches a bare "404": the local ADK client returns,
+    rather than raises, on a 404, so in a code-less error those digits are a
+    port (``:4040``), an id or a trace. Matching them would take an outage
+    for a deleted session.
     """
     code = getattr(error, "code", None)
     if isinstance(code, int) and not isinstance(code, bool):
         return code == 404
     message = str(error).lower()
-    return "not found" in message or "404" in message
+    return "not found" in message
 
 
 def _listed_activity(

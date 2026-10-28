@@ -97,7 +97,7 @@ Entering a project resumes its `latest_session_id`. That is the project's chat w
   2. `delete_project(user, id)` checks again before deleting.
 - `delete_sessions_best_effort` deletes each chat from its own agent (`app_name`), at most `_SESSION_DELETE_CONCURRENCY` (4) at a time:
   - `_sessions_delete` runs the synchronous Vertex call in `asyncio.to_thread`;
-  - `_is_session_not_found` decides by the error's int `code` (genai `APIError`, api_core `NotFound`), and only falls back to the message when there is no code.
+  - `_is_session_not_found` decides by the error's int `code` (genai `APIError`, api_core `NotFound`), and only falls back to the message when there is no code. The fallback matches "not found", never a bare "404": a port (`:4040`) or an id in an outage message would otherwise pass for "already gone".
 
   `ON DELETE CASCADE` then removes the rest. An agent session that could not be deleted is re-adopted into the default project on the next listing.
 
