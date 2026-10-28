@@ -95,6 +95,10 @@ RESTORED_CHAT_DETAIL = (
     "This chat was restored after it expired: Izumi does not remember the "
     "conversation and cannot continue it. Start a new chat to work with Izumi."
 )
+BUSY_CHAT_DELETE_DETAIL = (
+    "Izumi is still working in this chat. Wait for it to finish before "
+    "deleting the chat."
+)
 _active_runs: dict[str, float] = {}
 
 
@@ -1135,6 +1139,20 @@ class AgentService:
                     await self.workspace_auth.authorize(
                         workspace_id=int(s_workspace_id),
                         user=current_user,
+                    )
+                # Deleting the session under a live run kills it at its next
+                # append_event. Checked after the owner and workspace checks,
+                # so a foreign chat still answers 403, and with no await
+                # before the delete, so no run can start in between.
+                if _is_run_active(session_id):
+                    logger.warning(
+                        "[Projects] Refusing to delete chat %s: a run is "
+                        "still active",
+                        session_id,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=BUSY_CHAT_DELETE_DETAIL,
                     )
                 await self._sessions_delete(
                     agent_name, appName, user_id, session_id

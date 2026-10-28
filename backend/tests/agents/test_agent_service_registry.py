@@ -612,6 +612,46 @@ class TestDeleteSession:
         assert exc.value.status_code == 404
         service._sessions_delete.assert_not_called()
 
+    @pytest.mark.anyio
+    async def test_a_running_chat_is_not_deleted(self, service, registry):
+        # Deleting the session would kill the live run at its next event.
+        registry.get.return_value = _row("s1")
+        service._sessions_get = AsyncMock(return_value=_session())
+        service._sessions_delete = AsyncMock()
+
+        module._mark_run_started("s1")
+        try:
+            with pytest.raises(HTTPException) as exc:
+                await service.delete_session(USER, "s1", "7", _request())
+        finally:
+            module._mark_run_finished("s1")
+
+        assert (exc.value.status_code, exc.value.detail) == (
+            409,
+            module.BUSY_CHAT_DELETE_DETAIL,
+        )
+        service._sessions_delete.assert_not_called()
+        registry.delete.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_another_users_running_chat_is_still_refused_as_forbidden(
+        self, service, registry
+    ):
+        # The run guard comes after the owner check: a 409 would tell another
+        # user that the chat is running.
+        registry.get.return_value = _row("s1", user_id=99)
+        service._sessions_delete = AsyncMock()
+
+        module._mark_run_started("s1")
+        try:
+            with pytest.raises(HTTPException) as exc:
+                await service.delete_session(USER, "s1", "7", _request())
+        finally:
+            module._mark_run_finished("s1")
+
+        assert exc.value.status_code == 403
+        service._sessions_delete.assert_not_called()
+
 
 class TestOwnerOnlySessions:
     """Another user's session is refused even when Agent Engine returns it."""
