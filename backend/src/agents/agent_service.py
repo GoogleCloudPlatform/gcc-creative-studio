@@ -1301,6 +1301,7 @@ class AgentService:
                 title=row.title,
                 summary=row.summary,
                 expired=True,
+                restored=row.restored_at is not None,
             )
             for row in rows
         ]

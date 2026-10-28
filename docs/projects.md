@@ -58,6 +58,7 @@ There are deliberately no ORM relationships on `Project`. Deletes rely on the fo
   - The project filter and the agent (`app_name`, `NULL` = `ads_x`) apply.
   - The flag is opt-in, so every other caller keeps the exact listing.
   - An expired chat that still owns one of the caller's storyboards is flagged `restorable` (`StoryboardRepository.session_ids_with_storyboards`, one query for the whole listing).
+  - A restored chat whose new session expired too keeps `restored: true` (`restored_at` is never cleared), like every DTO built from a registry row.
 - **Titles** live in the registry (`PATCH /api/agent/sessions/{id}`). Old `izumi_topics` localStorage entries are imported once, and an entry is removed only after the server has saved it.
   - A title is generated only when the chat has neither a `topics` entry (kept in memory for the visit) nor a server `title`. Without both checks, `generateTitle` would run on every message and keep renaming the chat.
   - The title callbacks use the session id captured when the message was sent.

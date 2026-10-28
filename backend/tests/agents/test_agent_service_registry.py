@@ -410,6 +410,30 @@ class TestExpiredSessions:
 
         service.storyboard_repo.session_ids_with_storyboards.assert_not_called()
 
+    @pytest.mark.anyio
+    async def test_a_restored_chat_that_expired_again_stays_restored(
+        self, service, registry
+    ):
+        # A restored chat runs on a new agent session, which can expire too;
+        # its row keeps ``restored_at`` (a restore never clears the mark).
+        registry.map_for_user_workspace.return_value = {
+            "restored": _row(
+                "restored",
+                last_used_at=_at(1_780_100_000),
+                restored_at=_at(1_780_100_000),
+            ),
+            "plain": _row("plain", last_used_at=_at(1_780_000_000)),
+        }
+
+        result = await service._apply_session_registry(
+            USER, 10, [], include_expired=True
+        )
+
+        assert [(d.id, d.expired, d.restored) for d in result] == [
+            ("restored", True, True),
+            ("plain", True, False),
+        ]
+
 
 class TestListAndCreateSessions:
     """``list_sessions`` and ``create_session`` with a project."""
