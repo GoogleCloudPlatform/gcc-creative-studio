@@ -68,6 +68,7 @@
             type="button"
             class="icon-button"
             aria-label="Cancel renaming"
+            [disabled]="saving()"
             (click)="cancelDraft($event)"
           >
             <mat-icon>close</mat-icon>
@@ -156,6 +157,7 @@
           type="button"
           class="icon-button"
           aria-label="Cancel"
+          [disabled]="saving()"
           (click)="cancelDraft($event)"
         >
           <mat-icon>close</mat-icon>

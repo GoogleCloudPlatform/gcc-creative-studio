@@ -183,6 +183,11 @@ export class ProjectSwitcherComponent {
    */
   cancelDraft(event?: Event): void {
     event?.stopPropagation();
+    // The request in flight cannot be withdrawn, and its outcome closes the
+    // editor (or keeps it open to fix the name).
+    if (this.saving()) {
+      return;
+    }
     const opener = this.editorOpenerId();
     this.resetDraft();
     if (opener) {

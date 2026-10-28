@@ -20,7 +20,7 @@ import {ApplicationRef, computed, signal} from '@angular/core';
 import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {MatDialog} from '@angular/material/dialog';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
-import {of, throwError} from 'rxjs';
+import {Subject, of, throwError} from 'rxjs';
 import {Project} from '../../../common/models/project.model';
 import {ProjectStateService} from '../../services/project-state.service';
 import {ProjectSwitcherComponent} from './project-switcher.component';
@@ -282,6 +282,48 @@ describe('ProjectSwitcherComponent', () => {
 
     expect(component.editingId()).toBe(2);
     expect(component.saving()).toBeFalse();
+  });
+
+  it('keeps the rename editor while the save is in flight', () => {
+    const pending = new Subject<Project>();
+    state.renameProject.and.returnValue(pending);
+    openMenu();
+    inMenu<HTMLElement>('#project-edit-2')!.click();
+    fixture.detectChanges();
+    component.draftName.set('Spring launch');
+    keydown(inMenu('#project-rename-2')!, 'Enter');
+
+    // The PATCH cannot be withdrawn: neither Cancel nor Escape drop it.
+    const cancel = inMenu<HTMLButtonElement>('[aria-label="Cancel renaming"]')!;
+    expect(cancel.disabled).toBeTrue();
+    keydown(inMenu('#project-rename-2')!, 'Escape');
+    expect(component.editingId()).toBe(2);
+
+    pending.next(project(2, 'Spring launch'));
+    expect(component.editingId()).toBeNull();
+    expect(component.saving()).toBeFalse();
+  });
+
+  it('keeps the new-project editor while the create is in flight', () => {
+    const pending = new Subject<Project | null>();
+    state.createProject.and.returnValue(pending);
+    openMenu();
+    inMenu<HTMLElement>('#project-new-button')!.click();
+    fixture.detectChanges();
+    component.draftName.set('Holiday campaign');
+    keydown(inMenu('#project-new-input')!, 'Enter');
+
+    // Dropping the editor would not stop the project from being created
+    // and entered once the POST answers.
+    const cancel = inMenu<HTMLButtonElement>('[aria-label="Cancel"]')!;
+    expect(cancel.disabled).toBeTrue();
+    component.cancelDraft();
+    expect(component.isCreating()).toBeTrue();
+
+    pending.next(project(3, 'Holiday campaign'));
+    fixture.detectChanges();
+    expect(component.isCreating()).toBeFalse();
+    expect(trigger().getAttribute('aria-expanded')).toBe('false');
   });
 
   it('deletes only after confirmation', () => {
