@@ -401,6 +401,7 @@ describe('AgentChatService projects and chat titles', () => {
     });
 
     it('keeps an entry whose import failed, for a later retry', () => {
+      spyOn(console, 'warn');
       localStorage.setItem('izumi_topics', JSON.stringify({s1: 'Old title'}));
 
       service.importLegacyTitles([untitled('s1')]);
@@ -409,6 +410,15 @@ describe('AgentChatService projects and chat titles', () => {
         .flush({detail: 'boom'}, {status: 500, statusText: 'Server Error'});
 
       expect(localStorage.getItem('izumi_topics')).toContain('Old title');
+      expect(console.warn).toHaveBeenCalled();
+
+      // The failed import is no longer in flight: a later load retries it.
+      service.importLegacyTitles([untitled('s1')]);
+      const retry = http.expectOne(req => req.url.endsWith('/sessions/s1'));
+      expect(retry.request.body).toEqual({title: 'Old title'});
+      retry.flush({id: 's1', title: 'Old title'});
+
+      expect(localStorage.getItem('izumi_topics')).toBeNull();
     });
 
     it('removes the key once the last entry is imported', () => {
