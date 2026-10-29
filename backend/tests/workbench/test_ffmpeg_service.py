@@ -97,9 +97,11 @@ async def test_stitch_timeline_flow(ffmpeg_service):
             out_path, temp_dir = await ffmpeg_service.stitch_timeline(
                 timeline, mock_dl
             )
-            assert out_path.endswith("output.mp4")
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
+            try:
+                assert out_path.endswith("output.mp4")
+            finally:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
 
 
 @pytest.mark.anyio
@@ -145,15 +147,17 @@ async def test_stitch_timeline_wipe_left_transition(ffmpeg_service):
             out_path, temp_dir = await ffmpeg_service.stitch_timeline(
                 timeline, mock_dl
             )
-            assert out_path.endswith("output.mp4")
-            # Verify ffmpeg command contained mapped transition=wipeleft
-            called_args = mock_sub.call_args[0][0]
-            filter_str = "".join(called_args)
-            assert "transition=wipeleft" in filter_str
-            assert "duration=0.5" in filter_str
-            assert "offset=1.75" in filter_str
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
+            try:
+                assert out_path.endswith("output.mp4")
+                # Verify ffmpeg command contained mapped transition=wipeleft
+                called_args = mock_sub.call_args[0][0]
+                filter_str = "".join(called_args)
+                assert "transition=wipeleft" in filter_str
+                assert "duration=0.5" in filter_str
+                assert "offset=1.75" in filter_str
+            finally:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
 
 
 @pytest.mark.anyio
@@ -201,15 +205,20 @@ async def test_stitch_timeline_wipe_intro_outro_use_the_clip_timebase(
             _, temp_dir = await ffmpeg_service.stitch_timeline(
                 timeline, AsyncMock()
             )
-            called_args = mock_sub.call_args[0][0]
-            filter_str = called_args[called_args.index("-filter_complex") + 1]
-            assert "format=yuv420p,settb=AVTB[v_in_black]" in filter_str
-            assert "format=yuv420p,settb=AVTB[v_out_black]" in filter_str
-            assert "transition=wipeleft:duration=0.5:offset=0[v_fadein]" in (
-                filter_str
-            )
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
+            try:
+                called_args = mock_sub.call_args[0][0]
+                filter_str = called_args[
+                    called_args.index("-filter_complex") + 1
+                ]
+                assert "format=yuv420p,settb=AVTB[v_in_black]" in filter_str
+                assert "format=yuv420p,settb=AVTB[v_out_black]" in filter_str
+                assert (
+                    "transition=wipeleft:duration=0.5:offset=0[v_fadein]"
+                    in filter_str
+                )
+            finally:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
 
 
 @pytest.mark.anyio
@@ -269,21 +278,25 @@ async def test_stitch_timeline_applies_audio_clip_volume(ffmpeg_service):
             _, temp_dir = await ffmpeg_service.stitch_timeline(
                 timeline, mock_dl
             )
-            called_args = mock_sub.call_args[0][0]
-            filter_str = called_args[called_args.index("-filter_complex") + 1]
+            try:
+                called_args = mock_sub.call_args[0][0]
+                filter_str = called_args[
+                    called_args.index("-filter_complex") + 1
+                ]
 
-            # Music (clip 0): fades, then gain, then placement.
-            assert "volume=0.2[a0_volume]" in filter_str
-            assert "[a0_fadeout]volume=0.2[a0_volume]" in filter_str
-            assert "[a0_volume]adelay=0:all=1[a0_delayed]" in filter_str
-            # Voiceover (clip 1) is at unity: no redundant volume filter.
-            assert "[a1_volume]" not in filter_str
-            # (inputs: [0]=video, [1]=music, [2]=voiceover)
-            assert "[2:a]adelay=1000:all=1[a1_delayed]" in filter_str
-            # Both still reach the mix.
-            assert "[a0_delayed][a1_delayed]amix=inputs=2" in filter_str
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
+                # Music (clip 0): fades, then gain, then placement.
+                assert "volume=0.2[a0_volume]" in filter_str
+                assert "[a0_fadeout]volume=0.2[a0_volume]" in filter_str
+                assert "[a0_volume]adelay=0:all=1[a0_delayed]" in filter_str
+                # Voiceover (clip 1) is at unity: no redundant volume filter.
+                assert "[a1_volume]" not in filter_str
+                # (inputs: [0]=video, [1]=music, [2]=voiceover)
+                assert "[2:a]adelay=1000:all=1[a1_delayed]" in filter_str
+                # Both still reach the mix.
+                assert "[a0_delayed][a1_delayed]amix=inputs=2" in filter_str
+            finally:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
 
 
 @pytest.mark.anyio
@@ -349,43 +362,48 @@ async def test_stitch_timeline_transitions_do_not_shorten_the_render(
             _, temp_dir = await ffmpeg_service.stitch_timeline(
                 timeline, mock_dl
             )
-            called_args = mock_sub.call_args[0][0]
-            filter_str = called_args[called_args.index("-filter_complex") + 1]
+            try:
+                called_args = mock_sub.call_args[0][0]
+                filter_str = called_args[
+                    called_args.index("-filter_complex") + 1
+                ]
 
-            # Handles: only the clips touching a fade are padded, by t/2 on
-            # the side that touches it.
-            assert "[norm_v0]tpad" not in filter_str
-            assert (
-                "[norm_v1]tpad=stop_mode=clone:stop_duration=0.5[pad_v1]"
-                in filter_str
-            )
-            assert (
-                "[norm_v2]tpad=start_mode=clone:start_duration=0.5:"
-                "stop_mode=clone:stop_duration=0.5[pad_v2]" in filter_str
-            )
-            assert (
-                "[norm_v3]tpad=start_mode=clone:start_duration=0.5[pad_v3]"
-                in filter_str
-            )
-            # Joint 0 has no transition: plain concat of the unpadded clip.
-            assert "[norm_v0][pad_v1]concat=n=2:v=1:a=0[v1]" in filter_str
-            # Fades are centred on the cuts at 10 s and 15 s.
-            assert (
-                "[v1][pad_v2]xfade=transition=fade:duration=1.0:offset=9.5[v2]"
-                in filter_str
-            )
-            assert (
-                "[v2][pad_v3]xfade=transition=fade:duration=1.0:offset=14.5[v3]"
-                in filter_str
-            )
-            # The voiceover keeps its absolute spot and the mix is trimmed to
-            # the full 20 s, not 18.
-            assert "adelay=15000:all=1" in filter_str
-            assert "atrim=duration=20.0,asetpts=PTS-STARTPTS[audio_final]" in (
-                filter_str
-            )
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
+                # Handles: only the clips touching a fade are padded, by t/2 on
+                # the side that touches it.
+                assert "[norm_v0]tpad" not in filter_str
+                assert (
+                    "[norm_v1]tpad=stop_mode=clone:stop_duration=0.5[pad_v1]"
+                    in filter_str
+                )
+                assert (
+                    "[norm_v2]tpad=start_mode=clone:start_duration=0.5:"
+                    "stop_mode=clone:stop_duration=0.5[pad_v2]" in filter_str
+                )
+                assert (
+                    "[norm_v3]tpad=start_mode=clone:start_duration=0.5[pad_v3]"
+                    in filter_str
+                )
+                # Joint 0 has no transition: plain concat of the unpadded clip.
+                assert "[norm_v0][pad_v1]concat=n=2:v=1:a=0[v1]" in filter_str
+                # Fades are centred on the cuts at 10 s and 15 s.
+                assert (
+                    "[v1][pad_v2]xfade=transition=fade:"
+                    "duration=1.0:offset=9.5[v2]" in filter_str
+                )
+                assert (
+                    "[v2][pad_v3]xfade=transition=fade:"
+                    "duration=1.0:offset=14.5[v3]" in filter_str
+                )
+                # The voiceover keeps its absolute spot and the mix is trimmed
+                # to the full 20 s, not 18.
+                assert "adelay=15000:all=1" in filter_str
+                assert (
+                    "atrim=duration=20.0,asetpts=PTS-STARTPTS[audio_final]"
+                    in filter_str
+                )
+            finally:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
 
 
 @pytest.mark.anyio
@@ -434,14 +452,19 @@ async def test_stitch_timeline_transition_is_capped_by_the_shorter_clip(
             _, temp_dir = await ffmpeg_service.stitch_timeline(
                 timeline, mock_dl
             )
-            called_args = mock_sub.call_args[0][0]
-            filter_str = called_args[called_args.index("-filter_complex") + 1]
+            try:
+                called_args = mock_sub.call_args[0][0]
+                filter_str = called_args[
+                    called_args.index("-filter_complex") + 1
+                ]
 
-            # Capped to the 1 s clip: 0.5 s handles, fade centred on the 5 s cut.
-            assert "stop_duration=0.5[pad_v0]" in filter_str
-            assert "start_duration=0.5[pad_v1]" in filter_str
-            assert "xfade=transition=fade:duration=1.0:offset=4.5[v1]" in (
-                filter_str
-            )
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
+                # Capped to the 1 s clip: 0.5 s handles, fade centred on
+                # the 5 s cut.
+                assert "stop_duration=0.5[pad_v0]" in filter_str
+                assert "start_duration=0.5[pad_v1]" in filter_str
+                assert "xfade=transition=fade:duration=1.0:offset=4.5[v1]" in (
+                    filter_str
+                )
+            finally:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
