@@ -394,6 +394,7 @@ def _registry_row(user_id=1, title=None, summary=None, last_used_at=None):
         session_id="session_1",
         project_id=7,
         user_id=user_id,
+        workspace_id=1,
         app_name="ads_x",
         title=title,
         summary=summary,

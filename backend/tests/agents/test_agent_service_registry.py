@@ -940,6 +940,26 @@ class TestUpdateSessionMetadata:
 
         assert exc.value.status_code == 403
         registry.update_metadata.assert_not_called()
+        service.workspace_auth.authorize.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_a_chat_in_a_refused_workspace_is_403(
+        self, service, registry
+    ):
+        # Owning the chat is not enough once its workspace is out of reach.
+        registry.get.return_value = _row("s1")
+        service.workspace_auth.authorize.side_effect = HTTPException(
+            status_code=403, detail="Not a member"
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await service.update_session_metadata(USER, "s1", title="x")
+
+        assert exc.value.status_code == 403
+        service.workspace_auth.authorize.assert_awaited_once_with(
+            workspace_id=10, user=USER
+        )
+        registry.update_metadata.assert_not_called()
 
     @pytest.mark.anyio
     async def test_values_are_trimmed_and_the_updated_row_returned(

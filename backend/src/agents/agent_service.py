@@ -1495,6 +1495,11 @@ class AgentService:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have permission to modify this chat.",
             )
+        # Like the other chat paths: owning the chat is not enough once
+        # access to its workspace is gone.
+        await self.workspace_auth.authorize(
+            workspace_id=row.workspace_id, user=current_user
+        )
         clean_title = title.strip() if title else None
         clean_summary = summary.strip() if summary else None
         updated = await self.agent_session_repo.update_metadata(
