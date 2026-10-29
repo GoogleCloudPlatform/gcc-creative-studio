@@ -104,6 +104,10 @@ export class ProjectSwitcherComponent {
 
   startRename(event: Event, project: Project): void {
     event.stopPropagation();
+    // The save in flight still needs its editor (see `cancelDraft()`).
+    if (this.saving()) {
+      return;
+    }
     this.isCreating.set(false);
     this.editingId.set(project.id);
     this.draftName.set(project.name);
@@ -111,6 +115,10 @@ export class ProjectSwitcherComponent {
 
   startCreate(event: Event): void {
     event.stopPropagation();
+    // The save in flight still needs its editor (see `cancelDraft()`).
+    if (this.saving()) {
+      return;
+    }
     this.editingId.set(null);
     this.isCreating.set(true);
     this.draftName.set('');

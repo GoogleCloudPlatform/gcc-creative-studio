@@ -97,6 +97,14 @@ describe('ProjectSwitcherComponent', () => {
     TestBed.inject(ApplicationRef).tick();
   }
 
+  /** A menu item as the user meets it: disabled, and looking it, or not. */
+  const enabledItem = {disabled: false, cursor: 'pointer'};
+  const disabledItem = {disabled: true, cursor: 'default'};
+  function itemState(selector: string): typeof enabledItem {
+    const item = inMenu<HTMLButtonElement>(selector)!;
+    return {disabled: item.disabled, cursor: getComputedStyle(item).cursor};
+  }
+
   beforeEach(async () => {
     projects.set([project(1, 'Default project', true), project(2, 'Launch')]);
     activeProjectId.set(1);
@@ -324,6 +332,62 @@ describe('ProjectSwitcherComponent', () => {
     fixture.detectChanges();
     expect(component.isCreating()).toBeFalse();
     expect(trigger().getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('opens no other editor while a rename is in flight', () => {
+    const pending = new Subject<Project>();
+    state.renameProject.and.returnValue(pending);
+    openMenu();
+    inMenu<HTMLElement>('#project-edit-2')!.click();
+    fixture.detectChanges();
+    component.draftName.set('Spring launch');
+    keydown(inMenu('#project-rename-2')!, 'Enter');
+
+    // The answer closes whichever editor is open by then.
+    expect(itemState('#project-edit-1')).toEqual(disabledItem);
+    expect(itemState('#project-new-button')).toEqual(disabledItem);
+    component.startRename(new Event('click'), projects()[0]);
+    expect(component.editingId()).toBe(2);
+    component.startCreate(new Event('click'));
+    expect(component.isCreating()).toBeFalse();
+    expect(component.draftName()).toBe('Spring launch');
+
+    pending.next(project(2, 'Spring launch'));
+    fixture.detectChanges();
+    render();
+    expect(component.editingId()).toBeNull();
+    expect(itemState('#project-edit-1')).toEqual(enabledItem);
+    expect(itemState('#project-new-button')).toEqual(enabledItem);
+    expect(document.activeElement?.id).toBe('project-edit-2');
+  });
+
+  it('opens no other editor while a create is in flight', () => {
+    spyOn(console, 'error');
+    const pending = new Subject<Project | null>();
+    state.createProject.and.returnValue(pending);
+    openMenu();
+    inMenu<HTMLElement>('#project-new-button')!.click();
+    fixture.detectChanges();
+    component.draftName.set('Holiday campaign');
+    keydown(inMenu('#project-new-input')!, 'Enter');
+
+    expect(itemState('#project-edit-2')).toEqual(disabledItem);
+    component.startRename(new Event('click'), projects()[1]);
+    expect(component.editingId()).toBeNull();
+    expect(component.isCreating()).toBeTrue();
+
+    // A refused name is still there to fix.
+    const refusal = {status: 422, error: {detail: 'Invalid name'}};
+    pending.error(refusal);
+    fixture.detectChanges();
+    expect(console.error).toHaveBeenCalledWith(
+      'Create project error:',
+      refusal,
+    );
+    expect(component.isCreating()).toBeTrue();
+    expect(component.draftName()).toBe('Holiday campaign');
+    expect(component.saving()).toBeFalse();
+    expect(itemState('#project-edit-2')).toEqual(enabledItem);
   });
 
   it('deletes only after confirmation', () => {

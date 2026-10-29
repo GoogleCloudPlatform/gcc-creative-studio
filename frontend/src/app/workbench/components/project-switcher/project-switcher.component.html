@@ -104,6 +104,7 @@
               [id]="'project-edit-' + project.id"
               matTooltip="Rename"
               [attr.aria-label]="'Rename ' + project.name"
+              [disabled]="saving()"
               (click)="startRename($event, project)"
             >
               <mat-icon>edit</mat-icon>
@@ -169,6 +170,7 @@
         type="button"
         id="project-new-button"
         class="new-project-button"
+        [disabled]="saving()"
         (click)="startCreate($event)"
       >
         <mat-icon>add</mat-icon>
