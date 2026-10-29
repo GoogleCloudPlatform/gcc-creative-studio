@@ -186,8 +186,9 @@ The chat spec's `getActiveWorkspaceId` mock returns `null` on its first call, wh
   - `loads the chat when the panel was opened before the project entry`;
   - `does not fetch a chat that is already loaded again`;
   - `keeps the timeline the URL names when a project is entered`;
-  - `when the chat the URL names is gone`;
-  - `expired chats` (with `with a storyboard (restorable)`, and `StudioDropdownComponent option states`);
+  - `when the chat the URL names is gone`.
+- **Chat, outside `Projects`:**
+  - `expired chats` and its nested `with a storyboard (restorable)`, plus `StudioDropdownComponent option states` in the `studio-dropdown` spec;
   - `restored chats`;
   - `listener lifecycle`.
 
