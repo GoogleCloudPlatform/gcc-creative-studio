@@ -1129,6 +1129,12 @@ class AgentService:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="Session not found",
                     )
+                # An expired chat has no session state to name its workspace:
+                # the registry row's workspace is checked instead.
+                await self.workspace_auth.authorize(
+                    workspace_id=registry_row.workspace_id,
+                    user=current_user,
+                )
             else:
                 self._ensure_session_owner(session, user_id)
                 s_state = getattr(session, "session_state", None)

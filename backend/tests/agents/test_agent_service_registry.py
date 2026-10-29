@@ -580,8 +580,33 @@ class TestDeleteSession:
         result = await service.delete_session(USER, "s1", "7", _request())
 
         assert result == {"status": "success"}
+        service.workspace_auth.authorize.assert_awaited_once_with(
+            workspace_id=10, user=USER
+        )
         service._sessions_delete.assert_not_called()
         registry.delete.assert_awaited_once_with("s1")
+
+    @pytest.mark.anyio
+    async def test_a_refused_workspace_keeps_a_gone_chats_row(
+        self, service, registry
+    ):
+        # With the session gone, only the row names the chat's workspace.
+        registry.get.return_value = _row("s1")
+        service._sessions_get = AsyncMock(return_value=None)
+        service._sessions_delete = AsyncMock()
+        service.workspace_auth.authorize.side_effect = HTTPException(
+            status_code=403, detail="Not a member"
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await service.delete_session(USER, "s1", "7", _request())
+
+        assert exc.value.status_code == 403
+        service.workspace_auth.authorize.assert_awaited_once_with(
+            workspace_id=10, user=USER
+        )
+        service._sessions_delete.assert_not_called()
+        registry.delete.assert_not_called()
 
     @pytest.mark.anyio
     async def test_an_unregistered_chat_of_another_user_is_refused(
