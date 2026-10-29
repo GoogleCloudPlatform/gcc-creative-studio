@@ -22,7 +22,12 @@ import {
   fakeAsync,
   tick,
 } from '@angular/core/testing';
-import {FormBuilder, FormGroup, ReactiveFormsModule} from '@angular/forms';
+import {
+  AbstractControl,
+  FormBuilder,
+  FormGroup,
+  ReactiveFormsModule,
+} from '@angular/forms';
 import {MatDialog} from '@angular/material/dialog';
 import {MatFormFieldModule} from '@angular/material/form-field';
 import {MatInputModule} from '@angular/material/input';
@@ -39,6 +44,7 @@ import {collectReferenceEdges} from '../utils/workflow-loop.util';
 import {
   DynamicStepRecord,
   NodeTypes,
+  StepInputUnlinkEvent,
   StepOutputReference,
   StepStatusEnum,
   WorkflowTemplate,
@@ -1848,6 +1854,126 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
 
       expect(inputPos).toEqual({x: 300, y: 227});
       expect(outputPos).toEqual({x: 700, y: 227});
+    });
+  });
+
+  describe('onUnlinkInput', () => {
+    /** Private editor members the specs need to stub or observe. */
+    interface WorkflowEditorInternals {
+      updateEdges(): void;
+      getPortPosition(
+        stepId: string,
+        portName: string,
+        portType: string,
+      ): {x: number; y: number} | null;
+    }
+
+    const imageStepId = 'image_step_1';
+    const inputName = 'input_images';
+    const refA: StepOutputReference = {
+      step: 'src_a',
+      output: 'generated_image',
+    };
+    const refB: StepOutputReference = {
+      step: 'src_b',
+      output: 'generated_image',
+    };
+    const unlinkEvent: StepInputUnlinkEvent = {
+      stepId: imageStepId,
+      inputName,
+      ref: refA,
+    };
+    let editorInternals: WorkflowEditorInternals;
+
+    /** Looks the control up by step id; undo rebuilds the steps array. */
+    function findInputControl(): AbstractControl | null {
+      const stepForm = component.stepsArray.controls.find(
+        control => control.get('stepId')?.value === imageStepId,
+      );
+      return stepForm?.get(`inputs.${inputName}`) ?? null;
+    }
+
+    beforeEach(() => {
+      editorInternals = component as unknown as WorkflowEditorInternals;
+      spyOn(editorInternals, 'getPortPosition').and.returnValue({x: 5, y: 5});
+      formService.addStep(NodeTypes.IMAGE, {
+        stepId: imageStepId,
+        type: NodeTypes.IMAGE,
+        collapsed: false,
+        inputs: {[inputName]: [refA, refB]},
+        outputs: {},
+        settings: {},
+      });
+      editorInternals.updateEdges();
+      component.saveHistoryState();
+    });
+
+    it('removes only the selected reference from the input', () => {
+      component.onUnlinkInput(unlinkEvent);
+
+      expect(findInputControl()?.value).toEqual([refB]);
+    });
+
+    it('marks the input control as dirty', () => {
+      component.onUnlinkInput(unlinkEvent);
+
+      expect(findInputControl()?.dirty).toBeTrue();
+    });
+
+    it('calls updateEdges', () => {
+      const updateEdgesSpy = spyOn(
+        editorInternals,
+        'updateEdges',
+      ).and.callThrough();
+
+      component.onUnlinkInput(unlinkEvent);
+
+      expect(updateEdgesSpy).toHaveBeenCalled();
+    });
+
+    it('calls saveHistoryState once', () => {
+      const saveHistoryStateSpy = spyOn(
+        component,
+        'saveHistoryState',
+      ).and.callThrough();
+
+      component.onUnlinkInput(unlinkEvent);
+
+      expect(saveHistoryStateSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('drops the edge count by 1', () => {
+      const edgeCountBefore = component.edges.length;
+
+      component.onUnlinkInput(unlinkEvent);
+
+      expect(component.edges.length).toBe(edgeCountBefore - 1);
+    });
+
+    it('restores the reference on undo', fakeAsync(() => {
+      const edgeCountBefore = component.edges.length;
+      component.onUnlinkInput(unlinkEvent);
+
+      component.undo();
+      tick(500);
+
+      expect(findInputControl()?.value).toEqual([refA, refB]);
+      expect(component.edges.length).toBe(edgeCountBefore);
+      discardPeriodicTasks();
+    }));
+
+    it('does nothing in EditorMode.Run (read-only)', () => {
+      component.mode = EditorMode.Run;
+      const updateEdgesSpy = spyOn(editorInternals, 'updateEdges');
+      const saveHistoryStateSpy = spyOn(component, 'saveHistoryState');
+
+      component.onUnlinkInput(unlinkEvent);
+
+      const control = findInputControl();
+      expect(control?.value).toEqual([refA, refB]);
+      expect(control?.dirty).toBeFalse();
+      expect(updateEdgesSpy).not.toHaveBeenCalled();
+      expect(saveHistoryStateSpy).not.toHaveBeenCalled();
     });
   });
 

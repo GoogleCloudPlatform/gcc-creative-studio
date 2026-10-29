@@ -33,6 +33,7 @@ import {
   nameToLabel,
 } from '../utils/workflow-step.util';
 import {
+  AvailableOutput,
   DynamicStepRecord,
   LoopItemType,
   LoopMode,
@@ -540,7 +541,7 @@ export class WorkflowFormService {
     const availableOutputsPerStep = steps.map((_, currentStepIndex) => {
       // Allow connecting to any node except itself to avoid immediate self-loops
       const otherSteps = steps.filter((_, idx) => idx !== currentStepIndex);
-      const availableOutputs: any[] = [...userInputOutputs];
+      const availableOutputs: AvailableOutput[] = [...userInputOutputs];
 
       otherSteps.forEach(stepControl => {
         const step = stepControl.value;

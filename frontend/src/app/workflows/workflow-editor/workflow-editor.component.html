@@ -378,6 +378,7 @@
               >
                 <app-generic-step
                   class="absolute"
+                  (unlink)="onUnlinkInput($event)"
                   [attr.data-node-id]="step.value.stepId"
                   [style.left.px]="getNodePosition(step.value.stepId).x"
                   [style.top.px]="getNodePosition(step.value.stepId).y"

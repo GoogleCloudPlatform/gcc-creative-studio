@@ -26,16 +26,28 @@ export enum NodeTypes {
   LOOP = 'loop',
 }
 
+export type AvailableOutput = {
+  label: string;
+  value: StepOutputReference;
+  type: string;
+};
+
 export interface StepOutputReference {
   step: string;
   output: string;
   _definitionId?: string;
 }
 
+export interface StepInputUnlinkEvent {
+  stepId: string;
+  inputName: string;
+  ref: StepOutputReference;
+}
+
 export type StepInputValue =
   | null
   | StepOutputReference
-  | (StepOutputReference | ReferenceImage)[];
+  | MixedStepOutputValue[];
 
 export enum StepStatusEnum {
   IDLE = 'idle',
@@ -86,13 +98,13 @@ export type LoopMode = 'folder' | 'text_input' | 'linked_items';
 export type LoopItemType = 'image' | 'video' | 'audio';
 
 /** One Linked Items entry: a wired upstream output or a Media Gallery pick. */
-export type LoopLinkedItem = StepOutputReference | ReferenceImage;
+export type MixedStepOutputValue = StepOutputReference | ReferenceImage;
 
 export interface LoopInputs {
   /** Comma-separated items (fixed text or a linked text output). Used in `text_input` mode. */
   items_text: string | StepOutputReference | null;
   /** Linked Items mode: wired outputs and gallery picks, in iteration order. */
-  linked_items: LoopLinkedItem[] | null;
+  linked_items: MixedStepOutputValue[] | null;
   /** Back-edge from the loop end step's `loop_ending` output. */
   loop_ending: StepOutputReference | null;
 }
