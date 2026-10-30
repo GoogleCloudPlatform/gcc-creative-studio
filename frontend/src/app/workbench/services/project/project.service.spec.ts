@@ -136,12 +136,16 @@ describe('ProjectService', () => {
   });
 
   it('should resolve a project by storyboard_id or timeline_id', () => {
-    service.resolve({storyboard_id: 14}).subscribe();
+    service.resolve({storyboard_id: 14}).subscribe(project => {
+      expect(project).toEqual(mockProject);
+    });
     httpTestingController
       .expectOne(`${environment.backendURL}/projects/resolve?storyboard_id=14`)
       .flush(mockProject);
 
-    service.resolve({timeline_id: 42}).subscribe();
+    service.resolve({timeline_id: 42}).subscribe(project => {
+      expect(project).toEqual(mockProject);
+    });
     httpTestingController
       .expectOne(`${environment.backendURL}/projects/resolve?timeline_id=42`)
       .flush(mockProject);
