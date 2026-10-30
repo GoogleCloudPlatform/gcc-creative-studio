@@ -18,10 +18,13 @@ import os
 import tempfile
 from unittest.mock import AsyncMock
 import pytest
-from fastapi import status
+from fastapi import HTTPException, status
 
 from main import app
+from src.projects.dto.project_dto import ProjectResponse
+from src.projects.project_service import ProjectService
 from src.workbench.dto.workbench_dto import TimelineResponse
+from src.workbench.timeline_auth_guard import TimelineAccess, TimelineAuth
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.common.base_dto import (
     GenerationModelEnum,
@@ -38,10 +41,38 @@ from src.common.schema.media_item_model import (
 from src.workbench.workbench_service import WorkbenchService
 
 
+def _project(project_id=7, workspace_id=1):
+    return ProjectResponse(
+        id=project_id, workspace_id=workspace_id, owner_id=1, name="P"
+    )
+
+
 @pytest.fixture(name="mock_workbench_service")
 def fixture_mock_workbench_service():
     """Provides a mocked WorkbenchService."""
     return AsyncMock()
+
+
+@pytest.fixture(name="mock_timeline_auth")
+def fixture_mock_timeline_auth():
+    """The caller owns every timeline (project 7, storyboard 10)."""
+    timeline_auth = AsyncMock()
+    timeline_auth.authorize.return_value = TimelineAccess(
+        timeline_id=1,
+        project_id=7,
+        storyboard_id=10,
+        user_id="1",
+        workspace_id=1,
+    )
+    return timeline_auth
+
+
+@pytest.fixture(name="mock_project_service")
+def fixture_mock_project_service():
+    project_service = AsyncMock()
+    project_service.resolve_project_for_write.return_value = _project()
+    project_service.authorize_storyboard.return_value = _project()
+    return project_service
 
 
 from fastapi.security import HTTPAuthorizationCredentials
@@ -49,17 +80,24 @@ from src.workbench.workbench_controller import security
 
 
 @pytest.fixture(name="override_workbench_service", autouse=True)
-def fixture_override_workbench_service(mock_workbench_service):
+def fixture_override_workbench_service(
+    mock_workbench_service, mock_timeline_auth, mock_project_service
+):
     """Overrides the WorkbenchService and security dependency in the app."""
     app.dependency_overrides[WorkbenchService] = lambda: mock_workbench_service
+    app.dependency_overrides[TimelineAuth] = lambda: mock_timeline_auth
+    app.dependency_overrides[ProjectService] = lambda: mock_project_service
     app.dependency_overrides[security] = lambda: HTTPAuthorizationCredentials(
         scheme="Bearer", credentials="mock"
     )
     yield
-    if WorkbenchService in app.dependency_overrides:
-        del app.dependency_overrides[WorkbenchService]
-    if security in app.dependency_overrides:
-        del app.dependency_overrides[security]
+    for dependency in (
+        WorkbenchService,
+        TimelineAuth,
+        ProjectService,
+        security,
+    ):
+        app.dependency_overrides.pop(dependency, None)
 
 
 class TestWorkbenchController:
@@ -117,6 +155,54 @@ class TestWorkbenchController:
             ]
             is False
         )
+        # Project, owner and workspace are stamped server-side.
+        created = mock_workbench_service.create_timeline.await_args.args[0]
+        assert created.project_id == 7
+        assert created.user_id == "1"
+        assert created.workspace_id == "1"
+
+    def test_create_timeline_resolves_the_project_from_the_payload(
+        self, api_client, mock_workbench_service, mock_project_service
+    ):
+        mock_workbench_service.create_timeline.return_value = TimelineResponse(
+            timeline_id=1, workspace_id="1", title="New"
+        )
+        payload = {
+            "storyboard_id": "5",
+            "project_id": 7,
+            "session_id": "s1",
+            "workspace_id": "1",
+            "user_id": "999",
+            "title": "New",
+        }
+
+        response = api_client.post("/api/workbench/timelines", json=payload)
+
+        assert response.status_code == status.HTTP_201_CREATED
+        mock_project_service.resolve_project_for_write.assert_awaited_once()
+        call = mock_project_service.resolve_project_for_write.await_args
+        assert call.args[1] == 1
+        assert call.kwargs == {
+            "project_id": 7,
+            "storyboard_id": 5,
+            "session_id": "s1",
+        }
+        # A client-sent owner is never trusted.
+        created = mock_workbench_service.create_timeline.await_args.args[0]
+        assert created.user_id == "1"
+
+    def test_create_timeline_refused_project_is_not_created(
+        self, api_client, mock_workbench_service, mock_project_service
+    ):
+        mock_project_service.resolve_project_for_write.side_effect = (
+            HTTPException(status_code=403, detail="not yours")
+        )
+        payload = {"workspace_id": "1", "title": "New", "project_id": 8}
+
+        response = api_client.post("/api/workbench/timelines", json=payload)
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        mock_workbench_service.create_timeline.assert_not_called()
 
     def test_create_timeline_from_agent_reuses_storyboard_cut(
         self, api_client, mock_workbench_service
@@ -229,3 +315,140 @@ class TestWorkbenchController:
 
         response = api_client.delete("/api/workbench/timelines/999")
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+class TestTimelineAuthorization:
+    """Every timeline-by-id route is owner-scoped (security fix)."""
+
+    def test_foreign_timeline_is_refused_on_every_route(
+        self, api_client, mock_workbench_service, mock_timeline_auth
+    ):
+        mock_timeline_auth.authorize.side_effect = HTTPException(
+            status_code=403, detail="Not authorized to access this timeline"
+        )
+        body = {"workspace_id": "1", "title": "T"}
+
+        responses = [
+            api_client.get("/api/workbench/timelines/4"),
+            api_client.put("/api/workbench/timelines/4", json=body),
+            api_client.delete("/api/workbench/timelines/4"),
+            api_client.post("/api/workbench/timelines/4/render"),
+            api_client.post("/api/workbench/render", json={"timeline_id": 4}),
+        ]
+
+        assert [r.status_code for r in responses] == [403] * 5
+        mock_workbench_service.get_timeline.assert_not_called()
+        mock_workbench_service.update_timeline.assert_not_called()
+        mock_workbench_service.delete_timeline.assert_not_called()
+        mock_workbench_service.render_timeline_by_id.assert_not_called()
+
+    def test_render_without_timeline_id_is_400(self, api_client):
+        response = api_client.post("/api/workbench/render", json={})
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_listing_a_foreign_storyboard_is_refused(
+        self, api_client, mock_workbench_service, mock_project_service
+    ):
+        mock_project_service.authorize_storyboard.side_effect = HTTPException(
+            status_code=403, detail="Not authorized to use this storyboard"
+        )
+
+        response = api_client.get(
+            "/api/workbench/timelines", params={"storyboard_id": 30}
+        )
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        mock_workbench_service.list_timelines.assert_not_called()
+
+    def test_update_stamps_server_side_fields(
+        self, api_client, mock_workbench_service, mock_project_service
+    ):
+        mock_workbench_service.update_timeline.return_value = TimelineResponse(
+            timeline_id=4, workspace_id="1", title="T"
+        )
+        body = {
+            "storyboard_id": 10,
+            "workspace_id": "999",
+            "user_id": "999",
+            "project_id": 999,
+            "title": "T",
+        }
+
+        response = api_client.put("/api/workbench/timelines/4", json=body)
+
+        assert response.status_code == status.HTTP_200_OK
+        updated = mock_workbench_service.update_timeline.await_args.args[1]
+        assert updated.project_id == 7
+        assert updated.user_id == "1"
+        assert updated.workspace_id == "1"
+        # Same storyboard as before: no re-link check needed.
+        mock_project_service.authorize_storyboard.assert_not_called()
+
+    def test_update_refuses_a_storyboard_of_another_project(
+        self, api_client, mock_workbench_service, mock_project_service
+    ):
+        mock_project_service.authorize_storyboard.return_value = _project(8)
+        body = {"storyboard_id": 11, "workspace_id": "1", "title": "T"}
+
+        response = api_client.put("/api/workbench/timelines/4", json=body)
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        mock_workbench_service.update_timeline.assert_not_called()
+
+    def test_update_of_a_legacy_timeline_claims_the_storyboard_project(
+        self,
+        admin_client,
+        mock_workbench_service,
+        mock_project_service,
+        mock_timeline_auth,
+    ):
+        mock_timeline_auth.authorize.return_value = TimelineAccess(
+            timeline_id=4,
+            project_id=None,
+            storyboard_id=None,
+            user_id=None,
+            workspace_id=None,
+        )
+        mock_project_service.authorize_storyboard.return_value = _project(
+            8, workspace_id=5
+        )
+        mock_workbench_service.update_timeline.return_value = TimelineResponse(
+            timeline_id=4, workspace_id="5", title="T"
+        )
+        body = {"storyboard_id": 11, "workspace_id": "3", "title": "T"}
+
+        response = admin_client.put("/api/workbench/timelines/4", json=body)
+
+        assert response.status_code == status.HTTP_200_OK
+        updated = mock_workbench_service.update_timeline.await_args.args[1]
+        assert updated.project_id == 8
+        # The claimed project's workspace wins over the payload's.
+        assert updated.workspace_id == "5"
+
+    def test_update_of_an_unattributed_legacy_timeline_keeps_the_payload(
+        self,
+        admin_client,
+        mock_workbench_service,
+        mock_project_service,
+        mock_timeline_auth,
+    ):
+        mock_timeline_auth.authorize.return_value = TimelineAccess(
+            timeline_id=4,
+            project_id=None,
+            storyboard_id=None,
+            user_id=None,
+            workspace_id=None,
+        )
+        mock_workbench_service.update_timeline.return_value = TimelineResponse(
+            timeline_id=4, workspace_id="3", title="T"
+        )
+        body = {"workspace_id": "3", "title": "T"}
+
+        response = admin_client.put("/api/workbench/timelines/4", json=body)
+
+        assert response.status_code == status.HTTP_200_OK
+        updated = mock_workbench_service.update_timeline.await_args.args[1]
+        assert updated.project_id is None
+        # No owning project to follow: the payload's value is kept.
+        assert updated.workspace_id == "3"
+        mock_project_service.authorize_storyboard.assert_not_called()

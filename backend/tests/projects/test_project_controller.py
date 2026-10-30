@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Storyboard controller: agent/human routing of create and update."""
+"""Storyboard controller: by-id authorization, agent/human create and update."""
 
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi import status
+from fastapi import HTTPException, status
 
 from main import app
 from src.agents.agent_service import AgentService
@@ -67,6 +67,28 @@ def fixture_as_agent():
     is_agent_request.reset(token)
 
 
+class TestListStoryboards:
+    """GET /api/storyboards is scoped to the caller."""
+
+    def test_lists_only_the_callers_storyboards(
+        self, api_client, mock_project_service
+    ):
+        mock_project_service.list_storyboards_for_user.return_value = [
+            _storyboard()
+        ]
+
+        res = api_client.get(
+            "/api/storyboards", params={"workspace_id": 10, "session_id": "s1"}
+        )
+
+        assert res.status_code == status.HTTP_200_OK
+        assert [s["id"] for s in res.json()] == [14]
+        user, workspace_id, session_id = (
+            mock_project_service.list_storyboards_for_user.await_args.args
+        )
+        assert (user.id, workspace_id, session_id) == (1, 10, "s1")
+
+
 class TestCreateStoryboard:
     def test_human_create_never_reuses(self, api_client, mock_project_service):
         mock_project_service.create_storyboard.return_value = (
@@ -93,11 +115,81 @@ class TestCreateStoryboard:
         assert kwargs["reuse_session_record"] is True
 
 
+class TestStoryboardById:
+    """GET and DELETE /api/storyboards/{id} authorize before anything else."""
+
+    def test_get_authorizes_before_loading(
+        self, api_client, mock_project_service
+    ):
+        calls = []
+        mock_project_service.authorize_storyboard.side_effect = (
+            lambda user, storyboard_id: calls.append(
+                ("authorize", user.id, storyboard_id)
+            )
+        )
+        mock_project_service.get_storyboard.side_effect = (
+            lambda storyboard_id: calls.append(("load", storyboard_id))
+            or _storyboard()
+        )
+
+        res = api_client.get("/api/storyboards/14")
+
+        assert res.status_code == status.HTTP_200_OK
+        assert res.json()["id"] == 14
+        assert calls == [("authorize", 1, 14), ("load", 14)]
+
+    @pytest.mark.parametrize("code", [403, 404])
+    def test_a_refused_get_presigns_nothing(
+        self, api_client, mock_project_service, code
+    ):
+        mock_project_service.authorize_storyboard.side_effect = HTTPException(
+            status_code=code, detail="Refused"
+        )
+
+        res = api_client.get("/api/storyboards/14")
+
+        assert res.status_code == code
+        mock_project_service.get_storyboard.assert_not_called()
+
+    def test_get_of_a_storyboard_gone_since_authorization_is_404(
+        self, api_client, mock_project_service
+    ):
+        mock_project_service.get_storyboard.return_value = None
+
+        res = api_client.get("/api/storyboards/14")
+
+        assert res.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_delete_authorizes_then_deletes(
+        self, api_client, mock_project_service
+    ):
+        res = api_client.delete("/api/storyboards/14")
+
+        assert res.status_code == status.HTTP_204_NO_CONTENT
+        user, storyboard_id = (
+            mock_project_service.authorize_storyboard.await_args.args
+        )
+        assert (user.id, storyboard_id) == (1, 14)
+        mock_project_service.delete_storyboard.assert_awaited_once_with(14)
+        mock_project_service.get_storyboard.assert_not_called()
+
+    def test_a_refused_delete_deletes_nothing(
+        self, api_client, mock_project_service
+    ):
+        mock_project_service.authorize_storyboard.side_effect = HTTPException(
+            status_code=403, detail="Not authorized to use this storyboard"
+        )
+
+        res = api_client.delete("/api/storyboards/14")
+
+        assert res.status_code == status.HTTP_403_FORBIDDEN
+        mock_project_service.delete_storyboard.assert_not_called()
+
+
 class TestUpdateStoryboard:
     def test_human_update_is_mirrored_to_agent(
         self, api_client, mock_project_service, mock_agent_service
     ):
-        mock_project_service.get_storyboard.return_value = _storyboard()
         mock_project_service.update_storyboard.return_value = _storyboard()
         mock_agent_service.sync_storyboard_to_session.return_value = {
             "status": "synced",
@@ -121,11 +213,16 @@ class TestUpdateStoryboard:
         )
         assert user.id == 1
         assert sent.id == 14
+        user, storyboard_id = (
+            mock_project_service.authorize_storyboard.await_args.args
+        )
+        assert (user.id, storyboard_id) == (1, 14)
+        # Authorized without loading (and presigning) the storyboard first.
+        mock_project_service.get_storyboard.assert_not_called()
 
     def test_agent_update_is_not_mirrored_back(
         self, api_client, mock_project_service, mock_agent_service, as_agent
     ):
-        mock_project_service.get_storyboard.return_value = _storyboard()
         mock_project_service.update_storyboard.return_value = _storyboard()
 
         res = api_client.put("/api/storyboards/14", json={"scenes": []})
@@ -140,7 +237,6 @@ class TestUpdateStoryboard:
     ):
         legacy = _storyboard()
         legacy.scenes = [SceneDTO(id=140, scene_id=None, order=0, topic="Hook")]
-        mock_project_service.get_storyboard.return_value = legacy
         mock_project_service.update_storyboard.return_value = legacy
         mock_agent_service.sync_storyboard_to_session.return_value = {
             "status": "synced",
@@ -180,7 +276,6 @@ class TestUpdateStoryboard:
     def test_ids_are_only_persisted_after_a_real_sync(
         self, api_client, mock_project_service, mock_agent_service, sync
     ):
-        mock_project_service.get_storyboard.return_value = _storyboard()
         mock_project_service.update_storyboard.return_value = _storyboard()
         mock_agent_service.sync_storyboard_to_session.return_value = sync
 
@@ -192,7 +287,6 @@ class TestUpdateStoryboard:
     def test_failed_id_write_does_not_fail_the_edit(
         self, api_client, mock_project_service, mock_agent_service
     ):
-        mock_project_service.get_storyboard.return_value = _storyboard()
         mock_project_service.update_storyboard.return_value = _storyboard()
         mock_agent_service.sync_storyboard_to_session.return_value = {
             "status": "synced",
@@ -209,24 +303,27 @@ class TestUpdateStoryboard:
         mock_project_service.assign_scene_ids.assert_awaited_once()
 
     def test_update_not_found(self, api_client, mock_project_service):
-        mock_project_service.get_storyboard.return_value = None
+        mock_project_service.authorize_storyboard.side_effect = HTTPException(
+            status_code=404, detail="Storyboard not found"
+        )
         res = api_client.put("/api/storyboards/99", json={})
         assert res.status_code == status.HTTP_404_NOT_FOUND
+        mock_project_service.update_storyboard.assert_not_called()
 
     def test_update_forbidden_for_other_user(
         self, api_client, mock_project_service, mock_agent_service
     ):
-        mock_project_service.get_storyboard.return_value = _storyboard(
-            user_id=2
+        mock_project_service.authorize_storyboard.side_effect = HTTPException(
+            status_code=403, detail="Not authorized to use this storyboard"
         )
         res = api_client.put("/api/storyboards/14", json={})
         assert res.status_code == status.HTTP_403_FORBIDDEN
+        mock_project_service.update_storyboard.assert_not_called()
         mock_agent_service.sync_storyboard_to_session.assert_not_called()
 
     def test_update_returning_nothing_is_404(
         self, api_client, mock_project_service, mock_agent_service
     ):
-        mock_project_service.get_storyboard.return_value = _storyboard()
         mock_project_service.update_storyboard.return_value = None
         res = api_client.put("/api/storyboards/14", json={})
         assert res.status_code == status.HTTP_404_NOT_FOUND

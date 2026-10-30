@@ -74,15 +74,23 @@ import {
   interval,
   throwError,
 } from 'rxjs';
-import {debounceTime, switchMap, takeWhile, catchError} from 'rxjs/operators';
+import {
+  debounceTime,
+  switchMap,
+  takeWhile,
+  catchError,
+  map,
+} from 'rxjs/operators';
 import {StoryboardService} from '../services/storyboard/storyboard.service';
 import {GalleryService} from '../gallery/gallery.service';
 import {MediaItem} from '../common/models/media-item.model';
+import {ProjectStateService} from './services/project-state.service';
 
 @Component({
   selector: 'app-workbench',
   templateUrl: './workbench.component.html',
   styleUrls: ['./workbench.component.scss'],
+  providers: [ProjectStateService],
 })
 export class WorkbenchComponent implements OnInit, OnDestroy {
   // Signals for State
@@ -184,6 +192,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   dummyScrollContainer!: ElementRef<HTMLDivElement>;
 
   // Services
+  projectState = inject(ProjectStateService);
   private sanitizer = inject(DomSanitizer);
   private workbenchService = inject(WorkbenchService);
   private http = inject(HttpClient);
@@ -231,6 +240,10 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   private activeSaveSubscription?: Subscription;
   private hasPendingSave = false;
   private isSaving = false;
+  /** Timeline the in-flight save writes (`null` while it creates one). */
+  private savingTimelineId: number | string | null = null;
+  /** Project the pending (debounced) autosave was queued in. */
+  private pendingSaveProjectId: number | null = null;
   /** Monotonic id of the latest timeline fetch (see the timeline effect). */
   private timelineLoadSeq = 0;
 
@@ -240,6 +253,15 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     @Inject(PLATFORM_ID) platformId: Object,
   ) {
     this.isBrowser = isPlatformBrowser(platformId);
+
+    // The chat and timeline services are root-scoped and outlive this
+    // component: start every visit from a clean slate, so the previous
+    // visit's storyboard / timeline is never fetched (nor flashed, nor used
+    // to reopen the chat on a stale session) before `ProjectStateService`
+    // enters a project. Must stay in the constructor: the effects below
+    // first run in a microtask, i.e. before `ngOnInit`.
+    this.agentChatService.resetConversation();
+    this.timelineState.resetForProjectSwitch();
 
     effect(() => {
       this.applyVideoFilter();
@@ -266,7 +288,15 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     effect(
       () => {
         const timelineId = this.timelineState.loadedTimelineId();
-        if (this.isSaving) {
+        // Only a reload of the timeline being saved waits (it would replace
+        // edits made while the request is in flight). Another timeline (a
+        // project or chat switch during the save) loads now: this effect
+        // does not run again when the save lands, and an editor bound to a
+        // timeline it never loaded overwrites it on the next autosave.
+        if (
+          this.isSaving &&
+          (!timelineId || String(timelineId) === String(this.savingTimelineId))
+        ) {
           return;
         }
         if (timelineId) {
@@ -278,9 +308,13 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
           this.timelineState.isLoadingTimeline.set(true);
           this.workbenchService.getTimeline(timelineId).subscribe({
             next: (timeline: TimelineDTO) => {
-              if (requestSeq === this.timelineLoadSeq) {
-                this.timelineState.isLoadingTimeline.set(false);
+              // A superseded fetch (another timeline was requested since, or
+              // a project entry reset the editor) must not load: it would
+              // show, and autosave, a timeline the user has already left.
+              if (requestSeq !== this.timelineLoadSeq) {
+                return;
               }
+              this.timelineState.isLoadingTimeline.set(false);
               this.processGeneratedData(timeline);
               this.lastSavedText.set('Saved');
 
@@ -304,10 +338,11 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
               }
             },
             error: err => {
-              if (requestSeq === this.timelineLoadSeq) {
-                this.timelineState.isLoadingTimeline.set(false);
-              }
               console.error('Failed to fetch timeline:', err);
+              if (requestSeq !== this.timelineLoadSeq) {
+                return;
+              }
+              this.timelineState.isLoadingTimeline.set(false);
               this.lastSavedText.set('Failed to load timeline');
             },
           });
@@ -384,12 +419,38 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit() {
+    // Before the queryParams subscription below: the project owns the URL.
+    this.projectState.init();
+    // Entering another project first flushes the pending autosave, so edits
+    // made in the project being left are not lost.
+    this.projectState.registerBeforeLeave(() =>
+      this.hasPendingSave && !this.pendingSaveIsStale()
+        ? this.saveTimeline().pipe(
+            map(() => null),
+            catchError(() => of(null)),
+          )
+        : of(null),
+    );
+
     // save timeline after 10 seconds of inactivity
     this.saveSubscription = this.saveSubject
       .pipe(debounceTime(10000))
       .subscribe(() => {
+        // Already saved (e.g. flushed by a project switch): saving now would
+        // write the state of whatever is loaded at this point instead.
+        if (!this.hasPendingSave) {
+          return;
+        }
         this.hasPendingSave = false;
-        this.saveTimeline();
+        if (this.pendingSaveIsStale()) {
+          console.warn('Dropped the autosave of a project that was left');
+          return;
+        }
+        // saveTimeline() has already logged the failure and shown it in the
+        // status text: without a callback, RxJS rethrows it as unhandled.
+        this.saveTimeline().subscribe({
+          error: () => {},
+        });
       });
 
     this.route.queryParams.subscribe(params => {
@@ -397,10 +458,10 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
       const storyboardId = params['storyboardId'];
       const timelineId = params['timelineId'];
 
-      if (sessionId) {
-        this.agentChatService.selectedSessionId.set(sessionId);
-      }
-
+      // `sessionId` is deliberately NOT mirrored into `selectedSessionId`:
+      // the chat's gated loader reads it from the URL itself, while a chat
+      // panel created after this point takes `selectedSessionId` as "already
+      // loaded" and showed an empty chat on first entry.
       if (timelineId) {
         this.timelineState.loadedTimelineId.set(timelineId);
       }
@@ -1742,8 +1803,22 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
 
   triggerAutoSave() {
     this.hasPendingSave = true;
+    this.pendingSaveProjectId = this.projectState.activeProjectId();
     this.lastSavedText.set('Saving...');
     this.saveSubject.next();
+  }
+
+  /**
+   * True when the pending edits were made in another project than the active
+   * one: it was left without a flush (a deep link is adopted after the editor
+   * reacted to it) or deleted. Saving them now would write those edits, or
+   * an empty editor, into the timeline of the project just entered.
+   */
+  private pendingSaveIsStale(): boolean {
+    return (
+      this.pendingSaveProjectId !== null &&
+      this.pendingSaveProjectId !== this.projectState.activeProjectId()
+    );
   }
 
   /**
@@ -1845,7 +1920,13 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         };
       });
 
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    // The workspace of the project being saved, not the switcher's: a
+    // workspace switch flushes this save after the switcher has moved on,
+    // and the backend rejects a project of another workspace (400).
+    const workspaceId =
+      this.projectState.activeProjectWorkspaceId() ??
+      this.workspaceStateService.getActiveWorkspaceId();
+    const activeProjectId = this.projectState.activeProjectId();
 
     const timelineData: TimelineDTO = {
       timeline_id: timelineId || undefined,
@@ -1855,6 +1936,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         this.agentChatService.selectedSessionId() ||
         undefined,
       workspace_id: workspaceId || 1,
+      ...(activeProjectId ? {project_id: activeProjectId} : {}),
       title: 'Timeline',
       video_clips: videoClips,
       audio_clips: audioClips,
@@ -1864,6 +1946,8 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     };
 
     this.isSaving = true;
+    this.savingTimelineId = timelineId ?? null;
+    const projectAtSave = activeProjectId;
     const subject = new Subject<TimelineDTO>();
 
     const request$ = timelineId
@@ -1872,7 +1956,12 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     this.activeSaveSubscription = request$.subscribe({
       next: (res: TimelineDTO) => {
         this.lastSavedText.set('Saved');
-        if (res.timeline_id) {
+        // A save that lands after a project switch belongs to the project
+        // that was left: it must not load into the editor nor touch the URL.
+        if (
+          res.timeline_id &&
+          this.projectState.activeProjectId() === projectAtSave
+        ) {
           this.timelineState.loadedTimelineId.set(res.timeline_id);
           if (!res.storyboard_id && !res.session_id) {
             void this.router.navigate([], {

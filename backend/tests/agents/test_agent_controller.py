@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI
@@ -25,6 +27,28 @@ from src.users.user_model import UserModel
 from src.agents.agent_chat_event_model import AgentChatEvent
 from src.projects.project_repository import StoryboardRepository
 from src.projects.project_service import ProjectService
+from src.agents.agent_session_repository import AgentSessionRepository
+
+
+def _registry_stub():
+    """An empty session registry: no chat registered yet."""
+    repo = AsyncMock(spec=AgentSessionRepository)
+    repo.get.return_value = None
+    repo.register.return_value = None
+    repo.map_for_user_workspace.return_value = {}
+    repo.app_names_for_project.return_value = {}
+    return repo
+
+
+# Registry metadata every session payload now carries (empty registry).
+_NO_REGISTRY = {
+    "projectId": None,
+    "title": None,
+    "summary": None,
+    "expired": False,
+    "restorable": False,
+    "restored": False,
+}
 
 
 @pytest.fixture(name="mock_user")
@@ -145,6 +169,7 @@ def fixture_client(
         lambda: mock_storyboard_repo
     )
     app.dependency_overrides[ProjectService] = lambda: mock_project_service
+    app.dependency_overrides[AgentSessionRepository] = _registry_stub
     app.dependency_overrides[security] = lambda: HTTPAuthorizationCredentials(
         scheme="Bearer", credentials="dummy"
     )
@@ -175,6 +200,7 @@ async def test_get_sessions_success(mock_remote_agent, client):
             "lastUpdateTime": None,
             "state": {"workspace_id": 1},
             "events": [],
+            **_NO_REGISTRY,
         }
     ]
 
@@ -206,6 +232,109 @@ async def test_get_sessions_filtering(mock_remote_agent, client):
     assert call_args.kwargs.get("config") == {"filter": 'user_id="1"'}
 
 
+def _seen_row(session_id, title=None, restored_at=None):
+    """A registered chat Creative Studio has seen alive."""
+    return SimpleNamespace(
+        session_id=session_id,
+        project_id=7,
+        user_id=1,
+        workspace_id=1,
+        app_name="ads_x",
+        title=title,
+        summary=None,
+        last_used_at=datetime.datetime(2026, 10, 1, tzinfo=datetime.UTC),
+        restored_at=restored_at,
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("mock_remote_agent")
+async def test_get_sessions_lists_expired_chats_on_request(client):
+    # session_1 is in the agent's listing; "gone" is only in the registry.
+    repo = _registry_stub()
+    repo.map_for_user_workspace.return_value = {
+        "session_1": _seen_row("session_1"),
+        "gone": _seen_row("gone", title="Spring launch"),
+    }
+    client.app.dependency_overrides[AgentSessionRepository] = lambda: repo
+
+    default = client.get("/api/agent/sessions?workspace_id=1")
+    listed = client.get(
+        "/api/agent/sessions?workspace_id=1&include_expired=true"
+    )
+
+    assert default.status_code == listed.status_code == 200
+    assert [s["id"] for s in default.json()] == ["session_1"]
+    assert [(s["id"], s["expired"], s["title"]) for s in listed.json()] == [
+        ("session_1", False, None),
+        ("gone", True, "Spring launch"),
+    ]
+
+
+@pytest.mark.anyio
+async def test_restore_session_route(
+    mock_remote_agent, mock_storyboard_repo, client
+):
+    # "gone" is registered and owns a storyboard; the agent lost it.
+    sessions = mock_remote_agent.vclient.agent_engines.sessions
+    sessions.get.side_effect = RuntimeError("Session not found")
+    sessions.create.return_value = {
+        "id": "s-new",
+        "user_id": "1",
+        "session_state": {"workspace_id": 1},
+    }
+    repo = _registry_stub()
+    repo.get.side_effect = [
+        _seen_row("gone", title="Spring launch"),
+        _seen_row(
+            "s-new",
+            title="Spring launch",
+            restored_at=datetime.datetime(2026, 10, 2, tzinfo=datetime.UTC),
+        ),
+    ]
+    repo.replace_session_id.return_value = True
+    client.app.dependency_overrides[AgentSessionRepository] = lambda: repo
+    mock_storyboard_repo.session_ids_with_storyboards.return_value = {"gone"}
+
+    response = client.post("/api/agent/sessions/gone/restore?workspace_id=1")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert (body["id"], body["projectId"], body["title"]) == (
+        "s-new",
+        7,
+        "Spring launch",
+    )
+    assert (body["restored"], body["expired"]) == (True, False)
+    mock_storyboard_repo.reassign_session.assert_awaited_once_with(
+        "gone", "s-new", 1
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("mock_remote_agent")
+async def test_chat_route_refuses_a_restored_chat(client):
+    repo = _registry_stub()
+    repo.get.return_value = _seen_row(
+        "s-restored",
+        restored_at=datetime.datetime(2026, 10, 2, tzinfo=datetime.UTC),
+    )
+    client.app.dependency_overrides[AgentSessionRepository] = lambda: repo
+
+    response = client.post(
+        "/api/agent/chat",
+        json={
+            "sessionId": "s-restored",
+            "workspaceId": 1,
+            "newMessage": {"role": "user", "parts": [{"text": "hello"}]},
+        },
+    )
+
+    assert response.status_code == 409
+    assert "Start a new chat" in response.json()["detail"]
+    repo.touch.assert_not_called()
+
+
 @pytest.mark.anyio
 async def test_create_session_success(mock_remote_agent, client):
     mock_remote_agent.async_create_session.return_value = {
@@ -223,6 +352,7 @@ async def test_create_session_success(mock_remote_agent, client):
         "lastUpdateTime": None,
         "state": {"workspace_id": 1},
         "events": [],
+        **_NO_REGISTRY,
     }
 
 
@@ -245,6 +375,7 @@ async def test_get_session_messages_success(mock_remote_agent, client):
         "lastUpdateTime": None,
         "state": {"workspace_id": 1},
         "events": [],
+        **_NO_REGISTRY,
     }
 
 
@@ -256,6 +387,76 @@ async def test_delete_session_success(mock_remote_agent, client):
 
     assert response.status_code == 200
     assert response.json() == {"status": "success"}
+
+
+def _registry_row(user_id=1, title=None, summary=None, last_used_at=None):
+    return MagicMock(
+        session_id="session_1",
+        project_id=7,
+        user_id=user_id,
+        workspace_id=1,
+        app_name="ads_x",
+        title=title,
+        summary=summary,
+        last_used_at=last_used_at,
+        restored_at=None,
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("mock_remote_agent")
+async def test_update_session_metadata_route(client):
+    repo = _registry_stub()
+    repo.get.return_value = _registry_row()
+    last_used_at = datetime.datetime(2026, 10, 1, tzinfo=datetime.UTC)
+    repo.update_metadata.return_value = _registry_row(
+        title="Spring launch", summary="Teaser", last_used_at=last_used_at
+    )
+    client.app.dependency_overrides[AgentSessionRepository] = lambda: repo
+
+    response = client.patch(
+        "/api/agent/sessions/session_1",
+        json={"title": " Spring launch ", "summary": "Teaser"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["id"], body["projectId"], body["title"], body["summary"]) == (
+        "session_1",
+        7,
+        "Spring launch",
+        "Teaser",
+    )
+    assert body["lastUpdateTime"] == last_used_at.timestamp()
+    repo.update_metadata.assert_awaited_once_with(
+        "session_1", title="Spring launch", summary="Teaser"
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("mock_remote_agent")
+async def test_update_session_metadata_route_is_owner_only(client):
+    repo = _registry_stub()
+    repo.get.return_value = _registry_row(user_id=2)
+    client.app.dependency_overrides[AgentSessionRepository] = lambda: repo
+
+    response = client.patch(
+        "/api/agent/sessions/session_1", json={"title": "Mine now"}
+    )
+
+    assert response.status_code == 403
+    repo.update_metadata.assert_not_called()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "payload", [{"title": "x" * 201}, {"summary": "x" * 1001}]
+)
+@pytest.mark.usefixtures("mock_remote_agent")
+async def test_update_session_metadata_route_validates_lengths(client, payload):
+    response = client.patch("/api/agent/sessions/session_1", json=payload)
+
+    assert response.status_code == 422
 
 
 @pytest.mark.anyio
@@ -433,6 +634,7 @@ async def test_agent_service_sync_fallbacks(mock_remote_agent):
         storyboard_repo=MagicMock(),
         workspace_auth=AsyncMock(),
         project_service=MagicMock(),
+        agent_session_repo=_registry_stub(),
     )
 
     # Remove async methods to trigger sync fallback branches
@@ -469,8 +671,10 @@ async def test_agent_service_sync_fallbacks(mock_remote_agent):
 
     await service.list_sessions(MagicMock(), "u", MagicMock())
     await service.create_session(MagicMock(), "u", MagicMock())
-    await service.get_session_messages(MagicMock(), "s1", "u", MagicMock())
-    await service.delete_session(MagicMock(), "s1", "u", MagicMock())
+    # As the owner of the fixture's session (userId "1"): chats are
+    # owner-only, so another user id is refused.
+    await service.get_session_messages(MagicMock(), "s1", "1", MagicMock())
+    await service.delete_session(MagicMock(), "s1", "1", MagicMock())
 
 
 @pytest.mark.anyio
@@ -485,6 +689,7 @@ async def test_agent_service_exceptions(mock_remote_agent):
         storyboard_repo=MagicMock(),
         workspace_auth=AsyncMock(),
         project_service=MagicMock(),
+        agent_session_repo=_registry_stub(),
     )
 
     service.client.agent_engines.sessions.list.side_effect = Exception("err")

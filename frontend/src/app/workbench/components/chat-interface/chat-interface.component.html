@@ -41,9 +41,10 @@
     [class.opacity-60]="isSessionLocked()"
     [attr.aria-busy]="isSessionLocked()"
     [title]="isSessionLocked() ? 'Loading conversation…' : ''"
-    *ngIf="sessions().length > 0"
+    *ngIf="sessions().length > 0 || expiredSessions().length > 0"
   >
     <studio-dropdown
+      #sessionPicker
       [options]="dropdownOptions()"
       [value]="currentSessionId"
       (valueChange)="onSessionChange($event)"
@@ -274,10 +275,51 @@
     ></app-approval-gate>
   </div>
 
-  <!-- Chat Input -->
+  <!-- Restored Chat Banner: Izumi cannot continue a restored chat -->
   <div
     class="mt-2 flex flex-col gap-2"
-    *ngIf="!agentUnavailable() && !visibleApprovalGate()"
+    *ngIf="isRestoredChat() && !agentUnavailable() && !isSessionLocked()"
+    data-testid="restored-chat-banner"
+  >
+    <div
+      class="bg-gray-800 border border-indigo-500/60 rounded-2xl px-4 py-3 flex items-start gap-3"
+    >
+      <mat-icon class="text-indigo-400 shrink-0">history</mat-icon>
+      <div class="text-sm text-gray-200 flex-1">
+        <p class="font-semibold text-white">Restored chat</p>
+        <p class="opacity-80">
+          Its storyboard and timeline are back, but its messages are gone and
+          Izumi does not remember it. Edit them by hand, or start a new chat to
+          keep working with Izumi.
+        </p>
+      </div>
+    </div>
+    <div class="flex justify-end">
+      <studio-button
+        variant="primary"
+        size="small"
+        shape="pill"
+        data-testid="restored-chat-new-chat"
+        (click)="startNewChat()"
+      >
+        <span class="flex items-center gap-1">
+          <mat-icon class="!w-4 !h-4 !text-[16px] leading-4"
+            >add_comment</mat-icon
+          >
+          New chat
+        </span>
+      </studio-button>
+    </div>
+  </div>
+
+  <!-- Chat Input (a loaded restored chat shows its banner instead) -->
+  <div
+    class="mt-2 flex flex-col gap-2"
+    *ngIf="
+      !agentUnavailable() &&
+      !visibleApprovalGate() &&
+      (!isRestoredChat() || isSessionLocked())
+    "
   >
     <div
       class="flex gap-2 bg-gray-800 border border-gray-700 rounded-2xl px-3 py-2 focus-within:border-blue-500 flex items-center"

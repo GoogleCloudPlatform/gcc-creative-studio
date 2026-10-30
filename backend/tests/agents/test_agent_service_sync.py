@@ -26,6 +26,7 @@ from fastapi import HTTPException, Request
 
 from src.agents import agent_service as agent_service_module
 from src.agents.agent_service import AGENT_BUSY_DETAIL, AgentService
+from src.agents.agent_session_repository import AgentSessionRepository
 from src.agents.local_adk_client import LocalRemoteAgent
 from src.config.config_service import config_service
 from src.projects.dto.project_dto import SceneDTO, StoryboardResponse
@@ -47,6 +48,13 @@ def _clear_run_registry():
     agent_service_module._active_runs.clear()
 
 
+def _registry_stub():
+    """An empty chat registry: ``chat()`` then checks the session's owner."""
+    repo = AsyncMock(spec=AgentSessionRepository)
+    repo.get.return_value = None
+    return repo
+
+
 def _service(local_client=None, **deps) -> AgentService:
     with patch("vertexai.Client"):
         service = AgentService(
@@ -55,6 +63,7 @@ def _service(local_client=None, **deps) -> AgentService:
             storyboard_repo=deps.get("storyboard_repo", AsyncMock()),
             workspace_auth=deps.get("workspace_auth", AsyncMock()),
             project_service=deps.get("project_service", AsyncMock()),
+            agent_session_repo=deps.get("agent_session_repo", _registry_stub()),
         )
     if local_client is not None:
         service.local_client = local_client

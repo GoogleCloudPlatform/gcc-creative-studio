@@ -12,9 +12,48 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict, StringConstraints
 from datetime import datetime
-from typing import Optional, List
+from typing import Annotated, Optional, List
+
+# A project name: trimmed, 1-120 characters (``projects.name`` is
+# ``String(120)``).
+ProjectName = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)
+]
+
+
+# Project DTOs
+class ProjectCreate(BaseModel):
+    workspace_id: int
+    name: ProjectName
+
+
+class ProjectUpdate(BaseModel):
+    name: ProjectName
+
+
+class ProjectResponse(BaseModel):
+    """A project plus what the Workbench needs to reopen it.
+
+    ``latest_session_id`` is the most recently used chat, and
+    ``latest_timeline_id`` the newest timeline without a storyboard (a
+    manual timeline). Together they choose what entering the project
+    restores.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    workspace_id: int
+    owner_id: int
+    name: str
+    is_default: bool = False
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    session_count: int = 0
+    latest_session_id: Optional[str] = None
+    latest_timeline_id: Optional[int] = None
 
 
 # Scene DTO
@@ -75,6 +114,9 @@ class StoryboardCreate(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra="allow")
 
     workspace_id: int
+    # Optional: when omitted (Izumi never sends it) the backend resolves the
+    # project from ``session_id``, falling back to the user's default project.
+    project_id: Optional[int] = None
     session_id: Optional[str] = None
     template_name: Optional[str] = None
     bg_music_description: Optional[str] = None
@@ -98,6 +140,7 @@ class StoryboardCreateResponse(BaseModel):
     id: int
     user_id: int
     workspace_id: int
+    project_id: Optional[int] = None
     session_id: Optional[str] = None
     template_name: Optional[str] = None
     bg_music_description: Optional[str] = None
@@ -110,6 +153,7 @@ class StoryboardResponse(BaseModel):
     id: int
     user_id: int
     workspace_id: int
+    project_id: Optional[int] = None
     session_id: Optional[str] = None
     template_name: Optional[str] = None
     bg_music_description: Optional[str] = None

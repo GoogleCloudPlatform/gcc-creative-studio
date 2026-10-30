@@ -17,7 +17,7 @@
 import {Injectable, inject, signal} from '@angular/core';
 import {HttpClient} from '@angular/common/http';
 import {Observable, firstValueFrom, Subject, of} from 'rxjs';
-import {tap} from 'rxjs/operators';
+import {finalize, map, tap} from 'rxjs/operators';
 import {environment} from '../../../environments/environment';
 import {AuthService} from '../../common/services/auth.service';
 import {
@@ -26,6 +26,47 @@ import {
 } from '../../common/models/workbench.model';
 import {CampaignDetails} from '../utils/campaign-details';
 import {CharacterProfile} from '../utils/character-profile';
+
+/** Chat titles older builds kept in localStorage, keyed by session id. */
+const LEGACY_TOPICS_KEY = 'izumi_topics';
+type LegacyTopic = string | {title?: string; summary?: string};
+
+/** The API limits of a chat's server-side title and summary. */
+const SESSION_TITLE_MAX_LENGTH = 200;
+const SESSION_SUMMARY_MAX_LENGTH = 1000;
+
+/** A usable legacy text: localStorage content is not trusted to be typed. */
+function legacyText(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+/** The legacy titles; `{}` when storage is unavailable or corrupted. */
+export function readLegacyTopics(): Record<string, LegacyTopic> {
+  try {
+    const parsed: unknown = JSON.parse(
+      localStorage.getItem(LEGACY_TOPICS_KEY) || '{}',
+    );
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, LegacyTopic>)
+      : {};
+  } catch {
+    return {}; // Storage unavailable (SSR, privacy mode) or corrupted.
+  }
+}
+
+function forgetLegacyTopic(sessionId: string): void {
+  try {
+    const topics = readLegacyTopics();
+    delete topics[sessionId];
+    if (Object.keys(topics).length === 0) {
+      localStorage.removeItem(LEGACY_TOPICS_KEY);
+    } else {
+      localStorage.setItem(LEGACY_TOPICS_KEY, JSON.stringify(topics));
+    }
+  } catch {
+    // Best effort: the entry is simply imported again next time.
+  }
+}
 
 export interface SSECallbacks<T> {
   onClose?: () => void;
@@ -120,7 +161,10 @@ export class AgentChatService {
   // Read-only campaign brief published by the ads_x agent (null = not ready)
   campaignDetails = signal<CampaignDetails | null>(null);
 
-  // Selected session ID from route query params
+  // Session whose history the chat loaded (or is switching to after a
+  // storyboard pick). Only the chat writes a non-null value: never mirror the
+  // URL's `sessionId` here, a chat panel created later would take it as
+  // already loaded and show an empty conversation.
   selectedSessionId = signal<string | null>(null);
 
   // Agent Selection State
@@ -133,6 +177,12 @@ export class AgentChatService {
   // Unlike `timeline_id`, which exists as soon as the storyboard is persisted,
   // this only flips after `stitch_final_video` succeeds.
   finalVideoReady = signal<boolean>(false);
+
+  // The open chat was restored after it expired (`restored` on its session
+  // detail): its storyboard and timeline are back, but Izumi does not
+  // remember it and the backend refuses to run it (409). Kept here, like
+  // `finalVideoReady`, so a chat panel created later still locks it.
+  chatRestored = signal<boolean>(false);
 
   // Session whose poll loop was torn down (chat panel closed) while a stream
   // was still in flight. The next chat instance resumes polling for it.
@@ -172,17 +222,26 @@ export class AgentChatService {
 
   // Shared sessions state & caching
   sessions = signal<ChatSession[]>([]);
+  // The listed chats whose agent session is gone (`expired`): shown in the
+  // picker only, where a `restorable` one can be restored. Kept out of
+  // `sessions`, which every resume and fallback path reads, so none of them
+  // can pick a chat that cannot be opened.
+  expiredSessions = signal<ChatSession[]>([]);
   chatMessages = signal<any[]>([]);
   private lastLoadedWorkspaceId: number | null = null;
   private lastLoadedAgent = '';
   private lastLoadedSessionId: string | null = null;
   private lastLoadedStoryboardId: number | string | null = null;
+  private lastLoadedProjectId: number | null = null;
+  /** Chats whose legacy title import is in flight. */
+  private importingTitleIds = new Set<string>();
 
   getSessions(
     workspaceId?: number,
     forceRefresh = false,
     sessionId?: string | null,
     storyboardId?: number | string | null,
+    projectId?: number,
   ): Observable<ChatSession[]> {
     const currentAgent = this.activeAgent();
     const targetSessionId = sessionId ?? null;
@@ -194,30 +253,45 @@ export class AgentChatService {
       this.lastLoadedWorkspaceId === workspaceId &&
       this.lastLoadedAgent === currentAgent &&
       this.lastLoadedSessionId === targetSessionId &&
-      this.lastLoadedStoryboardId === targetStoryboardId
+      this.lastLoadedStoryboardId === targetStoryboardId &&
+      this.lastLoadedProjectId === (projectId ?? null)
     ) {
       return of(this.sessions());
     }
 
-    let url = `${this.apiUrl}/sessions?appName=${currentAgent}`;
+    let url = `${this.apiUrl}/sessions?appName=${currentAgent}&include_expired=true`;
     if (workspaceId) {
       url += `&workspace_id=${workspaceId}`;
     }
+    if (projectId) {
+      url += `&project_id=${projectId}`;
+    }
     return this.http.get<ChatSession[]>(url).pipe(
-      tap((sessions: ChatSession[]) => {
-        this.sessions.set(sessions || []);
+      map((listed: ChatSession[]) => listed || []),
+      tap((listed: ChatSession[]) => {
+        this.sessions.set(listed.filter(s => !s.expired));
+        this.expiredSessions.set(listed.filter(s => s.expired));
         this.lastLoadedWorkspaceId = workspaceId ?? null;
         this.lastLoadedAgent = currentAgent;
         this.lastLoadedSessionId = targetSessionId;
         this.lastLoadedStoryboardId = targetStoryboardId;
+        this.lastLoadedProjectId = projectId ?? null;
       }),
+      // Callers only ever see the chats that can be opened.
+      map(() => this.sessions()),
     );
   }
 
-  createSession(workspaceId?: number): Observable<ChatSession> {
+  createSession(
+    workspaceId?: number,
+    projectId?: number,
+  ): Observable<ChatSession> {
     let url = `${this.apiUrl}/sessions?appName=${this.activeAgent()}`;
     if (workspaceId) {
       url += `&workspace_id=${workspaceId}`;
+    }
+    if (projectId) {
+      url += `&project_id=${projectId}`;
     }
     return this.http.post<ChatSession>(url, {});
   }
@@ -247,6 +321,22 @@ export class AgentChatService {
     return this.http.delete<void>(url);
   }
 
+  /**
+   * Brings an expired chat's storyboard and timeline back. Resolves to the
+   * same chat (project, title) on a new session id, flagged `restored`:
+   * Izumi does not remember it, so it cannot be continued with the agent.
+   */
+  restoreSession(
+    sessionId: string,
+    workspaceId?: number,
+  ): Observable<ChatSession> {
+    let url = `${this.apiUrl}/sessions/${sessionId}/restore?appName=${this.activeAgent()}`;
+    if (workspaceId) {
+      url += `&workspace_id=${workspaceId}`;
+    }
+    return this.http.post<ChatSession>(url, {});
+  }
+
   generateTitle(text: string): Observable<any> {
     return this.http.post(
       `${environment.backendURL}/gemini/generate-title?appName=${this.activeAgent()}`,
@@ -254,6 +344,97 @@ export class AgentChatService {
         text,
       },
     );
+  }
+
+  updateSessionMetadata(
+    sessionId: string,
+    metadata: {title?: string; summary?: string},
+  ): Observable<ChatSession> {
+    // Clamped to the API limits (a fallback title is the user's whole first
+    // message); empty fields are left out, the server keeps them unchanged.
+    const body: {title?: string; summary?: string} = {};
+    if (metadata.title) {
+      body.title = metadata.title.slice(0, SESSION_TITLE_MAX_LENGTH);
+    }
+    if (metadata.summary) {
+      body.summary = metadata.summary.slice(0, SESSION_SUMMARY_MAX_LENGTH);
+    }
+    return this.http.patch<ChatSession>(
+      `${this.apiUrl}/sessions/${sessionId}`,
+      body,
+    );
+  }
+
+  /**
+   * Resets every shared conversation signal in one place. Called by
+   * `ProjectStateService` right before it enters another project.
+   */
+  resetConversation(): void {
+    this.stopPolling();
+    this.sessions.set([]);
+    this.expiredSessions.set([]);
+    this.chatMessages.set([]);
+    this.currentStoryboard.set(null);
+    this.selectedSessionId.set(null);
+    this.campaignDetails.set(null);
+    this.campaignSession.set(null);
+    this.interruptedSessionId.set(null);
+    this.finalVideoReady.set(false);
+    this.chatRestored.set(false);
+    this.isGeneratingStoryboard.set(false);
+    this.isGeneratingVideo.set(false);
+    this.lastLoadedWorkspaceId = null;
+    this.lastLoadedAgent = '';
+    this.lastLoadedSessionId = null;
+    this.lastLoadedStoryboardId = null;
+    this.lastLoadedProjectId = null;
+  }
+
+  /**
+   * One-time import of the chat titles older builds kept in localStorage
+   * (`izumi_topics`): an untitled chat with a local entry gets it as its
+   * server-side title, and the entry is removed once the server saved it.
+   * Fire and forget: failures are logged and retried on a later load.
+   */
+  importLegacyTitles(sessions: ChatSession[]): void {
+    const topics = readLegacyTopics();
+    for (const session of sessions) {
+      const legacy = topics[session.id];
+      if (!legacy || session.title || this.importingTitleIds.has(session.id)) {
+        continue;
+      }
+      const title = legacyText(
+        typeof legacy === 'string' ? legacy : legacy.title,
+      );
+      const summary =
+        typeof legacy === 'string' ? undefined : legacyText(legacy.summary);
+      if (!title && !summary) {
+        forgetLegacyTopic(session.id);
+        continue;
+      }
+      this.importingTitleIds.add(session.id);
+      this.updateSessionMetadata(session.id, {title, summary})
+        .pipe(finalize(() => this.importingTitleIds.delete(session.id)))
+        .subscribe({
+          next: updated => {
+            forgetLegacyTopic(session.id);
+            this.sessions.update(list =>
+              list.map(s =>
+                s.id === session.id
+                  ? {...s, title: updated.title, summary: updated.summary}
+                  : s,
+              ),
+            );
+          },
+          error: err =>
+            console.warn('Could not import the chat title', session.id, err),
+        });
+    }
+  }
+
+  /** Drops a chat's legacy localStorage title, e.g. once it is deleted. */
+  forgetLegacyTitle(sessionId: string): void {
+    forgetLegacyTopic(sessionId);
   }
 
   /**
