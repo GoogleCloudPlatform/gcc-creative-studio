@@ -215,6 +215,13 @@ export class ProjectSwitcherComponent {
     if (project.is_default) {
       return; // Not offered: the backend refuses it (409).
     }
+    // Nor while a save is in flight: a create enters the new project when
+    // it lands, and deleting the active project enters the default one, so
+    // the two entries would race. The answer would also close the menu, or
+    // move the focus, under the dialog.
+    if (this.saving()) {
+      return;
+    }
     const data: ConfirmationDialogData = {
       title: `Delete '${project.name}'?`,
       message: 'Its chats, storyboards and timelines are permanently deleted.',

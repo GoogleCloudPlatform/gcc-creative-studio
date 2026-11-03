@@ -390,6 +390,41 @@ describe('ProjectSwitcherComponent', () => {
     expect(itemState('#project-edit-2')).toEqual(enabledItem);
   });
 
+  it('offers no delete while a rename or create is in flight', () => {
+    dialog.open.and.returnValue({
+      afterClosed: () => of(true),
+    } as ReturnType<MatDialog['open']>);
+    activeProjectId.set(2);
+    const renamed = new Subject<Project>();
+    state.renameProject.and.returnValue(renamed);
+    openMenu();
+    inMenu<HTMLElement>('#project-edit-1')!.click();
+    fixture.detectChanges();
+    component.draftName.set('Main');
+    keydown(inMenu('#project-rename-1')!, 'Enter');
+
+    // The answer would move the focus behind the confirmation dialog.
+    expect(itemState('#project-delete-2')).toEqual(disabledItem);
+    component.confirmDelete(new Event('click'), projects()[1]);
+    expect(dialog.open).not.toHaveBeenCalled();
+
+    renamed.next(project(1, 'Main', true));
+    fixture.detectChanges();
+    expect(itemState('#project-delete-2')).toEqual(enabledItem);
+
+    const created = new Subject<Project | null>();
+    state.createProject.and.returnValue(created);
+    inMenu<HTMLElement>('#project-new-button')!.click();
+    fixture.detectChanges();
+    component.draftName.set('Holiday campaign');
+    keydown(inMenu('#project-new-input')!, 'Enter');
+
+    // Deleting the active project would race the new project's entry.
+    expect(itemState('#project-delete-2')).toEqual(disabledItem);
+    component.confirmDelete(new Event('click'), projects()[1]);
+    expect(dialog.open).not.toHaveBeenCalled();
+  });
+
   it('deletes only after confirmation', () => {
     dialog.open.and.returnValues(
       {afterClosed: () => of(false)} as ReturnType<MatDialog['open']>,

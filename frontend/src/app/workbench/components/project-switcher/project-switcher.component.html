@@ -119,6 +119,7 @@
                 [id]="'project-delete-' + project.id"
                 matTooltip="Delete"
                 [attr.aria-label]="'Delete ' + project.name"
+                [disabled]="saving()"
                 (click)="confirmDelete($event, project)"
               >
                 <mat-icon>delete_outline</mat-icon>
