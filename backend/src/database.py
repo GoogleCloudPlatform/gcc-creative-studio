@@ -131,7 +131,7 @@ async def get_connection():
         user=config_service.DB_USER,
         password=config_service.DB_PASS,
         db=config_service.DB_NAME,
-        ip_type=IPTypes.PRIVATE,  # Default to Private IP for secure VPC connection
+        ip_type=IPTypes.PUBLIC,  # Default to Private IP for secure VPC connection
     )
 
     return conn
