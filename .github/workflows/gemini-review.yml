@@ -14,9 +14,18 @@
 
 name: '🔎 Gemini Review'
 
+# SECURITY: This workflow runs a headless AI agent with GitHub write tools, so
+# it MUST NOT run automatically on unvetted pull requests from external forks
+# (indirect prompt injection via the PR diff/description could hijack the agent).
+#
+# The review is therefore gated behind an explicit maintainer action: it only
+# runs when a user with triage/write access applies the `ai-review` label.
+# `pull_request_target` runs in the context of the BASE branch (trusted
+# workflow definition) and the job never checks out or executes fork code; the
+# diff is fetched read-only through the GitHub MCP server.
 on:
-  pull_request:
-    types: [opened, synchronize]
+  pull_request_target:
+    types: [labeled]
     branches:
       - main
       - develop
@@ -32,23 +41,30 @@ defaults:
 
 jobs:
   review:
+    # Only run when an authorized maintainer explicitly requests the review by
+    # applying the `ai-review` label. Only users with triage+ permission on the
+    # repository can add labels, so the label itself is the authorization gate.
+    if: github.event.label.name == 'ai-review'
     runs-on: 'ubuntu-latest'
     timeout-minutes: 15
     permissions:
       contents: 'read'
-      issues: 'write'
       pull-requests: 'write'
     env:
-      GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
-      ISSUE_TITLE: '${{ github.event.pull_request.title || github.event.issue.title }}'
-      ISSUE_BODY: '${{ github.event.pull_request.body || github.event.issue.body }}'
-      PULL_REQUEST_NUMBER: '${{ github.event.pull_request.number || github.event.issue.number }}'
+      ISSUE_TITLE: '${{ github.event.pull_request.title }}'
+      ISSUE_BODY: '${{ github.event.pull_request.body }}'
+      PULL_REQUEST_NUMBER: '${{ github.event.pull_request.number }}'
       REPOSITORY: '${{ github.repository }}'
       GEMINI_CLI_TRUST_WORKSPACE: 'true'
       GEMINI_DEBUG: 'true'
     steps:
-      - name: 'Checkout repository'
+      # Checks out the trusted BASE branch only (default for pull_request_target).
+      # Never check out `github.event.pull_request.head.sha` here: that would
+      # execute untrusted fork code with a privileged token.
+      - name: 'Checkout repository (base branch)'
         uses: 'actions/checkout@v4'
+        with:
+          persist-credentials: false
 
       - name: 'Run Gemini pull request review'
         uses: 'google-github-actions/run-gemini-cli@v0'
@@ -72,10 +88,13 @@ jobs:
                     "--rm",
                     "-e",
                     "GITHUB_PERSONAL_ACCESS_TOKEN",
+                    "-e",
+                    "GITHUB_TOOLSETS",
                     "ghcr.io/github/github-mcp-server"
                   ],
                   "env": {
-                    "GITHUB_PERSONAL_ACCESS_TOKEN": "${{ secrets.GITHUB_TOKEN }}"
+                    "GITHUB_PERSONAL_ACCESS_TOKEN": "${{ secrets.GITHUB_TOKEN }}",
+                    "GITHUB_TOOLSETS": "pull_requests"
                   }
                 }
               }
