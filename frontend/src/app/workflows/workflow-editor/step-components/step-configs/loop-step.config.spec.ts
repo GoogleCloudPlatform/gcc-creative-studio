@@ -17,6 +17,9 @@
 import {FormControl, FormGroup} from '@angular/forms';
 import {StepOutputReference} from '../../../workflow.models';
 import {
+  LOOP_FOLDER_CHOOSE_VALUE,
+  LOOP_FOLDER_MISSING_TOOLTIP,
+  LOOP_FOLDER_SETTING,
   LOOP_ITEMS_TEXT_EMPTY_MESSAGE,
   LOOP_ITEMS_TEXT_INPUT,
   LOOP_LINKED_ITEMS_INPUT,
@@ -34,10 +37,18 @@ import {
   getLoopSourceErrorMessage,
   isLoopGalleryPick,
   isLoopMediaMode,
+  loopFolderIdValidator,
   loopItemsTextValidator,
   loopLinkedItemsRequiredValidator,
+  toLoopFolderId,
   toLoopMode,
 } from './loop-step.config';
+import {
+  FOLDER_CHOOSE_VALUE,
+  FOLDER_MISSING_TOOLTIP,
+  folderIdValidator,
+  toFolderId,
+} from './folder-setting.util';
 
 describe('loop-step.config', () => {
   const imageRef: StepOutputReference = {
@@ -222,6 +233,39 @@ describe('loop-step.config', () => {
 
     it('caps linked items at the Loop item limit', () => {
       expect(MAX_LOOP_LINKED_ITEMS).toBe(MAX_LOOP_ITEMS);
+    });
+
+    it('declares folder_id as a required folder setting without root', () => {
+      const folderSetting = LOOP_STEP_CONFIG.settings.find(
+        s => s.name === LOOP_FOLDER_SETTING,
+      );
+      expect(folderSetting).toEqual(
+        jasmine.objectContaining({
+          label: 'Media Gallery Folder',
+          type: 'folder',
+          allowRoot: false,
+          required: true,
+          defaultValue: null,
+        }),
+      );
+    });
+  });
+
+  describe('folder helper re-exports', () => {
+    it('keep the Loop names bound to the generic folder helpers', () => {
+      expect(LOOP_FOLDER_CHOOSE_VALUE).toBe(FOLDER_CHOOSE_VALUE);
+      expect(LOOP_FOLDER_MISSING_TOOLTIP).toBe(FOLDER_MISSING_TOOLTIP);
+      expect(toLoopFolderId).toBe(toFolderId);
+      expect(loopFolderIdValidator).toBe(folderIdValidator);
+    });
+
+    it('still validate folder ids', () => {
+      expect(toLoopFolderId(3)).toBe(3);
+      expect(toLoopFolderId(LOOP_FOLDER_CHOOSE_VALUE)).toBeNull();
+      expect(loopFolderIdValidator(new FormControl(null))).toBeNull();
+      expect(
+        loopFolderIdValidator(new FormControl(LOOP_FOLDER_CHOOSE_VALUE)),
+      ).toEqual({invalidLoopFolder: true});
     });
   });
 });

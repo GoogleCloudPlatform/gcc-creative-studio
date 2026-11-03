@@ -17,6 +17,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from src.common.base_dto import GenerationModelEnum
 from src.common.schema.media_item_model import (
@@ -142,6 +143,78 @@ class TestVeoServiceMethods:
         assert response.id == 123
         mock_media_repo.create.assert_called_once()
         mock_executor.submit.assert_called_once()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("requested_folder_id", [42, None])
+    async def test_start_video_generation_job_uses_resolved_output_folder(
+        self,
+        requested_folder_id,
+        veo_service,
+        mock_media_repo,
+        sample_create_veo_dto,
+        sample_user,
+    ):
+        request_dto = sample_create_veo_dto.model_copy(
+            update={"folder_id": requested_folder_id}
+        )
+
+        async def _create(item):
+            item.id = 900
+            return item
+
+        mock_media_repo.create.side_effect = _create
+        mock_executor = MagicMock()
+
+        with patch(
+            "src.videos.veo_service.resolve_output_folder_id",
+            AsyncMock(return_value=77),
+        ) as resolver:
+            response = await veo_service.start_video_generation_job(
+                request_dto=request_dto,
+                user=sample_user,
+                executor=mock_executor,
+            )
+
+        resolver.assert_awaited_once_with(
+            mock_media_repo.db, 1, sample_user, requested_folder_id
+        )
+        assert mock_media_repo.create.call_args.args[0].folder_id == 77
+        assert response.folder_id == 77
+        mock_executor.submit.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_start_video_generation_job_invalid_folder_creates_nothing(
+        self,
+        veo_service,
+        mock_media_repo,
+        sample_create_veo_dto,
+        sample_user,
+    ):
+        request_dto = sample_create_veo_dto.model_copy(
+            update={"folder_id": 999}
+        )
+        mock_executor = MagicMock()
+
+        with (
+            patch(
+                "src.videos.veo_service.resolve_output_folder_id",
+                AsyncMock(
+                    side_effect=HTTPException(
+                        status_code=422, detail="Folder not found"
+                    )
+                ),
+            ),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await veo_service.start_video_generation_job(
+                request_dto=request_dto,
+                user=sample_user,
+                executor=mock_executor,
+            )
+
+        assert exc_info.value.status_code == 422
+        mock_media_repo.create.assert_not_called()
+        mock_executor.submit.assert_not_called()
 
     @pytest.mark.anyio
     async def test_start_video_concatenation_job_success(

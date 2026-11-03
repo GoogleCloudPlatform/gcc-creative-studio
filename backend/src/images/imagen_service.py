@@ -52,7 +52,7 @@ from src.common.schema.media_item_model import (
 )
 from src.common.storage_service import GcsService
 from src.config.config_service import config_service
-from src.folders.agent_output_folder import resolve_agent_output_folder_id
+from src.folders.output_folder import resolve_output_folder_id
 from src.database import WorkerDatabase
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.images.dto.create_imagen_dto import CreateImagenDto
@@ -1687,6 +1687,7 @@ class ImagenService:
         asset_type: AssetTypeEnum | None = None,
         enhance_input_image: bool | None = None,
         image_preservation_factor: float | None = None,
+        folder_id: int | None = None,
     ) -> MediaItemResponse:
         """Starts a background job to upload and/or upscale an image.
 
@@ -1707,6 +1708,8 @@ class ImagenService:
             asset_type: The type of asset (e.g., IMAGE).
             enhance_input_image: Whether to enhance the input image before upscaling.
             image_preservation_factor: Factor for image preservation during upscaling.
+            folder_id: Optional gallery folder of the workspace to save the
+                result into; the root folder when omitted.
 
         Returns:
             A MediaItemResponse representing the placeholder item.
@@ -1784,8 +1787,8 @@ class ImagenService:
                     )
 
         # 1. Create Placeholder
-        folder_id = await resolve_agent_output_folder_id(
-            self.media_repo.db, workspace_id, user
+        folder_id = await resolve_output_folder_id(
+            self.media_repo.db, workspace_id, user, folder_id
         )
         placeholder_item = MediaItemModel(
             workspace_id=workspace_id,
@@ -1854,8 +1857,11 @@ class ImagenService:
         generation in the background.
         """
         # Create a placeholder document
-        folder_id = await resolve_agent_output_folder_id(
-            self.media_repo.db, request_dto.workspace_id, user
+        folder_id = await resolve_output_folder_id(
+            self.media_repo.db,
+            request_dto.workspace_id,
+            user,
+            request_dto.folder_id,
         )
         placeholder_item = MediaItemModel(
             workspace_id=request_dto.workspace_id,
@@ -1925,8 +1931,11 @@ class ImagenService:
         """
         # 2. Create a placeholder document
         # Do not allow manually setting ID for auto-increment columns
-        folder_id = await resolve_agent_output_folder_id(
-            self.media_repo.db, request_dto.workspace_id, user
+        folder_id = await resolve_output_folder_id(
+            self.media_repo.db,
+            request_dto.workspace_id,
+            user,
+            request_dto.folder_id,
         )
         placeholder_item = MediaItemModel(
             workspace_id=request_dto.workspace_id,

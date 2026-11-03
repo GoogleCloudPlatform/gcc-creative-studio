@@ -50,16 +50,33 @@ export interface StepInput {
   linkedOnly?: boolean;
 }
 
+/**
+ * Control rendered for a step setting. `folder` is a Media Gallery folder
+ * picker that stores a folder id (`null` = no folder / root).
+ */
+export type StepSettingType =
+  | 'text'
+  | 'textarea'
+  | 'select'
+  | 'checkbox'
+  | 'slider'
+  | 'radio'
+  | 'folder';
+
 export interface StepSetting {
   name: string;
   label: string;
-  type: 'text' | 'textarea' | 'select' | 'checkbox' | 'slider' | 'radio';
+  type: StepSettingType;
   options?: Option[];
   defaultValue: any;
   hidden?: boolean;
   min?: number;
   max?: number;
   step?: number;
+  /** `folder` only: `null` is an enabled "All Media (root)" choice. */
+  allowRoot?: boolean;
+  /** `folder` only: a folder must be chosen (shows the required error). */
+  required?: boolean;
 }
 
 export interface StepOutput {

@@ -104,6 +104,28 @@ describe('StepHistorySidebarComponent', () => {
     expect(query('#step-history-outputs-gen_image')).not.toBeNull();
   });
 
+  it('links each toggle to its content via aria-controls only while expanded', () => {
+    component.entry = buildEntry([iteration(1)]);
+    fixture.detectChanges();
+
+    const inputsToggle = query('#step-history-inputs-toggle-gen_image');
+    const outputsToggle = query('#step-history-outputs-toggle-gen_image');
+    const inputsContentId = 'step-history-inputs-gen_image';
+    const outputsContentId = 'step-history-outputs-gen_image';
+
+    expect(inputsToggle?.hasAttribute('aria-controls')).toBeFalse();
+    expect(outputsToggle?.getAttribute('aria-controls')).toBe(outputsContentId);
+    expect(query(`#${outputsContentId}`)).not.toBeNull();
+
+    inputsToggle?.click();
+    outputsToggle?.click();
+    fixture.detectChanges();
+
+    expect(inputsToggle?.getAttribute('aria-controls')).toBe(inputsContentId);
+    expect(query(`#${inputsContentId}`)).not.toBeNull();
+    expect(outputsToggle?.hasAttribute('aria-controls')).toBeFalse();
+  });
+
   it('preserves collapse state when switching iterations', () => {
     component.entry = buildEntry([iteration(1), iteration(2)]);
     fixture.detectChanges();

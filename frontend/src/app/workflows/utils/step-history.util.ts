@@ -151,7 +151,8 @@ function pickLastError(
   const failed = records.find(
     r => normalizeStepState(String(r.state.status)) === 'FAILED',
   );
-  return (failed ?? records.at(-1))?.state.last_error ?? null;
+  const pick = failed ?? records.at(-1);
+  return pick?.state.error ?? pick?.state.last_error ?? null;
 }
 
 /**

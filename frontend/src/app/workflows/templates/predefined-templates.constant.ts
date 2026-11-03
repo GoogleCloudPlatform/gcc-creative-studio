@@ -93,6 +93,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         settings: {
           model: 'gemini-3.8-flash',
           temperature: 0.7,
+          google_search: true,
         },
         type: NodeTypes.GENERATE_TEXT,
       },
@@ -134,6 +135,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         settings: {
           model: 'gemini-3.8-flash',
           temperature: 0.7,
+          google_search: false,
         },
         type: NodeTypes.GENERATE_TEXT,
       },
@@ -169,6 +171,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
           upscale_factor: 'x2',
           enhance_input_image: false,
           image_preservation_factor: null,
+          output_folder_id: null,
         },
         type: NodeTypes.IMAGE,
       },
@@ -235,6 +238,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         settings: {
           model: 'gemini-3.8-flash',
           temperature: 0.7,
+          google_search: true,
         },
         type: NodeTypes.GENERATE_TEXT,
       },
@@ -271,6 +275,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         settings: {
           model: 'gemini-3.8-flash',
           temperature: 0.7,
+          google_search: false,
         },
         type: NodeTypes.GENERATE_TEXT,
       },
@@ -297,6 +302,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         settings: {
           model: 'gemini-3.8-flash',
           temperature: 0.7,
+          google_search: false,
         },
         type: NodeTypes.GENERATE_TEXT,
       },
@@ -332,6 +338,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
           upscale_factor: 'x2',
           enhance_input_image: false,
           image_preservation_factor: null,
+          output_folder_id: null,
         },
         type: NodeTypes.IMAGE,
       },
@@ -398,6 +405,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         settings: {
           model: 'gemini-3.8-flash',
           temperature: 0.7,
+          google_search: true,
         },
         type: NodeTypes.GENERATE_TEXT,
       },
@@ -434,6 +442,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         settings: {
           model: 'gemini-3.8-flash',
           temperature: 0.7,
+          google_search: false,
         },
         type: NodeTypes.GENERATE_TEXT,
       },
@@ -470,6 +479,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         settings: {
           model: 'gemini-3.8-flash',
           temperature: 0.7,
+          google_search: false,
         },
         type: NodeTypes.GENERATE_TEXT,
       },
@@ -501,6 +511,7 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
           duration_seconds: 4,
           input_mode: 'Text to Video',
           resolution: '1K',
+          output_folder_id: null,
         },
         type: NodeTypes.GENERATE_VIDEO,
       },

@@ -30,6 +30,14 @@ import {
   StepOutput,
   StepOutputType,
 } from '../generic-step/step.model';
+import {
+  FOLDER_CHOOSE_VALUE,
+  FOLDER_MISSING_TOOLTIP,
+  FolderChooseValue,
+  FolderPreviewMimeType,
+  folderIdValidator,
+  toFolderId,
+} from './folder-setting.util';
 
 /**
  * Maximum number of items processed by a single Loop step. Shared by the node
@@ -206,14 +214,13 @@ export function buildLoopTruncationMessage(totalFound: number): string {
   return `Found ${totalFound} items, only the first ${MAX_LOOP_ITEMS} will be processed`;
 }
 
-/** Value of the "Choose folder…" option. Never persisted (folder ids are numbers). */
-export const LOOP_FOLDER_CHOOSE_VALUE = '__loop_choose_folder__';
-export type LoopFolderChooseValue = typeof LOOP_FOLDER_CHOOSE_VALUE;
+/** Loop names of the generic folder-setting helpers (kept for existing imports). */
+export const LOOP_FOLDER_CHOOSE_VALUE = FOLDER_CHOOSE_VALUE;
+export type LoopFolderChooseValue = FolderChooseValue;
 
-export const LOOP_FOLDER_MISSING_TOOLTIP =
-  "This folder no longer exists or you don't have access. Choose another folder.";
+export const LOOP_FOLDER_MISSING_TOOLTIP = FOLDER_MISSING_TOOLTIP;
 
-export type LoopItemMimeType = 'image/*' | 'video/*' | 'audio/*';
+export type LoopItemMimeType = FolderPreviewMimeType;
 
 /** Media type used to preview a folder's content for each Loop item type. */
 export const LOOP_ITEM_TYPE_MIME_MAP: Readonly<
@@ -225,22 +232,10 @@ export const LOOP_ITEM_TYPE_MIME_MAP: Readonly<
 };
 
 /** Returns the value as a positive integer folder id, otherwise null. */
-export function toLoopFolderId(value: unknown): number | null {
-  return typeof value === 'number' && Number.isInteger(value) && value > 0
-    ? value
-    : null;
-}
+export const toLoopFolderId = toFolderId;
 
 /** Flags any non-null value that is not a positive integer folder id. */
-export const loopFolderIdValidator: ValidatorFn = (
-  control: AbstractControl,
-): ValidationErrors | null => {
-  const value: unknown = control.value;
-  if (value === null || toLoopFolderId(value) !== null) {
-    return null;
-  }
-  return {invalidLoopFolder: true};
-};
+export const loopFolderIdValidator = folderIdValidator;
 
 export const LOOP_STEP_CONFIG: StepConfig = {
   type: NodeTypes.LOOP,
@@ -284,10 +279,12 @@ export const LOOP_STEP_CONFIG: StepConfig = {
       defaultValue: LOOP_MODE_FOLDER,
     },
     {
+      // Required only in folder mode; the editor toggles it with the mode.
       name: LOOP_FOLDER_SETTING,
       label: 'Media Gallery Folder',
-      type: 'select',
-      options: [],
+      type: 'folder',
+      allowRoot: false,
+      required: true,
       defaultValue: null,
     },
     {

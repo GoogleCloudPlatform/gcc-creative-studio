@@ -36,7 +36,7 @@ export class AddStepModalComponent {
   stepTypes: StepTypeOption[] = [
     {
       type: 'generate_text',
-      label: 'Generate Text',
+      label: 'Text',
       description: 'Generates text content using a large language model.',
       icon: 'description',
     },
@@ -49,13 +49,13 @@ export class AddStepModalComponent {
     },
     {
       type: 'generate_video',
-      label: 'Generate Video',
+      label: 'Video',
       description: 'Generates a video clip from a prompt or image.',
       icon: 'movie',
     },
     {
       type: 'generate_audio',
-      label: 'Generate Audio',
+      label: 'Audio',
       description: 'Generates audio (music or speech) from a text prompt.',
       icon: 'music_note',
     },

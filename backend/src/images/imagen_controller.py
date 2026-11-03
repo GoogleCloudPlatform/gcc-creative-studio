@@ -156,6 +156,7 @@ async def upload_upscale(
         None,
         alias="imagePreservationFactor",
     ),
+    folder_id: int | None = Form(None, alias="folderId", gt=0),
     current_user: UserModel = Depends(get_current_user),
     service: ImagenService = Depends(),
     workspace_auth: WorkspaceAuth = Depends(),
@@ -197,6 +198,7 @@ async def upload_upscale(
         mime_type=mime_type,
         enhance_input_image=effective_enhance_input_image,
         image_preservation_factor=effective_image_preservation_factor,
+        folder_id=folder_id,
     )
 
 

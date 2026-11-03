@@ -135,19 +135,113 @@ describe('WorkflowExecutionPollingService', () => {
     expect(workflowServiceSpy.getRuns).toHaveBeenCalledTimes(1);
   }));
 
-  it('should handle getRuns errors gracefully by emitting empty array and stopping poll', fakeAsync(() => {
-    workflowServiceSpy.getRuns.and.returnValue(
-      throwError(() => new Error('Network error')),
-    );
+  describe('getRuns error handling', () => {
+    const POLLING_INTERVAL_MS = 3000;
+    const MAX_CONSECUTIVE_POLL_FAILURES = 5;
+    const runningRun: WorkflowRunSummary = {
+      id: 'run-err-1',
+      workflow_id: 'wf-1',
+      status: WorkflowRunStatusEnum.RUNNING,
+      attempt_count: 1,
+    };
+    const failedRequest = (): Observable<WorkflowRunListResponse> =>
+      throwError(() => new Error('Network error'));
+    const failedRequests = (
+      count: number,
+    ): Observable<WorkflowRunListResponse>[] =>
+      Array.from({length: count}, failedRequest);
+    const runningResponse$ = of<WorkflowRunListResponse>({
+      runs: [runningRun],
+      next_page_token: null,
+    });
 
-    const emitted: WorkflowRunSummary[][] = [];
-    service.pollRuns('wf-1').subscribe(runs => emitted.push(runs));
+    beforeEach(() => {
+      spyOn(console, 'error');
+    });
 
-    tick(0);
-    expect(emitted.length).toBe(1);
-    expect(emitted[0]).toEqual([]);
-    expect(service.isPolling()).toBeFalse();
-  }));
+    it('should skip a single failed tick without emitting and keep polling', fakeAsync(() => {
+      workflowServiceSpy.getRuns.and.returnValues(
+        failedRequest(),
+        runningResponse$,
+      );
+
+      const emitted: WorkflowRunSummary[][] = [];
+      const sub = service
+        .pollRuns('wf-1')
+        .subscribe(runs => emitted.push(runs));
+
+      tick(0);
+      expect(emitted.length).toBe(0);
+      expect(service.isPolling()).toBeTrue();
+
+      tick(POLLING_INTERVAL_MS);
+      expect(workflowServiceSpy.getRuns).toHaveBeenCalledTimes(2);
+      expect(emitted.length).toBe(1);
+      expect(emitted[0]).toEqual([runningRun]);
+      expect(service.runs()).toEqual([runningRun]);
+      expect(service.isPolling()).toBeTrue();
+
+      sub.unsubscribe();
+    }));
+
+    it('should emit an empty array and stop polling after the maximum number of consecutive failures', fakeAsync(() => {
+      workflowServiceSpy.getRuns.and.callFake(failedRequest);
+
+      const emitted: WorkflowRunSummary[][] = [];
+      let completed = false;
+      service.pollRuns('wf-1').subscribe({
+        next: runs => emitted.push(runs),
+        complete: () => {
+          completed = true;
+        },
+      });
+
+      tick(0);
+      for (let i = 1; i < MAX_CONSECUTIVE_POLL_FAILURES - 1; i++) {
+        tick(POLLING_INTERVAL_MS);
+      }
+      expect(emitted.length).toBe(0);
+      expect(service.isPolling()).toBeTrue();
+
+      tick(POLLING_INTERVAL_MS);
+      expect(workflowServiceSpy.getRuns).toHaveBeenCalledTimes(
+        MAX_CONSECUTIVE_POLL_FAILURES,
+      );
+      expect(emitted).toEqual([[]]);
+      expect(completed).toBeTrue();
+      expect(service.isPolling()).toBeFalse();
+
+      tick(POLLING_INTERVAL_MS);
+      expect(workflowServiceSpy.getRuns).toHaveBeenCalledTimes(
+        MAX_CONSECUTIVE_POLL_FAILURES,
+      );
+    }));
+
+    it('should reset the consecutive failure count after a successful tick', fakeAsync(() => {
+      const failuresBeforeLimit = MAX_CONSECUTIVE_POLL_FAILURES - 1;
+      workflowServiceSpy.getRuns.and.returnValues(
+        ...failedRequests(failuresBeforeLimit),
+        runningResponse$,
+        ...failedRequests(failuresBeforeLimit),
+        failedRequest(),
+      );
+
+      const emitted: WorkflowRunSummary[][] = [];
+      service.pollRuns('wf-1').subscribe(runs => emitted.push(runs));
+
+      tick(0);
+      const ticksUntilLimitAfterReset = failuresBeforeLimit * 2;
+      for (let i = 0; i < ticksUntilLimitAfterReset; i++) {
+        tick(POLLING_INTERVAL_MS);
+      }
+      expect(emitted).toEqual([[runningRun]]);
+      expect(service.isPolling()).toBeTrue();
+
+      tick(POLLING_INTERVAL_MS);
+      expect(emitted).toEqual([[runningRun], []]);
+      expect(service.isPolling()).toBeFalse();
+    }));
+  });
 
   it('should keep in-flight getRuns request and ignore new polling ticks when response is slower than polling interval', fakeAsync(() => {
     const runningRun: WorkflowRunSummary = {

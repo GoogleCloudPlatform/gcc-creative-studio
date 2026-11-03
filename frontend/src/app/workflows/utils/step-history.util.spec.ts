@@ -232,7 +232,7 @@ describe('StepHistoryUtil', () => {
           loop_1: LOOP_RECORD,
           'gen_image#0': {
             status: 'FAILED',
-            last_error: {category: 'TRANSIENT', detail: 'boom'},
+            error: {category: 'TRANSIENT', detail: 'boom'},
           },
         }),
         LOOP_BODIES,

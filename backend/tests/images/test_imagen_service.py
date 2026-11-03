@@ -107,6 +107,47 @@ def fixture_sample_create_imagen_dto():
     )
 
 
+RESOLVED_FOLDER_ID = 77
+
+
+async def _assign_placeholder_id(item: MediaItemModel) -> MediaItemModel:
+    """``media_repo.create`` stand-in that returns the saved placeholder."""
+    item.id = 900
+    return item
+
+
+def _start_imagen_job(imagen_service, job, user, executor, folder_id):
+    """Starts the generate, VTO or upscale job with an output folder."""
+    if job == "generate":
+        return imagen_service.start_image_generation_job(
+            request_dto=CreateImagenDto(
+                workspace_id=1, prompt="A cat", folder_id=folder_id
+            ),
+            user=user,
+            executor=executor,
+        )
+    if job == "vto":
+        return imagen_service.start_vto_generation_job(
+            request_dto=VtoDto(
+                workspace_id=1,
+                person_image={"source_asset_id": 101},
+                top_image={"source_asset_id": 102},
+                folder_id=folder_id,
+            ),
+            user=user,
+            executor=executor,
+        )
+    return imagen_service.start_upload_upscale_job(
+        user=user,
+        executor=executor,
+        workspace_id=1,
+        gcs_uri="gs://input/original.png",
+        mime_type="image/png",
+        file_bytes=b"fake_bytes",
+        folder_id=folder_id,
+    )
+
+
 class TestImagenServiceMethods:
     """Tests for ImagenService wrapper methods."""
 
@@ -548,6 +589,66 @@ class TestImagenServiceMethods:
         assert response.id == 222
         mock_media_repo.create.assert_called_once()
         mock_executor.submit.assert_called_once()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("requested_folder_id", [42, None])
+    @pytest.mark.parametrize("job", ["generate", "vto", "upscale"])
+    async def test_start_job_places_item_in_resolved_output_folder(
+        self,
+        job,
+        requested_folder_id,
+        imagen_service,
+        mock_media_repo,
+        sample_user,
+    ):
+        mock_media_repo.create.side_effect = _assign_placeholder_id
+        mock_executor = MagicMock()
+
+        with patch(
+            "src.images.imagen_service.resolve_output_folder_id",
+            AsyncMock(return_value=RESOLVED_FOLDER_ID),
+        ) as resolver:
+            response = await _start_imagen_job(
+                imagen_service,
+                job,
+                sample_user,
+                mock_executor,
+                requested_folder_id,
+            )
+
+        resolver.assert_awaited_once_with(
+            mock_media_repo.db, 1, sample_user, requested_folder_id
+        )
+        placeholder = mock_media_repo.create.call_args.args[0]
+        assert placeholder.folder_id == RESOLVED_FOLDER_ID
+        assert response.folder_id == RESOLVED_FOLDER_ID
+        mock_executor.submit.assert_called_once()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("job", ["generate", "vto", "upscale"])
+    async def test_start_job_with_invalid_output_folder_creates_nothing(
+        self, job, imagen_service, mock_media_repo, sample_user
+    ):
+        mock_executor = MagicMock()
+
+        with (
+            patch(
+                "src.images.imagen_service.resolve_output_folder_id",
+                AsyncMock(
+                    side_effect=HTTPException(
+                        status_code=422, detail="Folder not found"
+                    )
+                ),
+            ),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await _start_imagen_job(
+                imagen_service, job, sample_user, mock_executor, 999
+            )
+
+        assert exc_info.value.status_code == 422
+        mock_media_repo.create.assert_not_called()
+        mock_executor.submit.assert_not_called()
 
     @pytest.mark.anyio
     async def test_get_media_item_with_presigned_urls_success(

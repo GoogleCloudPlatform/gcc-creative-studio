@@ -958,6 +958,7 @@ export class WorkflowFormService {
         aspect_ratio: '1:1',
         resolution: '1K',
         brand_guidelines: false,
+        output_folder_id: null,
       };
     } else if (type === NodeTypes.LOOP) {
       base.settings = {...DEFAULT_LOOP_SETTINGS};

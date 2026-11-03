@@ -289,10 +289,7 @@
       <div class="settings-grid">
         <ng-container *ngFor="let setting of localConfig.settings">
           <ng-container *ngIf="!setting.hidden && setting.name !== 'mode'">
-            <mat-form-field
-              *ngIf="setting.type === 'select' && setting.name !== loopFolderSettingName"
-              appearance="outline"
-            >
+            <mat-form-field *ngIf="setting.type === 'select'" appearance="outline">
               <mat-label>{{ setting.label }}</mat-label>
               <mat-select [formControlName]="setting.name">
                 <mat-option
@@ -304,46 +301,52 @@
               </mat-select>
             </mat-form-field>
             <mat-form-field
-              *ngIf="setting.name === loopFolderSettingName"
-              class="loop-folder-field"
+              *ngIf="setting.type === 'folder'"
+              [class]="folderDomNames.fieldClass"
               appearance="outline"
-              [title]="loopFolderOption().path"
+              [floatLabel]="folderFloatLabel"
+              [title]="folderOption().path"
               (mousedown)="$event.stopPropagation()"
             >
               <mat-label>{{ setting.label }}</mat-label>
               <mat-select
                 [formControlName]="setting.name"
-                placeholder="No folder selected"
-                [id]="'loop-folder-select-' + stepForm.value.stepId"
-                (openedChange)="onLoopFolderOpenedChange($event)"
-                (selectionChange)="onLoopFolderSelectionChange($event)"
+                [placeholder]="folderOption().label"
+                [id]="folderDomNames.selectIdPrefix + stepForm.value.stepId"
+                (openedChange)="onFolderOpenedChange($event)"
+                (selectionChange)="onFolderSelectionChange($event)"
               >
                 <mat-option
-                  *ngFor="
-                    let option of loopFolderOptions();
-                    trackBy: trackLoopFolderOption
-                  "
-                  class="loop-folder-current-option"
+                  *ngIf="showFolderRootOption()"
+                  [class]="folderDomNames.rootOptionClass"
+                  [value]="null"
+                  >{{ folderRootLabel }}</mat-option
+                >
+                <mat-option
+                  *ngFor="let option of folderOptions(); trackBy: trackFolderOption"
+                  [class]="folderDomNames.currentOptionClass"
                   [value]="option.value"
                   [disabled]="option.isPlaceholder"
                   [title]="option.path"
                   >{{ option.label }}</mat-option
                 >
                 <mat-option
-                  class="loop-folder-choose-option"
-                  [value]="loopFolderChooseValue"
+                  [class]="folderDomNames.chooseOptionClass"
+                  [value]="folderChooseValue"
                   >Choose folder…</mat-option
                 >
               </mat-select>
               <mat-icon
                 matSuffix
-                *ngIf="loopFolderOption().isMissing"
-                class="loop-folder-missing-icon"
+                *ngIf="folderOption().isMissing"
+                [class]="folderDomNames.missingIconClass"
                 color="warn"
-                [matTooltip]="loopFolderMissingTooltip"
+                [matTooltip]="folderMissingTooltip"
                 >warning</mat-icon
               >
-              <mat-error>Select a folder to loop over.</mat-error>
+              <mat-error *ngIf="setting.required"
+                >Select a folder to loop over.</mat-error
+              >
             </mat-form-field>
             <mat-form-field
               *ngIf="setting.type === 'text' || setting.type === 'textarea'"

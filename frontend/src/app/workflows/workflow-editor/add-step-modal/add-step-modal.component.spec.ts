@@ -48,6 +48,30 @@ describe('AddStepModalComponent', () => {
     expect(imageOption?.label).toBe('Image');
   });
 
+  it('should include text in stepTypes', () => {
+    const textOption = component.stepTypes.find(
+      s => s.type === 'generate_text',
+    );
+    expect(textOption).toBeDefined();
+    expect(textOption?.label).toBe('Text');
+  });
+
+  it('should include video in stepTypes', () => {
+    const videoOption = component.stepTypes.find(
+      s => s.type === 'generate_video',
+    );
+    expect(videoOption).toBeDefined();
+    expect(videoOption?.label).toBe('Video');
+  });
+
+  it('should include audio in stepTypes', () => {
+    const audioOption = component.stepTypes.find(
+      s => s.type === 'generate_audio',
+    );
+    expect(audioOption).toBeDefined();
+    expect(audioOption?.label).toBe('Audio');
+  });
+
   it('should include loop in stepTypes with a unique option id', () => {
     const loopOption = component.stepTypes.find(s => s.type === 'loop');
     expect(loopOption?.label).toBe('Loop');

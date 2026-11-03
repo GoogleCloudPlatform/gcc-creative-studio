@@ -31,6 +31,7 @@ import {workflowHasLoopStep} from '../../utils/workflow-loop.util';
 import {
   BatchItemResult,
   BatchItemStatus,
+  NodeTypes,
   QUEUE_REASON_LABELS,
   QueueReason,
   WorkflowModel,
@@ -199,7 +200,7 @@ export class BatchExecutionModalComponent {
 
   extractExpectedInputs(): void {
     const userInputStep = this.workflow?.steps?.find(
-      s => s.type === 'user_input',
+      s => s.type === NodeTypes.USER_INPUT,
     );
     if (userInputStep && userInputStep.outputs) {
       this.expectedInputs = Object.keys(userInputStep.outputs);
@@ -212,6 +213,9 @@ export class BatchExecutionModalComponent {
     if (file) {
       this.csvFile = file;
       this.parseCsv(file);
+      if (target) {
+        target.value = '';
+      }
     }
   }
 

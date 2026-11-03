@@ -36,16 +36,21 @@ import {MatSelect, MatSelectModule} from '@angular/material/select';
 import {MatSliderModule} from '@angular/material/slider';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {GENERATE_TEXT_STEP_CONFIG} from '../step-configs/generate-text-step.config';
+import {GENERATE_AUDIO_STEP_CONFIG} from '../step-configs/generate-audio-step.config';
 import {GENERATE_VIDEO_STEP_CONFIG} from '../step-configs/generate-video-step.config';
-import {IMAGE_STEP_CONFIG} from '../step-configs/image-step.config';
+import {
+  IMAGE_MODE_OPTIONS,
+  IMAGE_STEP_CONFIG,
+} from '../step-configs/image-step.config';
 import {LoopItemType, NodeTypes} from '../../../workflow.models';
-import {StepInput} from './step.model';
+import {StepConfig, StepInput} from './step.model';
 import {StudioSliderComponent} from '../../../../common/components/studio-slider/studio-slider.component';
 import {WorkflowStatusPipe} from '../../../workflow-status.pipe';
 import {GenericStepComponent} from './generic-step.component';
 import {NEVER, Subject, of, throwError} from 'rxjs';
 import {FolderService} from '../../../../common/services/folder.service';
 import {WorkspaceStateService} from '../../../../services/workspace/workspace-state.service';
+import {WorkflowFolderTreeStore} from '../../workflow-folder-tree.store';
 import {
   FolderSelectionResult,
   FolderTreeNode,
@@ -96,6 +101,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       ],
       providers: [
         FormBuilder,
+        WorkflowFolderTreeStore,
         {provide: MatDialog, useValue: dialogSpy},
         {
           provide: FolderService,
@@ -1217,6 +1223,142 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
     });
   });
 
+  describe('Generate Text Google search setting', () => {
+    const GOOGLE_SEARCH_LABEL = 'Google search';
+
+    let fb: FormBuilder;
+
+    const buildTextStepForm = (googleSearch: boolean | null): FormGroup => {
+      const settings: FormGroup = fb.group({
+        model: ['gemini-3.8-flash'],
+        temperature: [0.7],
+      });
+      if (googleSearch !== null) {
+        settings.addControl('google_search', fb.control(googleSearch));
+      }
+      return fb.group({
+        stepId: ['text_step_search'],
+        type: [NodeTypes.GENERATE_TEXT],
+        status: ['idle'],
+        inputs: fb.group({
+          prompt: ['What is the weather today?'],
+          input_images: [null],
+          input_videos: [null],
+        }),
+        settings,
+        outputs: fb.group({
+          generated_text: [{type: 'text'}],
+        }),
+      });
+    };
+
+    const mountStep = (
+      stepForm: FormGroup,
+    ): ComponentFixture<GenericStepComponent> => {
+      const stepFixture = TestBed.createComponent(GenericStepComponent);
+      const stepComponent = stepFixture.componentInstance;
+      stepComponent.stepForm = stepForm;
+      stepComponent.config = GENERATE_TEXT_STEP_CONFIG;
+      stepComponent.stepIndex = 0;
+      stepFixture.detectChanges();
+      return stepFixture;
+    };
+
+    const findGoogleSearchCheckbox = (
+      stepFixture: ComponentFixture<GenericStepComponent>,
+    ): HTMLElement | null => {
+      const checkbox = stepFixture.debugElement
+        .queryAll(By.css('mat-checkbox'))
+        .find(
+          el =>
+            (el.nativeElement as HTMLElement).textContent?.trim() ===
+            GOOGLE_SEARCH_LABEL,
+        );
+      return checkbox ? (checkbox.nativeElement as HTMLElement) : null;
+    };
+
+    const findNativeInput = (checkbox: HTMLElement | null): HTMLInputElement =>
+      checkbox?.querySelector('input[type="checkbox"]') as HTMLInputElement;
+
+    beforeEach(() => {
+      fb = TestBed.inject(FormBuilder);
+    });
+
+    it('declares google_search as an unchecked checkbox after temperature', () => {
+      const settingNames = GENERATE_TEXT_STEP_CONFIG.settings.map(s => s.name);
+      const googleSearchSetting = GENERATE_TEXT_STEP_CONFIG.settings.find(
+        s => s.name === 'google_search',
+      );
+
+      expect(settingNames).toEqual(['model', 'temperature', 'google_search']);
+      expect(googleSearchSetting?.type).toBe('checkbox');
+      expect(googleSearchSetting?.label).toBe(GOOGLE_SEARCH_LABEL);
+      expect(googleSearchSetting?.defaultValue).toBeFalse();
+    });
+
+    it('renders an unchecked "Google search" checkbox for a new step', () => {
+      const stepForm = buildTextStepForm(false);
+      const stepFixture = mountStep(stepForm);
+      const checkbox = findGoogleSearchCheckbox(stepFixture);
+
+      expect(checkbox).not.toBeNull();
+      expect(findNativeInput(checkbox).checked).toBeFalse();
+      expect(stepForm.get('settings.google_search')?.value).toBeFalse();
+    });
+
+    it('adds google_search as false to a legacy step without the key', () => {
+      const stepForm = buildTextStepForm(null);
+      const settings = stepForm.get('settings') as FormGroup;
+      expect(settings.contains('google_search')).toBeFalse();
+
+      const stepFixture = mountStep(stepForm);
+
+      expect(settings.contains('google_search')).toBeTrue();
+      expect(settings.get('google_search')?.value).toBeFalse();
+      expect(
+        findNativeInput(findGoogleSearchCheckbox(stepFixture)).checked,
+      ).toBeFalse();
+    });
+
+    it('does not mark a legacy step or its parent form dirty when backfilling google_search', () => {
+      const stepForm = buildTextStepForm(null);
+      const parentForm = fb.group({steps: fb.array([stepForm])});
+      parentForm.markAsPristine();
+
+      mountStep(stepForm);
+
+      expect(stepForm.get('settings.google_search')?.value).toBeFalse();
+      expect(stepForm.pristine).toBeTrue();
+      expect(parentForm.pristine).toBeTrue();
+    });
+
+    it('renders a persisted true value as checked', () => {
+      const stepFixture = mountStep(buildTextStepForm(true));
+
+      expect(
+        findNativeInput(findGoogleSearchCheckbox(stepFixture)).checked,
+      ).toBeTrue();
+    });
+
+    it('updates settings.google_search when the checkbox is clicked', () => {
+      const stepForm = buildTextStepForm(false);
+      const stepFixture = mountStep(stepForm);
+      const nativeInput = findNativeInput(
+        findGoogleSearchCheckbox(stepFixture),
+      );
+      const googleSearchControl = stepForm.get('settings.google_search');
+
+      nativeInput.click();
+      stepFixture.detectChanges();
+      expect(googleSearchControl?.value).toBeTrue();
+      expect(stepForm.value.settings.google_search).toBeTrue();
+
+      nativeInput.click();
+      stepFixture.detectChanges();
+      expect(googleSearchControl?.value).toBeFalse();
+    });
+  });
+
   describe('Image node resolution and aspect ratio features', () => {
     it('should include auto in aspect ratio options, disabled in generate_image and enabled in edit_image mode', () => {
       const aspectRatioSetting = component.localConfig.settings.find(
@@ -1417,11 +1559,11 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
 
     it('indexes workspace folders to resolve the saved folder name and path', () => {
       initLoopStep('folder', 'image', 8);
-      expect(component.loopFolderIndex()?.get(7)).toEqual({
+      expect(component.folderIndex()?.get(7)).toEqual({
         name: 'Campaign',
         path: 'Campaign',
       });
-      expect(component.loopFolderOption()).toEqual({
+      expect(component.folderOption()).toEqual({
         value: 8,
         label: 'Shots',
         path: 'Campaign / Shots',
@@ -1691,7 +1833,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         expect(currentOption.value).toBeNull();
         expect(currentOption.disabled).toBeTrue();
         expect(currentOption.viewValue).toBe('No folder selected');
-        expect(component.loopFolderOption().isPlaceholder).toBeTrue();
+        expect(component.folderOption().isPlaceholder).toBeTrue();
       });
 
       it('shows the resolved folder name with its full path as title', () => {
@@ -1708,13 +1850,13 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
 
       it('flags a saved folder missing from the tree with a warning icon', () => {
         initLoopStep('folder', 'image', 42);
-        const option = component.loopFolderOption();
+        const option = component.folderOption();
         expect(option.label).toBe('Folder #42');
         expect(option.isMissing).toBeTrue();
         expect(folderControl().value).toBe(42);
         expect(folderControl().valid).toBeTrue();
         expect(query('.loop-folder-missing-icon')).not.toBeNull();
-        expect(component.loopFolderMissingTooltip).toBe(
+        expect(component.folderMissingTooltip).toBe(
           LOOP_FOLDER_MISSING_TOOLTIP,
         );
       });
@@ -1722,7 +1864,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       it('shows the folder id without a warning while the tree is loading', () => {
         folderServiceSpy.getFolderTree.and.returnValue(NEVER);
         initLoopStep('folder', 'image', 2);
-        const option = component.loopFolderOption();
+        const option = component.folderOption();
         expect(option.label).toBe('Folder #2');
         expect(option.isMissing).toBeFalse();
         expect(query('.loop-folder-missing-icon')).toBeNull();
@@ -1734,7 +1876,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
           throwError(() => new Error('boom')),
         );
         initLoopStep('folder', 'image', 2);
-        const option = component.loopFolderOption();
+        const option = component.folderOption();
         expect(option.label).toBe('Folder #2');
         expect(option.isMissing).toBeFalse();
       });
@@ -1776,10 +1918,10 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
 
       it('restores pristine when the control was pristine before choosing', () => {
         initLoopStep('folder', 'image', 2);
-        component.onLoopFolderOpenedChange(true);
+        component.onFolderOpenedChange(true);
         folderControl().setValue(LOOP_FOLDER_CHOOSE_VALUE);
         folderControl().markAsDirty();
-        component.onLoopFolderSelectionChange({
+        component.onFolderSelectionChange({
           source: getFolderSelect(),
           value: LOOP_FOLDER_CHOOSE_VALUE,
         });
@@ -1789,11 +1931,11 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
 
       it('ignores regular option selections', () => {
         initLoopStep('folder', 'image', 2);
-        component.onLoopFolderSelectionChange({
+        component.onFolderSelectionChange({
           source: getFolderSelect(),
           value: 2,
         });
-        component.onLoopFolderOpenedChange(false);
+        component.onFolderOpenedChange(false);
         expect(dialogSpy.open).not.toHaveBeenCalled();
         expect(folderControl().value).toBe(2);
       });
@@ -1826,7 +1968,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       (['image', 'video', 'audio'] as LoopItemType[]).forEach(itemType => {
         it(`previews ${itemType} items in the folder dialog`, () => {
           initLoopStep('folder', itemType);
-          component.openLoopFolderSelector();
+          component.openFolderSelector();
           expect(lastDialogData().mimeType).toBe(
             LOOP_ITEM_TYPE_MIME_MAP[itemType],
           );
@@ -1836,7 +1978,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
 
       it('stores the confirmed folder and shows its name and path', async () => {
         initLoopStep('folder');
-        component.openLoopFolderSelector();
+        component.openFolderSelector();
         afterClosed$.next(SUMMER_RESULT);
         await renderSelection();
 
@@ -1844,7 +1986,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         expect(control.value).toBe(2);
         expect(control.dirty).toBeTrue();
         expect(control.touched).toBeTrue();
-        expect(component.loopFolderId()).toBe(2);
+        expect(component.folderId()).toBe(2);
         const select = getFolderSelect();
         const currentOption = select.options.first;
         expect(currentOption.viewValue).toBe('Summer');
@@ -1860,7 +2002,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         await renderSelection();
         expect(selectTriggerText()).toBe('Summer');
 
-        component.openLoopFolderSelector();
+        component.openFolderSelector();
         afterClosed$.next(NEW_FOLDER_RESULT);
         await renderSelection();
 
@@ -1869,24 +2011,24 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
 
       it('shows a newly created folder that is not in the loaded tree', () => {
         initLoopStep('folder', 'image', 2);
-        component.openLoopFolderSelector();
+        component.openFolderSelector();
         afterClosed$.next(NEW_FOLDER_RESULT);
         fixture.detectChanges();
 
         expect(folderControl().value).toBe(99);
-        expect(component.loopFolderOption()).toEqual({
+        expect(component.folderOption()).toEqual({
           value: 99,
           label: 'Fresh Shoot',
           path: 'Archive / Fresh Shoot',
           isPlaceholder: false,
           isMissing: false,
         });
-        expect(component.loopFolderIndex()?.get(2)?.name).toBe('Summer');
+        expect(component.folderIndex()?.get(2)?.name).toBe('Summer');
       });
 
       it('ignores an invalid dialog result', () => {
         initLoopStep('folder', 'image', 2);
-        component.openLoopFolderSelector();
+        component.openFolderSelector();
         afterClosed$.next({...SUMMER_RESULT, folderId: 0});
         expect(folderControl().value).toBe(2);
         expect(folderControl().pristine).toBeTrue();
@@ -1895,7 +2037,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       it('does not open the dialog when the form is read-only', () => {
         const loopForm = initLoopStep('folder', 'image', 2);
         loopForm.disable();
-        component.openLoopFolderSelector();
+        component.openFolderSelector();
         expect(dialogSpy.open).not.toHaveBeenCalled();
       });
 
@@ -1923,7 +2065,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         loopForm.patchValue({settings: {folder_id: 4}});
         await renderSelection();
 
-        expect(component.loopFolderId()).toBe(4);
+        expect(component.folderId()).toBe(4);
         const select = getFolderSelect();
         const currentOption = select.options.first;
         expect(currentOption.value).toBe(4);
@@ -1933,23 +2075,310 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
 
         loopForm.reset();
         fixture.detectChanges();
-        expect(component.loopFolderId()).toBeNull();
-        expect(component.loopFolderOption().isPlaceholder).toBeTrue();
+        expect(component.folderId()).toBeNull();
+        expect(component.folderOption().isPlaceholder).toBeTrue();
       });
 
       it('keeps the current folder when the choose value is emitted', () => {
         initLoopStep('folder', 'image', 2);
         folderControl().setValue(LOOP_FOLDER_CHOOSE_VALUE);
-        expect(component.loopFolderId()).toBe(2);
-        expect(component.loopFolderOption().label).toBe('Summer');
+        expect(component.folderId()).toBe(2);
+        expect(component.folderOption().label).toBe('Summer');
       });
 
       it('stops following folder_id changes once destroyed', () => {
         const loopForm = initLoopStep('folder', 'image', 2);
         component.ngOnDestroy();
         loopForm.patchValue({settings: {folder_id: 4}});
-        expect(component.loopFolderId()).toBe(2);
+        expect(component.folderId()).toBe(2);
       });
+    });
+  });
+
+  describe('Output folder setting', () => {
+    const OUTPUT_TREE: FolderTreeNode[] = [
+      {
+        id: 1,
+        name: 'Campaign',
+        children: [{id: 2, name: 'Q4', children: []}],
+      },
+    ];
+    const RENAMED_TREE: FolderTreeNode[] = [
+      {
+        id: 1,
+        name: 'Campaign',
+        children: [{id: 2, name: 'Q4 Final', children: []}],
+      },
+    ];
+    const Q4_RESULT: FolderSelectionResult = {
+      folderId: 2,
+      folderName: 'Q4',
+      path: 'Campaign / Q4',
+    };
+
+    interface MountedStep {
+      fixture: ComponentFixture<GenericStepComponent>;
+      component: GenericStepComponent;
+      form: FormGroup;
+    }
+
+    let folderServiceSpy: jasmine.SpyObj<FolderService>;
+    let store: WorkflowFolderTreeStore;
+    let afterClosed$: Subject<FolderSelectionResult | null | undefined>;
+
+    beforeEach(() => {
+      folderServiceSpy = TestBed.inject(
+        FolderService,
+      ) as jasmine.SpyObj<FolderService>;
+      folderServiceSpy.getFolderTree.calls.reset();
+      folderServiceSpy.getFolderTree.and.returnValue(of(OUTPUT_TREE));
+      store = TestBed.inject(WorkflowFolderTreeStore);
+      (dialogSpy.open as jasmine.Spy).and.callFake(() => {
+        afterClosed$ = new Subject();
+        const ref = {
+          afterClosed: () => afterClosed$.asObservable(),
+        } as unknown as FolderDialogRef;
+        return ref;
+      });
+    });
+
+    /** Binds a media node form to a component, as the editor does. */
+    function mountMediaStep(
+      config: StepConfig,
+      stepId: string,
+      folderId: number | null,
+      target: ComponentFixture<GenericStepComponent> = fixture,
+    ): MountedStep {
+      const form = fb.group({
+        stepId: [stepId],
+        type: [config.type],
+        status: ['idle'],
+        collapsed: [false],
+        inputs: fb.group({}),
+        settings: fb.group({output_folder_id: [folderId]}),
+        outputs: fb.group({}),
+      });
+      const targetComponent = target.componentInstance;
+      targetComponent.stepForm = form;
+      targetComponent.config = config;
+      targetComponent.ngOnChanges({
+        stepForm: {
+          currentValue: form,
+          previousValue: null,
+          firstChange: false,
+          isFirstChange: () => false,
+        },
+      });
+      target.detectChanges();
+      return {fixture: target, component: targetComponent, form};
+    }
+
+    const querySelect = (
+      target: ComponentFixture<GenericStepComponent>,
+      stepId: string,
+    ): MatSelect | null =>
+      target.debugElement
+        .query(By.css(`#output-folder-select-${stepId}`))
+        ?.injector.get(MatSelect) ?? null;
+
+    it('renders on the Image node in every mode', () => {
+      IMAGE_MODE_OPTIONS.forEach(({value}) => {
+        component.stepForm.get('settings.mode')?.setValue(value);
+        fixture.detectChanges();
+        expect(querySelect(fixture, 'image_step_1'))
+          .withContext(value)
+          .not.toBeNull();
+      });
+    });
+
+    it('renders on the Generate Video and Generate Audio nodes', () => {
+      mountMediaStep(GENERATE_VIDEO_STEP_CONFIG, 'video_1', null);
+      expect(querySelect(fixture, 'video_1')).not.toBeNull();
+
+      mountMediaStep(GENERATE_AUDIO_STEP_CONFIG, 'audio_1', null);
+      expect(querySelect(fixture, 'audio_1')).not.toBeNull();
+    });
+
+    it('defaults to an enabled "All Media (root)" option with a null value', () => {
+      const select = querySelect(fixture, 'image_step_1');
+      const rootOption = select?.options.first;
+      const host: HTMLElement = fixture.nativeElement;
+
+      expect(component.stepForm.get('settings.output_folder_id')?.value).toBe(
+        null,
+      );
+      expect(rootOption?.value).toBeNull();
+      expect(rootOption?.disabled).toBeFalse();
+      expect(rootOption?.viewValue).toBe('All Media (root)');
+      expect(select?.placeholder).toBe('All Media (root)');
+      expect(component.folderOption().isPlaceholder).toBeFalse();
+      expect(host.querySelector('.output-folder-field')).not.toBeNull();
+      expect(host.querySelector('#loop-folder-select-image_step_1')).toBeNull();
+    });
+
+    it('sets the confirmed folder id from the picker', () => {
+      const {form} = mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', null);
+      component.openFolderSelector();
+      afterClosed$.next(Q4_RESULT);
+      fixture.detectChanges();
+
+      const control = form.get('settings.output_folder_id');
+      const option = component.folderOption();
+      expect(control?.value).toBe(2);
+      expect(control?.dirty).toBeTrue();
+      expect(option.label).toBe('Q4');
+      expect(option.path).toBe('Campaign / Q4');
+    });
+
+    it('previews the generated media type in the picker', () => {
+      mountMediaStep(GENERATE_VIDEO_STEP_CONFIG, 'video_1', null);
+      component.openFolderSelector();
+      const data = dialogSpy.open.calls.mostRecent().args[1]
+        ?.data as ImageSelectorDialogData;
+      expect(data).toEqual(
+        jasmine.objectContaining({
+          selectionTarget: 'folder',
+          initialFolderId: null,
+          mimeType: 'video/*',
+        }),
+      );
+    });
+
+    it('goes back to the root (null) through the root option', async () => {
+      const {form} = mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', 2);
+      await fixture.whenStable();
+      const select = querySelect(fixture, 'img_1');
+      const options = select?.options.toArray() ?? [];
+      expect(options.map(o => o.value)).toEqual([
+        null,
+        2,
+        component.folderChooseValue,
+      ]);
+
+      select?.open();
+      fixture.detectChanges();
+      options[0]._selectViaInteraction();
+      fixture.detectChanges();
+
+      expect(form.get('settings.output_folder_id')?.value).toBeNull();
+      expect(component.folderId()).toBeNull();
+      expect(component.showFolderRootOption()).toBeFalse();
+    });
+
+    it('flags a saved folder missing from the tree', () => {
+      mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', 42);
+      const host: HTMLElement = fixture.nativeElement;
+      const option = component.folderOption();
+      expect(option.label).toBe('Folder #42');
+      expect(option.isMissing).toBeTrue();
+      expect(host.querySelector('.output-folder-missing-icon')).not.toBeNull();
+    });
+
+    it('never requires a folder', () => {
+      const {form} = mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', null);
+      const control = form.get('settings.output_folder_id');
+      control?.markAsTouched();
+      fixture.detectChanges();
+
+      const host: HTMLElement = fixture.nativeElement;
+      expect(control?.hasValidator(Validators.required)).toBeFalse();
+      expect(control?.valid).toBeTrue();
+      expect(host.querySelector('.output-folder-field mat-error')).toBeNull();
+    });
+
+    it('does not load the tree while the value is root and the select was never opened', () => {
+      mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', null);
+      expect(folderServiceSpy.getFolderTree).not.toHaveBeenCalled();
+    });
+
+    it('loads the tree once when the select is opened', () => {
+      component.onFolderOpenedChange(true);
+      component.onFolderOpenedChange(false);
+      component.onFolderOpenedChange(true);
+      expect(folderServiceSpy.getFolderTree).toHaveBeenCalledOnceWith(1);
+    });
+
+    it('does not refresh the tree when the select is opened', () => {
+      const refreshSpy = spyOn(store, 'refresh').and.callThrough();
+      component.onFolderOpenedChange(true);
+      expect(refreshSpy).not.toHaveBeenCalled();
+    });
+
+    it('shares one request between nodes of the same workspace', () => {
+      const response$ = new Subject<FolderTreeNode[]>();
+      folderServiceSpy.getFolderTree.and.returnValue(response$);
+      const first = mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', 2);
+      const second = mountMediaStep(
+        GENERATE_AUDIO_STEP_CONFIG,
+        'audio_1',
+        1,
+        TestBed.createComponent(GenericStepComponent),
+      );
+
+      response$.next(OUTPUT_TREE);
+      response$.complete();
+
+      expect(folderServiceSpy.getFolderTree).toHaveBeenCalledTimes(1);
+      expect(first.component.folderOption().label).toBe('Q4');
+      expect(second.component.folderOption().label).toBe('Campaign');
+    });
+
+    it('sends a single request when ngOnChanges and ngOnInit both initialize', () => {
+      folderServiceSpy.getFolderTree.and.returnValue(new Subject());
+      const freshFixture = TestBed.createComponent(GenericStepComponent);
+      const freshComponent = freshFixture.componentInstance;
+      const form = fb.group({
+        stepId: ['img_fresh'],
+        type: [NodeTypes.IMAGE],
+        status: ['idle'],
+        collapsed: [false],
+        inputs: fb.group({}),
+        settings: fb.group({output_folder_id: [2]}),
+        outputs: fb.group({}),
+      });
+      freshComponent.stepForm = form;
+      freshComponent.config = IMAGE_STEP_CONFIG;
+      freshComponent.ngOnChanges({
+        stepForm: {
+          currentValue: form,
+          previousValue: null,
+          firstChange: true,
+          isFirstChange: () => true,
+        },
+      });
+      freshFixture.detectChanges();
+
+      expect(folderServiceSpy.getFolderTree).toHaveBeenCalledTimes(1);
+    });
+
+    it('refreshes the shared tree after the picker closes, whatever the result', () => {
+      const refreshSpy = spyOn(store, 'refresh').and.callThrough();
+      mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', null);
+
+      component.openFolderSelector();
+      afterClosed$.next(undefined);
+      expect(refreshSpy).toHaveBeenCalledOnceWith(1);
+
+      component.openFolderSelector();
+      afterClosed$.next(Q4_RESULT);
+      expect(refreshSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('updates other nodes of the workspace after the picker refresh', () => {
+      mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', null);
+      const other = mountMediaStep(
+        GENERATE_VIDEO_STEP_CONFIG,
+        'video_1',
+        2,
+        TestBed.createComponent(GenericStepComponent),
+      );
+      expect(other.component.folderOption().label).toBe('Q4');
+
+      folderServiceSpy.getFolderTree.and.returnValue(of(RENAMED_TREE));
+      component.openFolderSelector();
+      afterClosed$.next(null);
+
+      expect(other.component.folderOption().label).toBe('Q4 Final');
     });
   });
 
