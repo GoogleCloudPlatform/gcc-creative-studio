@@ -650,6 +650,52 @@ class TestDeleteSession:
         service._sessions_delete.assert_not_called()
 
     @pytest.mark.anyio
+    async def test_a_live_chat_without_a_state_workspace_uses_its_row(
+        self, service, registry
+    ):
+        # The state names no workspace: the registry row's is checked, as for
+        # an expired chat, instead of skipping the workspace check.
+        registry.get.return_value = _row("s1")
+        service._sessions_get = AsyncMock(
+            return_value=_session(workspace_id=None)
+        )
+        service._sessions_delete = AsyncMock()
+
+        result = await service.delete_session(USER, "s1", "7", _request())
+
+        assert result == {"status": "success"}
+        service.workspace_auth.authorize.assert_awaited_once_with(
+            workspace_id=10, user=USER
+        )
+        service._sessions_delete.assert_awaited_once_with(
+            "agent", "ads_x", "7", "s1"
+        )
+        registry.delete.assert_awaited_once_with("s1")
+
+    @pytest.mark.anyio
+    async def test_a_refused_row_workspace_stops_a_live_chats_delete(
+        self, service, registry
+    ):
+        registry.get.return_value = _row("s1")
+        service._sessions_get = AsyncMock(
+            return_value=_session(workspace_id=None)
+        )
+        service._sessions_delete = AsyncMock()
+        service.workspace_auth.authorize.side_effect = HTTPException(
+            status_code=403, detail="Not a member"
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await service.delete_session(USER, "s1", "7", _request())
+
+        assert exc.value.status_code == 403
+        service.workspace_auth.authorize.assert_awaited_once_with(
+            workspace_id=10, user=USER
+        )
+        service._sessions_delete.assert_not_called()
+        registry.delete.assert_not_called()
+
+    @pytest.mark.anyio
     async def test_an_unknown_chat_is_404(self, service):
         service._sessions_get = AsyncMock(
             side_effect=ValueError("Session not found")

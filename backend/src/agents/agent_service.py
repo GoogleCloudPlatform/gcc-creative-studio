@@ -1145,6 +1145,10 @@ class AgentService:
                     if isinstance(s_state, dict)
                     else None
                 )
+                # Like the expired-chat branch: the registry still names the
+                # workspace when the live state does not.
+                if s_workspace_id is None and registry_row is not None:
+                    s_workspace_id = registry_row.workspace_id
                 if s_workspace_id is not None:
                     await self.workspace_auth.authorize(
                         workspace_id=int(s_workspace_id),

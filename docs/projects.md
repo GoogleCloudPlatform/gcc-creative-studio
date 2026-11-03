@@ -48,6 +48,7 @@ There are deliberately no ORM relationships on `Project`. Deletes rely on the fo
   - checks the registry and refuses an unregistered foreign chat;
   - never deletes after a failed read (`_get_session_or_none` answers 502);
   - does not swallow a refused workspace;
+  - authorizes a live chat's workspace from its session state, falling back to the registry row's `workspace_id` when the state names none, so a registered chat never skips the workspace check;
   - answers 409 (`BUSY_CHAT_DELETE_DETAIL`) while the chat `_is_run_active`, since the run would die at its next `append_event`. The check runs after the owner and workspace checks, so a foreign chat still gets 403, and right before the agent delete, with no await in between. It is per process, with the same caveat as the run guard;
   - only drops the registry row of a chat already gone from the agent, after `workspace_auth` on the row's `workspace_id`: the session state that names a live chat's workspace is gone with it, and the `workspace_id` query parameter is optional and chosen by the caller.
 - `chat()` refuses a foreign chat first, before anything reads the session or `process_stream` appends the caller's token to it. `_ensure_chat_owner` uses the registry row's owner, or, for an unregistered chat only, the fetched session's owner. It answers 403, or 502 when that read fails.
