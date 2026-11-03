@@ -1784,13 +1784,14 @@ describe('WorkbenchComponent', () => {
 
     describe('while a save is in flight', () => {
       let getTimeline: jasmine.Spy;
+      let update: jasmine.Spy;
+      let saveResponse: Subject<TimelineDTO>;
       let state: TimelineStateService;
 
       beforeEach(() => {
         const service = TestBed.inject(WorkbenchService);
-        spyOn(service, 'updateTimeline').and.returnValue(
-          new Subject<TimelineDTO>(), // Never answers: the save stays open.
-        );
+        saveResponse = new Subject<TimelineDTO>(); // Open until a test answers.
+        update = spyOn(service, 'updateTimeline').and.returnValue(saveResponse);
         getTimeline = spyOn(service, 'getTimeline').and.returnValue(
           new Subject<TimelineDTO>(),
         );
@@ -1816,6 +1817,90 @@ describe('WorkbenchComponent', () => {
         TestBed.flushEffects();
 
         expect(getTimeline).not.toHaveBeenCalled();
+      });
+
+      it('keeps the editor through a chat reload of the timeline being saved', () => {
+        // The chat reloads a storyboard by unsetting its timeline right
+        // before setting it again, and the effect runs for both values.
+        // Clearing the editor on the first would leave it empty (the second
+        // is skipped: the timeline being saved), and the next autosave would
+        // write that empty editor over timeline 41.
+        const agentChat = TestBed.inject(AgentChatService) as unknown as {
+          currentStoryboard: WritableSignal<any>;
+        };
+        state.loadedTimelineId.set(undefined);
+        agentChat.currentStoryboard.set({id: 7, timeline_id: 41});
+        TestBed.flushEffects();
+
+        expect(getTimeline).not.toHaveBeenCalled();
+        expect(state.timelineClips()).toEqual([clip]);
+
+        saveResponse.next({...saved, timeline_id: 41, session_id: 's1'});
+        TestBed.flushEffects();
+        expect(state.timelineClips()).toEqual([clip]);
+
+        component.saveTimeline(); // The next autosave.
+        const [timelineId, body] = update.calls.mostRecent().args;
+        expect(timelineId).toBe(41);
+        expect((body as TimelineDTO).video_clips.length).toBe(1);
+      });
+
+      it('clears the editor once the save lands if its timeline was left', () => {
+        // E.g. a project without a timeline was entered during the save.
+        projectState.activeProjectId.set(8);
+        state.selectedClipId.set('c1');
+        state.loadedTimelineId.set(undefined);
+        TestBed.flushEffects();
+        // Kept while the save runs: it may still be a chat reload.
+        expect(state.timelineClips()).toEqual([clip]);
+
+        saveResponse.next(saved);
+
+        expect(state.loadedTimelineId()).toBeUndefined();
+        expect(state.timelineClips()).toEqual([]);
+        expect(state.selectedClipId()).toBeNull();
+        expect(component.lastSavedText()).toBe('');
+      });
+
+      it('also clears it when that save fails', () => {
+        spyOn(console, 'error');
+        projectState.activeProjectId.set(8);
+        state.loadedTimelineId.set(undefined);
+        TestBed.flushEffects();
+
+        saveResponse.error(new Error('Network down'));
+
+        expect(state.timelineClips()).toEqual([]);
+      });
+
+      it('never clears a timeline set after the leave', () => {
+        projectState.activeProjectId.set(8);
+        state.loadedTimelineId.set(undefined);
+        TestBed.flushEffects();
+        state.loadedTimelineId.set(42);
+        TestBed.flushEffects();
+        state.timelineClips.set([clip]); // As if timeline 42 had loaded.
+
+        saveResponse.next({...saved, timeline_id: 41, session_id: 's1'});
+        TestBed.flushEffects();
+
+        expect(getTimeline).toHaveBeenCalledOnceWith(42);
+        expect(state.timelineClips()).toEqual([clip]);
+      });
+
+      it('drops a fetch still in flight once the timeline is unset', () => {
+        const pending = new Subject<TimelineDTO>();
+        getTimeline.and.returnValue(pending);
+        const apply = spyOn(component, 'processGeneratedData');
+        state.loadedTimelineId.set(42);
+        TestBed.flushEffects();
+        state.loadedTimelineId.set(undefined);
+        TestBed.flushEffects();
+        expect(state.isLoadingTimeline()).toBeFalse();
+
+        pending.next({...saved, timeline_id: 42});
+
+        expect(apply).not.toHaveBeenCalled();
       });
     });
 

@@ -242,6 +242,12 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
   private isSaving = false;
   /** Timeline the in-flight save writes (`null` while it creates one). */
   private savingTimelineId: number | string | null = null;
+  /**
+   * The timeline was unset while a save was in flight: the timeline effect
+   * left the editor as is, and `endSave()` clears it unless a timeline was
+   * set meanwhile.
+   */
+  private editorResetPending = false;
   /** Project the pending (debounced) autosave was queued in. */
   private pendingSaveProjectId: number | null = null;
   /** Monotonic id of the latest timeline fetch (see the timeline effect). */
@@ -293,12 +299,25 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
         // project or chat switch during the save) loads now: this effect
         // does not run again when the save lands, and an editor bound to a
         // timeline it never loaded overwrites it on the next autosave.
+        // No timeline waits too, until the save settles: the chat reloads a
+        // storyboard by unsetting its timeline right before setting it again,
+        // and this effect runs for both values. Clearing the editor in
+        // between would leave it empty yet bound to the timeline being saved,
+        // and the next autosave would write that over it. `endSave()` clears
+        // it instead if no timeline is set by then.
         if (
           this.isSaving &&
           (!timelineId || String(timelineId) === String(this.savingTimelineId))
         ) {
+          this.editorResetPending = !timelineId;
+          if (!timelineId) {
+            // Drop a fetch still in flight: it loads a timeline that was left.
+            this.timelineLoadSeq++;
+            this.timelineState.isLoadingTimeline.set(false);
+          }
           return;
         }
+        this.editorResetPending = false;
         if (timelineId) {
           // Publish the in-flight state so the chat can lock session switching
           // until the timeline for this storyboard has actually landed. The
@@ -347,16 +366,7 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
             },
           });
         } else {
-          // No timeline to load: invalidate any in-flight fetch and unlock.
-          this.timelineLoadSeq++;
-          this.timelineState.isLoadingTimeline.set(false);
-          this.timelineState.timelineClips.set([]);
-          this.timelineState.selectedClipId.set(null);
-          this.timelineState.assets.set([]);
-          this.timelineState.currentTime.set(0);
-          this.timelineState.isPlaying.set(false);
-          this.timelineState.scrollOffset.set(0);
-          this.lastSavedText.set('');
+          this.clearEditor();
         }
       },
       {allowSignalWrites: true},
@@ -1821,6 +1831,32 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
     );
   }
 
+  /** Empties the editor: no timeline is bound (see the timeline effect). */
+  private clearEditor(): void {
+    // No timeline to load: invalidate any in-flight fetch and unlock.
+    this.timelineLoadSeq++;
+    this.timelineState.isLoadingTimeline.set(false);
+    this.timelineState.timelineClips.set([]);
+    this.timelineState.selectedClipId.set(null);
+    this.timelineState.assets.set([]);
+    this.timelineState.currentTime.set(0);
+    this.timelineState.isPlaying.set(false);
+    this.timelineState.scrollOffset.set(0);
+    this.lastSavedText.set('');
+  }
+
+  /**
+   * Ends a save: clears the editor when its timeline was unset during the
+   * save and none has been set since (see `editorResetPending`).
+   */
+  private endSave(): void {
+    this.isSaving = false;
+    if (this.editorResetPending && !this.timelineState.loadedTimelineId()) {
+      this.clearEditor();
+    }
+    this.editorResetPending = false;
+  }
+
   /**
    * Trim length to persist for a clip. Placeholder durations (the 5 s default
    * before metadata arrives, 10 s when it fails) are display estimates only:
@@ -1975,14 +2011,14 @@ export class WorkbenchComponent implements OnInit, OnDestroy {
             });
           }
         }
-        this.isSaving = false;
+        this.endSave();
         subject.next(res);
         subject.complete();
       },
       error: err => {
         console.error('Error saving timeline', err);
         this.lastSavedText.set('Failed to save changes');
-        this.isSaving = false;
+        this.endSave();
         subject.error(err);
       },
     });
