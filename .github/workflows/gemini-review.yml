@@ -40,10 +40,16 @@ defaults:
     shell: 'bash'
 
 jobs:
-  review:
+  # GitHub refuses PR diffs above 20,000 lines (HTTP 406 "too_large"), and one
+  # agent session cannot review tens of thousands of lines within the timeout.
+  # This job builds the diff locally and splits big PRs into passes by area
+  # (backend / frontend / infrastructure / other), sources before tests.
+  # Tunables: REVIEW_CHUNK_LINES (lines per pass), REVIEW_MAX_CHUNKS (passes).
+  plan:
     # Only run when an authorized maintainer explicitly requests the review by
     # applying the `ai-review` label. Only users with triage+ permission on the
     # repository can add labels, so the label itself is the authorization gate.
+    # The `review` job below `needs` this one, so it inherits the gate.
     if: github.event.label.name == 'ai-review'
     runs-on: 'ubuntu-latest'
     timeout-minutes: 5
@@ -57,12 +63,26 @@ jobs:
       chunks: '${{ steps.plan.outputs.chunks }}'
       has_chunks: '${{ steps.plan.outputs.has_chunks }}'
     steps:
-      - name: 'Checkout repository'
+      # Checks out the trusted BASE branch only (default for pull_request_target),
+      # so the chunking script executed below is the base-branch copy. Never
+      # check out `github.event.pull_request.head.sha` here: that would execute
+      # untrusted fork code with a privileged token.
+      - name: 'Checkout repository (base branch)'
         uses: 'actions/checkout@v4'
         with:
-          ref: '${{ github.event.pull_request.head.sha }}'
           fetch-depth: 0
           persist-credentials: false
+
+      # `git diff base...head` only needs the head commit to be *reachable*, not
+      # checked out. Fetch the PR ref without touching the working tree.
+      - name: 'Fetch pull request head (not checked out)'
+        env:
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+        run: |-
+          auth="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth}" \
+            fetch --no-tags origin "+refs/pull/${PR_NUMBER}/head:refs/remotes/pr/${PR_NUMBER}"
 
       - name: 'Plan review passes'
         id: 'plan'
@@ -123,12 +143,35 @@ jobs:
       GEMINI_DEBUG: 'true'
     steps:
       # Checks out the trusted BASE branch only (default for pull_request_target).
-      # Never check out `github.event.pull_request.head.sha` here: that would
-      # execute untrusted fork code with a privileged token.
+      # Never check out `github.event.pull_request.head.sha` here: that would put
+      # untrusted fork code (and its GEMINI.md) in the agent's workspace with a
+      # privileged token. The agent reviews the diff file built below instead.
       - name: 'Checkout repository (base branch)'
         uses: 'actions/checkout@v4'
         with:
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: 'Fetch pull request head (not checked out)'
+        env:
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+        run: |-
+          auth="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth}" \
+            fetch --no-tags origin "+refs/pull/${PR_NUMBER}/head:refs/remotes/pr/${PR_NUMBER}"
+
+      - name: 'Build diff for this pass'
+        env:
+          BASE_SHA: '${{ github.event.pull_request.base.sha }}'
+          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
+          # Passed through env (never interpolated into the script): file
+          # names come from the PR author.
+          CHUNK_FILES: '${{ toJSON(matrix.chunk.files) }}'
+        run: |-
+          python3 .github/scripts/gemini_review_chunks.py build-diff \
+            --base "${BASE_SHA}" --head "${HEAD_SHA}" \
+            --output .gemini-review/pr.diff
 
       - name: 'Run Gemini pull request review'
         uses: 'google-github-actions/run-gemini-cli@v0'
