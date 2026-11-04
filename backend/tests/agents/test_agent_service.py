@@ -16,6 +16,14 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from fastapi import Request
 from src.users.user_model import UserModel
 from src.agents.agent_service import AgentService, safe_cast
+from src.agents.agent_session_repository import AgentSessionRepository
+
+
+def _registry_stub():
+    """An empty chat registry: ``chat()`` then checks the session's owner."""
+    repo = AsyncMock(spec=AgentSessionRepository)
+    repo.get.return_value = None
+    return repo
 
 
 def test_safe_cast():
@@ -188,6 +196,7 @@ async def test_chat_secure_auth_fallback():
             storyboard_repo=MagicMock(),
             workspace_auth=mock_workspace_auth,
             project_service=MagicMock(),
+            agent_session_repo=_registry_stub(),
         )
 
         user = MagicMock(spec=UserModel)
@@ -231,6 +240,7 @@ async def test_chat_process_stream_chunks():
             storyboard_repo=MagicMock(),
             workspace_auth=mock_workspace_auth,
             project_service=MagicMock(),
+            agent_session_repo=_registry_stub(),
         )
 
         user = MagicMock(spec=UserModel)
@@ -349,6 +359,7 @@ async def test_chat_process_stream_error_handling():
             storyboard_repo=MagicMock(),
             workspace_auth=mock_workspace_auth,
             project_service=MagicMock(),
+            agent_session_repo=_registry_stub(),
         )
 
         user = MagicMock(spec=UserModel)
@@ -423,6 +434,7 @@ async def test_chat_process_stream_classifies_expired_user_token(message):
             storyboard_repo=MagicMock(),
             workspace_auth=AsyncMock(),
             project_service=MagicMock(),
+            agent_session_repo=_registry_stub(),
         )
 
         user = MagicMock(spec=UserModel)
@@ -480,6 +492,7 @@ async def test_chat_detects_frame_approval_gate():
             storyboard_repo=MagicMock(),
             workspace_auth=mock_workspace_auth,
             project_service=MagicMock(),
+            agent_session_repo=_registry_stub(),
         )
 
         user = MagicMock(spec=UserModel)
@@ -740,6 +753,7 @@ async def test_chat_process_stream_classifies_concurrent_run():
             storyboard_repo=MagicMock(),
             workspace_auth=AsyncMock(),
             project_service=MagicMock(),
+            agent_session_repo=_registry_stub(),
         )
 
         user = MagicMock(spec=UserModel)
@@ -817,6 +831,7 @@ async def test_chat_rejects_second_run_while_first_is_active():
             storyboard_repo=MagicMock(),
             workspace_auth=AsyncMock(),
             project_service=MagicMock(),
+            agent_session_repo=_registry_stub(),
         )
 
         user = MagicMock(spec=UserModel)

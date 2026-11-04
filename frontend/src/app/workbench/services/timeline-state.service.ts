@@ -78,4 +78,23 @@ export class TimelineStateService {
       track.find(c => time >= c.startTime && time < c.startTime + c.duration),
     );
   });
+
+  /**
+   * Drops everything the timeline holds for the project being left, so the
+   * next project starts from an empty editor (`ProjectStateService` calls it
+   * right before the entry navigation). `pixelsPerSecond` is a view
+   * preference and survives the switch.
+   */
+  resetForProjectSwitch(): void {
+    this.loadedTimelineId.set(undefined);
+    this.timelineClips.set([]);
+    this.transitions.set([]);
+    this.transitionIn.set(null);
+    this.transitionOut.set(null);
+    this.selectedClipId.set(null);
+    this.assets.set([]);
+    this.currentTime.set(0);
+    this.isPlaying.set(false);
+    this.scrollOffset.set(0);
+  }
 }

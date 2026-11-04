@@ -135,6 +135,18 @@ docker exec -t creative-studio-backend sh -c "PYTHONPATH=/app uv run python -m b
 
 As this uses volumes, and we use hot reload to start the services, every time you change something on the files the container will be refreshed with the changes.
 
+### 🗂️ Workbench projects (database migration)
+
+The Workbench groups chats, storyboards and timelines into **projects** (owner-only; switch them from the Workbench header). The backend runs `alembic upgrade head` every time it starts, so the migration `b3f1c9d2e8a4` is applied automatically: it creates the `projects` and `agent_sessions` tables and backfills one **"Default project"** per workspace and user that already has Workbench data, so nothing is lost. If the projects tables are still missing (for example, the backend did not reload after you pulled), apply it by hand:
+
+```bash
+docker exec creative-studio-backend sh -c "cd /app && uv run alembic upgrade head"
+```
+
+Izumi needs no change: it keeps sending `workspace_id` and `session_id`, and the backend files the agent's storyboards and timelines into the chat's project. The design, access rules and frontend URL handling are described in [docs/projects.md](docs/projects.md).
+
+The follow-up migration `d7e3b1a9c5f2` adds `agent_sessions.restored_at`, used when an expired chat is restored (same automatic `upgrade head`). To try that flow locally, restart the local Izumi stack: its Firestore emulator forgets every session, so your chats show as **Expired** in the chat picker. Picking one that owns a storyboard restores its storyboard and timeline; Izumi cannot continue a restored chat, so start a new chat for new agent work.
+
 ### 🤖 Running the Izumi Agent locally (Workbench chat)
 
 In the cloud, the Workbench chat talks to the Izumi `ads_x` agent deployed on **Vertex AI Agent Engine**. Locally, with `ENVIRONMENT="local"`, the backend instead targets a **local Izumi container** at `IZUMI_AGENT_URL` (default `http://izumi-agent:8080`), so you can iterate on both projects without deploying anything.

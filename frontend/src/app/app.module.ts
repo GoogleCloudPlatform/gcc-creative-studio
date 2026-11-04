@@ -100,7 +100,7 @@ import {LoginComponent} from './login/login.component';
 import {VideoComponent} from './video/video.component';
 import {VtoComponent} from './vto/vto.component';
 import {WorkbenchComponent} from './workbench/workbench.component';
-import {ProjectsComponent} from './projects/projects.component';
+import {ProjectSwitcherComponent} from './workbench/components/project-switcher/project-switcher.component';
 import {ChatInterfaceComponent} from './workbench/components/chat-interface/chat-interface.component';
 import {BatchExecutionModalComponent} from './workflows/execution-history/batch-execution-modal/batch-execution-modal.component';
 import {ExecutionDetailsModalComponent} from './workflows/execution-history/execution-details-modal/execution-details-modal.component';
@@ -164,7 +164,6 @@ import {SafeUrlPipe} from './common/pipes/safe-url.pipe';
     StepHistorySidebarDialogComponent,
     BatchExecutionModalComponent,
     UpscaleComponent,
-    ProjectsComponent,
     FeedbackFabComponent,
   ],
   imports: [
@@ -217,6 +216,7 @@ import {SafeUrlPipe} from './common/pipes/safe-url.pipe';
     ApprovalGateComponent,
     TextFieldModule,
     SafeUrlPipe,
+    ProjectSwitcherComponent,
   ],
   providers: [
     provideClientHydration(),
