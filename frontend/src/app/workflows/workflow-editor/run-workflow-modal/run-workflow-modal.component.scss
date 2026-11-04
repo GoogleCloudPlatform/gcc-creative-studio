@@ -15,3 +15,98 @@
  */
 
 /* Add any specific styles here if needed */
+
+.run-folder-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin-bottom: 16px;
+}
+
+.run-folder-label {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: hsl(220, 10%, 70%);
+}
+
+.run-folder-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px dashed hsla(220, 15%, 60%, 0.35);
+  background: hsla(220, 15%, 20%, 0.45);
+  backdrop-filter: blur(8px);
+  color: hsl(220, 10%, 80%);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    box-shadow 0.2s ease;
+
+  &:hover,
+  &:focus-visible {
+    border-color: hsla(38, 66%, 51%, 0.7);
+    background: hsla(220, 15%, 24%, 0.6);
+    box-shadow: 0 0 12px hsla(38, 66%, 51%, 0.25);
+    outline: none;
+  }
+
+  &.has-folder {
+    border-style: solid;
+    border-color: hsla(38, 66%, 51%, 0.55);
+    background: linear-gradient(
+      135deg,
+      hsla(38, 66%, 51%, 0.14),
+      hsla(220, 15%, 20%, 0.5)
+    );
+    color: hsl(0, 0%, 96%);
+
+    .run-folder-icon {
+      color: #d69e2e;
+    }
+  }
+}
+
+.run-folder-icon {
+  flex-shrink: 0;
+  color: hsl(220, 10%, 60%);
+  transition: color 0.2s ease;
+}
+
+.run-folder-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 14px;
+}
+
+.run-folder-action {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #d69e2e;
+}
+
+.run-folder-hint {
+  font-size: 11px;
+  color: hsl(220, 8%, 55%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .run-folder-btn,
+  .run-folder-icon {
+    transition: none;
+  }
+}

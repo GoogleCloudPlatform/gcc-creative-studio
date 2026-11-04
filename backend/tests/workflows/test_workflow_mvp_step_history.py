@@ -53,8 +53,8 @@ def _loop_steps(end="gen_image"):
         UserInputStep(step_id="user_input"),
         LoopStep(
             step_id="loop_1",
-            inputs=LoopInputs(loop_ending=_ref(end, "loop_ending")),
-            settings=LoopSettings(mode="folder", folder_id=42),
+            inputs=LoopInputs(loop_ending=_ref(end, "loop_ending"), folder=42),
+            settings=LoopSettings(mode="folder"),
         ),
         ImageStep(
             step_id="gen_image",

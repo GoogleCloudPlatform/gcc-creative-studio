@@ -845,12 +845,13 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
         stepId,
         type: NodeTypes.LOOP,
         inputs: {
+          folder: null,
           items_text: null,
           linked_items: null,
           loop_ending: null,
           ...inputs,
         },
-        settings: {mode, folder_id: null, item_type: 'image'},
+        settings: {mode, item_type: 'image'},
       });
       return findStep(stepId);
     }
@@ -2156,9 +2157,12 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
           stepId: 'loop_1',
           type: NodeTypes.LOOP,
           status: StepStatusEnum.IDLE,
-          inputs: {loop_ending: {step: 'gen_image', output: 'loop_ending'}},
+          inputs: {
+            folder: 42,
+            loop_ending: {step: 'gen_image', output: 'loop_ending'},
+          },
           outputs: {},
-          settings: {mode: 'folder', folder_id: 42, item_type: 'image'},
+          settings: {mode: 'folder', item_type: 'image'},
         });
         formService.addStep(NodeTypes.IMAGE, {
           stepId: 'gen_image',

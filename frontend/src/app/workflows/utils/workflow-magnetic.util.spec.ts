@@ -316,6 +316,7 @@ describe('WorkflowMagneticUtil', () => {
       expect(getShortType('vid')).toBe('VID');
       expect(getShortType('audio')).toBe('AUD');
       expect(getShortType('aud')).toBe('AUD');
+      expect(getShortType('folder')).toBe('FLD');
     });
   });
 
@@ -329,6 +330,35 @@ describe('WorkflowMagneticUtil', () => {
       expect(getPortTypeColor('audio')).toBe(PORT_TYPE_COLORS.AUD);
       expect(getPortTypeColor(null)).toBe(PORT_TYPE_COLORS.TXT);
       expect(getPortTypeColor(undefined)).toBe(PORT_TYPE_COLORS.TXT);
+      expect(getPortTypeColor('folder')).toBe('#d69e2e');
+    });
+  });
+
+  describe('folder ports', () => {
+    it('maps folder and fld to FLD in any case or padding', () => {
+      expect(getCanonicalType('folder')).toBe('FLD');
+      expect(getCanonicalType(' Folder ')).toBe('FLD');
+      expect(getCanonicalType('FLD')).toBe('FLD');
+    });
+
+    it('connects folder ports only to folder ports, in both directions', () => {
+      expect(isPortTypeCompatible('folder', 'folder')).toBeTrue();
+      expect(isPortTypeCompatible('fld', 'Folder')).toBeTrue();
+      const otherTypes: ReadonlyArray<string> = [
+        'text',
+        'image',
+        'video',
+        'audio',
+        'loop_ending',
+      ];
+      otherTypes.forEach(type => {
+        expect(isPortTypeCompatible('folder', type))
+          .withContext(`folder -> ${type}`)
+          .toBeFalse();
+        expect(isPortTypeCompatible(type, 'folder'))
+          .withContext(`${type} -> folder`)
+          .toBeFalse();
+      });
     });
   });
 

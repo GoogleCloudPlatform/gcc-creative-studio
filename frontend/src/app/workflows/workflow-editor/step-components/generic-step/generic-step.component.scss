@@ -536,6 +536,9 @@
 .port-type-chip[data-type*='loop'] {
   background-color: hsl(173, 60%, 43%);
 }
+.port-type-chip[data-type*='folder'] {
+  background-color: #d69e2e;
+}
 
 .loop-capacity-hint {
   display: inline-flex;

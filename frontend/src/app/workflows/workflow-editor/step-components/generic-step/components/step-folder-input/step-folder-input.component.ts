@@ -96,6 +96,7 @@ function buildFolderDomNames(prefix: FolderDomPrefix): FolderDomNames {
 @Component({
   selector: 'app-step-folder-input',
   templateUrl: './step-folder-input.component.html',
+  styleUrls: ['./step-folder-input.component.scss'],
 })
 export class StepFolderInputComponent {
   /** The step's input control (folder id, link or `null`). */

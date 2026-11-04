@@ -293,11 +293,20 @@ describe('WorkflowFormService', () => {
 
     it('should default a new Image step to the root output folder', () => {
       service.addStep(NodeTypes.IMAGE);
-      const outputFolderControl = service.stepsArray
-        .at(0)
-        .get('settings.output_folder_id');
+      const imageStep = service.stepsArray.at(0);
+      const outputFolderControl = imageStep.get('inputs.output_folder');
       expect(outputFolderControl).not.toBeNull();
       expect(outputFolderControl?.value).toBeNull();
+      expect(imageStep.get('settings.output_folder_id')).toBeNull();
+    });
+
+    it('should default a new Loop step to no folder', () => {
+      service.addStep(NodeTypes.LOOP);
+      const loopStep = service.stepsArray.at(0);
+      const folderControl = loopStep.get('inputs.folder');
+      expect(folderControl).not.toBeNull();
+      expect(folderControl?.value).toBeNull();
+      expect(loopStep.get('settings.folder_id')).toBeNull();
     });
 
     it('should preserve collapsed true when adding step with existingData', () => {
@@ -399,8 +408,14 @@ describe('WorkflowFormService', () => {
       buildStep(
         'loop_1',
         NodeTypes.LOOP,
-        {items_text: null, linked_items: null, loop_ending: null, ...inputs},
-        {mode, folder_id: null, item_type: 'image'},
+        {
+          folder: null,
+          items_text: null,
+          linked_items: null,
+          loop_ending: null,
+          ...inputs,
+        },
+        {mode, item_type: 'image'},
       );
 
     function addSources(): void {
@@ -595,6 +610,43 @@ describe('WorkflowFormService', () => {
       expect(restoredLoop.get('inputs.items_text')?.value).toEqual(textRef);
     });
 
+    const folderParamRef: StepOutputReference = {
+      step: NodeTypes.USER_INPUT,
+      output: 'Target',
+      _definitionId: 'def_target',
+    };
+
+    ['text_input', 'linked_items'].forEach(nextMode => {
+      it(`clears a linked folder when switching folder -> ${nextMode}`, () => {
+        const loop = addLoop('folder', {folder: folderParamRef});
+
+        loop.get('settings.mode')?.setValue(nextMode);
+
+        const folder = loop.get('inputs.folder');
+        expect(folder?.value).toBeNull();
+        expect(folder?.dirty).toBeTrue();
+        expect(removedCount).toBe(1);
+      });
+
+      it(`keeps a fixed folder id when switching folder -> ${nextMode}`, () => {
+        const loop = addLoop('folder', {folder: 42});
+
+        loop.get('settings.mode')?.setValue(nextMode);
+
+        expect(loop.get('inputs.folder')?.value).toBe(42);
+        expect(removedCount).toBe(0);
+      });
+    });
+
+    it('leaves a linked folder untouched when switching text_input -> folder', () => {
+      const loop = addLoop('text_input', {folder: folderParamRef});
+
+      loop.get('settings.mode')?.setValue('folder');
+
+      expect(loop.get('inputs.folder')?.value).toEqual(folderParamRef);
+      expect(removedCount).toBe(0);
+    });
+
     it('resolves output types for user inputs, Loop items and static outputs', () => {
       addLoop('linked_items', {linked_items: [imgA]});
 
@@ -605,6 +657,205 @@ describe('WorkflowFormService', () => {
         'image',
       );
       expect(service.getOutputType('missing', 'x')).toBe('');
+    });
+  });
+
+  describe('Parameter type change cleanup', () => {
+    const imgA: StepOutputReference = {
+      step: 'img_a',
+      output: 'generated_image',
+    };
+
+    const paramRef = (name: string, id: string): StepOutputReference => ({
+      step: NodeTypes.USER_INPUT,
+      output: name,
+      _definitionId: id,
+    });
+
+    const briefRef = paramRef('Brief', 'def_brief');
+    const targetRef = paramRef('Target', 'def_target');
+    const shotRef = paramRef('Shot', 'def_shot');
+
+    const buildStep = (
+      stepId: string,
+      type: NodeTypes,
+      inputs: DynamicStepRecord = {},
+    ): WorkflowStep => ({
+      stepId,
+      type,
+      status: StepStatusEnum.IDLE,
+      position: {x: 0, y: 0},
+      collapsed: false,
+      inputs,
+      outputs: {},
+      settings: {},
+    });
+
+    const findStep = (stepId: string): FormGroup =>
+      service.stepsArray.controls.find(
+        c => c.get('stepId')?.value === stepId,
+      ) as FormGroup;
+
+    const definitionTypeControl = (id: string) =>
+      service.outputDefinitionsArray.controls
+        .find(c => c.get('id')?.value === id)
+        ?.get('type');
+
+    let removedCount: number;
+
+    beforeEach(() => {
+      service.outputDefinitionsArray.clear();
+      service.addOutputDefinition('Brief', 'text', 'def_brief');
+      service.addOutputDefinition('Target', 'folder', 'def_target');
+      service.addOutputDefinition('Shot', 'image', 'def_shot');
+      removedCount = 0;
+      service.loopLinksRemoved$.subscribe(() => removedCount++);
+    });
+
+    it('removes a text link when the parameter becomes a folder', () => {
+      service.addStep(
+        NodeTypes.IMAGE,
+        buildStep('img_1', NodeTypes.IMAGE, {prompt: briefRef}),
+      );
+
+      definitionTypeControl('def_brief')?.setValue('folder');
+
+      const prompt = findStep('img_1').get('inputs.prompt');
+      expect(prompt?.value).toBeNull();
+      expect(prompt?.dirty).toBeTrue();
+      expect(removedCount).toBe(1);
+    });
+
+    it('removes a folder link when the parameter becomes text', () => {
+      service.addStep(
+        NodeTypes.IMAGE,
+        buildStep('img_1', NodeTypes.IMAGE, {output_folder: targetRef}),
+      );
+
+      definitionTypeControl('def_target')?.setValue('text');
+
+      expect(findStep('img_1').get('inputs.output_folder')?.value).toBeNull();
+      expect(removedCount).toBe(1);
+    });
+
+    it('keeps the links that still fit when an image parameter becomes video', () => {
+      service.addStep(
+        NodeTypes.GENERATE_VIDEO,
+        buildStep('vid_1', NodeTypes.GENERATE_VIDEO, {
+          start_frame: shotRef,
+          input_video: shotRef,
+        }),
+      );
+
+      definitionTypeControl('def_shot')?.setValue('video');
+
+      const videoStep = findStep('vid_1');
+      expect(videoStep.get('inputs.start_frame')?.value).toBeNull();
+      expect(videoStep.get('inputs.input_video')?.value).toEqual(shotRef);
+      expect(removedCount).toBe(1);
+    });
+
+    it('drops only the parameter entries from a mixed array', () => {
+      service.addStep(
+        NodeTypes.IMAGE,
+        buildStep('img_1', NodeTypes.IMAGE, {input_images: [shotRef, imgA]}),
+      );
+
+      definitionTypeControl('def_shot')?.setValue('text');
+
+      expect(findStep('img_1').get('inputs.input_images')?.value).toEqual([
+        imgA,
+      ]);
+    });
+
+    it('turns an array holding only parameter links into null', () => {
+      service.addStep(
+        NodeTypes.IMAGE,
+        buildStep('img_1', NodeTypes.IMAGE, {input_images: [shotRef]}),
+      );
+
+      definitionTypeControl('def_shot')?.setValue('folder');
+
+      expect(findStep('img_1').get('inputs.input_images')?.value).toBeNull();
+    });
+
+    it('keeps the link on a rename without a type change', () => {
+      service.addStep(
+        NodeTypes.IMAGE,
+        buildStep('img_1', NodeTypes.IMAGE, {output_folder: targetRef}),
+      );
+
+      service.outputDefinitionsArray.controls
+        .find(c => c.get('id')?.value === 'def_target')
+        ?.get('name')
+        ?.setValue('Destination');
+
+      const link = findStep('img_1').get('inputs.output_folder')
+        ?.value as StepOutputReference;
+      expect(link.output).toBe('Destination');
+      expect(link._definitionId).toBe('def_target');
+      expect(removedCount).toBe(0);
+    });
+
+    it('removes nothing on a read-only form', () => {
+      service.addStep(
+        NodeTypes.IMAGE,
+        buildStep('img_1', NodeTypes.IMAGE, {output_folder: targetRef}),
+      );
+      expect(findStep('img_1').get('inputs.output_folder')?.value).toEqual(
+        targetRef,
+      );
+      service.workflowForm.disable();
+
+      definitionTypeControl('def_target')?.setValue('text');
+
+      expect(findStep('img_1').getRawValue().inputs.output_folder).toEqual(
+        targetRef,
+      );
+      expect(removedCount).toBe(0);
+    });
+
+    it('removes nothing while a workflow is patched', () => {
+      service.addStep(
+        NodeTypes.IMAGE,
+        buildStep('img_1', NodeTypes.IMAGE, {prompt: briefRef}),
+      );
+      const snapshot = service.workflowForm.getRawValue();
+      const [briefDefinition, ...otherDefinitions] =
+        snapshot.userInput.settings.definitions;
+
+      service.patchData({
+        ...snapshot,
+        userInput: {
+          ...snapshot.userInput,
+          settings: {
+            ...snapshot.userInput.settings,
+            definitions: [
+              {...briefDefinition, type: 'folder'},
+              ...otherDefinitions,
+            ],
+          },
+        },
+      });
+
+      expect(findStep('img_1').get('inputs.prompt')?.value).toEqual(briefRef);
+      expect(removedCount).toBe(0);
+    });
+
+    it('restores the removed links on undo', () => {
+      service.addStep(
+        NodeTypes.IMAGE,
+        buildStep('img_1', NodeTypes.IMAGE, {prompt: briefRef}),
+      );
+      const snapshot = service.workflowForm.getRawValue();
+
+      definitionTypeControl('def_brief')?.setValue('folder');
+      expect(findStep('img_1').get('inputs.prompt')?.value).toBeNull();
+
+      service.patchData(snapshot);
+
+      expect(findStep('img_1').get('inputs.prompt')?.value).toEqual(briefRef);
+      expect(definitionTypeControl('def_brief')?.value).toBe('text');
     });
   });
 

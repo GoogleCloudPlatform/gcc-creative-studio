@@ -17,9 +17,10 @@
 import {FormControl, FormGroup} from '@angular/forms';
 import {StepOutputReference} from '../../../workflow.models';
 import {
+  DEFAULT_LOOP_SETTINGS,
   LOOP_FOLDER_CHOOSE_VALUE,
   LOOP_FOLDER_MISSING_TOOLTIP,
-  LOOP_FOLDER_SETTING,
+  LOOP_FOLDER_INPUT,
   LOOP_ITEMS_TEXT_EMPTY_MESSAGE,
   LOOP_ITEMS_TEXT_INPUT,
   LOOP_LINKED_ITEMS_INPUT,
@@ -235,19 +236,26 @@ describe('loop-step.config', () => {
       expect(MAX_LOOP_LINKED_ITEMS).toBe(MAX_LOOP_ITEMS);
     });
 
-    it('declares folder_id as a required folder setting without root', () => {
-      const folderSetting = LOOP_STEP_CONFIG.settings.find(
-        s => s.name === LOOP_FOLDER_SETTING,
-      );
-      expect(folderSetting).toEqual(
-        jasmine.objectContaining({
-          label: 'Media Gallery Folder',
-          type: 'folder',
-          allowRoot: false,
-          required: true,
-          defaultValue: null,
-        }),
-      );
+    it('declares the folder as the first input, hidden and without root', () => {
+      const [firstInput] = LOOP_STEP_CONFIG.inputs;
+      expect(LOOP_FOLDER_INPUT).toBe('folder');
+      expect(firstInput).toEqual({
+        name: LOOP_FOLDER_INPUT,
+        label: 'Media Gallery Folder',
+        type: 'folder',
+        allowRoot: false,
+        required: false,
+        hidden: true,
+      });
+    });
+
+    it('no longer declares a folder setting', () => {
+      const settingNames = LOOP_STEP_CONFIG.settings.map(s => s.name);
+      expect(settingNames).not.toContain('folder_id');
+      expect(DEFAULT_LOOP_SETTINGS).toEqual({
+        mode: LOOP_MODE_FOLDER,
+        item_type: 'image',
+      });
     });
   });
 

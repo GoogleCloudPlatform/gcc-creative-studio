@@ -22,8 +22,12 @@ import {
   MatDialog,
   MatDialogRef,
 } from '@angular/material/dialog';
+import {By} from '@angular/platform-browser';
 import {of} from 'rxjs';
+import {FolderSelectionResult} from '../../../common/models/folder.model';
 import {SourceAssetService} from '../../../common/services/source-asset.service';
+import {RunFolderService} from '../../shared/run-folder.service';
+import {NodeTypes, StepStatusEnum, WorkflowStep} from '../../workflow.models';
 import {RunWorkflowModalComponent} from './run-workflow-modal.component';
 
 describe('RunWorkflowModalComponent', () => {
@@ -62,6 +66,12 @@ describe('RunWorkflowModalComponent', () => {
       imports: [ReactiveFormsModule],
       providers: [
         {provide: SourceAssetService, useValue: mockSourceAssetService},
+        {
+          provide: RunFolderService,
+          useValue: jasmine.createSpyObj<RunFolderService>('RunFolderService', [
+            'pickFolder',
+          ]),
+        },
         {provide: MatDialog, useValue: mockDialog},
         {provide: MatDialogRef, useValue: mockDialogRef},
         {
@@ -235,5 +245,140 @@ describe('RunWorkflowModalComponent', () => {
 
     expect(component.referenceImages['input_image']).toBeNull();
     expect(component.runForm.get('input_image')?.value).toBeNull();
+  });
+});
+
+describe('RunWorkflowModalComponent with a Folder parameter', () => {
+  let component: RunWorkflowModalComponent;
+  let fixture: ComponentFixture<RunWorkflowModalComponent>;
+  let runFolderServiceSpy: jasmine.SpyObj<RunFolderService>;
+  let dialogRefSpy: jasmine.SpyObj<MatDialogRef<RunWorkflowModalComponent>>;
+
+  const SHOES: FolderSelectionResult = {
+    folderId: 42,
+    folderName: 'Shoes',
+    path: 'Campaign / Shoes',
+  };
+
+  const folderUserInputStep: WorkflowStep = {
+    stepId: 'user_input',
+    type: NodeTypes.USER_INPUT,
+    status: StepStatusEnum.IDLE,
+    position: {x: 0, y: 0},
+    collapsed: false,
+    inputs: {},
+    outputs: {Target: {type: 'folder'}},
+    settings: {
+      definitions: [{id: 'def-target', name: 'Target', type: 'folder'}],
+    },
+  };
+
+  beforeEach(async () => {
+    runFolderServiceSpy = jasmine.createSpyObj<RunFolderService>(
+      'RunFolderService',
+      ['pickFolder'],
+    );
+    runFolderServiceSpy.pickFolder.and.returnValue(of(SHOES));
+    dialogRefSpy = jasmine.createSpyObj<
+      MatDialogRef<RunWorkflowModalComponent>
+    >('MatDialogRef', ['close']);
+
+    await TestBed.configureTestingModule({
+      declarations: [RunWorkflowModalComponent],
+      imports: [ReactiveFormsModule],
+      providers: [
+        {
+          provide: SourceAssetService,
+          useValue: jasmine.createSpyObj<SourceAssetService>(
+            'SourceAssetService',
+            ['uploadAsset'],
+          ),
+        },
+        {provide: RunFolderService, useValue: runFolderServiceSpy},
+        {
+          provide: MatDialog,
+          useValue: jasmine.createSpyObj<MatDialog>('MatDialog', ['open']),
+        },
+        {provide: MatDialogRef, useValue: dialogRefSpy},
+        {
+          provide: MAT_DIALOG_DATA,
+          useValue: {userInputStep: folderUserInputStep},
+        },
+      ],
+      schemas: [NO_ERRORS_SCHEMA],
+    }).compileComponents();
+
+    fixture = TestBed.createComponent(RunWorkflowModalComponent);
+    component = fixture.componentInstance;
+    fixture.detectChanges();
+  });
+
+  const queryById = (id: string): HTMLElement =>
+    fixture.debugElement.query(By.css(`#${id}`)).nativeElement as HTMLElement;
+
+  it('requires a folder id before running', () => {
+    const control = component.runForm.get('Target');
+    expect(control?.value).toBeNull();
+    expect(control?.hasError('required')).toBeTrue();
+    expect(component.runForm.invalid).toBeTrue();
+    expect(component.folderSelections()).toEqual({Target: null});
+  });
+
+  it('rejects a value that is not a folder id', () => {
+    const control = component.runForm.get('Target');
+    control?.setValue(0);
+    expect(control?.valid).toBeFalse();
+  });
+
+  it('renders a Browse button with the empty label', () => {
+    const button = queryById('run-folder-btn-Target');
+    expect(button.textContent).toContain('Browse');
+    expect(button.classList).not.toContain('has-folder');
+    expect(queryById('run-folder-path-Target').textContent?.trim()).toBe(
+      'Choose folder…',
+    );
+  });
+
+  it('stores the picked folder id and shows its path', () => {
+    queryById('run-folder-btn-Target').click();
+    fixture.detectChanges();
+
+    const control = component.runForm.get('Target');
+    const path = queryById('run-folder-path-Target');
+    const button = queryById('run-folder-btn-Target');
+    expect(runFolderServiceSpy.pickFolder).toHaveBeenCalledOnceWith(null);
+    expect(control?.value).toBe(42);
+    expect(control?.touched).toBeTrue();
+    expect(component.runForm.valid).toBeTrue();
+    expect(path.textContent?.trim()).toBe('Campaign / Shoes');
+    expect(path.title).toBe('Campaign / Shoes');
+    expect(button.classList).toContain('has-folder');
+    expect(button.textContent).toContain('Change');
+  });
+
+  it('reopens the picker at the current folder', () => {
+    component.openFolderPicker('Target');
+    component.openFolderPicker('Target');
+    expect(runFolderServiceSpy.pickFolder.calls.mostRecent().args).toEqual([
+      42,
+    ]);
+  });
+
+  it('keeps the value when the picker is cancelled', () => {
+    runFolderServiceSpy.pickFolder.and.returnValue(of(null));
+    component.openFolderPicker('Target');
+    expect(component.runForm.get('Target')?.value).toBeNull();
+    expect(component.folderSelections()).toEqual({Target: null});
+  });
+
+  it('ignores an unknown parameter', () => {
+    component.openFolderPicker('Missing');
+    expect(runFolderServiceSpy.pickFolder).not.toHaveBeenCalled();
+  });
+
+  it('closes with the folder id as a number', () => {
+    component.openFolderPicker('Target');
+    component.onRun();
+    expect(dialogRefSpy.close).toHaveBeenCalledOnceWith({Target: 42});
   });
 });

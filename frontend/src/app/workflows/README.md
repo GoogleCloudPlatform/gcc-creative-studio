@@ -88,6 +88,13 @@ Need to run the same workflow 50 times with different prompts or parameters? **B
    * All rows are queued at once and dispatched smoothly as capacity opens up.
    * Each row runs independently—if Row 3 hits a safety block (`NEEDS_ATTENTION`), Rows 1 and 2 still finish normally, and you can resume Row 3 on its own.
 
+### Folder Columns
+A **Folder** parameter column holds a Media Gallery folder **path** of the active workspace, e.g. `Campaign / Shoes`.
+* **Path format:** segments are split on `/`, trimmed and matched case-insensitively from the root (`campaign/shoes` works). An empty segment (`/Shoes`, `Campaign//Shoes`, `Campaign/`, blank cell) never matches, and a digits-only cell is a folder **name**, not an id.
+* **Preview:** each folder cell shows ✅ with the full path, or ⚠️ when it can't be resolved. Click any folder cell to pick a folder instead. Rows with a ⚠️ are always listed (even past the first 5, with their `#` row number), and **Run Batch** stays disabled until every folder cell is ✅.
+* **Sent as ids:** the batch request carries each folder as a numeric id, never the path.
+* **Backend re-check:** every row is checked again before it is queued. The user must have access to the workspace (`Workspace not found or not accessible.`), and the folder must exist, not deleted, in that workspace (`Folder not found for '<param>'.`, the same message for a missing, deleted or foreign folder). A failing row is created as `FAILED`; the other rows still run. A folder column left out of the CSV is not checked; an empty value fails the row.
+
 ---
 
 ## 4. How Multi-User Execution Works (Round-Robin Fair Queue)
@@ -122,8 +129,9 @@ Need to run the same steps for every image in a folder or every word in a list? 
 
 ### Step-by-Step
 1. **Pick a Source (`mode`):**
-   * **Media Gallery Folder (`folder`):** Choose a folder and an `item_type` (`image`, `video`, `audio`). Each matching item (generated or uploaded) becomes one iteration, oldest first. The folder is required in this mode.
-     * The folder select shows the current folder (full path on hover) plus a **Choose folder…** action. It opens the Media Gallery in folder mode, previewing items of the selected `item_type`. Browse to a folder and click **Use this folder** (the root "All Media" can't be selected).
+   * **Media Gallery Folder (`folder`):** Choose a folder and an `item_type` (`image`, `video`, `audio`). Each matching item (generated or uploaded) becomes one iteration, oldest first. The folder is an **input** (`inputs.folder`), required in this mode only.
+     * **Fixed:** the folder select shows the current folder (full path on hover) plus a **Choose folder…** action. It opens the Media Gallery in folder mode, previewing items of the selected `item_type`. Browse to a folder and click **Use this folder** (the root "All Media" can't be selected).
+     * **Linked:** wire it to a **Folder** parameter of the User Input step (port type `FLD`, which only connects to other `FLD` ports); the folder is then chosen in the run dialog. Leaving folder mode clears a linked folder (a Fixed one is kept).
    * **Text Input (`text_input`):** Provide comma-separated text (`"cat, dog, bird"`), fixed or linked from an upstream text output. Each trimmed value becomes one iteration.
 2. **Wire the Body:** Connect `current_item` to the first body step. Connect the last body step's **Loop Ending** port back to the Loop's `loop_ending` input.
    * The **Loop Ending** output port only appears on steps inside a Loop body (downstream of the Loop). A step outside any body keeps showing it only while its Loop Ending is still wired, so the stale wire can be removed.
@@ -164,10 +172,13 @@ Every step in a run (loop or not) exposes its data through a single **`history`*
 
 ## 7. Output Folder (Image, Video, Audio)
 
-The **Output folder** setting (`settings.output_folder_id`) picks the Media Gallery folder where the node saves what it generates.
+The **Output folder** input (`inputs.output_folder`) picks the Media Gallery folder where the node saves what it generates. Like any input it is **Fixed** or **Linked** to a **Folder** parameter of the User Input step. The old `settings.output_folder_id` (and the Loop `settings.folder_id`) were removed without migration: a saved value there is ignored, so pick the folder again.
 
-* **Default = root:** `null` always means the root, shown as **All Media (root)**. The predefined value is save into the root. While a folder is selected, the select still offers **All Media (root)** to go back.
-* **Choosing a folder:** **Choose folder…** opens the same folder picker as the Loop node (full path on hover). The picker never returns the root; use the **All Media (root)** option for that.
+* **Default = root:** `null` always means the root, shown as **All Media (root)**. The predefined value is save into the root. While a folder is selected, the select still offers **All Media (root)** to go back. The input is never required.
+* **Choosing a folder (Fixed):** **Choose folder…** opens the same folder picker as the Loop node (full path on hover). The picker never returns the root; use the **All Media (root)** option for that.
+* **Folder parameters (Linked):** a User Input parameter of type **Folder** has the `FLD` port type and only links to folder inputs (Loop folder, Output folder). The run dialog (**Browse** / **Change**) and the resume form (folder button showing the path or **Choose folder…**) open the folder picker of the active workspace, and the run sends the folder id as a number. Execution details show the folder path (or `Folder #<id>` when it can't be resolved), looked up in the run's workspace.
+* **Changing a parameter's type** removes its links to inputs that no longer accept it (e.g. Text → Folder unlinks a Prompt); compatible links are kept. Undo restores them.
+* **Strict ids:** the backend only accepts a positive integer folder id (or a link); `"42"`, `true`, `0` or negative numbers are rejected.
 * **Same workspace only:** the folder must belong to the workspace the run executes in. Any workspace member may save into any folder of that workspace (same rule as moving items into a folder).
 * **Missing folder:** in the editor, a deleted, foreign or inaccessible folder shows as `Folder #<id>` with a warning icon. At run time the step fails with `INVALID_INPUT` before generating anything and the run pauses in `NEEDS_ATTENTION`; pick another folder (or the root) and resume.
 * **Folder names in the editor:** the folder tree is loaded lazily (only when a node has a folder or its select is opened), once per workspace, and shared by every node of the editor. It is refreshed after the folder picker closes; folders changed elsewhere (another tab or user) show after reloading the editor.

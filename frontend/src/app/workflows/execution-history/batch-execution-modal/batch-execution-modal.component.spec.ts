@@ -21,9 +21,16 @@ import {
   MatDialog,
   MatDialogRef,
 } from '@angular/material/dialog';
-import {BehaviorSubject, Subject, of} from 'rxjs';
+import {By} from '@angular/platform-browser';
+import {BehaviorSubject, Subject, of, throwError} from 'rxjs';
 import {ConfirmationDialogComponent} from '../../../common/components/confirmation-dialog/confirmation-dialog.component';
+import {
+  FolderSelectionResult,
+  FolderTreeNode,
+} from '../../../common/models/folder.model';
+import {FolderService} from '../../../common/services/folder.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
+import {RunFolderService} from '../../shared/run-folder.service';
 import {
   BatchExecutionResponse,
   NodeTypes,
@@ -32,8 +39,11 @@ import {
 } from '../../workflow.models';
 import {WorkflowService} from '../../workflow.service';
 import {
+  BATCH_PREVIEW_ROW_LIMIT,
   BatchExecutionModalComponent,
+  BatchFolderCellViewModel,
   LOOP_BATCH_WARNING,
+  toBatchFolderCellKey,
 } from './batch-execution-modal.component';
 
 describe('BatchExecutionModalComponent', () => {
@@ -44,6 +54,8 @@ describe('BatchExecutionModalComponent', () => {
   let dialogSpy: jasmine.SpyObj<MatDialog>;
   let confirmationClosed: Subject<boolean | undefined>;
   let activeWorkspaceIdSubject: BehaviorSubject<number | null>;
+  let folderServiceSpy: jasmine.SpyObj<FolderService>;
+  let runFolderServiceSpy: jasmine.SpyObj<RunFolderService>;
 
   const userInputStep: WorkflowStep = {
     stepId: 'user_input_1',
@@ -62,9 +74,9 @@ describe('BatchExecutionModalComponent', () => {
     status: 'IDLE',
     position: {x: 300, y: 100},
     collapsed: false,
-    inputs: {},
+    inputs: {folder: 3},
     outputs: {},
-    settings: {mode: 'folder', folder_id: 3, item_type: 'image'},
+    settings: {mode: 'folder', item_type: 'image'},
   };
 
   const buildWorkflow = (steps: WorkflowStep[]): WorkflowModel => ({
@@ -77,7 +89,28 @@ describe('BatchExecutionModalComponent', () => {
     steps,
   });
 
+  const folderUserInputStep: WorkflowStep = {
+    ...userInputStep,
+    outputs: {prompt: {type: 'text'}, target: {type: 'folder'}},
+  };
+
+  const FOLDER_TREE: FolderTreeNode[] = [
+    {
+      id: 10,
+      name: 'Campaign',
+      children: [{id: 42, name: 'Shoes', children: []}],
+    },
+    {id: 11, name: 'Archive', children: []},
+  ];
+
+  const ARCHIVE_PICK: FolderSelectionResult = {
+    folderId: 11,
+    folderName: 'Archive',
+    path: 'Archive',
+  };
+
   const mockWorkflow = buildWorkflow([userInputStep]);
+  const folderWorkflow = buildWorkflow([folderUserInputStep]);
   const loopWorkflow = buildWorkflow([userInputStep, loopStep]);
 
   const batchResponse: BatchExecutionResponse = {
@@ -140,6 +173,15 @@ describe('BatchExecutionModalComponent', () => {
       afterClosed: () => confirmationClosed.asObservable(),
     } as MatDialogRef<ConfirmationDialogComponent, boolean>);
     activeWorkspaceIdSubject = new BehaviorSubject<number | null>(42);
+    folderServiceSpy = jasmine.createSpyObj<FolderService>('FolderService', [
+      'getFolderTree',
+    ]);
+    folderServiceSpy.getFolderTree.and.returnValue(of(FOLDER_TREE));
+    runFolderServiceSpy = jasmine.createSpyObj<RunFolderService>(
+      'RunFolderService',
+      ['pickFolder'],
+    );
+    runFolderServiceSpy.pickFolder.and.returnValue(of(null));
 
     await TestBed.configureTestingModule({
       declarations: [BatchExecutionModalComponent],
@@ -148,10 +190,13 @@ describe('BatchExecutionModalComponent', () => {
         {provide: MAT_DIALOG_DATA, useValue: {workflow}},
         {provide: MatDialog, useValue: dialogSpy},
         {provide: WorkflowService, useValue: workflowServiceSpy},
+        {provide: FolderService, useValue: folderServiceSpy},
+        {provide: RunFolderService, useValue: runFolderServiceSpy},
         {
           provide: WorkspaceStateService,
           useValue: {
             activeWorkspaceId$: activeWorkspaceIdSubject.asObservable(),
+            getActiveWorkspaceId: () => activeWorkspaceIdSubject.value,
           },
         },
       ],
@@ -299,6 +344,250 @@ describe('BatchExecutionModalComponent', () => {
       expect(component.isValid).toBeFalse();
       expect(dialogSpy.open).not.toHaveBeenCalled();
       expect(workflowServiceSpy.batchExecuteWorkflow).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('with a Folder parameter', () => {
+    const folderCell = (
+      rowIndex: number,
+    ): BatchFolderCellViewModel | undefined =>
+      component.folderCells().get(toBatchFolderCellKey(rowIndex, 'Target'));
+
+    function loadFolderCsv(targets: readonly string[]): void {
+      component.csvFile = new File(['csv'], 'batch.csv', {type: 'text/csv'});
+      component.headers = ['Prompt', 'Target'];
+      component.parsedItems = targets.map((target, index) => ({
+        Prompt: `Item ${index + 1}`,
+        Target: target,
+      }));
+      component.validateHeaders();
+      fixture.detectChanges();
+    }
+
+    const runButton = (): HTMLButtonElement =>
+      fixture.debugElement.query(By.css('#batch-modal-run-btn'))
+        .nativeElement as HTMLButtonElement;
+
+    beforeEach(async () => {
+      await setup(folderWorkflow);
+    });
+
+    it('loads the active workspace tree only once a folder column is mapped', () => {
+      expect(folderServiceSpy.getFolderTree).not.toHaveBeenCalled();
+      loadFolderCsv(['Campaign / Shoes']);
+      expect(folderServiceSpy.getFolderTree).toHaveBeenCalledOnceWith(42);
+      expect(component.folderTreeStatus()).toBe('loaded');
+    });
+
+    it('marks a resolvable path as valid with its full path', () => {
+      loadFolderCsv([' campaign / shoes ']);
+      const cell = folderCell(0);
+
+      expect(cell?.status).toBe('valid');
+      expect(cell?.folderId).toBe(42);
+      expect(cell?.label).toBe('Campaign / Shoes');
+      expect(cell?.statusIcon).toBe('✅');
+      expect(component.hasUnresolvedFolderCells()).toBeFalse();
+      expect(component.folderIssuesText()).toBeNull();
+    });
+
+    it('renders folder cells as buttons with status classes and stable ids', () => {
+      loadFolderCsv(['Campaign/Shoes', 'Nope']);
+      const validButton = fixture.debugElement.query(
+        By.css('#batch-folder-cell-0-target'),
+      ).nativeElement as HTMLButtonElement;
+      const invalidButton = fixture.debugElement.query(
+        By.css('#batch-folder-cell-1-target'),
+      ).nativeElement as HTMLButtonElement;
+
+      expect(validButton.classList).toContain('batch-folder-cell--valid');
+      expect(validButton.textContent).toContain('Campaign / Shoes');
+      expect(invalidButton.classList).toContain('batch-folder-cell--invalid');
+      expect(invalidButton.textContent).toContain('⚠️');
+    });
+
+    it('flags an unknown path and disables Run', () => {
+      loadFolderCsv(['Campaign / Shoes', 'Nope']);
+      const cell = folderCell(1);
+
+      expect(cell?.status).toBe('invalid');
+      expect(cell?.folderId).toBeNull();
+      expect(cell?.label).toBe('Nope');
+      expect(cell?.tooltip).toBe('"Nope" not found. Click to choose a folder.');
+      expect(component.unresolvedFolderCellCount()).toBe(1);
+      expect(component.folderIssuesText()).toBe(
+        '1 folder cell needs a folder. Click a ⚠️ cell to choose one.',
+      );
+      expect(runButton().disabled).toBeTrue();
+
+      component.runBatch();
+      expect(workflowServiceSpy.batchExecuteWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('flags an empty path', () => {
+      loadFolderCsv(['   ']);
+      const cell = folderCell(0);
+      expect(cell?.status).toBe('invalid');
+      expect(cell?.label).toBe('Empty folder path');
+    });
+
+    it('keeps cells pending and Run disabled while the tree loads', () => {
+      folderServiceSpy.getFolderTree.and.returnValue(
+        new Subject<FolderTreeNode[]>(),
+      );
+      loadFolderCsv(['Campaign / Shoes']);
+
+      expect(folderCell(0)?.status).toBe('pending');
+      expect(component.folderIssuesText()).toBe('Checking folder paths…');
+      expect(component.hasUnresolvedFolderCells()).toBeTrue();
+      expect(runButton().disabled).toBeTrue();
+    });
+
+    it('shows the tree error with a Retry button that reloads the tree', () => {
+      const warnSpy = spyOn(console, 'warn');
+      folderServiceSpy.getFolderTree.and.returnValue(
+        throwError(() => new Error('boom')),
+      );
+      loadFolderCsv(['Campaign / Shoes']);
+
+      expect(warnSpy).toHaveBeenCalled();
+      expect(component.folderTreeStatus()).toBe('error');
+      expect(component.showFolderTreeError()).toBeTrue();
+      expect(folderCell(0)?.status).toBe('invalid');
+      const errorAlert = fixture.debugElement.query(
+        By.css('#batch-folder-tree-error'),
+      );
+      expect(errorAlert.nativeElement.textContent).toContain(
+        'Folders could not be loaded.',
+      );
+
+      folderServiceSpy.getFolderTree.and.returnValue(of(FOLDER_TREE));
+      fixture.debugElement
+        .query(By.css('#batch-folder-tree-retry-btn'))
+        .nativeElement.click();
+      fixture.detectChanges();
+
+      expect(component.folderTreeStatus()).toBe('loaded');
+      expect(folderCell(0)?.status).toBe('valid');
+      expect(
+        fixture.debugElement.query(By.css('#batch-folder-tree-error')),
+      ).toBeNull();
+    });
+
+    it('keeps the previous tree when a refresh fails', () => {
+      spyOn(console, 'warn');
+      loadFolderCsv(['Campaign / Shoes']);
+      folderServiceSpy.getFolderTree.and.returnValue(
+        throwError(() => new Error('boom')),
+      );
+
+      component.loadFolderTree();
+
+      expect(component.folderTreeStatus()).toBe('loaded');
+      expect(folderCell(0)?.status).toBe('valid');
+    });
+
+    it('fixes a cell with the picker and refreshes the tree after close', () => {
+      runFolderServiceSpy.pickFolder.and.returnValue(of(ARCHIVE_PICK));
+      loadFolderCsv(['Nope']);
+      folderServiceSpy.getFolderTree.calls.reset();
+
+      fixture.debugElement
+        .query(By.css('#batch-folder-cell-0-target'))
+        .nativeElement.click();
+      fixture.detectChanges();
+
+      const cell = folderCell(0);
+      expect(runFolderServiceSpy.pickFolder).toHaveBeenCalledOnceWith(null);
+      expect(folderServiceSpy.getFolderTree).toHaveBeenCalledTimes(1);
+      expect(cell?.status).toBe('valid');
+      expect(cell?.folderId).toBe(11);
+      expect(cell?.label).toBe('Archive');
+      expect(runButton().disabled).toBeFalse();
+    });
+
+    it('keeps the cell unchanged when the picker is cancelled', () => {
+      loadFolderCsv(['Nope']);
+      const invalidCell = folderCell(0);
+      if (!invalidCell) return fail('missing folder cell');
+
+      component.openFolderPickerForCell(invalidCell);
+
+      expect(folderCell(0)?.status).toBe('invalid');
+      expect(folderServiceSpy.getFolderTree).toHaveBeenCalledTimes(2);
+    });
+
+    it('opens the picker at the resolved folder', () => {
+      loadFolderCsv(['Campaign / Shoes']);
+      const validCell = folderCell(0);
+      if (!validCell) return fail('missing folder cell');
+
+      component.openFolderPickerForCell(validCell);
+
+      expect(runFolderServiceSpy.pickFolder).toHaveBeenCalledOnceWith(42);
+    });
+
+    it('sends folder ids as numbers', () => {
+      runFolderServiceSpy.pickFolder.and.returnValue(of(ARCHIVE_PICK));
+      loadFolderCsv(['Campaign / Shoes', 'Nope']);
+      const invalidCell = folderCell(1);
+      if (!invalidCell) return fail('missing folder cell');
+      component.openFolderPickerForCell(invalidCell);
+
+      component.runBatch();
+
+      expect(workflowServiceSpy.batchExecuteWorkflow).toHaveBeenCalledOnceWith(
+        'wf-batch-1',
+        [
+          {
+            row_index: 0,
+            args: {workspace_id: 42, prompt: 'Item 1', target: 42},
+          },
+          {
+            row_index: 1,
+            args: {workspace_id: 42, prompt: 'Item 2', target: 11},
+          },
+        ],
+      );
+    });
+
+    it('resets the picked folders when a new CSV is parsed', async () => {
+      runFolderServiceSpy.pickFolder.and.returnValue(of(ARCHIVE_PICK));
+      loadFolderCsv(['Nope']);
+      const invalidCell = folderCell(0);
+      if (!invalidCell) return fail('missing folder cell');
+      component.openFolderPickerForCell(invalidCell);
+      expect(component.folderOverrides().size).toBe(1);
+
+      const validated = new Promise<void>(resolve => {
+        spyOn(component, 'validateHeaders').and.callFake(() => resolve());
+      });
+      component.parseCsv(
+        new File(['prompt,target\nItem,Nope'], 'next.csv', {type: 'text/csv'}),
+      );
+      await validated;
+
+      expect(component.folderOverrides().size).toBe(0);
+    });
+
+    it('previews the first rows plus later rows needing a folder', () => {
+      const targets = Array.from({length: 8}, (_, index) =>
+        index === 6 ? 'Nope' : 'Campaign / Shoes',
+      );
+      loadFolderCsv(targets);
+
+      const rows = component.previewRows();
+      expect(rows.map(row => row.rowNumber)).toEqual([1, 2, 3, 4, 5, 7]);
+      expect(rows.length).toBe(BATCH_PREVIEW_ROW_LIMIT + 1);
+      expect(component.previewFooterText()).toBe(
+        'Showing 6 of 8 rows (first 5 and rows needing a folder)',
+      );
+    });
+
+    it('previews only the first rows when every folder resolves', () => {
+      loadFolderCsv(Array.from({length: 7}, () => 'Campaign / Shoes'));
+      expect(component.previewRows().length).toBe(BATCH_PREVIEW_ROW_LIMIT);
+      expect(component.previewFooterText()).toBe('Showing first 5 of 7 rows');
     });
   });
 });

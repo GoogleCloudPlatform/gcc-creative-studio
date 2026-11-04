@@ -33,13 +33,13 @@ import {
 import {By} from '@angular/platform-browser';
 import {OverlayContainer} from '@angular/cdk/overlay';
 import {MatCheckboxModule} from '@angular/material/checkbox';
-import {MatDialog, MatDialogRef} from '@angular/material/dialog';
+import {MatDialog} from '@angular/material/dialog';
 import {MatFormFieldModule} from '@angular/material/form-field';
 import {MatIconModule} from '@angular/material/icon';
 import {MatInputModule} from '@angular/material/input';
 import {MatMenuModule, MatMenuTrigger} from '@angular/material/menu';
 import {MatRadioModule} from '@angular/material/radio';
-import {MatSelect, MatSelectModule} from '@angular/material/select';
+import {MatSelectModule} from '@angular/material/select';
 import {MatSliderModule} from '@angular/material/slider';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {GENERATE_TEXT_STEP_CONFIG} from '../step-configs/generate-text-step.config';
@@ -59,21 +59,15 @@ import {StepConfig, StepInput} from './step.model';
 import {StudioSliderComponent} from '../../../../common/components/studio-slider/studio-slider.component';
 import {WorkflowStatusPipe} from '../../../workflow-status.pipe';
 import {GenericStepComponent} from './generic-step.component';
-import {NEVER, Subject, of, throwError} from 'rxjs';
+import {of} from 'rxjs';
 import {FolderService} from '../../../../common/services/folder.service';
 import {WorkspaceStateService} from '../../../../services/workspace/workspace-state.service';
 import {WorkflowFolderTreeStore} from '../../workflow-folder-tree.store';
-import {
-  FolderSelectionResult,
-  FolderTreeNode,
-} from '../../../../common/models/folder.model';
-import {
-  ImageSelectorComponent,
-  ImageSelectorDialogData,
-} from '../../../../common/components/image-selector/image-selector.component';
+import {folderInputValidator} from '../step-configs/folder-setting.util';
+import {OUTPUT_FOLDER_INPUT_NAME} from '../step-configs/output-folder-setting';
 import {
   LOOP_FOLDER_CHOOSE_VALUE,
-  LOOP_FOLDER_MISSING_TOOLTIP,
+  LOOP_FOLDER_INPUT,
   LOOP_ITEM_TYPE_MIME_MAP,
   LOOP_STEP_CONFIG,
   MAX_LOOP_ITEMS,
@@ -82,11 +76,6 @@ import {
   loopLinkedItemsRequiredValidator,
   toLoopFolderId,
 } from '../step-configs/loop-step.config';
-
-type FolderDialogRef = MatDialogRef<
-  ImageSelectorComponent,
-  FolderSelectionResult | null | undefined
->;
 
 describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
   let component: GenericStepComponent;
@@ -1506,12 +1495,12 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         status: ['idle'],
         collapsed: [false],
         inputs: fb.group({
+          folder: [folderId],
           items_text: [''],
           loop_ending: [null],
         }),
         settings: fb.group({
           mode: [mode],
-          folder_id: [folderId],
           item_type: [itemType],
         }),
         outputs: fb.group({
@@ -1539,10 +1528,10 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
     const currentItemType = () =>
       component.localConfig.outputs.find(o => o.name === 'current_item')?.type;
 
-    it('shows folder settings and hides items_text in folder mode', () => {
+    it('shows the folder input and hides items_text in folder mode', () => {
       initLoopStep('folder', 'video');
 
-      expect(findSetting('folder_id')?.hidden).toBeFalsy();
+      expect(findInput(LOOP_FOLDER_INPUT)?.hidden).toBeFalse();
       expect(findSetting('item_type')?.hidden).toBeFalsy();
       expect(findInput('items_text')?.hidden).toBeTrue();
       expect(component.stepForm.get('inputs.items_text')?.disabled).toBeTrue();
@@ -1553,10 +1542,11 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       const loopForm = initLoopStep('folder');
       loopForm.get('settings.mode')?.setValue('text_input');
 
-      expect(findSetting('folder_id')?.hidden).toBeTrue();
+      const itemsTextInput = findInput('items_text');
+      expect(findInput(LOOP_FOLDER_INPUT)?.hidden).toBeTrue();
       expect(findSetting('item_type')?.hidden).toBeTrue();
-      expect(findInput('items_text')?.hidden).toBeFalse();
-      expect(findInput('items_text')?.required).toBeTrue();
+      expect(itemsTextInput?.hidden).toBeFalse();
+      expect(itemsTextInput?.required).toBeTrue();
       expect(component.stepForm.get('inputs.items_text')?.enabled).toBeTrue();
       expect(currentItemType()).toBe('text');
       expect(loopForm.get('outputs.current_item')?.value).toEqual({
@@ -1568,21 +1558,6 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       const loopForm = initLoopStep('folder');
       loopForm.get('settings.item_type')?.setValue('audio');
       expect(currentItemType()).toBe('audio');
-    });
-
-    it('indexes workspace folders to resolve the saved folder name and path', () => {
-      initLoopStep('folder', 'image', 8);
-      expect(component.folderIndex()?.get(7)).toEqual({
-        name: 'Campaign',
-        path: 'Campaign',
-      });
-      expect(component.folderOption()).toEqual({
-        value: 8,
-        label: 'Shots',
-        path: 'Campaign / Shots',
-        isPlaceholder: false,
-        isMissing: false,
-      });
     });
 
     it('always shows the static max loops hint', () => {
@@ -1605,13 +1580,15 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       const itemsTextControl = (): AbstractControl =>
         component.stepForm.get('inputs.items_text') as AbstractControl;
       const folderIdControl = (): AbstractControl =>
-        component.stepForm.get('settings.folder_id') as AbstractControl;
+        component.stepForm.get(
+          `inputs.${LOOP_FOLDER_INPUT}`,
+        ) as AbstractControl;
 
-      it('shows item_type and the linked_items port, hides folder_id', () => {
+      it('shows item_type and the linked_items port, hides the folder', () => {
         initLoopStep('linked_items', 'video');
 
         const linkedItemsInput = findInput('linked_items');
-        expect(findSetting('folder_id')?.hidden).toBeTrue();
+        expect(findInput(LOOP_FOLDER_INPUT)?.hidden).toBeTrue();
         expect(findSetting('item_type')?.hidden).toBeFalse();
         expect(findInput('items_text')?.hidden).toBeTrue();
         expect(linkedItemsInput?.hidden).toBeFalse();
@@ -1633,7 +1610,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         expect(linkedItems.hasError('linkedItemsRequired')).toBeTrue();
         expect(itemsTextControl().disabled).toBeTrue();
         expect(folderId.hasValidator(Validators.required)).toBeFalse();
-        expect(folderId.valid).toBeTrue();
+        expect(folderId.disabled).toBeTrue();
 
         linkedItems.setValue([imageRef]);
         expect(linkedItems.valid).toBeTrue();
@@ -1697,7 +1674,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         expect(itemsTextControl().disabled).toBeTrue();
         expect(linkedItemsControl().disabled).toBeTrue();
         expect(folderId.hasValidator(Validators.required)).toBeTrue();
-        expect(findSetting('folder_id')?.hidden).toBeFalse();
+        expect(findInput(LOOP_FOLDER_INPUT)?.hidden).toBeFalse();
 
         modeControl?.setValue('linked_items');
         expect(linkedItemsControl().enabled).toBeTrue();
@@ -1720,7 +1697,6 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
           }),
           settings: fb.group({
             mode: ['linked_items'],
-            folder_id: [null],
             item_type: ['image'],
           }),
           outputs: fb.group({current_item: [{type: 'image'}]}),
@@ -1743,438 +1719,120 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       });
     });
 
-    describe('Media Gallery folder select', () => {
-      const LOOP_TREE: FolderTreeNode[] = [
-        {
-          id: 1,
-          name: 'Marketing',
-          children: [
-            {
-              id: 2,
-              name: 'Summer',
-              children: [{id: 3, name: 'Week 1', children: []}],
-            },
-          ],
-        },
-        {id: 4, name: 'Archive', children: []},
-      ];
-      const SUMMER_RESULT: FolderSelectionResult = {
-        folderId: 2,
-        folderName: 'Summer',
-        path: 'Marketing / Summer',
+    describe('Media Gallery folder input', () => {
+      const folderRef: StepOutputReference = {
+        step: 'user_input',
+        output: 'Target',
       };
-      const NEW_FOLDER_RESULT: FolderSelectionResult = {
-        folderId: 99,
-        folderName: 'Fresh Shoot',
-        path: 'Archive / Fresh Shoot',
-      };
-
-      let folderServiceSpy: jasmine.SpyObj<FolderService>;
-      let afterClosed$: Subject<FolderSelectionResult | null | undefined>;
-
-      beforeEach(() => {
-        folderServiceSpy = TestBed.inject(
-          FolderService,
-        ) as jasmine.SpyObj<FolderService>;
-        folderServiceSpy.getFolderTree.and.returnValue(of(LOOP_TREE));
-        (dialogSpy.open as jasmine.Spy).and.callFake(() => {
-          afterClosed$ = new Subject();
-          const ref = {
-            afterClosed: () => afterClosed$.asObservable(),
-          } as unknown as FolderDialogRef;
-          return ref;
-        });
-      });
-
       const folderControl = (): AbstractControl =>
-        component.stepForm.get('settings.folder_id') as AbstractControl;
-      const savedFolderId = (): unknown =>
-        component.stepForm.getRawValue().settings.folder_id;
-      const getFolderSelect = (): MatSelect =>
-        fixture.debugElement
-          .query(By.css('#loop-folder-select-loop_1'))
-          .injector.get(MatSelect);
-      const lastDialogData = (): ImageSelectorDialogData =>
-        dialogSpy.open.calls.mostRecent().args[1]
-          ?.data as ImageSelectorDialogData;
-      const selectTriggerText = (): string =>
-        query(
-          '#loop-folder-select-loop_1 .mat-mdc-select-value-text',
-        )?.textContent?.trim() ?? '';
+        component.stepForm.get(
+          `inputs.${LOOP_FOLDER_INPUT}`,
+        ) as AbstractControl;
 
-      /** Renders, then lets MatSelect re-apply the control value to new options. */
-      async function renderSelection(): Promise<void> {
-        fixture.detectChanges();
-        await fixture.whenStable();
-        fixture.detectChanges();
-      }
-
-      async function chooseFolderOption(): Promise<void> {
-        const select = getFolderSelect();
-        select.open();
-        fixture.detectChanges();
-        await fixture.whenStable();
-        select.options.last._selectViaInteraction();
-        fixture.detectChanges();
-      }
-
-      it('renders exactly two options for folder_id', () => {
-        initLoopStep('folder', 'image', 2);
-        const options = getFolderSelect().options.toArray();
-        expect(options.length).toBe(2);
-        expect(options[0].value).toBe(2);
-        expect(options[1].value).toBe(LOOP_FOLDER_CHOOSE_VALUE);
-        expect(options[1].viewValue).toContain('Choose folder…');
-      });
-
-      it('keeps the generic options for the other select settings', () => {
-        initLoopStep('folder');
-        const itemTypeSelect = fixture.debugElement
-          .queryAll(By.directive(MatSelect))
-          .map(el => el.injector.get(MatSelect))
-          .find(select => select.ngControl?.name === 'item_type');
-        expect(itemTypeSelect?.options.map(o => o.value)).toEqual([
-          'image',
-          'video',
-          'audio',
-        ]);
-      });
-
-      it('shows a disabled placeholder option when no folder is selected', () => {
-        initLoopStep('folder');
-        const currentOption = getFolderSelect().options.first;
-        expect(currentOption.value).toBeNull();
-        expect(currentOption.disabled).toBeTrue();
-        expect(currentOption.viewValue).toBe('No folder selected');
-        expect(component.folderOption().isPlaceholder).toBeTrue();
-      });
-
-      it('shows the resolved folder name with its full path as title', () => {
-        initLoopStep('folder', 'image', 2);
-        const currentOption = getFolderSelect().options.first;
-        expect(currentOption.viewValue).toBe('Summer');
-        expect(currentOption.disabled).toBeFalse();
-        expect(currentOption._getHostElement().title).toBe(
-          'Marketing / Summer',
+      it('declares the folder as a hidden, root-less folder input', () => {
+        const folderInput = LOOP_STEP_CONFIG.inputs.find(
+          i => i.name === LOOP_FOLDER_INPUT,
         );
-        expect(query('.loop-folder-field')?.title).toBe('Marketing / Summer');
-        expect(query('.loop-folder-missing-icon')).toBeNull();
-      });
-
-      it('flags a saved folder missing from the tree with a warning icon', () => {
-        initLoopStep('folder', 'image', 42);
-        const option = component.folderOption();
-        expect(option.label).toBe('Folder #42');
-        expect(option.isMissing).toBeTrue();
-        expect(folderControl().value).toBe(42);
-        expect(folderControl().valid).toBeTrue();
-        expect(query('.loop-folder-missing-icon')).not.toBeNull();
-        expect(component.folderMissingTooltip).toBe(
-          LOOP_FOLDER_MISSING_TOOLTIP,
-        );
-      });
-
-      it('shows the folder id without a warning while the tree is loading', () => {
-        folderServiceSpy.getFolderTree.and.returnValue(NEVER);
-        initLoopStep('folder', 'image', 2);
-        const option = component.folderOption();
-        expect(option.label).toBe('Folder #2');
-        expect(option.isMissing).toBeFalse();
-        expect(query('.loop-folder-missing-icon')).toBeNull();
-      });
-
-      it('shows the folder id without a warning when the tree fails to load', () => {
-        spyOn(console, 'error');
-        folderServiceSpy.getFolderTree.and.returnValue(
-          throwError(() => new Error('boom')),
-        );
-        initLoopStep('folder', 'image', 2);
-        const option = component.folderOption();
-        expect(option.label).toBe('Folder #2');
-        expect(option.isMissing).toBeFalse();
-      });
-
-      it('reverts "Choose folder…" synchronously and opens the folder dialog', async () => {
-        const loopForm = initLoopStep('folder', 'image', 2);
-        const emitted: unknown[] = [];
-        loopForm
-          .get('settings.folder_id')
-          ?.valueChanges.subscribe(value => emitted.push(value));
-
-        await chooseFolderOption();
-
-        expect(folderControl().value).toBe(2);
-        expect(savedFolderId()).toBe(2);
-        expect(emitted[emitted.length - 1]).toBe(2);
-        expect(getFolderSelect().value).toBe(2);
-        expect(dialogSpy.open).toHaveBeenCalledTimes(1);
-      });
-
-      it('never keeps the choose value while the dialog is open or after cancel', async () => {
-        initLoopStep('folder');
-        await chooseFolderOption();
-        expect(savedFolderId()).not.toBe(LOOP_FOLDER_CHOOSE_VALUE);
-        expect(savedFolderId()).toBeNull();
-
-        afterClosed$.next(undefined);
-        afterClosed$.complete();
-        expect(savedFolderId()).toBeNull();
-        expect(folderControl().pristine).toBeTrue();
-      });
-
-      it('keeps the control dirty when it was already dirty before choosing', async () => {
-        initLoopStep('folder', 'image', 2);
-        folderControl().markAsDirty();
-        await chooseFolderOption();
-        expect(folderControl().dirty).toBeTrue();
-      });
-
-      it('restores pristine when the control was pristine before choosing', () => {
-        initLoopStep('folder', 'image', 2);
-        component.onFolderOpenedChange(true);
-        folderControl().setValue(LOOP_FOLDER_CHOOSE_VALUE);
-        folderControl().markAsDirty();
-        component.onFolderSelectionChange({
-          source: getFolderSelect(),
-          value: LOOP_FOLDER_CHOOSE_VALUE,
-        });
-        expect(folderControl().value).toBe(2);
-        expect(folderControl().pristine).toBeTrue();
-      });
-
-      it('ignores regular option selections', () => {
-        initLoopStep('folder', 'image', 2);
-        component.onFolderSelectionChange({
-          source: getFolderSelect(),
-          value: 2,
-        });
-        component.onFolderOpenedChange(false);
-        expect(dialogSpy.open).not.toHaveBeenCalled();
-        expect(folderControl().value).toBe(2);
-      });
-
-      it('opens the dialog again when "Choose folder…" is picked twice', async () => {
-        initLoopStep('folder', 'image', 2);
-        await chooseFolderOption();
-        afterClosed$.next(undefined);
-        await chooseFolderOption();
-        expect(dialogSpy.open).toHaveBeenCalledTimes(2);
-        expect(folderControl().value).toBe(2);
-      });
-
-      it('opens the selector in folder mode at the current folder', async () => {
-        initLoopStep('folder', 'image', 2);
-        await chooseFolderOption();
-        const [dialogComponent, dialogConfig] =
-          dialogSpy.open.calls.mostRecent().args;
-        expect(dialogComponent).toBe(ImageSelectorComponent);
-        expect(dialogConfig?.panelClass).toBe('image-selector-dialog');
-        expect(lastDialogData()).toEqual(
+        expect(folderInput).toEqual(
           jasmine.objectContaining({
-            selectionTarget: 'folder',
-            initialFolderId: 2,
-            mimeType: 'image/*',
+            type: 'folder',
+            allowRoot: false,
+            required: false,
+            hidden: true,
           }),
         );
+        expect(
+          LOOP_STEP_CONFIG.settings.some(s => s.name === 'folder_id'),
+        ).toBeFalse();
       });
 
-      (['image', 'video', 'audio'] as LoopItemType[]).forEach(itemType => {
-        it(`previews ${itemType} items in the folder dialog`, () => {
-          initLoopStep('folder', itemType);
-          component.openFolderSelector();
-          expect(lastDialogData().mimeType).toBe(
-            LOOP_ITEM_TYPE_MIME_MAP[itemType],
-          );
-          expect(lastDialogData().initialFolderId).toBeNull();
-        });
-      });
-
-      it('stores the confirmed folder and shows its name and path', async () => {
+      it('shows, enables and requires the folder in folder mode', () => {
         initLoopStep('folder');
-        component.openFolderSelector();
-        afterClosed$.next(SUMMER_RESULT);
-        await renderSelection();
-
+        const folderInput = findInput(LOOP_FOLDER_INPUT);
         const control = folderControl();
-        expect(control.value).toBe(2);
-        expect(control.dirty).toBeTrue();
-        expect(control.touched).toBeTrue();
-        expect(component.folderId()).toBe(2);
-        const select = getFolderSelect();
-        const currentOption = select.options.first;
-        expect(currentOption.viewValue).toBe('Summer');
-        expect(currentOption._getHostElement().title).toBe(
-          'Marketing / Summer',
-        );
-        expect(select.selected).toBe(currentOption);
-        expect(selectTriggerText()).toBe('Summer');
-      });
 
-      it('shows a confirmed folder in the closed select after another folder', async () => {
-        initLoopStep('folder', 'image', 2);
-        await renderSelection();
-        expect(selectTriggerText()).toBe('Summer');
-
-        component.openFolderSelector();
-        afterClosed$.next(NEW_FOLDER_RESULT);
-        await renderSelection();
-
-        expect(selectTriggerText()).toBe('Fresh Shoot');
-      });
-
-      it('shows a newly created folder that is not in the loaded tree', () => {
-        initLoopStep('folder', 'image', 2);
-        component.openFolderSelector();
-        afterClosed$.next(NEW_FOLDER_RESULT);
-        fixture.detectChanges();
-
-        expect(folderControl().value).toBe(99);
-        expect(component.folderOption()).toEqual({
-          value: 99,
-          label: 'Fresh Shoot',
-          path: 'Archive / Fresh Shoot',
-          isPlaceholder: false,
-          isMissing: false,
-        });
-        expect(component.folderIndex()?.get(2)?.name).toBe('Summer');
-      });
-
-      it('ignores an invalid dialog result', () => {
-        initLoopStep('folder', 'image', 2);
-        component.openFolderSelector();
-        afterClosed$.next({...SUMMER_RESULT, folderId: 0});
-        expect(folderControl().value).toBe(2);
-        expect(folderControl().pristine).toBeTrue();
-      });
-
-      it('does not open the dialog when the form is read-only', () => {
-        const loopForm = initLoopStep('folder', 'image', 2);
-        loopForm.disable();
-        component.openFolderSelector();
-        expect(dialogSpy.open).not.toHaveBeenCalled();
-      });
-
-      it('requires a folder only in folder mode', () => {
-        const loopForm = initLoopStep('folder');
-        const control = folderControl();
+        expect(folderInput?.hidden).toBeFalse();
+        expect(folderInput?.required).toBeTrue();
+        expect(control.enabled).toBeTrue();
+        expect(control.hasValidator(Validators.required)).toBeTrue();
+        expect(control.hasValidator(folderInputValidator)).toBeTrue();
         expect(control.hasError('required')).toBeTrue();
-        expect(loopForm.invalid).toBeTrue();
+        expect(component.stepForm.invalid).toBeTrue();
+      });
+
+      it('accepts a fixed folder id or a linked Folder parameter', () => {
+        initLoopStep('folder', 'image', 8);
+        const control = folderControl();
+        expect(control.valid).toBeTrue();
+
+        control.setValue(folderRef);
+        expect(control.valid).toBeTrue();
+      });
+
+      it('rejects the choose value and non-positive ids', () => {
+        initLoopStep('folder');
+        const control = folderControl();
 
         control.setValue(LOOP_FOLDER_CHOOSE_VALUE);
         expect(control.hasError('invalidLoopFolder')).toBeTrue();
-        control.setValue(null);
-
-        loopForm.get('settings.mode')?.setValue('text_input');
-        expect(control.valid).toBeTrue();
-        expect(loopForm.get('settings')?.valid).toBeTrue();
-
-        loopForm.get('settings.mode')?.setValue('folder');
-        expect(control.hasError('required')).toBeTrue();
+        control.setValue(0);
+        expect(control.hasError('invalidLoopFolder')).toBeTrue();
       });
 
-      it('updates the current folder option when folder_id is patched externally', async () => {
-        const loopForm = initLoopStep('folder', 'image', 2);
-        await renderSelection();
-        loopForm.patchValue({settings: {folder_id: 4}});
-        await renderSelection();
+      it('hides, disables and keeps the folder value outside folder mode', () => {
+        const loopForm = initLoopStep('folder', 'image', 8);
+        const modeControl = loopForm.get('settings.mode');
 
-        expect(component.folderId()).toBe(4);
-        const select = getFolderSelect();
-        const currentOption = select.options.first;
-        expect(currentOption.value).toBe(4);
-        expect(currentOption.viewValue).toBe('Archive');
-        expect(select.selected).toBe(currentOption);
-        expect(selectTriggerText()).toBe('Archive');
+        modeControl?.setValue('text_input');
+        const folderInput = findInput(LOOP_FOLDER_INPUT);
+        const textModeControl = folderControl();
+        expect(folderInput?.hidden).toBeTrue();
+        expect(folderInput?.required).toBeFalse();
+        expect(textModeControl.disabled).toBeTrue();
+        expect(textModeControl.hasValidator(Validators.required)).toBeFalse();
+        expect(textModeControl.value).toBe(8);
 
-        loopForm.reset();
-        fixture.detectChanges();
-        expect(component.folderId()).toBeNull();
-        expect(component.folderOption().isPlaceholder).toBeTrue();
+        modeControl?.setValue('linked_items');
+        expect(folderControl().disabled).toBeTrue();
+
+        modeControl?.setValue('folder');
+        const folderModeControl = folderControl();
+        expect(folderModeControl.enabled).toBeTrue();
+        expect(folderModeControl.value).toBe(8);
       });
 
-      it('keeps the current folder when the choose value is emitted', () => {
-        initLoopStep('folder', 'image', 2);
-        folderControl().setValue(LOOP_FOLDER_CHOOSE_VALUE);
-        expect(component.folderId()).toBe(2);
-        expect(component.folderOption().label).toBe('Summer');
+      (['image', 'video', 'audio'] as LoopItemType[]).forEach(itemType => {
+        it(`previews ${itemType} items in the folder picker`, () => {
+          initLoopStep('folder', itemType);
+          expect(component.folderPickerMimeType()).toBe(
+            LOOP_ITEM_TYPE_MIME_MAP[itemType],
+          );
+        });
       });
 
-      it('stops following folder_id changes once destroyed', () => {
-        const loopForm = initLoopStep('folder', 'image', 2);
-        component.ngOnDestroy();
-        loopForm.patchValue({settings: {folder_id: 4}});
-        expect(component.folderId()).toBe(2);
+      it('updates the picker preview when the item type changes', () => {
+        const loopForm = initLoopStep('folder', 'image');
+        loopForm.get('settings.item_type')?.setValue('video');
+        expect(component.folderPickerMimeType()).toBe('video/*');
       });
     });
   });
 
-  describe('Output folder setting', () => {
-    const OUTPUT_TREE: FolderTreeNode[] = [
-      {
-        id: 1,
-        name: 'Campaign',
-        children: [{id: 2, name: 'Q4', children: []}],
-      },
-    ];
-    const RENAMED_TREE: FolderTreeNode[] = [
-      {
-        id: 1,
-        name: 'Campaign',
-        children: [{id: 2, name: 'Q4 Final', children: []}],
-      },
-    ];
-    const Q4_RESULT: FolderSelectionResult = {
-      folderId: 2,
-      folderName: 'Q4',
-      path: 'Campaign / Q4',
-    };
-
-    interface MountedStep {
-      fixture: ComponentFixture<GenericStepComponent>;
-      component: GenericStepComponent;
-      form: FormGroup;
-    }
-
-    let folderServiceSpy: jasmine.SpyObj<FolderService>;
-    let store: WorkflowFolderTreeStore;
-    let afterClosed$: Subject<FolderSelectionResult | null | undefined>;
-
-    beforeEach(() => {
-      folderServiceSpy = TestBed.inject(
-        FolderService,
-      ) as jasmine.SpyObj<FolderService>;
-      folderServiceSpy.getFolderTree.calls.reset();
-      folderServiceSpy.getFolderTree.and.returnValue(of(OUTPUT_TREE));
-      store = TestBed.inject(WorkflowFolderTreeStore);
-      (dialogSpy.open as jasmine.Spy).and.callFake(() => {
-        afterClosed$ = new Subject();
-        const ref = {
-          afterClosed: () => afterClosed$.asObservable(),
-        } as unknown as FolderDialogRef;
-        return ref;
-      });
-    });
-
-    /** Binds a media node form to a component, as the editor does. */
-    function mountMediaStep(
-      config: StepConfig,
-      stepId: string,
-      folderId: number | null,
-      target: ComponentFixture<GenericStepComponent> = fixture,
-    ): MountedStep {
+  describe('Output folder input', () => {
+    /** Binds a media node form to the component, as the editor does. */
+    function mountMediaStep(config: StepConfig, stepId: string): FormGroup {
       const form = fb.group({
         stepId: [stepId],
         type: [config.type],
         status: ['idle'],
         collapsed: [false],
         inputs: fb.group({}),
-        settings: fb.group({output_folder_id: [folderId]}),
+        settings: fb.group({}),
         outputs: fb.group({}),
       });
-      const targetComponent = target.componentInstance;
-      targetComponent.stepForm = form;
-      targetComponent.config = config;
-      targetComponent.ngOnChanges({
+      component.stepForm = form;
+      component.config = config;
+      component.ngOnChanges({
         stepForm: {
           currentValue: form,
           previousValue: null,
@@ -2182,216 +1840,80 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
           isFirstChange: () => false,
         },
       });
-      target.detectChanges();
-      return {fixture: target, component: targetComponent, form};
+      fixture.detectChanges();
+      return form;
     }
 
-    const querySelect = (
-      target: ComponentFixture<GenericStepComponent>,
-      stepId: string,
-    ): MatSelect | null =>
-      target.debugElement
-        .query(By.css(`#output-folder-select-${stepId}`))
-        ?.injector.get(MatSelect) ?? null;
+    const findOutputFolderInput = (): StepInput | undefined =>
+      component.localConfig.inputs.find(
+        i => i.name === OUTPUT_FOLDER_INPUT_NAME,
+      );
 
-    it('renders on the Image node in every mode', () => {
+    it('is visible on the Image node in every mode', () => {
       IMAGE_MODE_OPTIONS.forEach(({value}) => {
         component.stepForm.get('settings.mode')?.setValue(value);
         fixture.detectChanges();
-        expect(querySelect(fixture, 'image_step_1'))
+        const outputFolderInput = findOutputFolderInput();
+        expect(outputFolderInput).withContext(value).toBeDefined();
+        expect(outputFolderInput?.hidden).withContext(value).toBeFalsy();
+        expect(
+          component.stepForm.get(`inputs.${OUTPUT_FOLDER_INPUT_NAME}`)?.enabled,
+        )
           .withContext(value)
-          .not.toBeNull();
+          .toBeTrue();
       });
     });
 
-    it('renders on the Generate Video and Generate Audio nodes', () => {
-      mountMediaStep(GENERATE_VIDEO_STEP_CONFIG, 'video_1', null);
-      expect(querySelect(fixture, 'video_1')).not.toBeNull();
+    const MEDIA_CASES: ReadonlyArray<{
+      config: StepConfig;
+      stepId: string;
+      mimeType: string;
+    }> = [
+      {config: IMAGE_STEP_CONFIG, stepId: 'img_1', mimeType: 'image/*'},
+      {
+        config: GENERATE_VIDEO_STEP_CONFIG,
+        stepId: 'video_1',
+        mimeType: 'video/*',
+      },
+      {
+        config: GENERATE_AUDIO_STEP_CONFIG,
+        stepId: 'audio_1',
+        mimeType: 'audio/*',
+      },
+    ];
 
-      mountMediaStep(GENERATE_AUDIO_STEP_CONFIG, 'audio_1', null);
-      expect(querySelect(fixture, 'audio_1')).not.toBeNull();
+    MEDIA_CASES.forEach(({config, stepId, mimeType}) => {
+      it(`is an optional, root-allowing folder input on the ${config.type} node`, () => {
+        const form = mountMediaStep(config, stepId);
+        const outputFolderInput = findOutputFolderInput();
+        const control = form.get(`inputs.${OUTPUT_FOLDER_INPUT_NAME}`);
+
+        expect(outputFolderInput?.type).toBe('folder');
+        expect(outputFolderInput?.allowRoot).toBeTrue();
+        expect(outputFolderInput?.required).toBeFalse();
+        expect(control?.value).toBeNull();
+        expect(control?.valid).toBeTrue();
+        expect(control?.hasValidator(Validators.required)).toBeFalse();
+        expect(control?.hasValidator(folderInputValidator)).toBeTrue();
+        expect(form.get('settings.output_folder_id')).toBeNull();
+      });
+
+      it(`previews ${mimeType} in the ${config.type} folder picker`, () => {
+        mountMediaStep(config, stepId);
+        expect(component.folderPickerMimeType()).toBe(mimeType);
+      });
     });
 
-    it('defaults to an enabled "All Media (root)" option with a null value', () => {
-      const select = querySelect(fixture, 'image_step_1');
-      const rootOption = select?.options.first;
-      const host: HTMLElement = fixture.nativeElement;
+    it('accepts a linked Folder parameter and rejects invalid ids', () => {
+      const form = mountMediaStep(IMAGE_STEP_CONFIG, 'img_1');
+      const control = form.get(`inputs.${OUTPUT_FOLDER_INPUT_NAME}`);
 
-      expect(component.stepForm.get('settings.output_folder_id')?.value).toBe(
-        null,
-      );
-      expect(rootOption?.value).toBeNull();
-      expect(rootOption?.disabled).toBeFalse();
-      expect(rootOption?.viewValue).toBe('All Media (root)');
-      expect(select?.placeholder).toBe('All Media (root)');
-      expect(component.folderOption().isPlaceholder).toBeFalse();
-      expect(host.querySelector('.output-folder-field')).not.toBeNull();
-      expect(host.querySelector('#loop-folder-select-image_step_1')).toBeNull();
-    });
-
-    it('sets the confirmed folder id from the picker', () => {
-      const {form} = mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', null);
-      component.openFolderSelector();
-      afterClosed$.next(Q4_RESULT);
-      fixture.detectChanges();
-
-      const control = form.get('settings.output_folder_id');
-      const option = component.folderOption();
-      expect(control?.value).toBe(2);
-      expect(control?.dirty).toBeTrue();
-      expect(option.label).toBe('Q4');
-      expect(option.path).toBe('Campaign / Q4');
-    });
-
-    it('previews the generated media type in the picker', () => {
-      mountMediaStep(GENERATE_VIDEO_STEP_CONFIG, 'video_1', null);
-      component.openFolderSelector();
-      const data = dialogSpy.open.calls.mostRecent().args[1]
-        ?.data as ImageSelectorDialogData;
-      expect(data).toEqual(
-        jasmine.objectContaining({
-          selectionTarget: 'folder',
-          initialFolderId: null,
-          mimeType: 'video/*',
-        }),
-      );
-    });
-
-    it('goes back to the root (null) through the root option', async () => {
-      const {form} = mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', 2);
-      await fixture.whenStable();
-      const select = querySelect(fixture, 'img_1');
-      const options = select?.options.toArray() ?? [];
-      expect(options.map(o => o.value)).toEqual([
-        null,
-        2,
-        component.folderChooseValue,
-      ]);
-
-      select?.open();
-      fixture.detectChanges();
-      options[0]._selectViaInteraction();
-      fixture.detectChanges();
-
-      expect(form.get('settings.output_folder_id')?.value).toBeNull();
-      expect(component.folderId()).toBeNull();
-      expect(component.showFolderRootOption()).toBeFalse();
-    });
-
-    it('flags a saved folder missing from the tree', () => {
-      mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', 42);
-      const host: HTMLElement = fixture.nativeElement;
-      const option = component.folderOption();
-      expect(option.label).toBe('Folder #42');
-      expect(option.isMissing).toBeTrue();
-      expect(host.querySelector('.output-folder-missing-icon')).not.toBeNull();
-    });
-
-    it('never requires a folder', () => {
-      const {form} = mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', null);
-      const control = form.get('settings.output_folder_id');
-      control?.markAsTouched();
-      fixture.detectChanges();
-
-      const host: HTMLElement = fixture.nativeElement;
-      expect(control?.hasValidator(Validators.required)).toBeFalse();
+      control?.setValue({step: 'user_input', output: 'Target'});
       expect(control?.valid).toBeTrue();
-      expect(host.querySelector('.output-folder-field mat-error')).toBeNull();
-    });
-
-    it('does not load the tree while the value is root and the select was never opened', () => {
-      mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', null);
-      expect(folderServiceSpy.getFolderTree).not.toHaveBeenCalled();
-    });
-
-    it('loads the tree once when the select is opened', () => {
-      component.onFolderOpenedChange(true);
-      component.onFolderOpenedChange(false);
-      component.onFolderOpenedChange(true);
-      expect(folderServiceSpy.getFolderTree).toHaveBeenCalledOnceWith(1);
-    });
-
-    it('does not refresh the tree when the select is opened', () => {
-      const refreshSpy = spyOn(store, 'refresh').and.callThrough();
-      component.onFolderOpenedChange(true);
-      expect(refreshSpy).not.toHaveBeenCalled();
-    });
-
-    it('shares one request between nodes of the same workspace', () => {
-      const response$ = new Subject<FolderTreeNode[]>();
-      folderServiceSpy.getFolderTree.and.returnValue(response$);
-      const first = mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', 2);
-      const second = mountMediaStep(
-        GENERATE_AUDIO_STEP_CONFIG,
-        'audio_1',
-        1,
-        TestBed.createComponent(GenericStepComponent),
-      );
-
-      response$.next(OUTPUT_TREE);
-      response$.complete();
-
-      expect(folderServiceSpy.getFolderTree).toHaveBeenCalledTimes(1);
-      expect(first.component.folderOption().label).toBe('Q4');
-      expect(second.component.folderOption().label).toBe('Campaign');
-    });
-
-    it('sends a single request when ngOnChanges and ngOnInit both initialize', () => {
-      folderServiceSpy.getFolderTree.and.returnValue(new Subject());
-      const freshFixture = TestBed.createComponent(GenericStepComponent);
-      const freshComponent = freshFixture.componentInstance;
-      const form = fb.group({
-        stepId: ['img_fresh'],
-        type: [NodeTypes.IMAGE],
-        status: ['idle'],
-        collapsed: [false],
-        inputs: fb.group({}),
-        settings: fb.group({output_folder_id: [2]}),
-        outputs: fb.group({}),
-      });
-      freshComponent.stepForm = form;
-      freshComponent.config = IMAGE_STEP_CONFIG;
-      freshComponent.ngOnChanges({
-        stepForm: {
-          currentValue: form,
-          previousValue: null,
-          firstChange: true,
-          isFirstChange: () => true,
-        },
-      });
-      freshFixture.detectChanges();
-
-      expect(folderServiceSpy.getFolderTree).toHaveBeenCalledTimes(1);
-    });
-
-    it('refreshes the shared tree after the picker closes, whatever the result', () => {
-      const refreshSpy = spyOn(store, 'refresh').and.callThrough();
-      mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', null);
-
-      component.openFolderSelector();
-      afterClosed$.next(undefined);
-      expect(refreshSpy).toHaveBeenCalledOnceWith(1);
-
-      component.openFolderSelector();
-      afterClosed$.next(Q4_RESULT);
-      expect(refreshSpy).toHaveBeenCalledTimes(2);
-    });
-
-    it('updates other nodes of the workspace after the picker refresh', () => {
-      mountMediaStep(IMAGE_STEP_CONFIG, 'img_1', null);
-      const other = mountMediaStep(
-        GENERATE_VIDEO_STEP_CONFIG,
-        'video_1',
-        2,
-        TestBed.createComponent(GenericStepComponent),
-      );
-      expect(other.component.folderOption().label).toBe('Q4');
-
-      folderServiceSpy.getFolderTree.and.returnValue(of(RENAMED_TREE));
-      component.openFolderSelector();
-      afterClosed$.next(null);
-
-      expect(other.component.folderOption().label).toBe('Q4 Final');
+      control?.setValue(42);
+      expect(control?.valid).toBeTrue();
+      control?.setValue(-1);
+      expect(control?.hasError('invalidLoopFolder')).toBeTrue();
     });
   });
 

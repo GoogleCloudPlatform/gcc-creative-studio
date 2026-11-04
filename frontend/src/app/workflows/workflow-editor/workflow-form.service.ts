@@ -505,7 +505,16 @@ export class WorkflowFormService {
     prevDefinitions: ParameterDefinition[],
     currentDefinitions: ParameterDefinition[],
   ): boolean {
-    if (this.isPatchingData() || this.workflowForm.disabled) return false;
+    // The root status is not enough: while `workflowForm.disable()` runs, the
+    // outputs sync recalculates the root's status before `steps` is disabled,
+    // so the root can end up enabled. The definitions array stays disabled.
+    if (
+      this.isPatchingData() ||
+      this.workflowForm.disabled ||
+      this.outputDefinitionsArray.disabled
+    ) {
+      return false;
+    }
     const prevById = new Map(prevDefinitions.map(def => [def.id, def]));
     return currentDefinitions
       .filter(def => {

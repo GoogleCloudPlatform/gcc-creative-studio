@@ -40,3 +40,89 @@ span,
 div {
   font-family: 'Google Sans', sans-serif;
 }
+
+.batch-row-number-col {
+  width: 48px;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.batch-folder-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: #e3e3e3;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+
+  &:hover,
+  &:focus-visible {
+    outline: none;
+    background: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 0 10px hsla(38, 66%, 51%, 0.2);
+  }
+
+  &--valid {
+    border-color: hsla(145, 55%, 50%, 0.35);
+    background: hsla(145, 55%, 45%, 0.1);
+
+    .batch-folder-cell-icon {
+      color: hsl(145, 55%, 60%);
+    }
+  }
+
+  &--invalid {
+    border-color: hsla(4, 80%, 70%, 0.45);
+    background: hsla(4, 80%, 70%, 0.1);
+    color: #f28b82;
+
+    .batch-folder-cell-icon {
+      color: #f28b82;
+    }
+  }
+
+  &--pending {
+    border-style: dashed;
+    border-color: hsla(38, 66%, 51%, 0.5);
+    background: hsla(38, 66%, 51%, 0.08);
+
+    .batch-folder-cell-icon {
+      color: #d69e2e;
+    }
+  }
+}
+
+.batch-folder-cell-icon {
+  flex-shrink: 0;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.batch-folder-cell-label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+#batch-folder-tree-retry-btn {
+  color: #f28b82;
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .batch-folder-cell {
+    transition: none;
+  }
+}
