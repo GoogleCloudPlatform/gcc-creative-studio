@@ -59,7 +59,7 @@
             type="button"
             class="icon-button confirm"
             aria-label="Save name"
-            [disabled]="saving()"
+            [disabled]="busy()"
             (click)="submitDraft($event)"
           >
             <mat-icon>check</mat-icon>
@@ -86,6 +86,7 @@
             role="menuitemradio"
             [id]="'project-option-' + project.id"
             [attr.aria-checked]="project.id === projectState.activeProjectId()"
+            [disabled]="deleting()"
             (click)="selectProject(project)"
           >
             <mat-icon class="check-icon" aria-hidden="true">{{
@@ -104,7 +105,7 @@
               [id]="'project-edit-' + project.id"
               matTooltip="Rename"
               [attr.aria-label]="'Rename ' + project.name"
-              [disabled]="saving()"
+              [disabled]="busy()"
               (click)="startRename($event, project)"
             >
               <mat-icon>edit</mat-icon>
@@ -119,7 +120,7 @@
                 [id]="'project-delete-' + project.id"
                 matTooltip="Delete"
                 [attr.aria-label]="'Delete ' + project.name"
-                [disabled]="saving()"
+                [disabled]="busy()"
                 (click)="confirmDelete($event, project)"
               >
                 <mat-icon>delete_outline</mat-icon>
@@ -150,7 +151,7 @@
           type="button"
           class="icon-button confirm"
           aria-label="Create project"
-          [disabled]="saving()"
+          [disabled]="busy()"
           (click)="submitDraft($event)"
         >
           <mat-icon>check</mat-icon>
@@ -171,7 +172,7 @@
         type="button"
         id="project-new-button"
         class="new-project-button"
-        [disabled]="saving()"
+        [disabled]="busy()"
         (click)="startCreate($event)"
       >
         <mat-icon>add</mat-icon>

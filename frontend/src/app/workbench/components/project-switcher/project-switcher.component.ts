@@ -33,6 +33,7 @@ import {MatIconModule} from '@angular/material/icon';
 import {MatMenuModule, MatMenuTrigger} from '@angular/material/menu';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {MatTooltipModule} from '@angular/material/tooltip';
+import {finalize} from 'rxjs';
 import {
   ConfirmationDialogComponent,
   ConfirmationDialogData,
@@ -71,6 +72,10 @@ export class ProjectSwitcherComponent {
   /** Value of the rename / new-project input (only one is shown at a time). */
   readonly draftName = signal('');
   readonly saving = signal(false);
+  /** A confirmed delete is in flight (see `confirmDelete()`). */
+  readonly deleting = signal(false);
+  /** A rename, create or delete is in flight: no other one may start. */
+  readonly busy = computed(() => this.saving() || this.deleting());
   readonly triggerName = computed(
     () => this.projectState.activeProject()?.name ?? 'Projects',
   );
@@ -97,6 +102,10 @@ export class ProjectSwitcherComponent {
     if (project.id === this.projectState.activeProjectId()) {
       return;
     }
+    // The delete in flight would override the pick (see `confirmDelete()`).
+    if (this.deleting()) {
+      return;
+    }
     this.projectState.selectProject(project.id).subscribe({
       error: error => handleErrorSnackbar(this.snackBar, error, 'Open project'),
     });
@@ -104,8 +113,9 @@ export class ProjectSwitcherComponent {
 
   startRename(event: Event, project: Project): void {
     event.stopPropagation();
-    // The save in flight still needs its editor (see `cancelDraft()`).
-    if (this.saving()) {
+    // The save in flight still needs its editor (see `cancelDraft()`), and
+    // a delete in flight may be removing this very project.
+    if (this.busy()) {
       return;
     }
     this.isCreating.set(false);
@@ -115,8 +125,9 @@ export class ProjectSwitcherComponent {
 
   startCreate(event: Event): void {
     event.stopPropagation();
-    // The save in flight still needs its editor (see `cancelDraft()`).
-    if (this.saving()) {
+    // The save in flight still needs its editor (see `cancelDraft()`), and
+    // a delete in flight must settle first (see `confirmDelete()`).
+    if (this.busy()) {
       return;
     }
     this.editingId.set(null);
@@ -143,7 +154,7 @@ export class ProjectSwitcherComponent {
     event?.stopPropagation();
     const name = this.draftName().trim();
     const editingId = this.editingId();
-    if (!name || this.saving()) {
+    if (!name || this.busy()) {
       if (!name) {
         this.cancelDraft();
       }
@@ -218,8 +229,8 @@ export class ProjectSwitcherComponent {
     // Nor while a save is in flight: a create enters the new project when
     // it lands, and deleting the active project enters the default one, so
     // the two entries would race. The answer would also close the menu, or
-    // move the focus, under the dialog.
-    if (this.saving()) {
+    // move the focus, under the dialog. Nor during another delete.
+    if (this.busy()) {
       return;
     }
     const data: ConfirmationDialogData = {
@@ -230,14 +241,31 @@ export class ProjectSwitcherComponent {
       .open(ConfirmationDialogComponent, {data})
       .afterClosed()
       .subscribe((confirmed?: boolean) => {
-        if (!confirmed) {
+        // Checked again: a quick double Enter opens a second dialog before
+        // this one takes the focus, and two deletes must not overlap (the
+        // first one to settle would clear `deleting`).
+        if (!confirmed || this.busy()) {
           return;
         }
-        this.projectState.deleteProject(project.id).subscribe({
-          // The backend answers 409 while one of the project's chats runs.
-          error: error =>
-            handleErrorSnackbar(this.snackBar, error, 'Delete project'),
-        });
+        // The same race the other way round: until the delete settles (the
+        // default project entered, if it removed the active one), a new
+        // project's entry, or a project picked meanwhile, would race it.
+        // Its row also stays listed until the DELETE lands.
+        this.deleting.set(true);
+        this.projectState
+          .deleteProject(project.id)
+          .pipe(finalize(() => this.deleting.set(false)))
+          .subscribe({
+            // The backend answers 409 while one of the project's chats runs.
+            error: error => {
+              handleErrorSnackbar(this.snackBar, error, 'Delete project');
+              // Disabled meanwhile, the item lost the focus: give it back,
+              // unless the focus has moved on (e.g. into an open editor).
+              if (this.document.activeElement === this.document.body) {
+                this.focusAfterRender(`project-delete-${project.id}`);
+              }
+            },
+          });
       });
   }
 

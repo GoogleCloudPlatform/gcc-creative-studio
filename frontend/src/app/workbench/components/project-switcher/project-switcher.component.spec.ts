@@ -425,6 +425,152 @@ describe('ProjectSwitcherComponent', () => {
     expect(dialog.open).not.toHaveBeenCalled();
   });
 
+  it('starts no other project change while a delete is in flight', () => {
+    dialog.open.and.returnValue({
+      afterClosed: () => of(true),
+    } as ReturnType<MatDialog['open']>);
+    activeProjectId.set(2);
+    const deleted = new Subject<Project | null>();
+    state.deleteProject.and.returnValue(deleted);
+    openMenu();
+    inMenu<HTMLElement>('#project-delete-2')!.click();
+    fixture.detectChanges();
+    expect(state.deleteProject).toHaveBeenCalledOnceWith(2);
+
+    // Deleting the active project enters the default one when it lands: a
+    // new project's entry, or a project picked meanwhile, would race it.
+    for (const item of [
+      '#project-option-1',
+      '#project-edit-1',
+      '#project-edit-2',
+      '#project-delete-2',
+      '#project-new-button',
+    ]) {
+      expect(itemState(item)).withContext(item).toEqual(disabledItem);
+    }
+    component.selectProject(projects()[0]);
+    component.startRename(new Event('click'), projects()[0]);
+    component.startCreate(new Event('click'));
+    component.confirmDelete(new Event('click'), projects()[1]);
+    expect(state.selectProject).not.toHaveBeenCalled();
+    expect(component.editingId()).toBeNull();
+    expect(component.isCreating()).toBeFalse();
+    expect(dialog.open).toHaveBeenCalledTimes(1);
+
+    deleted.next(null);
+    deleted.complete();
+    fixture.detectChanges();
+    expect(itemState('#project-option-1')).toEqual(enabledItem);
+    expect(itemState('#project-new-button')).toEqual(enabledItem);
+  });
+
+  it('keeps an open draft unsaved until a delete settles', () => {
+    dialog.open.and.returnValue({
+      afterClosed: () => of(true),
+    } as ReturnType<MatDialog['open']>);
+    activeProjectId.set(2);
+    const deleted = new Subject<Project | null>();
+    state.deleteProject.and.returnValue(deleted);
+    openMenu();
+    inMenu<HTMLElement>('#project-new-button')!.click();
+    fixture.detectChanges();
+    component.draftName.set('Holiday campaign');
+    inMenu<HTMLElement>('#project-delete-2')!.click();
+    fixture.detectChanges();
+
+    // The new project's entry would race the default project's. The delete
+    // does not own the editor, though: it can still be left.
+    const save = inMenu<HTMLButtonElement>('[aria-label="Create project"]')!;
+    expect(save.disabled).toBeTrue();
+    expect(inMenu<HTMLButtonElement>('[aria-label="Cancel"]')!.disabled)
+      .withContext('Cancel')
+      .toBeFalse();
+    keydown(inMenu('#project-new-input')!, 'Enter');
+    expect(state.createProject).not.toHaveBeenCalled();
+    expect(component.isCreating()).toBeTrue();
+
+    deleted.next(null);
+    deleted.complete();
+    fixture.detectChanges();
+    expect(save.disabled).toBeFalse();
+    keydown(inMenu('#project-new-input')!, 'Enter');
+    expect(state.createProject).toHaveBeenCalledOnceWith('Holiday campaign');
+  });
+
+  it('deletes once when a second dialog was confirmed meanwhile', () => {
+    // A quick double Enter opens a second dialog before the first one takes
+    // the focus.
+    const first = new Subject<boolean>();
+    const second = new Subject<boolean>();
+    dialog.open.and.returnValues(
+      {
+        afterClosed: () => first.asObservable(),
+      } as ReturnType<MatDialog['open']>,
+      {
+        afterClosed: () => second.asObservable(),
+      } as ReturnType<MatDialog['open']>,
+    );
+    state.deleteProject.and.returnValue(new Subject<Project | null>());
+    component.confirmDelete(new Event('click'), projects()[1]);
+    component.confirmDelete(new Event('click'), projects()[1]);
+
+    second.next(true);
+    first.next(true);
+
+    expect(state.deleteProject).toHaveBeenCalledOnceWith(2);
+  });
+
+  it('gives the focus back to Delete when the delete is refused', () => {
+    spyOn(console, 'error');
+    dialog.open.and.returnValue({
+      afterClosed: () => of(true),
+    } as ReturnType<MatDialog['open']>);
+    const deleted = new Subject<Project | null>();
+    state.deleteProject.and.returnValue(deleted);
+    openMenu();
+    render();
+    const deleteItem = inMenu<HTMLButtonElement>('#project-delete-2')!;
+    deleteItem.focus();
+    expect(document.activeElement).toBe(deleteItem);
+    deleteItem.click();
+    fixture.detectChanges();
+
+    // Disabled while the delete runs, the item lost the focus.
+    deleted.error({
+      status: 409,
+      error: {detail: 'A chat in this project is still running.'},
+    });
+    fixture.detectChanges();
+    render();
+
+    expect(document.activeElement?.id).toBe('project-delete-2');
+  });
+
+  it('leaves the focus in an open editor when a delete is refused', () => {
+    spyOn(console, 'error');
+    dialog.open.and.returnValue({
+      afterClosed: () => of(true),
+    } as ReturnType<MatDialog['open']>);
+    const deleted = new Subject<Project | null>();
+    state.deleteProject.and.returnValue(deleted);
+    openMenu();
+    inMenu<HTMLElement>('#project-new-button')!.click();
+    fixture.detectChanges();
+    component.confirmDelete(new Event('click'), projects()[1]);
+    fixture.detectChanges();
+    const input = inMenu<HTMLInputElement>('#project-new-input')!;
+    input.focus();
+
+    deleted.error({
+      status: 409,
+      error: {detail: 'A chat in this project is still running.'},
+    });
+    fixture.detectChanges();
+    render();
+
+    expect(document.activeElement).toBe(input);
+  });
+
   it('deletes only after confirmation', () => {
     dialog.open.and.returnValues(
       {afterClosed: () => of(false)} as ReturnType<MatDialog['open']>,
@@ -474,5 +620,7 @@ describe('ProjectSwitcherComponent', () => {
       component.confirmDelete(new Event('click'), project(2, 'Launch')),
     ).not.toThrow();
     expect(console.error).toHaveBeenCalled();
+    // Not left deleting: that would lock every later project change.
+    expect(component.deleting()).toBeFalse();
   });
 });

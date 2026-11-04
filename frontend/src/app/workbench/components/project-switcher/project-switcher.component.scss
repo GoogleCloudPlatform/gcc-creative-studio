@@ -222,6 +222,11 @@ $danger: #f28b82;
       outline-offset: -2px;
     }
 
+    &:disabled {
+      cursor: default;
+      opacity: 0.4;
+    }
+
     // Holds the name and the badge, laid out as the button's children were.
     .mat-mdc-menu-item-text {
       display: flex;
