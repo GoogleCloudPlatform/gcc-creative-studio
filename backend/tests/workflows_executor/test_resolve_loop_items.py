@@ -109,13 +109,14 @@ def _guard(cached=None):
     return guard
 
 
-def _request(**config):
+def _request(folder_id=42, **config):
     body = {
         "run_id": "run-1",
         "step_id": "loop_1",
         "execution_id": "exec-1",
         "workspace_id": 1,
-        "config": {"mode": "folder", "folder_id": 42, **config},
+        "inputs": {"folder": folder_id},
+        "config": {"mode": "folder", **config},
     }
     return body
 
@@ -266,8 +267,18 @@ async def test_folder_mode_requires_folder_id(service, deps):
     with pytest.raises(StepError) as exc_info:
         await _resolve(service, deps, _request(folder_id=None))
 
-    assert exc_info.value.status_code == 422
-    assert exc_info.value.error_category is ErrorCategory.INVALID_INPUT
+    _assert_invalid_input(
+        exc_info, "A Media Gallery folder is required in folder mode."
+    )
+    deps.workspace_auth.authorize.assert_not_awaited()
+    deps.folder_repository.get_folder_by_id.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_folder_mode_reads_folder_from_inputs(service, deps):
+    await _resolve(service, deps, _request(folder_id=42))
+
+    deps.folder_repository.get_folder_by_id.assert_awaited_once_with(42)
 
 
 @pytest.mark.anyio

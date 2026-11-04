@@ -75,9 +75,9 @@ describe('PREDEFINED_WORKFLOW_TEMPLATES', () => {
 
     expect(mediaSteps.length).toBeGreaterThan(0);
     mediaSteps.forEach(step => {
-      expect(step.settings)
+      expect(step.inputs)
         .withContext(step.stepId)
-        .toEqual(jasmine.objectContaining({output_folder_id: null}));
+        .toEqual(jasmine.objectContaining({output_folder: null}));
     });
   });
 });

@@ -206,6 +206,21 @@ class TestRequiredArgsAndPriorOutputs:
     def test_required_args_empty_when_no_call_steps(self):
         assert required_args([_user_input_step("user_in")]) == []
 
+    def test_linked_output_folder_is_a_required_arg(self):
+        image_step = ImageStep(
+            step_id="step_a",
+            inputs=ImageInputs(
+                prompt="A cat",
+                output_folder=StepOutputReference(
+                    step="user_in", output="Target"
+                ),
+            ),
+            settings=ImageSettings(),
+        )
+        steps = [_user_input_step("user_in"), image_step]
+
+        assert required_args(steps) == ["Target", "workspace_id"]
+
     def test_build_prior_outputs_filters_to_referenced_outputs(self):
         step_a = _text_step("step_a")
         step_b = _image_step(
@@ -454,23 +469,35 @@ class TestBuildWorkflowYaml:
             "google_search": google_search,
         }
 
-    @pytest.mark.parametrize("output_folder_id", [42, None])
-    def test_image_step_body_config_carries_output_folder(
-        self, output_folder_id
+    @pytest.mark.parametrize(
+        ("output_folder", "expected"),
+        [
+            (42, 42),
+            (None, None),
+            (
+                StepOutputReference(step="user_in", output="Target"),
+                "${args.Target}",
+            ),
+        ],
+        ids=["fixed", "root", "linked"],
+    )
+    def test_image_step_body_inputs_carry_output_folder(
+        self, output_folder, expected
     ):
+        user_input = UserInputStep(step_id="user_in")
         image_step = ImageStep(
             step_id="step_a",
-            inputs=ImageInputs(prompt="A cat"),
-            settings=ImageSettings(output_folder_id=output_folder_id),
+            inputs=ImageInputs(prompt="A cat", output_folder=output_folder),
+            settings=ImageSettings(),
         )
         defn = build_workflow_definition(
-            [image_step], executor_url=EXECUTOR_URL
+            [user_input, image_step], executor_url=EXECUTOR_URL
         )
         try_steps = _step_map(
             _step_map(defn["main"]["steps"])["run_steps"]["try"]["steps"]
         )
-        body_config = try_steps["step_a"]["try"]["args"]["body"]["config"]
-        assert body_config["output_folder_id"] == output_folder_id
+        body = try_steps["step_a"]["try"]["args"]["body"]
+        assert body["inputs"]["output_folder"] == expected
 
     def test_many_steps_split_assignments_into_chunks_of_50(self):
         steps = [_text_step(f"step_{i}") for i in range(55)]

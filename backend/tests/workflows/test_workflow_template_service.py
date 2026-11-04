@@ -57,6 +57,8 @@ def fixture_service(mock_template_repo):
         workflow_run_repository=AsyncMock(),
         source_asset_service=AsyncMock(),
         workflow_template_repository=mock_template_repo,
+        folder_repository=AsyncMock(),
+        workspace_auth=AsyncMock(),
     )
     return service
 

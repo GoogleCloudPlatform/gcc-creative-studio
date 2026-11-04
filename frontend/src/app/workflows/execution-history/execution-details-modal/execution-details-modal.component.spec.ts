@@ -27,7 +27,11 @@ import {MatSnackBar} from '@angular/material/snack-bar';
 import {Router} from '@angular/router';
 import {of, throwError} from 'rxjs';
 import {GalleryService} from '../../../gallery/gallery.service';
+import {By} from '@angular/platform-browser';
+import {FolderSelectionResult} from '../../../common/models/folder.model';
 import {MediaResolutionService} from '../../shared/media-resolution.service';
+import {RunFolderService} from '../../shared/run-folder.service';
+import {FolderPathMap} from '../../utils/folder-path.util';
 import {
   NodeTypes,
   WorkflowRunDetail,
@@ -52,6 +56,7 @@ describe('ExecutionDetailsModalComponent', () => {
   let mediaResolutionSpy: jasmine.SpyObj<MediaResolutionService>;
   let snackBarSpy: jasmine.SpyObj<MatSnackBar>;
   let dialogSpy: jasmine.SpyObj<MatDialog>;
+  let runFolderServiceSpy: jasmine.SpyObj<RunFolderService>;
 
   const mockNeedsAttentionRun: WorkflowRunDetail = {
     id: 'run-attention-1',
@@ -135,6 +140,14 @@ describe('ExecutionDetailsModalComponent', () => {
     );
     snackBarSpy = jasmine.createSpyObj<MatSnackBar>('MatSnackBar', ['open']);
     dialogSpy = jasmine.createSpyObj<MatDialog>('MatDialog', ['open']);
+    runFolderServiceSpy = jasmine.createSpyObj<RunFolderService>(
+      'RunFolderService',
+      ['pickFolder', 'resolveFolderPaths'],
+    );
+    runFolderServiceSpy.resolveFolderPaths.and.returnValue(
+      of(new Map<number, string>()),
+    );
+    runFolderServiceSpy.pickFolder.and.returnValue(of(null));
 
     workflowServiceSpy.getRunDetails.and.returnValue(of(mockNeedsAttentionRun));
 
@@ -153,6 +166,7 @@ describe('ExecutionDetailsModalComponent', () => {
         {provide: MediaResolutionService, useValue: mediaResolutionSpy},
         {provide: MatSnackBar, useValue: snackBarSpy},
         {provide: MatDialog, useValue: dialogSpy},
+        {provide: RunFolderService, useValue: runFolderServiceSpy},
       ],
       schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();
@@ -501,6 +515,156 @@ describe('ExecutionDetailsModalComponent', () => {
       expect(dialogSpy.open).toHaveBeenCalledTimes(1);
       expect(historyButton.tagName).toBe('BUTTON');
       expect(header.hasAttribute('role')).toBeFalse();
+    });
+  });
+
+  describe('folder inputs', () => {
+    const SHOES_PATHS: FolderPathMap = new Map([[42, 'Campaign / Shoes']]);
+    const BAGS: FolderSelectionResult = {
+      folderId: 43,
+      folderName: 'Bags',
+      path: 'Campaign / Bags',
+    };
+    const snapshot = mockNeedsAttentionRun.workflow_snapshot;
+    const [snapshotUserInput, ...snapshotOtherSteps] = snapshot?.steps ?? [];
+    const folderRun: WorkflowRunDetail = {
+      ...mockNeedsAttentionRun,
+      workspace_id: 7,
+      input_args: {prompt: 'Original prompt text', Target: 42},
+      workflow_snapshot: snapshot
+        ? {
+            ...snapshot,
+            steps: [
+              {
+                ...snapshotUserInput,
+                outputs: {prompt: {type: 'text'}, Target: {type: 'folder'}},
+              },
+              ...snapshotOtherSteps,
+            ],
+          }
+        : undefined,
+    };
+
+    function loadFolderRun(paths: FolderPathMap): void {
+      runFolderServiceSpy.resolveFolderPaths.calls.reset();
+      runFolderServiceSpy.resolveFolderPaths.and.returnValue(of(paths));
+      workflowServiceSpy.getRunDetails.and.returnValue(of(folderRun));
+      component.loadDetails();
+      fixture.detectChanges();
+    }
+
+    const targetArg = () =>
+      component.inputArgsEntries().find(entry => entry.key === 'Target');
+    const targetField = () =>
+      component.resumeFieldList().find(field => field.name === 'Target');
+
+    it('resolves the folder paths in the run workspace', () => {
+      loadFolderRun(SHOES_PATHS);
+      expect(runFolderServiceSpy.resolveFolderPaths).toHaveBeenCalledOnceWith(
+        jasmine.arrayContaining([42]),
+        7,
+      );
+    });
+
+    it('shows the folder path in the run inputs', () => {
+      loadFolderRun(SHOES_PATHS);
+      expect(targetArg()?.displayValue).toBe('Campaign / Shoes');
+      expect(component.folderPaths()).toEqual(SHOES_PATHS);
+    });
+
+    it('falls back to the folder id when the path lookup fails', () => {
+      loadFolderRun(new Map());
+      expect(targetArg()?.displayValue).toBe('Folder #42');
+      expect(targetField()?.folderLabel).toBe('Folder #42');
+    });
+
+    it('renders a folder picker button in the resume form', () => {
+      loadFolderRun(SHOES_PATHS);
+      component.toggleResumeForm();
+      fixture.detectChanges();
+
+      const field = targetField();
+      const button = fixture.debugElement.query(
+        By.css('#resume-folder-btn-Target'),
+      ).nativeElement as HTMLButtonElement;
+      expect(component.resumeForm.get('Target')?.value).toBe(42);
+      expect(field?.isFolder).toBeTrue();
+      expect(field?.controlId).toBe('resume-folder-btn-Target');
+      expect(field?.folderLabel).toBe('Campaign / Shoes');
+      expect(button.classList).toContain('has-folder');
+      expect(button.textContent).toContain('Campaign / Shoes');
+      expect(
+        fixture.debugElement.query(By.css('#resume-input-prompt')),
+      ).not.toBeNull();
+    });
+
+    it('stores the picked folder, shows its path and resumes with its id', () => {
+      loadFolderRun(SHOES_PATHS);
+      runFolderServiceSpy.pickFolder.and.returnValue(of(BAGS));
+      workflowServiceSpy.resumeRun.and.returnValue(
+        of({
+          run_id: 'run-attention-1',
+          status: WorkflowRunStatusEnum.RUNNING,
+          execution_id: 'exec-3',
+        }),
+      );
+
+      component.openResumeFolderPicker('Target');
+
+      const control = component.resumeForm.get('Target');
+      expect(runFolderServiceSpy.pickFolder).toHaveBeenCalledOnceWith(42);
+      expect(control?.value).toBe(43);
+      expect(control?.dirty).toBeTrue();
+      expect(targetField()?.folderLabel).toBe('Campaign / Bags');
+
+      component.submitResume();
+      expect(workflowServiceSpy.resumeRun).toHaveBeenCalledWith(
+        'wf-1',
+        'run-attention-1',
+        {prompt: 'Original prompt text', Target: 43},
+      );
+    });
+
+    it('keeps the folder when the picker is cancelled', () => {
+      loadFolderRun(SHOES_PATHS);
+      component.openResumeFolderPicker('Target');
+      expect(component.resumeForm.get('Target')?.value).toBe(42);
+      expect(targetField()?.folderLabel).toBe('Campaign / Shoes');
+    });
+
+    it('ignores an unknown resume field', () => {
+      loadFolderRun(SHOES_PATHS);
+      component.openResumeFolderPicker('Missing');
+      expect(runFolderServiceSpy.pickFolder).not.toHaveBeenCalled();
+    });
+
+    it('adds a missing folder field empty and clears its error once picked', () => {
+      loadFolderRun(SHOES_PATHS);
+      workflowServiceSpy.getRunDetails.and.returnValue(
+        of({...folderRun, input_args: {prompt: 'Original prompt text'}}),
+      );
+      component.loadDetails();
+      workflowServiceSpy.resumeRun.and.returnValue(
+        throwError(() => ({
+          status: 422,
+          error: {missing_inputs: ['Target']},
+        })),
+      );
+
+      component.submitResume();
+
+      const missingField = targetField();
+      expect(missingField?.isFolder).toBeTrue();
+      expect(missingField?.folderLabel).toBeNull();
+      expect(missingField?.errorMessage).not.toBeNull();
+      expect(component.resumeForm.get('Target')?.value).toBeNull();
+
+      runFolderServiceSpy.pickFolder.and.returnValue(of(BAGS));
+      component.openResumeFolderPicker('Target');
+
+      const pickedField = targetField();
+      expect(pickedField?.errorMessage).toBeNull();
+      expect(pickedField?.folderLabel).toBe('Campaign / Bags');
     });
   });
 });

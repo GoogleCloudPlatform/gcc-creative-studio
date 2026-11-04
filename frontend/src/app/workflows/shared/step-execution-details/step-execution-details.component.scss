@@ -149,3 +149,36 @@
     transform: translateY(0);
   }
 }
+
+.step-folder-input {
+  min-width: 0;
+}
+
+.step-folder-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 10px;
+  min-width: 0;
+  border-radius: 8px;
+  background: hsla(38, 66%, 51%, 0.08);
+  border: 1px solid hsla(38, 66%, 51%, 0.25);
+  color: #e3e3e3;
+  font-size: 13px;
+
+  span {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+}
+
+.step-folder-icon {
+  flex-shrink: 0;
+  font-size: 18px;
+  width: 18px;
+  height: 18px;
+  color: #d69e2e;
+}

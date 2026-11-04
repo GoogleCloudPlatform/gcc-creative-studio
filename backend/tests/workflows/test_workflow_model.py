@@ -173,36 +173,88 @@ MEDIA_STEP_PAYLOADS = [
 ]
 
 
-def _media_step(payload: dict, **settings) -> dict:
+def _media_step(payload: dict, **inputs) -> dict:
     return {
         "stepId": f"{payload['type']}_1",
         **payload,
-        "settings": {**payload["settings"], **settings},
+        "inputs": {**payload["inputs"], **inputs},
     }
+
+
+INVALID_FOLDER_IDS = ["42", True, 0, -1, 1.5]
 
 
 @pytest.mark.parametrize("payload", MEDIA_STEP_PAYLOADS)
 def test_media_step_without_output_folder_defaults_to_root(payload):
-    """Saved workflows from before the setting existed keep using root."""
+    """Steps without an output folder input save to the root folder."""
     step = TypeAdapter(WorkflowStep).validate_python(_media_step(payload))
-    assert step.settings.output_folder_id is None
+    assert step.inputs.output_folder is None
 
 
 @pytest.mark.parametrize("payload", MEDIA_STEP_PAYLOADS)
 def test_media_step_parses_output_folder(payload):
     step = TypeAdapter(WorkflowStep).validate_python(
-        _media_step(payload, output_folder_id=42)
+        _media_step(payload, output_folder=42)
     )
-    assert step.settings.output_folder_id == 42
+    assert step.inputs.output_folder == 42
 
 
-@pytest.mark.parametrize("folder_id", [0, -3])
 @pytest.mark.parametrize("payload", MEDIA_STEP_PAYLOADS)
-def test_media_step_rejects_non_positive_output_folder(payload, folder_id):
+def test_media_step_parses_linked_output_folder(payload):
+    step = TypeAdapter(WorkflowStep).validate_python(
+        _media_step(
+            payload, output_folder={"step": "user_input", "output": "Target"}
+        )
+    )
+    assert step.inputs.output_folder == StepOutputReference(
+        step="user_input", output="Target"
+    )
+
+
+@pytest.mark.parametrize("folder_id", INVALID_FOLDER_IDS)
+@pytest.mark.parametrize("payload", MEDIA_STEP_PAYLOADS)
+def test_media_step_rejects_non_strict_output_folder(payload, folder_id):
     with pytest.raises(ValidationError):
         TypeAdapter(WorkflowStep).validate_python(
-            _media_step(payload, output_folder_id=folder_id)
+            _media_step(payload, output_folder=folder_id)
         )
+
+
+def test_loop_inputs_accept_folder_id_link_and_none():
+    from src.workflows.schema.workflow_model import LoopInputs
+
+    assert LoopInputs(folder=42).folder == 42
+    assert LoopInputs(folder=None).folder is None
+    assert LoopInputs(
+        folder={"step": "user_input", "output": "Target"}
+    ).folder == StepOutputReference(step="user_input", output="Target")
+
+
+@pytest.mark.parametrize("folder_id", INVALID_FOLDER_IDS)
+def test_loop_inputs_reject_non_strict_folder(folder_id):
+    from src.workflows.schema.workflow_model import LoopInputs
+
+    with pytest.raises(ValidationError):
+        LoopInputs(folder=folder_id)
+
+
+def test_resolve_loop_items_inputs_accept_positive_int_folder():
+    from src.workflows_executor.dto.workflows_executor_dto import (
+        ResolveLoopItemsInputs,
+    )
+
+    assert ResolveLoopItemsInputs(folder=42).folder == 42
+    assert ResolveLoopItemsInputs().folder is None
+
+
+@pytest.mark.parametrize("folder_id", INVALID_FOLDER_IDS)
+def test_resolve_loop_items_inputs_reject_non_strict_folder(folder_id):
+    from src.workflows_executor.dto.workflows_executor_dto import (
+        ResolveLoopItemsInputs,
+    )
+
+    with pytest.raises(ValidationError):
+        ResolveLoopItemsInputs(folder=folder_id)
 
 
 def test_workflow_base_translate_legacy_generate_image():

@@ -77,6 +77,33 @@
         </div>
       </div>
 
+      <!-- Folder Paths -->
+      <div
+        *ngIf="showFolderTreeError()"
+        id="batch-folder-tree-error"
+        class="bg-red-500/10 border border-red-500/20 text-red-300 px-3 py-2 rounded text-sm flex items-center gap-2"
+        role="alert"
+      >
+        <mat-icon class="icon-sm">error</mat-icon>
+        <span class="flex-1">Folders could not be loaded.</span>
+        <button
+          id="batch-folder-tree-retry-btn"
+          type="button"
+          mat-button
+          (click)="loadFolderTree()"
+        >
+          Retry
+        </button>
+      </div>
+      <div
+        *ngIf="folderIssuesText() as folderIssues"
+        id="batch-folder-issues"
+        class="bg-amber-500/10 border border-amber-500/20 text-amber-300 px-3 py-2 rounded text-sm flex items-center gap-2"
+      >
+        <mat-icon class="icon-sm">folder_off</mat-icon>
+        <span>{{ folderIssues }}</span>
+      </div>
+
       <div
         class="max-h-[300px] overflow-auto border border-white/10 rounded-lg"
       >
@@ -86,7 +113,12 @@
           >
             <tr>
               <th
-                *ngFor="let header of headers"
+                class="batch-row-number-col px-4 py-3 font-medium text-neutral-400 align-top"
+              >
+                #
+              </th>
+              <th
+                *ngFor="let header of headersSignal()"
                 class="px-4 py-3 font-medium text-neutral-400 align-top"
               >
                 <div class="flex flex-col gap-1.5">
@@ -94,7 +126,7 @@
 
                   <!-- Mapped State -->
                   <div
-                    *ngIf="columnMapping[header]"
+                    *ngIf="columnMappingSignal()[header]"
                     class="flex items-center gap-1.5 text-green-400"
                   >
                     <mat-icon
@@ -104,13 +136,13 @@
                       check_circle
                     </mat-icon>
                     <span class="text-[11px] font-mono opacity-90">
-                      {{ columnMapping[header] }}
+                      {{ columnMappingSignal()[header] }}
                     </span>
                   </div>
 
                   <!-- Unmapped State -->
                   <div
-                    *ngIf="!columnMapping[header]"
+                    *ngIf="!columnMappingSignal()[header]"
                     class="flex items-center gap-1.5 text-orange-400/80"
                   >
                     <mat-icon
@@ -126,22 +158,42 @@
             </tr>
           </thead>
           <tbody class="divide-y divide-white/5">
-            <tr *ngFor="let item of previewItems()" class="hover:bg-white/5">
+            <tr
+              *ngFor="let row of previewRows(); trackBy: trackPreviewRow"
+              class="hover:bg-white/5"
+            >
+              <td class="batch-row-number-col px-4 py-2 text-neutral-500">
+                {{ row.rowNumber }}
+              </td>
               <td
-                *ngFor="let header of headers"
+                *ngFor="let cell of row.cells"
                 class="px-4 py-2 text-neutral-300 truncate max-w-[200px]"
-                [class.opacity-50]="!columnMapping[header]"
+                [class.opacity-50]="!cell.isMapped"
               >
-                {{ item[header] }}
+                <button
+                  *ngIf="cell.folder as folder; else plainCell"
+                  type="button"
+                  class="batch-folder-cell"
+                  [id]="folder.buttonId"
+                  [ngClass]="folder.statusClass"
+                  [matTooltip]="folder.tooltip"
+                  (click)="openFolderPickerForCell(folder)"
+                >
+                  <span class="batch-folder-cell-icon" aria-hidden="true">{{
+                    folder.statusIcon
+                  }}</span>
+                  <span class="batch-folder-cell-label">{{ folder.label }}</span>
+                </button>
+                <ng-template #plainCell>{{ cell.text }}</ng-template>
               </td>
             </tr>
           </tbody>
         </table>
         <div
-          *ngIf="parsedItemsSignal().length > 5"
+          *ngIf="previewFooterText() as footerText"
           class="px-4 py-2 text-xs text-neutral-500 bg-white/5 border-t border-white/5 text-center"
         >
-          Showing first 5 of {{ parsedItemsSignal().length }} rows
+          {{ footerText }}
         </div>
       </div>
     </div>
@@ -325,7 +377,8 @@
       parsedItemsSignal().length === 0 ||
       isProcessing ||
       isConfirmingBatch() ||
-      !isValid
+      !isValid ||
+      hasUnresolvedFolderCells()
     "
     *ngIf="resultRows().length === 0"
   >
