@@ -158,19 +158,34 @@
           class="resume-field-item"
           [class.has-field-error]="field.errorMessage !== null"
         >
-          <label
-            [for]="'resume-input-' + field.name"
-            class="resume-field-label"
-          >
+          <label [for]="field.controlId" class="resume-field-label">
             {{ field.label }}
           </label>
-          <textarea
-            [id]="'resume-input-' + field.name"
-            [formControlName]="field.name"
-            rows="2"
-            class="resume-field-input"
-            [placeholder]="'Enter value for ' + field.label"
-          ></textarea>
+          <button
+            *ngIf="field.isFolder; else resumeTextInput"
+            type="button"
+            class="resume-folder-btn"
+            [id]="field.controlId"
+            [class.has-folder]="field.folderLabel !== null"
+            [disabled]="isSubmitting()"
+            (click)="openResumeFolderPicker(field.name)"
+          >
+            <mat-icon>folder</mat-icon>
+            <span
+              class="resume-folder-path"
+              [id]="'resume-folder-path-' + field.name"
+              >{{ field.folderLabel ?? folderPickerEmptyLabel }}</span
+            >
+          </button>
+          <ng-template #resumeTextInput>
+            <textarea
+              [id]="field.controlId"
+              [formControlName]="field.name"
+              rows="2"
+              class="resume-field-input"
+              [placeholder]="'Enter value for ' + field.label"
+            ></textarea>
+          </ng-template>
           <span
             *ngIf="field.errorMessage"
             [id]="'resume-error-' + field.name"
@@ -303,6 +318,7 @@
                   [outputs]="iteration.outputs"
                   [mediaUrlMap]="mediaUrlMap"
                   [mode]="step.stepMode"
+                  [folderPaths]="folderPaths()"
                 >
                 </app-step-execution-details>
               </div>

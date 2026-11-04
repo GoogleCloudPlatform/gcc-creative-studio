@@ -50,16 +50,20 @@ import {
 import {
   DEFAULT_LOOP_SETTINGS,
   LOOP_CURRENT_ITEM_PORT,
+  LOOP_FOLDER_INPUT,
   LOOP_ITEMS_TEXT_INPUT,
   LOOP_ITEM_TYPE_SETTING,
   LOOP_LINKED_ITEMS_INPUT,
+  LOOP_MODE_FOLDER,
   LOOP_MODE_LINKED_ITEMS,
   LOOP_MODE_SETTING,
   LOOP_MODE_TEXT_INPUT,
   getLoopCurrentItemType,
+  getLoopLinkedItemsInputType,
   toLoopItemType,
   toLoopMode,
 } from './step-components/step-configs/loop-step.config';
+import {OUTPUT_FOLDER_INPUT_NAME} from './step-components/step-configs/output-folder-setting';
 import {
   StepConfig,
   StepOutputType,
@@ -93,7 +97,11 @@ export class WorkflowFormService {
   private readonly isPatchingData = signal<boolean>(false);
 
   private readonly loopLinksRemovedSubject = new Subject<void>();
-  /** Emits after hidden Loop source links were removed, so wires can be redrawn. */
+  /**
+   * Emits after links were removed by the form itself (hidden Loop source
+   * links, or links to a parameter whose type no longer fits), so wires can be
+   * redrawn.
+   */
   readonly loopLinksRemoved$: Observable<void> =
     this.loopLinksRemovedSubject.asObservable();
 
@@ -141,7 +149,11 @@ export class WorkflowFormService {
         .pipe(startWith(this.outputDefinitionsArray.getRawValue()), pairwise())
         .subscribe(([prev, curr]) => {
           this.handleOutputRenames(prev, curr);
+          const linksRemoved = this.handleOutputTypeChanges(prev, curr);
           this.syncOutputs(); // Also ensure outputs group is synced
+          if (linksRemoved) {
+            this.loopLinksRemovedSubject.next();
+          }
         });
     }
 
@@ -296,7 +308,14 @@ export class WorkflowFormService {
       previous.mode === LOOP_MODE_TEXT_INPUT &&
       current.mode !== LOOP_MODE_TEXT_INPUT
     ) {
-      removed = this.clearStaleLoopTextLink(inputs) || removed;
+      removed =
+        this.clearStaleLoopLink(inputs, LOOP_ITEMS_TEXT_INPUT) || removed;
+    }
+    if (
+      previous.mode === LOOP_MODE_FOLDER &&
+      current.mode !== LOOP_MODE_FOLDER
+    ) {
+      removed = this.clearStaleLoopLink(inputs, LOOP_FOLDER_INPUT) || removed;
     }
     if (
       current.mode === LOOP_MODE_LINKED_ITEMS &&
@@ -318,11 +337,12 @@ export class WorkflowFormService {
   }
 
   /**
-   * Clears a linked `items_text` (leaving Text Input mode). A fixed string is
-   * kept: it creates no dependency and is only sent in Text Input mode.
+   * Clears a linked Loop source input (`items_text` or `folder`) when leaving
+   * its mode. A fixed value is kept: it creates no dependency and is only sent
+   * in its own mode.
    */
-  private clearStaleLoopTextLink(inputs: FormGroup): boolean {
-    const control = inputs.get(LOOP_ITEMS_TEXT_INPUT);
+  private clearStaleLoopLink(inputs: FormGroup, inputName: string): boolean {
+    const control = inputs.get(inputName);
     if (!control || !isStepOutputReference(control.value)) return false;
     control.setValue(null);
     control.markAsDirty();
@@ -472,6 +492,113 @@ export class WorkflowFormService {
         );
       }
     });
+  }
+
+  /**
+   * Removes step links to user input parameters whose type changed to one the
+   * linked input no longer accepts. Only user edits are handled: nothing runs
+   * while a workflow, history snapshot or template is being patched (Undo
+   * restores the links) nor in read-only mode. Renames are left to
+   * {@link handleOutputRenames}. Returns true when a link was removed.
+   */
+  private handleOutputTypeChanges(
+    prevDefinitions: ParameterDefinition[],
+    currentDefinitions: ParameterDefinition[],
+  ): boolean {
+    if (this.isPatchingData() || this.workflowForm.disabled) return false;
+    const prevById = new Map(prevDefinitions.map(def => [def.id, def]));
+    return currentDefinitions
+      .filter(def => {
+        const previous = prevById.get(def.id);
+        return !!previous && previous.type !== def.type;
+      })
+      .reduce(
+        (removed, def) => this.removeIncompatibleParameterLinks(def) || removed,
+        false,
+      );
+  }
+
+  /**
+   * Drops the links to `definition` from every step input whose port type is
+   * not compatible with the parameter's new type. Compatible links are kept.
+   */
+  private removeIncompatibleParameterLinks(
+    definition: ParameterDefinition,
+  ): boolean {
+    let removed = false;
+    this.stepsArray.controls.forEach(stepControl => {
+      const inputs = stepControl.get('inputs') as FormGroup | null;
+      if (!inputs) return;
+      Object.entries(inputs.controls).forEach(([inputName, control]) => {
+        const inputType = this.getStepInputType(stepControl, inputName);
+        if (
+          inputType === null ||
+          isPortTypeCompatible(definition.type, inputType)
+        ) {
+          return;
+        }
+        removed = this.removeParameterRefs(control, definition) || removed;
+      });
+    });
+    return removed;
+  }
+
+  /**
+   * Port type of a step input: the Loop `linked_items` type follows
+   * `item_type`, Generate Text prompt variables are text, otherwise the static
+   * config type. Unknown inputs return null (their links are kept).
+   */
+  private getStepInputType(
+    stepControl: AbstractControl,
+    inputName: string,
+  ): string | null {
+    const stepType = stepControl.get('type')?.value as NodeTypes | undefined;
+    if (stepType === NodeTypes.LOOP && inputName === LOOP_LINKED_ITEMS_INPUT) {
+      return getLoopLinkedItemsInputType(
+        stepControl.get('settings')?.value ?? null,
+      );
+    }
+    const config = stepType
+      ? (STEP_CONFIGS_MAP as Partial<Record<NodeTypes, StepConfig>>)[stepType]
+      : undefined;
+    const inputConfig = config?.inputs.find(i => i.name === inputName);
+    if (inputConfig) return inputConfig.type;
+    return stepType === NodeTypes.GENERATE_TEXT ? 'text' : null;
+  }
+
+  /** True for a link to `definition`, matched by id with the name as fallback. */
+  private isParameterRef(
+    value: unknown,
+    definition: ParameterDefinition,
+  ): boolean {
+    if (!isStepOutputReference(value) || value.step !== NodeTypes.USER_INPUT) {
+      return false;
+    }
+    return value._definitionId
+      ? value._definitionId === definition.id
+      : value.output === definition.name;
+  }
+
+  /**
+   * Removes the links to `definition` from one input: matching array entries
+   * are dropped (an empty array becomes null), a single link becomes null.
+   */
+  private removeParameterRefs(
+    control: AbstractControl,
+    definition: ParameterDefinition,
+  ): boolean {
+    const value: unknown = control.value;
+    if (Array.isArray(value)) {
+      const kept = value.filter(item => !this.isParameterRef(item, definition));
+      if (kept.length === value.length) return false;
+      control.setValue(kept.length > 0 ? kept : null);
+    } else if (this.isParameterRef(value, definition)) {
+      control.setValue(null);
+    } else {
+      return false;
+    }
+    control.markAsDirty();
+    return true;
   }
 
   public updateStepReferences(
@@ -953,15 +1080,16 @@ export class WorkflowFormService {
 
     // Default settings logic
     if (type === NodeTypes.IMAGE) {
+      base.inputs = {[OUTPUT_FOLDER_INPUT_NAME]: null};
       base.settings = {
         mode: 'generate_image',
         model: 'gemini-3.1-flash-image',
         aspect_ratio: '1:1',
         resolution: '1K',
         brand_guidelines: false,
-        output_folder_id: null,
       };
     } else if (type === NodeTypes.LOOP) {
+      base.inputs = {[LOOP_FOLDER_INPUT]: null};
       base.settings = {...DEFAULT_LOOP_SETTINGS};
     }
     return base;

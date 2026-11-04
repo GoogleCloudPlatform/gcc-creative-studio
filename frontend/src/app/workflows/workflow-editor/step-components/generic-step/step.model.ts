@@ -45,7 +45,8 @@ export type StepInputType =
   | 'image'
   | 'video'
   | 'audio'
-  | 'loop_ending';
+  | 'loop_ending'
+  | 'folder';
 
 /** Data type of a step output port. */
 export type StepOutputType =
@@ -53,7 +54,8 @@ export type StepOutputType =
   | 'image'
   | 'video'
   | 'audio'
-  | 'loop_ending';
+  | 'loop_ending'
+  | 'folder';
 
 export interface StepInput {
   name: string;
@@ -65,20 +67,18 @@ export interface StepInput {
   isVariable?: boolean;
   /** When true, the input can only be wired from another step (no fixed value). */
   linkedOnly?: boolean;
+  /** `folder` only: in Fixed mode, `null` is an enabled "All Media (root)" choice. */
+  allowRoot?: boolean;
 }
 
-/**
- * Control rendered for a step setting. `folder` is a Media Gallery folder
- * picker that stores a folder id (`null` = no folder / root).
- */
+/** Control rendered for a step setting. */
 export type StepSettingType =
   | 'text'
   | 'textarea'
   | 'select'
   | 'checkbox'
   | 'slider'
-  | 'radio'
-  | 'folder';
+  | 'radio';
 
 export interface StepSetting {
   name: string;
@@ -90,10 +90,6 @@ export interface StepSetting {
   min?: number;
   max?: number;
   step?: number;
-  /** `folder` only: `null` is an enabled "All Media (root)" choice. */
-  allowRoot?: boolean;
-  /** `folder` only: a folder must be chosen (shows the required error). */
-  required?: boolean;
 }
 
 export interface StepOutput {

@@ -101,6 +101,8 @@ export type LoopItemType = 'image' | 'video' | 'audio';
 export type MixedStepOutputValue = StepOutputReference | ReferenceImage;
 
 export interface LoopInputs {
+  /** Source folder id (fixed) or a linked folder output. Used in `folder` mode. */
+  folder: number | StepOutputReference | null;
   /** Comma-separated items (fixed text or a linked text output). Used in `text_input` mode. */
   items_text: string | StepOutputReference | null;
   /** Linked Items mode: wired outputs and gallery picks, in iteration order. */
@@ -111,7 +113,6 @@ export interface LoopInputs {
 
 export interface LoopSettings {
   mode: LoopMode;
-  folder_id: number | null;
   item_type: LoopItemType;
 }
 

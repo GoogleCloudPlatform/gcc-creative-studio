@@ -33,6 +33,13 @@ import {
   toLoopMode,
 } from '../../workflow-editor/step-components/step-configs/loop-step.config';
 import {isVideoUrl} from '../../utils/workflow-step.util';
+import {
+  FOLDER_STEP_INPUT_KEYS,
+  FolderPathMap,
+  LOOP_FOLDER_INPUT_KEY,
+  formatFolderLabel,
+} from '../../utils/folder-path.util';
+import {toFolderId} from '../../workflow-editor/step-components/step-configs/folder-setting.util';
 import {STEP_CONFIGS_MAP} from '../step-configs.map';
 
 /** Output key holding a Loop step's resolved items. */
@@ -41,9 +48,15 @@ const LOOP_ITEMS_KEY = 'items';
 /** Input key holding a Loop step's source mode. */
 const LOOP_MODE_KEY = 'mode';
 
+/** Folder id recorded by Loop runs before the folder became an input. */
+const LOOP_FOLDER_ID_KEY = 'folder_id';
+
+/** Folder name recorded by Loop runs (fallback label when no path is known). */
+const LOOP_FOLDER_NAME_KEY = 'folder_name';
+
 /** Recorded Loop inputs shown in run details, per source mode. */
 const LOOP_INPUT_KEYS_BY_MODE: Readonly<Record<LoopMode, readonly string[]>> = {
-  folder: [LOOP_MODE_KEY, 'folder_name', 'item_type'],
+  folder: [LOOP_MODE_KEY, LOOP_FOLDER_INPUT_KEY, 'item_type'],
   text_input: [LOOP_MODE_KEY, 'items_text'],
   linked_items: [LOOP_MODE_KEY, 'item_type', 'source_count', 'skipped_count'],
 };
@@ -72,6 +85,7 @@ export class StepExecutionDetailsComponent implements OnInit {
   private readonly stepTypeState = signal<string>('');
   private readonly inputsState = signal<DynamicStepRecord>({});
   private readonly outputsState = signal<DynamicStepRecord>({});
+  private readonly folderPathsState = signal<FolderPathMap>(new Map());
 
   @Input() set stepType(value: string | null) {
     this.stepTypeState.set(value ?? '');
@@ -93,6 +107,50 @@ export class StepExecutionDetailsComponent implements OnInit {
   get outputs(): DynamicStepRecord {
     return this.outputsState();
   }
+
+  /**
+   * Folder id → path resolved by the host for this run. Hosts that do not
+   * pass it show the Loop `folder_name` or `Folder #<id>` instead.
+   */
+  @Input() set folderPaths(value: FolderPathMap | null) {
+    this.folderPathsState.set(value ?? new Map());
+  }
+
+  /** Recorded inputs; a Loop's legacy `folder_id` is exposed as `folder`. */
+  private readonly displayInputs = computed<DynamicStepRecord>(() => {
+    const inputs = this.inputsState();
+    if (!this.isLoopStep()) return inputs;
+    return {
+      ...inputs,
+      [LOOP_FOLDER_INPUT_KEY]:
+        inputs[LOOP_FOLDER_INPUT_KEY] ?? inputs[LOOP_FOLDER_ID_KEY],
+    };
+  });
+
+  /**
+   * Display label of each folder input holding a folder id: its path, else
+   * the Loop's recorded `folder_name`, else `Folder #<id>`. The root (`null`)
+   * has no entry.
+   */
+  readonly folderInputLabels = computed<Readonly<Record<string, string>>>(
+    () => {
+      const inputs = this.displayInputs();
+      const paths = this.folderPathsState();
+      const folderName = inputs[LOOP_FOLDER_NAME_KEY];
+      const fallbackName =
+        typeof folderName === 'string' && folderName ? folderName : null;
+      const labels: Record<string, string> = {};
+      FOLDER_STEP_INPUT_KEYS.forEach(key => {
+        const folderId = toFolderId(inputs[key]);
+        if (folderId === null) return;
+        labels[key] =
+          paths.get(folderId) ??
+          fallbackName ??
+          formatFolderLabel(folderId, paths);
+      });
+      return labels;
+    },
+  );
 
   /** True when rendering a Loop step's run data. */
   readonly isLoopStep = computed(() => this.stepTypeState() === NodeTypes.LOOP);
@@ -187,10 +245,11 @@ export class StepExecutionDetailsComponent implements OnInit {
     const result: Record<string, any> = {};
 
     if (this.isLoopStep()) {
-      const loopMode = toLoopMode(this.inputs['mode']);
+      const loopInputs = this.displayInputs();
+      const loopMode = toLoopMode(loopInputs[LOOP_MODE_KEY]);
       LOOP_INPUT_KEYS_BY_MODE[loopMode]
-        .filter(key => this.hasValue(this.inputs[key]))
-        .forEach(key => (result[key] = this.inputs[key]));
+        .filter(key => this.hasValue(loopInputs[key]))
+        .forEach(key => (result[key] = loopInputs[key]));
       if (LOOP_MODE_KEY in result) {
         result[LOOP_MODE_KEY] = LOOP_MODE_LABELS[loopMode];
       }
@@ -343,12 +402,14 @@ export class StepExecutionDetailsComponent implements OnInit {
   }
 
   isImageInput(inputName: any): boolean {
+    const name = String(inputName);
+    if (FOLDER_STEP_INPUT_KEYS.has(name)) return false;
     if (this.isImageStep()) {
-      return String(inputName) !== 'prompt';
+      return name !== 'prompt';
     }
     const config = this.getStepConfig();
     if (!config) return false;
-    const input = config.inputs?.find((i: any) => i.name === String(inputName));
+    const input = config.inputs?.find((i: any) => i.name === name);
     return input?.type === 'image';
   }
 

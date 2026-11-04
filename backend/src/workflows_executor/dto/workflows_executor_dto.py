@@ -19,6 +19,7 @@ from typing import Any
 from pydantic import BaseModel, Field, model_validator
 
 from src.workflows.schema.workflow_model import (
+    FolderId,
     GenerateAudioInputs,
     GenerateAudioSettings,
     GenerateTextInputs,
@@ -107,6 +108,9 @@ class ResolveLoopItemsInputs(BaseModel):
     linked_items: list[Any] | None = Field(
         default=None, max_length=MAX_LOOP_LINKED_RAW_VALUES
     )
+    # Folder mode: the Media Gallery folder id, resolved by the workflow
+    # engine from the Fixed value or the linked Folder parameter.
+    folder: FolderId | None = None
 
 
 class ResolveLoopItemsRequest(StepCallContext):

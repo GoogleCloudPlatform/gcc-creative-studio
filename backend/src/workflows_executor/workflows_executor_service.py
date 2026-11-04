@@ -849,8 +849,9 @@ class WorkflowsExecutorService:
     ) -> None:
         """Adds the node's output folder to a JSON generation body.
 
-        The key is omitted for the root folder (``None``), so root runs send
-        exactly the same body as before the setting existed.
+        The folder comes from the step's ``output_folder`` input. The key is
+        omitted for the root folder (``None``), so root runs send exactly the
+        same body as runs without an output folder.
         """
         if output_folder_id is not None:
             body["folder_id"] = output_folder_id
@@ -1021,7 +1022,7 @@ class WorkflowsExecutorService:
             "number_of_media": 1,
             "duration_seconds": request.config.duration_seconds,
         }
-        self._add_output_folder(body, request.config.output_folder_id)
+        self._add_output_folder(body, request.inputs.output_folder)
 
         # Creates the job and polls it for completion.
         video_id = await self._submit_job(
@@ -1221,7 +1222,7 @@ class WorkflowsExecutorService:
             "language_code": request.config.language_code,
             "negative_prompt": request.config.negative_prompt,
             "seed": request.config.seed,
-            "folder_id": request.config.output_folder_id,
+            "folder_id": request.inputs.output_folder,
         }
 
         # Filter None values to let DTO defaults take over if needed
@@ -1309,7 +1310,7 @@ class WorkflowsExecutorService:
     ) -> StepOutputs:
         logger.info("Execute unified image step, mode: %s", request.config.mode)
         mode = request.config.mode or "generate_image"
-        output_folder_id = request.config.output_folder_id
+        output_folder_id = request.inputs.output_folder
 
         if mode == "generate_image":
             if not request.inputs.prompt:
@@ -1482,7 +1483,8 @@ class WorkflowsExecutorService:
         not_found = StepError(
             422, ErrorCategory.INVALID_INPUT, FOLDER_NOT_FOUND_DETAIL
         )
-        if request.config.folder_id is None:
+        folder_id = request.inputs.folder
+        if folder_id is None:
             raise StepError(
                 422,
                 ErrorCategory.INVALID_INPUT,
@@ -1491,9 +1493,7 @@ class WorkflowsExecutorService:
         await WorkflowsExecutorService._authorize_loop_workspace(
             request, user, workspace_auth, denied=not_found
         )
-        folder = await folder_repository.get_folder_by_id(
-            request.config.folder_id
-        )
+        folder = await folder_repository.get_folder_by_id(folder_id)
         if folder is None or folder.workspace_id != request.workspace_id:
             raise not_found
         return folder

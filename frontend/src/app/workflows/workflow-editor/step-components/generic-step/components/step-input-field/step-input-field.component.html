@@ -117,6 +117,19 @@
     </mat-error>
   </mat-form-field>
 
+  <!-- Folder Input (Fixed) -->
+  <app-step-folder-input
+    *ngIf="mode === 'fixed' && config.type === 'folder'"
+    class="value-input"
+    [control]="control"
+    [inputName]="config.name"
+    [label]="config.label"
+    [allowRoot]="!!config.allowRoot"
+    [required]="config.required"
+    [stepId]="stepId"
+    [pickerMimeType]="folderPickerMimeType"
+  ></app-step-folder-input>
+
   <!-- Linked Input (Select) -->
   <!-- Also hide this for image/video/audio as step-media-input handles linked outputs too -->
   <mat-form-field

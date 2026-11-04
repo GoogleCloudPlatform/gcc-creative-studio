@@ -155,6 +155,8 @@
             [showValidationErrors]="showValidationErrors"
             [maxMediaItems]="getMaxMediaItems(input)"
             [disabledMessage]="getInputDisabledMessage(input.name)"
+            [stepId]="stepForm.value.stepId"
+            [folderPickerMimeType]="folderPickerMimeType()"
             (modeChange)="toggleInputMode(input.name, $event)"
             (fieldBlur)="onInputFieldBlur(input.name)"
           >
@@ -336,54 +338,6 @@
                   >{{ option.label }}</mat-option
                 >
               </mat-select>
-            </mat-form-field>
-            <mat-form-field
-              *ngIf="setting.type === 'folder'"
-              [class]="folderDomNames.fieldClass"
-              appearance="outline"
-              [floatLabel]="folderFloatLabel"
-              [title]="folderOption().path"
-              (mousedown)="$event.stopPropagation()"
-            >
-              <mat-label>{{ setting.label }}</mat-label>
-              <mat-select
-                [formControlName]="setting.name"
-                [placeholder]="folderOption().label"
-                [id]="folderDomNames.selectIdPrefix + stepForm.value.stepId"
-                (openedChange)="onFolderOpenedChange($event)"
-                (selectionChange)="onFolderSelectionChange($event)"
-              >
-                <mat-option
-                  *ngIf="showFolderRootOption()"
-                  [class]="folderDomNames.rootOptionClass"
-                  [value]="null"
-                  >{{ folderRootLabel }}</mat-option
-                >
-                <mat-option
-                  *ngFor="let option of folderOptions(); trackBy: trackFolderOption"
-                  [class]="folderDomNames.currentOptionClass"
-                  [value]="option.value"
-                  [disabled]="option.isPlaceholder"
-                  [title]="option.path"
-                  >{{ option.label }}</mat-option
-                >
-                <mat-option
-                  [class]="folderDomNames.chooseOptionClass"
-                  [value]="folderChooseValue"
-                  >Choose folder…</mat-option
-                >
-              </mat-select>
-              <mat-icon
-                matSuffix
-                *ngIf="folderOption().isMissing"
-                [class]="folderDomNames.missingIconClass"
-                color="warn"
-                [matTooltip]="folderMissingTooltip"
-                >warning</mat-icon
-              >
-              <mat-error *ngIf="setting.required"
-                >Select a folder to loop over.</mat-error
-              >
             </mat-form-field>
             <mat-form-field
               *ngIf="setting.type === 'text' || setting.type === 'textarea'"

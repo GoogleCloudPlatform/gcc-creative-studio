@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {Component, Inject, OnInit} from '@angular/core';
+import {Component, Inject, OnInit, inject, signal} from '@angular/core';
 import {FormBuilder, FormGroup, Validators} from '@angular/forms';
 import {
   MAT_DIALOG_DATA,
@@ -38,6 +38,16 @@ import {
   nameToLabel,
 } from '../../utils/workflow-step.util';
 import {WorkflowStep} from '../../workflow.models';
+import {
+  FOLDER_PICKER_EMPTY_LABEL,
+  FolderSelectionMap,
+  WORKFLOW_FOLDER_INPUT_TYPE,
+} from '../../utils/folder-path.util';
+import {RunFolderService} from '../../shared/run-folder.service';
+import {
+  folderIdValidator,
+  toFolderId,
+} from '../step-components/step-configs/folder-setting.util';
 
 @Component({
   selector: 'app-run-workflow-modal',
@@ -50,6 +60,12 @@ export class RunWorkflowModalComponent implements OnInit {
   inputDefinitions: {name: string; label: string; type: string}[] = [];
   referenceImages: {[key: string]: ReferenceImage | null} = {};
   readonly isVideoUrl = isVideoUrl;
+  readonly folderInputType = WORKFLOW_FOLDER_INPUT_TYPE;
+  readonly folderPickerEmptyLabel = FOLDER_PICKER_EMPTY_LABEL;
+  /** Picked folder (id + path) per folder parameter; null until picked. */
+  readonly folderSelections = signal<FolderSelectionMap>({});
+
+  private readonly runFolderService = inject(RunFolderService);
 
   constructor(
     private fb: FormBuilder,
@@ -89,6 +105,18 @@ export class RunWorkflowModalComponent implements OnInit {
               this.fb.control(null, Validators.required),
             );
             this.referenceImages[key] = null;
+          } else if (value.type === WORKFLOW_FOLDER_INPUT_TYPE) {
+            this.runForm.addControl(
+              key,
+              this.fb.control<number | null>(null, [
+                Validators.required,
+                folderIdValidator,
+              ]),
+            );
+            this.folderSelections.update(selections => ({
+              ...selections,
+              [key]: null,
+            }));
           } else {
             this.runForm.addControl(
               key,
@@ -172,6 +200,23 @@ export class RunWorkflowModalComponent implements OnInit {
   openImageSelectorForReference(inputName: string): void {
     const def = this.inputDefinitions.find(d => d.name === inputName);
     this.openMediaSelectorForReference(inputName, def?.type || 'image');
+  }
+
+  /** Opens the Media Gallery folder picker and stores the confirmed folder id. */
+  openFolderPicker(inputName: string): void {
+    const control = this.runForm.get(inputName);
+    if (!control) return;
+    this.runFolderService
+      .pickFolder(toFolderId(control.value))
+      .subscribe(selection => {
+        if (!selection) return;
+        control.setValue(selection.folderId);
+        control.markAsTouched();
+        this.folderSelections.update(selections => ({
+          ...selections,
+          [inputName]: selection,
+        }));
+      });
   }
 
   // Called when DROPPING a file on the new drop zone
