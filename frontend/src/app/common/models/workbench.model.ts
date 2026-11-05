@@ -100,6 +100,8 @@ export interface TimelineDTO {
   timeline_id?: number | string;
   storyboard_id?: number | string;
   workspace_id: number | string;
+  /** Owning project. Derived from the storyboard when one is attached. */
+  project_id?: number;
   user_id?: number | string;
   session_id?: string;
   title: string;
@@ -130,6 +132,7 @@ export interface StoryboardCreateResponse {
   id: number;
   user_id: number;
   workspace_id: number;
+  project_id?: number;
   session_id?: string;
   template_name?: string;
   bg_music_description?: string;
@@ -140,6 +143,7 @@ export interface StoryboardResponse {
   id: number;
   user_id: number;
   workspace_id: number;
+  project_id?: number;
   session_id?: string;
   template_name?: string;
   bg_music_description?: string;
@@ -173,6 +177,23 @@ export interface ChatSession {
   appName?: string;
   userId?: string;
   lastUpdateTime?: number;
+  /** Project the chat is registered in (session registry). */
+  projectId?: number;
+  /** Server-side chat name; `null` until the user or the importer names it. */
+  title?: string | null;
+  summary?: string | null;
+  /**
+   * A registered chat the agent no longer has (`include_expired` listings):
+   * shown in the picker, but it cannot be opened.
+   */
+  expired?: boolean;
+  /** An expired chat that still owns a storyboard: it can be restored. */
+  restorable?: boolean;
+  /**
+   * Restored after it expired: its storyboard and timeline are back, but
+   * Izumi does not remember it, so the backend refuses to run it (409).
+   */
+  restored?: boolean;
   state?: {
     current_storyboard_id?: string | number;
     currentStoryboardId?: string | number;

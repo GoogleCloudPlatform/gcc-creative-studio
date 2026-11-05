@@ -151,6 +151,9 @@ def _process_timeline_in_background(
                             timeline
                         )
 
+                        # Bound before the try: an upload failure must not
+                        # turn into UnboundLocalError in the ``finally``.
+                        thumbnail_path = None
                         try:
                             final_gcs_uri = await asyncio.to_thread(
                                 gcs_service.upload_file_to_gcs,
