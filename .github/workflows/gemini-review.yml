@@ -178,7 +178,7 @@ jobs:
         id: 'gemini_pr_review'
         continue-on-error: true
         with:
-          gemini_api_key: '${{ secrets.GEMINI_API_KEY }}'
+          gemini_api_key: '${{ secrets.GEMINI_API_KEY_V2 || secrets.GEMINI_API_KEY }}'
           gemini_debug: true
           settings: |-
             {
