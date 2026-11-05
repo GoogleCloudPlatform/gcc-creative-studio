@@ -14,15 +14,22 @@
  * limitations under the License.
  */
 
+import {ReferenceImage} from '../../common/models/search.model';
 import {
+  getLinkedRefs,
   getPreviewUrl,
   isStepOutputReference,
   isVideoUrl,
   labelToName,
   nameToLabel,
+  removeLinkFromInputValue,
 } from './workflow-step.util';
 
 describe('WorkflowStepUtil', () => {
+  const ref = {step: 'step_1', output: 'image'};
+  const otherRef = {step: 'step_2', output: 'image'};
+  const pick: ReferenceImage = {previewUrl: 'https://example.com/image.png'};
+
   describe('nameToLabel', () => {
     it('should replace underscores with spaces and trim', () => {
       expect(nameToLabel('my_description')).toBe('my description');
@@ -155,6 +162,63 @@ describe('WorkflowStepUtil', () => {
       expect(isStepOutputReference({})).toBeFalse();
       expect(isStepOutputReference({step: 'step_1'})).toBeFalse();
       expect(isStepOutputReference({output: 'out_1'})).toBeFalse();
+    });
+  });
+
+  describe('removeLinkFromInputValue', () => {
+    it('should return null for the matching single reference', () => {
+      const result = removeLinkFromInputValue(ref, ref);
+      expect(result).toBeNull();
+    });
+
+    it('should keep a different single reference', () => {
+      const result = removeLinkFromInputValue(ref, otherRef);
+      expect(result).toBe(ref);
+    });
+
+    it('should drop only the matching reference from an array', () => {
+      const result = removeLinkFromInputValue([ref, pick, otherRef], ref);
+      expect(result).toEqual([pick, otherRef]);
+    });
+
+    it('should return null when the last array item is removed', () => {
+      const result = removeLinkFromInputValue([ref], ref);
+      expect(result).toBeNull();
+    });
+
+    it('should ignore _definitionId when matching', () => {
+      const result = removeLinkFromInputValue(
+        {...ref, _definitionId: 'def_1'},
+        ref,
+      );
+      expect(result).toBeNull();
+    });
+
+    it('should keep every item of an array without a matching reference', () => {
+      const result = removeLinkFromInputValue([pick, otherRef], ref);
+      expect(result).toEqual([pick, otherRef]);
+    });
+
+    it('should keep null as null', () => {
+      const result = removeLinkFromInputValue(null, ref);
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('getLinkedRefs', () => {
+    it('should return an empty array for null', () => {
+      const result = getLinkedRefs(null);
+      expect(result).toEqual([]);
+    });
+
+    it('should wrap a single reference in an array', () => {
+      const result = getLinkedRefs(ref);
+      expect(result).toEqual([ref]);
+    });
+
+    it('should list only the references from a mixed array', () => {
+      const result = getLinkedRefs([ref, pick, otherRef]);
+      expect(result).toEqual([ref, otherRef]);
     });
   });
 });

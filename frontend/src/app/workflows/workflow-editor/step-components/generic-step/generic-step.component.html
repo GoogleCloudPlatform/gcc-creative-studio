@@ -110,8 +110,10 @@
           [class.port-row-disabled]="isInputDisabled(input.name)"
           *ngIf="!input.hidden"
         >
+        <ng-container *ngIf="(unlinkStateByInput()[input.name] ?? noUnlinkState) as unlinkState">
           <div
             class="port input-port"
+            #unlinkTrigger="matMenuTrigger"
             [class.magnetic-hover]="isMagneticTarget(input.name)"
             [class.port-compatible]="isCompatibleWithActiveDrag(input)"
             [class.port-incompatible]="isIncompatibleWithActiveDrag(input)"
@@ -128,7 +130,18 @@
                 : null
             "
             (mouseup)="onInputPortMouseUp($event, input.name)"
+            [class.has-links]="unlinkState.canUnlink"
+            [attr.tabindex]="unlinkState.canUnlink ? 0 : null"
+            [attr.role]="unlinkState.canUnlink ? 'button' : null"
+            [attr.aria-label]="unlinkState.ariaLabel"
+            [matMenuTriggerFor]="unlinkState.canUnlink ? unlinkMenu : null"
+            [matMenuTriggerData]="{inputName: input.name}"
+            (menuClosed)="onUnlinkMenuClosed()"
+            (mousedown)="onInputPortMouseDown($event, input.name)"
+            (click)="onInputPortClick($event, input.name)"
+            (keydown)="onInputPortKeydown($event, input.name, unlinkTrigger)"
           ></div>
+          </ng-container>
           <span
             class="port-type-chip input-chip"
             [attr.data-type]="input.type"
@@ -208,8 +221,10 @@
                   [class.magnetic-target]="isMagneticTarget(variable.name)"
                   [class.port-row-disabled]="isInputDisabled(variable.name)"
                 >
+                  <ng-container *ngIf="(unlinkStateByInput()[variable.name] ?? noUnlinkState) as unlinkState">
                   <div
                     class="port input-port"
+                    #unlinkTrigger="matMenuTrigger"
                     [class.magnetic-hover]="isMagneticTarget(variable.name)"
                     [class.port-compatible]="
                       isCompatibleWithActiveDrag(variable)
@@ -225,7 +240,18 @@
                     [attr.data-port-type]="'input'"
                     [attr.data-data-type]="'text'"
                     (mouseup)="onInputPortMouseUp($event, variable.name)"
+                    [class.has-links]="unlinkState.canUnlink"
+                    [attr.tabindex]="unlinkState.canUnlink ? 0 : null"
+                    [attr.role]="unlinkState.canUnlink ? 'button' : null"
+                    [attr.aria-label]="unlinkState.ariaLabel"
+                    [matMenuTriggerFor]="unlinkState.canUnlink ? unlinkMenu : null"
+                    [matMenuTriggerData]="{inputName: variable.name}"
+                    (menuClosed)="onUnlinkMenuClosed()"
+                    (mousedown)="onInputPortMouseDown($event, variable.name)"
+                    (click)="onInputPortClick($event, variable.name)"
+                    (keydown)="onInputPortKeydown($event, variable.name, unlinkTrigger)"
                   ></div>
+                  </ng-container>
                   <span class="port-type-chip input-chip" data-type="text"
                     >TXT</span
                   >
@@ -282,6 +308,17 @@
           </div>
         </div>
       </ng-container>
+
+      <mat-menu #unlinkMenu="matMenu" class="unlink-menu">
+        <ng-template matMenuContent let-inputName="inputName">
+          <button *ngFor="let item of unlinkStateByInput()[inputName]?.items; trackBy: trackUnlinkItem"
+            mat-menu-item type="button" class="unlink-menu-item" [id]="item.id"
+            [attr.aria-label]="item.ariaLabel" [matTooltip]="item.ariaLabel"
+            (click)="onUnlinkOptionSelected(inputName, item.ref)">
+            <mat-icon>link_off</mat-icon><span>{{ item.text }}</span>
+          </button>
+        </ng-template>
+      </mat-menu>
     </div>
 
     <div class="section settings" formGroupName="settings">

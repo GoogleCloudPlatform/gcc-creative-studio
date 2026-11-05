@@ -315,6 +315,20 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportedDurations: [],
     },
   },
+  {
+    value: 'gemini-4-argon',
+    viewValue: 'Gemini 4 Argon',
+    type: 'TEXT',
+    icon: 'gemini-spark-icon',
+    isSvg: true,
+    capabilities: {
+      supportedModes: ['Multimodal to text'],
+      maxReferenceImages: 10,
+      supportedAspectRatios: [],
+      supportedResolutions: [],
+      supportedDurations: [],
+    },
+  },
   // --- Video Models ---
   {
     value: 'gemini-omni-1.1-flash-preview',

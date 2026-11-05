@@ -381,6 +381,10 @@ describe('WorkflowMagneticUtil', () => {
       );
     });
 
+    it('should return 10 for input_images when model is gemini-4-argon', () => {
+      expect(getMaxAllowedInputs('input_images', 'gemini-4-argon')).toBe(10);
+    });
+
     it('should fallback to 14 for input_images when model is unknown or null', () => {
       expect(getMaxAllowedInputs('input_images', null)).toBe(14);
       expect(getMaxAllowedInputs('input_images', undefined)).toBe(14);

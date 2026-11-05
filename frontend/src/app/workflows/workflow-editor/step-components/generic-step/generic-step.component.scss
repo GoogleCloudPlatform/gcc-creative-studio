@@ -192,6 +192,22 @@
   cursor: default;
 }
 
+/* Linked input ports open the unlink menu. :where() keeps specificity equal to
+   .input-port so drag states (magnetic, compatible, incompatible, disabled) still win. */
+.input-port:where(.has-links) {
+  cursor: pointer;
+}
+
+.input-port:where(.has-links:hover) {
+  box-shadow: 0 0 0 3px rgba(99, 179, 237, 0.35);
+}
+
+.input-port:where(.has-links:focus-visible) {
+  outline: 2px solid #63b3ed;
+  outline-offset: 3px;
+  box-shadow: 0 0 10px 2px rgba(99, 179, 237, 0.55);
+}
+
 .output-port {
   right: -24px;
   top: 50%;

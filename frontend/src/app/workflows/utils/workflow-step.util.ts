@@ -16,7 +16,11 @@
 
 import {MediaItemSelection} from '../../common/components/image-selector/image-selector.component';
 import {SourceAssetResponseDto} from '../../common/services/source-asset.service';
-import {StepOutputReference} from '../workflow.models';
+import {
+  MixedStepOutputValue,
+  StepInputValue,
+  StepOutputReference,
+} from '../workflow.models';
 
 /**
  * Checks whether a given value is a valid StepOutputReference.
@@ -33,6 +37,60 @@ export function isStepOutputReference(
     'step' in value &&
     'output' in value
   );
+}
+
+function toMixedStepOutputValueArray(
+  value: StepInputValue,
+): MixedStepOutputValue[] {
+  const initialElement = value && !Array.isArray(value) ? [value] : [];
+  return Array.isArray(value) ? value : initialElement;
+}
+
+/**
+ * Extracts StepOutputReference objects from a potentially mixed value.
+ * @param value The value to extract StepOutputReferences from.
+ * @returns An array of StepOutputReference objects.
+ */
+export function getLinkedRefs(value: StepInputValue): StepOutputReference[] {
+  return toMixedStepOutputValueArray(value).filter(isStepOutputReference);
+}
+
+/**
+ * Checks if two values are the same StepOutputReference.
+ * @param a The first value to check.
+ * @param b The second value to check.
+ * @returns True if both values are StepOutputReferences and have the same step and output.
+ */
+export function isSameStepOutput(
+  a: MixedStepOutputValue,
+  b: MixedStepOutputValue,
+): boolean {
+  return (
+    isStepOutputReference(a) &&
+    isStepOutputReference(b) &&
+    a.step === b.step &&
+    a.output === b.output
+  );
+}
+
+/**
+ * Removes all StepOutputReferences that match the given reference from a potentially mixed value.
+ * @param value The value to remove the StepOutputReferences from.
+ * @param refToRemove The StepOutputReference to remove.
+ * @returns The value with the StepOutputReference removed, or null if the resulting value is empty.
+ */
+export function removeLinkFromInputValue(
+  value: StepInputValue,
+  refToRemove: StepOutputReference,
+): StepInputValue {
+  const filtered = toMixedStepOutputValueArray(value).filter(
+    ref => !isSameStepOutput(ref, refToRemove),
+  );
+  return Array.isArray(value) && filtered.length > 0
+    ? filtered
+    : filtered.length === 1
+      ? (filtered[0] as StepOutputReference)
+      : null;
 }
 
 /**
