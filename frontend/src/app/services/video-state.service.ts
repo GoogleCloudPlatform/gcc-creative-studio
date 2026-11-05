@@ -48,6 +48,9 @@ interface VideoState {
   referenceAudio: ReferenceAudio | null;
 }
 
+export const DEFAULT_OMNI_MODEL = 'gemini-omni-1.2-flash';
+export const DEFAULT_VIDEO_MODEL = DEFAULT_OMNI_MODEL;
+
 @Injectable({
   providedIn: 'root',
 })
@@ -61,7 +64,7 @@ export class VideoStateService {
       prompt: '',
       aspectRatio: '16:9',
       resolution: '1K',
-      model: 'gemini-omni-1.1-flash-preview',
+      model: DEFAULT_OMNI_MODEL,
       style: null,
       colorAndTone: null,
       lighting: null,

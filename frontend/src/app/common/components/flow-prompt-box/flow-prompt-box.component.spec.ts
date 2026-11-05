@@ -346,7 +346,7 @@ describe('FlowPromptBoxComponent', () => {
     });
 
     it('should identify omni models correctly with isOmniModel', () => {
-      component.selectedGenerationModel = 'Gemini Omni Flash';
+      component.selectedGenerationModel = 'Gemini Omni 1.2 Flash';
       expect(component.isOmniModel()).toBeTrue();
 
       component.selectedGenerationModel = 'Gemini Omni 1.1 Flash';

@@ -63,7 +63,11 @@ import {
   ConcatenationInput,
   SearchService,
 } from '../services/search/search.service';
-import {VideoStateService} from '../services/video-state.service';
+import {
+  DEFAULT_OMNI_MODEL,
+  DEFAULT_VIDEO_MODEL,
+  VideoStateService,
+} from '../services/video-state.service';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
 import {GalleryService} from '../gallery/gallery.service';
 
@@ -135,7 +139,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
   searchRequest: VeoRequest = {
     prompt: '',
-    generationModel: 'gemini-omni-1.1-flash-preview',
+    generationModel: DEFAULT_VIDEO_MODEL,
     aspectRatio: '16:9',
     numberOfMedia: 1,
     style: null,
@@ -228,11 +232,10 @@ export class VideoComponent implements OnInit, AfterViewInit {
     @Inject(PLATFORM_ID) private platformId: Object,
   ) {
     this.generationModels = MODEL_CONFIGS.filter(m => m.type === 'VIDEO');
-    this.searchRequest.generationModel = 'gemini-omni-1.1-flash-preview';
+    this.searchRequest.generationModel = DEFAULT_VIDEO_MODEL;
     this.selectedGenerationModel =
-      this.generationModels.find(
-        m => m.value === 'gemini-omni-1.1-flash-preview',
-      )?.viewValue || this.generationModels[0].viewValue;
+      this.generationModels.find(m => m.value === DEFAULT_VIDEO_MODEL)
+        ?.viewValue || this.generationModels[0].viewValue;
 
     this.isBrowser = isPlatformBrowser(this.platformId);
     this.activeVideoJob$ = this.service.activeVideoJob$.pipe(
@@ -634,7 +637,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
       !this.isConcatenateMode
     ) {
       const omniModel = this.generationModels.find(
-        m => m.value === 'gemini-omni-1.1-flash-preview',
+        m => m.value === DEFAULT_OMNI_MODEL,
       );
       if (omniModel) {
         this.selectModel(omniModel);
@@ -928,7 +931,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
       if (isVeo30) {
         const omniModel = this.generationModels.find(
-          m => m.value === 'gemini-omni-1.1-flash-preview',
+          m => m.value === DEFAULT_OMNI_MODEL,
         );
         if (omniModel) {
           this.selectModel(omniModel);
@@ -1418,7 +1421,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.selectedMode.set('Ingredients to Video');
 
     const omniModel = this.generationModels.find(
-      m => m.value === 'gemini-omni-1.1-flash-preview',
+      m => m.value === DEFAULT_OMNI_MODEL,
     );
     if (omniModel) {
       this.selectModel(omniModel);
@@ -1578,7 +1581,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
       }
       const omniModel = this.generationModels.find(
         m =>
-          m.value === 'gemini-omni-1.1-flash-preview' ||
+          m.value === DEFAULT_OMNI_MODEL ||
           m.value === 'gemini-omni-flash-preview',
       );
       if (omniModel) {
@@ -1711,7 +1714,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
       } else {
         const omniModel = this.generationModels.find(
           m =>
-            m.value === 'gemini-omni-1.1-flash-preview' ||
+            m.value === DEFAULT_OMNI_MODEL ||
             m.value === 'gemini-omni-flash-preview',
         );
         if (omniModel) {
