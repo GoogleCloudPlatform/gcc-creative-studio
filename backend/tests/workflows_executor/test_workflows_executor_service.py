@@ -504,6 +504,7 @@ async def test_generate_video_skips_unsupported_references_for_veo(service):
 @pytest.mark.parametrize(
     "model, expect_refs",
     [
+        ("gemini-omni-1.2-flash", True),
         ("gemini-omni-1.1-flash-preview", True),
         ("gemini-omni-flash-preview", True),
         ("not-a-real-model", False),

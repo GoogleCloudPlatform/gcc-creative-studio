@@ -317,6 +317,26 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
   },
   // --- Video Models ---
   {
+    value: 'gemini-omni-1.2-flash',
+    viewValue: 'Gemini Omni 1.2 Flash',
+    type: 'VIDEO',
+    icon: 'layers',
+    capabilities: {
+      supportedModes: [
+        'Text to Video',
+        'Ingredients to Video',
+        'Frames to Video',
+      ],
+      maxReferenceImages: 6,
+      supportedAspectRatios: ['16:9', '9:16'],
+      supportedResolutions: [],
+      supportedDurations: [4, 6, 8, 10, 12, 15],
+      supportsAudio: true,
+      supportsAudioReference: true,
+      supportsVideoReference: true,
+    },
+  },
+  {
     value: 'gemini-omni-1.1-flash-preview',
     viewValue: 'Gemini Omni 1.1 Flash',
     type: 'VIDEO',

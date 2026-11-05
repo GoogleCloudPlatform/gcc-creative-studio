@@ -391,6 +391,7 @@ def _process_video_in_background(
                             GenerationModelEnum.GEMINI_OMNI,
                             GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
                             GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+                            GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
                         ]:
                             worker_logger.info(
                                 "Running Gemini Omni video generation via Interactions API..."
@@ -984,6 +985,7 @@ def _process_video_in_background(
                             GenerationModelEnum.GEMINI_OMNI,
                             GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
                             GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+                            GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
                         ]:
                             valid_generated_videos = [
                                 img

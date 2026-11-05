@@ -398,6 +398,7 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
     return (
       val === 'gemini-omni-flash-preview' ||
       val === 'gemini-omni-1.1-flash-preview' ||
+      val === 'gemini-omni-1.2-flash' ||
       val === 'gemini-omni'
     );
   }

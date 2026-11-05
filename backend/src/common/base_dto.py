@@ -73,6 +73,7 @@ class GenerationModelEnum(str, Enum):
     GEMINI_OMNI = "gemini-omni-generate-preview"
     GEMINI_OMNI_FLASH_PREVIEW = "gemini-omni-flash-preview"
     GEMINI_OMNI_1_1_FLASH_PREVIEW = "gemini-omni-1.1-flash-preview"
+    GEMINI_OMNI_1_2_FLASH = "gemini-omni-1.2-flash"
     VEO_3_1_FAST_GENERATE_001 = "veo-3.1-fast-generate-001"
     VEO_3_1_LITE_GENERATE_001 = "veo-3.1-lite-generate-001"
     VEO_3_1_LITE_PREVIEW = "veo-3.1-lite-generate-preview"
@@ -140,6 +141,7 @@ class GenerationModelEnum(str, Enum):
             GenerationModelEnum.GEMINI_OMNI,
             GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
             GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+            GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
         )
 
     @property

@@ -110,8 +110,8 @@ class CreateVeoDto(BaseDto):
     duration_seconds: int = Field(
         default=8,
         ge=1,
-        le=10,
-        description="Duration in seconds for the videos to generate (between 1 and 10 secs).",
+        le=15,
+        description="Duration in seconds for the videos to generate (between 1 and 15 secs; the per-model maximum is enforced in validate_cross_fields).",
     )
     start_image_asset_id: AssetReferenceDto | None = Field(
         default=None,
@@ -219,6 +219,7 @@ class CreateVeoDto(BaseDto):
                 GenerationModelEnum.GEMINI_OMNI,
                 GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
                 GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+                GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
             }
             if model not in supported_reference_models:
                 raise ValueError(
@@ -229,8 +230,9 @@ class CreateVeoDto(BaseDto):
                     f"'{GenerationModelEnum.VEO_3_1_LITE_PREVIEW.value}' model, "
                     f"'{GenerationModelEnum.VEO_3_1_FAST_GENERATE_001.value}' model, "
                     f"'{GenerationModelEnum.GEMINI_OMNI.value}' model, "
-                    f"'{GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW.value}' model, or "
-                    f"'{GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW.value}' model.",
+                    f"'{GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW.value}' model, "
+                    f"'{GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW.value}' model, or "
+                    f"'{GenerationModelEnum.GEMINI_OMNI_1_2_FLASH.value}' model.",
                 )
 
             start_image_present = bool(self.start_image_asset_id)
@@ -266,6 +268,7 @@ class CreateVeoDto(BaseDto):
             GenerationModelEnum.GEMINI_OMNI,
             GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
             GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+            GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
         ):
             allowed_resolutions = {"1K"}
         elif model in (
@@ -290,6 +293,8 @@ class CreateVeoDto(BaseDto):
             GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
         ):
             max_duration = 10
+        elif model == GenerationModelEnum.GEMINI_OMNI_1_2_FLASH:
+            max_duration = 15
 
         if self.duration_seconds > max_duration:
             raise ValueError(
@@ -326,6 +331,7 @@ class CreateVeoDto(BaseDto):
             GenerationModelEnum.GEMINI_OMNI,
             GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
             GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+            GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
             GenerationModelEnum.VEO_3_1_PREVIEW,
             GenerationModelEnum.VEO_3_1_GENERATE_001,
             GenerationModelEnum.VEO_3_1_LITE_GENERATE_001,

@@ -227,7 +227,26 @@ def test_validate_duration_seconds():
             generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
             duration_seconds=11,
         )
-    assert "less than or equal to 10" in str(exc_info.value)
+    assert "Maximum supported duration: 10s" in str(exc_info.value)
+
+
+def test_validate_duration_seconds_omni_1_2_flash_up_to_15():
+    dto = CreateVeoDto(
+        prompt="Test",
+        workspace_id=1,
+        generation_model=GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+        duration_seconds=15,
+    )
+    assert dto.duration_seconds == 15
+
+    with pytest.raises(ValidationError) as exc_info:
+        CreateVeoDto(
+            prompt="Test",
+            workspace_id=1,
+            generation_model=GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+            duration_seconds=16,
+        )
+    assert "less than or equal to 15" in str(exc_info.value)
 
 
 def test_validate_audio_reference_by_model():
@@ -282,6 +301,7 @@ OMNI_MODELS = [
     GenerationModelEnum.GEMINI_OMNI,
     GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
     GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+    GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
 ]
 
 

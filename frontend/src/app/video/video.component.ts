@@ -313,7 +313,8 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.searchRequest.lighting = state.lighting;
     this.searchRequest.numberOfMedia =
       state.model === 'gemini-omni-flash-preview' ||
-      state.model === 'gemini-omni-1.1-flash-preview'
+      state.model === 'gemini-omni-1.1-flash-preview' ||
+      state.model === 'gemini-omni-1.2-flash'
         ? 1
         : state.numberOfMedia;
     this.selectedOutputs.set(this.searchRequest.numberOfMedia || 1);
@@ -382,7 +383,8 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
     if (
       model.value === 'gemini-omni-flash-preview' ||
-      model.value === 'gemini-omni-1.1-flash-preview'
+      model.value === 'gemini-omni-1.1-flash-preview' ||
+      model.value === 'gemini-omni-1.2-flash'
     ) {
       this.searchRequest.numberOfMedia = 1;
       this.selectedOutputs.set(1);
@@ -1569,7 +1571,8 @@ export class VideoComponent implements OnInit, AfterViewInit {
       const currentModel = this.searchRequest.generationModel;
       if (
         currentModel === 'gemini-omni-flash-preview' ||
-        currentModel === 'gemini-omni-1.1-flash-preview'
+        currentModel === 'gemini-omni-1.1-flash-preview' ||
+        currentModel === 'gemini-omni-1.2-flash'
       ) {
         return;
       }
@@ -1701,7 +1704,8 @@ export class VideoComponent implements OnInit, AfterViewInit {
       const currentModel = this.searchRequest.generationModel;
       if (
         currentModel === 'gemini-omni-flash-preview' ||
-        currentModel === 'gemini-omni-1.1-flash-preview'
+        currentModel === 'gemini-omni-1.1-flash-preview' ||
+        currentModel === 'gemini-omni-1.2-flash'
       ) {
         // Already on an Omni model
       } else {
