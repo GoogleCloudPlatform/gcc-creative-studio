@@ -15,6 +15,7 @@
 
 
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -131,18 +132,73 @@ class GenerationModelEnum(str, Enum):
 
     @property
     def is_gemini_omni_model(self) -> bool:
-        """Returns True if the model is a Gemini Omni video model.
-
-        Omni models are the only video models that accept video and audio
-        references. Add new Omni versions here so every capability check
-        picks them up.
-        """
+        """Returns True if the model is a Gemini Omni video model."""
         return self in (
             GenerationModelEnum.GEMINI_OMNI,
             GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
             GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
             GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
         )
+
+    @property
+    def supports_omni_video_refs_and_extend(self) -> bool:
+        """Returns True if the Omni model supports up to 3 video references and Extend Video."""
+        return self in (
+            GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+            GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+        )
+
+    @property
+    def max_reference_images(self) -> int:
+        """Returns the maximum number of reference images supported for video generation."""
+        if self == GenerationModelEnum.GEMINI_OMNI_1_2_FLASH:
+            return 10
+        if self == GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW:
+            return 5
+        if self in (
+            GenerationModelEnum.VEO_3_1_PREVIEW,
+            GenerationModelEnum.VEO_3_1_GENERATE_001,
+            GenerationModelEnum.VEO_3_1_LITE_GENERATE_001,
+            GenerationModelEnum.VEO_3_1_LITE_PREVIEW,
+            GenerationModelEnum.VEO_3_1_FAST_GENERATE_001,
+            GenerationModelEnum.GEMINI_OMNI,
+            GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+        ):
+            return 3
+        return 0
+
+    @property
+    def max_reference_videos(self) -> int:
+        """Returns the maximum number of reference videos supported for video generation."""
+        return 3 if self.supports_omni_video_refs_and_extend else 0
+
+    @property
+    def supports_video_extension(self) -> bool:
+        """Returns True if this video model supports extending an existing source video."""
+        return self not in (
+            GenerationModelEnum.GEMINI_OMNI,
+            GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+        )
+
+    def max_video_duration(
+        self,
+        *,
+        has_any_references: bool = False,
+        has_source_video: bool = False,
+        has_end_frame: bool = False,
+    ) -> int:
+        """Returns the maximum supported clip duration in seconds for this model and input mode."""
+        if self == GenerationModelEnum.GEMINI_OMNI_1_2_FLASH:
+            if has_any_references or has_source_video or has_end_frame:
+                return 10
+            return 15
+        if self in (
+            GenerationModelEnum.GEMINI_OMNI,
+            GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+            GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+        ):
+            return 10
+        return 8
 
     @property
     def valid_aspect_ratios(self) -> list["AspectRatioEnum"]:
@@ -304,10 +360,11 @@ class BaseDto(BaseModel):
 
 class AssetReferenceDto(BaseDto):
     id: int = Field(description="The ID of the asset.")
-    type: str = Field(
+    type: Literal["source_asset", "media_item"] = Field(
         description="The type of asset: 'source_asset' or 'media_item'."
     )
     index: int | None = Field(
         default=0,
+        ge=0,
         description="The index of the media in the media item (if applicable).",
     )

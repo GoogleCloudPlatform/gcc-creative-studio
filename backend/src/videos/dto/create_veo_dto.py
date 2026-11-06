@@ -139,16 +139,21 @@ class CreateVeoDto(BaseDto):
     )
     reference_images: list[ReferenceImageDto] | None = Field(
         default=None,
-        max_length=3,
+        max_length=10,
         description="A list of reference images, each with an ID and a type (ASSET or STYLE).",
+    )
+    reference_videos: list[AssetReferenceDto] | None = Field(
+        default=None,
+        max_length=3,
+        description="A list of up to 3 reference videos (source assets or gallery media items).",
     )
     reference_video: AssetReferenceDto | None = Field(
         default=None,
-        description="Object containing ID and type of asset to use as a reference video.",
+        description="Deprecated singular reference video; normalized into reference_videos.",
     )
     reference_audio: AssetReferenceDto | None = Field(
         default=None,
-        description="Object containing ID and type of asset to use as a reference audio.",
+        description="Deprecated reference audio field; audio references are rejected for video generation.",
     )
     parent_media_item_id: int | None = Field(
         default=None,
@@ -170,15 +175,24 @@ class CreateVeoDto(BaseDto):
     @model_validator(mode="after")
     def validate_cross_fields(self) -> "CreateVeoDto":
         """Performs several validations:
-        1. Ensures that source_media_items have a valid role.
-        2. Ensures references are not used with start/end frames or source videos.
-        3. Ensures reference image roles are only used with correct model.
-        4. Validates model-specific resolution limits.
-        5. Validates model-specific duration limits.
+        1. Rejects unsupported audio references across all models.
+        2. Ensures that source_media_items have a valid role.
+        3. Ensures references are not used with start/end frames or source videos.
+        4. Enforces per-model reference image, reference video, and extension support.
+        5. Validates model-specific resolution and mode-aware duration limits.
         """
         conflicting_roles_present = False
         reference_roles_present = False
         model = self.generation_model
+
+        has_audio_role = any(
+            item.role == AssetRoleEnum.AUDIO_REFERENCE
+            for item in (self.source_media_items or [])
+        )
+        if self.reference_audio is not None or has_audio_role:
+            raise ValueError(
+                "Audio reference is not supported for video generation."
+            )
 
         if self.source_media_items:
             non_reference_roles = {
@@ -189,6 +203,7 @@ class CreateVeoDto(BaseDto):
             reference_roles = {
                 AssetRoleEnum.IMAGE_REFERENCE_ASSET,
                 AssetRoleEnum.IMAGE_REFERENCE_STYLE,
+                AssetRoleEnum.VIDEO_REFERENCE,
             }
             valid_roles = non_reference_roles.union(reference_roles)
 
@@ -202,26 +217,87 @@ class CreateVeoDto(BaseDto):
                 if item.role in reference_roles:
                     reference_roles_present = True
 
+        # Normalize and deduplicate reference videos across reference_videos,
+        # legacy reference_video, and VIDEO_REFERENCE source_media_items.
+        normalized_ref_videos: list[AssetReferenceDto] = []
+        seen_video_keys: set[tuple[str, int, int]] = set()
+        raw_video_refs = list(self.reference_videos or [])
+        if self.reference_video is not None:
+            raw_video_refs.append(self.reference_video)
+
+        for ref in raw_video_refs:
+            idx = (ref.index or 0) if ref.type == "media_item" else 0
+            key = (ref.type, ref.id, idx)
+            if key not in seen_video_keys:
+                seen_video_keys.add(key)
+                normalized_ref_videos.append(ref)
+
+        self.reference_videos = normalized_ref_videos or None
+        self.reference_video = None
+
+        for item in self.source_media_items or []:
+            if item.role == AssetRoleEnum.VIDEO_REFERENCE:
+                seen_video_keys.add(
+                    ("media_item", item.media_item_id, item.media_index or 0)
+                )
+
+        # Deduplicate reference images in-place across reference_images and source_media_items.
+        seen_image_keys: set[tuple[str, int, int]] = set()
+        if self.reference_images is not None:
+            dedup_ref_images: list[ReferenceImageDto] = []
+            for img in self.reference_images:
+                key = ("source_asset", img.asset_id, 0)
+                if key not in seen_image_keys:
+                    seen_image_keys.add(key)
+                    dedup_ref_images.append(img)
+            self.reference_images = dedup_ref_images or None
+
+        if self.source_media_items is not None:
+            dedup_media_items: list[SourceMediaItemLink] = []
+            for item in self.source_media_items:
+                if item.role in {
+                    AssetRoleEnum.IMAGE_REFERENCE_ASSET,
+                    AssetRoleEnum.IMAGE_REFERENCE_STYLE,
+                }:
+                    key = (
+                        "media_item",
+                        item.media_item_id,
+                        item.media_index or 0,
+                    )
+                    if key in seen_image_keys:
+                        continue
+                    seen_image_keys.add(key)
+                dedup_media_items.append(item)
+            self.source_media_items = dedup_media_items or None
+
+        total_reference_images = len(seen_image_keys)
+        total_reference_videos = len(seen_video_keys)
+
         has_asset_references = (
-            bool(self.reference_images)
-            or bool(self.reference_video)
-            or bool(self.reference_audio)
+            total_reference_images > 0 or total_reference_videos > 0
         )
         has_any_references = has_asset_references or reference_roles_present
 
+        has_start_frame = bool(self.start_image_asset_id) or any(
+            i.role == AssetRoleEnum.START_FRAME
+            for i in (self.source_media_items or [])
+        )
+        has_end_frame = bool(self.end_image_asset_id) or any(
+            i.role == AssetRoleEnum.END_FRAME
+            for i in (self.source_media_items or [])
+        )
+        has_source_video = bool(self.source_video_asset_id) or any(
+            i.role == AssetRoleEnum.VIDEO_EXTENSION_SOURCE
+            for i in (self.source_media_items or [])
+        )
+
+        if not has_source_video and not self.prompt.strip():
+            raise ValueError(
+                "Prompt is required unless extending a source video."
+            )
+
         if has_any_references:
-            supported_reference_models = {
-                GenerationModelEnum.VEO_3_1_PREVIEW,
-                GenerationModelEnum.VEO_3_1_GENERATE_001,
-                GenerationModelEnum.VEO_3_1_LITE_GENERATE_001,
-                GenerationModelEnum.VEO_3_1_LITE_PREVIEW,
-                GenerationModelEnum.VEO_3_1_FAST_GENERATE_001,
-                GenerationModelEnum.GEMINI_OMNI,
-                GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
-                GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
-                GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
-            }
-            if model not in supported_reference_models:
+            if model.max_reference_images == 0:
                 raise ValueError(
                     "Reference images/media are only supported by the "
                     f"'{GenerationModelEnum.VEO_3_1_PREVIEW.value}' model, "
@@ -235,41 +311,43 @@ class CreateVeoDto(BaseDto):
                     f"'{GenerationModelEnum.GEMINI_OMNI_1_2_FLASH.value}' model.",
                 )
 
-            start_image_present = bool(self.start_image_asset_id)
-            end_image_present = bool(self.end_image_asset_id)
-            source_video_present = bool(self.source_video_asset_id)
-
             if (
-                start_image_present
-                or end_image_present
-                or source_video_present
+                has_start_frame
+                or has_end_frame
+                or has_source_video
                 or conflicting_roles_present
             ):
                 raise ValueError(
                     "Reference media cannot be used at the same time as a start frame, end frame, or source video.",
                 )
 
-        has_audio_reference = bool(self.reference_audio)
-        if has_audio_reference and not model.is_gemini_omni_model:
+        max_reference_videos = model.max_reference_videos
+        if total_reference_videos > 0:
+            if max_reference_videos == 0:
+                raise ValueError(
+                    f"Model '{model.value}' does not support Video as reference. "
+                    "Video reference is only supported by Gemini Omni 1.1 Flash and 1.2 Flash models."
+                )
+            if total_reference_videos > max_reference_videos:
+                raise ValueError(
+                    f"Model '{model.value}' supports up to {max_reference_videos} reference videos "
+                    f"(got {total_reference_videos})."
+                )
+
+        if has_source_video and not model.supports_video_extension:
             raise ValueError(
-                f"Model '{model.value}' does not support Audio as reference. "
-                "Audio reference is only supported by Gemini Omni models."
+                f"Model '{model.value}' does not support video extension."
             )
 
-        has_video_reference = bool(self.reference_video)
-        if has_video_reference and not model.is_gemini_omni_model:
+        max_reference_images = model.max_reference_images
+        if total_reference_images > max_reference_images:
             raise ValueError(
-                f"Model '{model.value}' does not support Video as reference. "
-                "Video reference is only supported by Gemini Omni models."
+                f"Model '{model.value}' supports up to {max_reference_images} reference images "
+                f"(got {total_reference_images})."
             )
 
         # Validate model-specific resolution limits
-        if model in (
-            GenerationModelEnum.GEMINI_OMNI,
-            GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
-            GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
-            GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
-        ):
+        if model.is_gemini_omni_model:
             allowed_resolutions = {"1K"}
         elif model in (
             GenerationModelEnum.VEO_3_1_LITE_GENERATE_001,
@@ -286,15 +364,17 @@ class CreateVeoDto(BaseDto):
             )
 
         # Validate model-specific duration limits
-        max_duration = 8
-        if model in (
-            GenerationModelEnum.GEMINI_OMNI,
-            GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
-            GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
-        ):
-            max_duration = 10
-        elif model == GenerationModelEnum.GEMINI_OMNI_1_2_FLASH:
-            max_duration = 15
+        if model.is_gemini_omni_model and self.duration_seconds < 3:
+            raise ValueError(
+                f"Model '{model.value}' requires a minimum duration of 3s "
+                f"(got '{self.duration_seconds}s')."
+            )
+
+        max_duration = model.max_video_duration(
+            has_any_references=has_any_references,
+            has_source_video=has_source_video,
+            has_end_frame=has_end_frame,
+        )
 
         if self.duration_seconds > max_duration:
             raise ValueError(
