@@ -48,7 +48,7 @@ import {
   ASPECT_RATIO_LABELS,
   ASPECT_RATIO_SQUARE,
   MODEL_CONFIGS,
-  isGeminiOmniModel,
+  getSupportedModelDurations,
 } from '../../../../common/config/model-config';
 import {FolderSelectionResult} from '../../../../common/models/folder.model';
 import {WorkspaceStateService} from '../../../../services/workspace/workspace-state.service';
@@ -479,15 +479,14 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     if (this.isPromptLinkedVariable(inputName)) {
       return 'Prompt is linked - variables inactive';
     }
-    if (this.localConfig?.type === NodeTypes.GENERATE_VIDEO) {
+    if (
+      this.localConfig?.type === NodeTypes.GENERATE_VIDEO &&
+      inputName === 'input_video'
+    ) {
       const currentModel = this.stepForm?.get('settings.model')?.value;
-      if (!isGeminiOmniModel(currentModel)) {
-        if (inputName === 'input_audio') {
-          return 'This model does not support Audio as reference';
-        }
-        if (inputName === 'input_video') {
-          return 'This model does not support Video as reference';
-        }
+      const modelConfig = MODEL_CONFIGS.find(c => c.value === currentModel);
+      if ((modelConfig?.capabilities.maxReferenceVideos ?? 0) === 0) {
+        return 'This model does not support Video as reference';
       }
     }
     return '';
@@ -625,6 +624,9 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
           this.inputModes[key] = 'linked';
         }
       });
+      if (this.localConfig?.type === NodeTypes.GENERATE_VIDEO) {
+        this.syncVideoDurationSetting();
+      }
     });
 
     const settings = this.stepForm.get('settings') as FormGroup;
@@ -668,6 +670,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
         }
         this.inputModeSubscription = modeControl?.valueChanges.subscribe(() => {
           this.updateInputVisibility();
+          this.syncVideoDurationSetting();
         });
       }
 
@@ -787,6 +790,27 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
               this.stepForm.get('settings.resolution')?.setValue(firstOption);
             }
           }
+        } else if (
+          this.localConfig.type === NodeTypes.GENERATE_VIDEO &&
+          this.stepForm.get('settings.resolution')
+        ) {
+          const currentResolution = this.stepForm.get(
+            'settings.resolution',
+          )?.value;
+          if (currentResolution && currentResolution !== '1K') {
+            this.stepForm.get('settings.resolution')?.setValue('1K');
+          }
+        }
+      } else if (
+        this.localConfig.type === NodeTypes.GENERATE_VIDEO &&
+        modelMeta.supportedResolutions.length === 0 &&
+        this.stepForm.get('settings.resolution')
+      ) {
+        const currentResolution = this.stepForm.get(
+          'settings.resolution',
+        )?.value;
+        if (currentResolution && currentResolution !== '1K') {
+          this.stepForm.get('settings.resolution')?.setValue('1K');
         }
       }
     }
@@ -815,39 +839,43 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     }
 
     // 3. Update Duration options
-    const durationSetting = this.localConfig.settings.find(
-      s => s.name === 'duration_seconds',
-    );
-    if (durationSetting) {
-      if (
-        modelMeta.supportedDurations &&
-        modelMeta.supportedDurations.length > 0
-      ) {
-        durationSetting.hidden = false;
-        durationSetting.options = modelMeta.supportedDurations.map(
-          duration => ({
-            value: duration,
-            label: `${duration}s`,
-          }),
-        );
-
-        // Reset value if current value is invalid
-        const currentDuration = this.stepForm.get(
-          'settings.duration_seconds',
-        )?.value;
+    if (this.localConfig.type === NodeTypes.GENERATE_VIDEO) {
+      this.syncVideoDurationSetting();
+    } else {
+      const durationSetting = this.localConfig.settings.find(
+        s => s.name === 'duration_seconds',
+      );
+      if (durationSetting) {
         if (
-          currentDuration &&
-          !modelMeta.supportedDurations.includes(Number(currentDuration))
+          modelMeta.supportedDurations &&
+          modelMeta.supportedDurations.length > 0
         ) {
-          const firstOption = durationSetting.options?.[0]?.value;
-          if (firstOption !== undefined) {
-            this.stepForm
-              .get('settings.duration_seconds')
-              ?.setValue(firstOption);
+          durationSetting.hidden = false;
+          durationSetting.options = modelMeta.supportedDurations.map(
+            duration => ({
+              value: duration,
+              label: `${duration}s`,
+            }),
+          );
+
+          // Reset value if current value is invalid
+          const currentDuration = this.stepForm.get(
+            'settings.duration_seconds',
+          )?.value;
+          if (
+            currentDuration &&
+            !modelMeta.supportedDurations.includes(Number(currentDuration))
+          ) {
+            const firstOption = durationSetting.options?.[0]?.value;
+            if (firstOption !== undefined) {
+              this.stepForm
+                .get('settings.duration_seconds')
+                ?.setValue(firstOption);
+            }
           }
+        } else {
+          durationSetting.hidden = true;
         }
-      } else {
-        durationSetting.hidden = true;
       }
     }
 
@@ -867,16 +895,127 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
       }
     });
 
-    // 4. Update Inputs based on Mode and Max Refs
+    // 5. Update Inputs based on Mode and Max Refs
     const maxRefs = modelMeta.maxReferenceImages; // 0, 1, or more
     this.currentMaxReferenceImages = maxRefs;
 
+    if (
+      this.localConfig.type === NodeTypes.GENERATE_VIDEO &&
+      !this.stepForm.disabled
+    ) {
+      const inputs = this.stepForm.get('inputs') as FormGroup | null;
+      this.trimControlToMax(
+        inputs?.get('input_images'),
+        modelMeta.maxReferenceImages ?? 0,
+      );
+      this.trimControlToMax(
+        inputs?.get('reference_images'),
+        modelMeta.maxReferenceImages ?? 0,
+      );
+      this.trimControlToMax(
+        inputs?.get('input_video'),
+        modelMeta.maxReferenceVideos ?? 0,
+      );
+    }
+
     this.updateInputVisibility();
+  }
+
+  private hasStepInputValue(val: unknown): boolean {
+    if (val === null || val === undefined || val === '') {
+      return false;
+    }
+    if (Array.isArray(val)) {
+      return val.length > 0;
+    }
+    if (typeof val === 'object') {
+      return Object.keys(val as Record<string, unknown>).length > 0;
+    }
+    return true;
+  }
+
+  private trimControlToMax(
+    control: AbstractControl | null | undefined,
+    maxAllowed: number,
+  ): void {
+    if (!control || control.value === null || control.value === undefined) {
+      return;
+    }
+    if (maxAllowed <= 0) {
+      control.setValue(null);
+    } else if (
+      Array.isArray(control.value) &&
+      control.value.length > maxAllowed
+    ) {
+      control.setValue(control.value.slice(0, maxAllowed));
+    }
+  }
+
+  private syncVideoDurationSetting(): void {
+    if (this.localConfig?.type !== NodeTypes.GENERATE_VIDEO) {
+      return;
+    }
+    const durationSetting = this.localConfig.settings.find(
+      s => s.name === 'duration_seconds',
+    );
+    if (!durationSetting) {
+      return;
+    }
+
+    const modelValue = this.stepForm?.get('settings.model')?.value;
+    const modelConfig = MODEL_CONFIGS.find(c => c.value === modelValue);
+    const currentMode =
+      this.stepForm?.get('settings.input_mode')?.value || 'Text to Video';
+    const currentResolution =
+      (this.stepForm?.get('settings.resolution')?.value as
+        | '1K'
+        | '2K'
+        | '4K'
+        | undefined) ?? '1K';
+    const inputs = this.stepForm?.get('inputs') as FormGroup | null;
+    const hasEndFrame = this.hasStepInputValue(inputs?.get('end_frame')?.value);
+    const supportedDurations = getSupportedModelDurations(
+      modelConfig,
+      currentMode,
+      currentResolution,
+      hasEndFrame,
+    );
+
+    if (supportedDurations.length > 0) {
+      durationSetting.hidden = false;
+      durationSetting.options = supportedDurations.map(duration => ({
+        value: duration,
+        label: `${duration}s`,
+      }));
+
+      const durationControl = this.stepForm?.get('settings.duration_seconds');
+      const currentDuration = Number(durationControl?.value);
+      if (
+        durationControl &&
+        !this.stepForm.disabled &&
+        (Number.isNaN(currentDuration) ||
+          !supportedDurations.includes(currentDuration))
+      ) {
+        const maxSupported = supportedDurations[supportedDurations.length - 1];
+        const targetDuration =
+          !Number.isNaN(currentDuration) && currentDuration > maxSupported
+            ? maxSupported
+            : supportedDurations[0];
+        if (durationControl.value !== targetDuration) {
+          durationControl.setValue(targetDuration);
+        }
+      }
+    } else {
+      durationSetting.hidden = true;
+    }
   }
 
   private updateInputVisibility(): void {
     const currentMode = this.stepForm.get('settings.input_mode')?.value;
     const currentModel = this.stepForm.get('settings.model')?.value;
+    const modelConfig = MODEL_CONFIGS.find(c => c.value === currentModel);
+    const supportsVideoRef =
+      (modelConfig?.capabilities.maxReferenceVideos ?? 0) > 0;
     const maxRefs = this.currentMaxReferenceImages;
 
     this.localConfig.inputs.forEach(input => {
@@ -885,13 +1024,11 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
         this.localConfig.type === NodeTypes.GENERATE_VIDEO &&
         (input.name === 'input_images' ||
           input.name === 'reference_images' ||
-          input.name === 'input_video' ||
-          input.name === 'input_audio')
+          input.name === 'input_video')
       ) {
         const showIngredients = currentMode === 'Ingredients to Video';
         const isImageRef =
           input.name === 'input_images' || input.name === 'reference_images';
-        const isAudioRef = input.name === 'input_audio';
         const isVideoRef = input.name === 'input_video';
         const isVisible = isImageRef
           ? showIngredients && maxRefs > 0
@@ -899,7 +1036,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
 
         if (isVisible) {
           input.hidden = false;
-          if ((isAudioRef || isVideoRef) && !isGeminiOmniModel(currentModel)) {
+          if (isVideoRef && !supportsVideoRef) {
             this.stepForm.get('inputs')?.get(input.name)?.disable();
           } else {
             this.stepForm.get('inputs')?.get(input.name)?.enable();
@@ -909,6 +1046,18 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
               this.inputModes[input.name] = 'mixed';
             }
           }
+        } else {
+          input.hidden = true;
+          this.stepForm.get('inputs')?.get(input.name)?.disable();
+        }
+      } else if (
+        this.localConfig.type === NodeTypes.GENERATE_VIDEO &&
+        input.name === 'source_video'
+      ) {
+        if (currentMode === 'Extend Video') {
+          input.hidden = false;
+          this.stepForm.get('inputs')?.get(input.name)?.enable();
+          this.inputModes[input.name] = 'mixed';
         } else {
           input.hidden = true;
           this.stepForm.get('inputs')?.get(input.name)?.disable();

@@ -534,3 +534,44 @@ class TestBuildWorkflowYaml:
                 [_text_step("step_a", prompt=big_prompt)],
                 executor_url=EXECUTOR_URL,
             )
+
+    def test_generate_video_legacy_input_audio_ignored_in_dependencies_and_yaml(
+        self,
+    ):
+        from src.workflows.schema.workflow_model import (
+            GenerateVideoInputs,
+            GenerateVideoSettings,
+            GenerateVideoStep,
+        )
+
+        user_in = _user_input_step("user_in")
+        video_step = GenerateVideoStep(
+            step_id="video_1",
+            inputs=GenerateVideoInputs(
+                prompt="A cinematic shot",
+                input_audio=StepOutputReference(
+                    step="user_in", output="legacy_audio"
+                ),
+                source_video=StepOutputReference(
+                    step="user_in", output="clip_source"
+                ),
+            ),
+            settings=GenerateVideoSettings(
+                model="gemini-omni-1.2-flash",
+                input_mode="Extend Video",
+            ),
+        )
+
+        assert required_args([user_in, video_step]) == [
+            "clip_source",
+            "workspace_id",
+        ]
+        graph = analyze_steps([user_in, video_step])
+        assert graph.dependencies["video_1"] == frozenset({"user_in"})
+
+        yaml_text = build_workflow_yaml(
+            [user_in, video_step], executor_url=EXECUTOR_URL
+        )
+        assert "input_audio" not in yaml_text
+        assert "legacy_audio" not in yaml_text
+        assert "source_video" in yaml_text

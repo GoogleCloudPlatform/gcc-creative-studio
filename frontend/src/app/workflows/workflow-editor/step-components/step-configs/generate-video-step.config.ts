@@ -52,9 +52,9 @@ export const GENERATE_VIDEO_STEP_CONFIG: StepConfig = {
       hidden: true,
     },
     {
-      name: 'input_audio',
-      label: 'Audio (Reference)',
-      type: 'audio',
+      name: 'source_video',
+      label: 'Source Video',
+      type: 'video',
       required: false,
       hidden: true,
     },
