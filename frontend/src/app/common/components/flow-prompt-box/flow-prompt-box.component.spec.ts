@@ -14,7 +14,13 @@
  * limitations under the License.
  */
 
-import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {
+  ComponentFixture,
+  TestBed,
+  fakeAsync,
+  tick,
+} from '@angular/core/testing';
+import {SimpleChange} from '@angular/core';
 import {FlowPromptBoxComponent} from './flow-prompt-box.component';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
@@ -364,6 +370,182 @@ describe('FlowPromptBoxComponent', () => {
       component.selectDuration(10);
       expect(component.selectedDuration()).toBe(10);
       expect(component.durationChanged.emit).toHaveBeenCalledWith(10);
+    });
+
+    it('should return mode-aware durations for Gemini Omni 1.2 Flash', () => {
+      const omni12 = MODEL_CONFIGS.find(
+        m => m.value === 'gemini-omni-1.2-flash',
+      )!;
+      component.selectedGenerationModel = omni12.viewValue;
+
+      component.mode = 'Text to Video';
+      expect(component.getSelectedModelDurations()).toEqual([
+        4, 6, 8, 10, 12, 15,
+      ]);
+
+      component.mode = 'Frames to Video';
+      component.image1Preview = 'http://example.com/start.png';
+      component.image2Preview = null;
+      expect(component.getSelectedModelDurations()).toEqual([
+        4, 6, 8, 10, 12, 15,
+      ]);
+
+      // End frame alone (even without start frame) caps duration at 10s
+      component.image1Preview = null;
+      component.image2Preview = 'http://example.com/end.png';
+      expect(component.getSelectedModelDurations()).toEqual([4, 6, 8, 10]);
+
+      component.image1Preview = 'http://example.com/start.png';
+      expect(component.getSelectedModelDurations()).toEqual([4, 6, 8, 10]);
+
+      component.mode = 'Ingredients to Video';
+      expect(component.getSelectedModelDurations()).toEqual([4, 6, 8, 10]);
+
+      component.mode = 'Extend Video';
+      expect(component.getSelectedModelDurations()).toEqual([4, 6, 8, 10]);
+    });
+
+    it('should step down 15s to 10s on mode switch with snackbar, and suppress snackbar on initial bind', fakeAsync(() => {
+      const omni12 = MODEL_CONFIGS.find(
+        m => m.value === 'gemini-omni-1.2-flash',
+      )!;
+      spyOn(component.durationChanged, 'emit');
+      component.selectedGenerationModel = omni12.viewValue;
+      component.mode = 'Ingredients to Video';
+      component.duration = 15;
+
+      // Initial hydration should clamp silently without firing snackbar
+      component.ngOnChanges({
+        mode: new SimpleChange(undefined, 'Ingredients to Video', true),
+        duration: new SimpleChange(undefined, 15, true),
+      });
+      tick();
+
+      expect(component.selectedDuration()).toBe(10);
+      expect(component.durationChanged.emit).toHaveBeenCalledWith(10);
+      expect(snackBarSpy.open).not.toHaveBeenCalled();
+
+      // Subsequent user change from 15s in Text to Video -> Ingredients to Video shows snackbar
+      component.mode = 'Text to Video';
+      component.selectDuration(15);
+      snackBarSpy.open.calls.reset();
+
+      component.mode = 'Ingredients to Video';
+      component.ngOnChanges({
+        mode: new SimpleChange('Text to Video', 'Ingredients to Video', false),
+      });
+      tick();
+
+      expect(component.selectedDuration()).toBe(10);
+      expect(snackBarSpy.open).toHaveBeenCalled();
+    }));
+
+    it('should reset resolution to 1K when switching from Veo 4K to Gemini Omni 1.2 Flash', fakeAsync(() => {
+      const omni12 = MODEL_CONFIGS.find(
+        m => m.value === 'gemini-omni-1.2-flash',
+      )!;
+      spyOn(component.resolutionChanged, 'emit');
+      component.selectedResolution.set('4K');
+
+      component.selectInternalModel(omni12);
+      tick();
+
+      expect(component.selectedResolution()).toBe('1K');
+      expect(component.resolutionChanged.emit).toHaveBeenCalledWith('1K');
+    }));
+
+    it('should expose per-model reference image and video limits and never render Audio Ref', () => {
+      const omni12 = MODEL_CONFIGS.find(
+        m => m.value === 'gemini-omni-1.2-flash',
+      )!;
+      const omni11 = MODEL_CONFIGS.find(
+        m => m.value === 'gemini-omni-1.1-flash-preview',
+      )!;
+      const veo31 = MODEL_CONFIGS.find(
+        m => m.value === 'veo-3.1-generate-001',
+      )!;
+
+      component.mode = 'Ingredients to Video';
+      component.selectedGenerationModel = omni12.viewValue;
+      fixture.detectChanges();
+      expect(fixture.nativeElement.textContent).toContain('0/10');
+      expect(fixture.nativeElement.textContent).toContain('0/3');
+      expect(fixture.nativeElement.textContent).not.toContain('Audio Ref');
+
+      component.selectedGenerationModel = omni11.viewValue;
+      fixture.detectChanges();
+      expect(fixture.nativeElement.textContent).toContain('0/5');
+      expect(fixture.nativeElement.textContent).toContain('0/3');
+
+      component.selectedGenerationModel = veo31.viewValue;
+      fixture.detectChanges();
+      expect(fixture.nativeElement.textContent).toContain('0/3');
+      expect(
+        component.getSelectedModelObject()?.capabilities.maxReferenceVideos ??
+          0,
+      ).toBe(0);
+    });
+
+    it('should render video element in Extend Video Slot 1 when preview is an mp4 URL and img for thumbnails', () => {
+      component.mode = 'Extend Video';
+      component.image1Preview =
+        'https://storage.googleapis.com/b/clip.mp4?sig=1';
+      fixture.detectChanges();
+      expect(fixture.nativeElement.querySelector('video')).not.toBeNull();
+
+      component.image1Preview =
+        'https://storage.googleapis.com/b/thumb.png?sig=1';
+      fixture.detectChanges();
+      expect(fixture.nativeElement.querySelector('video')).toBeNull();
+      expect(fixture.nativeElement.querySelector('img')).not.toBeNull();
+    });
+
+    it('should clamp 15s to 10s with end-frame snackbar reason when image2Preview is set alone', fakeAsync(() => {
+      const omni12 = MODEL_CONFIGS.find(
+        m => m.value === 'gemini-omni-1.2-flash',
+      )!;
+      component.selectedGenerationModel = omni12.viewValue;
+      component.mode = 'Frames to Video';
+      component.image1Preview = null;
+      component.image2Preview = null;
+      component.selectDuration(15);
+      snackBarSpy.open.calls.reset();
+
+      component.image2Preview = 'https://example.com/end.png';
+      component.ngOnChanges({
+        image2Preview: new SimpleChange(
+          null,
+          'https://example.com/end.png',
+          false,
+        ),
+      });
+      tick();
+
+      expect(component.selectedDuration()).toBe(10);
+      expect(snackBarSpy.open).toHaveBeenCalledWith(
+        'Duration adjusted to 10s when using an end frame.',
+        'Close',
+        {duration: 4000},
+      );
+    }));
+
+    it('should render movie icon placeholder without broken img when referenceVideo previewUrl is empty', () => {
+      const omni12 = MODEL_CONFIGS.find(
+        m => m.value === 'gemini-omni-1.2-flash',
+      )!;
+      component.selectedGenerationModel = omni12.viewValue;
+      component.mode = 'Ingredients to Video';
+      component.referenceVideos = [
+        {id: 101, type: 'media_item', previewUrl: '', index: 0},
+      ];
+      fixture.detectChanges();
+
+      const chipIcons = Array.from(
+        fixture.nativeElement.querySelectorAll('mat-icon'),
+      ).map((el: any) => el.textContent?.trim());
+      expect(chipIcons).toContain('movie');
+      expect(fixture.nativeElement.querySelector('img[src=""]')).toBeNull();
+      expect(fixture.nativeElement.querySelector('video')).toBeNull();
     });
   });
 

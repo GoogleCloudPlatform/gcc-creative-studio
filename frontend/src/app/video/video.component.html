@@ -373,8 +373,7 @@
           [image2Preview]="image2Preview"
           [referenceImages]="referenceImages"
           [referenceImagesType]="referenceImagesType"
-          [referenceVideo]="referenceVideo"
-          [referenceAudio]="referenceAudio"
+          [referenceVideos]="referenceVideos"
           [resolution]="searchRequest.resolution"
           [duration]="searchRequest.durationSeconds"
           (promptChanged)="onPromptChanged($event)"
@@ -394,9 +393,8 @@
           (editReferenceImage)="onEditPromptReferenceImage($event)"
           (clearReferenceImage)="onClearReferenceImage($event)"
           (openVideoSelectorForReference)="openVideoSelectorForReference()"
-          (clearReferenceVideo)="clearReferenceVideo($event)"
-          (openAudioSelectorForReference)="openAudioSelectorForReference()"
-          (clearReferenceAudio)="clearReferenceAudio($event)"
+          (onReferenceVideoDrop)="onReferenceVideoDrop($event)"
+          (clearReferenceVideoItem)="onClearReferenceVideo($event)"
           (toggleReferenceImagesType)="referenceImagesType = $event ? 'STYLE' : 'ASSET'; saveState()"
         ></app-flow-prompt-box>
       </div>

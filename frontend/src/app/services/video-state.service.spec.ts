@@ -111,24 +111,24 @@ describe('VideoStateService', () => {
     expect(consoleSpy).toHaveBeenCalled();
   });
 
-  it('should omit referenceVideo, referenceAudio, and referenceImages when saving state to localStorage', () => {
+  it('should omit referenceVideos and referenceImages when saving state to localStorage', () => {
     initService();
 
     service.updateState({
       prompt: 'video with references',
       referenceImages: [{previewUrl: 'http://example.com/img.png'}],
-      referenceVideo: {
-        id: 1,
-        type: 'source_asset',
-        previewUrl: 'http://example.com/vid.mp4',
-      },
-      referenceAudio: {id: 1, type: 'source_asset', name: 'audio.mp3'},
+      referenceVideos: [
+        {
+          id: 1,
+          type: 'source_asset',
+          previewUrl: 'http://example.com/vid.mp4',
+        },
+      ],
     });
 
     const state = service.getState();
     expect(state.referenceImages.length).toBe(1);
-    expect(state.referenceVideo).toBeTruthy();
-    expect(state.referenceAudio).toBeTruthy();
+    expect(state.referenceVideos.length).toBe(1);
 
     const saved = localStorage.getItem('video_state');
     expect(saved).toBeTruthy();
@@ -136,9 +136,26 @@ describe('VideoStateService', () => {
       const parsed = JSON.parse(saved);
       expect(parsed.prompt).toBe('video with references');
       expect(parsed.referenceImages).toBeUndefined();
-      expect(parsed.referenceVideo).toBeUndefined();
-      expect(parsed.referenceAudio).toBeUndefined();
+      expect(parsed.referenceVideos).toBeUndefined();
     }
+  });
+
+  it('should strip legacy referenceVideo and referenceAudio keys when hydrating saved state', () => {
+    localStorage.setItem(
+      'video_state',
+      JSON.stringify({
+        prompt: 'legacy saved prompt',
+        referenceVideo: {id: 10, type: 'source_asset'},
+        referenceAudio: {id: 11, type: 'source_asset', name: 'old.mp3'},
+      }),
+    );
+
+    initService();
+    const state = service.getState() as unknown as Record<string, unknown>;
+    expect(state['prompt']).toBe('legacy saved prompt');
+    expect(state['referenceVideos']).toEqual([]);
+    expect(state['referenceVideo']).toBeUndefined();
+    expect(state['referenceAudio']).toBeUndefined();
   });
 
   it('should not crash if localStorage.getItem throws an error during initialization', () => {

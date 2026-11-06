@@ -22,12 +22,15 @@ export type GenerationMode =
   | 'Text to Video'
   | 'Frames to Video'
   | 'Ingredients to Video'
+  | 'Extend Video'
   | 'Text to Audio'
   | 'Multimodal to text';
 
 export interface ModelCapability {
   supportedModes: GenerationMode[];
   maxReferenceImages: number; // Max images for ingredients/frames modes
+  maxReferenceVideos?: number; // Max videos for ingredients mode
+  maxConstrainedDuration?: number; // Max duration (s) when constrained by refs, extend, or end frame
   supportedAspectRatios: string[]; // e.g., ['16:9', '1:1']
   supportedResolutions: ('1K' | '2K' | '4K')[]; // e.g., ['1K', '2K', '4K']
   supportedDurations: number[];
@@ -38,7 +41,6 @@ export interface ModelCapability {
   supportsLanguage?: boolean;
   supportsSeed?: boolean;
   supportsVideoReference?: boolean;
-  supportsAudioReference?: boolean;
 }
 
 export interface GenerationModelConfig {
@@ -326,13 +328,15 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         'Text to Video',
         'Ingredients to Video',
         'Frames to Video',
+        'Extend Video',
       ],
-      maxReferenceImages: 6,
+      maxReferenceImages: 10,
+      maxReferenceVideos: 3,
+      maxConstrainedDuration: 10,
       supportedAspectRatios: ['16:9', '9:16'],
       supportedResolutions: [],
       supportedDurations: [4, 6, 8, 10, 12, 15],
       supportsAudio: true,
-      supportsAudioReference: true,
       supportsVideoReference: true,
     },
   },
@@ -346,13 +350,14 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         'Text to Video',
         'Ingredients to Video',
         'Frames to Video',
+        'Extend Video',
       ],
-      maxReferenceImages: 3,
+      maxReferenceImages: 5,
+      maxReferenceVideos: 3,
       supportedAspectRatios: ['16:9', '9:16'],
       supportedResolutions: [],
       supportedDurations: [4, 6, 8, 10],
       supportsAudio: true,
-      supportsAudioReference: true,
       supportsVideoReference: true,
     },
   },
@@ -366,8 +371,10 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         'Text to Video',
         'Ingredients to Video',
         'Frames to Video',
+        'Extend Video',
       ], // Assuming ingredients = image-to-video
       maxReferenceImages: 3,
+      maxReferenceVideos: 0,
       supportedAspectRatios: ['16:9', '9:16'],
       supportedResolutions: ['1K', '2K', '4K'],
       supportedDurations: [4, 6, 8],
@@ -384,8 +391,10 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         'Text to Video',
         'Ingredients to Video',
         'Frames to Video',
+        'Extend Video',
       ],
       maxReferenceImages: 3,
+      maxReferenceVideos: 0,
       supportedAspectRatios: ['16:9', '9:16'],
       supportedResolutions: ['1K', '2K'],
       supportedDurations: [4, 6, 8],
@@ -402,8 +411,10 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         'Text to Video',
         'Ingredients to Video',
         'Frames to Video',
+        'Extend Video',
       ],
       maxReferenceImages: 3,
+      maxReferenceVideos: 0,
       supportedAspectRatios: ['16:9', '9:16'],
       supportedResolutions: ['1K', '2K'],
       supportedDurations: [4, 6, 8],
@@ -420,8 +431,10 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         'Text to Video',
         'Ingredients to Video',
         'Frames to Video',
+        'Extend Video',
       ],
       maxReferenceImages: 3,
+      maxReferenceVideos: 0,
       supportedAspectRatios: ['16:9', '9:16'],
       supportedResolutions: ['1K', '2K', '4K'],
       supportedDurations: [4, 6, 8],
@@ -556,22 +569,55 @@ export const ASPECT_RATIO_LABELS: Record<string, string> = {
 };
 
 /**
- * Checks whether a given model identifier or config corresponds to Gemini Omni,
- * which supports Audio as a reference input.
+ * Checks whether a given model identifier or display name corresponds to Gemini Omni.
  */
 export function isGeminiOmniModel(modelValue?: string | null): boolean {
   if (!modelValue) return false;
   const config = MODEL_CONFIGS.find(
     m => m.value === modelValue || m.viewValue === modelValue,
   );
-  if (config?.capabilities?.supportsAudioReference) {
-    return true;
-  }
-  const val = modelValue.toLowerCase();
+  const val = (config?.value ?? modelValue).toLowerCase();
   return (
     val === 'gemini-omni-flash-preview' ||
+    val === 'gemini-omni-1.1-flash-preview' ||
+    val === 'gemini-omni-1.2-flash' ||
+    val === 'gemini-omni-generate-preview' ||
     val === 'gemini-omni' ||
     val.includes('gemini-omni') ||
     val.includes('gemini omni')
   );
+}
+
+/**
+ * Computes valid clip durations for a video model given the active mode,
+ * resolution, and whether an end frame is populated.
+ */
+export function getSupportedModelDurations(
+  model: GenerationModelConfig | undefined,
+  mode: string,
+  resolution: '1K' | '2K' | '4K' = '1K',
+  hasEndFrame = false,
+): number[] {
+  const baseDurations = model?.capabilities?.supportedDurations ?? [];
+  if (baseDurations.length === 0) {
+    return [];
+  }
+
+  const isOmni = isGeminiOmniModel(model?.value);
+  if ((!isOmni && mode !== 'Text to Video') || resolution !== '1K') {
+    const longest = baseDurations.at(-1);
+    return longest ? [longest] : [];
+  }
+
+  const constrainedMax = model?.capabilities?.maxConstrainedDuration;
+  if (
+    constrainedMax !== undefined &&
+    (mode === 'Ingredients to Video' ||
+      mode === 'Extend Video' ||
+      (mode === 'Frames to Video' && hasEndFrame))
+  ) {
+    return baseDurations.filter(d => d <= constrainedMax);
+  }
+
+  return [...baseDurations];
 }
