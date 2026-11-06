@@ -17,11 +17,7 @@
 import {Injectable} from '@angular/core';
 import {BehaviorSubject, Observable} from 'rxjs';
 
-import {
-  ReferenceImage,
-  ReferenceVideo,
-  ReferenceAudio,
-} from '../common/models/search.model';
+import {ReferenceImage, ReferenceVideo} from '../common/models/search.model';
 import {MODEL_CONFIGS} from '../common/config/model-config';
 
 const STORAGE_KEY = 'video_state';
@@ -44,9 +40,11 @@ interface VideoState {
   mode: string;
   referenceImages: ReferenceImage[];
   referenceImagesType: 'ASSET' | 'STYLE';
-  referenceVideo: ReferenceVideo | null;
-  referenceAudio: ReferenceAudio | null;
+  referenceVideos: ReferenceVideo[];
 }
+
+export const DEFAULT_OMNI_MODEL = 'gemini-omni-1.2-flash';
+export const DEFAULT_VIDEO_MODEL = DEFAULT_OMNI_MODEL;
 
 @Injectable({
   providedIn: 'root',
@@ -61,7 +59,7 @@ export class VideoStateService {
       prompt: '',
       aspectRatio: '16:9',
       resolution: '1K',
-      model: 'gemini-omni-1.1-flash-preview',
+      model: DEFAULT_OMNI_MODEL,
       style: null,
       colorAndTone: null,
       lighting: null,
@@ -75,8 +73,7 @@ export class VideoStateService {
       mode: 'Text to Video',
       referenceImages: [],
       referenceImagesType: 'ASSET',
-      referenceVideo: null,
-      referenceAudio: null,
+      referenceVideos: [],
     };
 
     let savedState: VideoState | null = null;
@@ -99,13 +96,16 @@ export class VideoStateService {
               loadedNumMedia = this.initialState.numberOfMedia;
             }
 
+            const cleanedParsed = {...parsed};
+            delete cleanedParsed.referenceVideo;
+            delete cleanedParsed.referenceAudio;
+
             savedState = {
               ...this.initialState,
-              ...parsed,
+              ...cleanedParsed,
               model: loadedModel,
               numberOfMedia: loadedNumMedia,
-              referenceVideo: null,
-              referenceAudio: null,
+              referenceVideos: [],
               referenceImages: [],
             };
           }
@@ -128,9 +128,12 @@ export class VideoStateService {
     if (typeof localStorage !== 'undefined') {
       try {
         // Don't save reference files to localStorage
-        const partialState: Partial<VideoState> = {...updated};
-        delete partialState.referenceVideo;
-        delete partialState.referenceAudio;
+        const partialState: Partial<VideoState> & Record<string, unknown> = {
+          ...updated,
+        };
+        delete partialState.referenceVideos;
+        delete partialState['referenceVideo'];
+        delete partialState['referenceAudio'];
         delete partialState.referenceImages;
         localStorage.setItem(STORAGE_KEY, JSON.stringify(partialState));
       } catch (e) {
@@ -147,6 +150,7 @@ export class VideoStateService {
     this.state.next({
       ...this.initialState,
       referenceImages: [],
+      referenceVideos: [],
     });
     if (typeof localStorage !== 'undefined') {
       try {

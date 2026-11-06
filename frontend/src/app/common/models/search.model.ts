@@ -81,8 +81,7 @@ export type VeoRequest = {
   useBrandGuidelines: boolean;
   enhancePrompt?: boolean;
   referenceImages?: ReferenceImageDto[];
-  referenceVideo?: AssetReferenceDto | null;
-  referenceAudio?: AssetReferenceDto | null;
+  referenceVideos?: AssetReferenceDto[];
   parentMediaItemId?: number | null;
   resolution?: '1K' | '2K' | '4K';
 };
@@ -155,12 +154,5 @@ export interface ReferenceVideo {
   id: number;
   type: 'source_asset' | 'media_item';
   previewUrl: string;
-  index?: number;
-}
-
-export interface ReferenceAudio {
-  id: number;
-  type: 'source_asset' | 'media_item';
-  name: string;
   index?: number;
 }

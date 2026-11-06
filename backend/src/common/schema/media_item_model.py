@@ -122,7 +122,7 @@ class SourceMediaItemLink(BaseModel):
     media_item_id: int
     """The ID of the source MediaItemModel in the 'media_library' collection."""
 
-    media_index: int
+    media_index: int = Field(ge=0)
     """The index of the specific image within the parent's `gcs_uris` list."""
 
     role: AssetRoleEnum

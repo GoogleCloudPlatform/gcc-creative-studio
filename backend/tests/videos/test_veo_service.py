@@ -1432,6 +1432,12 @@ class TestBackgroundWorkers:
                 "duration": "5s",
                 "aspect_ratio": "16:9",
             }
+            assert call_kwargs["extra_body"] == {
+                "generation_config": {
+                    "video_config": {"task": "image_to_video"}
+                }
+            }
+            assert "generation_config" not in call_kwargs
 
     @patch("src.database.WorkerDatabase")
     @patch("src.videos.veo_service.GenAIModelSetup.get_omni_client")
@@ -1788,8 +1794,582 @@ class TestBackgroundWorkers:
                 "duration": "4s",
                 "aspect_ratio": "9:16",
             }
+            assert call_kwargs["extra_body"] == {
+                "generation_config": {"video_config": {"task": "text_to_video"}}
+            }
             update_dict = mock_media_repo.update.call_args[0][1]
             assert update_dict["status"] == JobStatusEnum.COMPLETED
             assert update_dict["gcs_uris"] == [
                 "gs://bucket/omni_flash_video.mp4"
             ]
+
+    @pytest.mark.anyio
+    async def test_start_video_generation_job_persists_deduplicated_multi_video_refs(
+        self,
+        veo_service,
+        mock_media_repo,
+        mock_source_asset_repo,
+        sample_user,
+    ):
+        from src.common.schema.media_item_model import (
+            AssetRoleEnum,
+            SourceMediaItemLink,
+        )
+        from src.source_assets.schema.source_asset_model import (
+            AssetScopeEnum,
+            SourceAssetModel,
+        )
+
+        request_dto = CreateVeoDto(
+            workspace_id=1,
+            prompt="Multi video ingredients",
+            generation_model=GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+            reference_videos=[
+                {"id": 10, "type": "source_asset"},
+                {"id": 20, "type": "media_item", "index": 0},
+                {"id": 30, "type": "source_asset"},
+            ],
+            source_media_items=[
+                SourceMediaItemLink(
+                    media_item_id=20,
+                    media_index=0,
+                    role=AssetRoleEnum.VIDEO_REFERENCE,
+                )
+            ],
+        )
+
+        mock_source_asset_repo.get_by_id.side_effect = lambda aid: {
+            10: SourceAssetModel(
+                id=10,
+                workspace_id=1,
+                user_id=1,
+                gcs_uri="gs://b/10.mp4",
+                scope=AssetScopeEnum.PRIVATE,
+            ),
+            30: SourceAssetModel(
+                id=30,
+                workspace_id=999,
+                user_id=2,
+                gcs_uri="gs://b/30.mp4",
+                scope=AssetScopeEnum.SYSTEM,
+            ),
+        }.get(aid)
+        mock_media_repo.get_by_id.return_value = MediaItemModel(
+            id=20,
+            workspace_id=1,
+            user_id=1,
+            user_email="test@example.com",
+            mime_type=MimeTypeEnum.VIDEO_MP4,
+            model=GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+            aspect_ratio="16:9",
+            gcs_uris=["gs://b/20.mp4"],
+            thumbnail_uris=[],
+        )
+
+        async def _create(item):
+            item.id = 777
+            return item
+
+        mock_media_repo.create.side_effect = _create
+        mock_executor = MagicMock()
+
+        with patch(
+            "src.videos.veo_service.resolve_output_folder_id",
+            AsyncMock(return_value=None),
+        ):
+            await veo_service.start_video_generation_job(
+                request_dto=request_dto,
+                user=sample_user,
+                executor=mock_executor,
+            )
+
+        created_item = mock_media_repo.create.call_args.args[0]
+        assert len(created_item.source_assets) == 2
+        assert [a.asset_id for a in created_item.source_assets] == [10, 30]
+        assert all(
+            a.role == AssetRoleEnum.VIDEO_REFERENCE
+            for a in created_item.source_assets
+        )
+        assert len(created_item.source_media_items) == 1
+        assert created_item.source_media_items[0].media_item_id == 20
+
+    @pytest.mark.anyio
+    async def test_start_video_generation_job_rejects_cross_workspace_and_out_of_range_refs(
+        self,
+        veo_service,
+        mock_media_repo,
+        mock_source_asset_repo,
+        sample_user,
+    ):
+        from src.source_assets.schema.source_asset_model import (
+            AssetScopeEnum,
+            SourceAssetModel,
+        )
+
+        mock_executor = MagicMock()
+
+        # 1. Cross-workspace private SourceAsset -> 403
+        mock_source_asset_repo.get_by_id.return_value = SourceAssetModel(
+            id=55,
+            workspace_id=2,
+            user_id=9,
+            gcs_uri="gs://b/other.mp4",
+            scope=AssetScopeEnum.PRIVATE,
+        )
+        dto_cross_asset = CreateVeoDto(
+            workspace_id=1,
+            prompt="Steal asset",
+            generation_model=GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+            reference_videos=[{"id": 55, "type": "source_asset"}],
+        )
+        with pytest.raises(HTTPException) as exc_asset:
+            await veo_service.start_video_generation_job(
+                request_dto=dto_cross_asset,
+                user=sample_user,
+                executor=mock_executor,
+            )
+        assert exc_asset.value.status_code == 403
+        mock_media_repo.create.assert_not_called()
+
+        # 2. Cross-workspace MediaItem -> 403
+        mock_media_repo.get_by_id.return_value = MediaItemModel(
+            id=66,
+            workspace_id=2,
+            user_id=9,
+            user_email="other@example.com",
+            mime_type=MimeTypeEnum.VIDEO_MP4,
+            model=GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+            aspect_ratio="16:9",
+            gcs_uris=["gs://b/other_media.mp4"],
+            thumbnail_uris=[],
+        )
+        dto_cross_media = CreateVeoDto(
+            workspace_id=1,
+            prompt="",
+            generation_model=GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+            source_video_asset_id={"id": 66, "type": "media_item", "index": 0},
+        )
+        with pytest.raises(HTTPException) as exc_media:
+            await veo_service.start_video_generation_job(
+                request_dto=dto_cross_media,
+                user=sample_user,
+                executor=mock_executor,
+            )
+        assert exc_media.value.status_code == 403
+
+        # 3. Same-workspace MediaItem with out-of-range clip index -> 400
+        mock_media_repo.get_by_id.return_value = MediaItemModel(
+            id=77,
+            workspace_id=1,
+            user_id=1,
+            user_email="test@example.com",
+            mime_type=MimeTypeEnum.VIDEO_MP4,
+            model=GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+            aspect_ratio="16:9",
+            gcs_uris=["gs://b/only_one_clip.mp4"],
+            thumbnail_uris=[],
+        )
+        dto_bad_idx = CreateVeoDto(
+            workspace_id=1,
+            prompt="",
+            generation_model=GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+            source_video_asset_id={"id": 77, "type": "media_item", "index": 3},
+        )
+        with pytest.raises(HTTPException) as exc_idx:
+            await veo_service.start_video_generation_job(
+                request_dto=dto_bad_idx,
+                user=sample_user,
+                executor=mock_executor,
+            )
+        assert exc_idx.value.status_code == 400
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.videos.veo_service.GenAIModelSetup.get_omni_client")
+    @patch("src.videos.veo_service.generate_thumbnail")
+    def test_process_video_in_background_omni_multi_video_refs_and_extend(
+        self,
+        mock_thumb,
+        mock_omni_client_init,
+        mock_worker_db_class,
+    ):
+        from src.common.schema.media_item_model import (
+            AssetRoleEnum,
+            MediaItemModel,
+            MimeTypeEnum,
+            SourceMediaItemLink,
+        )
+
+        # 1. Multi-video Ingredients to Video (deduplicating duplicate media_item)
+        r2v_dto = CreateVeoDto(
+            workspace_id=1,
+            prompt="Combine clips",
+            generation_model=GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+            aspect_ratio="16:9",
+            duration_seconds=8,
+            reference_videos=[
+                {"id": 11, "type": "source_asset"},
+                {"id": 22, "type": "media_item", "index": 0},
+            ],
+            source_media_items=[
+                SourceMediaItemLink(
+                    media_item_id=22,
+                    media_index=0,
+                    role=AssetRoleEnum.VIDEO_REFERENCE,
+                )
+            ],
+        )
+
+        # 2. Extend Video with empty prompt + sticky parent_media_item_id + clip index=1 must run Turn 1 extend on clip 1
+        extend_dto = CreateVeoDto(
+            workspace_id=1,
+            prompt="",
+            generation_model=GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+            aspect_ratio="16:9",
+            duration_seconds=8,
+            source_video_asset_id={"id": 33, "type": "media_item", "index": 1},
+            parent_media_item_id=33,
+        )
+
+        mock_db_context = AsyncMock()
+        mock_db_factory = MagicMock(return_value=mock_db_context)
+        mock_worker_db_class.return_value.__aenter__.return_value = (
+            mock_db_factory
+        )
+
+        mock_vertex_client = MagicMock()
+        mock_omni_client_init.return_value = mock_vertex_client
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interaction-12"
+        mock_step = MagicMock()
+        mock_step.type = "model_output"
+        mock_content = MagicMock()
+        mock_content.type = "video"
+        mock_content.data = "ZmFrZS1vbW5pLXZpZGVvLWJ5dGVz"
+        mock_content.mime_type = "video/mp4"
+        mock_step.content = [mock_content]
+        mock_interaction.steps = [mock_step]
+        mock_vertex_client.interactions.create.return_value = mock_interaction
+        mock_thumb.return_value = "/tmp/thumbnails/thumb.png"
+
+        with (
+            patch(
+                "src.videos.veo_service.MediaRepository"
+            ) as mock_media_repo_class,
+            patch(
+                "src.videos.veo_service.SourceAssetRepository"
+            ) as mock_source_repo_class,
+            patch("src.videos.veo_service.GcsService") as mock_gcs_class,
+        ):
+            mock_media_repo = AsyncMock()
+            mock_media_repo_class.return_value = mock_media_repo
+            mock_source_repo = AsyncMock()
+            mock_source_repo_class.return_value = mock_source_repo
+
+            asset_11 = MagicMock()
+            asset_11.gcs_uri = "gs://b/asset_11.mp4"
+            asset_11.mime_type = "video/mp4"
+            mock_source_repo.get_by_id.return_value = asset_11
+
+            media_22 = MediaItemModel(
+                id=22,
+                workspace_id=1,
+                user_id=1,
+                user_email="t@t.com",
+                mime_type=MimeTypeEnum.VIDEO_MP4,
+                model=GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+                aspect_ratio="16:9",
+                gcs_uris=["gs://b/media_22.mp4"],
+                thumbnail_uris=[],
+            )
+            media_33 = MediaItemModel(
+                id=33,
+                workspace_id=1,
+                user_id=1,
+                user_email="t@t.com",
+                mime_type=MimeTypeEnum.VIDEO_MP4,
+                model=GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+                aspect_ratio="16:9",
+                gcs_uris=["gs://b/source_33_0.mp4", "gs://b/source_33_1.mp4"],
+                thumbnail_uris=[],
+                raw_data={
+                    "interaction_id": "prev-1",
+                    "signature": "sig-1",
+                    "interactions": [
+                        {"interaction_id": "prev-1", "signature": "sig-1"}
+                    ],
+                },
+            )
+            mock_media_repo.get_by_id.side_effect = lambda item_id: {
+                22: media_22,
+                33: media_33,
+            }.get(item_id)
+
+            mock_gcs_service = MagicMock()
+            mock_gcs_class.return_value = mock_gcs_service
+            mock_gcs_service.upload_file_to_gcs.return_value = (
+                "gs://bucket/out.mp4"
+            )
+
+            _process_video_in_background(
+                media_item_id=2001,
+                request_dto=r2v_dto,
+                user_email="test@user.com",
+            )
+            r2v_kwargs = mock_vertex_client.interactions.create.call_args[1]
+            video_uris = [
+                item["uri"]
+                for item in r2v_kwargs["input"]
+                if item.get("type") == "video"
+            ]
+            assert video_uris == [
+                "gs://b/media_22.mp4",
+                "gs://b/asset_11.mp4",
+            ]
+            assert r2v_kwargs["extra_body"] == {
+                "generation_config": {
+                    "video_config": {"task": "reference_to_video"}
+                }
+            }
+
+            mock_vertex_client.interactions.create.reset_mock()
+            _process_video_in_background(
+                media_item_id=2002,
+                request_dto=extend_dto,
+                user_email="test@user.com",
+            )
+            ext_kwargs = mock_vertex_client.interactions.create.call_args[1]
+            assert "previous_interaction_id" not in ext_kwargs
+            assert ext_kwargs["extra_body"] == {
+                "generation_config": {"video_config": {"task": "extend"}}
+            }
+            assert ext_kwargs["response_format"] == {
+                "type": "video",
+                "duration": "8s",
+            }
+            assert "aspect_ratio" not in ext_kwargs["response_format"]
+            assert ext_kwargs["input"] == [
+                {
+                    "type": "text",
+                    "text": "Continue the video seamlessly.",
+                },
+                {
+                    "type": "video",
+                    "mime_type": "video/mp4",
+                    "uri": "gs://b/source_33_1.mp4",
+                },
+            ]
+
+            mock_vertex_client.interactions.create.reset_mock()
+            prompted_extend_dto = extend_dto.model_copy(
+                update={"prompt": "Continue camera dolly forward"}
+            )
+            _process_video_in_background(
+                media_item_id=2003,
+                request_dto=prompted_extend_dto,
+                user_email="test@user.com",
+            )
+            prompted_ext_kwargs = (
+                mock_vertex_client.interactions.create.call_args[1]
+            )
+            assert prompted_ext_kwargs["response_format"] == {
+                "type": "video",
+                "duration": "8s",
+            }
+            assert prompted_ext_kwargs["input"] == [
+                {
+                    "type": "text",
+                    "text": "Continue camera dolly forward",
+                },
+                {
+                    "type": "video",
+                    "mime_type": "video/mp4",
+                    "uri": "gs://b/source_33_1.mp4",
+                },
+            ]
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.videos.veo_service.GenAIModelSetup.get_omni_client")
+    @patch("src.videos.veo_service.generate_thumbnail")
+    def test_process_video_in_background_turn2_with_extra_refs_runs_turn1_r2v(
+        self,
+        mock_thumb,
+        mock_omni_client_init,
+        mock_worker_db_class,
+    ):
+        from src.common.schema.media_item_model import (
+            MediaItemModel,
+            MimeTypeEnum,
+        )
+
+        mock_db_context = AsyncMock()
+        mock_db_factory = MagicMock(return_value=mock_db_context)
+        mock_worker_db_class.return_value.__aenter__.return_value = (
+            mock_db_factory
+        )
+
+        mock_vertex_client = MagicMock()
+        mock_omni_client_init.return_value = mock_vertex_client
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interaction-t1-r2v"
+        mock_step = MagicMock()
+        mock_step.type = "model_output"
+        mock_content = MagicMock()
+        mock_content.type = "video"
+        mock_content.data = "ZmFrZS1vbW5pLXZpZGVvLWJ5dGVz"
+        mock_content.mime_type = "video/mp4"
+        mock_step.content = [mock_content]
+        mock_interaction.steps = [mock_step]
+        mock_vertex_client.interactions.create.return_value = mock_interaction
+        mock_thumb.return_value = "/tmp/thumbnails/thumb.png"
+
+        with (
+            patch(
+                "src.videos.veo_service.MediaRepository"
+            ) as mock_media_repo_class,
+            patch(
+                "src.videos.veo_service.SourceAssetRepository"
+            ) as mock_source_repo_class,
+            patch("src.videos.veo_service.GcsService") as mock_gcs_class,
+        ):
+            mock_media_repo = AsyncMock()
+            mock_media_repo_class.return_value = mock_media_repo
+            mock_source_repo = AsyncMock()
+            mock_source_repo_class.return_value = mock_source_repo
+            mock_gcs_class.return_value.upload_file_to_gcs.return_value = (
+                "gs://bucket/out.mp4"
+            )
+
+            asset_img = MagicMock()
+            asset_img.gcs_uri = "gs://b/logo.png"
+            asset_img.mime_type = "image/png"
+            mock_source_repo.get_by_id.return_value = asset_img
+
+            media_33 = MediaItemModel(
+                id=33,
+                workspace_id=1,
+                user_id=1,
+                user_email="t@t.com",
+                mime_type=MimeTypeEnum.VIDEO_MP4,
+                model=GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+                aspect_ratio="16:9",
+                gcs_uris=["gs://b/source_33_0.mp4"],
+                thumbnail_uris=[],
+                raw_data={
+                    "interaction_id": "prev-1",
+                    "signature": "sig-1",
+                    "interactions": [
+                        {"interaction_id": "prev-1", "signature": "sig-1"}
+                    ],
+                },
+            )
+            mock_media_repo.get_by_id.return_value = media_33
+
+            turn2_plus_img_dto = CreateVeoDto(
+                workspace_id=1,
+                prompt="Add this logo to the scene",
+                generation_model=GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+                aspect_ratio="16:9",
+                duration_seconds=8,
+                parent_media_item_id=33,
+                reference_images=[{"asset_id": 91, "reference_type": "ASSET"}],
+            )
+            _process_video_in_background(
+                media_item_id=2003,
+                request_dto=turn2_plus_img_dto,
+                user_email="test@user.com",
+            )
+            t2_fallback_kwargs = (
+                mock_vertex_client.interactions.create.call_args[1]
+            )
+            assert "previous_interaction_id" not in t2_fallback_kwargs
+            assert t2_fallback_kwargs["extra_body"] == {
+                "generation_config": {
+                    "video_config": {"task": "reference_to_video"}
+                }
+            }
+            input_uris = [
+                item.get("uri")
+                for item in t2_fallback_kwargs["input"]
+                if "uri" in item
+            ]
+            assert "gs://b/logo.png" in input_uris
+            assert "gs://b/source_33_0.mp4" in input_uris
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.videos.veo_service.GenAIModelSetup.get_omni_client")
+    @patch("src.videos.veo_service.generate_thumbnail")
+    def test_process_video_in_background_fails_cleanly_on_invalid_source_video(
+        self,
+        mock_thumb,
+        mock_omni_client_init,
+        mock_worker_db_class,
+    ):
+        from src.common.schema.media_item_model import (
+            JobStatusEnum,
+            MediaItemModel,
+            MimeTypeEnum,
+        )
+
+        mock_db_context = AsyncMock()
+        mock_db_factory = MagicMock(return_value=mock_db_context)
+        mock_worker_db_class.return_value.__aenter__.return_value = (
+            mock_db_factory
+        )
+
+        mock_vertex_client = MagicMock()
+        mock_omni_client_init.return_value = mock_vertex_client
+
+        with (
+            patch(
+                "src.videos.veo_service.MediaRepository"
+            ) as mock_media_repo_class,
+            patch("src.videos.veo_service.SourceAssetRepository"),
+            patch("src.videos.veo_service.GcsService"),
+        ):
+            mock_media_repo = AsyncMock()
+            mock_media_repo_class.return_value = mock_media_repo
+
+            media_33 = MediaItemModel(
+                id=33,
+                workspace_id=1,
+                user_id=1,
+                user_email="t@t.com",
+                mime_type=MimeTypeEnum.VIDEO_MP4,
+                model=GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+                aspect_ratio="16:9",
+                gcs_uris=["gs://b/source_33_0.mp4", "gs://b/source_33_1.mp4"],
+                thumbnail_uris=[],
+                raw_data={
+                    "interaction_id": "prev-1",
+                    "signature": "sig-1",
+                    "interactions": [
+                        {"interaction_id": "prev-1", "signature": "sig-1"}
+                    ],
+                },
+            )
+            mock_media_repo.get_by_id.return_value = media_33
+
+            bad_extend_dto = CreateVeoDto(
+                workspace_id=1,
+                prompt="Extend this clip",
+                generation_model=GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+                aspect_ratio="16:9",
+                duration_seconds=8,
+                source_video_asset_id={
+                    "id": 33,
+                    "type": "media_item",
+                    "index": 9,
+                },
+                parent_media_item_id=33,
+            )
+            _process_video_in_background(
+                media_item_id=2004,
+                request_dto=bad_extend_dto,
+                user_email="test@user.com",
+            )
+            mock_vertex_client.interactions.create.assert_not_called()
+            failed_update = mock_media_repo.update.call_args[0][1]
+            assert failed_update["status"] == JobStatusEnum.FAILED
+            assert "Could not resolve source video" in (
+                failed_update.get("error_message") or ""
+            )

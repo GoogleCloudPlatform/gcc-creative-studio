@@ -379,6 +379,32 @@ describe('WorkflowMagneticUtil', () => {
       expect(getMaxAllowedInputs('input_images', 'veo-3.1-generate-001')).toBe(
         3,
       );
+      // gemini-omni-1.1-flash-preview has maxReferenceImages: 5
+      expect(
+        getMaxAllowedInputs('input_images', 'gemini-omni-1.1-flash-preview'),
+      ).toBe(5);
+      // gemini-omni-1.2-flash has maxReferenceImages: 10
+      expect(getMaxAllowedInputs('input_images', 'gemini-omni-1.2-flash')).toBe(
+        10,
+      );
+    });
+
+    it('should return model capabilities maxReferenceVideos for input_video on VIDEO models', () => {
+      expect(getMaxAllowedInputs('input_video', 'gemini-omni-1.2-flash')).toBe(
+        3,
+      );
+      expect(
+        getMaxAllowedInputs('input_video', 'gemini-omni-1.1-flash-preview'),
+      ).toBe(3);
+      expect(getMaxAllowedInputs('input_video', 'veo-3.1-generate-001')).toBe(
+        0,
+      );
+      expect(
+        getMaxAllowedInputs('input_video', 'gemini-omni-flash-preview'),
+      ).toBe(0);
+      expect(getMaxAllowedInputs('source_video', 'gemini-omni-1.2-flash')).toBe(
+        1,
+      );
     });
 
     it('should fallback to 14 for input_images when model is unknown or null', () => {
