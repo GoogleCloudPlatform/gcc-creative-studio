@@ -46,6 +46,12 @@
     >
       Login with Google
     </button>
+    <div
+      *ngIf="errorMessage"
+      class="mt-4 p-3 bg-red-500/20 border border-red-500/40 rounded-lg text-red-200 text-sm font-medium max-w-xs text-center"
+    >
+      {{ errorMessage }}
+    </div>
     <mat-spinner class="mt-5" [diameter]="50" *ngIf="this.loader"></mat-spinner>
   </div>
 
@@ -79,6 +85,12 @@
         >
           Login with Google
         </button>
+        <div
+          *ngIf="errorMessage"
+          class="mt-4 p-3 bg-red-500/20 border border-red-500/40 rounded-lg text-red-200 text-sm font-medium max-w-xs text-center"
+        >
+          {{ errorMessage }}
+        </div>
         <mat-spinner
           class="mt-5 m-auto"
           [diameter]="50"

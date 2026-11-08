@@ -1107,12 +1107,25 @@ import_legacy_database() {
 update_oauth_client() {
     step 11 "Configuring OAuth Client URIs"; cd "$REPO_ROOT"
     if [ -z "$AUTO_OAUTH_CLIENT_ID" ]; then warn "Could not find OAuth Client ID automatically. Skipping URI update."; return; fi
-    info "Fetching full OAuth client name..."; local OAUTH_CLIENT_FULL_NAME=$( (gcloud iap oauth-clients list "$GCP_PROJECT_ID" --format="json" 2>/dev/null || echo "[]") | jq -r --arg clientid "$AUTO_OAUTH_CLIENT_ID" 'try (.[]? | select(.name | contains($clientid)) | .name) catch ""' 2>/dev/null || echo "" )
-    if [ -z "$OAUTH_CLIENT_FULL_NAME" ]; then warn "Could not resolve the full name for the OAuth client. Skipping URI update."; return; fi
-    info "Ensuring OAuth Client has all required origins and redirect URIs..."; local PROJECT_DOMAIN_BASE=$(gcloud projects describe "$GCP_PROJECT_ID" --format='value(projectId)')
+    local PROJECT_DOMAIN_BASE=$(gcloud projects describe "$GCP_PROJECT_ID" --format='value(projectId)')
     local FIREBASEAPP_ORIGIN="https://${PROJECT_DOMAIN_BASE}.firebaseapp.com"; local WEBAPP_ORIGIN="https://${PROJECT_DOMAIN_BASE}.web.app"
     local FIREBASEAPP_REDIRECT_URI="${FIREBASEAPP_ORIGIN}/__/auth/handler"; local WEBAPP_REDIRECT_URI="${WEBAPP_ORIGIN}/__/auth/handler"
-    gcloud iap oauth-clients update "$OAUTH_CLIENT_FULL_NAME" --add-javascript-origins="$FIREBASEAPP_ORIGIN" --add-javascript-origins="$WEBAPP_ORIGIN" --add-redirect-uris="$FIREBASEAPP_REDIRECT_URI" --add-redirect-uris="$WEBAPP_REDIRECT_URI" --project="$GCP_PROJECT_ID" --quiet
+    info "Fetching full OAuth client name..."; local OAUTH_CLIENT_FULL_NAME=$( (gcloud iap oauth-clients list "$GCP_PROJECT_ID" --format="json" 2>/dev/null || echo "[]") | jq -r --arg clientid "$AUTO_OAUTH_CLIENT_ID" 'try (.[]? | select(.name | contains($clientid)) | .name) catch ""' 2>/dev/null || echo "" )
+    if [ -z "$OAUTH_CLIENT_FULL_NAME" ]; then
+        warn "Could not resolve the full name for the OAuth client via IAP API. Standard GCP Web Clients must be updated manually in Google Cloud Console."
+        echo -e "${C_YELLOW}Please ensure your OAuth 2.0 Web Client (ID: ${AUTO_OAUTH_CLIENT_ID}) has:${C_RESET}"
+        echo -e "  ${C_CYAN}Authorized JavaScript Origins:${C_RESET}"
+        echo -e "    - ${FIREBASEAPP_ORIGIN}"
+        echo -e "    - ${WEBAPP_ORIGIN}"
+        echo -e "  ${C_CYAN}Authorized Redirect URIs:${C_RESET}"
+        echo -e "    - ${FIREBASEAPP_REDIRECT_URI}"
+        echo -e "    - ${WEBAPP_REDIRECT_URI}"
+        echo -e "    - ${FIREBASEAPP_ORIGIN}/login"
+        echo -e "    - ${WEBAPP_ORIGIN}/login"
+        return
+    fi
+    info "Ensuring OAuth Client has all required origins and redirect URIs..."
+    gcloud iap oauth-clients update "$OAUTH_CLIENT_FULL_NAME" --add-javascript-origins="$FIREBASEAPP_ORIGIN" --add-javascript-origins="$WEBAPP_ORIGIN" --add-redirect-uris="$FIREBASEAPP_REDIRECT_URI" --add-redirect-uris="$WEBAPP_REDIRECT_URI" --add-redirect-uris="${FIREBASEAPP_ORIGIN}/login" --add-redirect-uris="${WEBAPP_ORIGIN}/login" --project="$GCP_PROJECT_ID" --quiet
     success "OAuth Client URIs configured automatically."
 }
 

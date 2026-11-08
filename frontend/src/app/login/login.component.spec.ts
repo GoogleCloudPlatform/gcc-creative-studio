@@ -42,6 +42,12 @@ class MockAuthService {
   signInForGoogleIdentityPlatform = jasmine.createSpy(
     'signInForGoogleIdentityPlatform',
   );
+  completeGoogleOidcRedirect$ = jasmine.createSpy(
+    'completeGoogleOidcRedirect$',
+  );
+  hasPendingOidcRedirect = jasmine
+    .createSpy('hasPendingOidcRedirect')
+    .and.returnValue(false);
   // Add any other methods from AuthService that are called in LoginComponent
 }
 
@@ -85,7 +91,20 @@ describe('LoginComponent', () => {
       ],
     }).compileComponents();
 
-    setAppInjector(TestBed.inject(Injector));
+    notificationService = TestBed.inject(
+      NotificationService,
+    ) as jasmine.SpyObj<NotificationService>;
+
+    if (AppInjector) {
+      spyOn(AppInjector, 'get').and.callFake((token: any) => {
+        if (token === NotificationService) {
+          return notificationService;
+        }
+        return null as any;
+      });
+    } else {
+      setAppInjector(TestBed.inject(Injector));
+    }
 
     fixture = TestBed.createComponent(LoginComponent);
     component = fixture.componentInstance;
@@ -95,13 +114,95 @@ describe('LoginComponent', () => {
     router = TestBed.inject(Router);
     ngZone = TestBed.inject(NgZone);
     snackBar = TestBed.inject(MatSnackBar) as jasmine.SpyObj<MatSnackBar>;
-    notificationService = TestBed.inject(
-      NotificationService,
-    ) as jasmine.SpyObj<NotificationService>;
   });
 
   it('should create the component', () => {
     expect(component).toBeTruthy();
+  });
+
+  describe('ngOnInit (OIDC redirect callback handling)', () => {
+    it('should not call completeGoogleOidcRedirect$ if hash has neither id_token nor error', () => {
+      (component as any).initialOidcHash = '';
+      authService.completeGoogleOidcRedirect$.calls.reset();
+
+      component.ngOnInit();
+
+      expect(authService.completeGoogleOidcRedirect$).not.toHaveBeenCalled();
+    });
+
+    it('should call completeGoogleOidcRedirect$ and navigate to home when id_token is present in hash', fakeAsync(() => {
+      const fakeHash = '#id_token=fake-token&token_type=Bearer';
+      (component as any).initialOidcHash = fakeHash;
+      authService.completeGoogleOidcRedirect$.and.returnValue(of('fake-token'));
+      spyOn(router, 'navigate');
+
+      component.ngOnInit();
+      tick();
+
+      expect(authService.completeGoogleOidcRedirect$).toHaveBeenCalledWith(
+        fakeHash,
+      );
+      expect(component.loader).toBeFalse();
+      expect(router.navigate).toHaveBeenCalledWith(['/']);
+    }));
+
+    it('should call completeGoogleOidcRedirect$ and handle login error when error is present in hash', fakeAsync(() => {
+      spyOn(console, 'error');
+      const fakeHash = '#error=access_denied&error_description=Consent+denied';
+      const oidcError = new Error('Consent denied');
+      (component as any).initialOidcHash = fakeHash;
+      authService.completeGoogleOidcRedirect$.and.returnValue(
+        throwError(() => oidcError),
+      );
+      spyOn(component as any, 'handleLoginError');
+
+      component.ngOnInit();
+      tick();
+
+      expect(authService.completeGoogleOidcRedirect$).toHaveBeenCalledWith(
+        fakeHash,
+      );
+      expect(component.loader).toBeFalse();
+      expect((component as any).handleLoginError).toHaveBeenCalledWith(
+        oidcError,
+      );
+    }));
+
+    it('should fall back to router fragment if initialOidcHash and window.location.hash are empty', fakeAsync(() => {
+      (component as any).initialOidcHash = '';
+      spyOn(router, 'parseUrl').and.returnValue({
+        fragment: 'id_token=router-token&token_type=Bearer',
+      } as any);
+      authService.completeGoogleOidcRedirect$.and.returnValue(
+        of('router-token'),
+      );
+      spyOn(router, 'navigate');
+
+      component.ngOnInit();
+      tick();
+
+      expect(authService.completeGoogleOidcRedirect$).toHaveBeenCalledWith(
+        '#id_token=router-token&token_type=Bearer',
+      );
+      expect(component.loader).toBeFalse();
+      expect(router.navigate).toHaveBeenCalledWith(['/']);
+    }));
+
+    it('should complete redirect when authService.hasPendingOidcRedirect() is true even if hash is empty', fakeAsync(() => {
+      (component as any).initialOidcHash = '';
+      authService.hasPendingOidcRedirect.and.returnValue(true);
+      authService.completeGoogleOidcRedirect$.and.returnValue(
+        of('cached-token'),
+      );
+      spyOn(router, 'navigate');
+
+      component.ngOnInit();
+      tick();
+
+      expect(authService.completeGoogleOidcRedirect$).toHaveBeenCalled();
+      expect(component.loader).toBeFalse();
+      expect(router.navigate).toHaveBeenCalledWith(['/']);
+    }));
   });
 
   describe('loginWithGoogle', () => {
@@ -234,6 +335,8 @@ describe('LoginComponent', () => {
       component['handleLoginError'](errorMessage);
 
       expect(component.loader).toBeFalse();
+      expect(component.invalidLogin).toBeTrue();
+      expect(component.errorMessage).toEqual(errorMessage.message);
       expect(notificationService.show).toHaveBeenCalledWith(
         errorMessage.message,
         'error',
