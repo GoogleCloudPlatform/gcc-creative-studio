@@ -165,9 +165,16 @@ export class WorkflowFormService {
     const stepData = existingData || this.generateDefaultStepData(type);
 
     // Ensure inputs/outputs/settings are objects
+    const rawInputs = {...(stepData.inputs || {})};
+    if (
+      stepData.type === NodeTypes.GENERATE_VIDEO &&
+      'input_audio' in rawInputs
+    ) {
+      delete rawInputs['input_audio'];
+    }
     const safeStepData = {
       ...stepData,
-      inputs: stepData.inputs || {},
+      inputs: rawInputs,
       outputs: stepData.outputs || {},
       settings: stepData.settings || {},
     };

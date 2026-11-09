@@ -39,6 +39,8 @@ import {ConfirmationDialogComponent} from '../../common/components/confirmation-
 import {WorkspaceStateService} from '../../services/workspace/workspace-state.service';
 import {FolderService} from '../../common/services/folder.service';
 import {FolderBreadcrumb} from '../../common/models/folder.model';
+import {MODEL_CONFIGS} from '../../common/config/model-config';
+import {DEFAULT_OMNI_MODEL} from '../../services/video-state.service';
 
 /**
  * One segment of the location trail shown above the media details.
@@ -499,36 +501,35 @@ export class MediaDetailComponent implements OnDestroy {
 
     const index = event.selectedIndex;
     const mime = this.mediaItem.mimeType || '';
-    const isAudio = mime.startsWith('audio/');
+    if (mime.startsWith('audio/')) {
+      return;
+    }
 
-    const remixState: any = {
-      parentMediaItemId: this.mediaItem.id,
-      parentMediaIndex: index,
-      generationModel: 'gemini-omni',
-      isOmniMode: true,
+    const itemModelConfig = MODEL_CONFIGS.find(
+      cfg => cfg.type === 'VIDEO' && cfg.value === this.mediaItem?.model,
+    );
+    const activeOmniModel =
+      (itemModelConfig?.capabilities.maxReferenceVideos ?? 0) > 0
+        ? itemModelConfig!.value
+        : DEFAULT_OMNI_MODEL;
+
+    const videoRef = {
+      id: this.mediaItem.id,
+      type: this.mediaItem.itemType || 'media_item',
+      index: index,
+      previewUrl:
+        this.mediaItem.presignedThumbnailUrls?.[index] ||
+        this.mediaItem.presignedUrls?.[index] ||
+        '',
     };
 
-    if (isAudio) {
-      remixState.referenceAudio = {
-        id: this.mediaItem.id,
-        type: this.mediaItem.itemType || 'media_item',
-        index: index,
-        name:
-          this.mediaItem.originalPrompt || `Audio Input ${this.mediaItem.id}`,
-      };
-    } else {
-      remixState.referenceVideo = {
-        id: this.mediaItem.id,
-        type: this.mediaItem.itemType || 'media_item',
-        index: index,
-        name:
-          this.mediaItem.originalPrompt || `Video Input ${this.mediaItem.id}`,
-        previewUrl:
-          this.mediaItem.presignedThumbnailUrls?.[index] ||
-          this.mediaItem.presignedUrls?.[index] ||
-          '',
-      };
-    }
+    const remixState = {
+      parentMediaItemId: this.mediaItem.id,
+      parentMediaIndex: index,
+      generationModel: activeOmniModel,
+      isOmniMode: true,
+      referenceVideos: [videoRef],
+    };
 
     const navigationExtras: NavigationExtras = {
       state: {remixState},
@@ -568,13 +569,22 @@ export class MediaDetailComponent implements OnDestroy {
       role: 'video_extension_source',
     };
 
+    const currentModelConfig = MODEL_CONFIGS.find(
+      m => m.type === 'VIDEO' && m.value === this.mediaItem?.model,
+    );
+    const supportsExtend =
+      currentModelConfig?.capabilities.supportedModes.includes('Extend Video');
+    const extendModel =
+      supportsExtend && currentModelConfig
+        ? currentModelConfig.value
+        : DEFAULT_OMNI_MODEL;
+
     const remixState = {
-      prompt: this.mediaItem.prompt,
       sourceMediaItems: [sourceMediaItem],
-      // Since it's a video, we can use the thumbnail as a preview.
       startImagePreviewUrl:
-        this.mediaItem.presignedThumbnailUrls?.[event.selectedIndex],
-      generationModel: 'veo-3.1-generate-001', // Switch to Veo 3.1 for video input
+        this.mediaItem.presignedThumbnailUrls?.[event.selectedIndex] ||
+        this.mediaItem.presignedUrls?.[event.selectedIndex],
+      generationModel: extendModel,
     };
 
     const navigationExtras: NavigationExtras = {

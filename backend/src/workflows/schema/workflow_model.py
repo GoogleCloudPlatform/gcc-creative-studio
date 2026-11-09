@@ -199,6 +199,7 @@ class GenerateVideoInputs(BaseModel):
     input_audio: WorkflowInputItem | None = None
     start_frame: WorkflowInputItem | None = None
     end_frame: WorkflowInputItem | None = None
+    source_video: WorkflowInputItem | None = None
 
 
 class GenerateVideoSettings(BaseModel):

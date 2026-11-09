@@ -325,8 +325,8 @@ async def test_generate_video(service):
         _, kwargs = service.mock_rest_client.post.call_args
         assert kwargs["json"]["aspect_ratio"] == "16:9"
         assert kwargs["json"]["duration_seconds"] == 6
-        assert kwargs["json"]["reference_video"] is None
-        assert kwargs["json"]["reference_audio"] is None
+        assert kwargs["json"]["reference_videos"] is None
+        assert "reference_audio" not in kwargs["json"]
         mock_poll.assert_called_once_with(777, None)
 
 
@@ -364,20 +364,28 @@ async def test_generate_vertical_video(service):
 
 
 @pytest.mark.anyio
-async def test_generate_video_with_reference_video_and_audio(service):
+async def test_generate_video_with_multi_reference_videos_and_ignored_audio(
+    service,
+):
     request = MagicMock()
     request.workspace_id = 1
-    request.inputs.prompt = "A running dog with music"
+    request.inputs.prompt = "A running dog with multi video refs"
     request.inputs.input_images = None
-    request.inputs.input_video = 888  # Media item ID from upstream step
-    request.inputs.input_audio = 999  # Media item ID from upstream step
+    request.inputs.input_video = [
+        [888, 889],
+        890,
+        891,
+    ]  # Nested loop + capped at 3
+    request.inputs.input_audio = 999  # Legacy field ignored
     request.inputs.start_frame = None
     request.inputs.end_frame = None
-    request.config.model = "gemini-omni-generate-preview"
+    request.inputs.source_video = None
+    request.config.model = "gemini-omni-1.2-flash"
     request.config.aspect_ratio = "16:9"
     request.config.brand_guidelines = False
-    request.config.resolution = "1K"
+    request.config.resolution = "4K"  # Forced down to 1K for Omni
     request.config.duration_seconds = 8
+    request.config.input_mode = "Ingredients to Video"
     request.config.output_folder_id = None
 
     service.mock_rest_client.post.return_value = Response(
@@ -394,21 +402,18 @@ async def test_generate_video_with_reference_video_and_audio(service):
         service.mock_rest_client.post.assert_called_once()
         _, kwargs = service.mock_rest_client.post.call_args
         assert kwargs["json"]["aspect_ratio"] == "16:9"
-        assert kwargs["json"]["reference_video"] == {
-            "id": 888,
-            "type": "media_item",
-            "index": 0,
-        }
-        assert kwargs["json"]["reference_audio"] == {
-            "id": 999,
-            "type": "media_item",
-            "index": 0,
-        }
+        assert kwargs["json"]["resolution"] == "1K"
+        assert kwargs["json"]["reference_videos"] == [
+            {"id": 888, "type": "media_item", "index": 0},
+            {"id": 889, "type": "media_item", "index": 0},
+            {"id": 890, "type": "media_item", "index": 0},
+        ]
+        assert "reference_audio" not in kwargs["json"]
         mock_poll.assert_called_once_with(1234, None)
 
 
 @pytest.mark.anyio
-async def test_generate_video_with_source_asset_video_and_audio(service):
+async def test_generate_video_with_source_asset_video_and_extend_mode(service):
     from src.workflows.schema.workflow_model import (
         ReferenceMediaOrAsset,
         SourceMediaItemLink,
@@ -417,27 +422,31 @@ async def test_generate_video_with_source_asset_video_and_audio(service):
     video_ref = ReferenceMediaOrAsset(
         previewUrl="https://example.com/vid.mp4",
         sourceMediaItem=SourceMediaItemLink(
-            mediaItemId=501, mediaIndex=1, role="video_reference_asset"
+            mediaItemId=501, mediaIndex=1, role="video_reference"
         ),
     )
-    audio_ref = ReferenceMediaOrAsset(
-        previewUrl="https://example.com/aud.mp3",
+    extend_ref = ReferenceMediaOrAsset(
+        previewUrl="https://example.com/ext.mp4",
         sourceAssetId=601,
     )
 
     request = MagicMock()
     request.workspace_id = 1
-    request.inputs.prompt = "A cinematic shot"
-    request.inputs.input_images = None
+    request.inputs.prompt = "Continue the cinematic shot"
+    request.inputs.input_images = [
+        111
+    ]  # Ignored when Extend Video is inferred/set
     request.inputs.input_video = video_ref
-    request.inputs.input_audio = audio_ref
+    request.inputs.input_audio = None
     request.inputs.start_frame = None
     request.inputs.end_frame = None
-    request.config.model = "gemini-omni-generate-preview"
+    request.inputs.source_video = extend_ref
+    request.config.model = "gemini-omni-1.1-flash-preview"
     request.config.aspect_ratio = "16:9"
     request.config.brand_guidelines = False
     request.config.resolution = "1K"
     request.config.duration_seconds = 8
+    request.config.input_mode = None  # Legacy unset mode infers Extend Video
     request.config.output_folder_id = None
 
     service.mock_rest_client.post.return_value = Response(
@@ -452,17 +461,15 @@ async def test_generate_video_with_source_asset_video_and_audio(service):
         result = await service.generate_video(request)
         assert result["generated_video"] == 5678
         _, kwargs = service.mock_rest_client.post.call_args
-        assert kwargs["json"]["aspect_ratio"] == "16:9"
-        assert kwargs["json"]["reference_video"] == {
-            "id": 501,
-            "type": "media_item",
-            "index": 1,
-        }
-        assert kwargs["json"]["reference_audio"] == {
+        assert kwargs["json"]["source_video_asset_id"] == {
             "id": 601,
             "type": "source_asset",
             "index": 0,
         }
+        assert kwargs["json"]["reference_videos"] is None
+        assert kwargs["json"]["reference_images"] == []
+        assert kwargs["json"]["source_media_items"] == []
+        assert "reference_audio" not in kwargs["json"]
         mock_poll.assert_called_once_with(5678, None)
 
 
@@ -476,10 +483,12 @@ async def test_generate_video_skips_unsupported_references_for_veo(service):
     request.inputs.input_audio = 999  # Leftover/disabled in UI
     request.inputs.start_frame = None
     request.inputs.end_frame = None
+    request.inputs.source_video = None
     request.config.model = "veo-3.1-generate-001"
     request.config.brand_guidelines = False
     request.config.resolution = "1K"
     request.config.duration_seconds = 8
+    request.config.input_mode = None
     request.config.output_folder_id = None
 
     service.mock_rest_client.post.return_value = Response(
@@ -494,9 +503,8 @@ async def test_generate_video_skips_unsupported_references_for_veo(service):
         result = await service.generate_video(request)
         assert result["generated_video"] == 9999
         _, kwargs = service.mock_rest_client.post.call_args
-        # Verify references were skipped (None) for Veo model
-        assert kwargs["json"]["reference_video"] is None
-        assert kwargs["json"]["reference_audio"] is None
+        assert kwargs["json"]["reference_videos"] is None
+        assert "reference_audio" not in kwargs["json"]
         mock_poll.assert_called_once_with(9999, None)
 
 
@@ -504,8 +512,10 @@ async def test_generate_video_skips_unsupported_references_for_veo(service):
 @pytest.mark.parametrize(
     "model, expect_refs",
     [
+        ("gemini-omni-1.2-flash", True),
         ("gemini-omni-1.1-flash-preview", True),
-        ("gemini-omni-flash-preview", True),
+        ("gemini-omni-flash-preview", False),
+        ("gemini-omni-generate-preview", False),
         ("not-a-real-model", False),
     ],
 )
@@ -514,17 +524,19 @@ async def test_generate_video_reference_passthrough_by_model(
 ):
     request = MagicMock()
     request.workspace_id = 1
-    request.inputs.prompt = "A running dog with music"
+    request.inputs.prompt = "A running dog"
     request.inputs.input_images = None
     request.inputs.input_video = 888
     request.inputs.input_audio = 999
     request.inputs.start_frame = None
     request.inputs.end_frame = None
+    request.inputs.source_video = None
     request.config.model = model
     request.config.aspect_ratio = "16:9"
     request.config.brand_guidelines = False
     request.config.resolution = "1K"
     request.config.duration_seconds = 8
+    request.config.input_mode = None
     request.config.output_folder_id = None
 
     service.mock_rest_client.post.return_value = Response(
@@ -538,20 +550,191 @@ async def test_generate_video_reference_passthrough_by_model(
     ):
         await service.generate_video(request)
         _, kwargs = service.mock_rest_client.post.call_args
+        assert "reference_audio" not in kwargs["json"]
         if expect_refs:
-            assert kwargs["json"]["reference_video"] == {
-                "id": 888,
-                "type": "media_item",
-                "index": 0,
-            }
-            assert kwargs["json"]["reference_audio"] == {
-                "id": 999,
-                "type": "media_item",
-                "index": 0,
-            }
+            assert kwargs["json"]["reference_videos"] == [
+                {
+                    "id": 888,
+                    "type": "media_item",
+                    "index": 0,
+                }
+            ]
         else:
-            assert kwargs["json"]["reference_video"] is None
-            assert kwargs["json"]["reference_audio"] is None
+            assert kwargs["json"]["reference_videos"] is None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "input_mode, input_images, start_frame, end_frame, source_video, configured_duration, expected_duration",
+    [
+        ("Ingredients to Video", [101], None, None, None, 15, 10),
+        ("Extend Video", None, None, None, 202, 15, 10),
+        ("Frames to Video", None, None, 303, None, 15, 10),
+        ("Frames to Video", None, 301, 303, None, 12, 10),
+        ("Frames to Video", None, 301, None, None, 15, 15),
+        ("Text to Video", None, None, None, None, 15, 15),
+        ("Text to Video", None, None, None, None, 2, 3),
+    ],
+)
+async def test_generate_video_clamps_legacy_omni_durations(
+    service,
+    input_mode,
+    input_images,
+    start_frame,
+    end_frame,
+    source_video,
+    configured_duration,
+    expected_duration,
+):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "A dramatic cinematic sweep"
+    request.inputs.input_images = input_images
+    request.inputs.input_video = None
+    request.inputs.input_audio = None
+    request.inputs.start_frame = start_frame
+    request.inputs.end_frame = end_frame
+    request.inputs.source_video = source_video
+    request.config.model = "gemini-omni-1.2-flash"
+    request.config.aspect_ratio = "16:9"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+    request.config.duration_seconds = configured_duration
+    request.config.input_mode = input_mode
+    request.config.output_folder_id = None
+
+    service.mock_rest_client.post.return_value = Response(
+        200, json={"id": 6060}
+    )
+
+    with patch.object(
+        service,
+        "_poll_job_status",
+        AsyncMock(return_value=True),
+    ):
+        await service.generate_video(request)
+        _, kwargs = service.mock_rest_client.post.call_args
+        assert kwargs["json"]["duration_seconds"] == expected_duration
+
+
+@pytest.mark.anyio
+async def test_generate_video_extend_mode_requires_source_video(service):
+    from fastapi import HTTPException
+
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "Continue the scene"
+    request.inputs.input_images = None
+    request.inputs.input_video = None
+    request.inputs.input_audio = None
+    request.inputs.start_frame = None
+    request.inputs.end_frame = None
+    request.inputs.source_video = None
+    request.config.model = "gemini-omni-1.2-flash"
+    request.config.aspect_ratio = "16:9"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+    request.config.duration_seconds = 8
+    request.config.input_mode = "Extend Video"
+    request.config.output_folder_id = None
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.generate_video(request)
+    assert exc_info.value.status_code == 400
+    assert "Source video is required" in exc_info.value.detail
+    service.mock_rest_client.post.assert_not_called()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("blank_prompt", ["", "   ", None])
+async def test_generate_video_non_extend_requires_non_empty_prompt(
+    service, blank_prompt
+):
+    from fastapi import HTTPException
+
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = blank_prompt
+    request.inputs.input_images = None
+    request.inputs.input_video = None
+    request.inputs.input_audio = None
+    request.inputs.start_frame = None
+    request.inputs.end_frame = None
+    request.inputs.source_video = None
+    request.config.model = "gemini-omni-1.2-flash"
+    request.config.aspect_ratio = "16:9"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+    request.config.duration_seconds = 8
+    request.config.input_mode = "Text to Video"
+    request.config.output_folder_id = None
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.generate_video(request)
+    assert exc_info.value.status_code == 400
+    assert "Prompt is required" in exc_info.value.detail
+    service.mock_rest_client.post.assert_not_called()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "model, input_count, expected_cap",
+    [
+        ("gemini-omni-1.2-flash", 12, 10),
+        ("gemini-omni-1.1-flash-preview", 7, 5),
+        ("veo-3.1-generate-001", 5, 3),
+    ],
+)
+async def test_generate_video_trims_and_deduplicates_reference_images_to_model_cap(
+    service, model, input_count, expected_cap
+):
+    from src.workflows.schema.workflow_model import ReferenceMediaOrAsset
+
+    # Include a duplicate media item (1000) plus mixed source assets
+    raw_images = [1000, 1000] + [1000 + i for i in range(1, input_count - 1)]
+    raw_images.append(
+        ReferenceMediaOrAsset(
+            previewUrl="https://example.com/a.png", sourceAssetId=9001
+        )
+    )
+    raw_images.append(
+        ReferenceMediaOrAsset(
+            previewUrl="https://example.com/b.png", sourceAssetId=9002
+        )
+    )
+
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "Showcase the product lineup"
+    request.inputs.input_images = raw_images
+    request.inputs.input_video = None
+    request.inputs.input_audio = None
+    request.inputs.start_frame = None
+    request.inputs.end_frame = None
+    request.inputs.source_video = None
+    request.config.model = model
+    request.config.aspect_ratio = "16:9"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+    request.config.duration_seconds = 8
+    request.config.input_mode = "Ingredients to Video"
+    request.config.output_folder_id = None
+
+    service.mock_rest_client.post.return_value = Response(
+        200, json={"id": 7070}
+    )
+
+    with patch.object(
+        service,
+        "_poll_job_status",
+        AsyncMock(return_value=True),
+    ):
+        await service.generate_video(request)
+        _, kwargs = service.mock_rest_client.post.call_args
+        submitted_total = len(kwargs["json"]["source_media_items"]) + len(
+            kwargs["json"]["reference_images"]
+        )
+        assert submitted_total == expected_cap
 
 
 def test_map_to_asset_reference_helper(service):

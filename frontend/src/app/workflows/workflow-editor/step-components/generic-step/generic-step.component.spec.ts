@@ -15,6 +15,7 @@
  */
 
 import {NO_ERRORS_SCHEMA} from '@angular/core';
+import {NotificationService} from '../../../../common/services/notification.service';
 import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {
   AbstractControl,
@@ -580,7 +581,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
     });
   });
 
-  describe('Video Node Ingredients Mode Reference Ports', () => {
+  describe('Video Node Ingredients & Extend Mode Ports', () => {
     let videoStepForm: FormGroup;
 
     beforeEach(() => {
@@ -592,7 +593,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
           prompt: ['A dramatic movie scene'],
           input_images: [null],
           input_video: [null],
-          input_audio: [null],
+          source_video: [null],
           start_frame: [null],
           end_frame: [null],
         }),
@@ -613,10 +614,100 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       component.ngOnInit();
     });
 
-    it('should hide and disable input_video and input_audio when input_mode is Text to Video', () => {
+    describe('reference trimming notices on model change', () => {
+      let showSpy: jasmine.Spy;
+
+      beforeEach(() => {
+        videoStepForm.get('settings.model')?.setValue('gemini-omni-1.2-flash');
+        showSpy = spyOn(TestBed.inject(NotificationService), 'show');
+      });
+
+      it('should notify once when switching to a model without video reference support', () => {
+        videoStepForm
+          .get('inputs.input_video')
+          ?.setValue({step: 'v1', output: 'generated_video'});
+
+        videoStepForm.get('settings.model')?.setValue('veo-3.1-generate-001');
+
+        expect(videoStepForm.get('inputs.input_video')?.value).toBeNull();
+        expect(showSpy).toHaveBeenCalledTimes(1);
+        expect(showSpy.calls.mostRecent().args[0]).toBe(
+          'Removed the reference video(s) because Veo 3.1 does not support video references.',
+        );
+      });
+
+      it('should notify about excess reference images trimmed to the new model limit', () => {
+        videoStepForm.get('inputs.input_images')?.setValue(
+          Array.from({length: 6}, (_, i) => ({
+            step: `img_${i}`,
+            output: 'generated_image',
+          })),
+        );
+
+        videoStepForm
+          .get('settings.model')
+          ?.setValue('gemini-omni-1.1-flash-preview');
+
+        expect(videoStepForm.get('inputs.input_images')?.value.length).toBe(5);
+        expect(showSpy).toHaveBeenCalledTimes(1);
+        expect(showSpy.calls.mostRecent().args[0]).toBe(
+          'Removed 1 excess reference image(s) because Gemini Omni 1.1 Flash supports up to 5.',
+        );
+      });
+
+      it('should not notify when nothing is trimmed on model change', () => {
+        videoStepForm.get('inputs.input_images')?.setValue([
+          {step: 'img_0', output: 'generated_image'},
+          {step: 'img_1', output: 'generated_image'},
+        ]);
+
+        videoStepForm
+          .get('settings.model')
+          ?.setValue('gemini-omni-1.1-flash-preview');
+
+        expect(showSpy).not.toHaveBeenCalled();
+      });
+
+      it('should not notify when trimming a saved step during initial load', () => {
+        const savedStepForm = fb.group({
+          stepId: ['video_step_saved'],
+          type: [NodeTypes.GENERATE_VIDEO],
+          status: ['idle'],
+          inputs: fb.group({
+            prompt: ['A saved scene'],
+            input_images: [
+              Array.from({length: 6}, (_, i) => ({
+                step: `img_${i}`,
+                output: 'generated_image',
+              })),
+            ],
+            input_video: [{step: 'v1', output: 'generated_video'}],
+          }),
+          settings: fb.group({
+            model: ['veo-3.1-generate-001'],
+            input_mode: ['Ingredients to Video'],
+            duration_seconds: [8],
+          }),
+          outputs: fb.group({
+            generated_video: [{type: 'video'}],
+          }),
+        });
+
+        component.stepForm = savedStepForm;
+        component.ngOnInit();
+
+        expect(savedStepForm.get('inputs.input_images')?.value?.length).toBe(3);
+        expect(showSpy).not.toHaveBeenCalled();
+      });
+    });
+
+    it('should hide and disable input_video, input_images, and source_video in Text to Video and never expose input_audio', () => {
       fixture.detectChanges();
       const inputVideo = component.localConfig.inputs.find(
         i => i.name === 'input_video',
+      );
+      const sourceVideo = component.localConfig.inputs.find(
+        i => i.name === 'source_video',
       );
       const inputAudio = component.localConfig.inputs.find(
         i => i.name === 'input_audio',
@@ -625,11 +716,12 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         i => i.name === 'input_images',
       );
 
+      expect(inputAudio).toBeUndefined();
       expect(inputVideo?.hidden).toBeTrue();
-      expect(inputAudio?.hidden).toBeTrue();
+      expect(sourceVideo?.hidden).toBeTrue();
       expect(inputImages?.hidden).toBeTrue();
       expect(videoStepForm.get('inputs.input_video')?.disabled).toBeTrue();
-      expect(videoStepForm.get('inputs.input_audio')?.disabled).toBeTrue();
+      expect(videoStepForm.get('inputs.source_video')?.disabled).toBeTrue();
       expect(videoStepForm.get('inputs.input_images')?.disabled).toBeTrue();
 
       expect(
@@ -642,11 +734,14 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         fixture.nativeElement.querySelector('[data-port-name="input_audio"]'),
       ).toBeNull();
       expect(
+        fixture.nativeElement.querySelector('[data-port-name="source_video"]'),
+      ).toBeNull();
+      expect(
         fixture.nativeElement.querySelector('[data-port-name="input_images"]'),
       ).toBeNull();
     });
 
-    it('should show input_audio and input_video as disabled with message when video model is not Gemini Omni in Ingredients to Video mode', () => {
+    it('should show input_video as disabled with message when video model does not support video references in Ingredients to Video mode', () => {
       // Model is 'veo-3.1-generate-001'
       videoStepForm
         .get('settings.input_mode')
@@ -656,23 +751,16 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       const inputVideo = component.localConfig.inputs.find(
         i => i.name === 'input_video',
       );
-      const inputAudio = component.localConfig.inputs.find(
-        i => i.name === 'input_audio',
-      );
       const inputImages = component.localConfig.inputs.find(
         i => i.name === 'input_images',
       );
 
       expect(inputVideo?.hidden).toBeFalse();
-      expect(inputAudio?.hidden).toBeFalse();
       expect(inputImages?.hidden).toBeFalse();
       expect(videoStepForm.get('inputs.input_images')?.enabled).toBeTrue();
 
       expect(
         component.getBaseInputs().find(i => i.name === 'input_video')?.hidden,
-      ).toBeFalse();
-      expect(
-        component.getBaseInputs().find(i => i.name === 'input_audio')?.hidden,
       ).toBeFalse();
       expect(
         component.getBaseInputs().find(i => i.name === 'input_images')?.hidden,
@@ -682,7 +770,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       ).not.toBeNull();
       expect(
         fixture.nativeElement.querySelector('[data-port-name="input_audio"]'),
-      ).not.toBeNull();
+      ).toBeNull();
       expect(
         fixture.nativeElement.querySelector('[data-port-name="input_images"]'),
       ).not.toBeNull();
@@ -692,21 +780,6 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       expect(component.getInputDisabledMessage('input_video')).toBe(
         'This model does not support Video as reference',
       );
-
-      // input_audio should be disabled and show message
-      expect(videoStepForm.get('inputs.input_audio')?.disabled).toBeTrue();
-      expect(component.getInputDisabledMessage('input_audio')).toBe(
-        'This model does not support Audio as reference',
-      );
-
-      // Dragging to disabled input_audio should not be compatible
-      component.dragSourcePort = {
-        stepId: 'other_step',
-        outputName: 'generated_audio',
-        type: 'audio',
-      };
-      expect(component.isCompatibleWithActiveDrag(inputAudio!)).toBeFalse();
-      expect(component.isIncompatibleWithActiveDrag(inputAudio!)).toBeTrue();
 
       // Dragging to disabled input_video should not be compatible
       component.dragSourcePort = {
@@ -718,18 +791,13 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       expect(component.isIncompatibleWithActiveDrag(inputVideo!)).toBeTrue();
     });
 
-    it('should show and enable input_audio and input_video when model is Gemini Omni in Ingredients to Video mode', () => {
-      videoStepForm
-        .get('settings.model')
-        ?.setValue('gemini-omni-1.1-flash-preview');
+    it('should show and enable input_video when model is Gemini Omni 1.1 or 1.2 in Ingredients to Video mode', () => {
+      videoStepForm.get('settings.model')?.setValue('gemini-omni-1.2-flash');
       videoStepForm
         .get('settings.input_mode')
         ?.setValue('Ingredients to Video');
       fixture.detectChanges();
 
-      const inputAudio = component.localConfig.inputs.find(
-        i => i.name === 'input_audio',
-      );
       const inputVideo = component.localConfig.inputs.find(
         i => i.name === 'input_video',
       );
@@ -738,27 +806,14 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       expect(videoStepForm.get('inputs.input_video')?.enabled).toBeTrue();
       expect(component.getInputDisabledMessage('input_video')).toBe('');
       expect(component.inputModes['input_video']).toBe('mixed');
-
-      expect(inputAudio?.hidden).toBeFalse();
-      expect(videoStepForm.get('inputs.input_audio')?.enabled).toBeTrue();
-      expect(component.getInputDisabledMessage('input_audio')).toBe('');
-      expect(component.inputModes['input_audio']).toBe('mixed');
+      expect(component.getMaxMediaItems(inputVideo!)).toBe(3);
 
       expect(
         fixture.nativeElement.querySelector('[data-port-name="input_video"]'),
       ).not.toBeNull();
       expect(
         fixture.nativeElement.querySelector('[data-port-name="input_audio"]'),
-      ).not.toBeNull();
-
-      // Dragging to enabled input_audio should be compatible
-      component.dragSourcePort = {
-        stepId: 'other_step',
-        outputName: 'generated_audio',
-        type: 'audio',
-      };
-      expect(component.isCompatibleWithActiveDrag(inputAudio!)).toBeTrue();
-      expect(component.isIncompatibleWithActiveDrag(inputAudio!)).toBeFalse();
+      ).toBeNull();
 
       // Dragging to enabled input_video should be compatible
       component.dragSourcePort = {
@@ -768,6 +823,91 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       };
       expect(component.isCompatibleWithActiveDrag(inputVideo!)).toBeTrue();
       expect(component.isIncompatibleWithActiveDrag(inputVideo!)).toBeFalse();
+    });
+
+    it('should enable source_video in Extend Video mode across Omni 1.1, Omni 1.2, and Veo 3.1', () => {
+      videoStepForm.get('settings.model')?.setValue('gemini-omni-1.2-flash');
+      videoStepForm.get('settings.input_mode')?.setValue('Extend Video');
+      fixture.detectChanges();
+
+      const sourceVideo = component.localConfig.inputs.find(
+        i => i.name === 'source_video',
+      );
+      const inputVideo = component.localConfig.inputs.find(
+        i => i.name === 'input_video',
+      );
+
+      expect(sourceVideo?.hidden).toBeFalse();
+      expect(videoStepForm.get('inputs.source_video')?.enabled).toBeTrue();
+      expect(component.inputModes['source_video']).toBe('mixed');
+      expect(inputVideo?.hidden).toBeTrue();
+      expect(videoStepForm.get('inputs.input_video')?.disabled).toBeTrue();
+      expect(
+        fixture.nativeElement.querySelector('[data-port-name="source_video"]'),
+      ).not.toBeNull();
+    });
+
+    it('should clamp duration_seconds on Omni 1.2 mode/frame changes and trim inputs when switching models', () => {
+      videoStepForm.get('settings.model')?.setValue('gemini-omni-1.2-flash');
+      videoStepForm.get('settings.input_mode')?.setValue('Text to Video');
+      videoStepForm.get('settings.duration_seconds')?.setValue(15);
+      expect(videoStepForm.get('settings.duration_seconds')?.value).toBe(15);
+
+      // Switching to Ingredients to Video clamps 15s -> 10s
+      videoStepForm
+        .get('settings.input_mode')
+        ?.setValue('Ingredients to Video');
+      expect(videoStepForm.get('settings.duration_seconds')?.value).toBe(10);
+
+      // Frames to Video with only start_frame allows 15s; adding end_frame (even alone) clamps 15s -> 10s
+      videoStepForm.get('settings.input_mode')?.setValue('Frames to Video');
+      videoStepForm
+        .get('inputs.start_frame')
+        ?.setValue({step: 'f1', output: 'generated_image'});
+      videoStepForm.get('inputs.end_frame')?.setValue(null);
+      videoStepForm.get('settings.duration_seconds')?.setValue(15);
+      expect(videoStepForm.get('settings.duration_seconds')?.value).toBe(15);
+      videoStepForm.get('inputs.start_frame')?.setValue(null);
+      videoStepForm
+        .get('inputs.end_frame')
+        ?.setValue({step: 'f2', output: 'generated_image'});
+      expect(videoStepForm.get('settings.duration_seconds')?.value).toBe(10);
+
+      // Return to Ingredients to Video to test model-switch input trimming
+      videoStepForm
+        .get('settings.input_mode')
+        ?.setValue('Ingredients to Video');
+
+      // Populate 8 images and 2 videos on Omni 1.2, then switch to Omni 1.1 (5 images, 3 videos) -> Veo 3.1 (3 images, 0 videos)
+      videoStepForm.get('inputs.input_images')?.setValue(
+        Array.from({length: 8}, (_, i) => ({
+          step: `img_${i}`,
+          output: 'generated_image',
+        })),
+      );
+      videoStepForm.get('inputs.input_video')?.setValue([
+        {step: 'v1', output: 'generated_video'},
+        {step: 'v2', output: 'generated_video'},
+      ]);
+
+      videoStepForm
+        .get('settings.model')
+        ?.setValue('gemini-omni-1.1-flash-preview');
+      expect(videoStepForm.get('inputs.input_images')?.value.length).toBe(5);
+      expect(videoStepForm.get('inputs.input_video')?.value.length).toBe(2);
+
+      videoStepForm.get('settings.model')?.setValue('veo-3.1-generate-001');
+      expect(videoStepForm.get('inputs.input_images')?.value.length).toBe(3);
+      expect(videoStepForm.get('inputs.input_video')?.value).toBeNull();
+      expect(videoStepForm.get('settings.duration_seconds')?.value).toBe(8);
+
+      // Also verify single-object input_video is cleared when switching to Veo 3.1
+      videoStepForm.get('settings.model')?.setValue('gemini-omni-1.2-flash');
+      videoStepForm
+        .get('inputs.input_video')
+        ?.setValue({step: 'v_single', output: 'generated_video'});
+      videoStepForm.get('settings.model')?.setValue('veo-3.1-generate-001');
+      expect(videoStepForm.get('inputs.input_video')?.value).toBeNull();
     });
 
     it('should hide and disable ingredient ports when switching to Frames to Video', () => {
@@ -787,9 +927,6 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       const inputVideo = component.localConfig.inputs.find(
         i => i.name === 'input_video',
       );
-      const inputAudio = component.localConfig.inputs.find(
-        i => i.name === 'input_audio',
-      );
       const inputImages = component.localConfig.inputs.find(
         i => i.name === 'input_images',
       );
@@ -801,10 +938,8 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       );
 
       expect(inputVideo?.hidden).toBeTrue();
-      expect(inputAudio?.hidden).toBeTrue();
       expect(inputImages?.hidden).toBeTrue();
       expect(videoStepForm.get('inputs.input_video')?.disabled).toBeTrue();
-      expect(videoStepForm.get('inputs.input_audio')?.disabled).toBeTrue();
 
       expect(startFrame?.hidden).toBeFalse();
       expect(endFrame?.hidden).toBeFalse();
@@ -825,9 +960,6 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       ).not.toBeNull();
       expect(
         fixture.nativeElement.querySelector('[data-port-name="input_video"]'),
-      ).toBeNull();
-      expect(
-        fixture.nativeElement.querySelector('[data-port-name="input_audio"]'),
       ).toBeNull();
     });
 
@@ -851,10 +983,10 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       videoStepForm
         .get('settings.input_mode')
         ?.setValue('Ingredients to Video');
-      // input_audio is disabled on non-Omni model
-      expect(videoStepForm.get('inputs.input_audio')?.disabled).toBeTrue();
+      // input_video is disabled on non-Omni model
+      expect(videoStepForm.get('inputs.input_video')?.disabled).toBeTrue();
 
-      component.onInputPortMouseUp(mockEvent, 'input_audio');
+      component.onInputPortMouseUp(mockEvent, 'input_video');
 
       expect(mockEvent.stopPropagation).toHaveBeenCalled();
       expect(component.portDrop.emit).not.toHaveBeenCalled();
@@ -866,8 +998,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       videoStepForm
         .get('settings.input_mode')
         ?.setValue('Ingredients to Video');
-      // input_audio is disabled on non-Omni model
-      expect(component.isInputDisabled('input_audio')).toBeTrue();
+      // input_video is disabled on non-Omni model
       expect(component.isInputDisabled('input_video')).toBeTrue();
       expect(component.isInputDisabled('input_images')).toBeFalse();
     });

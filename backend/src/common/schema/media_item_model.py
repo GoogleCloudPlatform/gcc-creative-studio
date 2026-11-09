@@ -82,7 +82,9 @@ class AssetRoleEnum(str, Enum):
         "image_reference_asset"  # An input for R2V with asset type
     )
     VIDEO_REFERENCE = "video_reference"  # Video used as omni input reference
-    AUDIO_REFERENCE = "audio_reference"  # Audio used as omni input reference
+    # Legacy: kept to read historical records; rejected for new video
+    # generation requests.
+    AUDIO_REFERENCE = "audio_reference"
     YOUTUBE_VIDEO_REFERENCE = (
         "youtube_video_reference"  # YouTube video used as input reference
     )
@@ -122,7 +124,7 @@ class SourceMediaItemLink(BaseModel):
     media_item_id: int
     """The ID of the source MediaItemModel in the 'media_library' collection."""
 
-    media_index: int
+    media_index: int = Field(ge=0)
     """The index of the specific image within the parent's `gcs_uris` list."""
 
     role: AssetRoleEnum

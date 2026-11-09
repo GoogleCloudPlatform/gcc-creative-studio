@@ -256,11 +256,12 @@ describe('StepExecutionDetailsComponent', () => {
       });
     });
 
-    it('should filter inputs and outputs for generate_video and identify video/audio inputs', () => {
+    it('should filter inputs and outputs for generate_video and ignore legacy input_audio', () => {
       component.stepType = NodeTypes.GENERATE_VIDEO;
       component.inputs = {
         prompt: 'add an elephant here',
         input_video: [{sourceAssetId: 10}],
+        source_video: {sourceAssetId: 20},
         input_audio: [{step: 'step_1', output: 'generated_audio'}],
         extra_unknown_field: 'ignored',
       };
@@ -272,14 +273,15 @@ describe('StepExecutionDetailsComponent', () => {
       expect(component.filteredInputs).toEqual({
         prompt: 'add an elephant here',
         input_video: [{sourceAssetId: 10}],
-        input_audio: [{step: 'step_1', output: 'generated_audio'}],
+        source_video: {sourceAssetId: 20},
       });
       expect(component.filteredOutputs).toEqual({
         generated_video: 102,
       });
 
       expect(component.isVideoInput('input_video')).toBeTrue();
-      expect(component.isAudioInput('input_audio')).toBeTrue();
+      expect(component.isVideoInput('source_video')).toBeTrue();
+      expect(component.isAudioInput('input_audio')).toBeFalse();
       expect(component.isImageInput('input_images')).toBeTrue();
       expect(component.isVideoOutput('generated_video')).toBeTrue();
     });

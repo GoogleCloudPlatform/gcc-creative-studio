@@ -16,6 +16,7 @@
 
 import asyncio
 import base64
+import datetime
 import logging
 import os
 import shutil
@@ -57,9 +58,14 @@ from src.multimodal.gemini_service import GeminiService, PromptTargetEnum
 from src.source_assets.repository.source_asset_repository import (
     SourceAssetRepository,
 )
+from src.source_assets.schema.source_asset_model import AssetScopeEnum
 from src.users.user_model import UserModel
 from src.videos.dto.concatenate_videos_dto import ConcatenateVideosDto
-from src.videos.dto.create_veo_dto import CreateVeoDto
+from src.videos.dto.create_veo_dto import (
+    CreateVeoDto,
+    dedupe_reference_images,
+    reference_video_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,25 +76,60 @@ VIDEO_RESOLUTION_MAP = {
 }
 
 
+def _is_asset_deleted(asset: object) -> bool:
+    return isinstance(getattr(asset, "deleted_at", None), datetime.datetime)
+
+
+def _belongs_to_workspace(
+    obj: object, workspace_id: int, *, allow_system_scope: bool = False
+) -> bool:
+    if (
+        allow_system_scope
+        and getattr(obj, "scope", None) == AssetScopeEnum.SYSTEM
+    ):
+        return True
+    obj_ws = getattr(obj, "workspace_id", None)
+    if isinstance(obj_ws, int):
+        return obj_ws == workspace_id
+    return False
+
+
+async def _get_active_media_item(
+    media_repo: MediaRepository, item_id: int
+) -> MediaItemModel | None:
+    """Fetches a MediaItem, treating soft-deleted items as missing."""
+    media_item = await media_repo.get_by_id(item_id)
+    if media_item is None or _is_asset_deleted(media_item):
+        return None
+    return media_item
+
+
 def _format_omni_prompt(
     prompt: str,
     aspect_ratio: AspectRatioEnum | str | None,
 ) -> str:
     """Formats prompt with aspect ratio and resolution directives for Gemini Omni."""
+    cleaned_prompt = prompt.strip()
     if (
         aspect_ratio == AspectRatioEnum.RATIO_9_16
         and "9:16" not in prompt
         and "vertical" not in prompt.lower()
         and "portrait" not in prompt.lower()
     ):
-        return f"{prompt}\nAspect ratio: 9:16 vertical portrait format. Resolution: 720p."
+        directive = (
+            "Aspect ratio: 9:16 vertical portrait format. Resolution: 720p."
+        )
+        return f"{cleaned_prompt}\n{directive}" if cleaned_prompt else directive
     if (
         aspect_ratio == AspectRatioEnum.RATIO_16_9
         and "16:9" not in prompt
         and "widescreen" not in prompt.lower()
         and "landscape" not in prompt.lower()
     ):
-        return f"{prompt}\nAspect ratio: 16:9 widescreen landscape format. Resolution: 720p."
+        directive = (
+            "Aspect ratio: 16:9 widescreen landscape format. Resolution: 720p."
+        )
+        return f"{cleaned_prompt}\n{directive}" if cleaned_prompt else directive
     return prompt
 
 
@@ -197,40 +238,90 @@ def _process_video_in_background(
                         if request_dto.source_video_asset_id:
                             ref = request_dto.source_video_asset_id
                             if ref.type == "media_item":
-                                parent_item = await media_repo.get_by_id(ref.id)
-                                if parent_item and parent_item.gcs_uris:
-                                    source_video_for_api = types.Video(
-                                        uri=parent_item.gcs_uris[0],
-                                        mime_type=parent_item.mime_type,
+                                parent_item = await _get_active_media_item(
+                                    media_repo, ref.id
+                                )
+                                idx = ref.index or 0
+                                if (
+                                    not parent_item
+                                    or not _belongs_to_workspace(
+                                        parent_item, request_dto.workspace_id
                                     )
+                                    or not parent_item.gcs_uris
+                                    or not (
+                                        0 <= idx < len(parent_item.gcs_uris)
+                                    )
+                                ):
+                                    raise ValueError(
+                                        f"Could not resolve source video media_item {ref.id} at index {idx}."
+                                    )
+                                source_video_for_api = types.Video(
+                                    uri=parent_item.gcs_uris[idx],
+                                    mime_type=parent_item.mime_type
+                                    or "video/mp4",
+                                )
                             else:
                                 video_asset = await source_asset_repo.get_by_id(
                                     ref.id
                                 )
-                                if video_asset:
-                                    source_video_for_api = types.Video(
-                                        uri=video_asset.gcs_uri,
-                                        mime_type=video_asset.mime_type,
+                                if (
+                                    not video_asset
+                                    or _is_asset_deleted(video_asset)
+                                    or not _belongs_to_workspace(
+                                        video_asset,
+                                        request_dto.workspace_id,
+                                        allow_system_scope=True,
                                     )
-                                else:
-                                    worker_logger.warning(
-                                        "Could not find source video asset: %s",
-                                        ref.id,
+                                    or not video_asset.gcs_uri
+                                ):
+                                    raise ValueError(
+                                        f"Could not resolve source video asset {ref.id}."
                                     )
+                                source_video_for_api = types.Video(
+                                    uri=video_asset.gcs_uri,
+                                    mime_type=video_asset.mime_type
+                                    or "video/mp4",
+                                )
                         if request_dto.start_image_asset_id:
                             ref = request_dto.start_image_asset_id
                             if ref.type == "media_item":
-                                parent_item = await media_repo.get_by_id(ref.id)
-                                if parent_item and parent_item.gcs_uris:
+                                parent_item = await _get_active_media_item(
+                                    media_repo, ref.id
+                                )
+                                idx = ref.index or 0
+                                if (
+                                    not parent_item
+                                    or not _belongs_to_workspace(
+                                        parent_item, request_dto.workspace_id
+                                    )
+                                ):
+                                    raise ValueError(
+                                        f"Start frame media_item {ref.id} is missing or outside workspace {request_dto.workspace_id}."
+                                    )
+                                if parent_item.gcs_uris and (
+                                    0 <= idx < len(parent_item.gcs_uris)
+                                ):
                                     start_image_for_api = types.Image(
-                                        gcs_uri=parent_item.gcs_uris[0],
+                                        gcs_uri=parent_item.gcs_uris[idx],
                                         mime_type=parent_item.mime_type,
                                     )
                             else:
                                 start_asset = await source_asset_repo.get_by_id(
                                     ref.id
                                 )
-                                if start_asset:
+                                if (
+                                    not start_asset
+                                    or _is_asset_deleted(start_asset)
+                                    or not _belongs_to_workspace(
+                                        start_asset,
+                                        request_dto.workspace_id,
+                                        allow_system_scope=True,
+                                    )
+                                ):
+                                    raise ValueError(
+                                        f"Start frame asset {ref.id} is missing or outside workspace {request_dto.workspace_id}."
+                                    )
+                                if start_asset.gcs_uri:
                                     start_image_for_api = types.Image(
                                         gcs_uri=start_asset.gcs_uri,
                                         mime_type=start_asset.mime_type,
@@ -239,17 +330,43 @@ def _process_video_in_background(
                         if request_dto.end_image_asset_id:
                             ref = request_dto.end_image_asset_id
                             if ref.type == "media_item":
-                                parent_item = await media_repo.get_by_id(ref.id)
-                                if parent_item and parent_item.gcs_uris:
+                                parent_item = await _get_active_media_item(
+                                    media_repo, ref.id
+                                )
+                                idx = ref.index or 0
+                                if (
+                                    not parent_item
+                                    or not _belongs_to_workspace(
+                                        parent_item, request_dto.workspace_id
+                                    )
+                                ):
+                                    raise ValueError(
+                                        f"End frame media_item {ref.id} is missing or outside workspace {request_dto.workspace_id}."
+                                    )
+                                if parent_item.gcs_uris and (
+                                    0 <= idx < len(parent_item.gcs_uris)
+                                ):
                                     end_image_for_api = types.Image(
-                                        gcs_uri=parent_item.gcs_uris[0],
+                                        gcs_uri=parent_item.gcs_uris[idx],
                                         mime_type=parent_item.mime_type,
                                     )
                             else:
                                 end_asset = await source_asset_repo.get_by_id(
                                     ref.id
                                 )
-                                if end_asset:
+                                if (
+                                    not end_asset
+                                    or _is_asset_deleted(end_asset)
+                                    or not _belongs_to_workspace(
+                                        end_asset,
+                                        request_dto.workspace_id,
+                                        allow_system_scope=True,
+                                    )
+                                ):
+                                    raise ValueError(
+                                        f"End frame asset {ref.id} is missing or outside workspace {request_dto.workspace_id}."
+                                    )
+                                if end_asset.gcs_uri:
                                     end_image_for_api = types.Image(
                                         gcs_uri=end_asset.gcs_uri,
                                         mime_type=end_asset.mime_type,
@@ -260,10 +377,23 @@ def _process_video_in_background(
                                 "Loading %s reference images.",
                                 len(request_dto.reference_images),
                             )
-                            for ref_dto in request_dto.reference_images:
+                            for ref_dto in dedupe_reference_images(
+                                request_dto.reference_images
+                            ):
                                 asset = await source_asset_repo.get_by_id(
                                     ref_dto.asset_id,
                                 )
+                                if asset and (
+                                    _is_asset_deleted(asset)
+                                    or not _belongs_to_workspace(
+                                        asset,
+                                        request_dto.workspace_id,
+                                        allow_system_scope=True,
+                                    )
+                                ):
+                                    raise ValueError(
+                                        f"Reference image asset {ref_dto.asset_id} is deleted or outside workspace {request_dto.workspace_id}."
+                                    )
                                 if asset and asset.gcs_uri:
                                     image = types.Image(
                                         gcs_uri=asset.gcs_uri,
@@ -295,12 +425,22 @@ def _process_video_in_background(
                                             ),
                                         )
 
+                        ref_videos_for_api: list[tuple[str, str]] = []
+                        seen_ref_video_keys: set[tuple[str, int, int]] = set()
+
                         # --- Handle Generated Inputs for Media Items (start/end frames, source video, and references) ---
                         if request_dto.source_media_items:
                             for gen_input in request_dto.source_media_items:
-                                parent_item = await media_repo.get_by_id(
+                                parent_item = await _get_active_media_item(
+                                    media_repo,
                                     gen_input.media_item_id,
                                 )
+                                if parent_item and not _belongs_to_workspace(
+                                    parent_item, request_dto.workspace_id
+                                ):
+                                    raise ValueError(
+                                        f"Media item {gen_input.media_item_id} does not belong to workspace {request_dto.workspace_id}."
+                                    )
                                 if (
                                     parent_item
                                     and parent_item.gcs_uris
@@ -332,7 +472,8 @@ def _process_video_in_background(
                                     ):
                                         source_video_for_api = types.Video(
                                             uri=gcs_uri,
-                                            mime_type=parent_item.mime_type,
+                                            mime_type=parent_item.mime_type
+                                            or "video/mp4",
                                         )
                                     elif (
                                         gen_input.role
@@ -362,21 +503,110 @@ def _process_video_in_background(
                                                 reference_type=types.VideoGenerationReferenceType.STYLE,
                                             ),
                                         )
+                                    elif (
+                                        gen_input.role
+                                        == AssetRoleEnum.VIDEO_REFERENCE
+                                    ):
+                                        key = (
+                                            "media_item",
+                                            gen_input.media_item_id,
+                                            gen_input.media_index or 0,
+                                        )
+                                        if key not in seen_ref_video_keys:
+                                            seen_ref_video_keys.add(key)
+                                            ref_videos_for_api.append(
+                                                (
+                                                    gcs_uri,
+                                                    parent_item.mime_type
+                                                    or "video/mp4",
+                                                )
+                                            )
                                 else:
+                                    if gen_input.role in (
+                                        AssetRoleEnum.VIDEO_EXTENSION_SOURCE,
+                                        AssetRoleEnum.VIDEO_REFERENCE,
+                                    ):
+                                        raise ValueError(
+                                            f"Could not resolve video media_item {gen_input.media_item_id} at index {gen_input.media_index}."
+                                        )
                                     worker_logger.warning(
                                         "Could not find or use generated_input: %s at index %s",
                                         gen_input.media_item_id,
                                         gen_input.media_index,
                                     )
 
+                        # Resolve deduplicated reference videos from reference_videos / legacy reference_video
+                        raw_ref_videos = list(
+                            request_dto.reference_videos or []
+                        )
+                        if request_dto.reference_video is not None:
+                            raw_ref_videos.append(request_dto.reference_video)
+
+                        for ref in raw_ref_videos:
+                            key = reference_video_key(ref)
+                            if key in seen_ref_video_keys:
+                                continue
+                            seen_ref_video_keys.add(key)
+                            if ref.type == "media_item":
+                                idx = ref.index or 0
+                                parent_item = await _get_active_media_item(
+                                    media_repo, ref.id
+                                )
+                                if (
+                                    not parent_item
+                                    or not _belongs_to_workspace(
+                                        parent_item, request_dto.workspace_id
+                                    )
+                                ):
+                                    raise ValueError(
+                                        f"Reference video media_item {ref.id} is missing or outside workspace {request_dto.workspace_id}."
+                                    )
+                                if not parent_item.gcs_uris or not (
+                                    0 <= idx < len(parent_item.gcs_uris)
+                                ):
+                                    raise ValueError(
+                                        f"Reference video media_item {ref.id} clip index {idx} is out of range."
+                                    )
+                                ref_videos_for_api.append(
+                                    (
+                                        parent_item.gcs_uris[idx],
+                                        parent_item.mime_type or "video/mp4",
+                                    )
+                                )
+                            else:
+                                video_asset = await source_asset_repo.get_by_id(
+                                    ref.id
+                                )
+                                if (
+                                    not video_asset
+                                    or _is_asset_deleted(video_asset)
+                                    or not _belongs_to_workspace(
+                                        video_asset,
+                                        request_dto.workspace_id,
+                                        allow_system_scope=True,
+                                    )
+                                    or not video_asset.gcs_uri
+                                ):
+                                    raise ValueError(
+                                        f"Reference video asset {ref.id} is missing or outside workspace {request_dto.workspace_id}."
+                                    )
+                                ref_videos_for_api.append(
+                                    (
+                                        video_asset.gcs_uri,
+                                        video_asset.mime_type or "video/mp4",
+                                    )
+                                )
+
                         # Validation to prevent conflicting inputs
-                        if reference_images_for_api and (
+                        if (
+                            reference_images_for_api or ref_videos_for_api
+                        ) and (
                             start_image_for_api
                             or end_image_for_api
                             or source_video_for_api
                         ):
                             raise ValueError(
-                                "Reference images cannot be used at the same time as a start/end image or a source video.",
+                                "Reference media cannot be used at the same time as a start/end image or a source video.",
                             )
 
                         all_generated_videos: list[types.GeneratedVideo] = []
@@ -391,6 +621,7 @@ def _process_video_in_background(
                             GenerationModelEnum.GEMINI_OMNI,
                             GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
                             GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+                            GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
                         ]:
                             worker_logger.info(
                                 "Running Gemini Omni video generation via Interactions API..."
@@ -400,74 +631,85 @@ def _process_video_in_background(
                             interaction_id = None
                             thought_signature = None
 
-                            # Resolve reference video & reference audio URIs
-                            ref_video_uri = None
-                            if request_dto.reference_video:
-                                ref = request_dto.reference_video
-                                if ref.type == "media_item":
-                                    parent_item = await media_repo.get_by_id(
-                                        ref.id
-                                    )
-                                    if parent_item and parent_item.gcs_uris:
-                                        index = ref.index or 0
-                                        if (
-                                            0
-                                            <= index
-                                            < len(parent_item.gcs_uris)
-                                        ):
-                                            ref_video_uri = (
-                                                parent_item.gcs_uris[index]
-                                            )
-                                        else:
-                                            ref_video_uri = (
-                                                parent_item.gcs_uris[0]
-                                            )
-                                else:
-                                    video_asset = (
-                                        await source_asset_repo.get_by_id(
-                                            ref.id
-                                        )
-                                    )
-                                    if video_asset:
-                                        ref_video_uri = video_asset.gcs_uri
-
-                            ref_audio_uri = None
-                            if request_dto.reference_audio:
-                                ref = request_dto.reference_audio
-                                if ref.type == "media_item":
-                                    parent_item = await media_repo.get_by_id(
-                                        ref.id
-                                    )
-                                    if parent_item and parent_item.gcs_uris:
-                                        index = ref.index or 0
-                                        if (
-                                            0
-                                            <= index
-                                            < len(parent_item.gcs_uris)
-                                        ):
-                                            ref_audio_uri = (
-                                                parent_item.gcs_uris[index]
-                                            )
-                                        else:
-                                            ref_audio_uri = (
-                                                parent_item.gcs_uris[0]
-                                            )
-                                else:
-                                    audio_asset = (
-                                        await source_asset_repo.get_by_id(
-                                            ref.id
-                                        )
-                                    )
-                                    if audio_asset:
-                                        ref_audio_uri = audio_asset.gcs_uri
-
-                            # Check for Turn 2 conversational input context
+                            # Check for Turn 2 conversational input context (never used for video extension or when extra references are attached)
+                            has_extra_references = (
+                                bool(reference_images_for_api)
+                                or len(seen_ref_video_keys) > 1
+                                or any(
+                                    ref_type != "media_item"
+                                    or ref_id
+                                    != request_dto.parent_media_item_id
+                                    for (
+                                        ref_type,
+                                        ref_id,
+                                        _idx,
+                                    ) in seen_ref_video_keys
+                                )
+                            )
                             is_turn_2 = False
-                            if request_dto.parent_media_item_id:
-                                parent_media_item = await media_repo.get_by_id(
-                                    request_dto.parent_media_item_id
+                            parent_media_item = None
+                            if (
+                                request_dto.parent_media_item_id
+                                and not source_video_for_api
+                                and not start_image_for_api
+                                and not end_image_for_api
+                            ):
+                                parent_media_item = (
+                                    await _get_active_media_item(
+                                        media_repo,
+                                        request_dto.parent_media_item_id,
+                                    )
                                 )
                                 if (
+                                    parent_media_item
+                                    and not _belongs_to_workspace(
+                                        parent_media_item,
+                                        request_dto.workspace_id,
+                                    )
+                                ):
+                                    raise ValueError(
+                                        f"Parent media_item {request_dto.parent_media_item_id} does not belong to workspace {request_dto.workspace_id}."
+                                    )
+                                if has_extra_references:
+                                    worker_logger.info(
+                                        "Extra reference media attached alongside parent MediaItem %s; "
+                                        "running Turn 1 R2V so all references are preserved.",
+                                        request_dto.parent_media_item_id,
+                                    )
+                                    if (
+                                        parent_media_item
+                                        and parent_media_item.gcs_uris
+                                        and request_dto.generation_model.max_reference_videos
+                                        > 0
+                                        and not any(
+                                            t == "media_item"
+                                            and rid
+                                            == request_dto.parent_media_item_id
+                                            for (
+                                                t,
+                                                rid,
+                                                _,
+                                            ) in seen_ref_video_keys
+                                        )
+                                        and len(ref_videos_for_api)
+                                        < request_dto.generation_model.max_reference_videos
+                                    ):
+                                        seen_ref_video_keys.add(
+                                            (
+                                                "media_item",
+                                                request_dto.parent_media_item_id,
+                                                0,
+                                            )
+                                        )
+                                        ref_videos_for_api.insert(
+                                            0,
+                                            (
+                                                parent_media_item.gcs_uris[0],
+                                                parent_media_item.mime_type
+                                                or "video/mp4",
+                                            ),
+                                        )
+                                elif (
                                     parent_media_item
                                     and parent_media_item.raw_data
                                 ):
@@ -479,6 +721,28 @@ def _process_video_in_background(
                                     signature1 = parent_media_item.raw_data.get(
                                         "signature"
                                     )
+                                    if not (interaction1_id and signature1):
+                                        interactions_list = (
+                                            parent_media_item.raw_data.get(
+                                                "interactions"
+                                            )
+                                            or []
+                                        )
+                                        if interactions_list and isinstance(
+                                            interactions_list[-1], dict
+                                        ):
+                                            interaction1_id = (
+                                                interaction1_id
+                                                or interactions_list[-1].get(
+                                                    "interaction_id"
+                                                )
+                                            )
+                                            signature1 = (
+                                                signature1
+                                                or interactions_list[-1].get(
+                                                    "signature"
+                                                )
+                                            )
                                     if interaction1_id and signature1:
                                         is_turn_2 = True
                                     else:
@@ -496,6 +760,7 @@ def _process_video_in_background(
                                         request_dto.parent_media_item_id,
                                     )
 
+                            omni_task = "text_to_video"
                             if is_turn_2:
                                 worker_logger.info(
                                     "Performing Turn 2 Multi-Turn generation "
@@ -578,9 +843,16 @@ def _process_video_in_background(
                                 worker_logger.info(
                                     "Performing Turn 1 Video Generation/R2V"
                                 )
-                                omni_prompt = _format_omni_prompt(
-                                    request_dto.prompt, request_dto.aspect_ratio
-                                )
+                                if source_video_for_api:
+                                    omni_prompt = (
+                                        request_dto.prompt.strip()
+                                        or "Continue the video seamlessly."
+                                    )
+                                else:
+                                    omni_prompt = _format_omni_prompt(
+                                        request_dto.prompt,
+                                        request_dto.aspect_ratio,
+                                    )
 
                                 t1_inputs = [
                                     {"type": "text", "text": omni_prompt}
@@ -617,28 +889,35 @@ def _process_video_in_background(
                                     t1_inputs.append(
                                         {
                                             "type": "video",
-                                            "mime_type": source_video_for_api.mime_type,
+                                            "mime_type": source_video_for_api.mime_type
+                                            or "video/mp4",
                                             "uri": source_video_for_api.uri,
                                         }
                                     )
 
-                                if ref_video_uri:
+                                for (
+                                    ref_video_uri,
+                                    ref_video_mime,
+                                ) in ref_videos_for_api:
                                     t1_inputs.append(
                                         {
                                             "type": "video",
-                                            "mime_type": "video/mp4",
+                                            "mime_type": ref_video_mime,
                                             "uri": ref_video_uri,
                                         }
                                     )
 
-                                if ref_audio_uri:
-                                    t1_inputs.append(
-                                        {
-                                            "type": "audio",
-                                            "mime_type": "audio/wav",
-                                            "uri": ref_audio_uri,
-                                        }
-                                    )
+                                if source_video_for_api:
+                                    omni_task = "extend"
+                                elif (
+                                    reference_images_for_api
+                                    or ref_videos_for_api
+                                ):
+                                    omni_task = "reference_to_video"
+                                elif start_image_for_api or end_image_for_api:
+                                    omni_task = "image_to_video"
+                                else:
+                                    omni_task = "text_to_video"
 
                             final_gcs_uris = []
                             permanent_thumbnail_gcs_uris = []
@@ -653,9 +932,13 @@ def _process_video_in_background(
                                 "type": "video",
                                 "duration": duration_str,
                             }
-                            if request_dto.aspect_ratio in (
-                                AspectRatioEnum.RATIO_9_16,
-                                AspectRatioEnum.RATIO_16_9,
+                            if (
+                                omni_task != "extend"
+                                and request_dto.aspect_ratio
+                                in (
+                                    AspectRatioEnum.RATIO_9_16,
+                                    AspectRatioEnum.RATIO_16_9,
+                                )
                             ):
                                 omni_response_format["aspect_ratio"] = (
                                     request_dto.aspect_ratio.value
@@ -682,11 +965,21 @@ def _process_video_in_background(
                                                 response_format=omni_response_format,
                                             )
                                         else:
+                                            # Pass video_config.task via extra_body without a generation_config
+                                            # kwarg; google-genai 2.9.0 strips video_config on typed
+                                            # GenerationConfig and shallow-overwrites top-level extra_body keys.
                                             interaction = await asyncio.to_thread(
                                                 vertex_client.interactions.create,
                                                 model=model_name_for_api,
                                                 input=t1_inputs,
                                                 response_format=omni_response_format,
+                                                extra_body={
+                                                    "generation_config": {
+                                                        "video_config": {
+                                                            "task": omni_task
+                                                        }
+                                                    }
+                                                },
                                             )
                                         break
                                     except Exception as e:
@@ -984,6 +1277,7 @@ def _process_video_in_background(
                             GenerationModelEnum.GEMINI_OMNI,
                             GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
                             GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+                            GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
                         ]:
                             valid_generated_videos = [
                                 img
@@ -1133,8 +1427,8 @@ def _process_video_concatenation_in_background(
                         for video_input in request_dto.inputs:
                             gcs_uri: str | None = None
                             if video_input.type == "media_item":
-                                item = await media_repo.get_by_id(
-                                    video_input.id
+                                item = await _get_active_media_item(
+                                    media_repo, video_input.id
                                 )
                                 if not item or not item.gcs_uris:
                                     raise ValueError(
@@ -1276,6 +1570,99 @@ class VeoService:
         self.gcs_service = gcs_service
         self.source_asset_repo = source_asset_repo
 
+    async def _validate_workspace_references(
+        self, request_dto: CreateVeoDto
+    ) -> None:
+        """Verifies that every referenced SourceAsset and MediaItem exists, belongs to
+        request_dto.workspace_id (or SYSTEM scope for SourceAssets), and has a valid clip index.
+        """
+        source_asset_ids: list[int] = []
+        media_refs: list[tuple[int, int, bool]] = []
+
+        all_asset_refs = [
+            request_dto.start_image_asset_id,
+            request_dto.end_image_asset_id,
+            request_dto.source_video_asset_id,
+            *(request_dto.reference_videos or []),
+        ]
+        if request_dto.reference_video is not None:
+            all_asset_refs.append(request_dto.reference_video)
+
+        for ref in all_asset_refs:
+            if ref is None:
+                continue
+            if ref.type == "media_item":
+                media_refs.append((ref.id, ref.index or 0, True))
+            else:
+                source_asset_ids.append(ref.id)
+
+        for ref_img in request_dto.reference_images or []:
+            source_asset_ids.append(ref_img.asset_id)
+
+        for link in request_dto.source_media_items or []:
+            media_refs.append((link.media_item_id, link.media_index or 0, True))
+
+        if request_dto.parent_media_item_id is not None:
+            media_refs.append((request_dto.parent_media_item_id, 0, False))
+
+        checked_assets: set[int] = set()
+        for asset_id in source_asset_ids:
+            if asset_id in checked_assets:
+                continue
+            checked_assets.add(asset_id)
+            asset = await self.source_asset_repo.get_by_id(asset_id)
+            if asset is None or _is_asset_deleted(asset):
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Source asset {asset_id} not found.",
+                )
+            if (
+                getattr(asset, "scope", None) != AssetScopeEnum.SYSTEM
+                and asset.workspace_id != request_dto.workspace_id
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        f"Asset {asset_id} does not belong to workspace "
+                        f"{request_dto.workspace_id}"
+                    ),
+                )
+
+        fetched_media: dict[int, MediaItemModel] = {}
+        for item_id, clip_index, require_clip in media_refs:
+            if item_id not in fetched_media:
+                media_item = await _get_active_media_item(
+                    self.media_repo, item_id
+                )
+                if media_item is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Media item {item_id} not found.",
+                    )
+                if media_item.workspace_id != request_dto.workspace_id:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=(
+                            f"Media item {item_id} does not belong to workspace "
+                            f"{request_dto.workspace_id}"
+                        ),
+                    )
+                fetched_media[item_id] = media_item
+            else:
+                media_item = fetched_media[item_id]
+
+            if require_clip and (
+                not media_item.gcs_uris
+                or not (0 <= clip_index < len(media_item.gcs_uris))
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Media item {item_id} clip index {clip_index} "
+                        "is out of range."
+                    ),
+                )
+
     async def start_video_generation_job(
         self,
         request_dto: CreateVeoDto,
@@ -1289,6 +1676,8 @@ class VeoService:
             The initial MediaItem with a 'processing' status and a pre-generated ID.
 
         """
+        await self._validate_workspace_references(request_dto)
+
         # 1. Prepare source asset links if they exist
         source_assets: list[SourceAssetLink] = []
         source_media_items: list[SourceMediaItemLink] = []
@@ -1299,7 +1688,7 @@ class VeoService:
                 source_media_items.append(
                     SourceMediaItemLink(
                         media_item_id=ref.id,
-                        media_index=0,
+                        media_index=ref.index or 0,
                         role=AssetRoleEnum.START_FRAME,
                     )
                 )
@@ -1317,7 +1706,7 @@ class VeoService:
                 source_media_items.append(
                     SourceMediaItemLink(
                         media_item_id=ref.id,
-                        media_index=0,
+                        media_index=ref.index or 0,
                         role=AssetRoleEnum.END_FRAME,
                     )
                 )
@@ -1335,7 +1724,7 @@ class VeoService:
                 source_media_items.append(
                     SourceMediaItemLink(
                         media_item_id=ref.id,
-                        media_index=0,
+                        media_index=ref.index or 0,
                         role=AssetRoleEnum.VIDEO_EXTENSION_SOURCE,
                     )
                 )
@@ -1348,7 +1737,9 @@ class VeoService:
                 )
 
         if request_dto.reference_images:
-            for ref_image in request_dto.reference_images:
+            for ref_image in dedupe_reference_images(
+                request_dto.reference_images
+            ):
                 role = (
                     AssetRoleEnum.IMAGE_REFERENCE_STYLE
                     if ref_image.reference_type == ReferenceImageTypeEnum.STYLE
@@ -1361,39 +1752,33 @@ class VeoService:
                     ),
                 )
 
-        if request_dto.reference_video:
-            ref = request_dto.reference_video
-            if ref.type == "media_item":
-                source_media_items.append(
-                    SourceMediaItemLink(
-                        media_item_id=ref.id,
-                        media_index=ref.index or 0,
-                        role=AssetRoleEnum.VIDEO_REFERENCE,
-                    )
-                )
-            else:
-                source_assets.append(
-                    SourceAssetLink(
-                        asset_id=ref.id,
-                        role=AssetRoleEnum.VIDEO_REFERENCE,
-                    )
-                )
+        seen_video_keys: set[tuple[str, int, int]] = {
+            ("media_item", item.media_item_id, item.media_index or 0)
+            for item in (request_dto.source_media_items or [])
+            if item.role == AssetRoleEnum.VIDEO_REFERENCE
+        }
+        raw_video_refs = list(request_dto.reference_videos or [])
+        if request_dto.reference_video is not None:
+            raw_video_refs.append(request_dto.reference_video)
 
-        if request_dto.reference_audio:
-            ref = request_dto.reference_audio
+        for ref in raw_video_refs:
+            key = reference_video_key(ref)
+            if key in seen_video_keys:
+                continue
+            seen_video_keys.add(key)
             if ref.type == "media_item":
                 source_media_items.append(
                     SourceMediaItemLink(
                         media_item_id=ref.id,
                         media_index=ref.index or 0,
-                        role=AssetRoleEnum.AUDIO_REFERENCE,
+                        role=AssetRoleEnum.VIDEO_REFERENCE,
                     )
                 )
             else:
                 source_assets.append(
                     SourceAssetLink(
                         asset_id=ref.id,
-                        role=AssetRoleEnum.AUDIO_REFERENCE,
+                        role=AssetRoleEnum.VIDEO_REFERENCE,
                     )
                 )
 
@@ -1475,11 +1860,18 @@ class VeoService:
 
         for video_input in request_dto.inputs:
             if video_input.type == "media_item":
-                item = await self.media_repo.get_by_id(video_input.id)
+                item = await _get_active_media_item(
+                    self.media_repo, video_input.id
+                )
                 if not item or item.mime_type != MimeTypeEnum.VIDEO_MP4:
                     raise HTTPException(
                         status_code=400,
                         detail=f"MediaItem '{video_input.id}' not found or is not a video.",
+                    )
+                if item.workspace_id != request_dto.workspace_id:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"Media item {video_input.id} does not belong to workspace {request_dto.workspace_id}",
                     )
                 source_media_items.append(
                     SourceMediaItemLink(
@@ -1490,10 +1882,22 @@ class VeoService:
                 )
             elif video_input.type == "source_asset":
                 asset = await self.source_asset_repo.get_by_id(video_input.id)
-                if not asset or asset.mime_type != MimeTypeEnum.VIDEO_MP4:
+                if (
+                    not asset
+                    or _is_asset_deleted(asset)
+                    or asset.mime_type != MimeTypeEnum.VIDEO_MP4
+                ):
                     raise HTTPException(
                         status_code=400,
                         detail=f"SourceAsset '{video_input.id}' not found or is not a video.",
+                    )
+                if (
+                    getattr(asset, "scope", None) != AssetScopeEnum.SYSTEM
+                    and asset.workspace_id != request_dto.workspace_id
+                ):
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"Asset {video_input.id} does not belong to workspace {request_dto.workspace_id}",
                     )
                 source_assets.append(
                     SourceAssetLink(
