@@ -44,6 +44,39 @@ class ReferenceImageDto(BaseDto):
     )
 
 
+def reference_image_key(img: ReferenceImageDto) -> tuple[int, str]:
+    """Returns the identity of a reference image.
+
+    The role is part of the identity, so the same image used once as an
+    ASSET and once as a STYLE reference counts as two distinct references.
+    """
+    return (img.asset_id, ReferenceImageTypeEnum(img.reference_type).value)
+
+
+def dedupe_reference_images(
+    images: list[ReferenceImageDto] | None,
+) -> list[ReferenceImageDto]:
+    """Drops exact duplicate reference images while preserving order."""
+    seen: set[tuple[int, str]] = set()
+    unique: list[ReferenceImageDto] = []
+    for img in images or []:
+        key = reference_image_key(img)
+        if key not in seen:
+            seen.add(key)
+            unique.append(img)
+    return unique
+
+
+def reference_video_key(ref: AssetReferenceDto) -> tuple[str, int, int]:
+    """Returns the identity of a reference video.
+
+    Gallery media items can hold several videos, so their index is part of
+    the identity; source assets hold one video and ignore the index.
+    """
+    index = (ref.index or 0) if ref.type == "media_item" else 0
+    return (ref.type, ref.id, index)
+
+
 class CreateVeoDto(BaseDto):
     """The refactored request model. Defaults are defined here to make the API
     contract explicit and self-documenting.
@@ -226,8 +259,7 @@ class CreateVeoDto(BaseDto):
             raw_video_refs.append(self.reference_video)
 
         for ref in raw_video_refs:
-            idx = (ref.index or 0) if ref.type == "media_item" else 0
-            key = (ref.type, ref.id, idx)
+            key = reference_video_key(ref)
             if key not in seen_video_keys:
                 seen_video_keys.add(key)
                 normalized_ref_videos.append(ref)
@@ -242,11 +274,14 @@ class CreateVeoDto(BaseDto):
                 )
 
         # Deduplicate reference images in-place across reference_images and source_media_items.
-        seen_image_keys: set[tuple[str, int, int]] = set()
+        # The role is part of the key so the same image used as both
+        # ASSET and STYLE is kept twice; exact duplicates still collapse.
+        # Keys are namespaced by origin so both lists share one counter.
+        seen_image_keys: set[tuple] = set()
         if self.reference_images is not None:
             dedup_ref_images: list[ReferenceImageDto] = []
             for img in self.reference_images:
-                key = ("source_asset", img.asset_id, 0)
+                key = ("source_asset", *reference_image_key(img))
                 if key not in seen_image_keys:
                     seen_image_keys.add(key)
                     dedup_ref_images.append(img)
@@ -263,6 +298,7 @@ class CreateVeoDto(BaseDto):
                         "media_item",
                         item.media_item_id,
                         item.media_index or 0,
+                        AssetRoleEnum(item.role).value,
                     )
                     if key in seen_image_keys:
                         continue
@@ -298,17 +334,15 @@ class CreateVeoDto(BaseDto):
 
         if has_any_references:
             if model.max_reference_images == 0:
+                supported = ", ".join(
+                    f"'{m.value}'"
+                    for m in GenerationModelEnum
+                    if m.max_reference_images > 0
+                )
                 raise ValueError(
-                    "Reference images/media are only supported by the "
-                    f"'{GenerationModelEnum.VEO_3_1_PREVIEW.value}' model, "
-                    f"'{GenerationModelEnum.VEO_3_1_GENERATE_001.value}' model, "
-                    f"'{GenerationModelEnum.VEO_3_1_LITE_GENERATE_001.value}' model, "
-                    f"'{GenerationModelEnum.VEO_3_1_LITE_PREVIEW.value}' model, "
-                    f"'{GenerationModelEnum.VEO_3_1_FAST_GENERATE_001.value}' model, "
-                    f"'{GenerationModelEnum.GEMINI_OMNI.value}' model, "
-                    f"'{GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW.value}' model, "
-                    f"'{GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW.value}' model, or "
-                    f"'{GenerationModelEnum.GEMINI_OMNI_1_2_FLASH.value}' model.",
+                    f"Model '{model.value}' does not support reference "
+                    "images/media. Reference images/media are only "
+                    f"supported by: {supported}.",
                 )
 
             if (

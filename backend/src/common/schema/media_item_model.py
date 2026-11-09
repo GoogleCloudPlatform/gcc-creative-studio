@@ -82,7 +82,9 @@ class AssetRoleEnum(str, Enum):
         "image_reference_asset"  # An input for R2V with asset type
     )
     VIDEO_REFERENCE = "video_reference"  # Video used as omni input reference
-    AUDIO_REFERENCE = "audio_reference"  # Audio used as omni input reference
+    # Legacy: kept to read historical records; rejected for new video
+    # generation requests.
+    AUDIO_REFERENCE = "audio_reference"
     YOUTUBE_VIDEO_REFERENCE = (
         "youtube_video_reference"  # YouTube video used as input reference
     )

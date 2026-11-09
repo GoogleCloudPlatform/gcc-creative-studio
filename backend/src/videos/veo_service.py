@@ -61,7 +61,11 @@ from src.source_assets.repository.source_asset_repository import (
 from src.source_assets.schema.source_asset_model import AssetScopeEnum
 from src.users.user_model import UserModel
 from src.videos.dto.concatenate_videos_dto import ConcatenateVideosDto
-from src.videos.dto.create_veo_dto import CreateVeoDto
+from src.videos.dto.create_veo_dto import (
+    CreateVeoDto,
+    dedupe_reference_images,
+    reference_video_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +91,17 @@ def _belongs_to_workspace(
     obj_ws = getattr(obj, "workspace_id", None)
     if isinstance(obj_ws, int):
         return obj_ws == workspace_id
-    return True
+    return False
+
+
+async def _get_active_media_item(
+    media_repo: MediaRepository, item_id: int
+) -> MediaItemModel | None:
+    """Fetches a MediaItem, treating soft-deleted items as missing."""
+    media_item = await media_repo.get_by_id(item_id)
+    if media_item is None or _is_asset_deleted(media_item):
+        return None
+    return media_item
 
 
 def _format_omni_prompt(
@@ -224,7 +238,9 @@ def _process_video_in_background(
                         if request_dto.source_video_asset_id:
                             ref = request_dto.source_video_asset_id
                             if ref.type == "media_item":
-                                parent_item = await media_repo.get_by_id(ref.id)
+                                parent_item = await _get_active_media_item(
+                                    media_repo, ref.id
+                                )
                                 idx = ref.index or 0
                                 if (
                                     not parent_item
@@ -269,7 +285,9 @@ def _process_video_in_background(
                         if request_dto.start_image_asset_id:
                             ref = request_dto.start_image_asset_id
                             if ref.type == "media_item":
-                                parent_item = await media_repo.get_by_id(ref.id)
+                                parent_item = await _get_active_media_item(
+                                    media_repo, ref.id
+                                )
                                 idx = ref.index or 0
                                 if (
                                     not parent_item
@@ -312,7 +330,9 @@ def _process_video_in_background(
                         if request_dto.end_image_asset_id:
                             ref = request_dto.end_image_asset_id
                             if ref.type == "media_item":
-                                parent_item = await media_repo.get_by_id(ref.id)
+                                parent_item = await _get_active_media_item(
+                                    media_repo, ref.id
+                                )
                                 idx = ref.index or 0
                                 if (
                                     not parent_item
@@ -357,11 +377,9 @@ def _process_video_in_background(
                                 "Loading %s reference images.",
                                 len(request_dto.reference_images),
                             )
-                            seen_worker_img_ids: set[int] = set()
-                            for ref_dto in request_dto.reference_images:
-                                if ref_dto.asset_id in seen_worker_img_ids:
-                                    continue
-                                seen_worker_img_ids.add(ref_dto.asset_id)
+                            for ref_dto in dedupe_reference_images(
+                                request_dto.reference_images
+                            ):
                                 asset = await source_asset_repo.get_by_id(
                                     ref_dto.asset_id,
                                 )
@@ -413,7 +431,8 @@ def _process_video_in_background(
                         # --- Handle Generated Inputs for Media Items (start/end frames, source video, and references) ---
                         if request_dto.source_media_items:
                             for gen_input in request_dto.source_media_items:
-                                parent_item = await media_repo.get_by_id(
+                                parent_item = await _get_active_media_item(
+                                    media_repo,
                                     gen_input.media_item_id,
                                 )
                                 if parent_item and not _belongs_to_workspace(
@@ -524,17 +543,15 @@ def _process_video_in_background(
                             raw_ref_videos.append(request_dto.reference_video)
 
                         for ref in raw_ref_videos:
-                            idx = (
-                                (ref.index or 0)
-                                if ref.type == "media_item"
-                                else 0
-                            )
-                            key = (ref.type, ref.id, idx)
+                            key = reference_video_key(ref)
                             if key in seen_ref_video_keys:
                                 continue
                             seen_ref_video_keys.add(key)
                             if ref.type == "media_item":
-                                parent_item = await media_repo.get_by_id(ref.id)
+                                idx = ref.index or 0
+                                parent_item = await _get_active_media_item(
+                                    media_repo, ref.id
+                                )
                                 if (
                                     not parent_item
                                     or not _belongs_to_workspace(
@@ -637,8 +654,11 @@ def _process_video_in_background(
                                 and not start_image_for_api
                                 and not end_image_for_api
                             ):
-                                parent_media_item = await media_repo.get_by_id(
-                                    request_dto.parent_media_item_id
+                                parent_media_item = (
+                                    await _get_active_media_item(
+                                        media_repo,
+                                        request_dto.parent_media_item_id,
+                                    )
                                 )
                                 if (
                                     parent_media_item
@@ -1407,8 +1427,8 @@ def _process_video_concatenation_in_background(
                         for video_input in request_dto.inputs:
                             gcs_uri: str | None = None
                             if video_input.type == "media_item":
-                                item = await media_repo.get_by_id(
-                                    video_input.id
+                                item = await _get_active_media_item(
+                                    media_repo, video_input.id
                                 )
                                 if not item or not item.gcs_uris:
                                     raise ValueError(
@@ -1611,7 +1631,9 @@ class VeoService:
         fetched_media: dict[int, MediaItemModel] = {}
         for item_id, clip_index, require_clip in media_refs:
             if item_id not in fetched_media:
-                media_item = await self.media_repo.get_by_id(item_id)
+                media_item = await _get_active_media_item(
+                    self.media_repo, item_id
+                )
                 if media_item is None:
                     raise HTTPException(
                         status_code=404,
@@ -1715,11 +1737,9 @@ class VeoService:
                 )
 
         if request_dto.reference_images:
-            seen_img_asset_ids: set[int] = set()
-            for ref_image in request_dto.reference_images:
-                if ref_image.asset_id in seen_img_asset_ids:
-                    continue
-                seen_img_asset_ids.add(ref_image.asset_id)
+            for ref_image in dedupe_reference_images(
+                request_dto.reference_images
+            ):
                 role = (
                     AssetRoleEnum.IMAGE_REFERENCE_STYLE
                     if ref_image.reference_type == ReferenceImageTypeEnum.STYLE
@@ -1732,37 +1752,35 @@ class VeoService:
                     ),
                 )
 
-        existing_video_media_keys = {
-            (item.media_item_id, item.media_index or 0)
+        seen_video_keys: set[tuple[str, int, int]] = {
+            ("media_item", item.media_item_id, item.media_index or 0)
             for item in (request_dto.source_media_items or [])
             if item.role == AssetRoleEnum.VIDEO_REFERENCE
         }
-        seen_video_asset_ids: set[int] = set()
         raw_video_refs = list(request_dto.reference_videos or [])
         if request_dto.reference_video is not None:
             raw_video_refs.append(request_dto.reference_video)
 
         for ref in raw_video_refs:
+            key = reference_video_key(ref)
+            if key in seen_video_keys:
+                continue
+            seen_video_keys.add(key)
             if ref.type == "media_item":
-                key = (ref.id, ref.index or 0)
-                if key not in existing_video_media_keys:
-                    existing_video_media_keys.add(key)
-                    source_media_items.append(
-                        SourceMediaItemLink(
-                            media_item_id=ref.id,
-                            media_index=ref.index or 0,
-                            role=AssetRoleEnum.VIDEO_REFERENCE,
-                        )
+                source_media_items.append(
+                    SourceMediaItemLink(
+                        media_item_id=ref.id,
+                        media_index=ref.index or 0,
+                        role=AssetRoleEnum.VIDEO_REFERENCE,
                     )
+                )
             else:
-                if ref.id not in seen_video_asset_ids:
-                    seen_video_asset_ids.add(ref.id)
-                    source_assets.append(
-                        SourceAssetLink(
-                            asset_id=ref.id,
-                            role=AssetRoleEnum.VIDEO_REFERENCE,
-                        )
+                source_assets.append(
+                    SourceAssetLink(
+                        asset_id=ref.id,
+                        role=AssetRoleEnum.VIDEO_REFERENCE,
                     )
+                )
 
         # 1. Create a placeholder MediaItem (without ID, let DB generate it)
         folder_id = await resolve_output_folder_id(
@@ -1842,7 +1860,9 @@ class VeoService:
 
         for video_input in request_dto.inputs:
             if video_input.type == "media_item":
-                item = await self.media_repo.get_by_id(video_input.id)
+                item = await _get_active_media_item(
+                    self.media_repo, video_input.id
+                )
                 if not item or item.mime_type != MimeTypeEnum.VIDEO_MP4:
                     raise HTTPException(
                         status_code=400,

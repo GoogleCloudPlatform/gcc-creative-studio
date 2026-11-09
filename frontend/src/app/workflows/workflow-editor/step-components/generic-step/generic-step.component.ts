@@ -35,6 +35,7 @@ import {
   Validators,
 } from '@angular/forms';
 import {MatDialog} from '@angular/material/dialog';
+import {NotificationService} from '../../../../common/services/notification.service';
 import {FloatLabelType} from '@angular/material/form-field';
 import {MatSelectChange} from '@angular/material/select';
 import {Subscription, take} from 'rxjs';
@@ -149,6 +150,19 @@ function buildFolderDomNames(prefix: FolderDomPrefix): FolderDomNames {
 
 const LOOP_FOLDER_DOM_NAMES = buildFolderDomNames('loop-folder');
 const OUTPUT_FOLDER_DOM_NAMES = buildFolderDomNames('output-folder');
+
+/** Media kind of a Generate Video reference input. */
+type ReferenceKind = 'image' | 'video';
+
+/** How long the reference trimming notice stays visible. */
+const TRIM_NOTICE_DURATION_MS = 5000;
+
+/** Outcome of trimming one kind of reference to a model's limit. */
+interface TrimmedReferences {
+  removed: number;
+  max: number;
+  kind: ReferenceKind;
+}
 
 @Component({
   selector: 'app-generic-step',
@@ -362,6 +376,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
   private readonly folderTreeStore = inject(WorkflowFolderTreeStore);
   private readonly workspaceStateService = inject(WorkspaceStateService);
   private readonly dialog = inject(MatDialog);
+  private readonly notificationService = inject(NotificationService);
   private settingsSubscription?: Subscription;
   private inputModeSubscription?: Subscription;
   private modeSubscription?: Subscription;
@@ -654,7 +669,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
         }
         this.settingsSubscription = modelControl?.valueChanges.subscribe(
           value => {
-            this.updateDynamicConfig(value);
+            this.updateDynamicConfig(value, true);
           },
         );
 
@@ -707,7 +722,14 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     this.updateCompatibleOutputs();
   }
 
-  private updateDynamicConfig(modelValue: string | null): void {
+  /**
+   * Applies model-dependent settings. `notifyTrimming` is only set for
+   * user-driven model changes so hydrating a saved step stays silent.
+   */
+  private updateDynamicConfig(
+    modelValue: string | null,
+    notifyTrimming = false,
+  ): void {
     if (!modelValue) return;
 
     // Find config in MODEL_CONFIGS
@@ -794,24 +816,14 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
           this.localConfig.type === NodeTypes.GENERATE_VIDEO &&
           this.stepForm.get('settings.resolution')
         ) {
-          const currentResolution = this.stepForm.get(
-            'settings.resolution',
-          )?.value;
-          if (currentResolution && currentResolution !== '1K') {
-            this.stepForm.get('settings.resolution')?.setValue('1K');
-          }
+          this.resetVideoResolutionTo1K();
         }
       } else if (
         this.localConfig.type === NodeTypes.GENERATE_VIDEO &&
         modelMeta.supportedResolutions.length === 0 &&
         this.stepForm.get('settings.resolution')
       ) {
-        const currentResolution = this.stepForm.get(
-          'settings.resolution',
-        )?.value;
-        if (currentResolution && currentResolution !== '1K') {
-          this.stepForm.get('settings.resolution')?.setValue('1K');
-        }
+        this.resetVideoResolutionTo1K();
       }
     }
 
@@ -904,21 +916,55 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
       !this.stepForm.disabled
     ) {
       const inputs = this.stepForm.get('inputs') as FormGroup | null;
-      this.trimControlToMax(
-        inputs?.get('input_images'),
-        modelMeta.maxReferenceImages ?? 0,
-      );
-      this.trimControlToMax(
-        inputs?.get('reference_images'),
-        modelMeta.maxReferenceImages ?? 0,
-      );
-      this.trimControlToMax(
+      const maxImages = modelMeta.maxReferenceImages ?? 0;
+      const maxVideos = modelMeta.maxReferenceVideos ?? 0;
+      const removedImages =
+        this.trimControlToMax(inputs?.get('input_images'), maxImages) +
+        this.trimControlToMax(inputs?.get('reference_images'), maxImages);
+      const removedVideos = this.trimControlToMax(
         inputs?.get('input_video'),
-        modelMeta.maxReferenceVideos ?? 0,
+        maxVideos,
       );
+      if (notifyTrimming) {
+        this.notifyTrimmedReferences(
+          modelConfig.viewValue,
+          {removed: removedImages, max: maxImages, kind: 'image'},
+          {removed: removedVideos, max: maxVideos, kind: 'video'},
+        );
+      }
     }
 
     this.updateInputVisibility();
+  }
+
+  private notifyTrimmedReferences(
+    modelLabel: string,
+    ...trims: TrimmedReferences[]
+  ): void {
+    const messages = trims
+      .filter(trim => trim.removed > 0)
+      .map(trim =>
+        trim.max <= 0
+          ? `Removed the reference ${trim.kind}(s) because ${modelLabel} does not support ${trim.kind} references.`
+          : `Removed ${trim.removed} excess reference ${trim.kind}(s) because ${modelLabel} supports up to ${trim.max}.`,
+      );
+    if (messages.length > 0) {
+      this.notificationService.show(
+        messages.join(' '),
+        'info',
+        undefined,
+        'info',
+        TRIM_NOTICE_DURATION_MS,
+      );
+    }
+  }
+
+  private resetVideoResolutionTo1K(): void {
+    const resolutionControl = this.stepForm.get('settings.resolution');
+    const currentResolution = resolutionControl?.value;
+    if (currentResolution && currentResolution !== '1K') {
+      resolutionControl?.setValue('1K');
+    }
   }
 
   private hasStepInputValue(val: unknown): boolean {
@@ -934,21 +980,30 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     return true;
   }
 
+  /**
+   * Trims a list input to `maxAllowed` items (clearing it when the limit is 0)
+   * and returns how many items were removed.
+   */
   private trimControlToMax(
     control: AbstractControl | null | undefined,
     maxAllowed: number,
-  ): void {
+  ): number {
     if (!control || control.value === null || control.value === undefined) {
-      return;
+      return 0;
     }
+    const value: unknown = control.value;
     if (maxAllowed <= 0) {
       control.setValue(null);
-    } else if (
-      Array.isArray(control.value) &&
-      control.value.length > maxAllowed
-    ) {
-      control.setValue(control.value.slice(0, maxAllowed));
+      if (Array.isArray(value)) {
+        return value.length;
+      }
+      return this.hasStepInputValue(value) ? 1 : 0;
     }
+    if (Array.isArray(value) && value.length > maxAllowed) {
+      control.setValue(value.slice(0, maxAllowed));
+      return value.length - maxAllowed;
+    }
+    return 0;
   }
 
   private syncVideoDurationSetting(): void {

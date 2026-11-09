@@ -15,6 +15,7 @@
  */
 
 import {NO_ERRORS_SCHEMA} from '@angular/core';
+import {NotificationService} from '../../../../common/services/notification.service';
 import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {
   AbstractControl,
@@ -611,6 +612,93 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       component.stepForm = videoStepForm;
       component.config = GENERATE_VIDEO_STEP_CONFIG;
       component.ngOnInit();
+    });
+
+    describe('reference trimming notices on model change', () => {
+      let showSpy: jasmine.Spy;
+
+      beforeEach(() => {
+        videoStepForm.get('settings.model')?.setValue('gemini-omni-1.2-flash');
+        showSpy = spyOn(TestBed.inject(NotificationService), 'show');
+      });
+
+      it('should notify once when switching to a model without video reference support', () => {
+        videoStepForm
+          .get('inputs.input_video')
+          ?.setValue({step: 'v1', output: 'generated_video'});
+
+        videoStepForm.get('settings.model')?.setValue('veo-3.1-generate-001');
+
+        expect(videoStepForm.get('inputs.input_video')?.value).toBeNull();
+        expect(showSpy).toHaveBeenCalledTimes(1);
+        expect(showSpy.calls.mostRecent().args[0]).toBe(
+          'Removed the reference video(s) because Veo 3.1 does not support video references.',
+        );
+      });
+
+      it('should notify about excess reference images trimmed to the new model limit', () => {
+        videoStepForm.get('inputs.input_images')?.setValue(
+          Array.from({length: 6}, (_, i) => ({
+            step: `img_${i}`,
+            output: 'generated_image',
+          })),
+        );
+
+        videoStepForm
+          .get('settings.model')
+          ?.setValue('gemini-omni-1.1-flash-preview');
+
+        expect(videoStepForm.get('inputs.input_images')?.value.length).toBe(5);
+        expect(showSpy).toHaveBeenCalledTimes(1);
+        expect(showSpy.calls.mostRecent().args[0]).toBe(
+          'Removed 1 excess reference image(s) because Gemini Omni 1.1 Flash supports up to 5.',
+        );
+      });
+
+      it('should not notify when nothing is trimmed on model change', () => {
+        videoStepForm.get('inputs.input_images')?.setValue([
+          {step: 'img_0', output: 'generated_image'},
+          {step: 'img_1', output: 'generated_image'},
+        ]);
+
+        videoStepForm
+          .get('settings.model')
+          ?.setValue('gemini-omni-1.1-flash-preview');
+
+        expect(showSpy).not.toHaveBeenCalled();
+      });
+
+      it('should not notify when trimming a saved step during initial load', () => {
+        const savedStepForm = fb.group({
+          stepId: ['video_step_saved'],
+          type: [NodeTypes.GENERATE_VIDEO],
+          status: ['idle'],
+          inputs: fb.group({
+            prompt: ['A saved scene'],
+            input_images: [
+              Array.from({length: 6}, (_, i) => ({
+                step: `img_${i}`,
+                output: 'generated_image',
+              })),
+            ],
+            input_video: [{step: 'v1', output: 'generated_video'}],
+          }),
+          settings: fb.group({
+            model: ['veo-3.1-generate-001'],
+            input_mode: ['Ingredients to Video'],
+            duration_seconds: [8],
+          }),
+          outputs: fb.group({
+            generated_video: [{type: 'video'}],
+          }),
+        });
+
+        component.stepForm = savedStepForm;
+        component.ngOnInit();
+
+        expect(savedStepForm.get('inputs.input_images')?.value?.length).toBe(3);
+        expect(showSpy).not.toHaveBeenCalled();
+      });
     });
 
     it('should hide and disable input_video, input_images, and source_video in Text to Video and never expose input_audio', () => {

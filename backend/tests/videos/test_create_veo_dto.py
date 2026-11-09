@@ -18,11 +18,68 @@ import pytest
 from pydantic import ValidationError
 
 from src.common.base_dto import (
+    AssetReferenceDto,
     GenerationModelEnum,
     ReferenceImageTypeEnum,
 )
 from src.common.schema.media_item_model import SourceMediaItemLink
-from src.videos.dto.create_veo_dto import CreateVeoDto, ReferenceImageDto
+from src.videos.dto.create_veo_dto import (
+    CreateVeoDto,
+    ReferenceImageDto,
+    dedupe_reference_images,
+    reference_image_key,
+    reference_video_key,
+)
+
+
+def test_reference_image_key_includes_role():
+    asset_ref = ReferenceImageDto(
+        asset_id=42, reference_type=ReferenceImageTypeEnum.ASSET
+    )
+    style_ref = ReferenceImageDto(
+        asset_id=42, reference_type=ReferenceImageTypeEnum.STYLE
+    )
+    asset_key = reference_image_key(asset_ref)
+    assert asset_key == (42, ReferenceImageTypeEnum.ASSET.value)
+    assert asset_key != reference_image_key(style_ref)
+
+
+def test_dedupe_reference_images_keeps_roles_and_order():
+    asset_42 = ReferenceImageDto(
+        asset_id=42, reference_type=ReferenceImageTypeEnum.ASSET
+    )
+    style_42 = ReferenceImageDto(
+        asset_id=42, reference_type=ReferenceImageTypeEnum.STYLE
+    )
+    asset_7 = ReferenceImageDto(
+        asset_id=7, reference_type=ReferenceImageTypeEnum.ASSET
+    )
+    duplicate_asset_42 = ReferenceImageDto(
+        asset_id=42, reference_type=ReferenceImageTypeEnum.ASSET
+    )
+    result = dedupe_reference_images(
+        [asset_7, asset_42, style_42, duplicate_asset_42]
+    )
+    assert result == [asset_7, asset_42, style_42]
+
+
+def test_dedupe_reference_images_handles_none():
+    assert dedupe_reference_images(None) == []
+
+
+def test_reference_video_key_ignores_index_for_source_assets():
+    source_key = reference_video_key(
+        AssetReferenceDto(id=5, type="source_asset", index=3)
+    )
+    assert source_key == ("source_asset", 5, 0)
+    media_key = reference_video_key(
+        AssetReferenceDto(id=5, type="media_item", index=3)
+    )
+    assert media_key == ("media_item", 5, 3)
+    no_index_key = reference_video_key(
+        AssetReferenceDto(id=5, type="media_item")
+    )
+    assert no_index_key == ("media_item", 5, 0)
 
 
 def test_create_veo_dto_valid():
@@ -75,6 +132,29 @@ def test_validate_source_media_items_model_conflict():
             source_media_items=[],  # Force validator to run
         )
     assert "Reference images/media are only supported by" in str(exc_info.value)
+
+
+def test_reference_images_error_lists_all_supporting_models():
+    supporting_values = [
+        m.value for m in GenerationModelEnum if m.max_reference_images > 0
+    ]
+    with pytest.raises(ValidationError) as exc_info:
+        CreateVeoDto(
+            prompt="Test",
+            workspace_id=1,
+            generation_model=GenerationModelEnum.VEO_3_QUALITY,
+            reference_images=[
+                ReferenceImageDto(
+                    asset_id=1,
+                    reference_type=ReferenceImageTypeEnum.ASSET,
+                ),
+            ],
+        )
+    message = str(exc_info.value)
+    assert "does not support reference images/media" in message
+    assert supporting_values
+    for value in supporting_values:
+        assert f"'{value}'" in message
 
 
 def test_validate_source_media_items_conflicting_inputs():
@@ -527,6 +607,49 @@ def test_validate_video_extension_and_omni_min_duration():
     assert "requires a minimum duration of 3s" in str(exc_info.value)
 
 
+def test_veo_3_0_rejects_video_extension():
+    with pytest.raises(ValidationError) as exc_info:
+        CreateVeoDto(
+            prompt="Extend",
+            workspace_id=1,
+            generation_model=GenerationModelEnum.VEO_3_QUALITY,
+            source_video_asset_id={"id": 7, "type": "media_item"},
+        )
+    assert "does not support video extension" in str(exc_info.value)
+
+
+def test_veo_3_1_accepts_video_extension():
+    dto = CreateVeoDto(
+        prompt="Extend",
+        workspace_id=1,
+        generation_model=GenerationModelEnum.VEO_3_1_GENERATE_001,
+        source_video_asset_id={"id": 7, "type": "media_item"},
+        duration_seconds=8,
+        resolution="1K",
+    )
+    assert dto.source_video_asset_id.id == 7
+
+
+@pytest.mark.parametrize(
+    "model, expected",
+    [
+        (GenerationModelEnum.GEMINI_OMNI_1_2_FLASH, True),
+        (GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW, True),
+        (GenerationModelEnum.VEO_3_1_GENERATE_001, True),
+        (GenerationModelEnum.VEO_3_1_PREVIEW, True),
+        (GenerationModelEnum.VEO_3_1_LITE_GENERATE_001, True),
+        (GenerationModelEnum.VEO_3_1_LITE_PREVIEW, True),
+        (GenerationModelEnum.VEO_3_1_FAST_GENERATE_001, True),
+        (GenerationModelEnum.VEO_3_QUALITY, False),
+        (GenerationModelEnum.GEMINI_OMNI, False),
+        (GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW, False),
+        (GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE, False),
+    ],
+)
+def test_supports_video_extension_allowlist(model, expected):
+    assert model.supports_video_extension is expected
+
+
 @pytest.mark.parametrize("model", OMNI_MODELS)
 def test_is_gemini_omni_model_true_for_omni(model):
     assert model.is_gemini_omni_model
@@ -762,3 +885,77 @@ def test_frontend_and_backend_video_model_capabilities_stay_in_sync():
         assert fe_max_videos == enum_member.max_reference_videos
         assert fe_supports_extend == enum_member.supports_video_extension
         assert max(fe_durations) == enum_member.max_video_duration()
+
+
+def test_same_asset_as_asset_and_style_keeps_both_roles():
+    dto = CreateVeoDto(
+        prompt="Same asset, two roles",
+        workspace_id=1,
+        generation_model=GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+        reference_images=[
+            ReferenceImageDto(
+                asset_id=7, reference_type=ReferenceImageTypeEnum.ASSET
+            ),
+            ReferenceImageDto(
+                asset_id=7, reference_type=ReferenceImageTypeEnum.STYLE
+            ),
+            ReferenceImageDto(
+                asset_id=7, reference_type=ReferenceImageTypeEnum.ASSET
+            ),
+        ],
+    )
+    reference_images = dto.reference_images
+    assert len(reference_images) == 2
+    assert {img.reference_type for img in reference_images} == {
+        ReferenceImageTypeEnum.ASSET,
+        ReferenceImageTypeEnum.STYLE,
+    }
+
+
+def test_same_media_item_as_asset_and_style_keeps_both_roles():
+    dto = CreateVeoDto(
+        prompt="Same media item, two roles",
+        workspace_id=1,
+        generation_model=GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+        source_media_items=[
+            SourceMediaItemLink(
+                media_item_id=3,
+                media_index=1,
+                role="image_reference_asset",
+            ),
+            SourceMediaItemLink(
+                media_item_id=3,
+                media_index=1,
+                role="image_reference_style",
+            ),
+            SourceMediaItemLink(
+                media_item_id=3,
+                media_index=1,
+                role="image_reference_style",
+            ),
+        ],
+    )
+    source_media_items = dto.source_media_items
+    assert len(source_media_items) == 2
+    assert {str(item.role) for item in source_media_items} == {
+        "image_reference_asset",
+        "image_reference_style",
+    }
+
+
+def test_asset_and_style_pairs_count_toward_reference_image_cap():
+    with pytest.raises(ValidationError) as exc_info:
+        CreateVeoDto(
+            prompt="Three assets, each as asset and style",
+            workspace_id=1,
+            generation_model=GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+            reference_images=[
+                ReferenceImageDto(asset_id=i, reference_type=ref_type)
+                for i in range(1, 4)
+                for ref_type in (
+                    ReferenceImageTypeEnum.ASSET,
+                    ReferenceImageTypeEnum.STYLE,
+                )
+            ],
+        )
+    assert "supports up to 5 reference images" in str(exc_info.value)

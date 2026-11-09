@@ -132,7 +132,17 @@ class GenerationModelEnum(str, Enum):
 
     @property
     def is_gemini_omni_model(self) -> bool:
-        """Returns True if the model is a Gemini Omni video model."""
+        """Returns True if the model is a Gemini Omni video model.
+
+        Omni models share Omni-only behaviour derived from this property:
+        1K-only resolution and a 3s minimum clip duration.
+
+        When adding a new Omni version, add it here AND to the explicit
+        capability lists that are not derived from this property:
+        max_reference_images, supports_omni_video_refs_and_extend (which
+        drives max_reference_videos), supports_video_extension and
+        max_video_duration.
+        """
         return self in (
             GenerationModelEnum.GEMINI_OMNI,
             GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
@@ -174,10 +184,20 @@ class GenerationModelEnum(str, Enum):
 
     @property
     def supports_video_extension(self) -> bool:
-        """Returns True if this video model supports extending an existing source video."""
-        return self not in (
-            GenerationModelEnum.GEMINI_OMNI,
-            GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+        """Returns True if this model supports extending an existing source video.
+
+        Explicit allowlist: only Gemini Omni 1.1/1.2 Flash and the Veo 3.1
+        family support extension. Every other model (older Veo versions,
+        retired Omni 1.0, image and audio models) returns False.
+        """
+        return self in (
+            GenerationModelEnum.GEMINI_OMNI_1_2_FLASH,
+            GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+            GenerationModelEnum.VEO_3_1_GENERATE_001,
+            GenerationModelEnum.VEO_3_1_PREVIEW,
+            GenerationModelEnum.VEO_3_1_LITE_GENERATE_001,
+            GenerationModelEnum.VEO_3_1_LITE_PREVIEW,
+            GenerationModelEnum.VEO_3_1_FAST_GENERATE_001,
         )
 
     def max_video_duration(
