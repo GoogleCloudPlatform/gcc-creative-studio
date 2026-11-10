@@ -68,7 +68,7 @@ jobs:
       # check out `github.event.pull_request.head.sha` here: that would execute
       # untrusted fork code with a privileged token.
       - name: 'Checkout repository (base branch)'
-        uses: 'actions/checkout@v4'
+        uses: 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262' # v4
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -147,7 +147,7 @@ jobs:
       # untrusted fork code (and its GEMINI.md) in the agent's workspace with a
       # privileged token. The agent reviews the diff file built below instead.
       - name: 'Checkout repository (base branch)'
-        uses: 'actions/checkout@v4'
+        uses: 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262' # v4
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -174,7 +174,7 @@ jobs:
             --output .gemini-review/pr.diff
 
       - name: 'Run Gemini pull request review'
-        uses: 'google-github-actions/run-gemini-cli@v0'
+        uses: 'google-github-actions/run-gemini-cli@f77273f4c914e4bf38440cf36a0369cb64a37489' # v0
         id: 'gemini_pr_review'
         continue-on-error: true
         with:
