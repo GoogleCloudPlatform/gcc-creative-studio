@@ -43,6 +43,11 @@ import {
 } from '../common/models/media-item.model';
 import {AddVoiceDialogComponent} from '../components/add-voice-dialog/add-voice-dialog.component';
 import {ConfirmationDialogComponent} from '../common/components/confirmation-dialog/confirmation-dialog.component';
+import {
+  AudioStemMixerDialogComponent,
+  AudioStemMixerDialogData,
+  AudioStemMixerDialogResult,
+} from '../common/components/audio-stem-mixer-dialog/audio-stem-mixer-dialog.component';
 import {MatIconRegistry} from '@angular/material/icon';
 import {LanguageEnum, VoiceEnum} from './audio.constants';
 import {SearchService} from '../services/search/search.service';
@@ -925,6 +930,60 @@ export class AudioComponent implements OnInit {
       this.snackBar,
       `Attached "${referenceAudio.name}" as Audio Ref — describe your next change below.`,
     );
+  }
+
+  openStemMixerForReference(event?: Event): void {
+    event?.stopPropagation();
+    if (!this.referenceAudio?.id) return;
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    if (!workspaceId) return;
+
+    const dialogRef = this.dialog.open<
+      AudioStemMixerDialogComponent,
+      AudioStemMixerDialogData,
+      AudioStemMixerDialogResult
+    >(AudioStemMixerDialogComponent, {
+      width: '680px',
+      maxWidth: '95vw',
+      panelClass: 'stem-mixer-dialog-panel',
+      data: {
+        workspaceId,
+        source: {
+          id: this.referenceAudio.id,
+          type: this.referenceAudio.type,
+          ...(this.referenceAudio.type === 'media_item'
+            ? {index: this.referenceAudio.index ?? 0}
+            : {}),
+        },
+        sourceTitle: this.referenceAudio.name,
+        allowUseAsReference: true,
+      },
+    });
+
+    dialogRef.afterClosed().subscribe(result => {
+      if (result) {
+        this.handleStemmedMediaCreated(result);
+      }
+    });
+  }
+
+  handleStemmedMediaCreated(result: AudioStemMixerDialogResult): void {
+    if (!result?.mediaItem?.id) return;
+    if (result.action === 'use_as_reference') {
+      const {referenceAudio, lyriaModel} = buildAudioIterationRemixState(
+        result.mediaItem as any,
+        0,
+      );
+      this.applyAudioIteration(referenceAudio, lyriaModel);
+      handleSuccessSnackbar(
+        this.snackBar,
+        `Saved stem mix and attached "${referenceAudio.name}" as Audio Ref!`,
+      );
+      return;
+    }
+
+    this.searchService.setActiveAudioJob(result.mediaItem);
+    handleSuccessSnackbar(this.snackBar, 'Stem mix saved to Gallery!');
   }
 
   private applyAudioIteration(

@@ -354,6 +354,11 @@ export class SearchService {
     this.activeAudioJob.next(null);
   }
 
+  setActiveAudioJob(item: MediaItem | null): void {
+    this.stopAudioPolling();
+    this.activeAudioJob.next(item);
+  }
+
   /**
    * Private method to poll the status of an audio item.
    * @param mediaId The ID of the job to poll.

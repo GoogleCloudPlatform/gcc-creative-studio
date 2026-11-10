@@ -42,6 +42,7 @@ class ConfigService(BaseSettings):
 
     # --- Core Project Settings ---
     PROJECT_ID: str = ""
+    REGION: str = "us-central1"
     LOCATION: str = "global"
     ENVIRONMENT: str = "development"
     FRONTEND_URL: str = "http://localhost:4200"
@@ -86,6 +87,30 @@ class ConfigService(BaseSettings):
     # --- Lyria ---
     LYRIA_MODEL_VERSION: str = "lyria-002"
     LYRIA_PROJECT_ID: str = ""
+
+    # --- Audio Stems (ONNX CPU / Cloud Run Job) ---
+    AUDIO_STEM_MODEL_URL: str = (
+        "https://huggingface.co/StemSplitio/htdemucs-6s-onnx/resolve/main/"
+        "htdemucs_6s_fp16weights.onnx"
+    )
+    AUDIO_STEM_MODEL_CACHE_DIR: str = "/tmp/creative_studio_models"
+    AUDIO_STEM_ORT_THREADS: int = Field(default=2, ge=1)
+    AUDIO_STEM_JOB_NAME: str = "creative-studio-stems-job"
+    AUDIO_STEM_JOB_REGION: str = ""
+    # Run stem separation via a local background OS subprocess (`python -m
+    # src.audios.stem_job_runner`) instead of triggering a Cloud Run Job.
+    # Leave unset to derive from ENVIRONMENT ("local" => subprocess; non-local =>
+    # Cloud Run Job with automatic subprocess fallback if the job is absent).
+    USE_LOCAL_STEM_RUNNER: bool | None = None
+
+    @property
+    def IS_LOCAL_STEM_RUNNER(self) -> bool:
+        """True when stem jobs should run strictly via a local OS subprocess."""
+        if self.USE_LOCAL_STEM_RUNNER is not None:
+            return self.USE_LOCAL_STEM_RUNNER
+        if self.ENVIRONMENT.strip().lower() == "local":
+            return True
+        return not bool(self.AUDIO_STEM_JOB_NAME.strip())
 
     # --- Imagen ---
     MODEL_IMAGEN_PRODUCT_RECONTEXT: str = (
@@ -182,6 +207,8 @@ class ConfigService(BaseSettings):
         # If these fields were not set by environment variables, set their default now.
         if not self.GENMEDIA_BUCKET:
             self.GENMEDIA_BUCKET = f"{self.PROJECT_ID}-assets"
+        if not self.AUDIO_STEM_JOB_REGION:
+            self.AUDIO_STEM_JOB_REGION = self.REGION or "us-central1"
 
         return self
 

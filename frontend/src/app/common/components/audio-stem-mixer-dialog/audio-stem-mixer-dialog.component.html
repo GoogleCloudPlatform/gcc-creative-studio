@@ -1,0 +1,277 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<div class="stem-dialog-container">
+  <!-- Header -->
+  <div class="stem-dialog-header">
+    <div class="header-title-group">
+      <div class="header-icon-badge">
+        <mat-icon>graphic_eq</mat-icon>
+      </div>
+      <div class="header-text">
+        <h2 class="dialog-title">Isolate Instrument Stems</h2>
+        <p class="dialog-subtitle" [matTooltip]="sourceName()">
+          {{ sourceName() || 'Audio Track' }}
+          <span *ngIf="cacheHit() && !isExtracting()" class="cache-pill">
+            Instant cache
+          </span>
+        </p>
+      </div>
+    </div>
+    <button
+      mat-icon-button
+      type="button"
+      class="close-btn"
+      aria-label="Close stem mixer"
+      [disabled]="isSaving()"
+      (click)="cancel()"
+    >
+      <mat-icon>close</mat-icon>
+    </button>
+  </div>
+
+  <!-- Extracting State -->
+  <div *ngIf="isExtracting()" class="state-card loading-state">
+    <mat-spinner [diameter]="42"></mat-spinner>
+    <h3>Separating instrument stems…</h3>
+    <p>
+      Isolating vocals, drums, bass, guitar, piano, and accompaniment on the
+      studio engine. Cached tracks open immediately on repeat visits.
+    </p>
+  </div>
+
+  <!-- Error State -->
+  <div *ngIf="!isExtracting() && errorMessage()" class="state-card error-state">
+    <mat-icon class="error-icon">error_outline</mat-icon>
+    <h3>Could not separate audio stems</h3>
+    <p>{{ errorMessage() }}</p>
+    <button
+      mat-stroked-button
+      type="button"
+      class="retry-btn"
+      (click)="runExtraction()"
+    >
+      <mat-icon>refresh</mat-icon>
+      Retry Separation
+    </button>
+  </div>
+
+  <!-- Interactive Stem Mixer -->
+  <div *ngIf="!isExtracting() && !errorMessage()" class="mixer-body">
+    <!-- Master Transport Bar -->
+    <div class="transport-bar">
+      <button
+        mat-icon-button
+        type="button"
+        class="master-play-btn"
+        [disabled]="isDecodingPreview() || selectedCount() === 0 && soloStem() === null"
+        [attr.aria-label]="isPlaying() ? 'Pause stem mix' : 'Play stem mix'"
+        (click)="togglePlayback()"
+      >
+        <mat-spinner *ngIf="isDecodingPreview()" [diameter]="24"></mat-spinner>
+        <mat-icon *ngIf="!isDecodingPreview()">
+          {{ isPlaying() ? 'pause_circle' : 'play_circle' }}
+        </mat-icon>
+      </button>
+
+      <span class="clock-label">{{ currentTimeLabel() }}</span>
+
+      <mat-slider class="transport-slider" min="0" max="100" step="0.2">
+        <input
+          matSliderThumb
+          aria-label="Seek stem mix position"
+          [value]="progressPercent()"
+          (valueChange)="seekPercent($event)"
+        />
+      </mat-slider>
+
+      <span class="clock-label">{{ totalDurationLabel() }}</span>
+    </div>
+
+    <!-- Quick Presets -->
+    <div class="presets-row">
+      <span class="presets-caption">Quick select:</span>
+      <div class="preset-chips">
+        <button
+          *ngFor="let preset of presets; trackBy: trackByPreset"
+          type="button"
+          class="preset-chip"
+          [class.active]="activePreset() === preset.id"
+          (click)="applyPreset(preset.id)"
+        >
+          <mat-icon>{{ preset.icon }}</mat-icon>
+          <span>{{ preset.label }}</span>
+        </button>
+      </div>
+      <span *ngIf="soloStem() as activeSolo" class="solo-banner">
+        Soloing {{ activeSolo }}
+      </span>
+    </div>
+
+    <!-- 6 Stem Rows -->
+    <div class="stems-list" role="group" aria-label="Instrument stems">
+      <div
+        *ngFor="let stem of stems(); trackBy: trackByStem"
+        class="stem-row"
+        [class.selected]="isStemSelected(stem.name)"
+        [class.audible]="isStemAudible(stem.name)"
+        [class.muted]="!isStemAudible(stem.name)"
+        (click)="toggleStem(stem.name)"
+      >
+        <div class="stem-left" (click)="$event.stopPropagation()">
+          <mat-checkbox
+            color="primary"
+            [checked]="isStemSelected(stem.name)"
+            [aria-label]="'Include ' + stem.label + ' stem'"
+            (change)="toggleStem(stem.name)"
+          ></mat-checkbox>
+          <mat-icon class="stem-type-icon">{{ getStemIcon(stem.name) }}</mat-icon>
+          <span class="stem-name" (click)="toggleStem(stem.name)">
+            {{ stem.label }}
+          </span>
+          <span
+            *ngIf="!stem.hasEnergy"
+            class="quiet-badge"
+            matTooltip="Minimal signal detected in this stem"
+          >
+            Quiet
+          </span>
+        </div>
+
+        <div class="stem-waveform" aria-hidden="true">
+          <span
+            *ngFor="
+              let bar of getStemWaveform(stem);
+              let i = index;
+              trackBy: trackByBarIndex
+            "
+            class="stem-bar"
+            [class.played]="isBarPlayed(i, getStemWaveform(stem).length)"
+            [style.height.%]="bar * 100"
+          ></span>
+        </div>
+
+        <button
+          type="button"
+          class="solo-btn"
+          [class.active]="soloStem() === stem.name"
+          [matTooltip]="
+            soloStem() === stem.name
+              ? 'Unsolo ' + stem.label
+              : 'Solo ' + stem.label + ' during preview'
+          "
+          [attr.aria-pressed]="soloStem() === stem.name"
+          (click)="toggleSolo(stem.name, $event)"
+        >
+          S
+        </button>
+      </div>
+    </div>
+
+    <!-- Output Options -->
+    <div class="save-options-panel">
+      <div class="save-mode-group">
+        <span class="option-label">Gallery output format</span>
+        <div class="mode-toggle-pills" role="radiogroup" aria-label="Output mode">
+          <button
+            type="button"
+            class="mode-pill"
+            [class.active]="saveMode() === 'combined'"
+            (click)="setSaveMode('combined')"
+          >
+            <mat-icon>merge_type</mat-icon>
+            Combined Mix (1 track)
+          </button>
+          <button
+            type="button"
+            class="mode-pill"
+            [class.active]="saveMode() === 'separate'"
+            (click)="setSaveMode('separate')"
+          >
+            <mat-icon>call_split</mat-icon>
+            Separate Stems ({{ selectedCount() }}
+            {{ selectedCount() === 1 ? 'track' : 'tracks' }})
+          </button>
+        </div>
+      </div>
+
+      <div class="title-input-group">
+        <label class="option-label" for="stem-mix-title-input">
+          Result title (optional)
+        </label>
+        <input
+          id="stem-mix-title-input"
+          type="text"
+          class="title-text-input"
+          maxlength="200"
+          [placeholder]="defaultTitlePlaceholder()"
+          [ngModel]="customTitle()"
+          (ngModelChange)="onCustomTitleInput($event)"
+        />
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer Actions -->
+  <div class="stem-dialog-footer">
+    <span class="selection-summary" *ngIf="!isExtracting() && !errorMessage()">
+      {{ selectedCount() }} of {{ stems().length }} stems selected
+    </span>
+    <span *ngIf="isExtracting() || errorMessage()"></span>
+
+    <div class="footer-buttons">
+      <button
+        mat-button
+        type="button"
+        class="cancel-action-btn"
+        [disabled]="isSaving()"
+        (click)="cancel()"
+      >
+        Cancel
+      </button>
+
+      <button
+        *ngIf="allowUseAsReference"
+        mat-stroked-button
+        type="button"
+        class="ref-action-btn"
+        [disabled]="!canSave()"
+        matTooltip="Saves selected stems as a combined mix and attaches it as Audio Ref in Audio Studio"
+        (click)="save('use_as_reference')"
+      >
+        <mat-icon>tune</mat-icon>
+        Save &amp; Use as Audio Ref
+      </button>
+
+      <button
+        mat-flat-button
+        color="primary"
+        type="button"
+        class="save-action-btn"
+        [disabled]="!canSave()"
+        (click)="save('saved')"
+      >
+        <mat-spinner
+          *ngIf="isSaving()"
+          [diameter]="18"
+          class="inline-spinner"
+        ></mat-spinner>
+        <mat-icon *ngIf="!isSaving()">library_music</mat-icon>
+        <span>{{ isSaving() ? 'Saving…' : 'Save to Gallery' }}</span>
+      </button>
+    </div>
+  </div>
+</div>

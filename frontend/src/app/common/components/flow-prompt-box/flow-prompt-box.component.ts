@@ -195,6 +195,7 @@ export class FlowPromptBoxComponent implements OnInit, OnChanges, OnDestroy {
   @Output() openAudioSelectorForReference = new EventEmitter<void>();
   @Output() onReferenceAudioDrop = new EventEmitter<DragEvent>();
   @Output() clearReferenceAudio = new EventEmitter<Event>();
+  @Output() stemReferenceAudio = new EventEmitter<Event>();
   @Output() openVideoUrlInputForReference = new EventEmitter<void>();
   @Output() clearExternalUrl = new EventEmitter<void>();
 
@@ -210,6 +211,7 @@ export class FlowPromptBoxComponent implements OnInit, OnChanges, OnDestroy {
     name: string;
     index?: number;
   } | null = null;
+  @Input() canStemReferenceAudio = false;
   @Input() isUploadingReferenceImage = false;
   @Input() isUploadingReferenceAudio = false;
   private _externalUrl: string | null = null;

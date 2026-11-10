@@ -40,7 +40,15 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Update package lists and install ffmpeg
-RUN apt-get update && apt-get install -y ffmpeg
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+
+# Bake HT-Demucs 6-stem FP16 ONNX weights outside /app so Cloud Run Jobs have
+# zero cold-start download, /tmp tmpfs RAM is untouched, and local ./backend:/app
+# bind mounts do not shadow the model file.
+ENV AUDIO_STEM_MODEL_PATH="/opt/creative-studio-models/htdemucs_6s_fp16weights.onnx"
+RUN mkdir -p /opt/creative-studio-models && \
+    python -c "import shutil, urllib.request; req = urllib.request.Request('https://huggingface.co/StemSplitio/htdemucs-6s-onnx/resolve/main/htdemucs_6s_fp16weights.onnx', headers={'User-Agent': 'google-cloud-creative-studio/1.0'}); resp = urllib.request.urlopen(req, timeout=300); out = open('/opt/creative-studio-models/htdemucs_6s_fp16weights.onnx', 'wb'); shutil.copyfileobj(resp, out); out.close(); resp.close()" && \
+    test "$(wc -c < /opt/creative-studio-models/htdemucs_6s_fp16weights.onnx)" -ge 1000000
 
 # Reset the entrypoint, don't invoke `uv`
 ENTRYPOINT []

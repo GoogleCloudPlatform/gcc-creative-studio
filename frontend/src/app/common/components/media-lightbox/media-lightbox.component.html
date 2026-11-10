@@ -448,6 +448,18 @@
         <mat-icon>delete</mat-icon>
       </studio-button>
       <studio-button
+        *ngIf="isAudio && showStemAudio"
+        variant="primary"
+        size="medium"
+        class="stem-audio-btn"
+        (click)="onStemAudioClick()"
+        matTooltip="Isolate instrument stems"
+      >
+        <mat-icon>graphic_eq</mat-icon>
+        Stems
+      </studio-button>
+
+      <studio-button
         *ngIf="canIterateAudio"
         variant="primary"
         size="medium"

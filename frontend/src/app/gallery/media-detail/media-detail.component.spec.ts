@@ -770,6 +770,51 @@ describe('MediaDetailComponent', () => {
         '110 BPM deep house groove with warm sub-bass.',
       );
     });
+
+    it('hides default TTS Voice/Language on htdemucs-6s stem items and routes handleStemmedMediaCreated actions', () => {
+      const host = loadItem({
+        id: 709,
+        model: 'htdemucs-6s',
+        originalPrompt: 'Isolated stems: Drums, Bass',
+        voiceName: 'Puck',
+        languageCode: 'en-US',
+      });
+      expect(host.textContent).toContain('htdemucs-6s');
+      expect(host.textContent).not.toContain('Voice:');
+      expect(host.textContent).not.toContain('Language:');
+
+      const stemmedItem: any = {
+        id: 910,
+        titles: ['Midnight Groove (Instrumental)'],
+        presignedUrls: ['https://example.com/910.mp3'],
+      };
+
+      mockRouter.navigate.calls.reset();
+      component.handleStemmedMediaCreated({
+        action: 'saved',
+        mediaItem: stemmedItem,
+      });
+      expect(mockRouter.navigate).toHaveBeenCalledWith(['/gallery', 910]);
+
+      mockRouter.navigate.calls.reset();
+      component.handleStemmedMediaCreated({
+        action: 'use_as_reference',
+        mediaItem: stemmedItem,
+      });
+      expect(mockRouter.navigate).toHaveBeenCalledWith(['/audio'], {
+        state: {
+          remixState: {
+            lyriaModel: undefined,
+            referenceAudio: {
+              id: 910,
+              type: 'media_item',
+              index: 0,
+              name: 'Midnight Groove (Instrumental)',
+            },
+          },
+        },
+      });
+    });
   });
 
   describe('revision history and cold-load resilience', () => {

@@ -20,7 +20,13 @@ from fastapi import APIRouter, Depends, File, Request, UploadFile
 from google.cloud import speech
 
 from src.audios.audio_service import AudioService
+from src.audios.audio_stem_service import AudioStemService
 from src.audios.dto.create_audio_dto import CreateAudioDto
+from src.audios.dto.stem_audio_dto import (
+    ExtractStemsDto,
+    ExtractStemsResponseDto,
+    SaveStemMixDto,
+)
 from src.auth.auth_guard import RoleChecker, get_current_user
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.users.user_model import UserModel, UserRoleEnum
@@ -66,6 +72,60 @@ async def generate_audio(
         request_dto=create_audio_dto,
         user=current_user,
         executor=executor,
+    )
+
+
+@router.post("/stems/extract", response_model=ExtractStemsResponseDto)
+async def extract_audio_stems(
+    extract_stems_dto: ExtractStemsDto,
+    current_user: UserModel = Depends(get_current_user),
+    audio_stem_service: AudioStemService = Depends(),
+    workspace_auth: WorkspaceAuth = Depends(),
+):
+    """Starts (or returns cached) 6-stem separation for a reference or generated audio."""
+    await workspace_auth.authorize(
+        workspace_id=extract_stems_dto.workspace_id,
+        user=current_user,
+    )
+    return await audio_stem_service.extract_stems(
+        request_dto=extract_stems_dto,
+        user=current_user,
+    )
+
+
+@router.post("/stems/status", response_model=ExtractStemsResponseDto)
+async def get_audio_stems_status(
+    extract_stems_dto: ExtractStemsDto,
+    current_user: UserModel = Depends(get_current_user),
+    audio_stem_service: AudioStemService = Depends(),
+    workspace_auth: WorkspaceAuth = Depends(),
+):
+    """Polls the status of an async Cloud Run / subprocess stem separation job."""
+    await workspace_auth.authorize(
+        workspace_id=extract_stems_dto.workspace_id,
+        user=current_user,
+    )
+    return await audio_stem_service.get_stem_extraction_status(
+        request_dto=extract_stems_dto,
+        user=current_user,
+    )
+
+
+@router.post("/stems/save", response_model=MediaItemResponse)
+async def save_audio_stem_mix(
+    save_stem_mix_dto: SaveStemMixDto,
+    current_user: UserModel = Depends(get_current_user),
+    audio_stem_service: AudioStemService = Depends(),
+    workspace_auth: WorkspaceAuth = Depends(),
+):
+    """Mixes or copies selected audio stems into a new gallery MediaItem."""
+    await workspace_auth.authorize(
+        workspace_id=save_stem_mix_dto.workspace_id,
+        user=current_user,
+    )
+    return await audio_stem_service.save_stem_mix(
+        request_dto=save_stem_mix_dto,
+        user=current_user,
     )
 
 

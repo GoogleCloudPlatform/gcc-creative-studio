@@ -33,6 +33,7 @@ import {
   MediaItem,
   SongStructureEntry,
   SongStructureSection,
+  buildAudioIterationRemixState,
   formatAudioClock,
   formatSongStructureEntries,
   formatTrackAnalysisForCopy,
@@ -69,6 +70,11 @@ import {GalleryService} from '../../../gallery/gallery.service';
 import {UserService} from '../../services/user.service';
 import {PromoteDialogResult} from '../promote-dialog/promote-dialog.component';
 import {PromoteLauncherService} from '../../services/promote-launcher.service';
+import {
+  AudioStemMixerDialogComponent,
+  AudioStemMixerDialogData,
+  AudioStemMixerDialogResult,
+} from '../audio-stem-mixer-dialog/audio-stem-mixer-dialog.component';
 
 @Component({
   selector: 'app-media-lightbox',
@@ -98,6 +104,7 @@ export class MediaLightboxComponent
   @Input() showOmni = true;
   @Input() showIterateAudio = true;
   @Input() showWorkspacePromoteBar = false;
+  @Input() showStemAudio = true;
 
   get isImage(): boolean {
     return this.mediaItem?.mimeType?.startsWith('image/') ?? false;
@@ -116,12 +123,13 @@ export class MediaLightboxComponent
   }
 
   get canIterateAudio(): boolean {
-    const model = (this.mediaItem as any)?.model;
+    const rawModel = (this.mediaItem as any)?.model;
+    const model = rawModel ? String(rawModel).toLowerCase() : '';
     return (
       this.isAudio &&
       this.showIterateAudio &&
       this.iterateAudioClicked.observers.length > 0 &&
-      (!model || String(model).toLowerCase().startsWith('lyria'))
+      (!model || model.startsWith('lyria') || model.startsWith('htdemucs'))
     );
   }
   @Output() editClicked = new EventEmitter<number>();
@@ -138,6 +146,8 @@ export class MediaLightboxComponent
     mediaItem: MediaItem;
     selectedIndex: number;
   }>();
+  @Output() stemmedMediaCreated =
+    new EventEmitter<AudioStemMixerDialogResult>();
   @Output() extendWithAiClicked = new EventEmitter<{
     mediaItem: MediaItem;
     selectedIndex: number;
@@ -1053,6 +1063,65 @@ export class MediaLightboxComponent
         selectedIndex: this.selectedIndex,
       });
     }
+  }
+
+  onStemAudioClick(): void {
+    if (!this.mediaItem?.id) return;
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    if (!workspaceId) return;
+
+    const audio = this.audioPlayerRef?.nativeElement;
+    if (audio && !audio.paused) {
+      audio.pause();
+      this.onAudioPause();
+    }
+
+    const rawItem = this.mediaItem as any;
+    const isSourceAsset = rawItem.itemType === 'source_asset';
+    const sourceTitle =
+      this.mediaItem.titles?.[this.selectedIndex] ||
+      this.mediaItem.titles?.[0] ||
+      rawItem.originalFilename ||
+      this.mediaItem.prompt ||
+      undefined;
+
+    const dialogRef = this.dialog.open<
+      AudioStemMixerDialogComponent,
+      AudioStemMixerDialogData,
+      AudioStemMixerDialogResult
+    >(AudioStemMixerDialogComponent, {
+      width: '680px',
+      maxWidth: '95vw',
+      panelClass: 'stem-mixer-dialog-panel',
+      data: {
+        workspaceId,
+        source: isSourceAsset
+          ? {id: this.mediaItem.id, type: 'source_asset'}
+          : {
+              id: this.mediaItem.id,
+              type: 'media_item',
+              index: this.selectedIndex,
+            },
+        sourceTitle,
+        folderId: this.mediaItem.folderId ?? null,
+        allowUseAsReference: true,
+      },
+    });
+
+    dialogRef.afterClosed().subscribe(result => {
+      if (!result) return;
+      if (this.stemmedMediaCreated.observed) {
+        this.stemmedMediaCreated.emit(result);
+        return;
+      }
+      if (result.action === 'use_as_reference') {
+        const remixState = buildAudioIterationRemixState(result.mediaItem, 0);
+        void this.router.navigate(['/audio'], {state: {remixState}});
+      } else {
+        handleSuccessSnackbar(this.snackBar, 'Stem mix saved to Gallery!');
+        void this.router.navigate(['/gallery', result.mediaItem.id]);
+      }
+    });
   }
 
   onExtendWithAiClick() {

@@ -39,6 +39,7 @@ import {BehaviorSubject, Subject, of, throwError} from 'rxjs';
 import {AudioComponent} from './audio.component';
 import {LanguageEnum, VoiceEnum} from './audio.constants';
 import {FlowPromptBoxComponent} from '../common/components/flow-prompt-box/flow-prompt-box.component';
+import {AudioStemMixerDialogComponent} from '../common/components/audio-stem-mixer-dialog/audio-stem-mixer-dialog.component';
 import {ConfirmationDialogComponent} from '../common/components/confirmation-dialog/confirmation-dialog.component';
 import {JobStatus, MediaItem} from '../common/models/media-item.model';
 import {MODEL_CONFIGS} from '../common/config/model-config';
@@ -78,7 +79,12 @@ describe('AudioComponent', () => {
     };
     searchServiceSpy = jasmine.createSpyObj(
       'SearchService',
-      ['startAudioGeneration', 'clearActiveAudioJob', 'rewritePrompt'],
+      [
+        'startAudioGeneration',
+        'setActiveAudioJob',
+        'clearActiveAudioJob',
+        'rewritePrompt',
+      ],
       {activeAudioJob$: activeAudioJobSubject.asObservable()},
     );
     searchServiceSpy.startAudioGeneration.and.returnValue(of({} as any));
@@ -964,6 +970,70 @@ describe('AudioComponent', () => {
     expect(galleryServiceSpy.bulkDelete).toHaveBeenCalledOnceWith(
       [{id: 505, type: 'media_item'}],
       11,
+    );
+  });
+
+  it('should open AudioStemMixerDialogComponent for attached referenceAudio and attach stemmed result when use_as_reference is chosen', () => {
+    component.referenceAudio = {
+      id: 321,
+      type: 'media_item',
+      index: 1,
+      name: 'Sunset Groove (Track 2)',
+    };
+    const stemmedItem = makeAudioJob({
+      id: 888,
+      model: GenerationModelEnum.HTDEMUCS_6S,
+      titles: ['Sunset Groove (Instrumental)'],
+      presignedUrls: ['https://signed/888.mp3'],
+    });
+    dialogSpy.open.and.returnValue({
+      afterClosed: () =>
+        of({
+          action: 'use_as_reference' as const,
+          mediaItem: stemmedItem,
+        }),
+    } as any);
+
+    const stopSpy = jasmine.createSpy('stopPropagation');
+    component.openStemMixerForReference({
+      stopPropagation: stopSpy,
+    } as unknown as Event);
+
+    expect(stopSpy).toHaveBeenCalled();
+    expect(dialogSpy.open).toHaveBeenCalledWith(
+      AudioStemMixerDialogComponent,
+      jasmine.objectContaining({
+        data: {
+          workspaceId: 1,
+          source: {id: 321, type: 'media_item', index: 1},
+          sourceTitle: 'Sunset Groove (Track 2)',
+          allowUseAsReference: true,
+        },
+      }),
+    );
+    expect(component.referenceAudio).toEqual({
+      id: 888,
+      type: 'media_item',
+      index: 0,
+      name: 'Sunset Groove (Instrumental)',
+    });
+  });
+
+  it('should focus saved stemmed MediaItem on Audio Studio stage when action is saved', () => {
+    const stemmedItem = makeAudioJob({
+      id: 889,
+      model: GenerationModelEnum.HTDEMUCS_6S,
+      titles: ['Vocals Only'],
+      presignedUrls: ['https://signed/889.mp3'],
+    });
+
+    component.handleStemmedMediaCreated({
+      action: 'saved',
+      mediaItem: stemmedItem,
+    });
+
+    expect(searchServiceSpy.setActiveAudioJob).toHaveBeenCalledWith(
+      stemmedItem,
     );
   });
 });
