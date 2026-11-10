@@ -17,18 +17,28 @@
 import {Component, Input, OnInit} from '@angular/core';
 import {AbstractControl, FormBuilder} from '@angular/forms';
 import {MatDialog} from '@angular/material/dialog';
+import {MatSnackBar} from '@angular/material/snack-bar';
 import {AssetTypeEnum} from '../../../../../../admin/source-assets-management/source-asset.model';
-import {ImageCropperDialogComponent} from '../../../../../../common/components/image-cropper-dialog/image-cropper-dialog.component';
-import {
-  ImageSelectorComponent,
-  MediaItemSelection,
-} from '../../../../../../common/components/image-selector/image-selector.component';
+import {ImageSelectorComponent} from '../../../../../../common/components/image-selector/image-selector.component';
 import {ReferenceImage} from '../../../../../../common/models/search.model';
 import {
+  SourceAssetOptionsDto,
   SourceAssetResponseDto,
   SourceAssetService,
 } from '../../../../../../common/services/source-asset.service';
+import {handleErrorSnackbar} from '../../../../../../utils/handleMessageSnackbar';
 import {StepOutputReference} from '../../../../../workflow.models';
+import {isInputAlreadyLinked} from '../../../../../utils/workflow-magnetic.util';
+import {
+  getPreviewUrl,
+  isVideoUrl,
+} from '../../../../../utils/workflow-step.util';
+import {LOOP_LINKED_ITEMS_REQUIRED_MESSAGE} from '../../../step-configs/loop-step.config';
+
+export type StepMediaType = 'image' | 'video' | 'audio';
+export type StepMediaMimeType = 'image/*' | 'video/*' | 'audio/*';
+
+const DEFAULT_EMPTY_MEDIA_MESSAGE = 'At least one input is required';
 
 @Component({
   selector: 'app-step-media-input',
@@ -37,15 +47,27 @@ import {StepOutputReference} from '../../../../../workflow.models';
 })
 export class StepMediaInputComponent implements OnInit {
   @Input() control!: AbstractControl;
+
+  readonly isVideoUrl = isVideoUrl;
   @Input() inputName!: string;
-  @Input() type: 'image' | 'video' = 'image';
+  @Input() type: StepMediaType = 'image';
   @Input() maxItems = 1;
   @Input() compatibleOutputs: any[] = [];
   @Input() showValidationErrors = false;
+  @Input() disabledMessage = '';
+  /** When true, only output references can be added (no gallery picks or uploads). */
+  @Input() linkedOnly = false;
+
+  /** Message shown when the input has no items and is invalid. */
+  get emptyErrorMessage(): string {
+    return this.control?.hasError('linkedItemsRequired')
+      ? LOOP_LINKED_ITEMS_REQUIRED_MESSAGE
+      : DEFAULT_EMPTY_MEDIA_MESSAGE;
+  }
 
   // Helpers
   get items(): (ReferenceImage | StepOutputReference)[] {
-    const val = this.control.value;
+    const val = this.control?.value;
     if (Array.isArray(val)) return val;
     // If it's single item but we want to treat it as array for rendering
     // Actually, fixed mode can be single object or array?
@@ -58,13 +80,28 @@ export class StepMediaInputComponent implements OnInit {
     // In GenericStepComponent, `referenceImages` was the source of truth for display, and `updateInputControlWithError` synced it to control.
     // We should probably maintain a local `referenceImages` array and sync to control.
     if (!val) return [];
-    return Array.isArray(val) ? val : [val];
+    return [val];
+  }
+
+  get unlinkedCompatibleOutputs(): any[] {
+    if (!this.compatibleOutputs) return [];
+    return this.compatibleOutputs.filter(
+      out =>
+        !out?.value?.step ||
+        !out?.value?.output ||
+        !isInputAlreadyLinked(
+          this.control?.value,
+          out.value.step,
+          out.value.output,
+        ),
+    );
   }
 
   constructor(
     private fb: FormBuilder,
     private dialog: MatDialog,
     private sourceAssetService: SourceAssetService,
+    private snackBar: MatSnackBar,
   ) {}
 
   ngOnInit(): void {}
@@ -74,22 +111,29 @@ export class StepMediaInputComponent implements OnInit {
   }
 
   isStepOutputReference(item: any): item is StepOutputReference {
-    return item && 'step' in item && 'output' in item;
+    return !!(
+      item &&
+      typeof item === 'object' &&
+      'step' in item &&
+      'output' in item
+    );
   }
 
   getLinkedOutputLabel(item: StepOutputReference): string {
-    const found = this.compatibleOutputs.find(
-      o => o.value.step === item.step && o.value.output === item.output,
+    const found = this.compatibleOutputs?.find(
+      o => o.value?.step === item.step && o.value?.output === item.output,
     );
     return found ? found.label : `${item.step}.${item.output}`;
   }
 
   openImageSelectorForReference(): void {
+    if (this.control?.disabled || this.linkedOnly) return;
     const remainingSlots = this.maxItems - this.items.length;
     if (remainingSlots <= 0) return;
 
-    let mimeType = 'image/*';
-    if (this.type === 'video') mimeType = 'video/mp4';
+    let mimeType: StepMediaMimeType = 'image/*';
+    if (this.type === 'video') mimeType = 'video/*';
+    if (this.type === 'audio') mimeType = 'audio/*';
 
     const dialogRef = this.dialog.open(ImageSelectorComponent, {
       width: '90vw',
@@ -121,17 +165,20 @@ export class StepMediaInputComponent implements OnInit {
           if ('gcsUri' in res) {
             newItem = {
               sourceAssetId: res.id,
-              previewUrl: res.presignedUrl || '',
+              previewUrl: getPreviewUrl(res),
             };
           } else {
-            const previewUrl = res.mediaItem.presignedUrls?.[res.selectedIndex];
+            const previewUrl = getPreviewUrl(res);
             if (previewUrl) {
               newItem = {
                 previewUrl: previewUrl,
                 sourceMediaItem: {
                   mediaItemId: res.mediaItem.id,
                   mediaIndex: res.selectedIndex,
-                  role: 'image_reference_asset',
+                  role:
+                    this.type === 'video'
+                      ? 'reference_video'
+                      : 'image_reference_asset',
                 },
               };
             }
@@ -156,36 +203,54 @@ export class StepMediaInputComponent implements OnInit {
 
   onReferenceImageDrop(event: DragEvent) {
     event.preventDefault();
+    if (this.control?.disabled || this.linkedOnly) return;
     if (this.items.length >= this.maxItems) return;
 
-    // Only support image drop for now as per original code `input.type === 'image' && ...`
-    // If this component handles video too, we should check type.
-    if (this.type !== 'image') return;
+    if (this.type !== 'image' && this.type !== 'video') return;
 
     const file = event.dataTransfer?.files[0];
-    if (file && file.type.startsWith('image/')) {
-      this.sourceAssetService
-        .uploadAsset(file, {
-          aspectRatio: 'other',
-          assetType: AssetTypeEnum.GENERIC_IMAGE,
-        })
-        .subscribe((result: SourceAssetResponseDto) => {
-          if (result && result.id) {
-            this.addItem({
-              sourceAssetId: result.id,
-              previewUrl: result.presignedUrl || '',
-            });
-          }
-        });
-    }
+    if (!file) return;
+
+    const isImage = this.type === 'image' && file.type.startsWith('image/');
+    const isVideo = this.type === 'video' && file.type.startsWith('video/');
+
+    if (!isImage && !isVideo) return;
+
+    const options: SourceAssetOptionsDto = isImage
+      ? {aspectRatio: 'other', assetType: AssetTypeEnum.GENERIC_IMAGE}
+      : {assetType: AssetTypeEnum.GENERIC_VIDEO};
+
+    this.sourceAssetService.uploadAsset(file, options).subscribe({
+      next: (result: SourceAssetResponseDto) => {
+        if (result && result.id) {
+          this.addItem({
+            sourceAssetId: result.id,
+            previewUrl: getPreviewUrl(result),
+          });
+        }
+      },
+      error: (err: unknown) => {
+        handleErrorSnackbar(this.snackBar, err, 'Upload dropped media');
+      },
+    });
   }
 
   addLinkedOutput(outputValue: any) {
+    if (this.control?.disabled) return;
     if (this.items.length >= this.maxItems) return;
-    this.addItem(outputValue.value);
+    const ref: StepOutputReference = outputValue?.value ?? outputValue;
+    if (
+      ref?.step &&
+      ref?.output &&
+      isInputAlreadyLinked(this.control?.value, ref.step, ref.output)
+    ) {
+      return;
+    }
+    this.addItem(ref);
   }
 
   clearReferenceImage(index: number) {
+    if (this.control?.disabled) return;
     const currentItems = [...this.items];
     currentItems.splice(index, 1);
     this.updateValue(currentItems);

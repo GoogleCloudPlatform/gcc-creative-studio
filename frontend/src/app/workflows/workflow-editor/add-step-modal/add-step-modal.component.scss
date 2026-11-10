@@ -44,6 +44,8 @@ mat-dialog-content {
   max-height: 60vh;
   min-height: 300px; /* Force at least some height to see if it renders */
   padding: 0 24px 24px 24px !important; // Override default material padding if needed
+  overflow: hidden;
+  margin-bottom: 16px;
 }
 
 .node-grid {
@@ -79,7 +81,7 @@ mat-dialog-content {
     cursor: not-allowed;
     background: #161616;
     border-color: #222;
-    
+
     .icon-container {
       background: #222;
       color: #555;
@@ -111,7 +113,7 @@ mat-dialog-content {
       align-items: center;
       gap: 8px;
       margin-bottom: 4px;
-      
+
       h3 {
         margin: 0;
         font-size: 16px;

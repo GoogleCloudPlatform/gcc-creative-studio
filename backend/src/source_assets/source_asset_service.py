@@ -420,7 +420,7 @@ class SourceAssetService:
                             user_image=original_gcs_uri,
                             upscale_factor=upscale_factor,
                             mime_type=MimeTypeEnum.IMAGE_PNG,
-                            generation_model=GenerationModelEnum.IMAGEN_4_UPSCALE_PREVIEW,
+                            generation_model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE,
                             enhance_input_image=enhance_input_image or False,
                             image_preservation_factor=image_preservation_factor,
                         )

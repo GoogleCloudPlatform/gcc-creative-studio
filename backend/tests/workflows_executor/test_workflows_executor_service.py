@@ -12,15 +12,42 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import AsyncMock, MagicMock, patch
+import logging
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
+import httpx
 import pytest
 from fastapi import HTTPException
+from google.genai import errors as genai_errors
+from google.genai import types
 from httpx import Response
 
+from src.common import retry as retry_module
 from src.common.schema.media_item_model import AssetRoleEnum
-from src.workflows.schema.workflow_model import ReferenceMediaOrAsset
+from src.config.config_service import ConfigService, config_service
+from src.folders.output_folder import OUTPUT_FOLDER_NOT_FOUND_DETAIL
+from src.workflows.queue.failure_classifier import ErrorCategory
+from src.workflows.schema.workflow_model import (
+    GenerateAudioInputs,
+    GenerateAudioSettings,
+    GenerateTextSettings,
+    GenerateVideoInputs,
+    GenerateVideoSettings,
+    ImageInputs,
+    ImageSettings,
+    ReferenceMediaOrAsset,
+)
+from src.workflows_executor.dto.workflows_executor_dto import (
+    GenerateAudioRequest,
+    GenerateTextRequest,
+    GenerateVideoRequest,
+    ImageStepRequest,
+)
+from src.workflows_executor.step_errors import StepError, to_step_error
 from src.workflows_executor.workflows_executor_service import (
+    POLL_INITIAL_DELAY_SECONDS,
+    POLL_INTERVAL_SECONDS,
+    REST_CLIENT_TIMEOUT_SECONDS,
     WorkflowsExecutorService,
 )
 
@@ -212,17 +239,12 @@ async def test_generate_text_stream(service):
     assert kwargs["model"] == "gemini-1.5-pro"
     # Prompt is wrapped as Part.from_text inside contents
     assert len(kwargs["contents"]) == 1
+    # A truthy MagicMock flag must not turn on Google Search grounding.
+    assert kwargs["config"].tools is None
 
 
 @pytest.mark.anyio
 async def test_generate_image(service):
-    request = MagicMock()
-    request.workspace_id = 1
-    request.inputs.prompt = "A cat"
-    request.config.model = "gemini-3.1-flash-image"
-    request.config.aspect_ratio = "1:1"
-    request.config.brand_guidelines = False
-
     service.mock_rest_client.post.return_value = Response(200, json={"id": 999})
 
     with patch.object(
@@ -230,22 +252,21 @@ async def test_generate_image(service):
         "_poll_job_status",
         AsyncMock(return_value=True),
     ) as mock_poll:
-        result = await service.generate_image(request)
-        assert result["generated_image"] == 999
+        result = await service._generate_image(
+            workspace_id=1,
+            prompt="A cat",
+            model="gemini-3.1-flash-image",
+            aspect_ratio="1:1",
+            brand_guidelines=False,
+            resolution="1K",
+        )
+        assert result == 999
         service.mock_rest_client.post.assert_called_once()
         mock_poll.assert_called_once_with(999, None)
 
 
 @pytest.mark.anyio
 async def test_edit_image(service):
-    request = MagicMock()
-    request.workspace_id = 1
-    request.inputs.prompt = "Add hat"
-    request.inputs.input_images = [123]
-    request.config.model = "gemini-3.1-flash-image"
-    request.config.aspect_ratio = "1:1"
-    request.config.brand_guidelines = False
-
     service.mock_rest_client.post.return_value = Response(200, json={"id": 888})
 
     with (
@@ -260,8 +281,16 @@ async def test_edit_image(service):
             AsyncMock(return_value=True),
         ) as mock_poll,
     ):
-        result = await service.edit_image(request)
-        assert result["edited_image"] == 888
+        result = await service._edit_image(
+            workspace_id=1,
+            prompt="Add hat",
+            input_images=[123],
+            model="gemini-3.1-flash-image",
+            aspect_ratio="1:1",
+            brand_guidelines=False,
+            resolution="1K",
+        )
+        assert result == 888
         service.mock_rest_client.post.assert_called_once()
         mock_poll.assert_called_once_with(888, None)
 
@@ -272,10 +301,16 @@ async def test_generate_video(service):
     request.workspace_id = 1
     request.inputs.prompt = "A running dog"
     request.inputs.input_images = [123]
+    request.inputs.input_video = None
+    request.inputs.input_audio = None
     request.inputs.start_frame = None
     request.inputs.end_frame = None
     request.config.model = "veo-3.1-generate-001"
+    request.config.aspect_ratio = "16:9"
     request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+    request.config.duration_seconds = 6
+    request.config.output_folder_id = None
 
     service.mock_rest_client.post.return_value = Response(200, json={"id": 777})
 
@@ -287,19 +322,498 @@ async def test_generate_video(service):
         result = await service.generate_video(request)
         assert result["generated_video"] == 777
         service.mock_rest_client.post.assert_called_once()
+        _, kwargs = service.mock_rest_client.post.call_args
+        assert kwargs["json"]["aspect_ratio"] == "16:9"
+        assert kwargs["json"]["duration_seconds"] == 6
+        assert kwargs["json"]["reference_videos"] is None
+        assert "reference_audio" not in kwargs["json"]
         mock_poll.assert_called_once_with(777, None)
 
 
 @pytest.mark.anyio
-async def test_virtual_try_on(service):
+async def test_generate_vertical_video(service):
     request = MagicMock()
     request.workspace_id = 1
-    request.inputs.model_image = 123
-    request.inputs.top_image = None
-    request.inputs.bottom_image = None
-    request.inputs.dress_image = None
-    request.inputs.shoes_image = None
+    request.inputs.prompt = "A vertical story video"
+    request.inputs.input_images = None
+    request.inputs.input_video = None
+    request.inputs.input_audio = None
+    request.inputs.start_frame = None
+    request.inputs.end_frame = None
+    request.config.model = "veo-3.1-generate-001"
+    request.config.aspect_ratio = "9:16"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+    request.config.duration_seconds = 8
+    request.config.output_folder_id = None
 
+    service.mock_rest_client.post.return_value = Response(200, json={"id": 888})
+
+    with patch.object(
+        service,
+        "_poll_job_status",
+        AsyncMock(return_value=True),
+    ) as mock_poll:
+        result = await service.generate_video(request)
+        assert result["generated_video"] == 888
+        service.mock_rest_client.post.assert_called_once()
+        _, kwargs = service.mock_rest_client.post.call_args
+        assert kwargs["json"]["aspect_ratio"] == "9:16"
+        assert kwargs["json"]["duration_seconds"] == 8
+        mock_poll.assert_called_once_with(888, None)
+
+
+@pytest.mark.anyio
+async def test_generate_video_with_multi_reference_videos_and_ignored_audio(
+    service,
+):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "A running dog with multi video refs"
+    request.inputs.input_images = None
+    request.inputs.input_video = [
+        [888, 889],
+        890,
+        891,
+    ]  # Nested loop + capped at 3
+    request.inputs.input_audio = 999  # Legacy field ignored
+    request.inputs.start_frame = None
+    request.inputs.end_frame = None
+    request.inputs.source_video = None
+    request.config.model = "gemini-omni-1.2-flash"
+    request.config.aspect_ratio = "16:9"
+    request.config.brand_guidelines = False
+    request.config.resolution = "4K"  # Forced down to 1K for Omni
+    request.config.duration_seconds = 8
+    request.config.input_mode = "Ingredients to Video"
+    request.config.output_folder_id = None
+
+    service.mock_rest_client.post.return_value = Response(
+        200, json={"id": 1234}
+    )
+
+    with patch.object(
+        service,
+        "_poll_job_status",
+        AsyncMock(return_value=True),
+    ) as mock_poll:
+        result = await service.generate_video(request)
+        assert result["generated_video"] == 1234
+        service.mock_rest_client.post.assert_called_once()
+        _, kwargs = service.mock_rest_client.post.call_args
+        assert kwargs["json"]["aspect_ratio"] == "16:9"
+        assert kwargs["json"]["resolution"] == "1K"
+        assert kwargs["json"]["reference_videos"] == [
+            {"id": 888, "type": "media_item", "index": 0},
+            {"id": 889, "type": "media_item", "index": 0},
+            {"id": 890, "type": "media_item", "index": 0},
+        ]
+        assert "reference_audio" not in kwargs["json"]
+        mock_poll.assert_called_once_with(1234, None)
+
+
+@pytest.mark.anyio
+async def test_generate_video_with_source_asset_video_and_extend_mode(service):
+    from src.workflows.schema.workflow_model import (
+        ReferenceMediaOrAsset,
+        SourceMediaItemLink,
+    )
+
+    video_ref = ReferenceMediaOrAsset(
+        previewUrl="https://example.com/vid.mp4",
+        sourceMediaItem=SourceMediaItemLink(
+            mediaItemId=501, mediaIndex=1, role="video_reference"
+        ),
+    )
+    extend_ref = ReferenceMediaOrAsset(
+        previewUrl="https://example.com/ext.mp4",
+        sourceAssetId=601,
+    )
+
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "Continue the cinematic shot"
+    request.inputs.input_images = [
+        111
+    ]  # Ignored when Extend Video is inferred/set
+    request.inputs.input_video = video_ref
+    request.inputs.input_audio = None
+    request.inputs.start_frame = None
+    request.inputs.end_frame = None
+    request.inputs.source_video = extend_ref
+    request.config.model = "gemini-omni-1.1-flash-preview"
+    request.config.aspect_ratio = "16:9"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+    request.config.duration_seconds = 8
+    request.config.input_mode = None  # Legacy unset mode infers Extend Video
+    request.config.output_folder_id = None
+
+    service.mock_rest_client.post.return_value = Response(
+        200, json={"id": 5678}
+    )
+
+    with patch.object(
+        service,
+        "_poll_job_status",
+        AsyncMock(return_value=True),
+    ) as mock_poll:
+        result = await service.generate_video(request)
+        assert result["generated_video"] == 5678
+        _, kwargs = service.mock_rest_client.post.call_args
+        assert kwargs["json"]["source_video_asset_id"] == {
+            "id": 601,
+            "type": "source_asset",
+            "index": 0,
+        }
+        assert kwargs["json"]["reference_videos"] is None
+        assert kwargs["json"]["reference_images"] == []
+        assert kwargs["json"]["source_media_items"] == []
+        assert "reference_audio" not in kwargs["json"]
+        mock_poll.assert_called_once_with(5678, None)
+
+
+@pytest.mark.anyio
+async def test_generate_video_skips_unsupported_references_for_veo(service):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "A running dog with ignored refs"
+    request.inputs.input_images = None
+    request.inputs.input_video = 888  # Leftover/disabled in UI
+    request.inputs.input_audio = 999  # Leftover/disabled in UI
+    request.inputs.start_frame = None
+    request.inputs.end_frame = None
+    request.inputs.source_video = None
+    request.config.model = "veo-3.1-generate-001"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+    request.config.duration_seconds = 8
+    request.config.input_mode = None
+    request.config.output_folder_id = None
+
+    service.mock_rest_client.post.return_value = Response(
+        200, json={"id": 9999}
+    )
+
+    with patch.object(
+        service,
+        "_poll_job_status",
+        AsyncMock(return_value=True),
+    ) as mock_poll:
+        result = await service.generate_video(request)
+        assert result["generated_video"] == 9999
+        _, kwargs = service.mock_rest_client.post.call_args
+        assert kwargs["json"]["reference_videos"] is None
+        assert "reference_audio" not in kwargs["json"]
+        mock_poll.assert_called_once_with(9999, None)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "model, expect_refs",
+    [
+        ("gemini-omni-1.2-flash", True),
+        ("gemini-omni-1.1-flash-preview", True),
+        ("gemini-omni-flash-preview", False),
+        ("gemini-omni-generate-preview", False),
+        ("not-a-real-model", False),
+    ],
+)
+async def test_generate_video_reference_passthrough_by_model(
+    service, model, expect_refs
+):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "A running dog"
+    request.inputs.input_images = None
+    request.inputs.input_video = 888
+    request.inputs.input_audio = 999
+    request.inputs.start_frame = None
+    request.inputs.end_frame = None
+    request.inputs.source_video = None
+    request.config.model = model
+    request.config.aspect_ratio = "16:9"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+    request.config.duration_seconds = 8
+    request.config.input_mode = None
+    request.config.output_folder_id = None
+
+    service.mock_rest_client.post.return_value = Response(
+        200, json={"id": 4321}
+    )
+
+    with patch.object(
+        service,
+        "_poll_job_status",
+        AsyncMock(return_value=True),
+    ):
+        await service.generate_video(request)
+        _, kwargs = service.mock_rest_client.post.call_args
+        assert "reference_audio" not in kwargs["json"]
+        if expect_refs:
+            assert kwargs["json"]["reference_videos"] == [
+                {
+                    "id": 888,
+                    "type": "media_item",
+                    "index": 0,
+                }
+            ]
+        else:
+            assert kwargs["json"]["reference_videos"] is None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "input_mode, input_images, start_frame, end_frame, source_video, configured_duration, expected_duration",
+    [
+        ("Ingredients to Video", [101], None, None, None, 15, 10),
+        ("Extend Video", None, None, None, 202, 15, 10),
+        ("Frames to Video", None, None, 303, None, 15, 10),
+        ("Frames to Video", None, 301, 303, None, 12, 10),
+        ("Frames to Video", None, 301, None, None, 15, 15),
+        ("Text to Video", None, None, None, None, 15, 15),
+        ("Text to Video", None, None, None, None, 2, 3),
+    ],
+)
+async def test_generate_video_clamps_legacy_omni_durations(
+    service,
+    input_mode,
+    input_images,
+    start_frame,
+    end_frame,
+    source_video,
+    configured_duration,
+    expected_duration,
+):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "A dramatic cinematic sweep"
+    request.inputs.input_images = input_images
+    request.inputs.input_video = None
+    request.inputs.input_audio = None
+    request.inputs.start_frame = start_frame
+    request.inputs.end_frame = end_frame
+    request.inputs.source_video = source_video
+    request.config.model = "gemini-omni-1.2-flash"
+    request.config.aspect_ratio = "16:9"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+    request.config.duration_seconds = configured_duration
+    request.config.input_mode = input_mode
+    request.config.output_folder_id = None
+
+    service.mock_rest_client.post.return_value = Response(
+        200, json={"id": 6060}
+    )
+
+    with patch.object(
+        service,
+        "_poll_job_status",
+        AsyncMock(return_value=True),
+    ):
+        await service.generate_video(request)
+        _, kwargs = service.mock_rest_client.post.call_args
+        assert kwargs["json"]["duration_seconds"] == expected_duration
+
+
+@pytest.mark.anyio
+async def test_generate_video_extend_mode_requires_source_video(service):
+    from fastapi import HTTPException
+
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "Continue the scene"
+    request.inputs.input_images = None
+    request.inputs.input_video = None
+    request.inputs.input_audio = None
+    request.inputs.start_frame = None
+    request.inputs.end_frame = None
+    request.inputs.source_video = None
+    request.config.model = "gemini-omni-1.2-flash"
+    request.config.aspect_ratio = "16:9"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+    request.config.duration_seconds = 8
+    request.config.input_mode = "Extend Video"
+    request.config.output_folder_id = None
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.generate_video(request)
+    assert exc_info.value.status_code == 400
+    assert "Source video is required" in exc_info.value.detail
+    service.mock_rest_client.post.assert_not_called()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("blank_prompt", ["", "   ", None])
+async def test_generate_video_non_extend_requires_non_empty_prompt(
+    service, blank_prompt
+):
+    from fastapi import HTTPException
+
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = blank_prompt
+    request.inputs.input_images = None
+    request.inputs.input_video = None
+    request.inputs.input_audio = None
+    request.inputs.start_frame = None
+    request.inputs.end_frame = None
+    request.inputs.source_video = None
+    request.config.model = "gemini-omni-1.2-flash"
+    request.config.aspect_ratio = "16:9"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+    request.config.duration_seconds = 8
+    request.config.input_mode = "Text to Video"
+    request.config.output_folder_id = None
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.generate_video(request)
+    assert exc_info.value.status_code == 400
+    assert "Prompt is required" in exc_info.value.detail
+    service.mock_rest_client.post.assert_not_called()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "model, input_count, expected_cap",
+    [
+        ("gemini-omni-1.2-flash", 12, 10),
+        ("gemini-omni-1.1-flash-preview", 7, 5),
+        ("veo-3.1-generate-001", 5, 3),
+    ],
+)
+async def test_generate_video_trims_and_deduplicates_reference_images_to_model_cap(
+    service, model, input_count, expected_cap
+):
+    from src.workflows.schema.workflow_model import ReferenceMediaOrAsset
+
+    # Include a duplicate media item (1000) plus mixed source assets
+    raw_images = [1000, 1000] + [1000 + i for i in range(1, input_count - 1)]
+    raw_images.append(
+        ReferenceMediaOrAsset(
+            previewUrl="https://example.com/a.png", sourceAssetId=9001
+        )
+    )
+    raw_images.append(
+        ReferenceMediaOrAsset(
+            previewUrl="https://example.com/b.png", sourceAssetId=9002
+        )
+    )
+
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "Showcase the product lineup"
+    request.inputs.input_images = raw_images
+    request.inputs.input_video = None
+    request.inputs.input_audio = None
+    request.inputs.start_frame = None
+    request.inputs.end_frame = None
+    request.inputs.source_video = None
+    request.config.model = model
+    request.config.aspect_ratio = "16:9"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+    request.config.duration_seconds = 8
+    request.config.input_mode = "Ingredients to Video"
+    request.config.output_folder_id = None
+
+    service.mock_rest_client.post.return_value = Response(
+        200, json={"id": 7070}
+    )
+
+    with patch.object(
+        service,
+        "_poll_job_status",
+        AsyncMock(return_value=True),
+    ):
+        await service.generate_video(request)
+        _, kwargs = service.mock_rest_client.post.call_args
+        submitted_total = len(kwargs["json"]["source_media_items"]) + len(
+            kwargs["json"]["reference_images"]
+        )
+        assert submitted_total == expected_cap
+
+
+def test_map_to_asset_reference_helper(service):
+    from src.workflows.schema.workflow_model import (
+        ReferenceMediaOrAsset,
+        SourceMediaItemLink,
+    )
+
+    # 1. None or empty
+    assert service._map_to_asset_reference(None) is None
+    assert service._map_to_asset_reference([]) is None
+
+    # 2. Integer
+    assert service._map_to_asset_reference(123) == {
+        "id": 123,
+        "type": "media_item",
+        "index": 0,
+    }
+
+    # 3. String digits
+    assert service._map_to_asset_reference("456") == {
+        "id": 456,
+        "type": "media_item",
+        "index": 0,
+    }
+
+    # 4. ReferenceMediaOrAsset with sourceMediaItem
+    ref_media = ReferenceMediaOrAsset(
+        previewUrl="",
+        sourceMediaItem=SourceMediaItemLink(
+            mediaItemId=789, mediaIndex=2, role="video_reference_asset"
+        ),
+    )
+    assert service._map_to_asset_reference(ref_media) == {
+        "id": 789,
+        "type": "media_item",
+        "index": 2,
+    }
+
+    # 5. ReferenceMediaOrAsset with sourceAssetId
+    ref_asset = ReferenceMediaOrAsset(
+        previewUrl="",
+        sourceAssetId=999,
+    )
+    assert service._map_to_asset_reference(ref_asset) == {
+        "id": 999,
+        "type": "source_asset",
+        "index": 0,
+    }
+
+    # 6. Dict with sourceMediaItem
+    dict_media = {
+        "sourceMediaItem": {"mediaItemId": 111, "mediaIndex": 0},
+    }
+    assert service._map_to_asset_reference(dict_media) == {
+        "id": 111,
+        "type": "media_item",
+        "index": 0,
+    }
+
+    # 7. Dict with sourceAssetId
+    dict_asset = {"sourceAssetId": 222}
+    assert service._map_to_asset_reference(dict_asset) == {
+        "id": 222,
+        "type": "source_asset",
+        "index": 0,
+    }
+
+    # 8. Dict with explicit id and type
+    dict_direct = {"id": 333, "type": "media_item", "index": 1}
+    assert service._map_to_asset_reference(dict_direct) == {
+        "id": 333,
+        "type": "media_item",
+        "index": 1,
+    }
+
+
+@pytest.mark.anyio
+async def test_virtual_try_on(service):
     service.mock_rest_client.post.return_value = Response(200, json={"id": 666})
 
     with patch.object(
@@ -307,8 +821,15 @@ async def test_virtual_try_on(service):
         "_poll_job_status",
         AsyncMock(return_value=True),
     ) as mock_poll:
-        result = await service.virtual_try_on(request)
-        assert result["generated_image"] == 666
+        result = await service._virtual_try_on(
+            workspace_id=1,
+            model_image=123,
+            top_image=None,
+            bottom_image=None,
+            dress_image=None,
+            shoes_image=None,
+        )
+        assert result == 666
         service.mock_rest_client.post.assert_called_once()
         mock_poll.assert_called_once_with(666, None)
 
@@ -323,6 +844,7 @@ async def test_generate_audio(service):
     request.config.language_code = "en"
     request.config.negative_prompt = None
     request.config.seed = None
+    request.config.output_folder_id = None
 
     service.mock_rest_client.post.return_value = Response(200, json={"id": 555})
 
@@ -335,3 +857,1040 @@ async def test_generate_audio(service):
         assert result["generated_audio"] == 555
         service.mock_rest_client.post.assert_called_once()
         mock_poll.assert_called_once_with(555, None)
+
+
+@pytest.mark.anyio
+async def test_upscale_image_success(service):
+    service.mock_rest_client.post.return_value = Response(200, json={"id": 444})
+
+    with (
+        patch.object(
+            service,
+            "_normalize_asset_inputs",
+            return_value=([{"media_item_id": 123}], []),
+        ),
+        patch.object(
+            service,
+            "_poll_job_status",
+            AsyncMock(return_value=True),
+        ) as mock_poll,
+    ):
+        result = await service._upscale_image(
+            workspace_id=1,
+            input_image=123,
+            upscale_factor="x4",
+            enhance_input_image=True,
+            image_preservation_factor=0.8,
+        )
+        assert result == 444
+        service.mock_rest_client.post.assert_called_once()
+        mock_poll.assert_called_once_with(444, None)
+
+
+@pytest.mark.anyio
+async def test_upscale_image_missing_input(service):
+    with patch.object(
+        service,
+        "_normalize_asset_inputs",
+        return_value=([], []),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await service._upscale_image(
+                workspace_id=1,
+                input_image=None,
+            )
+        assert exc.value.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_execute_image_generate_mode(service):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "A majestic lion"
+    request.config.mode = "generate_image"
+    request.config.model = "gemini-3.1-flash-image"
+    request.config.aspect_ratio = "1:1"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+    request.config.output_folder_id = None
+
+    with patch.object(
+        service,
+        "_generate_image",
+        AsyncMock(return_value=111),
+    ) as mock_gen:
+        result = await service.execute_image(request)
+        assert result == {"generated_image": 111}
+        mock_gen.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_execute_image_edit_mode(service):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "Add sunglasses"
+    request.inputs.input_images = [10]
+    request.config.mode = "edit_image"
+    request.config.model = "gemini-2.5-flash-image"
+    request.config.aspect_ratio = "1:1"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+
+    with patch.object(
+        service,
+        "_edit_image",
+        AsyncMock(return_value=222),
+    ) as mock_edit:
+        result = await service.execute_image(request)
+        assert result == {"generated_image": 222}
+        mock_edit.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_execute_image_generate_mode_auto_aspect_ratio_fallback(service):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "A futuristic city"
+    request.config.mode = "generate_image"
+    request.config.model = "gemini-3.1-flash-image"
+    request.config.aspect_ratio = "auto"
+    request.config.brand_guidelines = False
+    request.config.resolution = "2K"
+    request.config.output_folder_id = None
+
+    with patch.object(
+        service,
+        "_generate_image",
+        AsyncMock(return_value=112),
+    ) as mock_gen:
+        result = await service.execute_image(request)
+        assert result == {"generated_image": 112}
+        mock_gen.assert_called_once_with(
+            workspace_id=1,
+            prompt="A futuristic city",
+            model="gemini-3.1-flash-image",
+            aspect_ratio="1:1",
+            brand_guidelines=False,
+            resolution="2K",
+            authorization=None,
+            guard=None,
+            output_folder_id=None,
+        )
+
+
+@pytest.mark.anyio
+async def test_execute_image_edit_mode_auto_aspect_ratio_preserved(service):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "Add fireworks"
+    request.inputs.input_images = [10]
+    request.config.mode = "edit_image"
+    request.config.model = "gemini-3.1-flash-image"
+    request.config.aspect_ratio = "auto"
+    request.config.brand_guidelines = False
+    request.config.resolution = "4K"
+    request.config.output_folder_id = None
+
+    with patch.object(
+        service,
+        "_edit_image",
+        AsyncMock(return_value=223),
+    ) as mock_edit:
+        result = await service.execute_image(request)
+        assert result == {"generated_image": 223}
+        mock_edit.assert_called_once_with(
+            workspace_id=1,
+            prompt="Add fireworks",
+            input_images=[10],
+            model="gemini-3.1-flash-image",
+            aspect_ratio="auto",
+            brand_guidelines=False,
+            resolution="4K",
+            authorization=None,
+            guard=None,
+            output_folder_id=None,
+        )
+
+
+@pytest.mark.anyio
+async def test_execute_image_upscale_mode(service):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.input_image = 20
+    request.config.mode = "upscale_image"
+    request.config.upscale_factor = "x2"
+    request.config.enhance_input_image = False
+    request.config.image_preservation_factor = None
+    request.config.output_folder_id = None
+
+    with patch.object(
+        service,
+        "_upscale_image",
+        AsyncMock(return_value=333),
+    ) as mock_upscale:
+        result = await service.execute_image(request)
+        assert result == {"generated_image": 333}
+        mock_upscale.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_execute_image_vto_mode(service):
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.model_image = 30
+    request.inputs.top_image = 31
+    request.inputs.bottom_image = None
+    request.inputs.dress_image = None
+    request.inputs.shoes_image = None
+    request.config.mode = "virtual_try_on"
+    request.config.output_folder_id = None
+
+    with patch.object(
+        service,
+        "_virtual_try_on",
+        AsyncMock(return_value=444),
+    ) as mock_vto:
+        result = await service.execute_image(request)
+        assert result == {"generated_image": 444}
+        mock_vto.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_execute_image_missing_inputs(service):
+    # Test missing prompt in generate mode
+    req1 = MagicMock()
+    req1.inputs.prompt = None
+    req1.config.mode = "generate_image"
+    with pytest.raises(HTTPException) as exc1:
+        await service.execute_image(req1)
+    assert exc1.value.status_code == 400
+
+    # Test missing prompt in edit mode
+    req2 = MagicMock()
+    req2.inputs.prompt = None
+    req2.inputs.input_images = [1]
+    req2.config.mode = "edit_image"
+    with pytest.raises(HTTPException) as exc2:
+        await service.execute_image(req2)
+    assert exc2.value.status_code == 400
+
+    # Test missing input_images in edit mode
+    req3 = MagicMock()
+    req3.inputs.prompt = "Edit prompt"
+    req3.inputs.input_images = None
+    req3.config.mode = "edit_image"
+    with pytest.raises(HTTPException) as exc3:
+        await service.execute_image(req3)
+    assert exc3.value.status_code == 400
+
+    # Test missing input_image in upscale mode
+    req4 = MagicMock()
+    req4.inputs.input_image = None
+    req4.config.mode = "upscale_image"
+    with pytest.raises(HTTPException) as exc4:
+        await service.execute_image(req4)
+    assert exc4.value.status_code == 400
+
+    # Test missing model_image in vto mode
+    req5 = MagicMock()
+    req5.inputs.model_image = None
+    req5.config.mode = "virtual_try_on"
+    with pytest.raises(HTTPException) as exc5:
+        await service.execute_image(req5)
+    assert exc5.value.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_execute_image_invalid_mode(service):
+    request = MagicMock()
+    request.config.mode = "invalid_mode"
+    with pytest.raises(HTTPException) as exc:
+        await service.execute_image(request)
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_generate_text_simple(service):
+    request = MagicMock()
+    request.inputs.prompt = "Write a haiku about clouds."
+    request.inputs.input_images = None
+    request.inputs.input_videos = None
+    request.inputs.model_dump.return_value = {
+        "prompt": "Write a haiku about clouds."
+    }
+    request.config.model = "gemini-3-flash-preview"
+    request.config.temperature = 0.7
+
+    mock_chunk = MagicMock()
+    mock_chunk.text = "White fluffy shapes float"
+    service.mock_genai_client.models.generate_content_stream.return_value = [
+        mock_chunk
+    ]
+
+    result = await service.generate_text(request)
+    assert result == {"generated_text": "White fluffy shapes float"}
+    service.mock_genai_client.models.generate_content_stream.assert_called_once()
+    _, kwargs = (
+        service.mock_genai_client.models.generate_content_stream.call_args
+    )
+    assert kwargs["model"] == "gemini-3-flash-preview"
+    contents = kwargs["contents"]
+    assert len(contents) == 1
+    assert contents[0].text == "Write a haiku about clouds."
+
+
+@pytest.mark.anyio
+async def test_generate_text_prompt_variable_substitution(service):
+    request = MagicMock()
+    request.inputs.prompt = "Create a story about a <animal> wearing a <article_of_clothing> in <city>."
+    request.inputs.input_images = None
+    request.inputs.input_videos = None
+    request.inputs.model_dump.return_value = {
+        "prompt": "Create a story about a <animal> wearing a <article_of_clothing> in <city>.",
+        "animal": "golden retriever",
+        "article_of_clothing": "detective hat",
+        "city": "London",
+    }
+    request.config.model = "gemini-3-flash-preview"
+    request.config.temperature = 0.5
+
+    mock_chunk1 = MagicMock()
+    mock_chunk1.text = "Once upon a time "
+    mock_chunk2 = MagicMock()
+    mock_chunk2.text = "in London..."
+    service.mock_genai_client.models.generate_content_stream.return_value = [
+        mock_chunk1,
+        mock_chunk2,
+    ]
+
+    result = await service.generate_text(request)
+    assert result == {"generated_text": "Once upon a time in London..."}
+    _, kwargs = (
+        service.mock_genai_client.models.generate_content_stream.call_args
+    )
+    contents = kwargs["contents"]
+    assert len(contents) == 1
+    assert contents[0].text == (
+        "Create a story about a golden retriever wearing a detective hat in London."
+    )
+
+
+@pytest.mark.anyio
+async def test_generate_text_prompt_variable_substitution_dict_and_missing_values(
+    service,
+):
+    request = MagicMock()
+    request.inputs.prompt = "Compare <item1> with <item2> and <missing_item>."
+    request.inputs.input_images = None
+    request.inputs.input_videos = None
+    request.inputs.model_dump.return_value = {
+        "prompt": "Compare <item1> with <item2> and <missing_item>.",
+        "item1": {"generated_text": "Quantum Computing"},
+        "item2": {"text": "Classical Computing"},
+        "missing_item": None,
+    }
+    request.config.model = "gemini-3-flash-preview"
+    request.config.temperature = 0.7
+
+    mock_chunk = MagicMock()
+    mock_chunk.text = "Comparison result"
+    service.mock_genai_client.models.generate_content_stream.return_value = [
+        mock_chunk
+    ]
+
+    result = await service.generate_text(request)
+    assert result == {"generated_text": "Comparison result"}
+    _, kwargs = (
+        service.mock_genai_client.models.generate_content_stream.call_args
+    )
+    contents = kwargs["contents"]
+    assert len(contents) == 1
+    assert (
+        contents[0].text
+        == "Compare Quantum Computing with Classical Computing and ."
+    )
+
+
+@pytest.mark.anyio
+async def test_generate_text_prompt_variable_substitution_case_insensitive(
+    service,
+):
+    request = MagicMock()
+    request.inputs.prompt = "Story of a <ANIMAL> with a <Hat_Type>."
+    request.inputs.input_images = None
+    request.inputs.input_videos = None
+    request.inputs.model_dump.return_value = {
+        "prompt": "Story of a <ANIMAL> with a <Hat_Type>.",
+        "animal": "tiger",
+        "hat_type": "beanie",
+    }
+    request.config.model = "gemini-3-flash-preview"
+    request.config.temperature = 0.5
+
+    mock_chunk = MagicMock()
+    mock_chunk.text = "Tiger story"
+    service.mock_genai_client.models.generate_content_stream.return_value = [
+        mock_chunk
+    ]
+
+    result = await service.generate_text(request)
+    assert result == {"generated_text": "Tiger story"}
+    _, kwargs = (
+        service.mock_genai_client.models.generate_content_stream.call_args
+    )
+    contents = kwargs["contents"]
+    assert len(contents) == 1
+    assert contents[0].text == "Story of a tiger with a beanie."
+
+
+# --- Phase 1 hardening -------------------------
+# The poll-budget tests drive _poll_job_status directly.
+# pylint: disable=protected-access
+
+JWT = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMjMifQ.c2lnbmF0dXJl"
+USER_AUTH = f"Bearer {JWT}"
+
+
+def _image_request() -> MagicMock:
+    request = MagicMock()
+    request.workspace_id = 1
+    request.inputs.prompt = "A cat"
+    request.config.mode = "generate_image"
+    request.config.model = "gemini-3.1-flash-image"
+    request.config.aspect_ratio = "1:1"
+    request.config.brand_guidelines = False
+    request.config.resolution = "1K"
+    request.config.output_folder_id = None
+    return request
+
+
+def _text_request() -> MagicMock:
+    request = MagicMock()
+    request.config.temperature = 0.2
+    request.config.model = "gemini-3-flash-preview"
+    request.inputs.prompt = "Write a haiku"
+    request.inputs.input_images = None
+    request.inputs.input_videos = None
+    request.inputs.model_dump.return_value = {"prompt": "Write a haiku"}
+    return request
+
+
+def test_rest_client_timeout_stays_below_the_step_timeout():
+    with (
+        patch(
+            "src.workflows_executor.workflows_executor_service.RestClient"
+        ) as rest_client_class,
+        patch(
+            "src.workflows_executor.workflows_executor_service"
+            ".GenAIModelSetup.init"
+        ),
+    ):
+        WorkflowsExecutorService()
+
+    rest_client_class.assert_called_once_with(
+        timeout=REST_CLIENT_TIMEOUT_SECONDS
+    )
+    assert REST_CLIENT_TIMEOUT_SECONDS <= 280
+
+
+def test_poll_budget_defaults_to_270_seconds():
+    field = ConfigService.model_fields["WORKFLOW_GEN_POLL_TIMEOUT_SECONDS"]
+    assert field.default == 270
+
+
+@pytest.mark.anyio
+async def test_poll_budget_ends_with_step_in_progress(service):
+    service.mock_rest_client.get.return_value = Response(
+        200, json={"status": "processing"}
+    )
+
+    with (
+        patch("asyncio.sleep", AsyncMock()) as sleep,
+        patch("asyncio.get_event_loop") as get_loop,
+        patch.object(config_service, "WORKFLOW_GEN_POLL_TIMEOUT_SECONDS", 270),
+    ):
+        # Another poll fits at 264 s (264 + 5 <= 270) but not at 266 s.
+        get_loop.return_value.time.side_effect = [0, 264, 266]
+        with pytest.raises(StepError) as exc:
+            await service._poll_job_status(123, USER_AUTH)
+
+    assert exc.value.status_code == 504
+    assert exc.value.error_category is ErrorCategory.STEP_IN_PROGRESS
+    assert exc.value.job_terminal is False
+    assert exc.value.to_body()["error_category"] == "STEP_IN_PROGRESS"
+    assert service.mock_rest_client.get.await_count == 2
+    assert sleep.await_args_list == [
+        call(POLL_INITIAL_DELAY_SECONDS),
+        call(POLL_INTERVAL_SECONDS),
+    ]
+
+
+@pytest.mark.anyio
+async def test_single_check_poll_does_not_wait(service):
+    service.mock_rest_client.get.return_value = Response(
+        200, json={"status": "processing"}
+    )
+
+    with patch("asyncio.sleep", AsyncMock()) as sleep:
+        with pytest.raises(StepError) as exc:
+            await service._poll_job_status(123, budget_seconds=0)
+
+    assert exc.value.error_category is ErrorCategory.STEP_IN_PROGRESS
+    sleep.assert_not_awaited()
+    service.mock_rest_client.get.assert_awaited_once()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "first_answer",
+    [
+        Response(503, text="Service Unavailable"),
+        Response(429, text="Too Many Requests"),
+        Response(200, content=b"not json"),
+        Response(200, json=["not", "a", "dict"]),
+        httpx.ConnectError("connection refused"),
+    ],
+    ids=["503", "429", "invalid-json", "not-a-dict", "network"],
+)
+async def test_poll_keeps_polling_while_the_status_is_unknown(
+    service, first_answer
+):
+    service.mock_rest_client.get.side_effect = [
+        first_answer,
+        Response(200, json={"status": "completed"}),
+    ]
+
+    with patch("asyncio.sleep", AsyncMock()):
+        assert await service._poll_job_status(123) is True
+
+    assert service.mock_rest_client.get.await_count == 2
+
+
+@pytest.mark.anyio
+async def test_poll_error_answers_are_structured(service):
+    service.mock_rest_client.get.return_value = Response(
+        404, text="Media item not found"
+    )
+
+    with patch("asyncio.sleep", AsyncMock()):
+        with pytest.raises(StepError) as exc:
+            await service._poll_job_status(123)
+
+    assert exc.value.status_code == 404
+    assert exc.value.error_category is ErrorCategory.MISSING_RESOURCE
+    assert exc.value.detail == "Polling error: Media item not found"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("key", ["error_message", "errorMessage"])
+async def test_failed_job_blocked_by_safety_is_422(service, key):
+    service.mock_rest_client.get.return_value = Response(
+        200,
+        json={
+            "status": "failed",
+            key: "Image blocked by Responsible AI filters",
+        },
+    )
+
+    with patch("asyncio.sleep", AsyncMock()):
+        with pytest.raises(StepError) as exc:
+            await service._poll_job_status(123)
+
+    assert exc.value.status_code == 422
+    assert exc.value.error_category is ErrorCategory.SAFETY_BLOCK
+    assert exc.value.job_terminal is True
+
+
+@pytest.mark.anyio
+async def test_failed_job_without_a_known_cause_is_500(service):
+    service.mock_rest_client.get.return_value = Response(
+        200, json={"status": "failed"}
+    )
+
+    with patch("asyncio.sleep", AsyncMock()):
+        with pytest.raises(StepError) as exc:
+            await service._poll_job_status(123)
+
+    assert exc.value.status_code == 500
+    assert exc.value.error_category is ErrorCategory.UNKNOWN
+    assert exc.value.detail == "Generation job failed: Unknown error"
+
+
+@pytest.mark.anyio
+async def test_backend_safety_rejection_is_422(service):
+    service.mock_rest_client.post.return_value = Response(
+        400, text="Prompt blocked by safety filters"
+    )
+
+    with pytest.raises(StepError) as exc:
+        await service.execute_image(_image_request(), USER_AUTH)
+
+    assert exc.value.status_code == 422
+    assert exc.value.to_body() == {
+        "error_category": "SAFETY_BLOCK",
+        "detail": "Backend error: Prompt blocked by safety filters",
+    }
+
+
+@pytest.mark.anyio
+async def test_missing_job_id_is_an_internal_error(service):
+    service.mock_rest_client.post.return_value = Response(200, json={})
+
+    with pytest.raises(StepError) as exc:
+        await service.execute_image(_image_request(), USER_AUTH)
+
+    assert exc.value.status_code == 500
+    assert exc.value.error_category is ErrorCategory.INTERNAL
+    assert exc.value.detail == "Couldn't create image"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "chunk",
+    [
+        MagicMock(
+            text=None,
+            prompt_feedback=MagicMock(block_reason=types.BlockedReason.SAFETY),
+            candidates=[],
+        ),
+        MagicMock(
+            text="partial",
+            prompt_feedback=None,
+            candidates=[MagicMock(finish_reason=types.FinishReason.SAFETY)],
+        ),
+        MagicMock(
+            text="",
+            prompt_feedback=MagicMock(block_reason="PROHIBITED_CONTENT"),
+            candidates=None,
+        ),
+    ],
+    ids=["prompt-blocked", "finish-reason", "string-reason"],
+)
+async def test_text_blocked_by_safety_is_422_and_not_retried(service, chunk):
+    stream = service.mock_genai_client.models.generate_content_stream
+    stream.return_value = [chunk]
+
+    with pytest.raises(StepError) as exc:
+        await service.generate_text(_text_request())
+
+    assert exc.value.status_code == 422
+    assert exc.value.error_category is ErrorCategory.SAFETY_BLOCK
+    stream.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_text_ignores_non_safety_reasons(service):
+    chunk = MagicMock(
+        text="An old pond",
+        prompt_feedback=MagicMock(
+            block_reason=types.BlockedReason.BLOCKED_REASON_UNSPECIFIED
+        ),
+        candidates=[MagicMock(finish_reason=types.FinishReason.STOP)],
+    )
+    service.mock_genai_client.models.generate_content_stream.return_value = [
+        chunk
+    ]
+
+    result = await service.generate_text(_text_request())
+
+    assert result == {"generated_text": "An old pond"}
+
+
+@pytest.mark.anyio
+async def test_text_generation_retries_transient_errors(service):
+    stream = service.mock_genai_client.models.generate_content_stream
+    stream.side_effect = [
+        genai_errors.ServerError(
+            503, {"error": {"code": 503, "status": "UNAVAILABLE"}}
+        ),
+        [MagicMock(text="An old pond", prompt_feedback=None, candidates=[])],
+    ]
+    real_retrying = retry_module.l1_async_retrying
+    sleep = AsyncMock()
+
+    with patch(
+        "src.common.retry.l1_async_retrying",
+        lambda: real_retrying(sleep=sleep),
+    ):
+        result = await service.generate_text(_text_request())
+
+    assert result == {"generated_text": "An old pond"}
+    assert stream.call_count == 2
+    sleep.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_successful_step_logs_no_token(service, caplog):
+    service.mock_rest_client.post.return_value = Response(200, json={"id": 9})
+    service.mock_rest_client.get.return_value = Response(
+        200, json={"status": "completed"}
+    )
+
+    with caplog.at_level(logging.DEBUG), patch("asyncio.sleep", AsyncMock()):
+        result = await service.execute_image(_image_request(), USER_AUTH)
+
+    assert result == {"generated_image": 9}
+    assert caplog.records
+    assert JWT not in caplog.text
+    assert "Authorization" not in caplog.text
+    # The header is still forwarded to the backend endpoints.
+    _, post_kwargs = service.mock_rest_client.post.call_args
+    assert post_kwargs["headers"] == {"Authorization": USER_AUTH}
+    _, get_kwargs = service.mock_rest_client.get.call_args
+    assert get_kwargs["headers"] == {"Authorization": USER_AUTH}
+
+
+@pytest.mark.anyio
+async def test_backend_error_echoing_the_token_is_redacted(service, caplog):
+    service.mock_rest_client.post.return_value = Response(
+        500, text=f"upstream echoed Authorization: {USER_AUTH}"
+    )
+
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(StepError) as exc:
+            await service.execute_image(_image_request(), USER_AUTH)
+
+    assert "Backend error 500" in caplog.text
+    assert JWT not in caplog.text
+    assert JWT not in exc.value.detail
+    assert exc.value.error_category is ErrorCategory.INTERNAL
+    assert exc.value.retry_safe is False
+    assert exc.value.to_body()["retry_safe"] is False
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "first_error",
+    [
+        Response(429, text="Rate limited"),
+        Response(503, text="Service unavailable"),
+        httpx.ConnectError("connection refused"),
+    ],
+    ids=["429", "503", "connect-error"],
+)
+async def test_create_job_post_retries_never_processed_errors(
+    service, first_error
+):
+    service.mock_rest_client.post.side_effect = [
+        first_error,
+        Response(200, json={"id": 42}),
+    ]
+    service.mock_rest_client.get.return_value = Response(
+        200, json={"status": "completed"}
+    )
+    real_retrying = retry_module.l1_async_retrying
+    sleep = AsyncMock()
+
+    with (
+        patch(
+            "src.workflows_executor.workflows_executor_service"
+            ".l1_async_retrying",
+            lambda **kw: real_retrying(sleep=sleep, **kw),
+        ),
+        patch("asyncio.sleep", AsyncMock()),
+    ):
+        result = await service.execute_image(_image_request(), USER_AUTH)
+
+    assert result == {"generated_image": 42}
+    assert service.mock_rest_client.post.await_count == 2
+    sleep.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_create_job_post_does_not_retry_read_timeout(service):
+    service.mock_rest_client.post.side_effect = httpx.ReadTimeout(
+        "timed out after sending request"
+    )
+
+    with pytest.raises(StepError) as exc:
+        await service.execute_image(_image_request(), USER_AUTH)
+
+    assert service.mock_rest_client.post.await_count == 1
+    assert exc.value.error_category is ErrorCategory.TIMEOUT
+    assert exc.value.retry_safe is False
+
+
+# --- Generate Text: Google Search grounding -----------------------------
+
+
+def _grounded_text_request(
+    google_search: bool, **inputs: object
+) -> GenerateTextRequest:
+    return GenerateTextRequest(
+        inputs={"prompt": "What's the weather in Paris today?", **inputs},
+        config={
+            "model": "gemini-3-flash-preview",
+            "temperature": 0.4,
+            "google_search": google_search,
+        },
+    )
+
+
+def _text_chunk(text: str) -> MagicMock:
+    return MagicMock(text=text, prompt_feedback=None, candidates=[])
+
+
+def _assert_single_google_search_tool(config: types.GenerateContentConfig):
+    tools = config.tools
+    assert tools is not None
+    assert len(tools) == 1
+    tool = tools[0]
+    assert isinstance(tool, types.Tool)
+    assert isinstance(tool.google_search, types.GoogleSearch)
+
+
+def test_text_tools_only_enabled_for_strict_true():
+    settings = GenerateTextSettings(
+        model="gemini-3-flash-preview", temperature=0
+    )
+    assert WorkflowsExecutorService._text_tools(settings) is None
+
+    loose_config = MagicMock()
+    assert WorkflowsExecutorService._text_tools(loose_config) is None
+
+    settings.google_search = True
+    tools = WorkflowsExecutorService._text_tools(settings)
+    assert tools == [types.Tool(google_search=types.GoogleSearch())]
+
+
+@pytest.mark.anyio
+async def test_text_without_google_search_sends_no_tools(service):
+    stream = service.mock_genai_client.models.generate_content_stream
+    stream.return_value = [_text_chunk("Probably mild.")]
+
+    result = await service.generate_text(_grounded_text_request(False))
+
+    assert result == {"generated_text": "Probably mild."}
+    stream.assert_called_once()
+    config = stream.call_args.kwargs["config"]
+    assert config.tools is None
+    assert config.temperature == 0.4
+    assert config.top_p == 0.95
+    assert config.max_output_tokens == 65535
+    assert len(config.safety_settings) == 4
+    assert config.response_schema is None
+    assert config.response_mime_type is None
+    assert config.system_instruction is None
+
+
+@pytest.mark.anyio
+async def test_text_with_google_search_sends_google_search_tool(service):
+    stream = service.mock_genai_client.models.generate_content_stream
+    stream.return_value = [_text_chunk("Sunny, "), _text_chunk("21°C.")]
+
+    result = await service.generate_text(_grounded_text_request(True))
+
+    assert result == {"generated_text": "Sunny, 21°C."}
+    stream.assert_called_once()
+    call_kwargs = stream.call_args.kwargs
+    _assert_single_google_search_tool(call_kwargs["config"])
+    assert call_kwargs["model"] == "gemini-3-flash-preview"
+    assert len(call_kwargs["contents"]) == 1
+
+
+@pytest.mark.anyio
+async def test_text_with_google_search_keeps_media_parts(service):
+    stream = service.mock_genai_client.models.generate_content_stream
+    stream.return_value = [_text_chunk("A rainy street in Paris.")]
+    image_part = types.Part.from_uri(
+        file_uri="gs://bucket/street.png", mime_type="image/png"
+    )
+    resolve_media = AsyncMock(return_value=[image_part])
+
+    with patch.object(service, "_resolve_media_to_parts", resolve_media):
+        result = await service.generate_text(
+            _grounded_text_request(True, input_images=[123]), USER_AUTH
+        )
+
+    assert result == {"generated_text": "A rainy street in Paris."}
+    resolve_media.assert_awaited_once_with([123], USER_AUTH)
+    call_kwargs = stream.call_args.kwargs
+    _assert_single_google_search_tool(call_kwargs["config"])
+    contents = call_kwargs["contents"]
+    assert len(contents) == 2
+    assert contents[1] is image_part
+
+
+@pytest.mark.anyio
+async def test_text_with_google_search_retries_transient_errors_with_tools(
+    service,
+):
+    stream = service.mock_genai_client.models.generate_content_stream
+    stream.side_effect = [
+        genai_errors.ServerError(
+            503, {"error": {"code": 503, "status": "UNAVAILABLE"}}
+        ),
+        [_text_chunk("Sunny.")],
+    ]
+    real_retrying = retry_module.l1_async_retrying
+    sleep = AsyncMock()
+
+    with patch(
+        "src.common.retry.l1_async_retrying",
+        lambda: real_retrying(sleep=sleep),
+    ):
+        result = await service.generate_text(_grounded_text_request(True))
+
+    assert result == {"generated_text": "Sunny."}
+    assert stream.call_count == 2
+    sleep.assert_awaited_once()
+    for stream_call in stream.call_args_list:
+        _assert_single_google_search_tool(stream_call.kwargs["config"])
+
+
+@pytest.mark.anyio
+async def test_text_with_google_search_rejected_fails_without_fallback(
+    service,
+):
+    stream = service.mock_genai_client.models.generate_content_stream
+    stream.side_effect = genai_errors.ClientError(
+        400,
+        {
+            "error": {
+                "code": 400,
+                "status": "INVALID_ARGUMENT",
+                "message": "Search grounding is not supported.",
+            }
+        },
+    )
+    real_retrying = retry_module.l1_async_retrying
+    sleep = AsyncMock()
+
+    with (
+        patch(
+            "src.common.retry.l1_async_retrying",
+            lambda: real_retrying(sleep=sleep),
+        ),
+        pytest.raises(genai_errors.ClientError) as exc,
+    ):
+        await service.generate_text(_grounded_text_request(True))
+
+    stream.assert_called_once()
+    sleep.assert_not_awaited()
+    _assert_single_google_search_tool(stream.call_args.kwargs["config"])
+    step_error = to_step_error(exc.value)
+    assert step_error.error_category is ErrorCategory.INVALID_INPUT
+    assert step_error.status_code == 400
+
+
+# --- Output folder ----------------------------------------------------------
+
+OUTPUT_FOLDER_ID = 42
+
+IMAGE_MODE_INPUTS = {
+    "generate_image": {"prompt": "A cat"},
+    "edit_image": {"prompt": "Add a hat", "input_images": [10]},
+    "upscale_image": {"input_image": 20},
+    "virtual_try_on": {"model_image": 30, "top_image": 31},
+}
+
+
+def _image_step_request(
+    mode: str, output_folder_id: int | None
+) -> ImageStepRequest:
+    return ImageStepRequest(
+        workspace_id=1,
+        inputs=ImageInputs(**IMAGE_MODE_INPUTS[mode]),
+        config=ImageSettings(mode=mode, output_folder_id=output_folder_id),
+    )
+
+
+def _video_request(output_folder_id: int | None) -> GenerateVideoRequest:
+    return GenerateVideoRequest(
+        workspace_id=1,
+        inputs=GenerateVideoInputs(prompt="A running dog"),
+        config=GenerateVideoSettings(
+            model="veo-3.1-generate-001", output_folder_id=output_folder_id
+        ),
+    )
+
+
+def _audio_request(output_folder_id: int | None) -> GenerateAudioRequest:
+    return GenerateAudioRequest(
+        workspace_id=1,
+        inputs=GenerateAudioInputs(prompt="Birds chirping"),
+        config=GenerateAudioSettings(
+            model="lyria-002", output_folder_id=output_folder_id
+        ),
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("output_folder_id", [OUTPUT_FOLDER_ID, None])
+@pytest.mark.parametrize("mode", list(IMAGE_MODE_INPUTS))
+async def test_image_modes_send_output_folder_only_when_set(
+    service, mode, output_folder_id
+):
+    service.mock_rest_client.post.return_value = Response(200, json={"id": 5})
+
+    with patch.object(
+        service, "_poll_job_status", AsyncMock(return_value=True)
+    ):
+        result = await service.execute_image(
+            _image_step_request(mode, output_folder_id)
+        )
+
+    assert result == {"generated_image": 5}
+    post_kwargs = service.mock_rest_client.post.call_args.kwargs
+    # Upscale posts form data (string values); the other modes post JSON.
+    if mode == "upscale_image":
+        payload, key, expected = (
+            post_kwargs["data"],
+            "folderId",
+            str(OUTPUT_FOLDER_ID),
+        )
+    else:
+        payload, key, expected = (
+            post_kwargs["json"],
+            "folder_id",
+            OUTPUT_FOLDER_ID,
+        )
+    if output_folder_id is None:
+        assert key not in payload
+    else:
+        assert payload[key] == expected
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("output_folder_id", [OUTPUT_FOLDER_ID, None])
+@pytest.mark.parametrize(
+    "step_call, build_request",
+    [
+        ("generate_video", _video_request),
+        ("generate_audio", _audio_request),
+    ],
+)
+async def test_video_and_audio_send_output_folder_only_when_set(
+    service, step_call, build_request, output_folder_id
+):
+    service.mock_rest_client.post.return_value = Response(200, json={"id": 6})
+
+    with patch.object(
+        service, "_poll_job_status", AsyncMock(return_value=True)
+    ):
+        await getattr(service, step_call)(build_request(output_folder_id))
+
+    body = service.mock_rest_client.post.call_args.kwargs["json"]
+    if output_folder_id is None:
+        assert "folder_id" not in body
+    else:
+        assert body["folder_id"] == OUTPUT_FOLDER_ID
+
+
+@pytest.mark.anyio
+async def test_rejected_output_folder_is_invalid_input(service):
+    service.mock_rest_client.post.return_value = Response(
+        422, json={"detail": OUTPUT_FOLDER_NOT_FOUND_DETAIL}
+    )
+
+    with pytest.raises(StepError) as exc:
+        await service.execute_image(
+            _image_step_request("generate_image", OUTPUT_FOLDER_ID),
+            USER_AUTH,
+        )
+
+    error = exc.value
+    assert error.status_code == 422
+    assert error.error_category is ErrorCategory.INVALID_INPUT
+    assert OUTPUT_FOLDER_NOT_FOUND_DETAIL in error.detail
+    service.mock_rest_client.post.assert_awaited_once()

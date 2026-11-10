@@ -139,7 +139,29 @@
             </ng-container>
             <ng-container *ngIf="image1Preview">
               <div class="group absolute inset-0 rounded-lg overflow-hidden">
-                <img [src]="image1Preview" class="h-full w-full object-cover" />
+                <img
+                  *ngIf="
+                    !isVideoPreviewUrl(
+                      image1Preview,
+                      isExtendVideo() || isConcatenateVideo()
+                    )
+                  "
+                  [src]="image1Preview"
+                  class="h-full w-full object-cover"
+                />
+                <video
+                  *ngIf="
+                    isVideoPreviewUrl(
+                      image1Preview,
+                      isExtendVideo() || isConcatenateVideo()
+                    )
+                  "
+                  [src]="image1Preview"
+                  class="h-full w-full object-cover pointer-events-none"
+                  muted
+                  playsinline
+                  preload="metadata"
+                ></video>
                 <ng-container *ngIf="canEditImgSlot()">
                   <ng-container
                     *ngTemplateOutlet="editOverlay; context: {num: 1}"
@@ -147,6 +169,8 @@
                 </ng-container>
               </div>
               <button
+                type="button"
+                aria-label="Remove first input"
                 (click)="
                   $event.stopPropagation();
                   clearImage.emit({num: 1, event: $event})
@@ -176,7 +200,21 @@
             </ng-container>
             <ng-container *ngIf="image2Preview">
               <div class="group absolute inset-0 rounded-lg overflow-hidden">
-                <img [src]="image2Preview" class="h-full w-full object-cover" />
+                <img
+                  *ngIf="
+                    !isVideoPreviewUrl(image2Preview, isConcatenateVideo())
+                  "
+                  [src]="image2Preview"
+                  class="h-full w-full object-cover"
+                />
+                <video
+                  *ngIf="isVideoPreviewUrl(image2Preview, isConcatenateVideo())"
+                  [src]="image2Preview"
+                  class="h-full w-full object-cover pointer-events-none"
+                  muted
+                  playsinline
+                  preload="metadata"
+                ></video>
                 <ng-container *ngIf="canEditImgSlot()">
                   <ng-container
                     *ngTemplateOutlet="editOverlay; context: {num: 2}"
@@ -184,6 +222,8 @@
                 </ng-container>
               </div>
               <button
+                type="button"
+                aria-label="Remove second input"
                 (click)="
                   $event.stopPropagation();
                   clearImage.emit({num: 2, event: $event})
@@ -215,14 +255,15 @@
               "
             >
               <mat-icon class="text-neutral-500">add</mat-icon>
-              <span class="absolute bottom-0 text-[10px] text-neutral-500"
+              <span
+                class="absolute bottom-0 text-[10px] text-neutral-500 tabular-nums"
                 >{{ referenceImages.length }}/{{
                   model.capabilities.maxReferenceImages
                 }}</span
               >
             </div>
             <!-- Show small previews of reference images -->
-            <div class="flex flex-wrap gap-1">
+            <div class="flex flex-wrap gap-1 max-h-32 overflow-y-auto">
               <div
                 *ngFor="let ref of referenceImages; let i = index"
                 class="relative h-12 w-12 flex-shrink-0 group rounded-lg overflow-hidden"
@@ -249,88 +290,86 @@
                 </button>
               </div>
             </div>
+
+            <!-- Video Reference Slots (only for Ingredients to Video when model supports video references) -->
+            <ng-container
+              *ngIf="
+                mode === 'Ingredients to Video' &&
+                (model.capabilities.maxReferenceVideos ?? 0) > 0
+              "
+            >
+              <div
+                class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
+                [class.opacity-50]="
+                  referenceVideos.length >=
+                  (model.capabilities.maxReferenceVideos ?? 0)
+                "
+                (click)="
+                  referenceVideos.length <
+                    (model.capabilities.maxReferenceVideos ?? 0) &&
+                    openVideoSelectorForReference.emit()
+                "
+                (dragover)="$event.preventDefault()"
+                (drop)="
+                  $event.preventDefault(); onReferenceVideoDrop.emit($event)
+                "
+              >
+                <mat-icon class="text-neutral-500">videocam</mat-icon>
+                <span
+                  class="absolute bottom-0 text-[10px] text-neutral-500 tabular-nums"
+                  >{{ referenceVideos.length }}/{{
+                    model.capabilities.maxReferenceVideos
+                  }}</span
+                >
+              </div>
+              <div
+                *ngIf="referenceVideos.length > 0"
+                class="flex flex-wrap gap-1 max-h-32 overflow-y-auto"
+              >
+                <div
+                  *ngFor="let ref of referenceVideos; let i = index"
+                  class="relative h-12 w-12 flex-shrink-0 group rounded-lg overflow-hidden bg-neutral-800"
+                >
+                  <img
+                    *ngIf="
+                      ref.previewUrl && !isVideoPreviewUrl(ref.previewUrl, true)
+                    "
+                    [src]="ref.previewUrl"
+                    class="h-full w-full object-cover"
+                  />
+                  <video
+                    *ngIf="
+                      ref.previewUrl && isVideoPreviewUrl(ref.previewUrl, true)
+                    "
+                    [src]="ref.previewUrl"
+                    class="h-full w-full object-cover pointer-events-none"
+                    muted
+                    playsinline
+                    preload="metadata"
+                  ></video>
+                  <div
+                    *ngIf="!ref.previewUrl"
+                    class="h-full w-full flex items-center justify-center"
+                  >
+                    <mat-icon class="text-neutral-400 !h-5 !w-5 text-base"
+                      >movie</mat-icon
+                    >
+                  </div>
+                  <button
+                    type="button"
+                    aria-label="Remove reference video"
+                    (click)="
+                      $event.stopPropagation();
+                      clearReferenceVideoItem.emit({index: i, event: $event})
+                    "
+                    class="absolute -right-1 -top-1 rounded-full bg-neutral-900 p-0.5 text-neutral-400 hover:text-white"
+                  >
+                    <mat-icon class="!h-3 !w-3 text-xs">close</mat-icon>
+                  </button>
+                </div>
+              </div>
+            </ng-container>
           </ng-container>
-
-          <!-- Video Reference Slot (only for Ingredients to Video mode AND only for Gemini Omni) -->
-          <div
-            *ngIf="mode === 'Ingredients to Video' && isOmniModel()"
-            class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
-            (click)="!referenceVideo && openVideoSelectorForReference.emit()"
-          >
-            <ng-container *ngIf="!referenceVideo">
-              <mat-icon class="text-neutral-500">videocam</mat-icon>
-              <span class="absolute bottom-1 text-[8px] text-neutral-500"
-                >Video Ref</span
-              >
-            </ng-container>
-            <ng-container *ngIf="referenceVideo">
-              <img
-                *ngIf="
-                  referenceVideo.type === 'media_item' ||
-                  referenceVideo.previewUrl?.includes('.png') ||
-                  referenceVideo.previewUrl?.includes('.webp') ||
-                  referenceVideo.previewUrl?.includes('.jpg') ||
-                  referenceVideo.previewUrl?.includes('.jpeg') ||
-                  referenceVideo.previewUrl?.includes('presignedThumbnailUrls')
-                "
-                [src]="referenceVideo.previewUrl"
-                class="h-full w-full rounded-lg object-cover"
-              />
-              <video
-                *ngIf="
-                  referenceVideo.type !== 'media_item' &&
-                  !referenceVideo.previewUrl?.includes('.png') &&
-                  !referenceVideo.previewUrl?.includes('.webp') &&
-                  !referenceVideo.previewUrl?.includes('.jpg') &&
-                  !referenceVideo.previewUrl?.includes('.jpeg') &&
-                  !referenceVideo.previewUrl?.includes('presignedThumbnailUrls')
-                "
-                [src]="referenceVideo.previewUrl"
-                class="h-full w-full rounded-lg object-cover"
-                muted
-              ></video>
-              <button
-                (click)="
-                  $event.stopPropagation(); clearReferenceVideo.emit($event)
-                "
-                class="absolute -right-2 -top-2 rounded-full bg-neutral-900 p-0.5 text-neutral-400 hover:text-white"
-              >
-                <mat-icon class="!h-4 !w-4 text-sm">close</mat-icon>
-              </button>
-            </ng-container>
-          </div>
-
-          <!-- Audio Reference Slot (only for Ingredients to Video mode AND only for Gemini Omni) -->
-          <div
-            *ngIf="mode === 'Ingredients to Video' && isOmniModel()"
-            class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
-            (click)="!referenceAudio && openAudioSelectorForReference.emit()"
-          >
-            <ng-container *ngIf="!referenceAudio">
-              <mat-icon class="text-neutral-500">audiotrack</mat-icon>
-              <span class="absolute bottom-1 text-[8px] text-neutral-500"
-                >Audio Ref</span
-              >
-            </ng-container>
-            <ng-container *ngIf="referenceAudio">
-              <mat-icon
-                class="text-blue-400 !text-3xl !h-8 !w-8 flex items-center justify-center"
-                >music_note</mat-icon
-              >
-              <span
-                class="absolute bottom-1 text-[8px] text-neutral-300 max-w-[64px] truncate"
-                >{{ referenceAudio.name || 'Audio' }}</span
-              >
-              <button
-                (click)="
-                  $event.stopPropagation(); clearReferenceAudio.emit($event)
-                "
-                class="absolute -right-2 -top-2 rounded-full bg-neutral-900 p-0.5 text-neutral-400 hover:text-white"
-              >
-                <mat-icon class="!h-4 !w-4 text-sm">close</mat-icon>
-              </button>
-            </ng-container>
-          </div>
         </ng-container>
 
         <!-- Only for Video to Image mode -->
@@ -565,7 +604,7 @@
                   "
                   [disabled]="
                     isVideoToImage() &&
-                    !model.capabilities?.supportsVideoReference
+                    !model.capabilities.supportsVideoReference
                   "
                 >
                   <div class="flex items-center gap-2">

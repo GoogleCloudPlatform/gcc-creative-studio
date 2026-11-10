@@ -17,6 +17,8 @@
 import {MODEL_CONFIGS} from '../../../../common/config/model-config';
 import {NodeTypes} from '../../../workflow.models';
 import {StepConfig} from '../generic-step/step.model';
+import {LOOP_ENDING_OUTPUT} from './loop-step.config';
+import {OUTPUT_FOLDER_SETTING} from './output-folder-setting';
 
 const model_options = MODEL_CONFIGS.filter(model => model.type === 'AUDIO').map(
   model => ({
@@ -49,7 +51,7 @@ const LANGUAGE_OPTIONS = [
 
 export const GENERATE_AUDIO_STEP_CONFIG: StepConfig = {
   type: NodeTypes.GENERATE_AUDIO,
-  title: 'Generate Audio',
+  title: 'Audio',
   icon: 'music_note',
   inputs: [
     {
@@ -93,6 +95,7 @@ export const GENERATE_AUDIO_STEP_CONFIG: StepConfig = {
       type: 'text',
       defaultValue: '',
     },
+    OUTPUT_FOLDER_SETTING,
   ],
   outputs: [
     {
@@ -100,5 +103,6 @@ export const GENERATE_AUDIO_STEP_CONFIG: StepConfig = {
       label: 'generated_audio',
       type: 'audio',
     },
+    LOOP_ENDING_OUTPUT,
   ],
 };

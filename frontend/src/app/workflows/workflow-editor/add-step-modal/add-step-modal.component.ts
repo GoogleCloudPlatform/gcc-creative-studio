@@ -36,39 +36,35 @@ export class AddStepModalComponent {
   stepTypes: StepTypeOption[] = [
     {
       type: 'generate_text',
-      label: 'Generate Text',
+      label: 'Text',
       description: 'Generates text content using a large language model.',
       icon: 'description',
     },
     {
-      type: 'generate_image',
-      label: 'Generate Image',
-      description: 'Generates an image from a text prompt.',
+      type: 'image',
+      label: 'Image',
+      description:
+        'Generates, edits, upscales, or applies virtual try-on to images.',
       icon: 'image',
     },
     {
-      type: 'edit_image',
-      label: 'Edit Image',
-      description: 'Modifies an image using an editing or inpainting model.',
-      icon: 'edit',
-    },
-    {
-      type: 'virtual_try_on',
-      label: 'Virtual Try-On',
-      description: 'Applies a garment to a model image.',
-      icon: 'checkroom',
-    },
-    {
       type: 'generate_video',
-      label: 'Generate Video',
+      label: 'Video',
       description: 'Generates a video clip from a prompt or image.',
       icon: 'movie',
     },
     {
       type: 'generate_audio',
-      label: 'Generate Audio',
+      label: 'Audio',
       description: 'Generates audio (music or speech) from a text prompt.',
       icon: 'music_note',
+    },
+    {
+      type: 'loop',
+      label: 'Loop',
+      description:
+        'Repeats the connected steps for each item in a Media Gallery folder or a comma-separated list.',
+      icon: 'loop',
     },
   ];
 

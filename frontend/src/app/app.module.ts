@@ -106,6 +106,8 @@ import {BatchExecutionModalComponent} from './workflows/execution-history/batch-
 import {ExecutionDetailsModalComponent} from './workflows/execution-history/execution-details-modal/execution-details-modal.component';
 import {ExecutionHistoryComponent} from './workflows/execution-history/execution-history.component';
 import {StepExecutionDetailsComponent} from './workflows/shared/step-execution-details/step-execution-details.component';
+import {StepHistorySidebarComponent} from './workflows/workflow-editor/step-history-sidebar/step-history-sidebar.component';
+import {StepHistorySidebarDialogComponent} from './workflows/workflow-editor/step-history-sidebar/step-history-sidebar-dialog.component';
 import {AddStepModalComponent} from './workflows/workflow-editor/add-step-modal/add-step-modal.component';
 import {RunWorkflowModalComponent} from './workflows/workflow-editor/run-workflow-modal/run-workflow-modal.component';
 import {StepInputFieldComponent} from './workflows/workflow-editor/step-components/generic-step/components/step-input-field/step-input-field.component';
@@ -114,6 +116,8 @@ import {GenericStepComponent} from './workflows/workflow-editor/step-components/
 import {WorkflowEditorComponent} from './workflows/workflow-editor/workflow-editor.component';
 import {WorkflowListComponent} from './workflows/workflow-list/workflow-list.component';
 import {WorkflowStatusPipe} from './workflows/workflow-status.pipe';
+import {WorkflowWelcomeViewComponent} from './workflows/workflow-editor/workflow-welcome-view/workflow-welcome-view.component';
+import {SaveTemplateModalComponent} from './workflows/workflow-editor/save-template-modal/save-template-modal.component';
 import {UpscaleComponent} from './upscale/upscale.component';
 import {StoryboardComponent} from './workbench/components/storyboard/storyboard.component';
 import {TimeRulerComponent} from './workbench/components/time-ruler/time-ruler.component';
@@ -146,6 +150,8 @@ import {SafeUrlPipe} from './common/pipes/safe-url.pipe';
     AddVoiceDialogComponent,
     WorkflowListComponent,
     WorkflowEditorComponent,
+    WorkflowWelcomeViewComponent,
+    SaveTemplateModalComponent,
     AddStepModalComponent,
     GenericStepComponent,
     StepInputFieldComponent,
@@ -154,6 +160,8 @@ import {SafeUrlPipe} from './common/pipes/safe-url.pipe';
     ExecutionHistoryComponent,
     ExecutionDetailsModalComponent,
     StepExecutionDetailsComponent,
+    StepHistorySidebarComponent,
+    StepHistorySidebarDialogComponent,
     BatchExecutionModalComponent,
     UpscaleComponent,
     ProjectsComponent,

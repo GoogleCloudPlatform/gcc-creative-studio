@@ -141,6 +141,42 @@
   }
 }
 
+.folder-footer {
+  .folder-location {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 6px 14px;
+    border-radius: 999px;
+    background: hsla(217, 89%, 61%, 0.12);
+    border: 1px solid hsla(217, 89%, 61%, 0.3);
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 14px;
+    font-weight: 500;
+    transition: background 0.2s ease, border-color 0.2s ease;
+
+    &:hover {
+      background: hsla(217, 89%, 61%, 0.2);
+      border-color: hsla(217, 89%, 61%, 0.5);
+    }
+  }
+
+  .folder-location-icon {
+    flex-shrink: 0;
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+    color: hsl(217, 89%, 72%);
+  }
+
+  .folder-location-path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
 /* Ensure MediaGallery occupies full width and handles its own layout */
 ::ng-deep app-media-gallery {
   display: block;

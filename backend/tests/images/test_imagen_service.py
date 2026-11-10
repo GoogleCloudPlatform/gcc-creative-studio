@@ -14,10 +14,12 @@
 """Tests for Imagen Service."""
 
 
+import io
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from PIL import Image as PILImage
 
 from src.common.base_dto import AspectRatioEnum, GenerationModelEnum
 from src.common.schema.media_item_model import (
@@ -105,6 +107,47 @@ def fixture_sample_create_imagen_dto():
     )
 
 
+RESOLVED_FOLDER_ID = 77
+
+
+async def _assign_placeholder_id(item: MediaItemModel) -> MediaItemModel:
+    """``media_repo.create`` stand-in that returns the saved placeholder."""
+    item.id = 900
+    return item
+
+
+def _start_imagen_job(imagen_service, job, user, executor, folder_id):
+    """Starts the generate, VTO or upscale job with an output folder."""
+    if job == "generate":
+        return imagen_service.start_image_generation_job(
+            request_dto=CreateImagenDto(
+                workspace_id=1, prompt="A cat", folder_id=folder_id
+            ),
+            user=user,
+            executor=executor,
+        )
+    if job == "vto":
+        return imagen_service.start_vto_generation_job(
+            request_dto=VtoDto(
+                workspace_id=1,
+                person_image={"source_asset_id": 101},
+                top_image={"source_asset_id": 102},
+                folder_id=folder_id,
+            ),
+            user=user,
+            executor=executor,
+        )
+    return imagen_service.start_upload_upscale_job(
+        user=user,
+        executor=executor,
+        workspace_id=1,
+        gcs_uri="gs://input/original.png",
+        mime_type="image/png",
+        file_bytes=b"fake_bytes",
+        folder_id=folder_id,
+    )
+
+
 class TestImagenServiceMethods:
     """Tests for ImagenService wrapper methods."""
 
@@ -124,7 +167,7 @@ class TestImagenServiceMethods:
             user_id=1,
             user_email="test@example.com",
             mime_type=MimeTypeEnum.IMAGE_PNG,
-            model=GenerationModelEnum.IMAGEN_4_UPSCALE_PREVIEW,
+            model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE,
             aspect_ratio="1:1",
             gcs_uris=[],
             original_gcs_uris=[],
@@ -150,76 +193,231 @@ class TestImagenServiceMethods:
         mock_executor.submit.assert_called_once()
 
     @pytest.mark.anyio
-    async def test_upscale_image_success(self, imagen_service):
+    async def test_upscale_image_gemini_success(self, imagen_service):
         request_dto = UpscaleImagenDto(
             user_image="gs://bucket/input.png",
             upscale_factor="x4",
-            include_rai_reason=False,
-            enhance_input_image=False,
-            image_preservation_factor=1.0,
+            generation_model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE,
         )
 
-        with patch(
-            "src.images.imagen_service.GenAIModelSetup.init"
-        ) as mock_init:
-            mock_client = MagicMock()
-            mock_init.return_value = mock_client
+        with (
+            patch(
+                "src.images.imagen_service.gemini_generate_image"
+            ) as mock_gemini_gen,
+            patch(
+                "src.images.imagen_service.GenAIModelSetup.get_global_client"
+            ),
+        ):
+            mock_gen_img = MagicMock()
+            mock_gen_img.image.gcs_uri = "gs://bucket/upscaled.png"
+            mock_gemini_gen.return_value = (mock_gen_img, None)
 
-            mock_response = MagicMock()
-            mock_generated_image = MagicMock()
-            mock_generated_image.image.image_bytes = b"fake_upscaled_bytes"
-            mock_generated_image.rai_filtered_reason = ""
-            mock_response.generated_images = [mock_generated_image]
-
-            mock_client.models.upscale_image.return_value = mock_response
-
-            # Call
             result = await imagen_service.upscale_image(request_dto)
 
             assert result is not None
+            assert result.image.gcs_uri == "gs://bucket/upscaled.png"
+            # Verify prompt contains default preservation
+            called_prompt = mock_gemini_gen.call_args.kwargs["prompt"]
+            assert "Faithfully preserve the exact composition" in called_prompt
 
     @pytest.mark.anyio
-    async def test_upscale_image_rai_filtered(self, imagen_service):
-        from src.images.dto.upscale_imagen_dto import UpscaleImagenDto
+    async def test_upscale_image_with_enhancement_and_strict_preservation(
+        self, imagen_service
+    ):
+        request_dto = UpscaleImagenDto(
+            user_image="gs://bucket/input.png",
+            upscale_factor="x2",
+            enhance_input_image=True,
+            image_preservation_factor=0.9,
+            generation_model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE,
+        )
+
+        with (
+            patch(
+                "src.images.imagen_service.gemini_generate_image"
+            ) as mock_gemini_gen,
+            patch(
+                "src.images.imagen_service.GenAIModelSetup.get_global_client"
+            ),
+        ):
+            mock_gen_img = MagicMock()
+            mock_gen_img.image.gcs_uri = "gs://bucket/upscaled.png"
+            mock_gemini_gen.return_value = (mock_gen_img, None)
+
+            result = await imagen_service.upscale_image(request_dto)
+
+            assert result is not None
+            called_prompt = mock_gemini_gen.call_args.kwargs["prompt"]
+            assert "Apply active enhancement" in called_prompt
+            assert "strict preservation" in called_prompt
+            assert "0.90" in called_prompt
+
+    @pytest.mark.anyio
+    async def test_upscale_image_with_balanced_and_creative_preservation(
+        self, imagen_service
+    ):
+        # Test balanced preservation
+        request_dto_balanced = UpscaleImagenDto(
+            user_image="gs://bucket/input.png",
+            upscale_factor="x2",
+            image_preservation_factor=0.5,
+            generation_model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE,
+        )
+        with (
+            patch(
+                "src.images.imagen_service.gemini_generate_image"
+            ) as mock_gemini_gen,
+            patch(
+                "src.images.imagen_service.GenAIModelSetup.get_global_client"
+            ),
+        ):
+            mock_gen_img = MagicMock()
+            mock_gen_img.image.gcs_uri = "gs://bucket/upscaled.png"
+            mock_gemini_gen.return_value = (mock_gen_img, None)
+
+            await imagen_service.upscale_image(request_dto_balanced)
+            called_prompt = mock_gemini_gen.call_args.kwargs["prompt"]
+            assert "balanced preservation" in called_prompt
+            assert "0.50" in called_prompt
+
+        # Test creative preservation
+        request_dto_creative = UpscaleImagenDto(
+            user_image="gs://bucket/input.png",
+            upscale_factor="x2",
+            image_preservation_factor=0.2,
+            generation_model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE,
+        )
+        with (
+            patch(
+                "src.images.imagen_service.gemini_generate_image"
+            ) as mock_gemini_gen,
+            patch(
+                "src.images.imagen_service.GenAIModelSetup.get_global_client"
+            ),
+        ):
+            mock_gen_img = MagicMock()
+            mock_gen_img.image.gcs_uri = "gs://bucket/upscaled.png"
+            mock_gemini_gen.return_value = (mock_gen_img, None)
+
+            await imagen_service.upscale_image(request_dto_creative)
+            called_prompt = mock_gemini_gen.call_args.kwargs["prompt"]
+            assert "creative detail generation" in called_prompt
+            assert "0.20" in called_prompt
+
+    @pytest.mark.anyio
+    async def test_upscale_image_gemini_resize_and_4k_limit(
+        self, imagen_service
+    ):
+        # Create a real 1000x500 image
+        input_img = PILImage.new("RGB", (1000, 500), color="blue")
+        input_io = io.BytesIO()
+        input_img.save(input_io, format="PNG")
+        input_bytes = input_io.getvalue()
+
+        # Generated image from Gemini at 2048x1024
+        gen_img = PILImage.new("RGB", (2048, 1024), color="blue")
+        gen_io = io.BytesIO()
+        gen_img.save(gen_io, format="PNG")
+        gen_bytes = gen_io.getvalue()
+
+        imagen_service.gcs_service.download_bytes_from_gcs = MagicMock(
+            side_effect=[input_bytes, gen_bytes]
+        )
+        imagen_service.gcs_service.store_to_gcs = MagicMock(
+            return_value="gs://test-bucket/upscaled_images/upscaled_x4_resized.png"
+        )
 
         request_dto = UpscaleImagenDto(
             user_image="gs://bucket/input.png",
             upscale_factor="x4",
+            generation_model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE,
         )
-        with patch(
-            "src.images.imagen_service.GenAIModelSetup.init"
-        ) as mock_init:
-            mock_client = MagicMock()
-            mock_init.return_value = mock_client
-            mock_response = MagicMock()
-            mock_generated_image = MagicMock()
-            mock_generated_image.image = None  # Crucial to trigger RAI branch!
-            mock_generated_image.rai_filtered_reason = "unsafeContent"
-            mock_response.generated_images = [mock_generated_image]
 
-            mock_client.models.upscale_image.return_value = mock_response
+        with (
+            patch(
+                "src.images.imagen_service.gemini_generate_image"
+            ) as mock_gemini_gen,
+            patch(
+                "src.images.imagen_service.GenAIModelSetup.get_global_client"
+            ),
+        ):
+            mock_gen = MagicMock()
+            mock_gen.image.gcs_uri = "gs://bucket/gemini_images/raw.png"
+            mock_gemini_gen.return_value = (mock_gen, None)
 
-            with pytest.raises(
-                ValueError, match="Image upscaling filtered by RAI"
-            ):
-                await imagen_service.upscale_image(request_dto)
+            result = await imagen_service.upscale_image(request_dto)
+
+            assert result is not None
+            # 1000x500 * 4 = 4000x2000 (within 4096)
+            # Verify store_to_gcs was called with resized bytes
+            imagen_service.gcs_service.store_to_gcs.assert_called_once()
+            assert (
+                result.image.gcs_uri
+                == "gs://test-bucket/upscaled_images/upscaled_x4_resized.png"
+            )
 
     @pytest.mark.anyio
-    async def test_upscale_image_no_data(self, imagen_service):
-        from src.images.dto.upscale_imagen_dto import UpscaleImagenDto
+    async def test_upscale_image_gemini_base64_capped_4k(self, imagen_service):
+        import base64
+
+        # Create a 2000x1500 image -> * 4 would be 8000x6000 -> capped to 4096x3072
+        input_img = PILImage.new("RGB", (2000, 1500), color="red")
+        input_io = io.BytesIO()
+        input_img.save(input_io, format="PNG")
+        b64_str = base64.b64encode(input_io.getvalue()).decode("utf-8")
+
+        gen_img = PILImage.new("RGB", (2048, 1536), color="red")
+        gen_io = io.BytesIO()
+        gen_img.save(gen_io, format="PNG")
+        gen_bytes = gen_io.getvalue()
+
+        imagen_service.gcs_service.download_bytes_from_gcs = MagicMock(
+            return_value=gen_bytes
+        )
+        imagen_service.gcs_service.store_to_gcs = MagicMock(
+            return_value="gs://test-bucket/upscaled_images/upscaled_x4_capped.png"
+        )
 
         request_dto = UpscaleImagenDto(
-            user_image="gs://bucket/input.png",
+            user_image=b64_str,
             upscale_factor="x4",
+            generation_model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE,
         )
-        with patch(
-            "src.images.imagen_service.GenAIModelSetup.init"
-        ) as mock_init:
-            mock_client = MagicMock()
-            mock_init.return_value = mock_client
-            mock_response = MagicMock()
-            mock_response.generated_images = []  # Empty
-            mock_client.models.upscale_image.return_value = mock_response
+
+        with (
+            patch(
+                "src.images.imagen_service.gemini_generate_image"
+            ) as mock_gemini_gen,
+            patch(
+                "src.images.imagen_service.GenAIModelSetup.get_global_client"
+            ),
+        ):
+            mock_gen = MagicMock()
+            mock_gen.image.gcs_uri = "gs://bucket/gemini_images/raw.png"
+            mock_gemini_gen.return_value = (mock_gen, None)
+
+            result = await imagen_service.upscale_image(request_dto)
+
+            assert result is not None
+            imagen_service.gcs_service.store_to_gcs.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_upscale_image_gemini_failure(self, imagen_service):
+        request_dto = UpscaleImagenDto(
+            user_image="gs://bucket/input.png",
+            upscale_factor="x2",
+            generation_model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE,
+        )
+
+        with (
+            patch(
+                "src.images.imagen_service.gemini_generate_image"
+            ) as mock_gemini_gen,
+            patch(
+                "src.images.imagen_service.GenAIModelSetup.get_global_client"
+            ),
+        ):
+            mock_gemini_gen.return_value = (None, None)
 
             with pytest.raises(
                 ValueError,
@@ -326,7 +524,7 @@ class TestImagenServiceMethods:
             user_id=1,
             user_email="test@example.com",
             mime_type=MimeTypeEnum.IMAGE_PNG,
-            model=GenerationModelEnum.IMAGEN_4_UPSCALE_PREVIEW,
+            model=GenerationModelEnum.GEMINI_3_1_FLASH_IMAGE,
             aspect_ratio="1:1",
             gcs_uris=[],
             original_gcs_uris=[],
@@ -391,6 +589,66 @@ class TestImagenServiceMethods:
         assert response.id == 222
         mock_media_repo.create.assert_called_once()
         mock_executor.submit.assert_called_once()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("requested_folder_id", [42, None])
+    @pytest.mark.parametrize("job", ["generate", "vto", "upscale"])
+    async def test_start_job_places_item_in_resolved_output_folder(
+        self,
+        job,
+        requested_folder_id,
+        imagen_service,
+        mock_media_repo,
+        sample_user,
+    ):
+        mock_media_repo.create.side_effect = _assign_placeholder_id
+        mock_executor = MagicMock()
+
+        with patch(
+            "src.images.imagen_service.resolve_output_folder_id",
+            AsyncMock(return_value=RESOLVED_FOLDER_ID),
+        ) as resolver:
+            response = await _start_imagen_job(
+                imagen_service,
+                job,
+                sample_user,
+                mock_executor,
+                requested_folder_id,
+            )
+
+        resolver.assert_awaited_once_with(
+            mock_media_repo.db, 1, sample_user, requested_folder_id
+        )
+        placeholder = mock_media_repo.create.call_args.args[0]
+        assert placeholder.folder_id == RESOLVED_FOLDER_ID
+        assert response.folder_id == RESOLVED_FOLDER_ID
+        mock_executor.submit.assert_called_once()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("job", ["generate", "vto", "upscale"])
+    async def test_start_job_with_invalid_output_folder_creates_nothing(
+        self, job, imagen_service, mock_media_repo, sample_user
+    ):
+        mock_executor = MagicMock()
+
+        with (
+            patch(
+                "src.images.imagen_service.resolve_output_folder_id",
+                AsyncMock(
+                    side_effect=HTTPException(
+                        status_code=422, detail="Folder not found"
+                    )
+                ),
+            ),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await _start_imagen_job(
+                imagen_service, job, sample_user, mock_executor, 999
+            )
+
+        assert exc_info.value.status_code == 422
+        mock_media_repo.create.assert_not_called()
+        mock_executor.submit.assert_not_called()
 
     @pytest.mark.anyio
     async def test_get_media_item_with_presigned_urls_success(
@@ -1254,29 +1512,9 @@ def test_create_imagen_dto_validation_failures():
         )
     assert "Invalid generation model" in str(exc_info.value)
 
-    # 5. Unsupported editing model
-    with pytest.raises(ValidationError) as exc_info:
-        CreateImagenDto(
-            prompt="Edit image",
-            workspace_id=1,
-            generation_model=GenerationModelEnum.IMAGEN_4_UPSCALE_PREVIEW,
-            source_asset_ids=[1],
-        )
-    assert "does not support image editing" in str(exc_info.value)
-
-    # 6. Video reference with unsupported model
+    # 5. Simultaneous video reference and YouTube URL
     from src.common.base_dto import AssetReferenceDto
 
-    with pytest.raises(ValidationError) as exc_info:
-        CreateImagenDto(
-            prompt="Video to image",
-            workspace_id=1,
-            generation_model=GenerationModelEnum.IMAGEN_4_UPSCALE_PREVIEW,
-            reference_video=AssetReferenceDto(id=10, type="source_asset"),
-        )
-    assert "does not support video references" in str(exc_info.value)
-
-    # 7. Simultaneous video reference and YouTube URL
     with pytest.raises(ValidationError) as exc_info:
         CreateImagenDto(
             prompt="Video to image",
@@ -1309,6 +1547,20 @@ def test_upscale_imagen_dto_validation_failures():
             user_image="base64str", mime_type=MimeTypeEnum.AUDIO_WAV
         )
     assert "Invalid mime type" in str(exc_info.value)
+
+    # 3. Invalid image_preservation_factor (< 0.0)
+    with pytest.raises(ValidationError) as exc_info:
+        UpscaleImagenDto(user_image="base64str", image_preservation_factor=-0.1)
+    assert "image_preservation_factor must be between 0.0 and 1.0" in str(
+        exc_info.value
+    )
+
+    # 4. Invalid image_preservation_factor (> 1.0)
+    with pytest.raises(ValidationError) as exc_info:
+        UpscaleImagenDto(user_image="base64str", image_preservation_factor=1.5)
+    assert "image_preservation_factor must be between 0.0 and 1.0" in str(
+        exc_info.value
+    )
 
 
 def test_vto_dto_validation_failures():
@@ -1722,9 +1974,7 @@ def test_process_image_in_background_sync_imagen_text_to_image(
     _ = (mock_thumb_mu, mock_thumb_is)
     from src.common.base_dto import GenerationModelEnum
 
-    sample_create_imagen_dto.generation_model = (
-        GenerationModelEnum.IMAGEN_4_UPSCALE_PREVIEW
-    )
+    sample_create_imagen_dto.generation_model = GenerationModelEnum.IMAGEN_4_001
 
     mock_db_context = AsyncMock()
     mock_db_factory = MagicMock(return_value=mock_db_context)
@@ -1773,9 +2023,7 @@ def test_process_image_in_background_sync_imagen_edit_image(
     from src.common.base_dto import GenerationModelEnum
     from src.source_assets.schema.source_asset_model import SourceAssetModel
 
-    sample_create_imagen_dto.generation_model = (
-        GenerationModelEnum.IMAGEN_4_UPSCALE_PREVIEW
-    )
+    sample_create_imagen_dto.generation_model = GenerationModelEnum.IMAGEN_4_001
     sample_create_imagen_dto.source_asset_ids = [10]
 
     mock_db_context = AsyncMock()

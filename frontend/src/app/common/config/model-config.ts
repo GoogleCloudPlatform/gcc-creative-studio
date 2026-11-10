@@ -22,12 +22,15 @@ export type GenerationMode =
   | 'Text to Video'
   | 'Frames to Video'
   | 'Ingredients to Video'
+  | 'Extend Video'
   | 'Text to Audio'
   | 'Multimodal to text';
 
 export interface ModelCapability {
   supportedModes: GenerationMode[];
   maxReferenceImages: number; // Max images for ingredients/frames modes
+  maxReferenceVideos?: number; // Max videos for ingredients mode
+  maxConstrainedDuration?: number; // Max duration (s) when constrained by refs, extend, or end frame
   supportedAspectRatios: string[]; // e.g., ['16:9', '1:1']
   supportedResolutions: ('1K' | '2K' | '4K')[]; // e.g., ['1K', '2K', '4K']
   supportedDurations: number[];
@@ -63,6 +66,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportedModes: ['Text to Image', 'Ingredients to Image'],
       maxReferenceImages: 14,
       supportedAspectRatios: [
+        'auto',
         '1:1',
         '16:9',
         '9:16',
@@ -94,6 +98,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportedModes: ['Text to Image', 'Ingredients to Image'],
       maxReferenceImages: 14,
       supportedAspectRatios: [
+        'auto',
         '1:1',
         '16:9',
         '9:16',
@@ -125,6 +130,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportedModes: ['Text to Image', 'Ingredients to Image'],
       maxReferenceImages: 14,
       supportedAspectRatios: [
+        'auto',
         '1:1',
         '16:9',
         '9:16',
@@ -152,6 +158,7 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
       supportedModes: ['Text to Image', 'Ingredients to Image'],
       maxReferenceImages: 2,
       supportedAspectRatios: [
+        'auto',
         '1:1',
         '16:9',
         '9:16',
@@ -199,8 +206,8 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
     },
   },
   {
-    value: 'gemini-3-pro-preview',
-    viewValue: 'Gemini 3 Pro Preview',
+    value: 'gemini-3-flash-preview',
+    viewValue: 'Gemini 3 Flash Preview',
     type: 'TEXT',
     icon: 'gemini-spark-icon',
     isSvg: true,
@@ -213,8 +220,8 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
     },
   },
   {
-    value: 'gemini-3-flash-preview',
-    viewValue: 'Gemini 3 Flash Preview',
+    value: 'gemini-3.8-flash',
+    viewValue: 'Gemini 3.8 Flash',
     type: 'TEXT',
     icon: 'gemini-spark-icon',
     isSvg: true,
@@ -241,6 +248,48 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
     },
   },
   {
+    value: 'gemini-3.6-flash',
+    viewValue: 'Gemini 3.6 Flash',
+    type: 'TEXT',
+    icon: 'gemini-spark-icon',
+    isSvg: true,
+    capabilities: {
+      supportedModes: ['Multimodal to text'],
+      maxReferenceImages: 10,
+      supportedAspectRatios: [],
+      supportedResolutions: [],
+      supportedDurations: [],
+    },
+  },
+  {
+    value: 'gemini-3.5-flash',
+    viewValue: 'Gemini 3.5 Flash',
+    type: 'TEXT',
+    icon: 'gemini-spark-icon',
+    isSvg: true,
+    capabilities: {
+      supportedModes: ['Multimodal to text'],
+      maxReferenceImages: 10,
+      supportedAspectRatios: [],
+      supportedResolutions: [],
+      supportedDurations: [],
+    },
+  },
+  {
+    value: 'gemini-3.5-flash-lite',
+    viewValue: 'Gemini 3.5 Flash-Lite',
+    type: 'TEXT',
+    icon: 'gemini-spark-icon',
+    isSvg: true,
+    capabilities: {
+      supportedModes: ['Multimodal to text'],
+      maxReferenceImages: 10,
+      supportedAspectRatios: [],
+      supportedResolutions: [],
+      supportedDurations: [],
+    },
+  },
+  {
     value: 'gemini-3.1-pro-preview',
     viewValue: 'Gemini 3.1 Pro Preview',
     type: 'TEXT',
@@ -255,22 +304,8 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
     },
   },
   {
-    value: 'gemini-3.1-flash-preview',
-    viewValue: 'Gemini 3.1 Flash Preview',
-    type: 'TEXT',
-    icon: 'gemini-spark-icon',
-    isSvg: true,
-    capabilities: {
-      supportedModes: ['Multimodal to text'],
-      maxReferenceImages: 10,
-      supportedAspectRatios: [],
-      supportedResolutions: [],
-      supportedDurations: [],
-    },
-  },
-  {
-    value: 'gemini-3.1-flash-lite-preview',
-    viewValue: 'Gemini 3.1 Flash Lite Preview',
+    value: 'gemini-3.1-flash-lite',
+    viewValue: 'Gemini 3.1 Flash-Lite',
     type: 'TEXT',
     icon: 'gemini-spark-icon',
     isSvg: true,
@@ -284,6 +319,28 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
   },
   // --- Video Models ---
   {
+    value: 'gemini-omni-1.2-flash',
+    viewValue: 'Gemini Omni 1.2 Flash',
+    type: 'VIDEO',
+    icon: 'layers',
+    capabilities: {
+      supportedModes: [
+        'Text to Video',
+        'Ingredients to Video',
+        'Frames to Video',
+        'Extend Video',
+      ],
+      maxReferenceImages: 10,
+      maxReferenceVideos: 3,
+      maxConstrainedDuration: 10,
+      supportedAspectRatios: ['16:9', '9:16'],
+      supportedResolutions: [],
+      supportedDurations: [4, 6, 8, 10, 12, 15],
+      supportsAudio: true,
+      supportsVideoReference: true,
+    },
+  },
+  {
     value: 'gemini-omni-1.1-flash-preview',
     viewValue: 'Gemini Omni 1.1 Flash',
     type: 'VIDEO',
@@ -293,12 +350,15 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         'Text to Video',
         'Ingredients to Video',
         'Frames to Video',
+        'Extend Video',
       ],
-      maxReferenceImages: 3,
+      maxReferenceImages: 5,
+      maxReferenceVideos: 3,
       supportedAspectRatios: ['16:9', '9:16'],
       supportedResolutions: [],
       supportedDurations: [4, 6, 8, 10],
       supportsAudio: true,
+      supportsVideoReference: true,
     },
   },
   {
@@ -311,8 +371,10 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         'Text to Video',
         'Ingredients to Video',
         'Frames to Video',
+        'Extend Video',
       ], // Assuming ingredients = image-to-video
       maxReferenceImages: 3,
+      maxReferenceVideos: 0,
       supportedAspectRatios: ['16:9', '9:16'],
       supportedResolutions: ['1K', '2K', '4K'],
       supportedDurations: [4, 6, 8],
@@ -329,8 +391,10 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         'Text to Video',
         'Ingredients to Video',
         'Frames to Video',
+        'Extend Video',
       ],
       maxReferenceImages: 3,
+      maxReferenceVideos: 0,
       supportedAspectRatios: ['16:9', '9:16'],
       supportedResolutions: ['1K', '2K'],
       supportedDurations: [4, 6, 8],
@@ -347,8 +411,10 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         'Text to Video',
         'Ingredients to Video',
         'Frames to Video',
+        'Extend Video',
       ],
       maxReferenceImages: 3,
+      maxReferenceVideos: 0,
       supportedAspectRatios: ['16:9', '9:16'],
       supportedResolutions: ['1K', '2K'],
       supportedDurations: [4, 6, 8],
@@ -365,8 +431,10 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
         'Text to Video',
         'Ingredients to Video',
         'Frames to Video',
+        'Extend Video',
       ],
       maxReferenceImages: 3,
+      maxReferenceVideos: 0,
       supportedAspectRatios: ['16:9', '9:16'],
       supportedResolutions: ['1K', '2K', '4K'],
       supportedDurations: [4, 6, 8],
@@ -479,8 +547,12 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
   },
 ];
 
+export const ASPECT_RATIO_AUTO = 'auto';
+export const ASPECT_RATIO_SQUARE = '1:1';
+
 export const ASPECT_RATIO_LABELS: Record<string, string> = {
-  '1:1': '1:1 (Square)',
+  [ASPECT_RATIO_AUTO]: 'Auto (Dynamic)',
+  [ASPECT_RATIO_SQUARE]: '1:1 (Square)',
   '16:9': '16:9 (Landscape)',
   '9:16': '9:16 (Portrait)',
   '4:3': '4:3 (Standard)',
@@ -495,3 +567,57 @@ export const ASPECT_RATIO_LABELS: Record<string, string> = {
   '1:8': '1:8 (Tall Ribbon)',
   '8:1': '8:1 (Wide Ribbon)',
 };
+
+/**
+ * Checks whether a given model identifier or display name corresponds to Gemini Omni.
+ */
+export function isGeminiOmniModel(modelValue?: string | null): boolean {
+  if (!modelValue) return false;
+  const config = MODEL_CONFIGS.find(
+    m => m.value === modelValue || m.viewValue === modelValue,
+  );
+  const val = (config?.value ?? modelValue).toLowerCase();
+  return (
+    val === 'gemini-omni-flash-preview' ||
+    val === 'gemini-omni-1.1-flash-preview' ||
+    val === 'gemini-omni-1.2-flash' ||
+    val === 'gemini-omni-generate-preview' ||
+    val === 'gemini-omni' ||
+    val.includes('gemini-omni') ||
+    val.includes('gemini omni')
+  );
+}
+
+/**
+ * Computes valid clip durations for a video model given the active mode,
+ * resolution, and whether an end frame is populated.
+ */
+export function getSupportedModelDurations(
+  model: GenerationModelConfig | undefined,
+  mode: string,
+  resolution: '1K' | '2K' | '4K' = '1K',
+  hasEndFrame = false,
+): number[] {
+  const baseDurations = model?.capabilities?.supportedDurations ?? [];
+  if (baseDurations.length === 0) {
+    return [];
+  }
+
+  const isOmni = isGeminiOmniModel(model?.value);
+  if ((!isOmni && mode !== 'Text to Video') || resolution !== '1K') {
+    const longest = baseDurations.at(-1);
+    return longest ? [longest] : [];
+  }
+
+  const constrainedMax = model?.capabilities?.maxConstrainedDuration;
+  if (
+    constrainedMax !== undefined &&
+    (mode === 'Ingredients to Video' ||
+      mode === 'Extend Video' ||
+      (mode === 'Frames to Video' && hasEndFrame))
+  ) {
+    return baseDurations.filter(d => d <= constrainedMax);
+  }
+
+  return [...baseDurations];
+}
