@@ -15,16 +15,11 @@
 name: '🔎 Gemini Review'
 
 # SECURITY: This workflow runs a headless AI agent with GitHub write tools, so
-# it MUST NOT run automatically on unvetted pull requests from external forks
-# (indirect prompt injection via the PR diff/description could hijack the agent).
-#
-# The review is therefore gated behind an explicit maintainer action: it only
-# runs when a user with triage/write access applies the `ai-review` label.
-# `pull_request_target` runs in the context of the BASE branch (trusted
-# workflow definition) and the job never checks out or executes fork code; the
-# diff is fetched read-only through the GitHub MCP server.
+# it only runs when a user with triage/write access applies the `ai-review`
+# label on a pull request. Using `pull_request` (instead of `pull_request_target`)
+# ensures external forks never receive repository secrets or write tokens.
 on:
-  pull_request_target:
+  pull_request:
     types: [labeled]
     branches:
       - main
@@ -68,8 +63,9 @@ jobs:
       # check out `github.event.pull_request.head.sha` here: that would execute
       # untrusted fork code with a privileged token.
       - name: 'Checkout repository (base branch)'
-        uses: 'actions/checkout@v4'
+        uses: 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262' # v4
         with:
+          ref: '${{ github.event.pull_request.base.sha }}'
           fetch-depth: 0
           persist-credentials: false
 
@@ -147,8 +143,9 @@ jobs:
       # untrusted fork code (and its GEMINI.md) in the agent's workspace with a
       # privileged token. The agent reviews the diff file built below instead.
       - name: 'Checkout repository (base branch)'
-        uses: 'actions/checkout@v4'
+        uses: 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262' # v4
         with:
+          ref: '${{ github.event.pull_request.base.sha }}'
           fetch-depth: 0
           persist-credentials: false
 
@@ -174,7 +171,7 @@ jobs:
             --output .gemini-review/pr.diff
 
       - name: 'Run Gemini pull request review'
-        uses: 'google-github-actions/run-gemini-cli@v0'
+        uses: 'google-github-actions/run-gemini-cli@f77273f4c914e4bf38440cf36a0369cb64a37489' # v0
         id: 'gemini_pr_review'
         continue-on-error: true
         with:
