@@ -500,7 +500,6 @@ export const PREDEFINED_WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
           },
           input_images: null,
           input_video: null,
-          input_audio: null,
           start_frame: null,
           end_frame: null,
         },

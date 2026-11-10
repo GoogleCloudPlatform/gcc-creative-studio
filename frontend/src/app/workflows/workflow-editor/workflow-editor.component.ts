@@ -902,7 +902,11 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       label: string;
       type: string;
     }> = [];
-    if (!inputsGroup || !config?.inputs) {
+    if (
+      !inputsGroup ||
+      !config?.inputs ||
+      config.type !== NodeTypes.GENERATE_TEXT
+    ) {
       return dynamicInputs;
     }
 
@@ -1062,7 +1066,11 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
           let inputConfig = config?.inputs?.find(
             (i: any) => i.name === event.inputName,
           );
-          if (!inputConfig && inputs.contains(event.inputName)) {
+          if (
+            !inputConfig &&
+            stepType === NodeTypes.GENERATE_TEXT &&
+            inputs.contains(event.inputName)
+          ) {
             inputConfig = {
               name: event.inputName,
               label: event.inputName,
@@ -2159,6 +2167,10 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
             newInputs[key] = this.cleanInputValue(val);
           }
         });
+
+        if (newStep.type === NodeTypes.GENERATE_VIDEO) {
+          delete newInputs['input_audio'];
+        }
 
         // If generate_text step has a linked/non-fixed prompt, do not save dynamic variables
         if (newStep.type === NodeTypes.GENERATE_TEXT) {

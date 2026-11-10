@@ -974,3 +974,34 @@ def test_step_state_defaults_and_json_output():
     )
     assert state.in_progress_continuations == 0
     assert state.to_json()["extra"] == 1
+
+
+def test_generate_video_step_supports_source_video_multi_video_and_legacy_audio():
+    step = GenerateVideoStep(
+        step_id="video_step_1",
+        inputs=GenerateVideoInputs(
+            prompt="Extend and combine clips",
+            input_video=[
+                StepOutputReference(step="v1", output="generated_video"),
+                101,
+                102,
+            ],
+            input_audio=StepOutputReference(
+                step="legacy_audio", output="generated_audio"
+            ),
+            source_video=StepOutputReference(
+                step="v0", output="generated_video"
+            ),
+        ),
+        settings=GenerateVideoSettings(
+            model="gemini-omni-1.2-flash",
+            input_mode="Extend Video",
+        ),
+    )
+    assert step.inputs.source_video == StepOutputReference(
+        step="v0", output="generated_video"
+    )
+    assert step.inputs.input_audio == StepOutputReference(
+        step="legacy_audio", output="generated_audio"
+    )
+    assert isinstance(step.inputs.input_video, list)

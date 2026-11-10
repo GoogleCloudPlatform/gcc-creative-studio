@@ -544,12 +544,12 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
     expect(candidates.find(c => c.portName === 'input_images')).toBeUndefined();
   });
 
-  it('should include enabled video and audio input ports in collectMagneticCandidatePorts', () => {
+  it('should include enabled video input ports and ignore legacy input_audio in collectMagneticCandidatePorts', () => {
     const videoStepForm = fb.group({
       stepId: ['step_video_node'],
       type: [NodeTypes.GENERATE_VIDEO],
       settings: fb.group({
-        model: ['gemini-experimental-omni'],
+        model: ['gemini-omni-1.2-flash'],
         input_mode: ['Ingredients to Video'],
       }),
       inputs: fb.group({
@@ -578,10 +578,10 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
     );
     expect(
       audioCandidates.find(c => c.portName === 'input_audio'),
-    ).toBeDefined();
+    ).toBeUndefined();
   });
 
-  it('should exclude disabled video/audio input ports in collectMagneticCandidatePorts', () => {
+  it('should exclude disabled video input ports in collectMagneticCandidatePorts', () => {
     const videoControl = fb.control({value: null, disabled: true});
     const videoStepForm = fb.group({
       stepId: ['step_video_node'],
@@ -608,10 +608,14 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
     ).toBeUndefined();
   });
 
-  it('should allow connection from video source to input_video in onPortDrop', () => {
+  it('should allow up to 3 connections to input_video on Omni 1.2 and reject a 4th in onPortDrop', () => {
     const videoStepForm = fb.group({
       stepId: ['step_video_node'],
       type: [NodeTypes.GENERATE_VIDEO],
+      settings: fb.group({
+        model: ['gemini-omni-1.2-flash'],
+        input_mode: ['Ingredients to Video'],
+      }),
       inputs: fb.group({
         prompt: [''],
         input_video: [null],
@@ -619,55 +623,65 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
     });
     component.stepsArray.push(videoStepForm);
 
-    component.dragSourcePort = {
-      stepId: 'step_video_source',
-      outputName: 'generated_video',
-      type: 'video',
-    };
-
-    component.onPortDrop(
-      {stepId: 'step_video_node', inputName: 'input_video'},
-      'step_video_node',
-    );
+    for (let i = 1; i <= 4; i++) {
+      component.dragSourcePort = {
+        stepId: `step_video_source_${i}`,
+        outputName: 'generated_video',
+        type: 'video',
+      };
+      component.onPortDrop(
+        {stepId: 'step_video_node', inputName: 'input_video'},
+        'step_video_node',
+      );
+    }
 
     expect(component.dragSourcePort).toBeNull();
     expect(
       videoStepForm.get('inputs')?.get('input_video')?.value as any,
-    ).toEqual({
-      step: 'step_video_source',
-      output: 'generated_video',
-    });
+    ).toEqual([
+      {step: 'step_video_source_1', output: 'generated_video'},
+      {step: 'step_video_source_2', output: 'generated_video'},
+      {step: 'step_video_source_3', output: 'generated_video'},
+    ]);
   });
 
-  it('should allow connection from audio source to input_audio in onPortDrop', () => {
-    const videoStepForm = fb.group({
-      stepId: ['step_video_node'],
-      type: [NodeTypes.GENERATE_VIDEO],
-      inputs: fb.group({
-        prompt: [''],
-        input_audio: [null],
-      }),
+  it('should strip legacy input_audio on GENERATE_VIDEO steps in addStep, getDynamicInputs, and prepareSteps', () => {
+    formService.addStep(NodeTypes.GENERATE_VIDEO, {
+      stepId: 'legacy_video_step',
+      type: NodeTypes.GENERATE_VIDEO,
+      settings: {
+        model: 'gemini-omni-1.2-flash',
+        input_mode: 'Ingredients to Video',
+      },
+      inputs: {
+        prompt: 'hello',
+        input_audio: {step: 'audio_1', output: 'generated_audio'},
+      },
+      outputs: {generated_video: {type: 'video'}},
     });
-    component.stepsArray.push(videoStepForm);
 
-    component.dragSourcePort = {
-      stepId: 'step_audio_source',
-      outputName: 'generated_audio',
-      type: 'audio',
-    };
+    const addedCtrl = component.stepsArray.controls.find(
+      c => c.get('stepId')?.value === 'legacy_video_step',
+    ) as FormGroup;
+    expect(addedCtrl.get('inputs')?.get('input_audio')).toBeNull();
 
-    component.onPortDrop(
-      {stepId: 'step_video_node', inputName: 'input_audio'},
-      'step_video_node',
+    // Even if a legacy control is present on a FormGroup, getDynamicInputs and prepareSteps ignore it
+    (addedCtrl.get('inputs') as FormGroup).addControl(
+      'input_audio',
+      fb.control({step: 'audio_1', output: 'generated_audio'}),
     );
-
-    expect(component.dragSourcePort).toBeNull();
+    const config = component.getStepConfig(NodeTypes.GENERATE_VIDEO);
     expect(
-      videoStepForm.get('inputs')?.get('input_audio')?.value as any,
-    ).toEqual({
-      step: 'step_audio_source',
-      output: 'generated_audio',
-    });
+      component.getDynamicInputs(config, addedCtrl.get('inputs') as FormGroup),
+    ).toEqual([]);
+
+    const prepared = (component as any).prepareSteps(
+      component.workflowForm.getRawValue(),
+    );
+    const preparedVideo = prepared.find(
+      (s: any) => s.stepId === 'legacy_video_step',
+    );
+    expect(preparedVideo.inputs.input_audio).toBeUndefined();
   });
 
   it('should support adding video output definition to user input node and connecting it to video input', () => {
