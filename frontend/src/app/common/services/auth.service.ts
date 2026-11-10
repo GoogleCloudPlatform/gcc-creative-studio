@@ -26,13 +26,11 @@ import {
   signInWithPopup,
   UserCredential,
 } from '@angular/fire/auth';
-import {Observable, from, throwError, of} from 'rxjs';
+import {Observable, from, throwError, of, EMPTY} from 'rxjs';
 import {catchError, tap, map, switchMap} from 'rxjs/operators';
 import {isPlatformBrowser} from '@angular/common';
 
-// Declare the 'google' global object from the Google Identity Services script
-declare const google: any;
-
+export const OIDC_NONCE_KEY = 'creative_studio_oidc_nonce';
 const FIREBASE_SESSION_KEY = 'firebase_session';
 const USER_DETAILS = 'USER_DETAILS';
 const LOGIN_ROUTE = '/login';
@@ -54,6 +52,7 @@ export class AuthService {
   private currentOAuthAccessToken: string | null = null;
   private firebaseIdToken: string | null = null; // To store the Firebase token for the test
   private firebaseTokenExpiry: number | null = null; // To store token expiration time (in ms)
+  private pendingOidcHash = '';
 
   constructor(
     private router: Router,
@@ -65,6 +64,12 @@ export class AuthService {
       prompt: 'select_account',
     });
     this.loadSessionFromStorage();
+    if (isPlatformBrowser(this.platformId)) {
+      const hash = window.location.hash || '';
+      if (hash && (hash.includes('id_token=') || hash.includes('error='))) {
+        this.pendingOidcHash = hash;
+      }
+    }
   }
 
   /**
@@ -153,85 +158,178 @@ export class AuthService {
   }
 
   /**
-   * A test sign-in method to get a Google ID token compatible with Identity Platform.
-   *
-   * @returns An Observable that emits the Identity Platform-compatible ID token.
+   * Redirects browser to a given URL.
+   * Separated as a method so unit tests can spy on it without page reloads.
    */
-  signInForGoogleIdentityPlatform(): Observable<string> {
-    return this.promptForIdentityPlatformToken$().pipe(
-      switchMap(idToken => {
-        const payload = JSON.parse(atob(idToken.split('.')[1]));
-        const userEmail = payload.email?.toLowerCase();
-
-        // If allowed, proceed to save session and return token
-        this.firebaseIdToken = idToken;
-        this.firebaseTokenExpiry = payload.exp * 1000;
-
-        const session: FirebaseSession = {
-          token: idToken,
-          expiry: this.firebaseTokenExpiry,
-        };
-        localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
-
-        // Call the backend to get or create the user profile.
-        return this.syncUserWithBackend$(idToken).pipe(
-          map(() => idToken), // Pass the token along for the final result.
-        );
-      }),
-    );
+  redirectToUrl(url: string): void {
+    if (isPlatformBrowser(this.platformId)) {
+      window.location.assign(url);
+    }
   }
 
-  private promptForIdentityPlatformToken$(): Observable<string> {
-    const GOOGLE_CLIENT_ID = environment.GOOGLE_CLIENT_ID;
+  /**
+   * Builds the standard Google OIDC redirect URL with select_account and nonce.
+   */
+  buildGoogleOidcRedirectUrl(): string {
+    const clientId = environment.GOOGLE_CLIENT_ID;
+    if (!clientId) {
+      throw new Error('Google Client ID is not configured.');
+    }
 
-    return new Observable<string>(observer => {
-      if (typeof google === 'undefined') {
-        return observer.error(
-          new Error(
-            'Google Identity Services script not loaded. Add it to index.html',
-          ),
-        );
-      }
-
-      const loginTimeout = setTimeout(() => {
-        observer.error(
-          new Error(
-            'Login timed out or third party sign-in may be disabled. Please try again and enable third party sign-in by clicking on the information button at the top left side of the browser.',
-          ),
-        );
-      }, 15000);
-
+    const nonce = crypto.randomUUID();
+    if (isPlatformBrowser(this.platformId)) {
       try {
-        google.accounts.id.initialize({
-          client_id: GOOGLE_CLIENT_ID,
-          callback: (response: any) => {
-            clearTimeout(loginTimeout);
-            const idToken = response.credential;
-            if (idToken) {
-              observer.next(idToken);
-              observer.complete();
-            } else {
-              observer.error(
-                new Error(
-                  'Google Sign-In response did not contain a credential.',
-                ),
-              );
-            }
-          },
-        });
-
-        // Trigger the One Tap prompt.
-        // Per new docs, we don't use the notification object for flow control.
-        google.accounts.id.prompt();
-      } catch (error) {
-        clearTimeout(loginTimeout);
-        console.error(
-          'Error during Google Identity Platform sign-in initialization:',
-          error,
-        );
-        observer.error(error);
+        sessionStorage.setItem(OIDC_NONCE_KEY, nonce);
+      } catch (e) {
+        console.warn('Could not write OIDC nonce to sessionStorage:', e);
       }
+      try {
+        localStorage.setItem(OIDC_NONCE_KEY, nonce);
+      } catch (e) {
+        console.warn('Could not write OIDC nonce to localStorage:', e);
+      }
+    }
+
+    const redirectUri = `${window.location.origin}${LOGIN_ROUTE}`;
+    // eslint-disable-next-line n/no-unsupported-features/node-builtins
+    const params = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      response_type: 'id_token',
+      scope: 'openid email profile',
+      prompt: 'select_account',
+      nonce: nonce,
     });
+
+    return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+  }
+
+  /**
+   * Initiates Google Sign-In via standard Google OIDC redirect.
+   *
+   * @returns An Observable that redirects the browser to accounts.google.com.
+   */
+  signInForGoogleIdentityPlatform(): Observable<string> {
+    try {
+      const authUrl = this.buildGoogleOidcRedirectUrl();
+      this.redirectToUrl(authUrl);
+      return EMPTY;
+    } catch (error: any) {
+      return throwError(() => error);
+    }
+  }
+
+  hasPendingOidcRedirect(): boolean {
+    return !!this.pendingOidcHash;
+  }
+
+  /**
+   * Completes Google OIDC redirect flow by parsing the URL fragment,
+   * validating the nonce, synchronizing with the backend, and cleaning the address bar.
+   */
+  completeGoogleOidcRedirect$(rawHash?: string): Observable<string> {
+    const hash =
+      rawHash !== undefined && rawHash !== ''
+        ? rawHash
+        : this.pendingOidcHash ||
+          (isPlatformBrowser(this.platformId) ? window.location.hash : '');
+    this.pendingOidcHash = '';
+
+    const cleanHash = hash.startsWith('#') ? hash.substring(1) : hash;
+    // eslint-disable-next-line n/no-unsupported-features/node-builtins
+    const params = new URLSearchParams(cleanHash);
+
+    // Scrub URL fragment immediately so tokens never linger in browser history
+    if (isPlatformBrowser(this.platformId)) {
+      window.history.replaceState(
+        {},
+        document.title,
+        window.location.pathname + window.location.search,
+      );
+    }
+
+    let expectedNonce: string | null = null;
+    if (isPlatformBrowser(this.platformId)) {
+      try {
+        expectedNonce =
+          sessionStorage.getItem(OIDC_NONCE_KEY) ||
+          localStorage.getItem(OIDC_NONCE_KEY);
+      } catch (e) {
+        console.warn('Could not read OIDC nonce from storage:', e);
+      }
+      try {
+        sessionStorage.removeItem(OIDC_NONCE_KEY);
+        localStorage.removeItem(OIDC_NONCE_KEY);
+      } catch (e) {
+        console.warn('Could not clear OIDC nonce from storage:', e);
+      }
+    }
+
+    const error = params.get('error');
+    if (error) {
+      const errorDescription =
+        params.get('error_description') || error || 'Google Sign-In failed.';
+      return throwError(() => new Error(errorDescription));
+    }
+
+    const idToken = params.get('id_token');
+    if (!idToken) {
+      return throwError(
+        () => new Error('Google Sign-In response did not contain an ID token.'),
+      );
+    }
+
+    let payload: any;
+    try {
+      payload = this.decodeJwtPayload(idToken);
+    } catch (e) {
+      return throwError(() => new Error('Failed to decode Google ID token.'));
+    }
+
+    if (!payload) {
+      return throwError(() => new Error('Failed to decode Google ID token.'));
+    }
+
+    if (!expectedNonce || payload.nonce !== expectedNonce) {
+      return throwError(
+        () => new Error('Invalid OIDC nonce. Please try signing in again.'),
+      );
+    }
+
+    // If allowed, proceed to save session and return token
+    this.firebaseIdToken = idToken;
+    this.firebaseTokenExpiry = payload.exp * 1000;
+
+    const session: FirebaseSession = {
+      token: idToken,
+      expiry: this.firebaseTokenExpiry,
+    };
+    if (isPlatformBrowser(this.platformId)) {
+      try {
+        localStorage.setItem(FIREBASE_SESSION_KEY, JSON.stringify(session));
+      } catch (e) {
+        console.warn('Could not write Firebase session to localStorage:', e);
+      }
+    }
+
+    // Call the backend to get or create the user profile.
+    return this.syncUserWithBackend$(idToken).pipe(
+      map(() => idToken), // Pass the token along for the final result.
+      catchError(syncError => {
+        // Roll back in-memory and local session so the user is not left in a half-authenticated state
+        this.firebaseIdToken = null;
+        this.firebaseTokenExpiry = null;
+        if (isPlatformBrowser(this.platformId)) {
+          try {
+            localStorage.removeItem(FIREBASE_SESSION_KEY);
+            localStorage.removeItem(USER_DETAILS);
+          } catch (e) {
+            // ignore
+          }
+        }
+        return throwError(() => syncError);
+      }),
+    );
   }
 
   /**
@@ -244,7 +342,9 @@ export class AuthService {
     // First, check our own session info which is loaded from localStorage.
     // This is synchronous and tells us if we have a valid, non-expired token.
     if (!this.isLoggedIn()) {
-      return of();
+      return throwError(
+        () => new Error('User session is not valid or has expired.'),
+      );
     }
 
     // Fallback case: The Firebase Auth instance is not yet initialized, but we
@@ -260,7 +360,11 @@ export class AuthService {
       .pipe(
         tap((userDetails: UserModel) => {
           // The backend is the source of truth. Save the returned profile to local storage.
-          localStorage.setItem(USER_DETAILS, JSON.stringify(userDetails));
+          try {
+            localStorage.setItem(USER_DETAILS, JSON.stringify(userDetails));
+          } catch (e) {
+            console.warn('Could not write USER_DETAILS to localStorage:', e);
+          }
         }),
         catchError((error: HttpErrorResponse) => {
           console.error('Failed to sync user with backend', error);
@@ -309,7 +413,16 @@ export class AuthService {
       this.firebaseTokenExpiry > now
     );
 
-    if (!isTokenValid && this.router.url !== LOGIN_ROUTE) {
+    const currentPath = (this.router.url || '').split('?')[0].split('#')[0];
+    const isBrowser = isPlatformBrowser(this.platformId);
+    const windowPath = isBrowser ? window.location.pathname : '';
+    const isOnLogin =
+      currentPath === LOGIN_ROUTE ||
+      currentPath.startsWith('/login') ||
+      windowPath === LOGIN_ROUTE ||
+      windowPath.startsWith('/login');
+
+    if (!isTokenValid && !isOnLogin) {
       void this.router.navigate([LOGIN_ROUTE]);
     }
 

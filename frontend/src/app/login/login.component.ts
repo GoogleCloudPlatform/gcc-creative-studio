@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {Component, NgZone, Inject, PLATFORM_ID} from '@angular/core';
+import {Component, NgZone, Inject, PLATFORM_ID, OnInit} from '@angular/core';
 import {GoogleAuthProvider} from '@angular/fire/auth';
 import {Router} from '@angular/router';
 import {AuthService} from './../common/services/auth.service';
@@ -35,8 +35,9 @@ interface LooseObject {
   templateUrl: './login.component.html',
   styleUrls: ['./login.component.scss'],
 })
-export class LoginComponent {
+export class LoginComponent implements OnInit {
   private readonly provider: GoogleAuthProvider = new GoogleAuthProvider();
+  private initialOidcHash = '';
 
   loader = false;
   invalidLogin = false;
@@ -48,15 +49,51 @@ export class LoginComponent {
     private router: Router,
     public ngZone: NgZone,
     private _snackBar: MatSnackBar,
-    @Inject(PLATFORM_ID) platformId: Object,
+    @Inject(PLATFORM_ID) private platformId: Object,
   ) {
-    this.isBrowser = isPlatformBrowser(platformId);
+    this.isBrowser = isPlatformBrowser(this.platformId);
+    this.initialOidcHash = this.isBrowser ? window.location.hash : '';
     this.provider.setCustomParameters({
       prompt: 'select_account',
     });
   }
 
-  ngOnInit(): void {}
+  ngOnInit(): void {
+    if (!this.isBrowser) {
+      return;
+    }
+
+    const routerFragment = this.router?.parseUrl(this.router.url)?.fragment;
+    const fallbackFragment = routerFragment ? `#${routerFragment}` : '';
+    const hash =
+      this.initialOidcHash || window.location.hash || fallbackFragment;
+    if (
+      this.authService.hasPendingOidcRedirect() ||
+      (hash && (hash.includes('id_token=') || hash.includes('error=')))
+    ) {
+      this.loader = true;
+      this.authService.completeGoogleOidcRedirect$(hash).subscribe({
+        next: () => {
+          this.ngZone.run(() => {
+            this.loader = false;
+            void this.router.navigate([HOME_ROUTE]);
+          });
+        },
+        error: error => {
+          this.ngZone.run(() => {
+            this.loader = false;
+            console.error('Google OIDC Redirect Error:', error);
+            this.handleLoginError(
+              error || {
+                message:
+                  'An unexpected error occurred during sign-in. Please try again.',
+              },
+            );
+          });
+        },
+      });
+    }
+  }
 
   loginWithGoogle() {
     this.loader = true;
@@ -95,34 +132,25 @@ export class LoginComponent {
         },
       });
     } else {
-      // This will use the Google Identity Services library to get an FIREBASE-compatible token.
       this.authService.signInForGoogleIdentityPlatform().subscribe({
-        next: (firebaseToken: string) => {
-          // The signInForGoogleIdentityPlatform method already stored the token and minimal user details
-          // in localStorage. We just need to redirect to trigger the AuthGuard.
+        next: () => {
           this.ngZone.run(() => {
             this.loader = false;
             void this.router.navigate([HOME_ROUTE]);
           });
         },
         error: error => {
-          this.loader = false;
-          console.error('Login failed', error);
-          // Handle specific errors from the auth service
-          if (
-            error.message?.includes('timed out') ||
-            error.message?.includes('Access Denied')
-          ) {
-            this.handleLoginError(error);
-          } else {
+          this.ngZone.run(() => {
+            this.loader = false;
+            console.error('Login failed', error);
             this.handleLoginError(
               error || {
                 message:
                   'An unexpected error occurred during sign-in. Please try again.',
               },
             );
-          }
-          console.error('FIREBASE Login Process Error:', error);
+            console.error('Google Sign-In Redirect Error:', error);
+          });
         },
       });
     }
@@ -130,6 +158,12 @@ export class LoginComponent {
 
   private handleLoginError(error: any, postErrorAction?: () => void) {
     this.loader = false;
+    this.invalidLogin = true;
+    this.errorMessage =
+      error?.error?.detail?.[0]?.msg ||
+      error?.error?.detail ||
+      error?.message ||
+      'An unexpected error occurred during sign-in. Please try again.';
     handleErrorSnackbar(this._snackBar, error, 'Login Error');
     if (postErrorAction) {
       postErrorAction();

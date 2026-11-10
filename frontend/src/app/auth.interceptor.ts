@@ -55,13 +55,19 @@ export class AuthInterceptor implements HttpInterceptor {
       }),
       catchError(error => {
         // If the error is NOT an HttpErrorResponse, it's a token refresh failure
-        // from our AuthService. In this case, the session is invalid, and we should log out.
+        // from our AuthService. In this case, the session is invalid, and we should log out
+        // (unless we are already on /login, where logging out would destroy an in-flight login).
         if (!(error instanceof HttpErrorResponse)) {
           console.error(
-            'AuthInterceptor: Session expired and could not be refreshed. Logging out.',
+            'AuthInterceptor: Session expired and could not be refreshed.',
             error,
           );
-          void this.authService.logout();
+          const isLoginPage =
+            typeof window !== 'undefined' &&
+            window.location.pathname.startsWith('/login');
+          if (!isLoginPage) {
+            void this.authService.logout();
+          }
         }
 
         // Otherwise, it's a backend API error (e.g., 404, 500). We should NOT log out.
