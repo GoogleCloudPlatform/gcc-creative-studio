@@ -16,7 +16,7 @@
 import logging
 from typing import Any, List
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from src.auth.auth_guard import get_current_user
 from src.users.user_model import UserModel
@@ -29,6 +29,7 @@ from src.agents.agent_dtos import (
     SessionResponseDto,
     SessionDetailResponseDto,
     UpdateCharacterRequestDto,
+    UpdateSessionRequestDto,
 )
 
 router = APIRouter(
@@ -46,12 +47,20 @@ security = HTTPBearer()
 async def get_sessions(
     request: Request,
     workspace_id: int | None = None,
+    project_id: int | None = None,
     appName: str = APP_NAME,
+    include_expired: bool = False,
     current_user: UserModel = Depends(get_current_user),
     agent_service: AgentService = Depends(),
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
-    """List chat sessions for the current user from Vertex AI Agent Engines."""
+    """List chat sessions for the current user from Vertex AI Agent Engines.
+
+    ``project_id`` narrows the list to the chats registered in that project.
+    ``include_expired`` appends the registered chats the agent backend no
+    longer has, flagged ``expired``. They cannot be opened; a ``restorable``
+    one (it owns a storyboard) can be restored (``POST .../restore``).
+    """
     user_id = str(current_user.id)
     return await agent_service.list_sessions(
         current_user=current_user,
@@ -59,6 +68,8 @@ async def get_sessions(
         request=request,
         workspace_id=workspace_id,
         appName=appName,
+        project_id=project_id,
+        include_expired=include_expired,
     )
 
 
@@ -66,12 +77,17 @@ async def get_sessions(
 async def create_session(
     request: Request,
     workspace_id: int | None = None,
+    project_id: int | None = None,
     appName: str = APP_NAME,
     current_user: UserModel = Depends(get_current_user),
     agent_service: AgentService = Depends(),
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
-    """Create a new chat session in Vertex AI Agent Engines."""
+    """Create a new chat session in Vertex AI Agent Engines.
+
+    The chat is registered in ``project_id``, or in the user's default
+    project for the workspace when none is given.
+    """
     user_id = str(current_user.id)
     return await agent_service.create_session(
         current_user=current_user,
@@ -79,6 +95,7 @@ async def create_session(
         request=request,
         workspace_id=workspace_id,
         appName=appName,
+        project_id=project_id,
     )
 
 
@@ -145,6 +162,55 @@ async def delete_session(
         request=request,
         workspace_id=workspace_id,
         appName=appName,
+    )
+
+
+@router.patch("/sessions/{session_id}", response_model=SessionResponseDto)
+async def update_session(
+    session_id: str,
+    payload: UpdateSessionRequestDto,
+    appName: str = APP_NAME,
+    current_user: UserModel = Depends(get_current_user),
+    agent_service: AgentService = Depends(),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    """Sets the chat's server-side title/summary (owner only)."""
+    return await agent_service.update_session_metadata(
+        current_user=current_user,
+        session_id=session_id,
+        title=payload.title,
+        summary=payload.summary,
+        app_name=appName,
+    )
+
+
+@router.post(
+    "/sessions/{session_id}/restore",
+    response_model=SessionResponseDto,
+    dependencies=[Depends(security)],
+)
+async def restore_session(
+    session_id: str,
+    request: Request,
+    workspace_id: int | None = None,
+    app_name: str = Query(APP_NAME, alias="appName"),
+    current_user: UserModel = Depends(get_current_user),
+    agent_service: AgentService = Depends(),
+):
+    """Restores an expired chat's storyboard and timeline (owner only).
+
+    The chat keeps its project and title on a new agent session and is
+    flagged ``restored``: Izumi does not remember it, so ``/chat`` refuses
+    to run there (409). 409 too while the chat has not expired or owns no
+    storyboard.
+    """
+    return await agent_service.restore_session(
+        current_user=current_user,
+        user_id=str(current_user.id),
+        session_id=session_id,
+        request=request,
+        workspace_id=workspace_id,
+        app_name=app_name,
     )
 
 

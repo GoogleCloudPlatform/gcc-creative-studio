@@ -35,7 +35,10 @@ from src.workbench.dto.workbench_dto import (
     VideoTimeline,
 )
 from src.workbench.ffmpeg_service import FFmpegService
-from src.workbench.workbench_service import WorkbenchService
+from src.workbench.workbench_service import (
+    WorkbenchService,
+    _process_timeline_in_background,
+)
 from src.common.schema.media_item_model import (
     MediaItemModel,
     MimeTypeEnum,
@@ -396,3 +399,56 @@ async def test_render_timeline_ffmpeg_failure(service):
 
             with pytest.raises(RuntimeError, match="FFmpeg failed"):
                 await service.render_timeline(request)
+
+
+@patch("src.database.WorkerDatabase")
+def test_background_render_upload_failure_marks_the_item_failed(
+    mock_worker_db_class, tmp_path
+):
+    """The real upload error reaches the FAILED update: the ``finally``
+    must not die on an unbound ``thumbnail_path`` first."""
+    mock_db_factory = MagicMock(return_value=AsyncMock())
+    mock_worker_db_class.return_value.__aenter__.return_value = mock_db_factory
+    temp_dir = tmp_path / "render"
+    temp_dir.mkdir()
+
+    with (
+        patch(
+            "src.workbench.workbench_service.MediaRepository"
+        ) as media_repo_cls,
+        patch("src.workbench.workbench_service.GcsService") as gcs_cls,
+        patch("src.workbench.workbench_service.FFmpegService"),
+        patch(
+            "src.workbench.workbench_service.WorkbenchService"
+        ) as service_cls,
+        patch(
+            "src.workbench.repository.timeline_repository.TimelineRepository"
+        ) as timeline_repo_cls,
+        patch(
+            "src.source_assets.repository.source_asset_repository."
+            "SourceAssetRepository"
+        ),
+        patch("src.auth.iam_signer_credentials_service.IamSignerCredentials"),
+    ):
+        media_repo = AsyncMock()
+        media_repo_cls.return_value = media_repo
+        timeline_repo_cls.return_value.get_by_id_with_details = AsyncMock(
+            return_value=MagicMock()
+        )
+        worker_service = service_cls.return_value
+        worker_service._enrich_timeline = AsyncMock()
+        worker_service._stitch_timeline = AsyncMock(
+            return_value=(str(temp_dir / "output.mp4"), str(temp_dir))
+        )
+        gcs_cls.return_value.upload_file_to_gcs.side_effect = RuntimeError(
+            "bucket unavailable"
+        )
+
+        _process_timeline_in_background(media_item_id=55, timeline_id=9)
+
+    media_repo.update.assert_awaited_once()
+    media_item_id, update = media_repo.update.await_args.args
+    assert media_item_id == 55
+    assert update["status"] == JobStatusEnum.FAILED
+    assert update["error_message"] == "Render failed: bucket unavailable"
+    assert not temp_dir.exists()

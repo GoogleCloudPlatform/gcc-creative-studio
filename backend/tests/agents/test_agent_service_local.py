@@ -25,6 +25,7 @@ from src.agents.agent_service import (
     AgentService,
 )
 from src.agents.local_adk_client import LocalAdkAgentClient, LocalRemoteAgent
+from src.agents.agent_session_repository import AgentSessionRepository
 from src.config.config_service import config_service
 from src.users.user_model import UserModel
 
@@ -38,6 +39,15 @@ def fixture_local_mode():
     config_service.USE_LOCAL_IZUMI_AGENT = previous
 
 
+def _registry_stub():
+    """An empty session registry: no chat registered yet."""
+    repo = AsyncMock(spec=AgentSessionRepository)
+    repo.get.return_value = None
+    repo.register.return_value = None
+    repo.map_for_user_workspace.return_value = {}
+    return repo
+
+
 def _service(local_client: AsyncMock | None = None, **deps) -> AgentService:
     with patch("vertexai.Client"):
         service = AgentService(
@@ -46,6 +56,7 @@ def _service(local_client: AsyncMock | None = None, **deps) -> AgentService:
             storyboard_repo=deps.get("storyboard_repo", AsyncMock()),
             workspace_auth=deps.get("workspace_auth", AsyncMock()),
             project_service=deps.get("project_service", AsyncMock()),
+            agent_session_repo=deps.get("agent_session_repo", _registry_stub()),
         )
     if local_client is not None:
         service.local_client = local_client
@@ -124,6 +135,7 @@ async def test_list_sessions_local_filters_by_workspace(local_mode):
     ]
     service = _service(local_client)
     user = MagicMock(spec=UserModel)
+    user.id = 999
 
     result = await service.list_sessions(
         current_user=user,
@@ -145,7 +157,7 @@ async def test_create_session_local_passes_state(local_mode):
     request.headers = {"Authorization": "Bearer abc"}
 
     dto = await service.create_session(
-        current_user=MagicMock(spec=UserModel),
+        current_user=MagicMock(spec=UserModel, id=999),
         user_id="999",
         request=request,
         workspace_id=10,
@@ -353,6 +365,7 @@ async def test_chat_local_unreachable_agent_records_error(local_mode):
     from src.agents.local_adk_client import LocalAgentError
 
     local_client = AsyncMock()
+    local_client.get_session.return_value = _local_session("s1", 10)
 
     async def failing_stream(**_kwargs):
         raise LocalAgentError("Local Izumi agent is not reachable (503)")

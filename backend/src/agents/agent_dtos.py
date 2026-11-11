@@ -15,7 +15,7 @@
 """Data Transfer Objects for Agent Controller Endpoints."""
 
 from typing import Any, Dict, List, Literal, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from src.projects.dto.project_dto import StoryboardResponse
 
 
@@ -81,12 +81,36 @@ class PollEventsResponseDto(BaseModel):
 
 # --- Session Responses ---
 class SessionResponseDto(BaseModel):
+    """A chat as listed: its agent session plus Creative Studio's registry."""
+
     id: str
     appName: str
     userId: str
     lastUpdateTime: Optional[float] = None
     state: Optional[Dict[str, Any]] = None
     events: Optional[List[Any]] = None
+    # From Creative Studio's session registry (``agent_sessions``), not from
+    # Agent Engine: the chat's project and its server-side title.
+    projectId: Optional[int] = None
+    title: Optional[str] = None
+    summary: Optional[str] = None
+    # A registered chat the agent backend no longer has (expired, or its
+    # local store was reset): listed on request. It cannot be opened, only
+    # restored when ``restorable``.
+    expired: bool = False
+    # An expired chat that still owns a storyboard: it can be restored.
+    restorable: bool = False
+    # A chat restored after it expired: Izumi does not remember it, so it
+    # cannot run there (its storyboard and timeline are edited by hand).
+    restored: bool = False
+
+
+# --- PATCH /sessions/{session_id} ---
+class UpdateSessionRequestDto(BaseModel):
+    """Server-side chat title and summary (they replace localStorage topics)."""
+
+    title: Optional[str] = Field(default=None, max_length=200)
+    summary: Optional[str] = Field(default=None, max_length=1000)
 
 
 # --- Any dynamic structure fallback (for passthrough) ---
