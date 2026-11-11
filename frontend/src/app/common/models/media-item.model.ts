@@ -157,6 +157,8 @@ export interface AudioMusicalProfile {
 export interface AudioTrackAnalysis {
   raw_text?: string;
   lyrics?: string;
+  waveform?: number[];
+  duration_seconds?: number;
   structure?: Record<string, any> | any[];
   musical_profile?: Record<string, any>;
   seed?: number | null;
@@ -227,6 +229,88 @@ export function getAudioTrackAnalysis(
 ): AudioTrackAnalysis | null {
   const tracks = resolveAudioAnalysis(item)?.tracks;
   return Array.isArray(tracks) ? (tracks[index] ?? null) : null;
+}
+
+export function getAudioTrackWaveform(
+  track: AudioTrackAnalysis | null | undefined,
+): number[] | null {
+  const raw = track?.waveform;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const nums = raw.map(Number);
+  return nums.every(Number.isFinite)
+    ? nums.map(n => Math.min(1, Math.max(0.05, Math.abs(n))))
+    : null;
+}
+
+function parsePositiveSeconds(raw: unknown): number | null {
+  if (typeof raw === 'number') {
+    return Number.isFinite(raw) && raw > 0 ? raw : null;
+  }
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  const mmss = /^(\d+):([0-5]\d(?:\.\d+)?)$/.exec(trimmed);
+  if (mmss) {
+    const total = Number(mmss[1]) * 60 + Number(mmss[2]);
+    return total > 0 ? total : null;
+  }
+  const secMatch = /^(\d+(?:\.\d+)?)\s*s?$/i.exec(trimmed);
+  const val = secMatch ? Number(secMatch[1]) : NaN;
+  return Number.isFinite(val) && val > 0 ? val : null;
+}
+
+export function getAudioTrackDurationSeconds(
+  track: AudioTrackAnalysis | null | undefined,
+  fallbackDurationSeconds?: number | null,
+): number | null {
+  return (
+    parsePositiveSeconds(
+      track?.duration_seconds ?? (track as any)?.durationSeconds,
+    ) ??
+    parsePositiveSeconds(getStructureRecord(track)?.['duration']) ??
+    parsePositiveSeconds(fallbackDurationSeconds)
+  );
+}
+
+export function formatAudioClock(seconds: number, round = false): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+  const total = round ? Math.max(1, Math.round(seconds)) : Math.floor(seconds);
+  const secs = total % 60;
+  return `${Math.floor(total / 60)}:${secs < 10 ? '0' : ''}${secs}`;
+}
+
+export function formatAudioDuration(
+  seconds: number | null | undefined,
+): string | null {
+  return typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0
+    ? formatAudioClock(seconds, true)
+    : null;
+}
+
+function formatBpmCandidate(raw: unknown): string | null {
+  const num =
+    typeof raw === 'number'
+      ? raw
+      : typeof raw === 'string'
+        ? Number(/^(\d+(?:\.\d+)?)\s*(?:bpm)?$/i.exec(raw.trim())?.[1])
+        : NaN;
+  return Number.isFinite(num) && num > 0 ? `${Math.round(num)} BPM` : null;
+}
+
+export function getAudioTrackBpm(
+  track: AudioTrackAnalysis | null | undefined,
+): string | null {
+  if (!track) return null;
+  const structure = getStructureRecord(track);
+  const rawProfile = track.musical_profile ?? (track as any).musicalProfile;
+  const profileBpm =
+    rawProfile && typeof rawProfile === 'object' && !Array.isArray(rawProfile)
+      ? rawProfile['bpm']
+      : undefined;
+  return (
+    formatBpmCandidate(structure?.['bpm']) ??
+    formatBpmCandidate(profileBpm) ??
+    formatBpmCandidate(structure?.['tempo'])
+  );
 }
 
 export function getAudioTrackLyrics(
@@ -435,7 +519,6 @@ export function buildAudioIterationRemixState(
     },
   };
 }
-
 /**
  * Defines the response structure for a paginated gallery query,
  * mirroring the Pydantic model from the backend.

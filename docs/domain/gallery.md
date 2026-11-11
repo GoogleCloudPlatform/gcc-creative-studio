@@ -41,3 +41,8 @@ Source files:
   - Enforces `MAX_INLINE_THUMBNAIL_BYTES` (50 MiB) by checking GCS object metadata (reloading if `blob.size is None`) before synchronous thumbnail generation; oversized assets log a warning and skip thumbnail creation instead of buffering large blobs in memory.
 - **Non-blocking post-auth workflow session sync (`schedule_post_auth_session`):**
   - Offloads workflow token persistence and throttled dispatcher ticks onto a tracked background `asyncio.Task` with per-user singleflight dedup and queued token rotation, and drains cleanly via `drain_post_auth_tasks()` during shutdown.
+
+## Single-Item Audio Analysis Read
+
+- **`GET /api/gallery/item/{item_id}/audio-analysis` (`GalleryService.get_media_audio_analysis`):**
+  - Verifies workspace access through `_get_authorized_media_item(item_id, current_user)` (`WorkspaceAuth.authorize` on `item.workspace_id`; raises `HTTP 404` when missing) and returns `normalize_audio_analysis(item.audio_analysis)` without generating presigned GCS URLs.

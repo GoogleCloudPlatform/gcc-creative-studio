@@ -260,4 +260,70 @@ describe('GalleryService', () => {
     });
     expect(promotedCount).toBe(1);
   });
+
+  it('preserves seed: 0 in getMedia and unified metadata mapping', () => {
+    service = TestBed.inject(GalleryService);
+    let mappedSeed: number | undefined;
+    service.getMedia(501).subscribe(item => {
+      mappedSeed = item.seed;
+    });
+
+    const req = httpMock.expectOne(
+      `${environment.backendURL}/gallery/item/501`,
+    );
+    req.flush({
+      id: 501,
+      workspaceId: 1,
+      createdAt: '2026-07-08T22:20:10Z',
+      status: 'COMPLETED',
+      mimeType: 'audio/wav',
+      seed: 0,
+      gcsUris: ['gs://b/0.wav'],
+    });
+    expect(mappedSeed).toBe(0);
+
+    let metadataSeed: number | undefined;
+    service.getMedia(502).subscribe(item => {
+      metadataSeed = item.seed;
+    });
+    const req2 = httpMock.expectOne(
+      `${environment.backendURL}/gallery/item/502`,
+    );
+    req2.flush({
+      id: 502,
+      workspaceId: 1,
+      createdAt: '2026-07-08T22:20:10Z',
+      status: 'COMPLETED',
+      mimeType: 'audio/wav',
+      metadata: {seed: 0},
+      gcsUris: ['gs://b/1.wav'],
+    });
+    expect(metadataSeed).toBe(0);
+  });
+
+  it('caches getAudioAnalysis per item and evicts failed requests for retry', () => {
+    service = TestBed.inject(GalleryService);
+    spyOn(console, 'error');
+    const results: Array<unknown> = [];
+
+    service.getAudioAnalysis(77).subscribe(res => results.push(res));
+    const failReq = httpMock.expectOne(
+      `${environment.backendURL}/gallery/item/77/audio-analysis`,
+    );
+    failReq.flush('Server Error', {status: 500, statusText: 'Error'});
+    expect(results).toEqual([null]);
+
+    // Subsequent call after error must trigger a fresh HTTP request
+    service.getAudioAnalysis(77).subscribe(res => results.push(res));
+    service.getAudioAnalysis(77).subscribe(res => results.push(res));
+    const retryReq = httpMock.expectOne(
+      `${environment.backendURL}/gallery/item/77/audio-analysis`,
+    );
+    retryReq.flush({audioAnalysis: {tracks: [{waveform: [0.2, 0.8]}]}});
+    expect(results).toEqual([
+      null,
+      {tracks: [{waveform: [0.2, 0.8]}]},
+      {tracks: [{waveform: [0.2, 0.8]}]},
+    ]);
+  });
 });

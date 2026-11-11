@@ -25,6 +25,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.audios.lyria3_text import normalize_audio_analysis
 from src.auth.iam_signer_credentials_service import IamSignerCredentials
 from src.database import get_db
 from src.common.dto.pagination_response_dto import PaginationResponseDto
@@ -490,6 +491,46 @@ class GalleryService:
             data=enriched_items,
         )
 
+    async def _get_authorized_media_item(
+        self,
+        item_id: int,
+        current_user: UserModel,
+    ) -> MediaItemModel | None:
+        """Fetches a media item and authorizes workspace access, or returns None if missing."""
+        is_admin = UserRoleEnum.ADMIN in current_user.roles
+        item = await self.media_repo.get_by_id(
+            item_id, include_deleted=is_admin
+        )
+        if not item:
+            return None
+
+        workspace = await self.workspace_repo.get_by_id(item.workspace_id)
+        if not workspace:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Parent workspace for this item not found.",
+            )
+
+        await self.workspace_auth.authorize(
+            workspace_id=item.workspace_id,
+            user=current_user,
+        )
+        return item
+
+    async def get_media_audio_analysis(
+        self,
+        item_id: int,
+        current_user: UserModel,
+    ) -> dict | None:
+        """Returns ``audio_analysis`` for a single authorized media item without signing URLs."""
+        item = await self._get_authorized_media_item(item_id, current_user)
+        if not item:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Media item not found",
+            )
+        return normalize_audio_analysis(getattr(item, "audio_analysis", None))
+
     async def get_media_by_id(
         self,
         item_id: int,
@@ -498,30 +539,9 @@ class GalleryService:
         """Retrieves a single media item, performs an authorization check,
         and enriches it with presigned URLs.
         """
-        # Run the synchronous database query in a separate thread
-        is_admin = UserRoleEnum.ADMIN in current_user.roles
-        item = await self.media_repo.get_by_id(
-            item_id, include_deleted=is_admin
-        )
-
+        item = await self._get_authorized_media_item(item_id, current_user)
         if not item:
             return None
-
-        # Fetch the workspace for authorization check
-        workspace = await self.workspace_repo.get_by_id(item.workspace_id)
-
-        # This should ideally not happen if data is consistent, but it's a good safeguard.
-        if not workspace:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Parent workspace for this item not found.",
-            )
-
-        # Use the centralized authorization logic
-        await self.workspace_auth.authorize(
-            workspace_id=item.workspace_id,
-            user=current_user,
-        )
 
         return await self.hydrate_media_item(item, current_user)
 
