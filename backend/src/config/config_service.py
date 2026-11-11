@@ -60,8 +60,8 @@ class ConfigService(BaseSettings):
     GENMEDIA_BUCKET: str = ""
 
     # --- Gemini ---
-    GEMINI_MODEL_ID: str = "gemini-2.5-pro"
-    GEMINI_AUDIO_ANALYSIS_MODEL_ID: str = "gemini-2.5-pro"
+    GEMINI_MODEL_ID: str = "gemini-3.1-pro-preview"
+    GEMINI_AUDIO_ANALYSIS_MODEL_ID: str = "gemini-3.1-pro-preview"
 
     # --- Database Configuration ---
     INSTANCE_CONNECTION_NAME: str = ""

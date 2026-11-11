@@ -97,29 +97,27 @@ async def test_generate_multimodal_endpoint_failure(mock_gemini_service):
     )
 
 
-@pytest.mark.anyio
-async def test_rewrite_prompt_endpoint_success(mock_gemini_service):
+def test_rewrite_prompt_endpoint_success(mock_gemini_service):
     request = RewritePromptRequestDto(
-        user_prompt="test prompt",
-        target_type=PromptTargetEnum.IMAGE,
+        user_prompt="jazz",
+        target_type=PromptTargetEnum.AUDIO,
     )
     mock_gemini_service.generate_random_or_rewrite_prompt.return_value = (
-        "rewritten prompt"
+        "rewritten audio prompt"
     )
 
-    response = await rewrite_prompt_endpoint(
+    response = rewrite_prompt_endpoint(
         rewrite_request=request, gemini_service=mock_gemini_service
     )
 
     assert isinstance(response, RewrittenOrRandomPromptResponse)
-    assert response.prompt == "rewritten prompt"
+    assert response.prompt == "rewritten audio prompt"
     mock_gemini_service.generate_random_or_rewrite_prompt.assert_called_once_with(
-        PromptTargetEnum.IMAGE, "test prompt"
+        PromptTargetEnum.AUDIO, "jazz"
     )
 
 
-@pytest.mark.anyio
-async def test_random_prompt_endpoint_success(mock_gemini_service):
+def test_random_prompt_endpoint_success(mock_gemini_service):
     request = RandomPromptRequestDto(
         target_type=PromptTargetEnum.VIDEO,
     )
@@ -127,19 +125,18 @@ async def test_random_prompt_endpoint_success(mock_gemini_service):
         "random prompt"
     )
 
-    response = await random_prompt_endpoint(
+    response = random_prompt_endpoint(
         random_request=request, gemini_service=mock_gemini_service
     )
 
     assert isinstance(response, RewrittenOrRandomPromptResponse)
     assert response.prompt == "random prompt"
     mock_gemini_service.generate_random_or_rewrite_prompt.assert_called_once_with(
-        PromptTargetEnum.VIDEO,
+        PromptTargetEnum.VIDEO
     )
 
 
-@pytest.mark.anyio
-async def test_generate_title_endpoint_success(mock_gemini_service):
+def test_generate_title_endpoint_success(mock_gemini_service):
     request = GenerateTitleRequestDto(
         text="test conversation text",
     )
@@ -148,7 +145,7 @@ async def test_generate_title_endpoint_success(mock_gemini_service):
         "summary": "A Summary",
     }
 
-    response = await generate_title_endpoint(
+    response = generate_title_endpoint(
         request=request, gemini_service=mock_gemini_service
     )
 
@@ -163,8 +160,7 @@ async def test_generate_title_endpoint_success(mock_gemini_service):
 # --- Additional exception handling and boundary tests ---
 
 
-@pytest.mark.anyio
-async def test_rewrite_prompt_endpoint_failure(mock_gemini_service):
+def test_rewrite_prompt_endpoint_failure(mock_gemini_service):
     request = RewritePromptRequestDto(
         user_prompt="test prompt",
         target_type=PromptTargetEnum.IMAGE,
@@ -174,7 +170,7 @@ async def test_rewrite_prompt_endpoint_failure(mock_gemini_service):
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await rewrite_prompt_endpoint(
+        rewrite_prompt_endpoint(
             rewrite_request=request, gemini_service=mock_gemini_service
         )
     assert exc_info.value.status_code == 500
@@ -184,8 +180,7 @@ async def test_rewrite_prompt_endpoint_failure(mock_gemini_service):
     )
 
 
-@pytest.mark.anyio
-async def test_random_prompt_endpoint_failure(mock_gemini_service):
+def test_random_prompt_endpoint_failure(mock_gemini_service):
     request = RandomPromptRequestDto(
         target_type=PromptTargetEnum.VIDEO,
     )
@@ -194,15 +189,14 @@ async def test_random_prompt_endpoint_failure(mock_gemini_service):
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await random_prompt_endpoint(
+        random_prompt_endpoint(
             random_request=request, gemini_service=mock_gemini_service
         )
     assert exc_info.value.status_code == 500
     assert "Failed to generate random prompt" in exc_info.value.detail
 
 
-@pytest.mark.anyio
-async def test_generate_title_endpoint_failure(mock_gemini_service):
+def test_generate_title_endpoint_failure(mock_gemini_service):
     request = GenerateTitleRequestDto(
         text="test conversation text",
     )
@@ -211,7 +205,7 @@ async def test_generate_title_endpoint_failure(mock_gemini_service):
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await generate_title_endpoint(
+        generate_title_endpoint(
             request=request, gemini_service=mock_gemini_service
         )
     assert exc_info.value.status_code == 500
