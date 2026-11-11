@@ -66,6 +66,7 @@ import {
 import {
   AvailableOutput,
   DynamicStepRecord,
+  EditorMode,
   NodeTypes,
   StepEntry,
   StepInputUnlinkEvent,
@@ -192,7 +193,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
   @Input() stepForm!: FormGroup;
   @Input() stepIndex!: number;
   @Input() availableOutputs: AvailableOutput[] = [];
-  @Input() mode: 'create' | 'edit' | 'run' = 'create';
+  @Input() mode: EditorMode = EditorMode.Create;
   @Input() config!: StepConfig;
   @Input() showValidationErrors = false;
   @Input() mediaUrlMap!: Map<string, string>;
@@ -267,6 +268,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
   @Output() unlink = new EventEmitter<StepInputUnlinkEvent>();
 
   StepStatusEnum = StepStatusEnum;
+  EditorMode = EditorMode;
   NodeTypes = NodeTypes;
   readonly maxLoopItems = MAX_LOOP_ITEMS;
 
@@ -418,6 +420,12 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
 
   isCollapsed = false;
   inputModes: {[key: string]: 'fixed' | 'linked' | 'mixed'} = {};
+  /**
+   * Inputs whose value is currently a single step-output reference (wired).
+   * Used to detect when a wire is removed so the input returns to fixed mode,
+   * without overriding an explicit "Link" mode chosen with no wire yet.
+   */
+  private wiredInputs = new Set<string>();
   compatibleOutputs: {[key: string]: any[]} = {};
   newVariableName = '';
 
@@ -542,7 +550,8 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   canUnlink(inputName: string): boolean {
-    if (this.isInputDisabled(inputName)) return false;
+    if (this.mode === EditorMode.Run || this.isInputDisabled(inputName))
+      return false;
     return getLinkedRefs(this.getInputValue(inputName)).length > 0;
   }
 
@@ -680,6 +689,8 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     }
     if (changes['availableOutputs']) {
       this.updateCompatibleOutputs();
+    }
+    if (changes['availableOutputs'] || changes['mode']) {
       this.refreshUnlinkStates();
     }
   }
@@ -763,6 +774,11 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     if (this.inputsSubscription) {
       this.inputsSubscription.unsubscribe();
     }
+    this.wiredInputs = new Set(
+      Object.keys(inputs.controls).filter(key =>
+        isStepOutputReference(inputs.get(key)?.value),
+      ),
+    );
     this.inputsSubscription = inputs.valueChanges.subscribe(value => {
       if (!value) return;
       Object.keys(value).forEach(key => {
@@ -770,6 +786,20 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
         const isLinked = isStepOutputReference(val);
         if (isLinked && this.inputModes[key] !== 'linked') {
           this.inputModes[key] = 'linked';
+        }
+        const wasWired = this.wiredInputs.has(key);
+        if (isLinked) {
+          this.wiredInputs.add(key);
+        } else {
+          this.wiredInputs.delete(key);
+        }
+        if (
+          wasWired &&
+          !isLinked &&
+          !Array.isArray(val) &&
+          !this.isLinkedOnlyInput(key)
+        ) {
+          this.inputModes[key] = 'fixed';
         }
       });
       this.refreshUnlinkStates();
@@ -1761,6 +1791,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     }
     this.inputModes[varName] = 'fixed';
     this.updateCompatibleOutputs();
+    this.refreshUnlinkStates();
   }
 
   removeVariable(varName: string): void {
@@ -1779,6 +1810,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     delete this.inputModes[actualName];
     delete this.compatibleOutputs[actualName];
     this.updateCompatibleOutputs();
+    this.refreshUnlinkStates();
   }
 
   toggleInputMode(inputName: string, mode: 'fixed' | 'linked' | 'mixed') {
@@ -1856,6 +1888,11 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     });
 
     this.updateCompatibleOutputs();
+  }
+
+  private isLinkedOnlyInput(inputName: string): boolean {
+    return !!this.localConfig?.inputs.find(i => i.name === inputName)
+      ?.linkedOnly;
   }
 
   private initializeInputMode(

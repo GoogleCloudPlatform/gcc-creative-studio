@@ -43,6 +43,7 @@ import {MediaResolutionService} from '../shared/media-resolution.service';
 import {collectReferenceEdges} from '../utils/workflow-loop.util';
 import {
   DynamicStepRecord,
+  EditorMode,
   NodeTypes,
   StepInputUnlinkEvent,
   StepOutputReference,
@@ -57,7 +58,7 @@ import {
   loopLinkedItemsRequiredValidator,
 } from './step-components/step-configs/loop-step.config';
 import {SaveTemplateModalComponent} from './save-template-modal/save-template-modal.component';
-import {EditorMode, WorkflowEditorComponent} from './workflow-editor.component';
+import {WorkflowEditorComponent} from './workflow-editor.component';
 import {WorkflowFormService} from './workflow-form.service';
 import {WorkflowFolderTreeStore} from './workflow-folder-tree.store';
 import {FolderService} from '../../common/services/folder.service';
@@ -1988,6 +1989,27 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
       expect(control?.dirty).toBeFalse();
       expect(updateEdgesSpy).not.toHaveBeenCalled();
       expect(saveHistoryStateSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('step card mode', () => {
+    it('passes the run mode to the step cards', () => {
+      formService.addStep(NodeTypes.IMAGE, {
+        stepId: 'image_step_mode',
+        type: NodeTypes.IMAGE,
+        inputs: {},
+        outputs: {},
+        settings: {},
+      });
+      component.isLoading = false;
+      component.mode = EditorMode.Run;
+      fixture.detectChanges();
+
+      const stepCard = fixture.nativeElement.querySelector(
+        'app-generic-step[data-node-id="image_step_mode"]',
+      ) as (HTMLElement & {mode: EditorMode}) | null;
+      expect(stepCard).not.toBeNull();
+      expect(stepCard?.mode).toBe(EditorMode.Run);
     });
   });
 

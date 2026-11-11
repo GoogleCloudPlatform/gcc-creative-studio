@@ -86,11 +86,10 @@ export function removeLinkFromInputValue(
   const filtered = toMixedStepOutputValueArray(value).filter(
     ref => !isSameStepOutput(ref, refToRemove),
   );
-  return Array.isArray(value) && filtered.length > 0
-    ? filtered
-    : filtered.length === 1
-      ? (filtered[0] as StepOutputReference)
-      : null;
+  if (Array.isArray(value)) {
+    return filtered.length > 0 ? filtered : null;
+  }
+  return filtered.length === 1 ? (filtered[0] as StepOutputReference) : null;
 }
 
 /**

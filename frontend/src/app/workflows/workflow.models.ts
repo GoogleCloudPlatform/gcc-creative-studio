@@ -16,6 +16,13 @@
 
 import {ReferenceImage} from '../common/models/search.model';
 
+/** Mode of the workflow editor and its step cards; `Run` is read-only. */
+export enum EditorMode {
+  Create = 'create',
+  Edit = 'edit',
+  Run = 'run',
+}
+
 export enum NodeTypes {
   USER_INPUT = 'user_input',
   GENERATE_TEXT = 'generate_text',

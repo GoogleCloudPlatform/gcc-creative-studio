@@ -50,7 +50,7 @@
     </div>
     <div class="step-actions">
       <button
-        *ngIf="mode !== 'run'"
+        *ngIf="mode !== EditorMode.Run"
         mat-icon-button
         color="primary"
         (click)="$event.stopPropagation(); clone.emit()"
@@ -59,7 +59,7 @@
         <mat-icon>content_copy</mat-icon>
       </button>
       <button
-        *ngIf="mode !== 'run'"
+        *ngIf="mode !== EditorMode.Run"
         mat-icon-button
         color="warn"
         (click)="$event.stopPropagation(); delete.emit()"
@@ -182,7 +182,7 @@
             </div>
             <div
               class="add-variable-form flex items-center gap-2 w-full"
-              *ngIf="mode !== 'run'"
+              *ngIf="mode !== EditorMode.Run"
             >
               <mat-form-field
                 appearance="outline"

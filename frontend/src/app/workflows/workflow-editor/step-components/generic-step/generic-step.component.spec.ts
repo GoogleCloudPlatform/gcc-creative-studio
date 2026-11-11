@@ -51,6 +51,7 @@ import {
   IMAGE_STEP_CONFIG,
 } from '../step-configs/image-step.config';
 import {
+  EditorMode,
   LoopItemType,
   NodeTypes,
   StepInputUnlinkEvent,
@@ -1123,6 +1124,35 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       expect(inputsGroup.contains('custom_var')).toBeTrue();
     });
 
+    it('should refresh unlink states directly when adding a variable without form events', () => {
+      const inputsGroup = textStepForm.get('inputs') as FormGroup;
+      inputsGroup.addControl('silent_var', fb.control(null), {
+        emitEvent: false,
+      });
+      const refreshSpy = spyOn(
+        component as unknown as {refreshUnlinkStates: () => void},
+        'refreshUnlinkStates',
+      );
+
+      component.addVariable('silent_var');
+
+      expect(refreshSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should refresh unlink states directly when removing a variable without form events', () => {
+      component.addVariable('silent_var');
+      const inputsGroup = textStepForm.get('inputs') as FormGroup;
+      inputsGroup.removeControl('silent_var', {emitEvent: false});
+      const refreshSpy = spyOn(
+        component as unknown as {refreshUnlinkStates: () => void},
+        'refreshUnlinkStates',
+      );
+
+      component.removeVariable('silent_var');
+
+      expect(refreshSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('should prevent variable creation when variable name matches a real base port', () => {
       // Trying to add base port names as dynamic variables must be blocked (case-insensitively)
       component.addVariable('prompt');
@@ -1255,6 +1285,42 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         promptVarsElement.classList.contains('disabled-section'),
       ).toBeFalse();
       expect(component.isInputDisabled('custom_var')).toBeFalse();
+    });
+
+    describe('unlinking a wired prompt', () => {
+      const promptRef = {step: 'upstream_step', output: 'generated_text'};
+      const varRef = {step: 'upstream_step', output: 'other_text'};
+
+      it('disables variables while wired and re-enables them once the wire is removed', () => {
+        component.addVariable('custom_var');
+        const promptControl = textStepForm.get('inputs.prompt');
+        const varControl = textStepForm.get('inputs.custom_var');
+
+        promptControl?.setValue(promptRef);
+        varControl?.setValue(varRef);
+        expect(component.inputModes['prompt']).toBe('linked');
+        expect(component.isInputDisabled('custom_var')).toBeTrue();
+        expect(component.getInputDisabledMessage('custom_var')).toBe(
+          'Prompt is linked - variables inactive',
+        );
+        expect(component.canUnlink('custom_var')).toBeFalse();
+
+        // The editor clears the control when the last link is removed.
+        promptControl?.setValue(null);
+        expect(component.inputModes['prompt']).toBe('fixed');
+        expect(component.isInputDisabled('custom_var')).toBeFalse();
+        expect(component.getInputDisabledMessage('custom_var')).toBe('');
+        expect(component.canUnlink('custom_var')).toBeTrue();
+        expect(component.canUnlink('prompt')).toBeFalse();
+      });
+
+      it('keeps an explicitly chosen link mode when no wire was connected', () => {
+        component.addVariable('custom_var');
+        component.toggleInputMode('prompt', 'linked');
+        textStepForm.get('inputs.custom_var')?.setValue('value');
+        expect(component.inputModes['prompt']).toBe('linked');
+        expect(component.isInputDisabled('custom_var')).toBeTrue();
+      });
     });
 
     it('should append variable placeholder to prompt when appendToPrompt() is called', () => {
@@ -2772,6 +2838,15 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       fixture.detectChanges();
     }
 
+    function switchToRunMode(): void {
+      const previousMode = component.mode;
+      component.mode = EditorMode.Run;
+      component.ngOnChanges({
+        mode: new SimpleChange(previousMode, EditorMode.Run, false),
+      });
+      fixture.detectChanges();
+    }
+
     /** Dispatches a mouse event on the port and spies on stopPropagation. */
     function dispatchMouseEvent(port: HTMLElement, type: string): jasmine.Spy {
       const event = new MouseEvent(type, {bubbles: true, cancelable: true});
@@ -2917,6 +2992,30 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         expect(trigger.menuOpen).toBeFalse();
         expect(queryMenuItems().length).toBe(0);
       }));
+
+      it('opens no menu in run mode', fakeAsync(() => {
+        switchToRunMode();
+
+        queryPromptPort().click();
+        settle();
+
+        expect(trigger.menuOpen).toBeFalse();
+        expect(queryMenuItems().length).toBe(0);
+      }));
+    });
+
+    describe('run mode', () => {
+      it('canUnlink returns false for a linked input', () => {
+        component.mode = EditorMode.Run;
+
+        expect(component.canUnlink('prompt')).toBeFalse();
+      });
+
+      it('removes the unlink attributes when the mode switches to run', () => {
+        switchToRunMode();
+
+        expectNoUnlinkAttributes(queryPromptPort());
+      });
     });
 
     describe('stopPropagation', () => {

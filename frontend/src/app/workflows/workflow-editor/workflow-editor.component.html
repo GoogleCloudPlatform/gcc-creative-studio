@@ -386,6 +386,7 @@
                   (click)="onStepClick(i, step.value.stepId)"
                   [stepForm]="asFormGroup(step)"
                   [stepIndex]="i"
+                  [mode]="mode"
                   [config]="getStepConfig(step.value.type)"
                   [availableOutputs]="availableOutputsPerStep[i]"
                   [showValidationErrors]="submitted"

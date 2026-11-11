@@ -49,6 +49,7 @@ import {
 import {MediaResolutionService} from '../shared/media-resolution.service';
 import {
   AvailableOutput,
+  EditorMode,
   isNonTerminalRunStatus,
   NodeTypes,
   Point,
@@ -2476,10 +2477,4 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   // populateFormFromData and resetFormForNew removed, handled by service patchData and initForm
 
   // getStepIcon removed, use StepIconPipe in template
-}
-
-export enum EditorMode {
-  Create,
-  Edit,
-  Run,
 }
