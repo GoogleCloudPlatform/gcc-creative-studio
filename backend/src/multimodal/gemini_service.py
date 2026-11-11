@@ -15,6 +15,7 @@
 
 """Gemini Service for multimodal content generation."""
 
+import asyncio
 import json
 import logging
 from enum import Enum
@@ -39,14 +40,25 @@ from src.brand_guidelines.repository.brand_guideline_repository import (
 from src.brand_guidelines.schema.brand_guideline_model import (
     BrandGuidelineModel,
 )
+from src.common.base_dto import GenerationModelEnum
 from src.common.retry import is_transient_or_quota
 from src.config.config_service import config_service
+from src.audios.dto.create_audio_dto import CreateAudioDto
 from src.images.dto.create_imagen_dto import CreateImagenDto
 from src.multimodal.dto.create_prompt_imagen_dto import CreatePromptImageDto
 from src.multimodal.dto.create_prompt_video_dto import CreatePromptVideoDto
+from src.multimodal.dto.gemini_prompt_enhancer_dto import (
+    GenerateAudioMediaMetadataResponseDto,
+    GenerateMediaMetadataResponseDto,
+    MusicalProfileDto,
+    PromptTargetEnum,
+)
 from src.multimodal.rewriters import (
+    ITERATE_AUDIO_TEXT_PROMPT_TEMPLATE,
+    RANDOM_AUDIO_PROMPT_TEMPLATE,
     RANDOM_IMAGE_PROMPT_TEMPLATE,
     RANDOM_VIDEO_PROMPT_TEMPLATE,
+    REWRITE_AUDIO_TEXT_PROMPT_TEMPLATE,
     REWRITE_IMAGE_JSON_PROMPT_TEMPLATE,
     REWRITE_IMAGE_TEXT_PROMPT_TEMPLATE,
     REWRITE_VIDEO_JSON_PROMPT_TEMPLATE,
@@ -63,12 +75,6 @@ from src.multimodal.dto.multimodal_generation_request_dto import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-class PromptTargetEnum(str, Enum):
-    IMAGE = "image"
-    VIDEO = "video"
-    AUDIO = "audio"
 
 
 class ResponseMimeTypeEnum(str, Enum):
@@ -117,6 +123,7 @@ class GeminiService:
         prompt_template: str,
         response_mime_type: ResponseMimeTypeEnum = ResponseMimeTypeEnum.JSON,
         response_schema: type[BaseModel] | None = None,
+        extra_parts: list[types.Part] | None = None,
     ) -> str:
         """Rewrites a user prompt using Gemini into a structured JSON format.
 
@@ -130,32 +137,29 @@ class GeminiService:
 
         """
         full_prompt = f"{prompt_template} {original_prompt}"
-        response_schema = response_schema or self._get_response_schema(
-            target_type
+        contents: Any = (
+            [*extra_parts, full_prompt] if extra_parts else full_prompt
         )
-
+        mime_val = response_mime_type.value
+        if mime_val not in (
+            ResponseMimeTypeEnum.JSON.value,
+            ResponseMimeTypeEnum.TEXT.value,
+        ):
+            return ""
         try:
-            response = None
-            if response_mime_type.value == ResponseMimeTypeEnum.JSON.value:
-                response = self.client.models.generate_content(
-                    model=self.rewriter_model,
-                    contents=full_prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type=response_mime_type.value,
-                        response_schema=response_schema,
-                    ),
-                )
-            elif response_mime_type.value == ResponseMimeTypeEnum.TEXT.value:
-                response = self.client.models.generate_content(
-                    model=self.rewriter_model,
-                    contents=full_prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type=response_mime_type.value,
-                    ),
-                )
-            else:
-                return ""
-
+            schema = (
+                response_schema or self._get_response_schema(target_type)
+                if mime_val == ResponseMimeTypeEnum.JSON.value
+                else None
+            )
+            response = self.client.models.generate_content(
+                model=self.rewriter_model,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    response_mime_type=mime_val,
+                    response_schema=schema,
+                ),
+            )
             return response.text or ""
         except Exception as e:
             logger.error(
@@ -172,27 +176,28 @@ class GeminiService:
     ) -> str:
         """Generates a completely new, random, and creative text prompt."""
         try:
-            prompt_template = RANDOM_IMAGE_PROMPT_TEMPLATE
-
-            if not original_prompt:
-                prompt_template = (
-                    RANDOM_IMAGE_PROMPT_TEMPLATE
-                    if target_type.value == PromptTargetEnum.IMAGE
-                    else RANDOM_VIDEO_PROMPT_TEMPLATE
-                )
-            else:
-                prompt_template = (
-                    REWRITE_IMAGE_TEXT_PROMPT_TEMPLATE
-                    if target_type.value == PromptTargetEnum.IMAGE
-                    else REWRITE_VIDEO_TEXT_PROMPT_TEMPLATE
-                )
-            response = self.generate_structured_prompt(
+            templates = (
+                {
+                    PromptTargetEnum.IMAGE: REWRITE_IMAGE_TEXT_PROMPT_TEMPLATE,
+                    PromptTargetEnum.AUDIO: REWRITE_AUDIO_TEXT_PROMPT_TEMPLATE,
+                }
+                if original_prompt
+                else {
+                    PromptTargetEnum.IMAGE: RANDOM_IMAGE_PROMPT_TEMPLATE,
+                    PromptTargetEnum.AUDIO: RANDOM_AUDIO_PROMPT_TEMPLATE,
+                }
+            )
+            default_tpl = (
+                REWRITE_VIDEO_TEXT_PROMPT_TEMPLATE
+                if original_prompt
+                else RANDOM_VIDEO_PROMPT_TEMPLATE
+            )
+            return self.generate_structured_prompt(
                 original_prompt=original_prompt,
                 target_type=target_type,
-                prompt_template=prompt_template,
+                prompt_template=templates.get(target_type, default_tpl),
                 response_mime_type=ResponseMimeTypeEnum.TEXT,
             )
-            return response
         except Exception as e:
             logger.error("Failed to generate random prompt: %s", e)
             raise
@@ -231,11 +236,101 @@ class GeminiService:
                 attributes.append(f"- {formatted_key}: {formatted_value}")
         return "\n".join(filter(None, attributes))
 
+    _AUDIO_ITERATION_MODEL_HINTS = {
+        GenerationModelEnum.LYRIA_002: (
+            "Target model constraint: Lyria 2 (instrumental only — write a "
+            "cohesive ~30-second instrumental prose prompt; do NOT include "
+            "vocals, a Lyrics: block, or [m:ss - m:ss] section brackets; "
+            "translate any vocal melody from the reference audio into an "
+            "expressive lead instrument)."
+        ),
+        GenerationModelEnum.LYRIA_3_CLIP_PREVIEW: (
+            "Target model format: Lyria 3 Clip (~30-second clip — anchor "
+            "the [m:ss - m:ss] section timeline within 0:00 to 0:30)."
+        ),
+        GenerationModelEnum.LYRIA_3_PRO_PREVIEW: (
+            "Target model format: Lyria 3 Pro (full-length structured "
+            "track up to ~3:00 — explicit [m:ss - m:ss] section timestamps "
+            "control exact section timing and total song duration; "
+            "preserve the reference track's total duration unless the user "
+            "asks to extend, shorten, or add sections)."
+        ),
+    }
+
+    @staticmethod
+    def _format_audio_iteration_prompt(
+        dto: CreateImagenDto | CreateVeoDto | CreateAudioDto,
+        reference_audio_context: dict[str, Any],
+    ) -> str:
+        """Builds the structured user/context payload for iterative audio progression."""
+        sections: list[str] = []
+        hint = GeminiService._AUDIO_ITERATION_MODEL_HINTS.get(
+            getattr(dto, "model", None)
+        )
+        if hint:
+            sections.append(hint)
+
+        prior_prompt = (
+            reference_audio_context.get("prior_prompt") or ""
+        ).strip()
+        if prior_prompt:
+            sections.append(f"Reference track prior prompt: {prior_prompt}")
+
+        raw_steps = reference_audio_context.get("iteration_steps")
+        if isinstance(raw_steps, list):
+            clean_steps = [
+                s.strip() for s in raw_steps if isinstance(s, str) and s.strip()
+            ]
+            if clean_steps:
+                numbered = "\n".join(
+                    f"{i}. {step}" for i, step in enumerate(clean_steps, 1)
+                )
+                sections.append(
+                    "Cumulative iteration history (chronological user requests "
+                    f"leading to the reference track):\n{numbered}"
+                )
+
+        musical_profile = reference_audio_context.get("musical_profile")
+        structure = reference_audio_context.get("structure")
+        for label, payload in (
+            (
+                "Reference track acoustic / musical profile (BPM, key, "
+                "harmony, instrumentation)",
+                musical_profile,
+            ),
+            ("Reference track structure and metadata", structure),
+        ):
+            if payload:
+                serialized = (
+                    json.dumps(payload, ensure_ascii=False)
+                    if isinstance(payload, (dict, list))
+                    else str(payload)
+                )
+                sections.append(f"{label}: {serialized}")
+
+        lyrics = (reference_audio_context.get("lyrics") or "").strip()
+        raw_text = (reference_audio_context.get("raw_text") or "").strip()
+        if lyrics:
+            sections.append(f"Reference track lyrics:\n{lyrics}")
+        elif raw_text and not structure and not musical_profile:
+            sections.append(f"Reference track notes:\n{raw_text}")
+
+        sections.append(
+            "User's iterative progression / modification instructions:\n"
+            f"{dto.prompt}"
+        )
+        negative = (getattr(dto, "negative_prompt", None) or "").strip()
+        if negative:
+            sections.append(f"Elements to avoid: {negative}")
+        return "\n\n".join(sections)
+
     async def enhance_prompt_from_dto(
         self,
-        dto: CreateImagenDto | CreateVeoDto,
+        dto: CreateImagenDto | CreateVeoDto | CreateAudioDto,
         target_type: PromptTargetEnum,
         response_mime_type: ResponseMimeTypeEnum = ResponseMimeTypeEnum.JSON,
+        extra_parts: list[types.Part] | None = None,
+        reference_audio_context: dict[str, Any] | None = None,
     ) -> str:
         """Enhances a partially filled DTO by converting it to a string.
 
@@ -243,15 +338,40 @@ class GeminiService:
         This single method replaces the four repetitive `rewrite_for_*` methods.
 
         Args:
-            dto: The input DTO, which can be for an image or video.
-            target_type: The target output type (IMAGE or VIDEO).
+            dto: The input DTO, which can be for an image, video, or audio.
+            target_type: The target output type (IMAGE, VIDEO, or AUDIO).
 
         Returns:
-            A dictionary containing the prompt data from Gemini.
+            A dictionary or text prompt string from Gemini.
 
         """
+        if target_type == PromptTargetEnum.AUDIO:
+            if reference_audio_context is not None:
+                prompt_text = self._format_audio_iteration_prompt(
+                    dto, reference_audio_context
+                )
+                prompt_template = ITERATE_AUDIO_TEXT_PROMPT_TEMPLATE
+            else:
+                prompt_text = dto.prompt
+                negative = (getattr(dto, "negative_prompt", None) or "").strip()
+                if negative:
+                    prompt_text = (
+                        f"{prompt_text}\nElements to avoid: {negative}"
+                    )
+                prompt_template = REWRITE_AUDIO_TEXT_PROMPT_TEMPLATE
+            return await asyncio.to_thread(
+                self.generate_structured_prompt,
+                original_prompt=prompt_text,
+                target_type=PromptTargetEnum.AUDIO,
+                prompt_template=prompt_template,
+                response_mime_type=ResponseMimeTypeEnum.TEXT,
+                extra_parts=extra_parts,
+            )
+
         if target_type not in [PromptTargetEnum.IMAGE, PromptTargetEnum.VIDEO]:
-            raise ValueError("Invalid target_type. Must be IMAGE or VIDEO.")
+            raise ValueError(
+                "Invalid target_type. Must be IMAGE, VIDEO, or AUDIO."
+            )
 
         # --- Prompt Enhancement for Gemini Image-to-Image ---
         # This logic is placed here to ensure that any call to enhance a prompt
@@ -455,55 +575,84 @@ class GeminiService:
             logger.error("Failed to generate title and summary: %s", e)
             raise
 
+    _MEDIA_EXT_MIMES = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".mp4": "video/mp4",
+        ".wav": "audio/wav",
+        ".ogg": "audio/ogg",
+        ".mp3": "audio/mpeg",
+    }
+
+    @staticmethod
+    def _compact_musical_profile(raw_profile: Any) -> dict[str, Any] | None:
+        """Validates and compacts a raw musical profile dict into snake_case."""
+        if not isinstance(raw_profile, dict) or not raw_profile:
+            return None
+        try:
+            dumped = MusicalProfileDto.model_validate(raw_profile).model_dump(
+                exclude_none=True
+            )
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning("Ignoring malformed musical_profile payload: %s", e)
+            return None
+
+        cleaned: dict[str, Any] = {}
+        for key, val in dumped.items():
+            if isinstance(val, str):
+                if val.strip():
+                    cleaned[key] = val.strip()
+            elif isinstance(val, list):
+                items = [
+                    str(v).strip()
+                    for v in val
+                    if v is not None and str(v).strip()
+                ]
+                if items:
+                    cleaned[key] = items
+            elif val is not None:
+                cleaned[key] = val
+        return cleaned or None
+
     def generate_media_metadata(
         self,
         prompt: str,
         media_uris: list[str] | str | None,
         model_name: str,
         mime_type: str | None = None,
-    ) -> dict[str, list[str]]:
-        """Generates titles and descriptions for media assets in batch.
+        include_audio_profile: bool = False,
+    ) -> dict[str, Any]:
+        """Generates titles and descriptions (and optional audio profiles) in batch."""
+        uris_list = (
+            [media_uris]
+            if isinstance(media_uris, str)
+            else (media_uris if isinstance(media_uris, list) else [])
+        )
 
-        Args:
-            prompt: Instructions or context for generating metadata.
-            media_uris: List of GCS URIs (or a single URI string) of the media assets.
-            model_name: The Gemini model to use.
-            mime_type: Optional MIME type of the media assets.
-
-        Returns:
-            A dictionary with 'titles' (list of str) and 'descriptions' (list of str).
-        """
-        if isinstance(media_uris, str):
-            uris_list = [media_uris]
-        elif isinstance(media_uris, list):
-            uris_list = media_uris
-        else:
-            uris_list = []
-
-        contents = []
+        contents: list[Any] = []
         for media_uri in uris_list:
             try:
-                resolved_mime_type = mime_type
-                if not resolved_mime_type:
+                resolved_mime = mime_type
+                if not resolved_mime:
                     uri_lower = media_uri.lower()
-                    if uri_lower.endswith(".png"):
-                        resolved_mime_type = "image/png"
-                    elif uri_lower.endswith((".jpg", ".jpeg")):
-                        resolved_mime_type = "image/jpeg"
-                    elif uri_lower.endswith(".mp4"):
-                        resolved_mime_type = "video/mp4"
-                    elif uri_lower.endswith((".wav", ".mp3", ".ogg")):
-                        resolved_mime_type = "audio/mpeg"
-                    elif "video" in uri_lower:
-                        resolved_mime_type = "video/mp4"
-                    elif "audio" in uri_lower:
-                        resolved_mime_type = "audio/mpeg"
-                    else:
-                        resolved_mime_type = "image/png"
-
+                    ext = (
+                        f".{uri_lower.rsplit('.', 1)[-1]}"
+                        if "." in uri_lower
+                        else ""
+                    )
+                    resolved_mime = self._MEDIA_EXT_MIMES.get(ext) or (
+                        "video/mp4"
+                        if "video" in uri_lower
+                        else (
+                            "audio/mpeg"
+                            if "audio" in uri_lower
+                            else "image/png"
+                        )
+                    )
                 contents.append(
                     types.Part.from_uri(
-                        file_uri=media_uri, mime_type=resolved_mime_type
+                        file_uri=media_uri, mime_type=resolved_mime
                     )
                 )
             except Exception as e:
@@ -516,35 +665,44 @@ class GeminiService:
             f" {len(uris_list)} media items provided, in exact sequential"
             " order."
         )
+        if include_audio_profile:
+            batch_prompt += (
+                " Also analyze each audio item's musical characteristics to"
+                " populate musicalProfile (bpm, keySignature, timeSignature,"
+                " chordProgression, groove, instrumentation, vocalProfile)."
+            )
         contents.append(batch_prompt)
 
-        # pylint: disable=import-outside-toplevel
-        from src.multimodal.dto.gemini_prompt_enhancer_dto import (
-            GenerateMediaMetadataResponseDto,
+        schema_cls = (
+            GenerateAudioMediaMetadataResponseDto
+            if include_audio_profile
+            else GenerateMediaMetadataResponseDto
         )
-
         try:
             response = self.client.models.generate_content(
                 model=model_name,
                 contents=contents,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
-                    response_schema=GenerateMediaMetadataResponseDto,
+                    response_schema=schema_cls,
                 ),
             )
-            raw_result = json.loads(response.text or "{}")
-            items = raw_result.get("items") or []
-            titles = [
-                item.get("title", "")
-                for item in items
-                if isinstance(item, dict)
-            ]
-            descriptions = [
-                item.get("description", "")
-                for item in items
-                if isinstance(item, dict)
-            ]
-            return {"titles": titles, "descriptions": descriptions}
+            raw_items = json.loads(response.text or "{}").get("items") or []
+            dict_items = [i for i in raw_items if isinstance(i, dict)]
+            result: dict[str, Any] = {
+                "titles": [i.get("title", "") for i in dict_items],
+                "descriptions": [i.get("description", "") for i in dict_items],
+            }
+            if include_audio_profile:
+                result["musical_profiles"] = [
+                    self._compact_musical_profile(
+                        i["musicalProfile"]
+                        if "musicalProfile" in i
+                        else i.get("musical_profile")
+                    )
+                    for i in dict_items
+                ]
+            return result
         except Exception as e:
             logger.error("Failed to generate media metadata: %s", e)
             raise
