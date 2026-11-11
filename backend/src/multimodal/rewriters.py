@@ -31,7 +31,9 @@ After the main prompt, on separate lines, provide the following Technical Parame
 
 RANDOM_VIDEO_PROMPT_TEMPLATE = """Generate a single, random, creative, and visually descriptive prompt suitable for an AI Video generator. The prompt should describe a complete, short scene with a clear beginning, middle, and end. Include specific details about the subject and the sequence of actions, the environment and lighting, and the overall visual aesthetic. Crucially, describe the camera work, including movements (e.g., 'slow dolly-in', 'sweeping crane shot') and angles. Finally, suggest the sound design or key audio elements."""
 
-RANDOM_AUDIO_PROMPT_TEMPLATE = """ """
+RANDOM_AUDIO_PROMPT_TEMPLATE = """Generate a single, creative, and musically rich prompt (2 to 4 sentences) suitable for an AI music generator. Describe the musical genre and subgenre, lead and backing instruments, tempo (BPM) and rhythmic groove, harmonic mood, dynamic progression, and production or mix texture (e.g., 'warm analog tape saturation', 'crisp modern studio mix'). Include expressive vocal or lyrical direction when fitting for the genre, or specify an instrumental arrangement. Do NOT reference real artists, bands, or copyrighted song titles, and avoid visual camera directions or non-musical sound effects.
+
+IMPORTANT!!: JUST RETURN THE PROMPT DIRECTLY, YOU DON'T NEED TO CLARIFY THAT."""
 
 
 # Rewrite Text Prompt Templates
@@ -64,7 +66,33 @@ The User Prompt to rewrite:
 '{}'
 """
 
-REWRITE_AUDIO_TEXT_PROMPT_TEMPLATE = """ """
+REWRITE_AUDIO_TEXT_PROMPT_TEMPLATE = """Please rewrite and enrich the following prompt so it is ideal for an AI music generator. Expand it into a clear, cohesive 2 to 4 sentence musical brief that preserves the user's core intent while specifying the musical genre/style, lead and accompaniment instruments, tempo (BPM) and rhythmic feel, mood/atmosphere, arrangement dynamics, and studio production quality. Preserve the user's vocal and lyrical intent: if the prompt includes lyrics, singing, or songwriting themes, preserve any provided lyrics verbatim and enrich the vocal delivery and musical backing; only specify an instrumental arrangement when the user asks for instrumental/background music or describes purely instrumental cues. If reference images are attached, translate their visual mood, setting, energy, and atmosphere into musical elements. Respect any elements listed to avoid without appending a separate 'Avoid:' footer. Do NOT mention real artist names, bands, or copyrighted songs, and avoid visual scenes, camera directions, or non-musical sound effects.
+
+IMPORTANT!!: JUST RETURN THE REWRITTEN PROMPT DIRECTLY, YOU DON'T NEED TO CLARIFY THAT.
+
+The User Prompt to rewrite:
+"""
+
+ITERATE_AUDIO_TEXT_PROMPT_TEMPLATE = """Listen carefully to the attached reference audio track and review any provided prior track metadata, then write a complete, self-contained AI music generation prompt that evolves or edits the music according to the user's instructions.
+- Analyze the reference audio's musical identity (incorporating any provided acoustic/musical profile): genre and subgenre, exact tempo (BPM) and time signature, key signature/tonality, chord progression, rhythmic groove, lead and backing instrumentation, studio mix/production texture, and (if present) vocal range/timbre, language, delivery, backing harmonies, and sung lyrics.
+- Treat the user's prompt as targeted iterative progression or section-level editing instructions on top of the reference audio: preserve the reference track's core musical continuity (explicitly stating its genre, BPM, key signature, time signature, harmonic progression, groove, instrumentation, mix character, and vocal profile) EXCEPT for the specific sections, time ranges, instruments, dynamics, or vocals the user asks to change, extend, build up, strip back, or transform.
+- Timestamp-anchored section timeline (for Lyria 3 targets):
+  - Unless the target model constraint specifies Lyria 2, structure the prompt with:
+    1. A concise opening style & sonic header stating genre/subgenre, exact BPM, key signature, time signature, production texture, and (when vocals are present) canonical singer timbre/register (such as 'Female Soprano', 'Female Alto', 'Male Tenor', 'Male Baritone', or 'Weathered Rocker') plus delivery style.
+    2. Explicit chronological `[m:ss - m:ss] Section Name: ...` lines mapping the full track duration (for example, `[0:00 - 0:10] Intro: ...`, `[0:10 - 0:28] Verse 1: ...`, `[0:28 - 0:48] Chorus: ...`). Derive section boundaries from the reference audio and any provided timestamped lyrics/metadata (converting decimal lyric timestamps like `[0.0:5.3]` into `[m:ss - m:ss]` section spans, and fitting within the target model's duration window). Keep unedited time ranges faithful in instrumentation, groove, and harmony while applying modifications strictly to the sections or time windows requested by the user.
+- If a cumulative iteration history of earlier user requests is provided, honor that progression of creative choices unless a later step in the history or the user's new modification explicitly overrides an earlier step.
+- Vocal, `Lyrics:`, and backing-vocal continuity:
+  - If a target model constraint specifies instrumental-only (Lyria 2), produce a cohesive instrumental prose prompt with NO vocals, NO `Lyrics:` block, and NO `[m:ss - m:ss]` brackets, translating any vocal melody into an expressive lead instrument.
+  - Otherwise, if the reference audio or prior metadata contains vocals/lyrics (or the user asks to add vocals) and the user has NOT asked for an instrumental version: append a dedicated `Lyrics:` block after the section timeline organized by section labels (`Verse 1:`, `Chorus:`, etc.), preserving unchanged lyrics verbatim, revising or continuing only the requested lines/sections, and using parenthetical cues like `(moving on)` or `(soft oohs)` for backing vocals, echoes, or ad-libs.
+  - If the reference audio is instrumental and the user does not ask for vocals, keep the arrangement strictly instrumental with no `Lyrics:` block.
+- If reference images are also attached, weave their visual mood, energy, and atmosphere into the musical progression.
+- Respect any elements listed to avoid without appending a separate 'Avoid:' footer.
+- Do NOT mention real artist names, bands, or copyrighted songs, and avoid visual scenes, camera directions, or non-musical sound effects.
+
+IMPORTANT!!: JUST RETURN THE MUSIC PROMPT DIRECTLY, YOU DON'T NEED TO CLARIFY THAT.
+
+Iteration Context and User Instructions:
+"""
 
 
 # Rewrite JSON Prompt Templates

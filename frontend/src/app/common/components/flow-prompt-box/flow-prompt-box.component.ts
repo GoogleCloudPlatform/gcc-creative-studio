@@ -79,6 +79,40 @@ export class FlowPromptBoxComponent implements OnInit, OnChanges, OnDestroy {
     icon?: string;
   }[] = [];
   @Input() modes: {value: string; icon: string; label: string}[] = [];
+  @Input() showRewrite = true;
+  @Input() canEditReferenceImages = true;
+
+  private placeholderSignal = signal<string>('');
+  @Input() set placeholder(val: string) {
+    this.placeholderSignal.set(val || '');
+  }
+  get placeholder(): string {
+    return this.placeholderSignal();
+  }
+
+  private showAspectRatioSignal = signal<boolean>(true);
+  @Input() set showAspectRatio(val: boolean) {
+    this.showAspectRatioSignal.set(val);
+  }
+  get showAspectRatio(): boolean {
+    return this.showAspectRatioSignal();
+  }
+
+  private allowReferenceImagesSignal = signal<boolean>(false);
+  @Input() set allowReferenceImages(val: boolean) {
+    this.allowReferenceImagesSignal.set(val);
+  }
+  get allowReferenceImages(): boolean {
+    return this.allowReferenceImagesSignal();
+  }
+
+  private allowReferenceAudioSignal = signal<boolean>(false);
+  @Input() set allowReferenceAudio(val: boolean) {
+    this.allowReferenceAudioSignal.set(val);
+  }
+  get allowReferenceAudio(): boolean {
+    return this.allowReferenceAudioSignal();
+  }
 
   // --- setter inputs ---
   private _generationModels: GenerationModelConfig[] = [];
@@ -158,6 +192,9 @@ export class FlowPromptBoxComponent implements OnInit, OnChanges, OnDestroy {
     index: number;
     event: Event;
   }>();
+  @Output() openAudioSelectorForReference = new EventEmitter<void>();
+  @Output() onReferenceAudioDrop = new EventEmitter<DragEvent>();
+  @Output() clearReferenceAudio = new EventEmitter<Event>();
   @Output() openVideoUrlInputForReference = new EventEmitter<void>();
   @Output() clearExternalUrl = new EventEmitter<void>();
 
@@ -167,6 +204,12 @@ export class FlowPromptBoxComponent implements OnInit, OnChanges, OnDestroy {
   @Input() referenceImagesType: 'ASSET' | 'STYLE' = 'ASSET';
   @Input() referenceVideo: any | null = null;
   @Input() referenceVideos: ReferenceVideo[] = [];
+  @Input() referenceAudio: {
+    id: number;
+    type: 'source_asset' | 'media_item';
+    name: string;
+    index?: number;
+  } | null = null;
   private _externalUrl: string | null = null;
   private externalUrlSignal = signal<string | null>(null);
   @Input() set externalUrl(val: string | null) {
@@ -190,6 +233,11 @@ export class FlowPromptBoxComponent implements OnInit, OnChanges, OnDestroy {
 
   @HostListener('document:click', ['$event'])
   clickout(event: any) {
+    const targetEl = event?.target as HTMLElement | null;
+    if (targetEl?.closest?.('.cdk-overlay-container')) {
+      return;
+    }
+
     // Close Mode Menu if clicked outside trigger and menu
     if (
       this.isModeMenuOpen() &&
@@ -247,8 +295,40 @@ export class FlowPromptBoxComponent implements OnInit, OnChanges, OnDestroy {
   isTextToVideo = computed(() => this.selectedMode() === 'Text to Video');
   isVideoToImage = computed(() => this.selectedMode() === 'Video to Image');
   isImageMode = computed(() => this.selectedMode().includes('Image'));
+  isAudioMode = computed(() => /audio|music|speech/i.test(this.selectedMode()));
+  effectivePlaceholder = computed(() => {
+    if (this.placeholderSignal()) return this.placeholderSignal();
+    if (this.isConcatenateVideo()) return 'Prompt not needed for concatenation';
+    if (this.isImageMode()) return 'Generate an image with text...';
+    if (this.isAudioMode()) return 'Describe the audio to generate...';
+    return 'Generate a video with text...';
+  });
   canEditImgSlot = computed(
     () => !this.isExtendVideo() && !this.isConcatenateVideo(),
+  );
+  hasAspectRatioOptions = computed(() => {
+    if (!this.showAspectRatioSignal()) return false;
+    const model = this.getSelectedModelObject();
+    return model
+      ? (model.capabilities?.supportedAspectRatios ?? []).length > 0
+      : true;
+  });
+  canShowReferenceImages = computed(() => {
+    const maxRefs =
+      this.getSelectedModelObject()?.capabilities?.maxReferenceImages ?? 0;
+    return (
+      maxRefs > 0 &&
+      (this.isIngredientsToVideo() ||
+        this.isIngredientsToImage() ||
+        this.allowReferenceImagesSignal())
+    );
+  });
+  canShowReferenceAudio = computed(
+    () =>
+      this.allowReferenceAudioSignal() &&
+      Boolean(
+        this.getSelectedModelObject()?.capabilities?.supportsAudioReference,
+      ),
   );
   hasResolutionOptions = computed(() => this.supportedResolutions().length > 0);
   hasDurationOptions = computed(
@@ -310,6 +390,19 @@ export class FlowPromptBoxComponent implements OnInit, OnChanges, OnDestroy {
   onPromptInput(event: Event) {
     const target = event.target as HTMLTextAreaElement;
     this.promptChanged.emit(target.value);
+  }
+
+  /**
+   * Handles Ctrl+Enter inside the prompt and stops it here: Home and Video
+   * also listen for Ctrl+Enter on `window`, so a bubbling event would start a
+   * second generation.
+   */
+  onPromptCtrlEnter(event: Event): void {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!this.isLoading && !this.isConcatenateVideo()) {
+      this.generateClicked.emit();
+    }
   }
 
   onEditOverlayClick(num?: NumPos, index?: number, ref?: ReferenceImage): void {

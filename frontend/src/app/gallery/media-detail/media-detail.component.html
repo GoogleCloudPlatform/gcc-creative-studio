@@ -39,6 +39,7 @@
         (sendToVtoClicked)="sendToVto($event)"
         (extendWithAiClicked)="handleExtendWithAi($event)"
         (concatenateClicked)="handleConcatenate($event)"
+        (iterateAudioClicked)="handleIterateAudio($event)"
         (editWithOmniClicked)="handleEditWithOmni($event)"
         (deleteClicked)="deleteCurrentMedia()"
         (tagsChanged)="onTagsChanged($event)"
@@ -117,47 +118,49 @@
                   </p>
                 </div>
 
-                <div *ngIf="mediaItem.voiceName" class="contents">
+                <div *ngIf="!isMusicItem() && mediaItem.voiceName" class="contents">
                   <strong class="font-semibold text-gray-400">Voice:</strong>
                   <p class="text-right">{{ mediaItem.voiceName }}</p>
                 </div>
-<div *ngIf="mediaItem.languageCode" class="contents">
-  <strong class="font-semibold text-gray-400">Language:</strong>
-  <p class="text-right">{{ mediaItem.languageCode }}</p>
+                <div *ngIf="!isMusicItem() && mediaItem.languageCode" class="contents">
+                  <strong class="font-semibold text-gray-400">Language:</strong>
+                  <p class="text-right">{{ mediaItem.languageCode }}</p>
                 </div>
 
-                <div *ngIf="mediaItem.seed" class="contents">
+                <div *ngIf="displaySeed() !== null" class="contents">
                   <strong class="font-semibold text-gray-400">Seed:</strong>
-                  <p class="text-right">{{ mediaItem.seed }}</p>
+                  <p class="text-right" data-testid="media-detail-seed">{{ displaySeed() }}</p>
                 </div>
-<div *ngIf="mediaItem.numMedia" class="contents">
-  <strong class="font-semibold text-gray-400">Number of Media:</strong>
-  <p class="text-right">{{ mediaItem.numMedia }}</p>
-</div>
-<div *ngIf="mediaItem.duration" class="contents">
-  <strong class="font-semibold text-gray-400">Duration:</strong>
-  <p class="text-right">{{ mediaItem.duration }}s</p>
-</div>
+                <div *ngIf="mediaItem.numMedia" class="contents">
+                  <strong class="font-semibold text-gray-400">Number of Media:</strong>
+                  <p class="text-right">{{ mediaItem.numMedia }}</p>
+                </div>
+                <div *ngIf="mediaItem.duration" class="contents">
+                  <strong class="font-semibold text-gray-400">Duration:</strong>
+                  <p class="text-right">{{ mediaItem.duration }}s</p>
+                </div>
 
-                <div *ngIf="mediaItem.aspectRatio" class="contents">
+                <div *ngIf="!isAudioItem() && mediaItem.aspectRatio" class="contents">
                   <strong class="font-semibold text-gray-400">Aspect Ratio:</strong>
                   <p class="text-right">
                     {{ mediaItem.aspectRatio }}
                   </p>
                 </div>
-                <div *ngIf="mediaItem.resolution" class="contents">
+                <div *ngIf="!isAudioItem() && mediaItem.resolution" class="contents">
                   <strong class="font-semibold text-gray-400">Resolution:</strong>
                   <p class="text-right">{{ mediaItem.resolution }}</p>
                 </div>
-                <div *ngIf="mediaItem.googleSearch !== undefined" class="contents">
+                <div
+                  *ngIf="!isAudioItem() && mediaItem.googleSearch !== null && mediaItem.googleSearch !== undefined"
+                  class="contents"
+                >
                   <strong class="font-semibold text-gray-400">Google Search:</strong>
                   <p class="text-right">
                     {{ mediaItem.googleSearch ? 'Enabled' : 'Disabled' }}
                   </p>
                 </div>
-                
               </div>
-              </section>
+            </section>
 
             <!-- Tags Section -->
             <section class="space-y-3" *ngIf="(mediaItem.tags?.length ?? 0) > 0">
@@ -204,64 +207,182 @@
             </section>
             
             <!-- Prompt Section -->
-            <section class="space-y-3" *ngIf="mediaItem.prompt">
-              <h3 class="text-lg font-semibold border-b border-gray-700">
-                Prompt
-              </h3>
-              <div>
+            <section
+              class="space-y-3"
+              *ngIf="displayOriginalPrompt() || (!promptJson && mediaItem.negativePrompt)"
+            >
+              <h3 class="text-lg font-semibold border-b border-gray-700">Prompt</h3>
+              <div *ngIf="displayOriginalPrompt()" data-testid="original-prompt-box">
                 <strong class="font-semibold text-gray-400 block mb-1">Original Prompt:</strong>
-                <p class="p-3 rounded-md bg-gray-800 text-gray-300 text-sm" [class.line-clamp-3]="!isPromptExpanded">
-                  {{
-                  mediaItem.prompt
-                  .split(' ')
-                  .slice(0, isPromptExpanded ? undefined : 20)
-                  .join(' ')
-                  }}<span *ngIf="
-                                                                                  !isPromptExpanded &&
-                                                                                  mediaItem.prompt.split(' ').length > 20
-                                                                                ">...</span>
-                </p>
-                <button *ngIf="mediaItem.prompt.split(' ').length > 20" (click)="togglePromptExpansion()"
-                  class="text-blue-400 hover:text-blue-300 text-sm mt-1">
-                  {{ isPromptExpanded ? 'Show less' : 'Show more' }}
-                </button>
+                <p
+                  class="p-3 rounded-md bg-gray-800 text-gray-300 text-sm whitespace-pre-line break-words"
+                  [class.line-clamp-4]="!isPromptExpanded"
+                >{{ displayOriginalPrompt() }}</p>
+                <button
+                  *ngIf="isExpandablePrompt(displayOriginalPrompt())"
+                  type="button"
+                  (click)="togglePromptExpansion()"
+                  class="text-blue-400 hover:text-blue-300 text-sm mt-1"
+                >{{ isPromptExpanded ? 'Show less' : 'Show more' }}</button>
               </div>
-              </section>
-              
-              <!-- Source Assets -->
-              <section class="space-y-3" *ngIf="
-                              mediaItem.enrichedSourceAssets?.length ||
-                              mediaItem.enrichedSourceMediaItems?.length
-                            ">
-                <h3 class="text-lg font-semibold border-b border-gray-700">
-                  Referenced Assets
-                </h3>
-                <div class="flex flex-wrap gap-2">
-                  <!-- From uploaded assets -->
-                  <a *ngFor="let asset of mediaItem.enrichedSourceAssets" [routerLink]="['/asset-detail', asset.assetId]" target="_blank" rel="noopener noreferrer"
-                    class="w-20 h-20 rounded-md overflow-hidden hover:opacity-80 transition-opacity cursor-pointer border border-gray-700 bg-neutral-800 flex items-center justify-center">
-                    <ng-container *ngIf="asset.mimeType?.startsWith('audio/')">
-                      <mat-icon class="text-white !text-3xl !h-8 !w-8 flex items-center justify-center">graphic_eq</mat-icon>
-                    </ng-container>
-                    <ng-container *ngIf="!asset.mimeType?.startsWith('audio/')">
-                      <img [src]="asset?.presignedThumbnailUrl || asset.presignedUrl" alt="Source Asset"
-                        class="w-full h-full object-cover" />
-                    </ng-container>
-                  </a>
-                  <!-- From previously generated media -->
-                  <a *ngFor="let source of mediaItem.enrichedSourceMediaItems" [routerLink]="['/gallery', source.mediaItemId]"
-                    [queryParams]="{img_index: source.mediaIndex}" target="_blank" rel="noopener noreferrer"
-                    class="w-20 h-20 rounded-md overflow-hidden hover:opacity-80 transition-opacity cursor-pointer border border-gray-700 bg-neutral-800 flex items-center justify-center">
-                    <ng-container *ngIf="source.mimeType?.startsWith('audio/')">
-                      <mat-icon class="text-white !text-3xl !h-8 !w-8 flex items-center justify-center">graphic_eq</mat-icon>
-                    </ng-container>
-                    <ng-container *ngIf="!source.mimeType?.startsWith('audio/')">
-                      <img [src]="source?.presignedThumbnailUrl || source.presignedUrl" alt="Source Media Item"
-                        class="w-full h-full object-cover" />
-                    </ng-container>
-                  </a>
+
+              <div *ngIf="synthesizedPrompt" data-testid="synthesized-prompt-box">
+                <div class="flex items-center justify-between mb-1">
+                  <strong class="font-semibold text-gray-400">Synthesized Prompt:</strong>
+                  <button
+                    mat-icon-button
+                    type="button"
+                    (click)="copyPromptText(synthesizedPrompt)"
+                    matTooltip="Copy synthesized prompt"
+                    aria-label="Copy synthesized prompt"
+                    class="!w-7 !h-7 text-gray-400 hover:text-white"
+                  >
+                    <mat-icon class="!text-base !w-4 !h-4">content_copy</mat-icon>
+                  </button>
+                </div>
+                <p
+                  class="p-3 rounded-md bg-gray-800/80 border border-gray-700/70 text-gray-300 text-xs whitespace-pre-line break-words leading-relaxed"
+                  [class.line-clamp-4]="!isSynthesizedPromptExpanded"
+                >{{ synthesizedPrompt }}</p>
+                <button
+                  *ngIf="isExpandablePrompt(synthesizedPrompt)"
+                  type="button"
+                  (click)="toggleSynthesizedPromptExpansion()"
+                  class="text-blue-400 hover:text-blue-300 text-sm mt-1"
+                >{{ isSynthesizedPromptExpanded ? 'Show less' : 'Show more' }}</button>
               </div>
-              </section>
+
+              <div *ngIf="!promptJson && mediaItem.negativePrompt" data-testid="negative-prompt-box">
+                <strong class="font-semibold text-gray-400 block mb-1">Negative Prompt:</strong>
+                <p class="p-3 rounded-md bg-gray-800 text-gray-300 text-sm whitespace-pre-line break-words">{{ mediaItem.negativePrompt }}</p>
+              </div>
+            </section>
+
+            <!-- Audio Iteration History Section -->
+            <section
+              class="space-y-3"
+              *ngIf="audioIterationSteps().length > 0"
+              data-testid="audio-iteration-history-section"
+            >
+              <h3 class="text-lg font-semibold border-b border-gray-700 pb-1">Iteration History</h3>
+              <ol class="space-y-2">
+                <li
+                  *ngFor="let step of audioIterationSteps(); let idx = index; let last = last; trackBy: trackByIndex"
+                  class="flex items-start gap-2.5 p-2.5 rounded-md border text-xs leading-relaxed"
+                  [ngClass]="
+                    last
+                      ? 'bg-blue-950/30 border-blue-500/40 text-gray-100'
+                      : 'bg-gray-800/60 border-gray-700/70 text-gray-300'
+                  "
+                >
+                  <span
+                    class="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold flex-shrink-0 mt-0.5"
+                    [ngClass]="
+                      last
+                        ? 'bg-blue-500/30 text-blue-200 border border-blue-400/50'
+                        : 'bg-gray-700 text-gray-300'
+                    "
+                  >{{ idx + 1 }}</span>
+                  <span class="whitespace-pre-line break-words flex-1">{{ step }}</span>
+                </li>
+              </ol>
+            </section>
+
+            <!-- Per-Take Acoustic Musical Profile Section -->
+            <section
+              class="space-y-3"
+              *ngIf="currentTrackMusicalProfile() as profile"
+              data-testid="track-musical-profile-section"
+            >
+              <h3 class="text-lg font-semibold border-b border-gray-700 pb-1">Musical Profile</h3>
+
+              <div *ngIf="currentTrackMusicalProfileEntries().length" class="flex flex-wrap gap-2">
+                <div
+                  *ngFor="let entry of currentTrackMusicalProfileEntries(); trackBy: trackByIndex"
+                  data-testid="musical-profile-chip"
+                  class="inline-flex items-baseline gap-1.5 px-2.5 py-1 rounded-full bg-gray-800 border border-gray-700 text-xs"
+                >
+                  <span class="font-semibold text-blue-300">{{ entry.label }}:</span>
+                  <span class="text-gray-200">{{ entry.value }}</span>
+                </div>
+              </div>
+
+              <div *ngIf="profile.instrumentation.length" class="space-y-1.5">
+                <strong class="font-semibold text-gray-400 block text-xs">Instrumentation:</strong>
+                <div class="flex flex-wrap gap-1.5">
+                  <span
+                    *ngFor="let instrument of profile.instrumentation; trackBy: trackByIndex"
+                    class="px-2 py-0.5 rounded bg-gray-800/80 border border-gray-700 text-gray-200 text-xs"
+                  >{{ instrument }}</span>
+                </div>
+              </div>
+
+              <div
+                *ngIf="profile.chordProgression"
+                class="p-2.5 rounded-md bg-gray-800/60 border border-gray-700/70 text-gray-300 text-xs leading-relaxed"
+              >
+                <strong class="font-semibold text-blue-300 mr-1">Chords:</strong>{{ profile.chordProgression }}
+              </div>
+
+              <div
+                *ngIf="profile.groove"
+                class="p-2.5 rounded-md bg-gray-800/60 border border-gray-700/70 text-gray-300 text-xs leading-relaxed"
+              >
+                <strong class="font-semibold text-blue-300 mr-1">Groove:</strong>{{ profile.groove }}
+              </div>
+            </section>
+
+            <!-- Source Assets -->
+            <section
+              class="space-y-3"
+              *ngIf="mediaItem.enrichedSourceAssets?.length || mediaItem.enrichedSourceMediaItems?.length"
+              data-testid="referenced-assets-section"
+            >
+              <h3 class="text-lg font-semibold border-b border-gray-700">Referenced Assets</h3>
+              <ng-template #refTileContent let-ref let-showTrack="showTrack">
+                <ng-container *ngIf="isAudioReference(ref); else nonAudioRef">
+                  <mat-icon class="text-blue-300 !text-2xl !h-6 !w-6 flex items-center justify-center">graphic_eq</mat-icon>
+                  <span class="mt-1 text-[10px] font-medium text-blue-200 leading-tight">Audio Ref</span>
+                  <span
+                    *ngIf="showTrack && ref.mediaIndex !== undefined && ref.mediaIndex !== null"
+                    class="text-[9px] text-gray-400 leading-tight"
+                  >Track {{ ref.mediaIndex + 1 }}</span>
+                </ng-container>
+                <ng-template #nonAudioRef>
+                  <img
+                    [src]="ref?.presignedThumbnailUrl || ref.presignedUrl"
+                    alt="Source Asset"
+                    class="w-full h-full object-cover"
+                  />
+                  <span
+                    class="absolute inset-x-0 bottom-0 bg-black/75 text-[10px] text-gray-200 text-center py-0.5 truncate px-1"
+                  >{{ getSourceRoleBadge(ref) }}</span>
+                </ng-template>
+              </ng-template>
+              <div class="flex flex-wrap gap-2">
+                <a
+                  *ngFor="let asset of mediaItem.enrichedSourceAssets; trackBy: trackByIndex"
+                  [routerLink]="['/asset-detail', getSourceAssetRouteId(asset)]"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  [matTooltip]="getSourceTooltip(asset)"
+                  class="relative w-20 h-20 rounded-md overflow-hidden hover:opacity-85 transition-opacity cursor-pointer border border-gray-700 bg-neutral-800 flex flex-col items-center justify-center"
+                >
+                  <ng-container *ngTemplateOutlet="refTileContent; context: {$implicit: asset, showTrack: false}"></ng-container>
+                </a>
+                <a
+                  *ngFor="let source of mediaItem.enrichedSourceMediaItems; trackBy: trackByIndex"
+                  [routerLink]="['/gallery', source.mediaItemId]"
+                  [queryParams]="{img_index: source.mediaIndex}"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  [matTooltip]="getSourceTooltip(source)"
+                  class="relative w-20 h-20 rounded-md overflow-hidden hover:opacity-85 transition-opacity cursor-pointer border border-gray-700 bg-neutral-800 flex flex-col items-center justify-center"
+                >
+                  <ng-container *ngTemplateOutlet="refTileContent; context: {$implicit: source, showTrack: true}"></ng-container>
+                </a>
+              </div>
+            </section>
 
             <!-- Style Section -->
             <section
@@ -568,11 +689,13 @@
               <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
                 <strong class="font-semibold text-gray-400">Mime Type:</strong>
                 <p class="text-right">{{ mediaItem.mimeType || 'N/A' }}</p>
-        
-                <strong class="font-semibold text-gray-400">Watermark:</strong>
-                <p class="text-right">
-                  {{ mediaItem.addWatermark ?? 'N/A' }}
-                </p>
+
+                <div *ngIf="!isAudioItem()" class="contents">
+                  <strong class="font-semibold text-gray-400">Watermark:</strong>
+                  <p class="text-right">
+                    {{ mediaItem.addWatermark ?? 'N/A' }}
+                  </p>
+                </div>
               </div>
             </section>
 
@@ -598,7 +721,7 @@
               </section>
 
               <!-- Other -->
-              <section class="space-y-3">
+              <section class="space-y-3" *ngIf="mediaItem.comment || mediaItem.critique">
                 <h3 class="text-lg font-semibold border-b border-gray-700 pb-2">
                   Other
                 </h3>

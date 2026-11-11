@@ -26,7 +26,7 @@ import {MatSnackBar} from '@angular/material/snack-bar';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {MatIconTestingModule} from '@angular/material/icon/testing';
 import {By} from '@angular/platform-browser';
-import {MODEL_CONFIGS} from '../../config/model-config';
+import {isGeminiOmniModel, MODEL_CONFIGS} from '../../config/model-config';
 
 describe('FlowPromptBoxComponent', () => {
   let component: FlowPromptBoxComponent;
@@ -170,6 +170,57 @@ describe('FlowPromptBoxComponent', () => {
       expect(component.modelSelected.emit).toHaveBeenCalledWith(
         nanoBanana2Lite,
       );
+    });
+
+    it('should disable models without supportsVideoReference in Video to Image mode', () => {
+      const noVideoRefModel = {
+        value: 'legacy-image-model',
+        viewValue: 'Legacy Image Model',
+        type: 'IMAGE' as const,
+        capabilities: {
+          supportedModes: ['Text to Image' as const],
+          maxReferenceImages: 0,
+          supportedAspectRatios: ['1:1'],
+          supportedResolutions: ['1K' as const],
+          supportedDurations: [],
+          supportsVideoReference: false,
+        },
+      };
+      component.generationModels = [...MODEL_CONFIGS, noVideoRefModel];
+      component.isSettingsMenuOpen.set(true);
+      component.isSettingsDropdownOpen.set('model');
+      fixture.detectChanges();
+
+      const modelButtons = fixture.debugElement.queryAll(
+        By.css('div.max-h-80 button'),
+      );
+      const legacyBtn = modelButtons.find(btn =>
+        btn.nativeElement.textContent.includes('Legacy Image Model'),
+      );
+
+      expect(legacyBtn?.nativeElement.disabled).toBeTrue();
+    });
+
+    it('should not allow selecting a model without supportsVideoReference in Video to Image mode', () => {
+      const noVideoRefModel = {
+        value: 'legacy-image-model',
+        viewValue: 'Legacy Image Model',
+        type: 'IMAGE' as const,
+        capabilities: {
+          supportedModes: ['Text to Image' as const],
+          maxReferenceImages: 0,
+          supportedAspectRatios: ['1:1'],
+          supportedResolutions: ['1K' as const],
+          supportedDurations: [],
+          supportsVideoReference: false,
+        },
+      };
+      component.generationModels = [...MODEL_CONFIGS, noVideoRefModel];
+      spyOn(component.modelSelected, 'emit');
+
+      component.selectInternalModel(noVideoRefModel);
+
+      expect(component.modelSelected.emit).not.toHaveBeenCalled();
     });
   });
 
@@ -597,6 +648,177 @@ describe('FlowPromptBoxComponent', () => {
       expect(component.modelSelected.emit).toHaveBeenCalledWith(
         unsupportedModel,
       );
+    });
+  });
+
+  describe('Audio and Capability Guards', () => {
+    const lyria3Clip = MODEL_CONFIGS.find(
+      m => m.value === 'lyria-3-clip-preview',
+    )!;
+    const lyria2 = MODEL_CONFIGS.find(m => m.value === 'lyria-002')!;
+
+    beforeEach(() => {
+      component.generationModels = MODEL_CONFIGS;
+    });
+
+    it('should hide aspect ratio options when an audio model with empty supportedAspectRatios is selected', () => {
+      component.selectedGenerationModel = lyria3Clip.viewValue;
+      fixture.detectChanges();
+
+      expect(component.hasAspectRatioOptions()).toBeFalse();
+    });
+
+    it('should hide aspect ratio options when showAspectRatio is false', () => {
+      component.showAspectRatio = false;
+      fixture.detectChanges();
+
+      expect(component.hasAspectRatioOptions()).toBeFalse();
+    });
+
+    it('should hide Rewrite button when showRewrite is false', () => {
+      component.showRewrite = false;
+      fixture.detectChanges();
+
+      const buttons = fixture.debugElement.queryAll(By.css('button'));
+      const rewriteBtn = buttons.find(b =>
+        b.nativeElement.textContent.includes('Rewrite'),
+      );
+      expect(rewriteBtn).toBeUndefined();
+    });
+
+    it('should use custom placeholder when provided and audio fallback when in Music mode', () => {
+      component.mode = 'Music';
+      component.placeholder = '';
+      expect(component.effectivePlaceholder()).toBe(
+        'Describe the audio to generate...',
+      );
+
+      component.placeholder = 'Describe the music...';
+      expect(component.effectivePlaceholder()).toBe('Describe the music...');
+    });
+
+    it('should show reference images for Lyria 3 when allowReferenceImages is true and hide for Lyria 2', () => {
+      component.mode = 'Music';
+      component.allowReferenceImages = true;
+      component.canEditReferenceImages = false;
+      component.selectedGenerationModel = lyria3Clip.viewValue;
+      component.referenceImages = [
+        {previewUrl: 'https://example.com/ref.png', sourceAssetId: 1},
+      ];
+      fixture.detectChanges();
+
+      expect(component.canShowReferenceImages()).toBeTrue();
+      const editOverlays = fixture.debugElement.queryAll(
+        By.css('[matTooltip="Edit Image"]'),
+      );
+      expect(editOverlays.length).toBe(0);
+
+      component.selectedGenerationModel = lyria2.viewValue;
+      fixture.detectChanges();
+      expect(component.canShowReferenceImages()).toBeFalse();
+    });
+
+    it('should not classify Lyria models as Gemini Omni despite supportsAudioReference', () => {
+      expect(isGeminiOmniModel('lyria-002')).toBeFalse();
+      expect(isGeminiOmniModel('lyria-3-clip-preview')).toBeFalse();
+      expect(isGeminiOmniModel('lyria-3-pro-preview')).toBeFalse();
+      expect(isGeminiOmniModel('Lyria 3 Clip Preview')).toBeFalse();
+      expect(isGeminiOmniModel('gemini-omni-1.2-flash')).toBeTrue();
+    });
+
+    it('should NOT show Audio Ref slot in Ingredients to Video mode even for Gemini Omni', () => {
+      const omni12 = MODEL_CONFIGS.find(
+        m => m.value === 'gemini-omni-1.2-flash',
+      )!;
+      component.mode = 'Ingredients to Video';
+      component.selectedGenerationModel = omni12.viewValue;
+      component.allowReferenceAudio = false;
+      fixture.detectChanges();
+
+      expect(component.canShowReferenceAudio()).toBeFalse();
+    });
+
+    it('should render Audio Ref slot for both Lyria 3 and Lyria 2 when allowReferenceAudio is true and emit drop/select/clear events', () => {
+      const chirp = MODEL_CONFIGS.find(m => m.value === 'chirp_3')!;
+      spyOn(component.openAudioSelectorForReference, 'emit');
+      spyOn(component.onReferenceAudioDrop, 'emit');
+      spyOn(component.clearReferenceAudio, 'emit');
+
+      component.mode = 'Music';
+      component.allowReferenceAudio = true;
+      component.selectedGenerationModel = lyria2.viewValue;
+      fixture.detectChanges();
+
+      // Shown even for Lyria 2 where canShowReferenceImages() is false
+      expect(component.canShowReferenceImages()).toBeFalse();
+      expect(component.canShowReferenceAudio()).toBeTrue();
+      const audioLabel = fixture.debugElement
+        .queryAll(By.css('span.text-\\[8px\\]'))
+        .find(el => el.nativeElement.textContent.trim() === 'Audio Ref');
+      expect(audioLabel).toBeTruthy();
+
+      const audioSlot = audioLabel!.parent!;
+      audioSlot.triggerEventHandler('click', {});
+      expect(component.openAudioSelectorForReference.emit).toHaveBeenCalled();
+
+      const dropEvt = {
+        preventDefault: jasmine.createSpy('preventDefault'),
+      } as unknown as DragEvent;
+      audioSlot.triggerEventHandler('drop', dropEvt);
+      expect(dropEvt.preventDefault).toHaveBeenCalled();
+      expect(component.onReferenceAudioDrop.emit).toHaveBeenCalledWith(dropEvt);
+
+      // Hidden for TTS models without supportsAudioReference
+      component.selectedGenerationModel = chirp.viewValue;
+      fixture.detectChanges();
+      expect(component.canShowReferenceAudio()).toBeFalse();
+    });
+  });
+
+  describe('Ctrl+Enter in the prompt', () => {
+    let windowKeydown: jasmine.Spy;
+
+    beforeEach(() => {
+      windowKeydown = jasmine.createSpy('windowKeydown');
+      window.addEventListener('keydown', windowKeydown);
+    });
+
+    afterEach(() => {
+      window.removeEventListener('keydown', windowKeydown);
+    });
+
+    function pressCtrlEnter(): KeyboardEvent {
+      const textarea = fixture.debugElement.query(By.css('textarea'))
+        .nativeElement as HTMLTextAreaElement;
+      const event = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      textarea.dispatchEvent(event);
+      return event;
+    }
+
+    it('emits generateClicked once and keeps the event away from window listeners', () => {
+      const emitSpy = spyOn(component.generateClicked, 'emit');
+
+      const event = pressCtrlEnter();
+
+      expect(emitSpy).toHaveBeenCalledTimes(1);
+      expect(event.defaultPrevented).toBeTrue();
+      expect(windowKeydown).not.toHaveBeenCalled();
+    });
+
+    it('does not emit while loading and still stops propagation', () => {
+      component.isLoading = true;
+      fixture.detectChanges();
+      const emitSpy = spyOn(component.generateClicked, 'emit');
+
+      pressCtrlEnter();
+
+      expect(emitSpy).not.toHaveBeenCalled();
+      expect(windowKeydown).not.toHaveBeenCalled();
     });
   });
 });

@@ -14,181 +14,362 @@
  limitations under the License.
 -->
 
-<div class="video-background">
-    <video autoplay muted loop playsinline>
-        <source src="assets/videos/abstract-waves.mp4" type="video/mp4">
-        Your browser does not support HTML5 video.
-    </video>
-    <div class="video-overlay"></div>
-</div>
-
-<ng-container *ngIf="activeAudioJob$ | async as job">
+<div class="lg:container lg:mx-auto mb-8">
   <div
-    *ngIf="job.status === JobStatus.PROCESSING"
-    class="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black bg-opacity-70 rounded-xl"
+    class="home-margin grid grid-cols-1"
+    *ngIf="{job: activeAudioJob$ | async} as vm"
   >
-    <mat-progress-spinner
-      color="primary"
-      mode="indeterminate"
-      [diameter]="50"
-    ></mat-progress-spinner>
-    <p class="!mt-6 text-white text-lg">
-      Your audio is being generated...
-    </p>
-    <p class="text-gray-400 text-sm">
-      This may take a few moments. You can safely navigate away.
-    </p>
-  </div>
+    <div *ngIf="isLoading; else audioOrGallery" class="video-container">
+      <div class="w-full h-full flex justify-center items-center">
+        <mat-progress-spinner
+          color="primary"
+          mode="indeterminate"
+        ></mat-progress-spinner>
+      </div>
+    </div>
 
-  <div
-    *ngIf="job.status === JobStatus.FAILED && showErrorOverlay"
-    class="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black bg-opacity-70 rounded-xl text-center p-4"
-  >
-    <mat-icon class="text-red-500 !w-16 !h-16 !text-6xl"
-      >error_outline</mat-icon
-    >
-    <p class="mt-4 text-white text-lg">Audio Generation Failed</p>
-    <p class="text-gray-400 text-sm max-w-md">
-      {{ job.errorMessage || job.error_message }}
-    </p>
-    <button
-      mat-raised-button
-      color="primary"
-      (click)="closeErrorOverlay()"
-      class="mt-4"
-    >
-      Close
-    </button>
-  </div>
-</ng-container>
+    <ng-template #audioOrGallery>
+      <ng-container *ngIf="vm.job as job">
+        <div
+          *ngIf="job.status === JobStatus.PROCESSING"
+          class="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black bg-opacity-70 rounded-xl"
+        >
+          <mat-progress-spinner
+            color="primary"
+            mode="indeterminate"
+            [diameter]="50"
+          ></mat-progress-spinner>
+          <p class="!mt-6 text-white text-lg">
+            Your audio is being generated...
+          </p>
+          <p class="text-gray-400 text-sm">
+            This may take a few moments. You can safely navigate away.
+          </p>
+        </div>
 
-<div class="studio-container">
+        <div
+          *ngIf="job.status === JobStatus.FAILED && showErrorOverlay"
+          class="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black bg-opacity-70 rounded-xl text-center p-4"
+        >
+          <mat-icon class="text-red-500 !w-16 !h-16 !text-6xl"
+            >error_outline</mat-icon
+          >
+          <p class="mt-4 text-white text-lg">Audio Generation Failed</p>
+          <p class="text-gray-400 text-sm max-w-md">
+            {{ job.errorMessage || job.error_message }}
+          </p>
+          <button
+            mat-raised-button
+            color="primary"
+            (click)="closeErrorOverlay()"
+            class="mt-4"
+          >
+            Close
+          </button>
+        </div>
 
-    <div class="header-section">
-        <mat-icon
-          svgIcon="white-gemini-spark-icon"
-          class="!w-12 !h-12 mr-2 md:mr-[1rem] !z-[50]"
-        ></mat-icon>
-        <h1
-          class="text-center justify-center text-white text-2xl font-bold !m-0 !z-[50]"
+        <!-- Audio Result Lightbox -->
+        <div
+          style="min-height: 45vh;"
+          *ngIf="job.status === JobStatus.COMPLETED"
+        >
+          <app-media-lightbox
+            [mediaItem]="job"
+            [initialIndex]="0"
+            [showSeeMoreInfoButton]="true"
+            [showDeleteButton]="true"
+            (iterateAudioClicked)="handleIterateAudio($event)"
+            (deleteClicked)="deleteGeneratedMedia()"
+          ></app-media-lightbox>
+        </div>
+      </ng-container>
+
+      <div
+        *ngIf="vm.job?.status !== JobStatus.COMPLETED"
+        class="video-container"
+      >
+        <video
+          class="w-full h-full object-cover rounded-xl"
+          oncanplay="this.play()"
+          onloadedmetadata="this.muted = true"
+          muted
+          playsinline
+          loop
+          autoplay
+        >
+          <source src="assets/videos/abstract-waves.mp4" type="video/mp4" />
+        </video>
+        <div
+          class="top-[40%] md:top-[20%] lg:top-[30%] xl:top-[40%] absolute w-full text-center justify-center text-3xl md:text-6xl font-bold bg-gradient-to-r from-blue-500 via-violet-500 to-red-400 bg-clip-text text-transparent"
         >
           Describe Your Sound
-        </h1>
-    </div>
-
-    <ng-container *ngIf="activeAudioJob$ | async as job">
-      <div class="result-container" *ngIf="job.status === JobStatus.COMPLETED">
-          <app-media-lightbox
-              [mediaItem]="job"
-              [initialIndex]="0"
-              [showSeeMoreInfoButton]="true"
-              [showDeleteButton]="true"
-              (deleteClicked)="deleteGeneratedMedia()"
-          ></app-media-lightbox>
+        </div>
       </div>
-    </ng-container>
+    </ng-template>
 
-    <div class="control-panel glass-effect">
-
-        <div class="model-selector">
-            <mat-button-toggle-group [(ngModel)]="selectedModel" (ngModelChange)="saveState()" name="modelSelect" aria-label="Select Model">
-                <mat-button-toggle value="lyria">Lyria (Music)</mat-button-toggle>
-                <mat-button-toggle value="chirp">Chirp TTS</mat-button-toggle>
-                <mat-button-toggle value="gemini-tts">Gemini TTS</mat-button-toggle>
-            </mat-button-toggle-group>
+    <!-- Control Options -->
+    <div
+      class="control-options inline-flex justify-center items-start grid grid-cols-2 md:grid-cols-3 lg:flex gap-4 mt-8 place-items-center"
+    >
+      @if (selectedModel === 'lyria') {
+        <div
+          matTooltip="Select Negative Phrases"
+          class="cursor-pointer w-36 inline-flex flex-col justify-start items-center"
+        >
+          <button
+            mat-fab
+            aria-label="Select Negative Phrases"
+            [matMenuTriggerFor]="negativePhrasesMenu"
+            class="!w-16 !h-16 !shadow-none text-center justify-center text-stone-300 text-2xl"
+          >
+            <mat-icon>block</mat-icon>
+          </button>
+          <div
+            class="text-center justify-center text-neutral-200 text-base mt-2"
+          >
+            Negative Phrases ({{ negativePhrases.length }})
+          </div>
+          <mat-menu
+            #negativePhrasesMenu="matMenu"
+            class="negative-phrases-menu"
+          >
+            <div class="p-2" (click)="$event.stopPropagation()">
+              <mat-form-field class="w-full">
+                <mat-label>Things to avoid...</mat-label>
+                <mat-chip-grid #chipGrid aria-label="Enter negative phrases">
+                  @for (phrase of negativePhrases; track $index) {
+                    <mat-chip-row
+                      (removed)="removeNegativePhrase(phrase)"
+                      matTooltipPosition="below"
+                      class="negative-prompt-chips"
+                    >
+                      {{ phrase }}
+                      <button matChipRemove [matTooltip]="'Remove ' + phrase">
+                        <mat-icon>cancel</mat-icon>
+                      </button>
+                    </mat-chip-row>
+                  }
+                </mat-chip-grid>
+                <input
+                  placeholder="New phrase..."
+                  [matChipInputFor]="chipGrid"
+                  (matChipInputTokenEnd)="addNegativePhrase($event)"
+                />
+              </mat-form-field>
+            </div>
+          </mat-menu>
         </div>
 
-        <mat-divider></mat-divider>
-
-        <div class="config-grid">
-
-            <ng-container *ngIf="selectedModel === 'lyria'">
-                <mat-form-field appearance="outline">
-                    <mat-label>Music Model</mat-label>
-                    <mat-select [ngModel]="lyriaModel" (selectionChange)="onLyriaModelChange($event.value)" name="lyriaModel">
-                        <mat-option *ngFor="let m of lyriaModels" [value]="m.value">
-                            {{ m.viewValue }}
-                        </mat-option>
-                    </mat-select>
-                </mat-form-field>
-
-                <mat-form-field appearance="outline" class="large-field">
-                    <mat-label>Prompt</mat-label>
-                    <textarea matInput [(ngModel)]="prompt" (ngModelChange)="saveState()" placeholder="Describe the music..." (keydown.control.enter)="generate()"></textarea>
-                </mat-form-field>
-
-                <mat-form-field appearance="outline">
-                    <mat-label>Negative Prompt</mat-label>
-                    <input matInput [(ngModel)]="negativePrompt" (ngModelChange)="saveState()" placeholder="What to avoid">
-                </mat-form-field>
-
-                <mat-form-field *ngIf="lyriaSupportsSeed" appearance="outline" class="short-field">
-                    <mat-label>Seed</mat-label>
-                    <input matInput type="number" [(ngModel)]="seed" (ngModelChange)="saveState()">
-                </mat-form-field>
-
-                <mat-form-field appearance="outline" class="short-field">
-                    <mat-label>Results</mat-label>
-                    <mat-select [(ngModel)]="sampleCount" (ngModelChange)="saveState()">
-                        <mat-option *ngFor="let count of [1, 2, 3, 4]" [value]="count">
-                            {{ count }}
-                        </mat-option>
-                    </mat-select>
-                </mat-form-field>
-            </ng-container>
-
-            <ng-container *ngIf="selectedModel !== 'lyria'">
-                <mat-form-field appearance="outline" class="large-field">
-                    <mat-label>Text to Speech</mat-label>
-                    <textarea matInput [(ngModel)]="prompt" (ngModelChange)="saveState()" placeholder="Enter text to speak..." (keydown.control.enter)="generate()"></textarea>
-                </mat-form-field>
-
-                <mat-form-field appearance="outline">
-                    <mat-label>Language</mat-label>
-                    <mat-select [(ngModel)]="selectedLanguage" (ngModelChange)="saveState()">
-                        <mat-option *ngFor="let lang of languages" [value]="lang.code">
-                            {{ lang.name }}
-                        </mat-option>
-                    </mat-select>
-                </mat-form-field>
-
-                <mat-form-field appearance="outline">
-                    <mat-label>Voice</mat-label>
-                    <mat-select [ngModel]="selectedVoice" (selectionChange)="onVoiceSelectionChange($event.value)">
-                        <mat-option class="add-voice-option" value="add-new-voice">
-                            <mat-icon>add_circle_outline</mat-icon>
-                            <strong>Add your voice</strong>
-                        </mat-option>
-                        <mat-divider></mat-divider>
-                        <mat-option *ngFor="let voice of voices" [value]="voice.id">
-                            <span *ngIf="voice.type === 'custom'">🎤 </span>
-                            {{ voice.name }}
-                        </mat-option>
-                    </mat-select>
-                </mat-form-field>
-
-                <mat-form-field appearance="outline" class="short-field">
-                    <mat-label>Results</mat-label>
-                    <mat-select [(ngModel)]="sampleCount" (ngModelChange)="saveState()">
-                        <mat-option *ngFor="let count of [1, 2, 3, 4]" [value]="count">
-                            {{ count }}
-                        </mat-option>
-                    </mat-select>
-                </mat-form-field>
-            </ng-container>
+        <div
+          matTooltip="Enhance Prompt with AI"
+          class="cursor-pointer w-32 inline-flex flex-col justify-start items-center"
+        >
+          <mat-slide-toggle
+            [(ngModel)]="enhancePrompt"
+            (ngModelChange)="saveState()"
+            class="!w-16 !h-16 !shadow-none text-center !flex justify-center items-center text-stone-300"
+          >
+          </mat-slide-toggle>
+          <div
+            class="text-center justify-center text-neutral-200 text-base mt-2"
+          >
+            Enhance Prompt
+          </div>
+        </div>
+      } @else {
+        <div
+          matTooltip="Select Language"
+          class="cursor-pointer w-36 inline-flex flex-col justify-start items-center"
+        >
+          <button
+            mat-fab
+            aria-label="Select Language"
+            [matMenuTriggerFor]="languageMenu"
+            class="!w-16 !h-16 !shadow-none text-center justify-center text-stone-300 text-2xl"
+          >
+            <mat-icon>translate</mat-icon>
+          </button>
+          <div
+            class="text-center justify-center text-neutral-200 text-base mt-2"
+          >
+            {{ selectedLanguageName() }}
+          </div>
+          <mat-menu #languageMenu="matMenu">
+            @for (lang of languages; track lang.code) {
+              <button
+                mat-menu-item
+                [ngClass]="{
+                  'menu-item-selected': selectedLanguage() === lang.code,
+                }"
+                (click)="selectLanguage(lang.code)"
+              >
+                <span>{{ lang.name }}</span>
+              </button>
+            }
+          </mat-menu>
         </div>
 
-        <div class="action-row">
-            <span class="model-hint" *ngIf="selectedModel === 'lyria' && lyriaModelHint">
-                <mat-icon>info_outline</mat-icon>
-                {{ lyriaModelHint }}
-            </span>
-            <button mat-raised-button color="primary" class="create-btn"
-                    (click)="generate()" [disabled]="(activeAudioJob$ | async)?.status === JobStatus.PROCESSING">
-                <mat-spinner diameter="20" *ngIf="(activeAudioJob$ | async)?.status === JobStatus.PROCESSING"></mat-spinner>
-                <span *ngIf="(activeAudioJob$ | async)?.status !== JobStatus.PROCESSING">Create</span>
-            </button>
+        <div
+          matTooltip="Select Voice"
+          class="cursor-pointer w-32 inline-flex flex-col justify-start items-center"
+        >
+          <button
+            mat-fab
+            aria-label="Select Voice"
+            [matMenuTriggerFor]="voiceMenu"
+            class="!w-16 !h-16 !shadow-none text-center justify-center text-stone-300 text-2xl"
+          >
+            <mat-icon>record_voice_over</mat-icon>
+          </button>
+          <div
+            class="text-center justify-center text-neutral-200 text-base mt-2"
+          >
+            {{ selectedVoiceLabel() }}
+          </div>
+          <mat-menu #voiceMenu="matMenu">
+            @for (voice of voices(); track voice.id) {
+              <button
+                mat-menu-item
+                [ngClass]="{'menu-item-selected': selectedVoice() === voice.id}"
+                (click)="selectVoice(voice.id)"
+              >
+                <span>
+                  {{ voice.type === 'custom' ? '🎤 ' : '' }}{{ voice.name }}
+                </span>
+              </button>
+            }
+          </mat-menu>
         </div>
 
+        <div
+          matTooltip="Clone Custom Voice"
+          class="cursor-pointer w-32 inline-flex flex-col justify-start items-center"
+        >
+          <button
+            mat-fab
+            aria-label="Clone Custom Voice"
+            (click)="openAddVoiceDialog()"
+            class="!w-16 !h-16 !shadow-none text-center justify-center text-stone-300 text-2xl"
+          >
+            <mat-icon>mic</mat-icon>
+          </button>
+          <div
+            class="text-center justify-center text-neutral-200 text-base mt-2"
+          >
+            Add Voice
+          </div>
+        </div>
+      }
     </div>
+
+    <!-- Prompt Generator -->
+    <div class="grid grid-cols-1 lg:grid-cols-4 gap-4 my-5">
+      <!-- Prompt Section -->
+      <div
+        class="lg:col-span-4 flex flex-col justify-start items-center gap-4 w-full"
+      >
+        <app-flow-prompt-box
+          #promptBoxHost
+          class="w-full max-w-2xl block"
+          [prompt]="prompt"
+          [outputs]="sampleCount"
+          [mode]="currentAudioMode()"
+          [modes]="audioModes"
+          [generationModels]="activeGenerationModels()"
+          [selectedGenerationModel]="selectedGenerationModelName()"
+          [isLoading]="
+            isLoading ||
+            isRewritingPrompt ||
+            uploadingReferenceCount > 0 ||
+            vm.job?.status === JobStatus.PROCESSING
+          "
+          [placeholder]="
+            selectedModel === 'lyria'
+              ? referenceAudio
+                ? 'Describe how to evolve or build on this audio...'
+                : 'Describe the music...'
+              : 'Enter text to speak...'
+          "
+          [showAspectRatio]="false"
+          [showRewrite]="selectedModel === 'lyria'"
+          [allowReferenceImages]="selectedModel === 'lyria'"
+          [allowReferenceAudio]="selectedModel === 'lyria'"
+          [canEditReferenceImages]="false"
+          [referenceImages]="referenceImages"
+          [referenceAudio]="referenceAudio"
+          (promptChanged)="onPromptChanged($event)"
+          (outputsChanged)="onOutputsChanged($event)"
+          (modeChanged)="onModeChanged($event)"
+          (modelSelected)="onAudioModelSelected($event)"
+          (openImageSelectorForReference)="openImageSelector()"
+          (onReferenceImageDrop)="onReferenceImageDrop($event)"
+          (clearReferenceImage)="clearReferenceImage($event.index, $event.event)"
+          (openAudioSelectorForReference)="openAudioSelectorForReference()"
+          (onReferenceAudioDrop)="onReferenceAudioDrop($event)"
+          (clearReferenceAudio)="clearReferenceAudio($event)"
+          (rewriteClicked)="rewritePrompt()"
+          (generateClicked)="generate()"
+        >
+          <ng-container flowExtraChips>
+            @if (
+              selectedModel === 'lyria' &&
+              lyriaSupportsSeed &&
+              seed !== undefined &&
+              seed !== null
+            ) {
+              <span
+                class="rounded-md bg-neutral-800 px-2 py-1 cursor-pointer hover:bg-neutral-700"
+                matTooltip="Seed"
+              >
+                #{{ seed }}
+              </span>
+            }
+          </ng-container>
+
+          <div flowExtraSettings>
+            @if (selectedModel === 'lyria' && lyriaSupportsSeed) {
+              <div class="mt-3">
+                <label
+                  for="lyria-seed-input"
+                  class="block text-xs font-medium text-neutral-400 mb-1.5"
+                >
+                  Seed (optional)
+                </label>
+                <div
+                  class="relative flex items-center rounded-lg bg-neutral-700 px-3 py-2 text-sm"
+                >
+                  <input
+                    id="lyria-seed-input"
+                    type="number"
+                    [(ngModel)]="seed"
+                    (ngModelChange)="saveState()"
+                    placeholder="Random"
+                    class="w-full bg-transparent text-white placeholder:text-neutral-400 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                  @if (seed !== undefined && seed !== null) {
+                    <button
+                      type="button"
+                      aria-label="Clear seed"
+                      (click)="$event.stopPropagation(); clearSeed()"
+                      class="ml-2 flex items-center justify-center text-neutral-400 hover:text-white"
+                    >
+                      <mat-icon class="!h-4 !w-4 !text-base">close</mat-icon>
+                    </button>
+                  }
+                </div>
+              </div>
+            }
+          </div>
+        </app-flow-prompt-box>
+
+        @if (selectedModel === 'lyria' && lyriaModelHint) {
+          <div class="model-hint">
+            <mat-icon>info_outline</mat-icon>
+            <span>{{ lyriaModelHint }}</span>
+          </div>
+        }
+      </div>
+    </div>
+  </div>
 </div>
+
