@@ -48,6 +48,8 @@ from src.common.storage_service import GcsService
 from src.folders.agent_output_folder import resolve_agent_output_folder_id
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.images.repository.media_item_repository import MediaRepository
+from src.lineage.lineage_service import record_lineage_safely
+from src.lineage.schema.item_lineage_model import LineageItemTypeEnum
 from src.source_assets.repository.source_asset_repository import (
     SourceAssetRepository,
 )
@@ -486,6 +488,15 @@ class WorkbenchService:
             source_media_items=source_media_items,
         )
         db_item = await self.media_repo.create(new_media_item)
+        await record_lineage_safely(
+            getattr(self.media_repo, "db", None),
+            workspace_id=ws_id,
+            child_type=LineageItemTypeEnum.MEDIA_ITEM,
+            child_id=db_item.id,
+            child_mime_type=MimeTypeEnum.VIDEO_MP4,
+            source_assets=source_assets,
+            source_media_items=source_media_items,
+        )
 
         executor.submit(
             _process_timeline_in_background,

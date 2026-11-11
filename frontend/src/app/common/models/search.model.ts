@@ -83,6 +83,7 @@ export type VeoRequest = {
   referenceImages?: ReferenceImageDto[];
   referenceVideos?: AssetReferenceDto[];
   parentMediaItemId?: number | null;
+  parentMediaIndex?: number;
   resolution?: '1K' | '2K' | '4K';
 };
 

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {Component, OnDestroy} from '@angular/core';
+import {Component, OnDestroy, computed, signal} from '@angular/core';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {MatDialog} from '@angular/material/dialog';
 import {DomSanitizer, SafeHtml} from '@angular/platform-browser';
@@ -22,6 +22,10 @@ import {ActivatedRoute, NavigationExtras, Router} from '@angular/router';
 import {first, Subscription} from 'rxjs';
 import {
   EnrichedSourceAsset,
+  EnrichedSourceMediaItem,
+  ItemLineageResponse,
+  LineageItemType,
+  LineageNode,
   MediaItem,
 } from '../../common/models/media-item.model';
 import {GalleryItem} from '../../common/models/gallery-item.model';
@@ -56,6 +60,30 @@ export interface LocationCrumb {
 /** Folder segments shown before the trail collapses the middle into "…". */
 export const MAX_VISIBLE_FOLDER_CRUMBS = 3;
 
+const SOURCE_ROLE_BADGES: Record<string, string> = {
+  input: 'Input',
+  image_edit_source: 'Edited',
+  crop_source: 'Cropped',
+  upscale_source: 'Upscaled',
+  omni_edit_source: 'Omni Edit',
+  audio_iteration_source: 'Iterated',
+  audio_stem_source: 'Stem Mix',
+  start_frame: 'Start Frame',
+  end_frame: 'End Frame',
+  style_reference: 'Style Ref',
+  image_reference_style: 'Style Ref',
+  image_reference_asset: 'Image Ref',
+  video_reference: 'Video Ref',
+  video_extension_source: 'Extended',
+  concatenation_source: 'Clip Source',
+  vto_person: 'Person',
+  vto_top: 'Top',
+  vto_bottom: 'Bottom',
+  vto_dress: 'Dress',
+  vto_shoe: 'Shoes',
+  mask: 'Mask',
+};
+
 @Component({
   selector: 'app-media-detail',
   templateUrl: './media-detail.component.html',
@@ -64,9 +92,80 @@ export const MAX_VISIBLE_FOLDER_CRUMBS = 3;
 export class MediaDetailComponent implements OnDestroy {
   private routeSub?: Subscription;
   private mediaSub?: Subscription;
+  private lineageSub?: Subscription;
 
   public isLoading = true;
-  public mediaItem: GalleryItem | undefined;
+  private readonly mediaItemSignal = signal<GalleryItem | undefined>(undefined);
+  get mediaItem(): GalleryItem | undefined {
+    return this.mediaItemSignal();
+  }
+  set mediaItem(value: GalleryItem | undefined) {
+    this.mediaItemSignal.set(value);
+  }
+
+  public readonly lineage = signal<ItemLineageResponse>({
+    spine: [],
+    derivatives: [],
+  });
+  public readonly lineageSpine = computed<LineageNode[]>(() => {
+    const spine = this.lineage().spine ?? [];
+    return spine.length > 1 ? spine : [];
+  });
+  public readonly lineageSpineDescending = computed<LineageNode[]>(() =>
+    [...this.lineageSpine()].reverse(),
+  );
+  public readonly audioIterationStepsDescending = computed<string[]>(() => {
+    const item = this.mediaItemSignal();
+    const rawSteps = item?.audioAnalysis?.['iteration_steps'];
+    const steps = Array.isArray(rawSteps)
+      ? rawSteps
+          .map(s => (typeof s === 'string' ? s.trim() : ''))
+          .filter(Boolean)
+      : [];
+    const hasRef = [
+      ...(item?.enrichedSourceAssets ?? []),
+      ...(item?.enrichedSourceMediaItems ?? []),
+    ].some(r => this.isAudioReference(r));
+    return steps.length > 1 || (steps.length === 1 && hasRef)
+      ? [...steps].reverse()
+      : [];
+  });
+  public readonly derivedItems = computed<LineageNode[]>(
+    () => this.lineage().derivatives ?? [],
+  );
+  public readonly primaryParentNode = computed<LineageNode | null>(() => {
+    const spine = this.lineageSpine();
+    return spine.length > 1 ? spine[spine.length - 2] : null;
+  });
+  public readonly compositionSourceAssets = computed<EnrichedSourceAsset[]>(
+    () => {
+      const assets = this.mediaItemSignal()?.enrichedSourceAssets ?? [];
+      const parent = this.primaryParentNode();
+      if (!parent || parent.itemType !== 'source_asset') {
+        return assets;
+      }
+      return assets.filter(
+        a => Number(this.getSourceAssetRouteId(a)) !== parent.id,
+      );
+    },
+  );
+  public readonly compositionSourceMediaItems = computed<
+    EnrichedSourceMediaItem[]
+  >(() => {
+    const items = this.mediaItemSignal()?.enrichedSourceMediaItems ?? [];
+    const parent = this.primaryParentNode();
+    if (!parent || parent.itemType !== 'media_item') {
+      return items;
+    }
+    return items.filter(
+      s =>
+        !(
+          s.mediaItemId === parent.id &&
+          Number(s.mediaIndex ?? 0) === parent.mediaIndex
+        ),
+    );
+  });
+
   public isAdmin = false;
   public initialSlideIndex = 0;
   public currentImageIndex = 0;
@@ -121,6 +220,107 @@ export class MediaDetailComponent implements OnDestroy {
 
   trackCrumb(_index: number, crumb: LocationCrumb): number | string {
     return crumb.id ?? 'ellipsis';
+  }
+
+  trackByIndex(index: number): number {
+    return index;
+  }
+
+  trackLineageNode(_index: number, node: LineageNode): string {
+    return `${node.itemType}:${node.id}:${node.mediaIndex}`;
+  }
+
+  getSourceAssetRouteId(
+    asset: EnrichedSourceAsset | null | undefined,
+  ): number | string | undefined {
+    return asset?.assetId ?? asset?.sourceAssetId;
+  }
+
+  isAudioReference(ref: any): boolean {
+    const role = String(ref?.role || '').toLowerCase();
+    return Boolean(
+      ref?.mimeType?.startsWith('audio/') ||
+        role === 'audio_reference' ||
+        role === 'audio_iteration_source' ||
+        role === 'audio_stem_source',
+    );
+  }
+
+  isAudioLineageNode(node: LineageNode | null | undefined): boolean {
+    return Boolean(node?.mimeType?.startsWith('audio/'));
+  }
+
+  getSourceRoleBadge(ref: any): string {
+    const rawRole = String(ref?.role || '').toLowerCase();
+    if (rawRole === 'video_extension_source') return 'Source Video';
+    if (this.isAudioReference(ref) && !SOURCE_ROLE_BADGES[rawRole]) {
+      return 'Audio Ref';
+    }
+    if (rawRole === 'audio_reference') return 'Audio Ref';
+    const mapped = SOURCE_ROLE_BADGES[rawRole];
+    if (mapped) return mapped;
+    if (ref?.mimeType?.startsWith('video/')) return 'Video Ref';
+    if (ref?.mimeType?.startsWith('image/')) return 'Image Ref';
+    return 'Reference';
+  }
+
+  getSourceTooltip(ref: any): string {
+    const label = this.getSourceRoleBadge(ref);
+    return ref?.mediaIndex !== undefined && ref?.mediaIndex !== null
+      ? `${label} · #${Number(ref.mediaIndex) + 1}`
+      : label;
+  }
+
+  getLineageStepBadge(node: LineageNode, isFirst: boolean): string {
+    if (isFirst) {
+      return node.itemType === 'source_asset' ? 'Uploaded' : 'Original';
+    }
+    const rawRole = String(node.role || '').toLowerCase();
+    return SOURCE_ROLE_BADGES[rawRole] ?? this.getSourceRoleBadge(node);
+  }
+
+  getLineageItemLabel(node: LineageNode): string {
+    if (node.itemType === 'source_asset') {
+      return `Asset #${node.id}`;
+    }
+    const kind = node.mimeType?.startsWith('video/')
+      ? 'Video'
+      : node.mimeType?.startsWith('audio/')
+        ? 'Audio'
+        : 'Image';
+    if (node.mediaIndex > 0) {
+      const unit = node.mimeType?.startsWith('audio/') ? 'Track' : 'Var';
+      return `${kind} #${node.id} · ${unit} ${node.mediaIndex + 1}`;
+    }
+    return `${kind} #${node.id}`;
+  }
+
+  getLineageNodeRoute(node: LineageNode): (string | number)[] {
+    return node.itemType === 'source_asset'
+      ? ['/asset-detail', node.id]
+      : ['/gallery', node.id];
+  }
+
+  getLineageNodeQueryParams(
+    node: LineageNode,
+  ): Record<string, number> | undefined {
+    return node.itemType === 'media_item' && node.mediaIndex > 0
+      ? {img_index: node.mediaIndex}
+      : undefined;
+  }
+
+  getDerivativeRoleBadge(node: LineageNode): string {
+    const rawRole = String(node.role || '').toLowerCase();
+    return SOURCE_ROLE_BADGES[rawRole] ?? this.getSourceRoleBadge(node);
+  }
+
+  getDerivativeTooltip(node: LineageNode): string {
+    const badge = this.getDerivativeRoleBadge(node);
+    const label = this.getLineageItemLabel(node);
+    const detail = (node.title || node.prompt || '').trim();
+    const snippet =
+      detail.length > 72 ? `${detail.slice(0, 72).trimEnd()}…` : detail;
+    return snippet ? `${badge} — ${label}: ${snippet}` : `${badge} — ${label}`;
   }
 
   get identityFields(): {label: string; value: any; type: string}[] {
@@ -249,9 +449,12 @@ export class MediaDetailComponent implements OnDestroy {
     this.routeSub?.unsubscribe();
     this.mediaSub?.unsubscribe();
     this.breadcrumbSub?.unsubscribe();
+    this.lineageSub?.unsubscribe();
   }
 
   fetchMediaDetails(id: number, isAsset = false): void {
+    this.lineageSub?.unsubscribe();
+    this.lineage.set({spine: [], derivatives: []});
     const fetchObs = isAsset
       ? this.galleryService.getAsset(id)
       : this.galleryService.getMedia(id);
@@ -264,6 +467,7 @@ export class MediaDetailComponent implements OnDestroy {
         this.readInitialIndexFromUrl();
         this.parsePrompt();
         this.loadFolderBreadcrumbs();
+        this.loadItemLineage(isAsset);
       },
       error: err => {
         console.error('Failed to fetch media details', err);
@@ -272,6 +476,33 @@ export class MediaDetailComponent implements OnDestroy {
         handleErrorSnackbar(this._snackBar, err, 'Fetch details');
       },
     });
+  }
+
+  private loadItemLineage(isAsset: boolean): void {
+    this.lineageSub?.unsubscribe();
+    const current = this.mediaItem;
+    if (
+      !current?.id ||
+      typeof this.galleryService.getItemLineage !== 'function'
+    ) {
+      this.lineage.set({spine: [], derivatives: []});
+      return;
+    }
+    const itemType: LineageItemType =
+      isAsset || current.itemType === 'source_asset'
+        ? 'source_asset'
+        : 'media_item';
+    this.lineageSub = this.galleryService
+      .getItemLineage(itemType, current.id)
+      .subscribe({
+        next: res => {
+          this.lineage.set(res ?? {spine: [], derivatives: []});
+        },
+        error: err => {
+          console.warn('Could not resolve lineage for media', err);
+          this.lineage.set({spine: [], derivatives: []});
+        },
+      });
   }
 
   /**

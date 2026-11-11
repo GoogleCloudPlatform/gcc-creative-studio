@@ -53,6 +53,8 @@ from src.images.repository.media_item_repository import MediaRepository
 from src.brand_guidelines.repository.brand_guideline_repository import (
     BrandGuidelineRepository,
 )
+from src.lineage.lineage_service import record_lineage_safely
+from src.lineage.schema.item_lineage_model import LineageItemTypeEnum
 from src.multimodal.gemini_service import GeminiService
 from src.users.user_model import UserModel
 
@@ -601,6 +603,20 @@ def _process_audio_in_background(
                                 )
 
                         await media_repo.update(media_item_id, update_data)
+                        await record_lineage_safely(
+                            getattr(media_repo, "db", None),
+                            workspace_id=request_dto.workspace_id,
+                            child_type=LineageItemTypeEnum.MEDIA_ITEM,
+                            child_id=media_item_id,
+                            child_mime_type=output_mime_type,
+                            user_prompt=request_dto.prompt,
+                            source_assets=getattr(
+                                request_dto, "source_assets", None
+                            ),
+                            source_media_items=getattr(
+                                request_dto, "source_media_items", None
+                            ),
+                        )
                         worker_logger.info(
                             f"Audio job {media_item_id} completed successfully."
                         )

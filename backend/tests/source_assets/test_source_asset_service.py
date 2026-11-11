@@ -858,3 +858,100 @@ async def test_create_asset_response_youtube(service):
         == "https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg"
     )
     assert res.user_email == "test@example.com"
+
+
+@pytest.mark.anyio
+@patch("src.source_assets.source_asset_service.record_lineage_safely")
+@patch("src.source_assets.source_asset_service.MediaRepository")
+async def test_upload_asset_records_crop_lineage_for_same_workspace_parent(
+    mock_media_repo_cls,
+    mock_record_lineage,
+    service,
+    mock_dependencies,
+    sample_user,
+):
+    mock_dependencies["repo"].db = AsyncMock()
+    mock_dependencies["repo"].find_by_hash.return_value = None
+    mock_dependencies["gcs_service"].store_to_gcs.return_value = (
+        "gs://bucket/cropped.png"
+    )
+    mock_dependencies["iam_signer"].generate_presigned_url.return_value = (
+        "https://signed.url/cropped.png"
+    )
+    mock_dependencies["repo"].create.return_value = SourceAssetModel(
+        id=77,
+        workspace_id=1,
+        user_id=1,
+        gcs_uri="gs://bucket/cropped.png",
+        original_filename="cropped.png",
+        file_hash="hash77",
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+    )
+
+    parent_media = MagicMock(id=44, workspace_id=1)
+    mock_media_repo_inst = AsyncMock()
+    mock_media_repo_inst.get_by_id.return_value = parent_media
+    mock_media_repo_cls.return_value = mock_media_repo_inst
+
+    await service.upload_asset(
+        user=sample_user,
+        file_bytes=get_dummy_image_bytes(),
+        filename="cropped.png",
+        workspace_id=1,
+        mime_type="image/png",
+        parent_media_item_id=44,
+        parent_media_index=2,
+        action_summary="Cropped & annotated",
+    )
+
+    mock_record_lineage.assert_awaited_once()
+    kwargs = mock_record_lineage.await_args.kwargs
+    assert kwargs["child_id"] == 77
+    assert kwargs["explicit_primary"].parent_id == 44
+    assert kwargs["explicit_primary"].parent_index == 2
+    assert kwargs["explicit_primary"].action_summary == "Cropped & annotated"
+
+
+@pytest.mark.anyio
+@patch("src.source_assets.source_asset_service.record_lineage_safely")
+@patch("src.source_assets.source_asset_service.MediaRepository")
+async def test_upload_asset_skips_crop_lineage_for_foreign_workspace_parent(
+    mock_media_repo_cls,
+    mock_record_lineage,
+    service,
+    mock_dependencies,
+    sample_user,
+):
+    mock_dependencies["repo"].db = AsyncMock()
+    mock_dependencies["repo"].find_by_hash.return_value = None
+    mock_dependencies["gcs_service"].store_to_gcs.return_value = (
+        "gs://bucket/cropped.png"
+    )
+    mock_dependencies["iam_signer"].generate_presigned_url.return_value = (
+        "https://signed.url/cropped.png"
+    )
+    mock_dependencies["repo"].create.return_value = SourceAssetModel(
+        id=78,
+        workspace_id=1,
+        user_id=1,
+        gcs_uri="gs://bucket/cropped.png",
+        original_filename="cropped.png",
+        file_hash="hash78",
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+    )
+
+    foreign_parent = MagicMock(id=44, workspace_id=999)
+    mock_media_repo_inst = AsyncMock()
+    mock_media_repo_inst.get_by_id.return_value = foreign_parent
+    mock_media_repo_cls.return_value = mock_media_repo_inst
+
+    await service.upload_asset(
+        user=sample_user,
+        file_bytes=get_dummy_image_bytes(),
+        filename="cropped.png",
+        workspace_id=1,
+        mime_type="image/png",
+        parent_media_item_id=44,
+    )
+
+    mock_record_lineage.assert_not_called()

@@ -380,6 +380,69 @@ async def test_bulk_copy_success(service):
 
 
 @pytest.mark.anyio
+async def test_bulk_copy_strips_cross_workspace_source_links_only(service):
+    from pydantic import BaseModel
+
+    from src.galleries.dto.bulk_copy_dto import BulkCopyDto, BulkCopyItemDto
+
+    class DummyMediaWithSources(BaseModel):
+        id: int
+        workspace_id: int
+        folder_id: int | None = None
+        user_id: int
+        user_email: str
+        gcs_uris: list
+        source_assets: list | None = None
+        source_media_items: list | None = None
+
+    current_user = UserModel(
+        id=1,
+        email="user@test.com",
+        name="User",
+        roles=[UserRoleEnum.USER],
+    )
+    source_item = DummyMediaWithSources(
+        id=1,
+        workspace_id=99,
+        user_id=1,
+        user_email="user@test.com",
+        gcs_uris=["gs://b/1.png"],
+        source_assets=[{"asset_id": 5, "role": "input"}],
+        source_media_items=[
+            {"media_item_id": 7, "media_index": 0, "role": "input"}
+        ],
+    )
+    service.mock_media_repo.get_by_id.return_value = source_item
+
+    # Cross-workspace copy -> strips foreign workspace references
+    await service.bulk_copy(
+        BulkCopyDto(
+            target_workspace_id=88,
+            items=[BulkCopyItemDto(id=1, type="media_item")],
+        ),
+        current_user,
+    )
+    cross_payload = service.mock_media_repo.create.call_args[0][0]
+    assert cross_payload["source_assets"] is None
+    assert cross_payload["source_media_items"] is None
+
+    # Same-workspace copy -> preserves references
+    service.mock_media_repo.create.reset_mock()
+    await service.bulk_copy(
+        BulkCopyDto(
+            target_workspace_id=99,
+            items=[BulkCopyItemDto(id=1, type="media_item")],
+        ),
+        current_user,
+    )
+    same_payload = service.mock_media_repo.create.call_args[0][0]
+    assert same_payload["source_assets"] == [{"asset_id": 5, "role": "input"}]
+    assert same_payload["source_media_items"] == [
+        {"media_item_id": 7, "media_index": 0, "role": "input"}
+    ]
+
+
+@pytest.mark.anyio
 async def test_bulk_download_success(service):
     from src.galleries.dto.bulk_download_dto import (
         BulkDownloadDto,

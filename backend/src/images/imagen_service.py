@@ -63,6 +63,12 @@ from src.images.schema.imagen_result_model import (
     CustomImagenResult,
     ImageGenerationResult,
 )
+from src.lineage.lineage_builder import ExplicitPrimarySpec
+from src.lineage.lineage_service import record_lineage_safely
+from src.lineage.schema.item_lineage_model import (
+    LineageItemTypeEnum,
+    LineageRoleEnum,
+)
 from src.multimodal.gemini_service import GeminiService, PromptTargetEnum
 from src.source_assets.repository.source_asset_repository import (
     SourceAssetRepository,
@@ -422,6 +428,15 @@ def _process_vto_in_background(
                             ),
                         }
                         await media_repo.update(media_item_id, update_data)
+                        await record_lineage_safely(
+                            getattr(media_repo, "db", None),
+                            workspace_id=request_dto.workspace_id,
+                            child_type=LineageItemTypeEnum.MEDIA_ITEM,
+                            child_id=media_item_id,
+                            child_mime_type=mime_type,
+                            source_assets=source_assets,
+                            source_media_items=source_media_items,
+                        )
                         worker_logger.info(
                             "Successfully processed VTO job.",
                             extra={
@@ -674,7 +689,7 @@ def _process_image_in_background(
                     start_time = time.monotonic()
                     gcs_output_directory = f"gs://{cfg.GENMEDIA_BUCKET}"
 
-                    # original_prompt was unused
+                    raw_user_prompt = request_dto.prompt
                     if request_dto.enhance_prompt:
                         rewritten_prompt = (
                             await gemini_service.enhance_prompt_from_dto(
@@ -1281,6 +1296,16 @@ def _process_image_in_background(
                                 )
 
                         await media_repo.update(media_item_id, update_data)
+                        await record_lineage_safely(
+                            getattr(media_repo, "db", None),
+                            workspace_id=request_dto.workspace_id,
+                            child_type=LineageItemTypeEnum.MEDIA_ITEM,
+                            child_id=media_item_id,
+                            child_mime_type=mime_type,
+                            user_prompt=raw_user_prompt,
+                            source_assets=source_assets,
+                            source_media_items=source_media_items_list,
+                        )
                         worker_logger.info(
                             "Successfully processed image job %s",
                             media_item_id,
@@ -1329,6 +1354,7 @@ def _process_upload_upscale_in_background(
     scope: AssetScopeEnum | None = None,
     enhance_input_image: bool | None = None,
     image_preservation_factor: float | None = None,
+    media_index: int = 0,
 ):
     """Background worker to handle image upscale, GCS upload, and DB update."""
     # time is removed
@@ -1404,6 +1430,7 @@ def _process_upload_upscale_in_background(
                     final_upscaled_uri = None
                     final_original_uri = gcs_uri
                     used_source_asset_id = source_asset_id
+                    used_media_index = max(0, int(media_index or 0))
 
                     inherited_titles = None
                     inherited_descriptions = None
@@ -1477,14 +1504,32 @@ def _process_upload_upscale_in_background(
                                     f"not found",
                                 )
 
-                            # Use the first original URI if available, else the
-                            # first generation URI
                             if existing_media.original_gcs_uris:
-                                final_original_uri = (
-                                    existing_media.original_gcs_uris[0]
+                                safe_orig_idx = (
+                                    used_media_index
+                                    if 0
+                                    <= used_media_index
+                                    < len(existing_media.original_gcs_uris)
+                                    else 0
                                 )
+                                final_original_uri = (
+                                    existing_media.original_gcs_uris[
+                                        safe_orig_idx
+                                    ]
+                                )
+                                used_media_index = safe_orig_idx
                             elif existing_media.gcs_uris:
-                                final_original_uri = existing_media.gcs_uris[0]
+                                safe_gen_idx = (
+                                    used_media_index
+                                    if 0
+                                    <= used_media_index
+                                    < len(existing_media.gcs_uris)
+                                    else 0
+                                )
+                                final_original_uri = existing_media.gcs_uris[
+                                    safe_gen_idx
+                                ]
+                                used_media_index = safe_gen_idx
                             else:
                                 raise ValueError(
                                     f"Media item {media_item_id_existing} "
@@ -1544,10 +1589,19 @@ def _process_upload_upscale_in_background(
 
                         # --- Finalize ---
                         source_assets_list = []
+                        source_media_items_list = []
                         if used_source_asset_id:
                             source_assets_list.append(
                                 SourceAssetLink(
                                     asset_id=int(used_source_asset_id),
+                                    role=AssetRoleEnum.INPUT,
+                                ).model_dump(),
+                            )
+                        elif media_item_id_existing:
+                            source_media_items_list.append(
+                                SourceMediaItemLink(
+                                    media_item_id=int(media_item_id_existing),
+                                    media_index=used_media_index,
                                     role=AssetRoleEnum.INPUT,
                                 ).model_dump(),
                             )
@@ -1621,7 +1675,44 @@ def _process_upload_upscale_in_background(
                                 else None
                             ),
                         }
+                        if source_media_items_list:
+                            update_data["source_media_items"] = (
+                                source_media_items_list
+                            )
                         await media_repo.update(media_item_id, update_data)
+
+                        upscale_summary = (
+                            f"Upscaled ({upscale_factor})"
+                            if upscale_factor
+                            else "Upscaled image"
+                        )
+                        upscale_primary: ExplicitPrimarySpec | None = None
+                        if media_item_id_existing:
+                            upscale_primary = ExplicitPrimarySpec(
+                                parent_type=LineageItemTypeEnum.MEDIA_ITEM,
+                                parent_id=int(media_item_id_existing),
+                                parent_index=used_media_index,
+                                role=LineageRoleEnum.UPSCALE_SOURCE.value,
+                                action_summary=upscale_summary,
+                            )
+                        elif used_source_asset_id:
+                            upscale_primary = ExplicitPrimarySpec(
+                                parent_type=LineageItemTypeEnum.SOURCE_ASSET,
+                                parent_id=int(used_source_asset_id),
+                                parent_index=0,
+                                role=LineageRoleEnum.UPSCALE_SOURCE.value,
+                                action_summary=upscale_summary,
+                            )
+                        await record_lineage_safely(
+                            getattr(media_repo, "db", None),
+                            workspace_id=workspace_id,
+                            child_type=LineageItemTypeEnum.MEDIA_ITEM,
+                            child_id=media_item_id,
+                            child_mime_type=MimeTypeEnum.IMAGE_PNG,
+                            source_assets=source_assets_list,
+                            source_media_items=source_media_items_list,
+                            explicit_primary=upscale_primary,
+                        )
                         worker_logger.info(
                             "Upscale job %s completed successfully.",
                             media_item_id,
@@ -1688,6 +1779,7 @@ class ImagenService:
         enhance_input_image: bool | None = None,
         image_preservation_factor: float | None = None,
         folder_id: int | None = None,
+        media_index: int = 0,
     ) -> MediaItemResponse:
         """Starts a background job to upload and/or upscale an image.
 
@@ -1710,6 +1802,7 @@ class ImagenService:
             image_preservation_factor: Factor for image preservation during upscaling.
             folder_id: Optional gallery folder of the workspace to save the
                 result into; the root folder when omitted.
+            media_index: Index of the image within ``media_item_id_existing``.
 
         Returns:
             A MediaItemResponse representing the placeholder item.
@@ -1740,10 +1833,14 @@ class ImagenService:
                     raise ValueError(
                         f"Media item {media_item_id_existing} not found"
                     )
-                # We don't strictly need the URI here as the worker
-                # will fetch it,
-                # but good to validate existence.
-                target_gcs_uri = media.gcs_uris[0] if media.gcs_uris else None
+                safe_idx = (
+                    media_index
+                    if media.gcs_uris and 0 <= media_index < len(media.gcs_uris)
+                    else 0
+                )
+                target_gcs_uri = (
+                    media.gcs_uris[safe_idx] if media.gcs_uris else None
+                )
 
         if target_gcs_uri and not file_bytes:
             # Download bytes for validation to ensure error feedback
@@ -1828,6 +1925,7 @@ class ImagenService:
             scope=scope,
             enhance_input_image=enhance_input_image,
             image_preservation_factor=image_preservation_factor,
+            **({"media_index": media_index} if media_index else {}),
         )
 
         logger.info(

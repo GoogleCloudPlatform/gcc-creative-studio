@@ -192,6 +192,11 @@ class CreateVeoDto(BaseDto):
         default=None,
         description="The ID of the parent media item for multi-turn conversation editing.",
     )
+    parent_media_index: int = Field(
+        default=0,
+        ge=0,
+        description="The index within parent_media_item_id for multi-turn conversation editing.",
+    )
     file_name: str | None = Field(
         default=None,
         description="Optional name for the generated media.",
