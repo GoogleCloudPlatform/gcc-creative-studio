@@ -14,10 +14,27 @@
  * limitations under the License.
  */
 
+import {StepOutputReference} from '../../../workflow.models';
+
 interface Option {
   value: string | number;
   label: string;
   disabled?: boolean;
+}
+
+export interface UnlinkOption {
+  ref: StepOutputReference;
+  label: string;
+}
+export interface UnlinkMenuItem extends UnlinkOption {
+  id: string;
+  text: string;
+  ariaLabel: string;
+}
+export interface InputUnlinkState {
+  canUnlink: boolean;
+  ariaLabel: string | null;
+  items: UnlinkMenuItem[];
 }
 
 /** Data type of a step input port. `loop_ending` only accepts a `loop_ending` output. */

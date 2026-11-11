@@ -14,9 +14,14 @@
  * limitations under the License.
  */
 
-import {NO_ERRORS_SCHEMA} from '@angular/core';
+import {NO_ERRORS_SCHEMA, SimpleChange} from '@angular/core';
+import {
+  ComponentFixture,
+  TestBed,
+  fakeAsync,
+  flush,
+} from '@angular/core/testing';
 import {NotificationService} from '../../../../common/services/notification.service';
-import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {
   AbstractControl,
   FormBuilder,
@@ -27,11 +32,13 @@ import {
   Validators,
 } from '@angular/forms';
 import {By} from '@angular/platform-browser';
+import {OverlayContainer} from '@angular/cdk/overlay';
 import {MatCheckboxModule} from '@angular/material/checkbox';
 import {MatDialog, MatDialogRef} from '@angular/material/dialog';
 import {MatFormFieldModule} from '@angular/material/form-field';
 import {MatIconModule} from '@angular/material/icon';
 import {MatInputModule} from '@angular/material/input';
+import {MatMenuModule, MatMenuTrigger} from '@angular/material/menu';
 import {MatRadioModule} from '@angular/material/radio';
 import {MatSelect, MatSelectModule} from '@angular/material/select';
 import {MatSliderModule} from '@angular/material/slider';
@@ -43,7 +50,13 @@ import {
   IMAGE_MODE_OPTIONS,
   IMAGE_STEP_CONFIG,
 } from '../step-configs/image-step.config';
-import {LoopItemType, NodeTypes} from '../../../workflow.models';
+import {
+  EditorMode,
+  LoopItemType,
+  NodeTypes,
+  StepInputUnlinkEvent,
+  StepOutputReference,
+} from '../../../workflow.models';
 import {StepConfig, StepInput} from './step.model';
 import {StudioSliderComponent} from '../../../../common/components/studio-slider/studio-slider.component';
 import {WorkflowStatusPipe} from '../../../workflow-status.pipe';
@@ -97,6 +110,7 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         MatRadioModule,
         MatSliderModule,
         MatIconModule,
+        MatMenuModule,
         NoopAnimationsModule,
         WorkflowStatusPipe,
       ],
@@ -1110,6 +1124,35 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       expect(inputsGroup.contains('custom_var')).toBeTrue();
     });
 
+    it('should refresh unlink states directly when adding a variable without form events', () => {
+      const inputsGroup = textStepForm.get('inputs') as FormGroup;
+      inputsGroup.addControl('silent_var', fb.control(null), {
+        emitEvent: false,
+      });
+      const refreshSpy = spyOn(
+        component as unknown as {refreshUnlinkStates: () => void},
+        'refreshUnlinkStates',
+      );
+
+      component.addVariable('silent_var');
+
+      expect(refreshSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should refresh unlink states directly when removing a variable without form events', () => {
+      component.addVariable('silent_var');
+      const inputsGroup = textStepForm.get('inputs') as FormGroup;
+      inputsGroup.removeControl('silent_var', {emitEvent: false});
+      const refreshSpy = spyOn(
+        component as unknown as {refreshUnlinkStates: () => void},
+        'refreshUnlinkStates',
+      );
+
+      component.removeVariable('silent_var');
+
+      expect(refreshSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('should prevent variable creation when variable name matches a real base port', () => {
       // Trying to add base port names as dynamic variables must be blocked (case-insensitively)
       component.addVariable('prompt');
@@ -1242,6 +1285,42 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
         promptVarsElement.classList.contains('disabled-section'),
       ).toBeFalse();
       expect(component.isInputDisabled('custom_var')).toBeFalse();
+    });
+
+    describe('unlinking a wired prompt', () => {
+      const promptRef = {step: 'upstream_step', output: 'generated_text'};
+      const varRef = {step: 'upstream_step', output: 'other_text'};
+
+      it('disables variables while wired and re-enables them once the wire is removed', () => {
+        component.addVariable('custom_var');
+        const promptControl = textStepForm.get('inputs.prompt');
+        const varControl = textStepForm.get('inputs.custom_var');
+
+        promptControl?.setValue(promptRef);
+        varControl?.setValue(varRef);
+        expect(component.inputModes['prompt']).toBe('linked');
+        expect(component.isInputDisabled('custom_var')).toBeTrue();
+        expect(component.getInputDisabledMessage('custom_var')).toBe(
+          'Prompt is linked - variables inactive',
+        );
+        expect(component.canUnlink('custom_var')).toBeFalse();
+
+        // The editor clears the control when the last link is removed.
+        promptControl?.setValue(null);
+        expect(component.inputModes['prompt']).toBe('fixed');
+        expect(component.isInputDisabled('custom_var')).toBeFalse();
+        expect(component.getInputDisabledMessage('custom_var')).toBe('');
+        expect(component.canUnlink('custom_var')).toBeTrue();
+        expect(component.canUnlink('prompt')).toBeFalse();
+      });
+
+      it('keeps an explicitly chosen link mode when no wire was connected', () => {
+        component.addVariable('custom_var');
+        component.toggleInputMode('prompt', 'linked');
+        textStepForm.get('inputs.custom_var')?.setValue('value');
+        expect(component.inputModes['prompt']).toBe('linked');
+        expect(component.isInputDisabled('custom_var')).toBeTrue();
+      });
     });
 
     it('should append variable placeholder to prompt when appendToPrompt() is called', () => {
@@ -2619,6 +2698,401 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
 
     it('keeps the loop_ending control in the outputs form group', () => {
       expect(component.stepForm.get('outputs.loop_ending')).not.toBeNull();
+    });
+  });
+
+  describe('Input unlink menu', () => {
+    const linkedRef: StepOutputReference = {step: 'src_step', output: 'out'};
+    const promptPortSelector =
+      '[data-port-type="input"][data-port-name="prompt"]';
+    let emitted: StepInputUnlinkEvent[];
+    let portElement: HTMLElement;
+    let trigger: MatMenuTrigger;
+    let overlayElement: HTMLElement;
+
+    /** Runs change detection and lets the menu animations settle. */
+    function settle(): void {
+      fixture.detectChanges();
+      flush();
+      fixture.detectChanges();
+    }
+
+    function openMenu(): void {
+      trigger.openMenu();
+      settle();
+    }
+
+    function findUnlinkOption(): HTMLButtonElement | null {
+      return overlayElement.querySelector<HTMLButtonElement>(
+        '.unlink-menu-item',
+      );
+    }
+
+    beforeEach(() => {
+      component.stepForm.get('inputs.prompt')?.setValue(linkedRef);
+      fixture.detectChanges();
+
+      emitted = [];
+      component.unlink.subscribe(event => emitted.push(event));
+      const port = fixture.debugElement.query(By.css(promptPortSelector));
+      portElement = port.nativeElement;
+      trigger = port.injector.get(MatMenuTrigger);
+      overlayElement = TestBed.inject(OverlayContainer).getContainerElement();
+    });
+
+    it('emits unlink only after the menu has closed', fakeAsync(() => {
+      openMenu();
+      const option = findUnlinkOption();
+      expect(option).not.toBeNull();
+
+      option?.click();
+      expect(emitted).toEqual([]);
+
+      settle();
+      expect(trigger.menuOpen).toBeFalse();
+      expect(emitted).toEqual([
+        {stepId: 'image_step_1', inputName: 'prompt', ref: linkedRef},
+      ]);
+    }));
+
+    it('emits nothing when the menu closes without a selection', fakeAsync(() => {
+      openMenu();
+      trigger.closeMenu();
+      settle();
+
+      expect(trigger.menuOpen).toBeFalse();
+      expect(emitted).toEqual([]);
+    }));
+
+    it('emits a selection only once', fakeAsync(() => {
+      openMenu();
+      findUnlinkOption()?.click();
+      settle();
+      openMenu();
+      trigger.closeMenu();
+      settle();
+
+      expect(emitted.length).toBe(1);
+    }));
+
+    it('does not throw when the last link is removed on selection', fakeAsync(() => {
+      component.unlink.subscribe(() =>
+        component.stepForm.get('inputs.prompt')?.setValue(null),
+      );
+      openMenu();
+      findUnlinkOption()?.click();
+
+      expect(() => settle()).not.toThrow();
+      expect(emitted.length).toBe(1);
+      expect(trigger.menu).toBeNull();
+    }));
+
+    it('opens the menu from the keyboard', fakeAsync(() => {
+      portElement.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter'}));
+      settle();
+
+      expect(trigger.menuOpen).toBeTrue();
+      trigger.closeMenu();
+      settle();
+    }));
+  });
+
+  describe('Input unlink state and port handlers', () => {
+    const linkedRef: StepOutputReference = {step: 'src_step', output: 'out'};
+    const unmatchedRef: StepOutputReference = {
+      step: 'gone_step',
+      output: 'gone_out',
+    };
+    const promptPortSelector =
+      '[data-port-type="input"][data-port-name="prompt"]';
+    const unlinkMenuItemSelector = '.unlink-menu-item';
+    let promptControl: AbstractControl;
+    let portElement: HTMLElement;
+    let trigger: MatMenuTrigger;
+    let overlayElement: HTMLElement;
+
+    /** Runs change detection and lets the menu animations settle. */
+    function settle(): void {
+      fixture.detectChanges();
+      flush();
+      fixture.detectChanges();
+    }
+
+    function queryPromptPort(): HTMLElement {
+      return fixture.nativeElement.querySelector(promptPortSelector);
+    }
+
+    function queryMenuItems(): NodeListOf<HTMLElement> {
+      return overlayElement.querySelectorAll<HTMLElement>(
+        unlinkMenuItemSelector,
+      );
+    }
+
+    function unlinkPrompt(): void {
+      promptControl.setValue(null);
+      fixture.detectChanges();
+    }
+
+    function disablePrompt(): void {
+      promptControl.disable();
+      fixture.detectChanges();
+    }
+
+    function switchToRunMode(): void {
+      const previousMode = component.mode;
+      component.mode = EditorMode.Run;
+      component.ngOnChanges({
+        mode: new SimpleChange(previousMode, EditorMode.Run, false),
+      });
+      fixture.detectChanges();
+    }
+
+    /** Dispatches a mouse event on the port and spies on stopPropagation. */
+    function dispatchMouseEvent(port: HTMLElement, type: string): jasmine.Spy {
+      const event = new MouseEvent(type, {bubbles: true, cancelable: true});
+      const stopPropagationSpy = spyOn(
+        event,
+        'stopPropagation',
+      ).and.callThrough();
+      port.dispatchEvent(event);
+      return stopPropagationSpy;
+    }
+
+    /** Dispatches a keydown on the port and spies on preventDefault. */
+    function dispatchKeydown(port: HTMLElement, key: string): jasmine.Spy {
+      const event = new KeyboardEvent('keydown', {
+        key,
+        bubbles: true,
+        cancelable: true,
+      });
+      const preventDefaultSpy = spyOn(
+        event,
+        'preventDefault',
+      ).and.callThrough();
+      port.dispatchEvent(event);
+      return preventDefaultSpy;
+    }
+
+    function expectNoUnlinkAttributes(port: HTMLElement): void {
+      expect(port.classList.contains('has-links')).toBeFalse();
+      expect(port.getAttribute('tabindex')).toBeNull();
+      expect(port.getAttribute('role')).toBeNull();
+      expect(port.getAttribute('aria-label')).toBeNull();
+    }
+
+    beforeEach(() => {
+      const availableOutputs = [
+        {value: linkedRef, label: ' my-step-input ', type: 'image'},
+      ];
+      component.availableOutputs = availableOutputs;
+      component.ngOnChanges({
+        availableOutputs: new SimpleChange([], availableOutputs, false),
+      });
+      promptControl = component.stepForm.get('inputs.prompt')!;
+      promptControl.setValue(linkedRef);
+      fixture.detectChanges();
+
+      const port = fixture.debugElement.query(By.css(promptPortSelector));
+      portElement = port.nativeElement;
+      trigger = port.injector.get(MatMenuTrigger);
+      overlayElement = TestBed.inject(OverlayContainer).getContainerElement();
+    });
+
+    describe('getUnlinkOptions', () => {
+      it('uses the trimmed availableOutputs label', () => {
+        expect(component.getUnlinkOptions('prompt')).toEqual([
+          {ref: linkedRef, label: 'my-step-input'},
+        ]);
+      });
+
+      it('falls back to step.output when no output matches', () => {
+        promptControl.setValue(unmatchedRef);
+
+        expect(component.getUnlinkOptions('prompt')).toEqual([
+          {
+            ref: unmatchedRef,
+            label: `${unmatchedRef.step}.${unmatchedRef.output}`,
+          },
+        ]);
+      });
+    });
+
+    describe('canUnlink', () => {
+      it('returns true when the input has a link', () => {
+        expect(component.canUnlink('prompt')).toBeTrue();
+      });
+
+      it('returns false when the input has no link', () => {
+        promptControl.setValue(null);
+
+        expect(component.canUnlink('prompt')).toBeFalse();
+      });
+
+      it('returns false when the input is disabled', () => {
+        promptControl.disable();
+
+        expect(component.isInputDisabled('prompt')).toBeTrue();
+        expect(component.canUnlink('prompt')).toBeFalse();
+      });
+    });
+
+    describe('port attributes', () => {
+      it('sets has-links, tabindex, role and aria-label when linked', () => {
+        expect(portElement.classList.contains('has-links')).toBeTrue();
+        expect(portElement.getAttribute('tabindex')).toBe('0');
+        expect(portElement.getAttribute('role')).toBe('button');
+        expect(portElement.getAttribute('aria-label')).toBe(
+          'Unlink options for Prompt',
+        );
+      });
+
+      it('sets none of them when not linked', () => {
+        unlinkPrompt();
+
+        expectNoUnlinkAttributes(queryPromptPort());
+      });
+
+      it('sets none of them when disabled', () => {
+        disablePrompt();
+
+        expectNoUnlinkAttributes(queryPromptPort());
+      });
+    });
+
+    describe('click', () => {
+      it('opens the menu with one item per link', fakeAsync(() => {
+        promptControl.setValue([linkedRef, unmatchedRef]);
+        fixture.detectChanges();
+
+        queryPromptPort().click();
+        settle();
+
+        expect(trigger.menuOpen).toBeTrue();
+        expect(queryMenuItems().length).toBe(2);
+        trigger.closeMenu();
+        settle();
+      }));
+
+      it('opens no menu when the input has no link', fakeAsync(() => {
+        unlinkPrompt();
+
+        queryPromptPort().click();
+        settle();
+
+        expect(trigger.menuOpen).toBeFalse();
+        expect(queryMenuItems().length).toBe(0);
+      }));
+
+      it('opens no menu when the input is disabled', fakeAsync(() => {
+        disablePrompt();
+
+        queryPromptPort().click();
+        settle();
+
+        expect(trigger.menuOpen).toBeFalse();
+        expect(queryMenuItems().length).toBe(0);
+      }));
+
+      it('opens no menu in run mode', fakeAsync(() => {
+        switchToRunMode();
+
+        queryPromptPort().click();
+        settle();
+
+        expect(trigger.menuOpen).toBeFalse();
+        expect(queryMenuItems().length).toBe(0);
+      }));
+    });
+
+    describe('run mode', () => {
+      it('canUnlink returns false for a linked input', () => {
+        component.mode = EditorMode.Run;
+
+        expect(component.canUnlink('prompt')).toBeFalse();
+      });
+
+      it('removes the unlink attributes when the mode switches to run', () => {
+        switchToRunMode();
+
+        expectNoUnlinkAttributes(queryPromptPort());
+      });
+    });
+
+    describe('stopPropagation', () => {
+      it('is called on mousedown when linked', () => {
+        const stopPropagationSpy = dispatchMouseEvent(portElement, 'mousedown');
+
+        expect(stopPropagationSpy).toHaveBeenCalled();
+      });
+
+      it('is called on click when linked', () => {
+        const stopPropagationSpy = dispatchMouseEvent(portElement, 'click');
+
+        expect(stopPropagationSpy).toHaveBeenCalled();
+        trigger.closeMenu();
+      });
+
+      it('is not called on mousedown without links', () => {
+        unlinkPrompt();
+
+        const stopPropagationSpy = dispatchMouseEvent(
+          queryPromptPort(),
+          'mousedown',
+        );
+
+        expect(stopPropagationSpy).not.toHaveBeenCalled();
+      });
+
+      it('is not called on click without links', () => {
+        unlinkPrompt();
+
+        const stopPropagationSpy = dispatchMouseEvent(
+          queryPromptPort(),
+          'click',
+        );
+
+        expect(stopPropagationSpy).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('keydown', () => {
+      it('opens the menu on Space', fakeAsync(() => {
+        dispatchKeydown(portElement, ' ');
+        settle();
+
+        expect(trigger.menuOpen).toBeTrue();
+        expect(queryMenuItems().length).toBe(1);
+        trigger.closeMenu();
+        settle();
+      }));
+
+      it('calls preventDefault on Enter', () => {
+        const preventDefaultSpy = dispatchKeydown(portElement, 'Enter');
+
+        expect(preventDefaultSpy).toHaveBeenCalled();
+        trigger.closeMenu();
+      });
+
+      it('calls preventDefault on Space', () => {
+        const preventDefaultSpy = dispatchKeydown(portElement, ' ');
+
+        expect(preventDefaultSpy).toHaveBeenCalled();
+        trigger.closeMenu();
+      });
+
+      it('does nothing without links', fakeAsync(() => {
+        unlinkPrompt();
+
+        const unlinkedPort = queryPromptPort();
+        const enterPreventDefaultSpy = dispatchKeydown(unlinkedPort, 'Enter');
+        const spacePreventDefaultSpy = dispatchKeydown(unlinkedPort, ' ');
+        settle();
+
+        expect(enterPreventDefaultSpy).not.toHaveBeenCalled();
+        expect(spacePreventDefaultSpy).not.toHaveBeenCalled();
+        expect(trigger.menuOpen).toBeFalse();
+        expect(queryMenuItems().length).toBe(0);
+      }));
     });
   });
 });

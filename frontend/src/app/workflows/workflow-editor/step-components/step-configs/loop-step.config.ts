@@ -19,9 +19,9 @@ import {ReferenceImage} from '../../../../common/models/search.model';
 import {
   DynamicStepRecord,
   LoopItemType,
-  LoopLinkedItem,
   LoopMode,
   LoopSettings,
+  MixedStepOutputValue,
   NodeTypes,
 } from '../../../workflow.models';
 import {isStepOutputReference} from '../../../utils/workflow-step.util';
@@ -154,7 +154,9 @@ export function isLoopGalleryPick(value: unknown): value is ReferenceImage {
 }
 
 /** True for one `linked_items` entry: a wired output or a gallery pick. */
-export function isLoopLinkedItem(value: unknown): value is LoopLinkedItem {
+export function isLoopLinkedItem(
+  value: unknown,
+): value is MixedStepOutputValue {
   return isStepOutputReference(value) || isLoopGalleryPick(value);
 }
 

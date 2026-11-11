@@ -54,15 +54,31 @@ import {
 import {FolderSelectionResult} from '../../../../common/models/folder.model';
 import {WorkspaceStateService} from '../../../../services/workspace/workspace-state.service';
 import {WorkflowFolderTreeStore} from '../../workflow-folder-tree.store';
-import {StepConfig, StepInput, StepOutput, StepSetting} from './step.model';
 import {
+  InputUnlinkState,
+  StepConfig,
+  StepInput,
+  StepOutput,
+  StepSetting,
+  UnlinkMenuItem,
+  UnlinkOption,
+} from './step.model';
+import {
+  AvailableOutput,
   DynamicStepRecord,
+  EditorMode,
   NodeTypes,
   StepEntry,
+  StepInputUnlinkEvent,
+  StepInputValue,
   StepOutputReference,
   StepStatusEnum,
 } from '../../../workflow.models';
-import {isStepOutputReference} from '../../../utils/workflow-step.util';
+import {
+  getLinkedRefs,
+  isSameStepOutput,
+  isStepOutputReference,
+} from '../../../utils/workflow-step.util';
 import {
   getLatestStepInputs,
   getLatestStepOutputs,
@@ -110,6 +126,7 @@ import {
   isPortTypeCompatible,
   PortShortType,
 } from '../../../utils/workflow-magnetic.util';
+import {MatMenuTrigger} from '@angular/material/menu';
 
 /** View model of the current-folder option in a folder setting select. */
 interface FolderOptionView {
@@ -126,6 +143,8 @@ interface FolderOptionView {
  * `loop-folder-*` names; media nodes use `output-folder-*`.
  */
 type FolderDomPrefix = 'loop-folder' | 'output-folder';
+
+type InputUnlinkStates = Record<string, InputUnlinkState>;
 
 /** DOM ids/classes of the folder control (stable for E2E tests). */
 interface FolderDomNames {
@@ -150,6 +169,7 @@ function buildFolderDomNames(prefix: FolderDomPrefix): FolderDomNames {
 
 const LOOP_FOLDER_DOM_NAMES = buildFolderDomNames('loop-folder');
 const OUTPUT_FOLDER_DOM_NAMES = buildFolderDomNames('output-folder');
+const UNLINK_MENU_OPEN_KEYS: ReadonlySet<string> = new Set(['Enter', ' ']);
 
 /** Media kind of a Generate Video reference input. */
 type ReferenceKind = 'image' | 'video';
@@ -172,8 +192,8 @@ interface TrimmedReferences {
 export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
   @Input() stepForm!: FormGroup;
   @Input() stepIndex!: number;
-  @Input() availableOutputs: any[] = [];
-  @Input() mode: 'create' | 'edit' | 'run' = 'create';
+  @Input() availableOutputs: AvailableOutput[] = [];
+  @Input() mode: EditorMode = EditorMode.Create;
   @Input() config!: StepConfig;
   @Input() showValidationErrors = false;
   @Input() mediaUrlMap!: Map<string, string>;
@@ -183,6 +203,16 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     null;
   @Input() dragSourcePort: DragSourcePort | null = null;
 
+  protected readonly unlinkStateByInput = signal<InputUnlinkStates>({});
+  readonly noUnlinkState: InputUnlinkState = {
+    canUnlink: false,
+    ariaLabel: null,
+    items: [],
+  };
+  readonly trackUnlinkItem = (_i: number, item: UnlinkMenuItem): string =>
+    item.id;
+  /** Unlink chosen in the unlink menu, emitted once the menu has closed. */
+  private pendingUnlink: StepInputUnlinkEvent | null = null;
   private readonly stepExecutionState = signal<StepEntry | null>(null);
   private readonly outputLinkedState = signal<boolean>(false);
   private readonly loopEndingOutputVisibleState = signal<boolean>(false);
@@ -235,8 +265,10 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     mouseEvent: MouseEvent;
   }>();
   @Output() portDrop = new EventEmitter<{stepId: string; inputName: string}>();
+  @Output() unlink = new EventEmitter<StepInputUnlinkEvent>();
 
   StepStatusEnum = StepStatusEnum;
+  EditorMode = EditorMode;
   NodeTypes = NodeTypes;
   readonly maxLoopItems = MAX_LOOP_ITEMS;
 
@@ -388,6 +420,12 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
 
   isCollapsed = false;
   inputModes: {[key: string]: 'fixed' | 'linked' | 'mixed'} = {};
+  /**
+   * Inputs whose value is currently a single step-output reference (wired).
+   * Used to detect when a wire is removed so the input returns to fixed mode,
+   * without overriding an explicit "Link" mode chosen with no wire yet.
+   */
+  private wiredInputs = new Set<string>();
   compatibleOutputs: {[key: string]: any[]} = {};
   newVariableName = '';
 
@@ -507,6 +545,109 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     return '';
   }
 
+  private getInputValue(inputName: string): StepInputValue {
+    return this.stepForm?.get('inputs')?.get(inputName)?.value;
+  }
+
+  canUnlink(inputName: string): boolean {
+    if (this.mode === EditorMode.Run || this.isInputDisabled(inputName))
+      return false;
+    return getLinkedRefs(this.getInputValue(inputName)).length > 0;
+  }
+
+  getUnlinkOptions(inputName: string): UnlinkOption[] {
+    const refs = getLinkedRefs(this.getInputValue(inputName));
+    return refs.map(ref => ({
+      ref,
+      label: this.getLinkLabel(ref),
+    }));
+  }
+
+  private getLinkLabel(ref: StepOutputReference): string {
+    return this.availableOutputs.reduce((carry, item) => {
+      const newLabel = isSameStepOutput(item.value, ref)
+        ? item.label.trim()
+        : '';
+      return newLabel === '' ? carry : newLabel;
+    }, `${ref.step}.${ref.output}`);
+  }
+
+  private getStepId(): string {
+    return this.stepForm?.value?.stepId ?? '';
+  }
+
+  private getInputs(): StepInput[] {
+    return this.localConfig?.inputs ?? [];
+  }
+
+  private toUnlinkMenuItem(
+    stepId: string,
+    input: StepInput,
+    option: UnlinkOption,
+  ): UnlinkMenuItem {
+    return {
+      ...option,
+      id: `unlink-option-${stepId}-${input.name}-${option.ref.step}.${option.ref.output}`,
+      text: `Unlink ${option.label}`,
+      ariaLabel: `Unlink ${option.label} from ${input.label}`,
+    };
+  }
+
+  private refreshUnlinkStates(): void {
+    const states: InputUnlinkStates = {};
+    const stepId = this.getStepId();
+    this.getInputs().forEach(input => {
+      const canUnlink = this.canUnlink(input.name);
+      const availableItems = canUnlink ? this.getUnlinkOptions(input.name) : [];
+      const items = availableItems.map(
+        this.toUnlinkMenuItem.bind(this, stepId, input),
+      );
+      const ariaLabel = canUnlink ? `Unlink options for ${input.label}` : null;
+      states[input.name] = {canUnlink, ariaLabel, items};
+    });
+    this.unlinkStateByInput.set(states);
+  }
+
+  private stopPropagationIfUnlinkable(event: Event, inputName: string): void {
+    if (this.canUnlink(inputName)) event.stopPropagation();
+  }
+
+  onInputPortMouseDown(event: MouseEvent, inputName: string): void {
+    this.stopPropagationIfUnlinkable(event, inputName);
+  }
+
+  onInputPortClick(event: MouseEvent, inputName: string): void {
+    this.stopPropagationIfUnlinkable(event, inputName);
+  }
+
+  /**
+   * Stores the chosen link; it is emitted by {@link onUnlinkMenuClosed}.
+   * Emitting right away would unbind the menu (no links left) while the
+   * trigger is still closing, which breaks MatMenuTrigger.
+   */
+  onUnlinkOptionSelected(inputName: string, ref: StepOutputReference): void {
+    this.pendingUnlink = {stepId: this.getStepId(), inputName, ref};
+  }
+
+  /** Emits the pending unlink, if any, once the unlink menu has fully closed. */
+  onUnlinkMenuClosed(): void {
+    const pendingUnlink = this.pendingUnlink;
+    this.pendingUnlink = null;
+    if (pendingUnlink) this.unlink.emit(pendingUnlink);
+  }
+
+  /** A div gets no native click from Enter/Space, so open the menu here. */
+  onInputPortKeydown(
+    event: KeyboardEvent,
+    inputName: string,
+    trigger: MatMenuTrigger,
+  ): void {
+    if (!UNLINK_MENU_OPEN_KEYS.has(event.key) || !this.canUnlink(inputName))
+      return;
+    event.preventDefault();
+    trigger.openMenu();
+  }
+
   onInputPortMouseUp(event: MouseEvent, inputName: string): void {
     event.stopPropagation();
     if (this.isInputDisabled(inputName)) {
@@ -548,6 +689,9 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     }
     if (changes['availableOutputs']) {
       this.updateCompatibleOutputs();
+    }
+    if (changes['availableOutputs'] || changes['mode']) {
+      this.refreshUnlinkStates();
     }
   }
 
@@ -630,6 +774,11 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     if (this.inputsSubscription) {
       this.inputsSubscription.unsubscribe();
     }
+    this.wiredInputs = new Set(
+      Object.keys(inputs.controls).filter(key =>
+        isStepOutputReference(inputs.get(key)?.value),
+      ),
+    );
     this.inputsSubscription = inputs.valueChanges.subscribe(value => {
       if (!value) return;
       Object.keys(value).forEach(key => {
@@ -638,7 +787,22 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
         if (isLinked && this.inputModes[key] !== 'linked') {
           this.inputModes[key] = 'linked';
         }
+        const wasWired = this.wiredInputs.has(key);
+        if (isLinked) {
+          this.wiredInputs.add(key);
+        } else {
+          this.wiredInputs.delete(key);
+        }
+        if (
+          wasWired &&
+          !isLinked &&
+          !Array.isArray(val) &&
+          !this.isLinkedOnlyInput(key)
+        ) {
+          this.inputModes[key] = 'fixed';
+        }
       });
+      this.refreshUnlinkStates();
       if (this.localConfig?.type === NodeTypes.GENERATE_VIDEO) {
         this.syncVideoDurationSetting();
       }
@@ -720,6 +884,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     }
 
     this.updateCompatibleOutputs();
+    this.refreshUnlinkStates();
   }
 
   /**
@@ -1406,6 +1571,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
       ?.setValue({type: currentItemType}, {emitEvent: false});
 
     this.updateCompatibleOutputs();
+    this.refreshUnlinkStates();
   }
 
   /**
@@ -1625,6 +1791,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     }
     this.inputModes[varName] = 'fixed';
     this.updateCompatibleOutputs();
+    this.refreshUnlinkStates();
   }
 
   removeVariable(varName: string): void {
@@ -1643,6 +1810,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     delete this.inputModes[actualName];
     delete this.compatibleOutputs[actualName];
     this.updateCompatibleOutputs();
+    this.refreshUnlinkStates();
   }
 
   toggleInputMode(inputName: string, mode: 'fixed' | 'linked' | 'mixed') {
@@ -1720,6 +1888,11 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     });
 
     this.updateCompatibleOutputs();
+  }
+
+  private isLinkedOnlyInput(inputName: string): boolean {
+    return !!this.localConfig?.inputs.find(i => i.name === inputName)
+      ?.linkedOnly;
   }
 
   private initializeInputMode(
