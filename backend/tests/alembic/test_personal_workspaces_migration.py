@@ -595,7 +595,7 @@ def test_merged_head_upgrade_and_projects_safe_downgrade() -> None:
             run_alembic_upgrade(MERGED_THROWAWAY_DB, PROJECTS_HEAD_REVISION)
             seeded = asyncio.run(_seed_and_verify_merged_downgrade())
 
-            run_alembic_upgrade(MERGED_THROWAWAY_DB, "head")
+            run_alembic_upgrade(MERGED_THROWAWAY_DB, MERGE_REVISION)
             head_versions, _ = asyncio.run(_fetch_versions_and_workspaces())
             ws_ids = asyncio.run(
                 _attach_projects_and_sessions_to_personal_ws(seeded)
@@ -608,8 +608,8 @@ def test_merged_head_upgrade_and_projects_safe_downgrade() -> None:
                 _fetch_versions_and_workspaces()
             )
 
-            # Re-upgrade cleanly back to the single merged head.
-            run_alembic_upgrade(MERGED_THROWAWAY_DB, "head")
+            # Re-upgrade cleanly back to the single merged revision.
+            run_alembic_upgrade(MERGED_THROWAWAY_DB, MERGE_REVISION)
             reup_versions, _ = asyncio.run(_fetch_versions_and_workspaces())
             return {
                 "ws_ids": ws_ids,

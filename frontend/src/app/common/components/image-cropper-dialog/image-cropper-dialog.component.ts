@@ -72,6 +72,9 @@ export interface ImageCropperDialogData {
   aspectRatios?: AspectRatio[];
   enableUpscale?: boolean;
   targetWorkspaceId?: number | null;
+  parentMediaItemId?: number;
+  parentMediaIndex?: number;
+  parentSourceAssetId?: number;
 }
 
 interface TextInputCanvas {
@@ -167,6 +170,9 @@ export class ImageCropperDialogComponent implements AfterViewInit, OnDestroy {
     ImageCropperDialogComponent.open(dialog, {
       imageUrl: previewUrl,
       targetWorkspaceId,
+      parentMediaItemId: data.ref.sourceMediaItem?.mediaItemId,
+      parentMediaIndex: data.ref.sourceMediaItem?.mediaIndex ?? 0,
+      parentSourceAssetId: data.ref.sourceAssetId,
     }).subscribe(result => {
       if (result && result.id) {
         referenceImages[data.index] = {
@@ -638,12 +644,33 @@ export class ImageCropperDialogComponent implements AfterViewInit, OnDestroy {
     file: File,
     aspectRatio: string,
   ): Observable<SourceAssetResponseDto> {
+    const hasParent =
+      this.data.parentMediaItemId !== undefined ||
+      this.data.parentSourceAssetId !== undefined;
+    const isAnnotated =
+      this.activeMode() === ImageEditorMode.DRAW || this.canUndo();
+    const ratioSuffix =
+      aspectRatio && aspectRatio !== 'other' ? ` (${aspectRatio})` : '';
+    const actionSummary = hasParent
+      ? isAnnotated
+        ? `Cropped & annotated${ratioSuffix}`
+        : `Cropped${ratioSuffix}`
+      : undefined;
+
     return this.sourceAssetService.uploadAsset(
       file,
       {
         aspectRatio: aspectRatio,
         scope: AssetScopeEnum.PRIVATE,
         assetType: this.data.assetType || AssetTypeEnum.GENERIC_IMAGE,
+        ...(hasParent
+          ? {
+              parentMediaItemId: this.data.parentMediaItemId,
+              parentMediaIndex: this.data.parentMediaIndex,
+              parentSourceAssetId: this.data.parentSourceAssetId,
+              actionSummary,
+            }
+          : {}),
       },
       this.data.targetWorkspaceId ?? null,
       null,

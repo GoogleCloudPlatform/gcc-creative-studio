@@ -118,6 +118,7 @@ export class VideoComponent implements OnInit, AfterViewInit, OnDestroy {
   referenceImagesType: 'ASSET' | 'STYLE' = 'ASSET';
   referenceVideos: ReferenceVideo[] = [];
   parentMediaItemId: number | null = null;
+  parentMediaIndex = 0;
   private concatenateSelectorTimer: ReturnType<typeof setTimeout> | null = null;
   currentMode = 'Text to Video';
   modes = [
@@ -809,6 +810,15 @@ export class VideoComponent implements OnInit, AfterViewInit, OnDestroy {
         this.referenceVideos[0].id === this.parentMediaItemId
           ? this.parentMediaItemId
           : undefined,
+      parentMediaIndex:
+        this.currentMode === 'Ingredients to Video' &&
+        this.parentMediaItemId !== null &&
+        this.referenceImages.length === 0 &&
+        this.referenceVideos.length === 1 &&
+        this.referenceVideos[0].type === 'media_item' &&
+        this.referenceVideos[0].id === this.parentMediaItemId
+          ? (this.referenceVideos[0].index ?? this.parentMediaIndex)
+          : undefined,
     };
 
     // TODO: Add notification when video is completed after the pooling
@@ -1318,6 +1328,7 @@ export class VideoComponent implements OnInit, AfterViewInit, OnDestroy {
     this._input1IsVideo = false;
     this._input2IsVideo = false;
     this.parentMediaItemId = null;
+    this.parentMediaIndex = 0;
     this.referenceImages = [];
     this.referenceVideos = [];
     this.isExtensionMode = false;
@@ -1592,6 +1603,7 @@ export class VideoComponent implements OnInit, AfterViewInit, OnDestroy {
       }
       if (remixState.parentMediaItemId !== undefined) {
         this.parentMediaItemId = remixState.parentMediaItemId;
+        this.parentMediaIndex = remixState.parentMediaIndex ?? 0;
       }
     }
 
@@ -1614,6 +1626,7 @@ export class VideoComponent implements OnInit, AfterViewInit, OnDestroy {
     }
     this.resetInputs();
     this.parentMediaItemId = event.mediaItem.id;
+    this.parentMediaIndex = event.selectedIndex ?? 0;
     this.currentMode = 'Ingredients to Video';
     this.selectedMode.set('Ingredients to Video');
 
@@ -1861,6 +1874,7 @@ export class VideoComponent implements OnInit, AfterViewInit, OnDestroy {
       removed.id === this.parentMediaItemId
     ) {
       this.parentMediaItemId = null;
+      this.parentMediaIndex = 0;
     }
     this.saveState();
   }
