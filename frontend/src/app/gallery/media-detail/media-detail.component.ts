@@ -14,15 +14,24 @@
  * limitations under the License.
  */
 
-import {Component, OnDestroy} from '@angular/core';
+import {Component, OnDestroy, computed, inject, signal} from '@angular/core';
+import {Clipboard} from '@angular/cdk/clipboard';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {MatDialog} from '@angular/material/dialog';
 import {DomSanitizer, SafeHtml} from '@angular/platform-browser';
 import {ActivatedRoute, NavigationExtras, Router} from '@angular/router';
 import {first, Subscription} from 'rxjs';
 import {
+  AudioMusicalProfile,
+  AudioTrackAnalysis,
   EnrichedSourceAsset,
   MediaItem,
+  SongStructureEntry,
+  buildAudioIterationRemixState,
+  formatMusicalProfileEntries,
+  getAudioIterationSteps,
+  getAudioTrackAnalysis,
+  getAudioTrackMusicalProfile,
 } from '../../common/models/media-item.model';
 import {GalleryItem} from '../../common/models/gallery-item.model';
 import {CreatePromptMediaDto} from '../../common/models/prompt.model';
@@ -56,6 +65,19 @@ export interface LocationCrumb {
 /** Folder segments shown before the trail collapses the middle into "…". */
 export const MAX_VISIBLE_FOLDER_CRUMBS = 3;
 
+const SOURCE_ROLE_BADGES: Record<string, string> = {
+  start_frame: 'Start Frame',
+  end_frame: 'End Frame',
+  style_reference: 'Style Ref',
+  image_reference_style: 'Style Ref',
+  image_reference_asset: 'Image Ref',
+  video_reference: 'Video Ref',
+  video_extension_source: 'Source Video',
+  concatenation_source: 'Clip Source',
+  youtube_video_reference: 'YouTube Ref',
+  mask: 'Mask',
+};
+
 @Component({
   selector: 'app-media-detail',
   templateUrl: './media-detail.component.html',
@@ -64,14 +86,29 @@ export const MAX_VISIBLE_FOLDER_CRUMBS = 3;
 export class MediaDetailComponent implements OnDestroy {
   private routeSub?: Subscription;
   private mediaSub?: Subscription;
+  private clipboard = inject(Clipboard, {optional: true});
+
+  private readonly mediaItemSignal = signal<GalleryItem | undefined>(undefined);
+  private readonly currentImageIndexSignal = signal<number>(0);
 
   public isLoading = true;
-  public mediaItem: GalleryItem | undefined;
+  public get mediaItem(): GalleryItem | undefined {
+    return this.mediaItemSignal();
+  }
+  public set mediaItem(val: GalleryItem | undefined) {
+    this.mediaItemSignal.set(val);
+  }
   public isAdmin = false;
   public initialSlideIndex = 0;
-  public currentImageIndex = 0;
+  public get currentImageIndex(): number {
+    return this.currentImageIndexSignal();
+  }
+  public set currentImageIndex(val: number) {
+    this.currentImageIndexSignal.set(val);
+  }
   promptJson: any | undefined;
   isPromptExpanded = false;
+  isSynthesizedPromptExpanded = false;
   public isIdentityExpanded = false;
   public selectedAssetForLightbox: GalleryItem | null = null;
   public lightboxInitialIndex = 0;
@@ -121,6 +158,123 @@ export class MediaDetailComponent implements OnDestroy {
 
   trackCrumb(_index: number, crumb: LocationCrumb): number | string {
     return crumb.id ?? 'ellipsis';
+  }
+
+  readonly isMusicItem = computed<boolean>(() =>
+    String(this.mediaItemSignal()?.model ?? '')
+      .toLowerCase()
+      .startsWith('lyria'),
+  );
+
+  readonly isAudioItem = computed<boolean>(
+    () =>
+      Boolean(this.mediaItemSignal()?.mimeType?.startsWith('audio/')) ||
+      this.isMusicItem(),
+  );
+
+  readonly currentTrackAnalysis = computed<AudioTrackAnalysis | null>(() =>
+    getAudioTrackAnalysis(
+      this.mediaItemSignal(),
+      this.currentImageIndexSignal(),
+    ),
+  );
+
+  readonly displaySeed = computed<number | null>(() => {
+    const seed =
+      this.currentTrackAnalysis()?.seed ?? this.mediaItemSignal()?.seed;
+    return typeof seed === 'number' && Number.isFinite(seed) ? seed : null;
+  });
+
+  readonly currentTrackMusicalProfile = computed<AudioMusicalProfile | null>(
+    () => getAudioTrackMusicalProfile(this.currentTrackAnalysis()),
+  );
+
+  readonly currentTrackMusicalProfileEntries = computed<SongStructureEntry[]>(
+    () => formatMusicalProfileEntries(this.currentTrackMusicalProfile()),
+  );
+
+  readonly hasAudioReferenceSource = computed<boolean>(() => {
+    const item = this.mediaItemSignal();
+    return [
+      ...(item?.enrichedSourceAssets ?? []),
+      ...(item?.enrichedSourceMediaItems ?? []),
+    ].some(r => this.isAudioReference(r));
+  });
+
+  readonly audioIterationSteps = computed<string[]>(() => {
+    const steps = getAudioIterationSteps(this.mediaItemSignal());
+    return steps.length > 1 ||
+      (steps.length === 1 && this.hasAudioReferenceSource())
+      ? steps
+      : [];
+  });
+
+  readonly displayOriginalPrompt = computed<string>(() => {
+    const item = this.mediaItemSignal();
+    return (item?.originalPrompt ?? '').trim() || (item?.prompt ?? '').trim();
+  });
+
+  get synthesizedPrompt(): string | null {
+    if (this.promptJson) return null;
+    const item = this.mediaItemSignal();
+    const orig = (item?.originalPrompt ?? '').trim();
+    const full = (item?.prompt ?? '').trim();
+    return orig && full && orig !== full ? full : null;
+  }
+
+  trackByIndex(index: number): number {
+    return index;
+  }
+
+  isExpandablePrompt(text: string | null | undefined): boolean {
+    return Boolean(
+      text &&
+        (text.length > 160 ||
+          text.split('\n').length > 4 ||
+          text.split(/\s+/).length > 25),
+    );
+  }
+
+  toggleSynthesizedPromptExpansion(): void {
+    this.isSynthesizedPromptExpanded = !this.isSynthesizedPromptExpanded;
+  }
+
+  copyPromptText(text: string | null | undefined): void {
+    const trimmed = (text ?? '').trim();
+    if (!trimmed) return;
+    if (this.clipboard) {
+      this.clipboard.copy(trimmed);
+    } else if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      void navigator.clipboard.writeText(trimmed);
+    }
+    handleSuccessSnackbar(this._snackBar, 'Copied to clipboard!');
+  }
+
+  getSourceAssetRouteId(asset: any): number | string | null {
+    return asset?.assetId ?? asset?.sourceAssetId ?? null;
+  }
+
+  isAudioReference(ref: any): boolean {
+    return (
+      ref?.role === 'audio_reference' ||
+      Boolean(ref?.mimeType?.startsWith('audio/'))
+    );
+  }
+
+  getSourceRoleBadge(ref: any): string {
+    if (this.isAudioReference(ref)) return 'Audio Ref';
+    const mapped = SOURCE_ROLE_BADGES[String(ref?.role || '').toLowerCase()];
+    if (mapped) return mapped;
+    if (ref?.mimeType?.startsWith('video/')) return 'Video Ref';
+    if (ref?.mimeType?.startsWith('image/')) return 'Image Ref';
+    return 'Reference';
+  }
+
+  getSourceTooltip(ref: any): string {
+    const label = this.getSourceRoleBadge(ref);
+    return ref?.mediaIndex !== undefined && ref?.mediaIndex !== null
+      ? `${label} (Track / Variation ${Number(ref.mediaIndex) + 1})`
+      : label;
   }
 
   get identityFields(): {label: string; value: any; type: string}[] {
@@ -259,7 +413,11 @@ export class MediaDetailComponent implements OnDestroy {
     this.mediaSub = fetchObs.subscribe({
       next: (data: GalleryItem) => {
         this.mediaItem = data;
+        this.initialSlideIndex = 0;
+        this.currentImageIndex = 0;
         this.isLoading = false;
+        this.isPromptExpanded = false;
+        this.isSynthesizedPromptExpanded = false;
         this.loadingService.hide();
         this.readInitialIndexFromUrl();
         this.parsePrompt();
@@ -535,6 +693,18 @@ export class MediaDetailComponent implements OnDestroy {
       state: {remixState},
     };
     void this.router.navigate(['/video'], navigationExtras);
+  }
+
+  handleIterateAudio(event: {
+    mediaItem: MediaItem;
+    selectedIndex: number;
+  }): void {
+    if (!this.mediaItem) return;
+    const remixState = buildAudioIterationRemixState(
+      this.mediaItem,
+      event.selectedIndex,
+    );
+    void this.router.navigate(['/audio'], {state: {remixState}});
   }
 
   sendToVto(index: number): void {

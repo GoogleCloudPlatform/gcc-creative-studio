@@ -20,11 +20,17 @@ import httpx
 import pytest
 from google.genai import errors
 
+from src.audios.dto.create_audio_dto import CreateAudioDto
+from src.common.base_dto import GenerationModelEnum
 from src.images.dto.create_imagen_dto import CreateImagenDto
 from src.multimodal.gemini_service import (
     GeminiService,
     PromptTargetEnum,
     ResponseMimeTypeEnum,
+)
+from src.multimodal.rewriters import (
+    ITERATE_AUDIO_TEXT_PROMPT_TEMPLATE,
+    REWRITE_AUDIO_TEXT_PROMPT_TEMPLATE,
 )
 
 
@@ -852,3 +858,225 @@ def test_l1_gives_up_after_three_attempts(gemini_service, method_name, invoke):
 
     assert generate_content.call_count == 3
     assert sleep.call_count == 2
+
+
+def test_generate_random_and_rewrite_audio_prompt(gemini_service):
+    mock_resp = MagicMock(
+        text="Warm lo-fi hip-hop beat at 82 BPM with Rhodes piano."
+    )
+    gemini_service.client.models.generate_content.return_value = mock_resp
+
+    assert (
+        gemini_service.generate_random_or_rewrite_prompt(PromptTargetEnum.AUDIO)
+        == mock_resp.text
+    )
+    assert (
+        gemini_service.generate_random_or_rewrite_prompt(
+            PromptTargetEnum.AUDIO, original_prompt="lofi"
+        )
+        == mock_resp.text
+    )
+    assert gemini_service.client.models.generate_content.call_count == 2
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    (
+        "dto_kwargs",
+        "use_part",
+        "ref_ctx",
+        "expected_substrings",
+        "forbidden_substrings",
+    ),
+    [
+        (
+            {
+                "prompt": "jazz",
+                "model": GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+                "enhance_prompt": True,
+            },
+            False,
+            None,
+            ["jazz"],
+            [],
+        ),
+        (
+            {
+                "prompt": "Sing about neon city rain",
+                "negative_prompt": "harsh distortion",
+                "model": GenerationModelEnum.LYRIA_3_PRO_PREVIEW,
+                "enhance_prompt": True,
+            },
+            True,
+            None,
+            ["Elements to avoid: harsh distortion"],
+            [],
+        ),
+        (
+            {
+                "prompt": (
+                    "Build into an anthemic chorus with electric guitar"
+                    " harmonies"
+                ),
+                "negative_prompt": "muddy bass",
+                "model": GenerationModelEnum.LYRIA_3_PRO_PREVIEW,
+                "enhance_prompt": False,
+            },
+            True,
+            {
+                "uri": "gs://bucket/prior.mp3",
+                "mime_type": "audio/mpeg",
+                "prior_prompt": "Warm indie rock verse at 112 BPM",
+                "structure": {"bpm": 112, "key": "G major"},
+                "lyrics": "[Verse 1]\nChasing horizons at dawn",
+            },
+            [
+                ITERATE_AUDIO_TEXT_PROMPT_TEMPLATE.strip(),
+                "Warm indie rock verse at 112 BPM",
+                '"bpm": 112',
+                "[Verse 1]\nChasing horizons at dawn",
+                "Build into an anthemic chorus with electric guitar harmonies",
+                "Elements to avoid: muddy bass",
+                "Target model format: Lyria 3 Pro",
+                "[m:ss - m:ss]",
+            ],
+            ["Lyria 2 (instrumental only"],
+        ),
+        (
+            {
+                "prompt": "Add warm cello counterpoint",
+                "model": GenerationModelEnum.LYRIA_002,
+            },
+            True,
+            {
+                "uri": "gs://bucket/prior.wav",
+                "mime_type": "audio/wav",
+                "raw_text": "Gentle acoustic motif in D major",
+            },
+            [
+                "Target model constraint: Lyria 2 (instrumental only",
+                "do NOT include vocals, a Lyrics: block",
+                "Reference track notes:\nGentle acoustic motif in D major",
+            ],
+            [],
+        ),
+        (
+            {
+                "prompt": "Add muted trumpet solo over the Rhodes",
+                "model": GenerationModelEnum.LYRIA_3_CLIP_PREVIEW,
+            },
+            True,
+            {
+                "uri": "gs://bucket/step2.mp3",
+                "mime_type": "audio/mpeg",
+                "prior_prompt": "120 BPM Bb Major drumless Rhodes jazz solo",
+                "iteration_steps": [
+                    "Jazz solo on keys",
+                    "Remove all the drums",
+                ],
+                "musical_profile": {
+                    "bpm": 120,
+                    "key_signature": "Bb Major",
+                    "time_signature": "4/4",
+                    "instrumentation": ["Fender Rhodes", "upright bass"],
+                },
+            },
+            [
+                "Target model format: Lyria 3 Clip (~30-second clip — anchor "
+                "the [m:ss - m:ss] section timeline within 0:00 to 0:30).",
+                "Cumulative iteration history",
+                "1. Jazz solo on keys",
+                "2. Remove all the drums",
+                "Reference track acoustic / musical profile",
+                '"bpm": 120',
+                '"key_signature": "Bb Major"',
+                "Add muted trumpet solo over the Rhodes",
+            ],
+            [],
+        ),
+    ],
+)
+async def test_enhance_prompt_from_audio_dto_variants(
+    gemini_service,
+    dto_kwargs,
+    use_part,
+    ref_ctx,
+    expected_substrings,
+    forbidden_substrings,
+):
+    assert (
+        "unless the user explicitly asks for vocals"
+        not in REWRITE_AUDIO_TEXT_PROMPT_TEMPLATE
+    )
+    assert "Lyrics:" in ITERATE_AUDIO_TEXT_PROMPT_TEMPLATE
+    assert "Female Alto" in ITERATE_AUDIO_TEXT_PROMPT_TEMPLATE
+
+    dto = CreateAudioDto(workspace_id=1, **dto_kwargs)
+    part = MagicMock(name="media_part")
+    mock_resp = MagicMock(text="Enhanced audio prompt.")
+    gemini_service.client.models.generate_content.return_value = mock_resp
+
+    res = await gemini_service.enhance_prompt_from_dto(
+        dto,
+        PromptTargetEnum.AUDIO,
+        extra_parts=[part] if use_part else None,
+        reference_audio_context=ref_ctx,
+    )
+
+    assert res == mock_resp.text
+    contents = gemini_service.client.models.generate_content.call_args.kwargs[
+        "contents"
+    ]
+    if use_part:
+        assert contents[0] is part
+        prompt_body = contents[1]
+    else:
+        prompt_body = contents
+    for expected in expected_substrings:
+        assert expected in prompt_body
+    for forbidden in forbidden_substrings:
+        assert forbidden not in prompt_body
+
+
+def test_generate_media_metadata_with_audio_profile_compacts_and_infers_audio_mimes(
+    gemini_service,
+):
+    gemini_service.client.models.generate_content.return_value = MagicMock(
+        text=(
+            '{"items": ['
+            '{"title": "Take 1", "description": "Warm jazz keys", "musicalProfile": '
+            '{"bpm": 124, "keySignature": "F# minor", "timeSignature": "4/4", '
+            '"instrumentation": ["Rhodes", "  ", "upright bass"], "vocalProfile": "  "}},'
+            '{"title": "Take 2", "description": "Ambient pad", "musicalProfile": "invalid"}'
+            "]}"
+        )
+    )
+
+    with patch(
+        "src.multimodal.gemini_service.types.Part.from_uri",
+        side_effect=[MagicMock(), MagicMock()],
+    ) as mock_from_uri:
+        res = gemini_service.generate_media_metadata(
+            prompt="Jazz keys",
+            media_uris=["gs://bucket/take1.wav", "gs://bucket/take2.ogg"],
+            model_name="gemini-3.5-flash",
+            include_audio_profile=True,
+        )
+
+    assert [c.kwargs for c in mock_from_uri.call_args_list] == [
+        {"file_uri": "gs://bucket/take1.wav", "mime_type": "audio/wav"},
+        {"file_uri": "gs://bucket/take2.ogg", "mime_type": "audio/ogg"},
+    ]
+    assert res == {
+        "titles": ["Take 1", "Take 2"],
+        "descriptions": ["Warm jazz keys", "Ambient pad"],
+        "musical_profiles": [
+            {
+                "bpm": 124,
+                "key_signature": "F# minor",
+                "time_signature": "4/4",
+                "instrumentation": ["Rhodes", "upright bass"],
+            },
+            None,
+        ],
+    }

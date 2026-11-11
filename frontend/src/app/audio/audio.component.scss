@@ -14,333 +14,79 @@
  * limitations under the License.
  */
 
-// 1. Video Background Setup
-.video-background {
-    position: fixed;
-    top: -30vh;
-    left: 0;
-    width: 100%;
-    height: 130vh;
-    z-index: 0;
-    overflow: hidden;
-
-    video {
-        min-width: 100%;
-        min-height: 100%;
-        object-fit: cover; // Ensures video covers the whole screen
-    }
-
-    .video-overlay {
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0, 0, 0, 0.5);
-    }
+.home-margin {
+  --max-container-width: 1400px;
+  max-width: var(--max-container-width);
+  margin-top: calc(10vh + 0px);
+  margin-left: max(
+    calc(5vw + 4.5rem),
+    calc(50% - var(--max-container-width) / 2)
+  );
+  margin-bottom: 5vh;
 }
 
-// 2. Layout (mobile-first)
-// Breakpoints mirror the rest of the app: 576 / 768 / 992 / 1200.
-.studio-container {
-    position: relative;
-    z-index: 1;
-    min-height: 100vh;
-    min-height: 100dvh; // Accounts for mobile browser chrome where supported
-    display: flex;
-    flex-direction: column;
-    // Extra bottom space so the floating mobile nav (app-header) never covers the Create button.
-    padding: 1rem 1rem 6.5rem;
-    box-sizing: border-box;
-    color: white;
-
-    @media (min-width: 768px) {
-        padding: 2rem;
-    }
+.video-container {
+  height: 15vh;
+  overflow: hidden;
+  display: block;
+  position: relative;
+  border-radius: 1rem;
 }
 
-.header-section {
-    // Lives in the normal flow and takes the free space above the panel,
-    // so it can never overlap the control panel on short screens.
-    flex: 1 1 auto;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    gap: 0.75rem;
-    padding: 2.5rem 0 1.5rem;
-    min-height: 20vh;
-
-    h1 {
-        font-size: clamp(1.5rem, 4vw, 3rem);
-        font-weight: 400;
-        margin: 0;
-        text-shadow: 0 2px 4px rgba(0,0,0,0.5);
-    }
-
-    @media (min-width: 768px) {
-        gap: 1rem;
-        min-height: 25vh;
-    }
+::ng-deep .mat-mdc-chip-action,
+::ng-deep .mat-mdc-chip-action-label {
+  overflow: hidden !important;
+  text-overflow: ellipsis;
 }
 
-// 3. CUSTOM AUDIO PLAYER STYLES
-.result-container {
-    display: flex;
-    justify-content: center;
-    margin-bottom: 1rem;
-    width: 100%;
-    min-width: 0;
-    z-index: 10;
-
-    > * {
-        max-width: 100%;
-        min-width: 0;
-    }
+.control-options mat-icon {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow: visible;
+  transform: scale(1.5);
 }
 
-.custom-player {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 16px;
-    border-radius: 50px; // Pill shape
-    width: 100%;
-    max-width: 600px;
-    box-sizing: border-box;
-
-    // Glassmorphism
-    background: rgba(255, 255, 255, 0.1);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
-
-    @media (min-width: 576px) {
-        gap: 15px;
-        padding: 12px 30px;
-    }
-
-    .play-btn {
-        color: white;
-        transform: scale(1.1);
-        transition: transform 0.2s, color 0.2s;
-        padding: 0;
-        flex-shrink: 0;
-
-        &:hover {
-            transform: scale(1.2);
-            color: #a0c4ff; // Light blue hover
-        }
-
-        mat-icon {
-            width: 40px;
-            height: 40px;
-            font-size: 40px;
-        }
-    }
-
-    .time-text {
-        color: rgba(255, 255, 255, 0.9);
-        font-family: 'Roboto Mono', monospace;
-        font-size: 0.9rem;
-        min-width: 45px;
-        text-align: center;
-        flex-shrink: 0;
-    }
-
-    .custom-slider {
-        flex: 1;
-        min-width: 0;
-
-        // Force slider to look white/glassy
-        ::ng-deep {
-            .mdc-slider__track--active_fill {
-                border-color: white !important;
-            }
-            .mdc-slider__track--inactive {
-                background-color: rgba(255, 255, 255, 0.3) !important;
-            }
-            .mdc-slider__thumb-knob {
-                background-color: white !important;
-                border-color: white !important;
-            }
-        }
-    }
-}
-
-// 4. Control Panel (Glassmorphism)
-.control-panel {
-    background: rgba(255, 255, 255, 0.1);
-    backdrop-filter: blur(15px);
-    -webkit-backdrop-filter: blur(15px);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 16px;
-    padding: 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    max-width: 1200px;
-    width: 100%;
-    min-width: 0;
-    margin: 0 auto;
-    box-sizing: border-box;
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
-
-    @media (min-width: 768px) {
-        padding: 20px;
-        gap: 15px;
-    }
-
-    &.glass-effect {
-        ::ng-deep .mat-mdc-form-field-subscript-wrapper {
-            display: none;
-        }
-
-        ::ng-deep .mat-mdc-form-field {
-            background: rgba(0,0,0,0.3);
-            border-radius: 4px;
-        }
-        ::ng-deep .mat-mdc-input-element,
-        ::ng-deep .mat-mdc-select-value,
-        ::ng-deep .mat-mdc-floating-label {
-            color: white !important;
-        }
-    }
-}
-
-.model-selector {
-    display: flex;
-    justify-content: center;
-    min-width: 0;
-
-    mat-button-toggle-group {
-        background-color: rgba(0,0,0,0.4);
-        border: none;
-        // Full-width, equally split toggles on phones; natural width on larger screens.
-        width: 100%;
-        max-width: 100%;
-
-        mat-button-toggle {
-            color: #ccc;
-            flex: 1 1 0;
-            min-width: 0;
-
-            &.mat-button-toggle-checked {
-                background-color: rgba(255, 255, 255, 0.2);
-                color: white;
-            }
-
-            ::ng-deep .mat-button-toggle-label-content {
-                padding: 0 8px;
-                font-size: 0.85rem;
-                white-space: normal;
-                line-height: 1.2;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                min-height: 44px;
-            }
-        }
-
-        @media (min-width: 576px) {
-            width: auto;
-
-            mat-button-toggle {
-                flex: 0 0 auto;
-
-                ::ng-deep .mat-button-toggle-label-content {
-                    padding: 0 16px;
-                    font-size: inherit;
-                    white-space: nowrap;
-                }
-            }
-        }
-    }
-}
-
-// Mobile-first: one column; two columns on tablets (prompt spans both);
-// a single wrapping row on desktops.
-.config-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0.75rem 1rem;
-    align-items: start;
-    min-width: 0;
-
-    mat-form-field {
-        width: 100%;
-        min-width: 0;
-    }
-
-    @media (min-width: 576px) {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-
-        .large-field { grid-column: 1 / -1; }
-    }
-
-    @media (min-width: 992px) {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 15px;
-
-        mat-form-field { flex: 2 1 10rem; width: auto; }
-        .large-field { flex: 4 1 16rem; }
-        .short-field { flex: 1 1 6rem; max-width: 12rem; }
-    }
-}
-
-.action-row {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 0.75rem;
-
-    @media (min-width: 576px) {
-        flex-direction: row;
-        align-items: center;
-        justify-content: flex-end;
-        flex-wrap: wrap;
-        gap: 1rem;
-    }
+.menu-item-selected {
+  background: linear-gradient(to right, #3b82f6, #8b5cf6, #f87171);
 }
 
 .model-hint {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.85rem;
-    color: rgba(255, 255, 255, 0.75);
-    line-height: 1.3;
-    min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.75);
+  line-height: 1.3;
+  min-width: 0;
+  text-align: center;
 
-    mat-icon {
-        font-size: 18px;
-        width: 18px;
-        height: 18px;
-        flex-shrink: 0;
-    }
-
-    @media (min-width: 576px) {
-        margin-right: auto; // Push the Create button to the right edge
-    }
+  mat-icon {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+  }
 }
 
-.create-btn {
-    width: 100%;
-    padding: 0.5rem 3rem;
-    font-size: 1.1rem;
-    height: 48px;
-
-    @media (min-width: 576px) {
-        width: auto;
-    }
+// Medium devices (tablets, 768px and up)
+@media (min-width: 768px) {
+  .video-container {
+    height: 45vh;
+  }
 }
 
-.add-voice-option {
-    color: #4285f4;
-    display: flex;
-    align-items: center;
-    gap: 8px;
+// X-Large devices (large desktops, 1200px and up)
+@media (min-width: 1200px) {
+  .home-margin {
+    margin: 2rem auto 0 auto;
+  }
+
+  ::ng-deep .image-selector-dialog {
+    width: 70vw !important;
+    max-width: 70vw !important;
+  }
 }
+
