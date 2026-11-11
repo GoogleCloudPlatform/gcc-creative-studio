@@ -841,6 +841,12 @@ def test_frontend_and_backend_video_model_capabilities_stay_in_sync():
         / "config"
         / "model-config.ts"
     )
+    if not ts_path.is_file():
+        pytest.skip(
+            f"Frontend model config not found at {ts_path}; the frontend "
+            "sources are not available in this environment (e.g. inside "
+            "the backend container)."
+        )
     ts_text = ts_path.read_text(encoding="utf-8")
 
     # Extract each object block inside MODEL_CONFIGS where type: 'VIDEO'

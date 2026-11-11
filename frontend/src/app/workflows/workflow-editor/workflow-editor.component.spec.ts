@@ -20,6 +20,7 @@ import {
   TestBed,
   discardPeriodicTasks,
   fakeAsync,
+  flush,
   tick,
 } from '@angular/core/testing';
 import {
@@ -2184,6 +2185,8 @@ describe('WorkflowEditorComponent - Magnetic Connection Snapping', () => {
       );
       expect(component.historyStack.length).toBe(historyLengthBeforeUpdate);
       expect(textStepCtrl?.get('status')?.value).toBe(StepStatusEnum.COMPLETED);
+      flush();
+      discardPeriodicTasks();
     }));
 
     describe('Loop workflows', () => {

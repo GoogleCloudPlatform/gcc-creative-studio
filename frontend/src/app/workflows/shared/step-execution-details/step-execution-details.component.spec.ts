@@ -621,7 +621,11 @@ describe('StepExecutionDetailsComponent', () => {
           '/gallery',
           '101',
         ]);
-        expect(openSpy).toHaveBeenCalledWith('/gallery/101', '_blank');
+        expect(openSpy).toHaveBeenCalledWith(
+          '/gallery/101',
+          '_blank',
+          'noopener,noreferrer',
+        );
       });
     });
   });

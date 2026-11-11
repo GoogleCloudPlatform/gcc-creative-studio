@@ -210,8 +210,25 @@ async def test_integration_workspace_boundaries(
                 )
                 await session.commit()
     finally:
-        # Cleanup mock_user_b from DB
+        # Cleanup mock_user_b and every row referencing it (media items,
+        # source assets, workflows, ... created as a side effect of User B's
+        # requests). Children are deleted before parents to satisfy FKs.
+        from src.database import Base
+
+        users_id_column = User.__table__.c.id
         async with async_session_local() as session:
+            for table in reversed(Base.metadata.sorted_tables):
+                if table.info.get("is_view") or table is User.__table__:
+                    continue
+                user_fk_columns = [
+                    fk.parent
+                    for fk in table.foreign_keys
+                    if fk.column is users_id_column
+                ]
+                for column in user_fk_columns:
+                    await session.execute(
+                        delete(table).where(column == mock_user_b.id)
+                    )
             await session.execute(delete(User).where(User.id == mock_user_b.id))
             await session.commit()
         # Restore mock_user override

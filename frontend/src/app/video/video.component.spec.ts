@@ -35,11 +35,11 @@ import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {provideHttpClient} from '@angular/common/http';
 import {provideHttpClientTesting} from '@angular/common/http/testing';
 import {provideRouter} from '@angular/router';
-import {CUSTOM_ELEMENTS_SCHEMA, Injector} from '@angular/core';
+import {CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
 import {of, Subject} from 'rxjs';
 
 import {VideoComponent} from './video.component';
-import {AppInjector, setAppInjector} from '../app-injector';
+import {useTestBedAppInjector} from '../testing/app-injector.testing';
 import {NotificationService} from '../common/services/notification.service';
 import {SearchService} from '../services/search/search.service';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
@@ -131,11 +131,7 @@ describe('VideoComponent', () => {
       schemas: [CUSTOM_ELEMENTS_SCHEMA],
     }).compileComponents();
 
-    if (!AppInjector) {
-      setAppInjector({
-        get: (token: any) => TestBed.inject(token),
-      } as Injector);
-    }
+    useTestBedAppInjector();
     fixture = TestBed.createComponent(VideoComponent);
     component = fixture.componentInstance;
     fixture.detectChanges();

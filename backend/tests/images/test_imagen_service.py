@@ -1662,6 +1662,129 @@ def test_process_image_in_background_sync_video_ref_source_asset(
             assert call_kwargs["source_assets"][0]["role"] == "video_reference"
 
 
+def test_create_imagen_dto_flash_lite_accepts_video_references():
+    from pydantic import ValidationError
+
+    from src.common.base_dto import AssetReferenceDto, GenerationModelEnum
+    from src.images.dto.create_imagen_dto import CreateImagenDto
+
+    lite_model = GenerationModelEnum.GEMINI_3_1_FLASH_LITE_IMAGE
+    video_reference = AssetReferenceDto(id=10, type="source_asset")
+    youtube_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+    file_dto = CreateImagenDto(
+        prompt="Video to image",
+        workspace_id=1,
+        generation_model=lite_model,
+        reference_video=video_reference,
+    )
+    assert file_dto.generation_model == lite_model
+    assert file_dto.reference_video == video_reference
+
+    youtube_dto = CreateImagenDto(
+        prompt="Video to image",
+        workspace_id=1,
+        generation_model=lite_model,
+        external_url=youtube_url,
+    )
+    assert youtube_dto.external_url == youtube_url
+
+    with pytest.raises(ValidationError) as exc_info:
+        CreateImagenDto(
+            prompt="Video to image",
+            workspace_id=1,
+            generation_model=lite_model,
+            reference_video=video_reference,
+            resolution="2K",
+        )
+    assert "only supports 1K resolution" in str(exc_info.value)
+
+
+@patch("src.images.imagen_service.generate_image_thumbnail_from_gcs")
+@patch("src.common.media_utils.generate_image_thumbnail_from_gcs")
+@patch("src.database.WorkerDatabase")
+@patch("src.images.imagen_service.GenAIModelSetup.init")
+def test_process_image_in_background_flash_lite_forwards_video_reference(
+    mock_genai_init,
+    mock_worker_db_class,
+    mock_thumb_mu,
+    mock_thumb_is,
+    sample_create_imagen_dto,
+    sample_user,
+):
+    _ = (mock_thumb_mu, mock_thumb_is)
+    from src.common.base_dto import AssetReferenceDto, GenerationModelEnum
+    from src.source_assets.schema.source_asset_model import SourceAssetModel
+
+    lite_model = GenerationModelEnum.GEMINI_3_1_FLASH_LITE_IMAGE
+    video_gcs_uri = "gs://b/lite_video.mp4"
+    sample_create_imagen_dto.generation_model = lite_model
+    sample_create_imagen_dto.resolution = "1K"
+    sample_create_imagen_dto.reference_video = AssetReferenceDto(
+        id=777, type="source_asset"
+    )
+
+    mock_db_context = AsyncMock()
+    mock_db_factory = MagicMock(return_value=mock_db_context)
+    mock_worker_db_class.return_value.__aenter__.return_value = mock_db_factory
+    mock_genai_init.return_value = MagicMock()
+
+    with (
+        patch(
+            "src.images.imagen_service.gemini_generate_image"
+        ) as mock_gemini_gen,
+        patch(
+            "src.images.imagen_service.MediaRepository"
+        ) as mock_media_repo_class,
+        patch(
+            "src.images.imagen_service.SourceAssetRepository"
+        ) as mock_sa_repo_class,
+        patch("src.images.imagen_service.GcsService") as mock_gcs_class,
+    ):
+        mock_result = MagicMock()
+        mock_result.image.gcs_uri = "gs://bucket/output_lite.png"
+        mock_gemini_gen.return_value = (mock_result, None)
+
+        mock_media_repo = AsyncMock()
+        mock_media_repo_class.return_value = mock_media_repo
+
+        mock_sa_repo = AsyncMock()
+        mock_sa_repo_class.return_value = mock_sa_repo
+        mock_sa_repo.get_by_id.return_value = SourceAssetModel(
+            workspace_id=1,
+            user_id=1,
+            user_email="admin@test.com",
+            original_filename="lite_video.mp4",
+            file_hash="fakehash",
+            mime_type="video/mp4",
+            gcs_uri=video_gcs_uri,
+        )
+
+        mock_gcs = AsyncMock()
+        mock_gcs.bucket_name = "test-bucket"
+        mock_gcs_class.return_value = mock_gcs
+
+        _process_image_in_background(
+            media_item_id=201,
+            request_dto=sample_create_imagen_dto,
+            current_user=sample_user,
+        )
+
+        mock_gemini_gen.assert_called_once()
+        gen_kwargs = mock_gemini_gen.call_args.kwargs
+        assert gen_kwargs["model"] == lite_model
+        reference_parts = gen_kwargs["reference_parts"]
+        assert len(reference_parts) == 1
+        assert reference_parts[0].file_data.file_uri == video_gcs_uri
+
+        mock_media_repo.update.assert_called_once()
+        linked_asset = mock_media_repo.update.call_args[0][1]["source_assets"][
+            0
+        ]
+        assert linked_asset["asset_id"] == 777
+        assert linked_asset["role"] == "video_reference"
+
+
 @patch("src.images.imagen_service.generate_image_thumbnail_from_gcs")
 @patch("src.common.media_utils.generate_image_thumbnail_from_gcs")
 @patch("src.database.WorkerDatabase")
