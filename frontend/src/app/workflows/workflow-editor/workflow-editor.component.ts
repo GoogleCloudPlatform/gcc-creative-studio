@@ -48,10 +48,13 @@ import {
 } from '../../utils/handleMessageSnackbar';
 import {MediaResolutionService} from '../shared/media-resolution.service';
 import {
+  AvailableOutput,
+  EditorMode,
   isNonTerminalRunStatus,
   NodeTypes,
   Point,
   StepEntry,
+  StepInputUnlinkEvent,
   StepInputValue,
   StepOutputReference,
   StepState,
@@ -70,7 +73,11 @@ import {
 // But wait, template calls getStepConfig.
 import {STEP_CONFIGS_MAP} from '../shared/step-configs.map'; // Kept for template
 import {GENERATE_TEXT_STEP_CONFIG} from './step-components/step-configs/generate-text-step.config';
-import {isStepOutputReference, labelToName} from '../utils/workflow-step.util';
+import {
+  isStepOutputReference,
+  labelToName,
+  removeLinkFromInputValue,
+} from '../utils/workflow-step.util';
 import {
   DragSourcePort,
   findClosestMagneticPort,
@@ -243,7 +250,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   // availableOutputsPerStep is now an observable, but template expects array.
   // We can subscribe to it or usage async pipe.
   // For minimal template change, we'll subscribe.
-  availableOutputsPerStep: any[][] = [];
+  availableOutputsPerStep: AvailableOutput[][] = [];
   previousOutputDefinitions: any[] = [];
 
   private destroyRef = inject(DestroyRef);
@@ -1033,9 +1040,7 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       }
 
       // Connect dragSourcePort to event target
-      const stepForm = this.stepsArray.controls.find(
-        c => c.get('stepId')?.value === targetStepId,
-      ) as FormGroup;
+      const stepForm = this.findStepForm(targetStepId);
       if (stepForm) {
         const inputs = stepForm.get('inputs') as FormGroup;
         if (inputs && inputs.contains(event.inputName)) {
@@ -1155,6 +1160,29 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
       this.magneticTargetPort = null;
       this.candidateMagneticPorts = [];
     }
+  }
+
+  onUnlinkInput(event: StepInputUnlinkEvent): void {
+    if (this.isReadOnly) return;
+    const stepForm = this.findStepForm(event.stepId);
+    const control = stepForm?.get('inputs')?.get(event.inputName);
+    if (!control) return;
+    control.setValue(removeLinkFromInputValue(control.value, event.ref));
+    control.markAsDirty();
+    this.updateEdges();
+    this.saveHistoryState();
+  }
+
+  /**
+   * Returns the step form group whose `stepId` matches the given id, or null
+   * when no such step exists.
+   */
+  private findStepForm(stepId: string): FormGroup | null {
+    return (
+      (this.stepsArray.controls.find(c => c.get('stepId')?.value === stepId) as
+        | FormGroup
+        | undefined) ?? null
+    );
   }
 
   private updateEdges(): void {
@@ -2449,10 +2477,4 @@ export class WorkflowEditorComponent implements OnInit, OnDestroy {
   // populateFormFromData and resetFormForNew removed, handled by service patchData and initForm
 
   // getStepIcon removed, use StepIconPipe in template
-}
-
-export enum EditorMode {
-  Create,
-  Edit,
-  Run,
 }
