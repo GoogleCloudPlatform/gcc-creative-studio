@@ -31,7 +31,7 @@ import {
   map,
 } from 'rxjs/operators';
 import {environment} from '../../environments/environment';
-import {MediaItem} from '../common/models/media-item.model';
+import {AudioAnalysis, MediaItem} from '../common/models/media-item.model';
 import {
   GalleryItem,
   PaginatedGalleryResponse,
@@ -56,6 +56,10 @@ export class GalleryService implements OnDestroy {
   private filters$ = new BehaviorSubject<GallerySearchDto | null>(null);
   private uiFiltersState: GalleryFiltersState | null = null;
   private dataLoadingSubscription: Subscription;
+  private audioAnalysisCache = new Map<
+    number,
+    Observable<AudioAnalysis | null>
+  >();
 
   constructor(
     private http: HttpClient,
@@ -165,6 +169,7 @@ export class GalleryService implements OnDestroy {
     this.currentPage = 0;
     this.allImagesLoaded$.next(false);
     this.imagesCache$.next([]);
+    this.audioAnalysisCache.clear();
   }
 
   private processFetchResponse(
@@ -192,6 +197,27 @@ export class GalleryService implements OnDestroy {
           this.mapUnifiedItem({...response, itemType: 'media_item'}),
         ),
       );
+  }
+
+  getAudioAnalysis(id: number): Observable<AudioAnalysis | null> {
+    const cached = this.audioAnalysisCache.get(id);
+    if (cached) {
+      return cached;
+    }
+    const url = `${environment.backendURL}/gallery/item/${id}/audio-analysis`;
+    const req$ = this.http
+      .get<{audioAnalysis?: AudioAnalysis | null}>(url)
+      .pipe(
+        map(res => res?.audioAnalysis ?? null),
+        catchError(err => {
+          console.error(`Failed to fetch audio analysis for item ${id}`, err);
+          this.audioAnalysisCache.delete(id);
+          return of(null);
+        }),
+        shareReplay(1),
+      );
+    this.audioAnalysisCache.set(id, req$);
+    return req$;
   }
 
   getAsset(id: number): Observable<GalleryItem> {
@@ -303,7 +329,7 @@ export class GalleryService implements OnDestroy {
       voiceName: item.voiceName || metadata.voiceName || metadata.voice_name,
       languageCode:
         item.languageCode || metadata.languageCode || metadata.language_code,
-      seed: item.seed || metadata.seed,
+      seed: item.seed ?? metadata.seed,
       numMedia: item.numMedia || metadata.numMedia || metadata.num_media,
       duration: item.duration || metadata.duration,
       resolution: item.resolution || metadata.resolution,
@@ -333,7 +359,8 @@ export class GalleryService implements OnDestroy {
       comment: item.comment || metadata.comment,
       critique: item.critique || metadata.critique,
       rawData: item.rawData || metadata.raw_data,
-      audioAnalysis: item.audioAnalysis || metadata.audio_analysis,
+      audioAnalysis:
+        item.audioAnalysis || item.audio_analysis || metadata.audio_analysis,
       errorMessage:
         item.errorMessage ||
         item.error_message ||

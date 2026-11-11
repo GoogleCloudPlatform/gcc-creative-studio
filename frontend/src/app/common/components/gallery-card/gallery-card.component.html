@@ -125,10 +125,44 @@
     </ng-container>
 
     <ng-container *ngIf="item.mimeType?.startsWith('audio/')">
-      <div class="audio-card-preview">
-        <mat-icon [class.playing-icon]="hoveredAudioId === item.id">
-          graphic_eq
-        </mat-icon>
+      <div
+        class="audio-card-preview"
+        [class.has-waveform]="hoveredAudioId === item.id && !!currentAudioWaveform()"
+      >
+        <div
+          *ngIf="hoveredAudioId === item.id && currentAudioWaveform() as bars; else audioIconFallback"
+          class="audio-card-waveform"
+          aria-hidden="true"
+        >
+          <span
+            *ngFor="let bar of bars; trackBy: trackByIndex"
+            class="audio-card-waveform-bar"
+            [style.height.%]="bar * 100"
+          ></span>
+        </div>
+        <ng-template #audioIconFallback>
+          <mat-icon [class.playing-icon]="hoveredAudioId === item.id">
+            graphic_eq
+          </mat-icon>
+        </ng-template>
+        <div
+          *ngIf="hoveredAudioId === item.id && (currentAudioDurationLabel() || currentAudioBpmLabel())"
+          class="audio-hover-meta"
+        >
+          <span *ngIf="currentAudioDurationLabel()" class="audio-meta-item">
+            {{ currentAudioDurationLabel() }}
+          </span>
+          <span
+            *ngIf="currentAudioDurationLabel() && currentAudioBpmLabel()"
+            class="audio-meta-sep"
+            aria-hidden="true"
+          >
+            &middot;
+          </span>
+          <span *ngIf="currentAudioBpmLabel()" class="audio-meta-item">
+            {{ currentAudioBpmLabel() }}
+          </span>
+        </div>
       </div>
       <div
         class="spacer"

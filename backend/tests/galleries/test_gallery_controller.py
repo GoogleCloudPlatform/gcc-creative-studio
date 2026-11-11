@@ -124,6 +124,17 @@ def test_get_single_gallery_item_not_found(client, mock_service):
     assert response.status_code == 404
 
 
+def test_get_gallery_item_audio_analysis_success(client, mock_service):
+    mock_service.get_media_audio_analysis = AsyncMock(
+        return_value={"tracks": [{"waveform": [0.2, 0.8]}]}
+    )
+    response = client.get("/api/gallery/item/42/audio-analysis")
+    assert response.status_code == 200
+    assert response.json() == {
+        "audioAnalysis": {"tracks": [{"waveform": [0.2, 0.8]}]}
+    }
+
+
 def test_bulk_delete_items_success(client, mock_service):
     mock_service.bulk_delete.return_value = True
     payload = {"items": [{"id": 1, "type": "media_item"}], "workspace_id": 1}
