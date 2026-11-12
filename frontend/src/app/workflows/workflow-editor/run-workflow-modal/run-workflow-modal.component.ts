@@ -212,6 +212,7 @@ export class RunWorkflowModalComponent implements OnInit {
         if (!selection) return;
         control.setValue(selection.folderId);
         control.markAsTouched();
+        control.markAsDirty();
         this.folderSelections.update(selections => ({
           ...selections,
           [inputName]: selection,
