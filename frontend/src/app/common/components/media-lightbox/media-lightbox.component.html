@@ -21,12 +21,12 @@
     [ngClass]="[
       aspectRatioClass,
       (!isVideo && !isAudio) ? 'zoomable' : '',
-      isAudio ? '!bg-transparent !shadow-none !h-full flex-col' : ''
+      isAudio ? 'audio-stage-container !h-full flex-col' : ''
     ]"
     (click)="(!isVideo && !isAudio) && openPhotoSwipe(selectedIndex)"
   >
     <!-- Audio Stage Visuals -->
-    <div *ngIf="isAudio" class="audio-stage-layout">
+    <div *ngIf="isAudio" class="audio-stage-layout" [class.has-lyrics]="hasCurrentTrackText()">
         <div class="audio-icon-container">
             <mat-icon class="stage-icon">music_note</mat-icon>
         </div>
@@ -39,6 +39,44 @@
               matTooltipShowDelay="300"
             >{{ mediaItem.prompt || 'Untitled Audio' }}</h2>
             <p class="audio-type">{{ mediaItem.mimeType }}</p>
+        </div>
+
+        <div *ngIf="hasCurrentTrackText()" class="audio-lyrics-panel glass-effect">
+          <div class="audio-lyrics-header">
+            <span class="audio-lyrics-title">
+              <mat-icon class="lyrics-icon">lyrics</mat-icon>
+              {{
+                currentTrackLyrics() && (currentTrackStructureEntries().length || currentTrackCaption())
+                  ? 'Lyrics & Structure'
+                  : currentTrackLyrics()
+                    ? 'Lyrics'
+                    : 'Song Structure'
+              }}
+            </span>
+            <button
+              mat-icon-button
+              type="button"
+              class="copy-lyrics-btn"
+              matTooltip="Copy lyrics / structure"
+              (click)="copyCurrentTrackText(); $event.stopPropagation()"
+              aria-label="Copy lyrics"
+            >
+              <mat-icon>content_copy</mat-icon>
+            </button>
+          </div>
+          <div class="audio-lyrics-body">
+            <div *ngIf="currentTrackStructureEntries().length" class="structure-grid">
+              <div *ngFor="let entry of currentTrackStructureEntries(); trackBy: trackByIndex" class="structure-chip">
+                <span class="structure-label">{{ entry.label }}</span>
+                <span class="structure-value">{{ entry.value }}</span>
+              </div>
+            </div>
+            <pre *ngIf="currentTrackLyrics()" class="lyrics-text">{{ currentTrackLyrics() }}</pre>
+            <p *ngIf="currentTrackCaption()" class="structure-caption">
+              <span class="structure-caption-label">Caption:</span>
+              {{ currentTrackCaption() }}
+            </p>
+          </div>
         </div>
     </div>
     <ng-container *ngIf="!isVideo && !isAudio && selectedUrl">
@@ -76,29 +114,89 @@
     </ng-container>
 
     <ng-container *ngIf="isAudio && selectedUrl">
-        <div class="custom-audio-player glass-effect">
-            <audio #audioPlayer
-                   [src]="selectedUrl"
-                   (timeupdate)="onTimeUpdate()"
-                   (loadedmetadata)="onAudioLoaded()"
-                   (ended)="onAudioEnded()"
-                   hidden>
-            </audio>
+      <div class="custom-audio-player glass-effect" [class.is-playing]="isPlaying">
+        <audio
+          #audioPlayer
+          [src]="selectedUrl"
+          (play)="onAudioPlay()"
+          (pause)="onAudioPause()"
+          (timeupdate)="onTimeUpdate()"
+          (loadedmetadata)="onAudioLoaded()"
+          (ended)="onAudioEnded()"
+          hidden
+        ></audio>
 
-            <button mat-icon-button class="play-btn" (click)="togglePlay()">
-                <mat-icon class="!w-10 !h-10 !text-[40px] leading-[40px]">
-                    {{ isPlaying ? 'pause_circle' : 'play_circle' }}
-                </mat-icon>
-            </button>
+        <button
+          mat-icon-button
+          type="button"
+          class="play-btn"
+          [attr.aria-label]="isPlaying ? 'Pause audio' : 'Play audio'"
+          (click)="togglePlay()"
+        >
+          <mat-icon class="!w-10 !h-10 !text-[40px] leading-[40px]">
+            {{ isPlaying ? 'pause_circle' : 'play_circle' }}
+          </mat-icon>
+        </button>
 
-            <span class="time-text">{{ currentTime }}</span>
+        <span class="time-text">{{ currentTime }}</span>
 
-            <mat-slider class="custom-slider" min="0" max="100" step="0.1">
-                <input matSliderThumb [value]="progressValue" (valueChange)="seek($event)">
-            </mat-slider>
+        <div
+          *ngIf="currentTrackWaveform() as bars; else sliderFallback"
+          class="waveform-scrubber"
+          role="slider"
+          tabindex="0"
+          aria-label="Seek audio waveform"
+          [attr.aria-valuemin]="0"
+          [attr.aria-valuemax]="100"
+          [attr.aria-valuenow]="progressValue | number:'1.0-0'"
+          [attr.aria-valuetext]="currentTime + ' of ' + duration"
+          [class.waveform-scrubbing]="isScrubbing()"
+          (pointerdown)="onWaveformPointerDown($event)"
+          (pointermove)="onWaveformPointerMove($event)"
+          (pointerup)="onWaveformPointerUp($event)"
+          (pointercancel)="onWaveformPointerUp($event)"
+          (pointerleave)="onWaveformPointerLeave()"
+          (keydown)="onWaveformKeyDown($event)"
+        >
+          <div class="waveform-bars" aria-hidden="true">
+            <span
+              *ngFor="let bar of bars; let i = index; trackBy: trackByIndex"
+              class="waveform-bar"
+              [class.played]="isBarPlayed(i, bars.length)"
+              [class.hovered]="isBarHovered(i, bars.length)"
+              [style.height.%]="bar * 100"
+            ></span>
+          </div>
 
-            <span class="time-text">{{ duration }}</span>
+          <div
+            #waveformPlayhead
+            class="waveform-playhead"
+            aria-hidden="true"
+            [style.left.%]="progressValue"
+          ></div>
+
+          <span
+            *ngIf="hoverTimeLabel() as hoverLabel"
+            class="waveform-hover-time"
+            aria-hidden="true"
+            [style.left.%]="hoverProgress()"
+          >
+            {{ hoverLabel }}
+          </span>
         </div>
+
+        <ng-template #sliderFallback>
+          <mat-slider class="custom-slider" min="0" max="100" step="0.1">
+            <input
+              matSliderThumb
+              [value]="progressValue"
+              (valueChange)="seek($event)"
+            />
+          </mat-slider>
+        </ng-template>
+
+        <span class="time-text">{{ duration }}</span>
+      </div>
     </ng-container>
   </div>
 

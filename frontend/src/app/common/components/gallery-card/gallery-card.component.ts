@@ -17,23 +17,37 @@
 import {
   Component,
   Input,
+  Optional,
   Output,
   EventEmitter,
   OnDestroy,
   Inject,
   PLATFORM_ID,
+  computed,
+  signal,
 } from '@angular/core';
 import {Router} from '@angular/router';
 import {isPlatformBrowser} from '@angular/common';
+import {Subscription} from 'rxjs';
 import {GalleryItem} from '../../models/gallery-item.model';
 import {MediaItemSelection} from '../image-selector/image-selector.component';
 import {UserService} from '../../services/user.service';
 import {MatDialog} from '@angular/material/dialog';
 import {UserRolesEnum} from '../../models/user.model';
 import {AssignTagsDialogComponent} from '../assign-tags-dialog/assign-tags-dialog.component';
-import {MediaItem} from '../../models/media-item.model';
+import {
+  AudioAnalysis,
+  AudioTrackAnalysis,
+  MediaItem,
+  formatAudioDuration,
+  getAudioTrackAnalysis,
+  getAudioTrackBpm,
+  getAudioTrackDurationSeconds,
+  getAudioTrackWaveform,
+} from '../../models/media-item.model';
 import {TagModel} from '../../services/tags.service';
 import {GalleryDragPayload} from '../../models/folder.model';
+import {GalleryService} from '../../../gallery/gallery.service';
 
 @Component({
   selector: 'app-gallery-card',
@@ -42,17 +56,37 @@ import {GalleryDragPayload} from '../../models/folder.model';
 })
 export class GalleryCardComponent implements OnDestroy {
   isAdmin = false;
+  readonly loadedAudioAnalysis = signal<AudioAnalysis | null>(null);
+  readonly probedTrackDurations = signal<Record<number, number>>({});
+  private readonly itemSignal = signal<GalleryItem | undefined>(undefined);
+  private readonly currentImageIndexSignal = signal<number>(0);
+  private audioAnalysisSub?: Subscription;
+  private audioAnalysisInFlight = false;
+  private activeMetadataAudio: HTMLAudioElement | null = null;
+  private activeMetadataProbeIndex: number | null = null;
+  private probedAudioIndices = new Set<number>();
+  private _item!: GalleryItem;
 
   constructor(
     private router: Router,
     private userService: UserService,
     public dialog: MatDialog,
     @Inject(PLATFORM_ID) private platformId: Object,
+    @Optional() private galleryService?: GalleryService,
   ) {
     const userDetails = this.userService.getUserDetails();
     this.isAdmin = userDetails?.roles?.includes(UserRolesEnum.ADMIN) || false;
   }
-  @Input() item!: GalleryItem;
+  @Input() set item(val: GalleryItem) {
+    if (val?.id !== this._item?.id) {
+      this.resetHoverAudioState();
+    }
+    this._item = val;
+    this.itemSignal.set(val);
+  }
+  get item(): GalleryItem {
+    return this._item;
+  }
   @Input() isSelectionMode = false;
   @Input() isSelectorMode = false;
   @Input() isSelected = false;
@@ -83,7 +117,12 @@ export class GalleryCardComponent implements OnDestroy {
 
   isDragging = false;
   private wasDragged = false;
-  currentImageIndex = 0;
+  get currentImageIndex(): number {
+    return this.currentImageIndexSignal();
+  }
+  set currentImageIndex(val: number) {
+    this.currentImageIndexSignal.set(val);
+  }
   loadedMedia: Record<number, boolean> = {};
   hoveredVideoId: number | null = null;
   hoveredAudioId: number | null = null;
@@ -155,6 +194,47 @@ export class GalleryCardComponent implements OnDestroy {
     );
   }
 
+  readonly currentAudioTrack = computed<AudioTrackAnalysis | null>(() => {
+    const loaded = this.loadedAudioAnalysis();
+    const item = this.itemSignal();
+    return getAudioTrackAnalysis(
+      loaded ? {audioAnalysis: loaded} : item,
+      this.currentImageIndexSignal(),
+    );
+  });
+
+  readonly currentAudioWaveform = computed<number[] | null>(() =>
+    getAudioTrackWaveform(this.currentAudioTrack()),
+  );
+
+  readonly currentAudioBpmLabel = computed<string | null>(() =>
+    getAudioTrackBpm(this.currentAudioTrack()),
+  );
+
+  readonly currentAudioDurationLabel = computed<string | null>(() => {
+    const item = this.itemSignal();
+    const idx = this.currentImageIndexSignal();
+    const itemAny = item as any;
+    const metaAny = item?.metadata as any;
+    const itemDuration =
+      itemAny?.durationSeconds ??
+      itemAny?.duration_seconds ??
+      item?.duration ??
+      metaAny?.durationSeconds ??
+      metaAny?.duration_seconds ??
+      null;
+    const seconds =
+      getAudioTrackDurationSeconds(
+        this.currentAudioTrack(),
+        idx === 0 ? itemDuration : null,
+      ) ?? this.probedTrackDurations()[idx];
+    return formatAudioDuration(seconds);
+  });
+
+  trackByIndex(index: number): number {
+    return index;
+  }
+
   openAssignTagsDialog(event: Event): void {
     event.stopPropagation();
     event.preventDefault();
@@ -178,7 +258,9 @@ export class GalleryCardComponent implements OnDestroy {
     });
   }
 
-  ngOnDestroy() {}
+  ngOnDestroy() {
+    this.resetHoverAudioState();
+  }
 
   onMouseEnter() {
     if (this.item.mimeType?.startsWith('video/')) {
@@ -186,12 +268,121 @@ export class GalleryCardComponent implements OnDestroy {
     }
     if (this.item.mimeType?.startsWith('audio/')) {
       this.hoveredAudioId = this.item.id;
+      if (!this.ensureAudioWaveformLoaded()) {
+        this.ensureAudioDurationLoaded();
+      }
     }
   }
 
   onMouseLeave() {
     this.hoveredVideoId = null;
     this.hoveredAudioId = null;
+    if (this.activeMetadataAudio && this.activeMetadataProbeIndex !== null) {
+      this.probedAudioIndices.delete(this.activeMetadataProbeIndex);
+      this.cleanupMetadataAudio();
+    }
+  }
+
+  private resetHoverAudioState(): void {
+    this.audioAnalysisSub?.unsubscribe();
+    this.audioAnalysisInFlight = false;
+    this.loadedAudioAnalysis.set(null);
+    this.probedAudioIndices.clear();
+    this.probedTrackDurations.set({});
+    this.cleanupMetadataAudio();
+  }
+
+  private ensureAudioWaveformLoaded(): boolean {
+    if (
+      !this.galleryService ||
+      this.item.itemType !== 'media_item' ||
+      this.loadedAudioAnalysis() !== null ||
+      getAudioTrackAnalysis(this.item, 0)
+    ) {
+      return false;
+    }
+    if (this.audioAnalysisInFlight) return true;
+
+    const requestedId = this.item.id;
+    this.audioAnalysisInFlight = true;
+    this.audioAnalysisSub?.unsubscribe();
+    this.audioAnalysisSub = this.galleryService
+      .getAudioAnalysis(requestedId)
+      .subscribe(analysis => {
+        this.audioAnalysisInFlight = false;
+        if (this.item?.id !== requestedId) return;
+        if (analysis) {
+          this.loadedAudioAnalysis.set(analysis);
+        }
+        if (this.hoveredAudioId === requestedId) {
+          this.ensureAudioDurationLoaded();
+        }
+      });
+    return true;
+  }
+
+  private ensureAudioDurationLoaded(): void {
+    const itemId = this.item?.id;
+    const trackIndex = this.currentImageIndex;
+    const url = this.item?.presignedUrls?.[trackIndex];
+    if (
+      this.currentAudioDurationLabel() ||
+      !url ||
+      itemId === undefined ||
+      !isPlatformBrowser(this.platformId) ||
+      typeof Audio === 'undefined' ||
+      this.probedAudioIndices.has(trackIndex)
+    ) {
+      return;
+    }
+
+    this.probedAudioIndices.add(trackIndex);
+    this.cleanupMetadataAudio();
+    try {
+      const audio = new Audio();
+      audio.preload = 'metadata';
+      this.activeMetadataAudio = audio;
+      this.activeMetadataProbeIndex = trackIndex;
+
+      const cleanup = () => {
+        audio.onloadedmetadata = null;
+        audio.onerror = null;
+        if (this.activeMetadataAudio === audio) {
+          this.cleanupMetadataAudio();
+        }
+      };
+
+      audio.onloadedmetadata = () => {
+        const dur = audio.duration;
+        cleanup();
+        if (this.item?.id === itemId && Number.isFinite(dur) && dur > 0) {
+          this.probedTrackDurations.update(prev => ({
+            ...prev,
+            [trackIndex]: dur,
+          }));
+        }
+      };
+      audio.onerror = cleanup;
+      audio.src = url;
+    } catch (err) {
+      console.warn('Failed to probe audio metadata duration:', err);
+      this.probedAudioIndices.delete(trackIndex);
+      this.cleanupMetadataAudio();
+    }
+  }
+
+  private cleanupMetadataAudio(): void {
+    this.activeMetadataProbeIndex = null;
+    if (!this.activeMetadataAudio) return;
+    try {
+      this.activeMetadataAudio.onloadedmetadata = null;
+      this.activeMetadataAudio.onerror = null;
+      this.activeMetadataAudio.removeAttribute('src');
+      this.activeMetadataAudio.load();
+    } catch {
+      // Ignore cleanup errors on detached audio elements
+    }
+    this.activeMetadataAudio = null;
   }
 
   nextImageItem(event: Event) {
@@ -199,6 +390,9 @@ export class GalleryCardComponent implements OnDestroy {
     event.preventDefault();
     const total = this.displayUrls.length;
     this.currentImageIndex = (this.currentImageIndex + 1) % total;
+    if (this.hoveredAudioId === this.item.id) {
+      this.ensureAudioDurationLoaded();
+    }
   }
 
   prevImageItem(event: Event) {
@@ -206,6 +400,9 @@ export class GalleryCardComponent implements OnDestroy {
     event.preventDefault();
     const total = this.displayUrls.length;
     this.currentImageIndex = (this.currentImageIndex - 1 + total) % total;
+    if (this.hoveredAudioId === this.item.id) {
+      this.ensureAudioDurationLoaded();
+    }
   }
 
   onMediaLoad(index = 0): void {

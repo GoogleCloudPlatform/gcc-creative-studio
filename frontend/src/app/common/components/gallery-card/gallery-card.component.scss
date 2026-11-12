@@ -136,6 +136,62 @@
   cursor: pointer;
   transition: background-color 0.3s;
 
+  .audio-card-waveform {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    width: 88%;
+    min-width: 0;
+    max-width: 500px;
+    height: 58%;
+    max-height: 116px;
+    overflow: hidden;
+    pointer-events: none;
+    animation: audio-waveform-fade-in 180ms ease-out;
+  }
+
+  .audio-card-waveform-bar {
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 4px;
+    min-height: 3px;
+    border-radius: 999px;
+    background: linear-gradient(
+      180deg,
+      rgba(232, 234, 237, 0.34) 0%,
+      rgba(168, 199, 250, 0.2) 100%
+    );
+  }
+
+  .audio-hover-meta {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 20;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(18, 18, 22, 0.55);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: rgba(232, 234, 237, 0.88);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+    animation: audio-waveform-fade-in 160ms ease-out;
+  }
+
+  .audio-meta-sep {
+    color: rgba(255, 255, 255, 0.38);
+  }
+
   mat-icon {
     font-size: 80px; // Large icon
     width: 80px;
@@ -148,6 +204,15 @@
   .playing-icon {
     color: #a0c4ff; // Light blue to indicate active state
     animation: pulse-audio 1.5s infinite ease-in-out;
+  }
+}
+
+@keyframes audio-waveform-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 
@@ -169,6 +234,16 @@
 // Style the hover effect on the parent 'card-root'
 .card-root:hover .audio-card-preview {
   background-color: #38383e;
+
+  &.has-waveform {
+    background:
+      radial-gradient(
+        ellipse at 50% 50%,
+        rgba(168, 199, 250, 0.06) 0%,
+        rgba(49, 50, 56, 0) 72%
+      ),
+      #313238;
+  }
 
   mat-icon {
     color: rgba(255, 255, 255, 0.6);

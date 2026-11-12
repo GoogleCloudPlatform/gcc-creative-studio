@@ -340,13 +340,16 @@ class TestBackgroundWorkers:
             user_id=sample_user.id,
         )
 
-        mock_repo.update.assert_called_with(
-            126,
-            {
-                "status": JobStatusEnum.COMPLETED,
-                "gcs_uris": ["gs://foo/gemini.wav"],
-                "generation_time": pytest.approx(0, abs=10.0),
-            },
+        mock_repo.update.assert_called_once()
+        updated_id, updated_payload = mock_repo.update.call_args[0]
+        assert updated_id == 126
+        assert updated_payload["status"] == JobStatusEnum.COMPLETED
+        assert updated_payload["gcs_uris"] == ["gs://foo/gemini.wav"]
+        assert updated_payload["generation_time"] == pytest.approx(0, abs=10.0)
+        assert len(updated_payload["audio_analysis"]["tracks"]) == 1
+        assert (
+            len(updated_payload["audio_analysis"]["tracks"][0]["waveform"])
+            == 120
         )
         mock_client.models.generate_content.assert_called_once()
         _, call_kwargs = mock_client.models.generate_content.call_args
@@ -776,3 +779,106 @@ class TestLyria3Helpers:
         audio, mime = _extract_lyria3_audio(interaction)
         assert audio is None
         assert mime == "audio/mpeg"
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.audios.audio_service.MediaRepository")
+    @patch("src.audios.audio_service.GenAIModelSetup")
+    @patch("src.audios.audio_service.GcsService")
+    def test_process_lyria3_persists_aligned_lyrics_and_structure(
+        self,
+        mock_gcs,
+        mock_genai_setup,
+        mock_repo_cls,
+        mock_worker_db,
+        sample_user,
+    ):
+        mock_db_factory = MagicMock()
+        mock_worker_db.return_value.__aenter__.return_value = mock_db_factory
+        mock_db_factory.return_value.__aenter__.return_value = AsyncMock()
+
+        mock_repo = AsyncMock()
+        mock_repo_cls.return_value = mock_repo
+
+        mock_gcs_singleton = MagicMock()
+        mock_gcs_singleton.store_to_gcs.side_effect = [
+            "gs://bucket/track_0.mp3",
+            None,
+            "gs://bucket/track_2.mp3",
+        ]
+        mock_gcs.return_value = mock_gcs_singleton
+
+        mock_client = MagicMock()
+        mock_client.interactions.create.side_effect = [
+            {
+                "outputs": [
+                    {
+                        "type": "text",
+                        "text": "[Verse]\nTrack zero lyrics\n\nCaption: Lush synthpop\nBPM: 112.0",
+                    },
+                    {
+                        "type": "audio",
+                        "mime_type": "audio/mpeg",
+                        "data": "SGVsbG8=",
+                    },
+                ]
+            },
+            {
+                "outputs": [
+                    {"type": "text", "text": "Failed upload"},
+                    {
+                        "type": "audio",
+                        "mime_type": "audio/mpeg",
+                        "data": "SGVsbG8=",
+                    },
+                ]
+            },
+            {
+                "outputs": [
+                    {
+                        "type": "audio",
+                        "mime_type": "audio/mpeg",
+                        "data": "SGVsbG8=",
+                    }
+                ]
+            },
+        ]
+        mock_genai_setup.get_omni_client.return_value = mock_client
+
+        dto = CreateAudioDto(
+            workspace_id=1,
+            prompt="Indie pop anthem",
+            model=GenerationModelEnum.LYRIA_3_PRO_PREVIEW,
+            sample_count=3,
+        )
+        _process_audio_in_background(
+            media_item_id=300,
+            request_dto=dto,
+            user_email=sample_user.email,
+            user_id=sample_user.id,
+        )
+
+        mock_repo.update.assert_called_once_with(
+            300,
+            {
+                "status": JobStatusEnum.COMPLETED,
+                "gcs_uris": [
+                    "gs://bucket/track_0.mp3",
+                    "gs://bucket/track_2.mp3",
+                ],
+                "generation_time": pytest.approx(0, abs=10.0),
+                "mime_type": MimeTypeEnum.AUDIO_MPEG,
+                "audio_analysis": {
+                    "tracks": [
+                        {
+                            "raw_text": "[Verse]\nTrack zero lyrics\n\nCaption: Lush synthpop\nBPM: 112.0",
+                            "lyrics": "[Verse]\nTrack zero lyrics",
+                            "structure": {
+                                "caption": "Lush synthpop",
+                                "bpm": 112,
+                            },
+                        },
+                        None,
+                    ],
+                },
+            },
+        )
