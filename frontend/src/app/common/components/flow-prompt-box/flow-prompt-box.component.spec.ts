@@ -135,7 +135,7 @@ describe('FlowPromptBoxComponent', () => {
       expect(component.clearExternalUrl.emit).toHaveBeenCalled();
     });
 
-    it('should disable Nano Banana 2 Lite and enable Nano Banana 2 in Video to Image mode', () => {
+    it('should enable both Nano Banana 2 and Nano Banana 2 Lite in Video to Image mode', () => {
       component.generationModels = MODEL_CONFIGS;
       component.isSettingsMenuOpen.set(true);
       component.isSettingsDropdownOpen.set('model');
@@ -155,10 +155,10 @@ describe('FlowPromptBoxComponent', () => {
       );
 
       expect(nanoBanana2Btn?.nativeElement.disabled).toBeFalse();
-      expect(nanoBanana2LiteBtn?.nativeElement.disabled).toBeTrue();
+      expect(nanoBanana2LiteBtn?.nativeElement.disabled).toBeFalse();
     });
 
-    it('should not allow selecting Nano Banana 2 Lite in Video to Image mode', () => {
+    it('should allow selecting Nano Banana 2 Lite in Video to Image mode', () => {
       component.generationModels = MODEL_CONFIGS;
       const nanoBanana2Lite = MODEL_CONFIGS.find(
         m => m.value === 'gemini-3.1-flash-lite-image',
@@ -167,7 +167,9 @@ describe('FlowPromptBoxComponent', () => {
 
       component.selectInternalModel(nanoBanana2Lite);
 
-      expect(component.modelSelected.emit).not.toHaveBeenCalled();
+      expect(component.modelSelected.emit).toHaveBeenCalledWith(
+        nanoBanana2Lite,
+      );
     });
   });
 
