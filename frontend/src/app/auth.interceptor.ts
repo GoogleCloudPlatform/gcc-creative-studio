@@ -22,8 +22,8 @@ import {
   HttpInterceptor,
   HttpErrorResponse,
 } from '@angular/common/http';
-import {Observable, throwError} from 'rxjs';
-import {catchError, switchMap} from 'rxjs/operators';
+import {EMPTY, Observable, throwError} from 'rxjs';
+import {catchError, defaultIfEmpty, switchMap} from 'rxjs/operators';
 import {AuthService} from './common/services/auth.service';
 import {environment} from '../environments/environment';
 
@@ -44,9 +44,20 @@ export class AuthInterceptor implements HttpInterceptor {
       return next.handle(request);
     }
 
-    // Asynchronously get a valid token. This will use the cache or trigger a silent refresh.
+    // Get a valid token. This uses the cache or renews the session silently.
+    const hadSession = this.authService.hasRenewableSession();
     return this.authService.getValidIdentityPlatformToken$().pipe(
+      defaultIfEmpty(null),
       switchMap(token => {
+        if (!token) {
+          if (hadSession) {
+            // A session existed but no token could be produced: treat as a
+            // renewal failure. Without a session, keep the old behavior and
+            // drop the request quietly.
+            this.authService.onSessionRenewalFailed();
+          }
+          return EMPTY;
+        }
         // Token was retrieved successfully. Clone the request and add the auth header.
         const authorizedRequest = request.clone({
           setHeaders: {Authorization: `Bearer ${token}`},
@@ -54,14 +65,15 @@ export class AuthInterceptor implements HttpInterceptor {
         return next.handle(authorizedRequest);
       }),
       catchError(error => {
-        // If the error is NOT an HttpErrorResponse, it's a token refresh failure
-        // from our AuthService. In this case, the session is invalid, and we should log out.
+        // If the error is NOT an HttpErrorResponse, it's a session renewal
+        // failure from AuthService. AuthService decides whether to send the
+        // user to the login page (it waits instead when offline or hidden).
         if (!(error instanceof HttpErrorResponse)) {
           console.error(
-            'AuthInterceptor: Session expired and could not be refreshed. Logging out.',
+            'AuthInterceptor: Session expired and could not be renewed.',
             error,
           );
-          void this.authService.logout();
+          this.authService.onSessionRenewalFailed();
         }
 
         // Otherwise, it's a backend API error (e.g., 404, 500). We should NOT log out.

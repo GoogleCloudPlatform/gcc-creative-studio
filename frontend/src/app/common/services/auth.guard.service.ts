@@ -27,6 +27,7 @@ import {UserService} from './user.service';
 import {UserRolesEnum} from '../models/user.model';
 import {isPlatformBrowser} from '@angular/common';
 import {Observable, of} from 'rxjs';
+import {catchError, defaultIfEmpty, map} from 'rxjs/operators';
 
 const LOGIN_ROUTE = '/login';
 @Injectable({
@@ -57,11 +58,33 @@ export class AuthGuardService implements CanActivate {
     }
 
     // --- BROWSER SIDE ---
-    if (!this.authService.isLoggedIn()) {
-      void this.router.navigate([LOGIN_ROUTE]);
-      return false;
+    if (this.authService.isLoggedIn()) {
+      return this.hasRequiredRoles(route);
     }
 
+    // Expired but renewable (e.g. waking from sleep): renew silently first.
+    if (this.authService.hasRenewableSession()) {
+      return this.authService.getValidIdentityPlatformToken$().pipe(
+        defaultIfEmpty(null),
+        map(token => {
+          if (!token) {
+            void this.router.navigate([LOGIN_ROUTE]);
+            return false;
+          }
+          return this.hasRequiredRoles(route);
+        }),
+        catchError(() => {
+          this.authService.onSessionRenewalFailed();
+          return of(false);
+        }),
+      );
+    }
+
+    void this.router.navigate([LOGIN_ROUTE]);
+    return false;
+  }
+
+  private hasRequiredRoles(route: ActivatedRouteSnapshot): boolean {
     const requiredRoles = route.data?.['requiredRoles'] as UserRolesEnum[];
     if (requiredRoles && requiredRoles.length > 0) {
       const userDetails = this.userService.getUserDetails();
