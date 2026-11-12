@@ -17,7 +17,9 @@
 import {
   ComponentFixture,
   TestBed,
+  discardPeriodicTasks,
   fakeAsync,
+  flush,
   tick,
 } from '@angular/core/testing';
 import {WorkbenchComponent} from './workbench.component';
@@ -1135,6 +1137,8 @@ describe('WorkbenchComponent', () => {
       // expect(mockAnchor.download).toBe('video_rendered.mp4'); // Filename is dynamic now
       expect(mockAnchor.click).toHaveBeenCalled();
       expect(component.isDownloading()).toBeFalse();
+      flush();
+      discardPeriodicTasks();
     }));
 
     it('should call saveTimeline first if hasPendingSave is true before rendering', fakeAsync(() => {
@@ -1191,6 +1195,8 @@ describe('WorkbenchComponent', () => {
       // expect(mockAnchor.download).toBe('video_rendered.mp4');
       expect(mockAnchor.click).toHaveBeenCalled();
       expect(component.isDownloading()).toBeFalse();
+      flush();
+      discardPeriodicTasks();
     }));
   });
 
