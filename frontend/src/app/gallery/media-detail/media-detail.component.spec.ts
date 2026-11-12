@@ -89,6 +89,9 @@ describe('MediaDetailComponent', () => {
       getAsset: jasmine
         .createSpy('getAsset')
         .and.returnValue(of({} as GalleryItem)),
+      getItemLineage: jasmine
+        .createSpy('getItemLineage')
+        .and.returnValue(of({spine: [], derivatives: []})),
       createTemplateFromMediaItem: jasmine
         .createSpy('createTemplateFromMediaItem')
         .and.returnValue(of({id: 'new-template-id'})),
@@ -375,6 +378,233 @@ describe('MediaDetailComponent', () => {
         'B',
         'C',
       ]);
+    });
+  });
+
+  describe('cross-modal item lineage', () => {
+    const loadItem = (overrides: Partial<GalleryItem>): HTMLElement => {
+      mockGalleryService.getMedia.and.returnValue(
+        of({
+          id: 40,
+          workspaceId: 1,
+          createdAt: '2026-07-08T22:20:10Z',
+          itemType: 'media_item',
+          status: 'COMPLETED',
+          mimeType: 'image/png',
+          gcsUris: [],
+          presignedUrls: ['https://example.com/item.png'],
+          presignedThumbnailUrls: ['https://example.com/thumb.png'],
+          metadata: {},
+          ...overrides,
+        } as GalleryItem),
+      );
+      component.fetchMediaDetails(overrides.id ?? 40, false);
+      fixture.detectChanges();
+      return fixture.nativeElement as HTMLElement;
+    };
+
+    it('renders descending Iteration History spine, deleted tombstones, and Derived Items', () => {
+      mockGalleryService.getItemLineage.and.returnValue(
+        of({
+          spine: [
+            {
+              itemType: 'source_asset',
+              id: 10,
+              mediaIndex: 0,
+              mimeType: 'image/jpeg',
+              prompt: 'Uploaded: bottle.jpg',
+              thumbnailUrl: 'https://example.com/a10.jpg',
+              deleted: false,
+            },
+            {
+              itemType: 'media_item',
+              id: 20,
+              mediaIndex: 2,
+              mimeType: 'image/png',
+              role: 'image_edit_source',
+              prompt: 'Place bottle on wet slate rock',
+              thumbnailUrl: 'https://example.com/m20_2.jpg',
+              deleted: false,
+            },
+            {
+              itemType: 'media_item',
+              id: 30,
+              mediaIndex: 0,
+              mimeType: 'video/mp4',
+              role: 'start_frame',
+              prompt: 'Removed intermediate video',
+              deleted: true,
+            },
+            {
+              itemType: 'media_item',
+              id: 40,
+              mediaIndex: 0,
+              mimeType: 'video/mp4',
+              role: 'omni_edit_source',
+              prompt: 'Add golden hour light rays',
+              thumbnailUrl: 'https://example.com/m40.jpg',
+              deleted: false,
+            },
+          ],
+          derivatives: [
+            {
+              itemType: 'media_item',
+              id: 55,
+              mediaIndex: 0,
+              mimeType: 'video/mp4',
+              role: 'omni_edit_source',
+              prompt: 'Add rain reflections',
+              thumbnailUrl: 'https://example.com/m55.jpg',
+              deleted: false,
+            },
+          ],
+        }),
+      );
+
+      const host = loadItem({
+        id: 40,
+        mimeType: 'video/mp4',
+        originalPrompt: 'Add golden hour light rays',
+      });
+
+      expect(mockGalleryService.getItemLineage).toHaveBeenCalledWith(
+        'media_item',
+        40,
+      );
+
+      const steps = host.querySelectorAll('[data-testid="lineage-spine-step"]');
+      expect(steps.length).toBe(4);
+
+      // Step 4 (top): Current version has no self-link and displays "Current"
+      expect(steps[0].textContent).toContain('4');
+      expect(steps[0].textContent).toContain('Omni Edit');
+      expect(steps[0].textContent).toContain('Current');
+      expect(
+        steps[0].querySelector('[data-testid="lineage-step-link"]'),
+      ).toBeNull();
+
+      // Step 3: Soft-deleted step renders tombstone instead of link
+      expect(steps[1].textContent).toContain('3');
+      expect(
+        steps[1].querySelector('[data-testid="lineage-step-deleted"]'),
+      ).not.toBeNull();
+      expect(
+        steps[1].querySelector('[data-testid="lineage-step-link"]'),
+      ).toBeNull();
+      expect(steps[1].textContent).toContain('Removed intermediate video');
+
+      // Step 2: Intermediate variation with clickable link & img_index query param
+      expect(steps[2].textContent).toContain('2');
+      expect(steps[2].textContent).toContain('Edited');
+      expect(steps[2].textContent).toContain('Image #20 · Var 3');
+      expect(
+        component.getLineageNodeQueryParams(
+          component.lineageSpineDescending()[2],
+        ),
+      ).toEqual({img_index: 2});
+
+      // Step 1 (bottom): Uploaded root asset
+      expect(steps[3].textContent).toContain('1');
+      expect(steps[3].textContent).toContain('Uploaded');
+      expect(steps[3].textContent).toContain('Asset #10');
+      expect(steps[3].textContent).toContain('Uploaded: bottle.jpg');
+
+      // Derived Items section renders active downstream child
+      const derivedSection = host.querySelector(
+        '[data-testid="derived-items-section"]',
+      );
+      expect(derivedSection).not.toBeNull();
+      const derivedTiles = host.querySelectorAll(
+        '[data-testid="derived-item-tile"]',
+      );
+      expect(derivedTiles.length).toBe(1);
+      expect(derivedTiles[0].textContent).toContain('Omni Edit');
+    });
+
+    it('deduplicates immediate primary parent from Referenced Assets while keeping secondary ingredients', () => {
+      mockGalleryService.getItemLineage.and.returnValue(
+        of({
+          spine: [
+            {
+              itemType: 'media_item',
+              id: 200,
+              mediaIndex: 1,
+              mimeType: 'video/mp4',
+              prompt: 'Original hero shot',
+              deleted: false,
+            },
+            {
+              itemType: 'media_item',
+              id: 300,
+              mediaIndex: 0,
+              mimeType: 'video/mp4',
+              role: 'omni_edit_source',
+              prompt: 'Add logo overlay',
+              deleted: false,
+            },
+          ],
+          derivatives: [],
+        }),
+      );
+
+      const host = loadItem({
+        id: 300,
+        mimeType: 'video/mp4',
+        enrichedSourceAssets: [
+          {
+            assetId: 91,
+            gcsUri: 'gs://b/logo.png',
+            presignedUrl: 'https://example.com/logo.png',
+            presignedThumbnailUrl: 'https://example.com/logo.png',
+            role: 'image_reference_asset',
+            mimeType: 'image/png',
+          },
+        ],
+        enrichedSourceMediaItems: [
+          {
+            mediaItemId: 200,
+            mediaIndex: 1,
+            gcsUri: 'gs://b/200_1.mp4',
+            presignedUrl: 'https://example.com/200_1.mp4',
+            presignedThumbnailUrl: 'https://example.com/200_1.jpg',
+            role: 'video_reference',
+            mimeType: 'video/mp4',
+          },
+        ],
+      });
+
+      expect(component.compositionSourceMediaItems().length).toBe(0);
+      expect(component.compositionSourceAssets().length).toBe(1);
+      const refSection = host.querySelector(
+        '[data-testid="referenced-assets-section"]',
+      );
+      expect(refSection).not.toBeNull();
+      expect(refSection?.textContent).toContain('Image Ref');
+      expect(refSection?.textContent).not.toContain('Video Ref');
+    });
+
+    it('falls back cleanly to legacy audioIterationSteps when getItemLineage errors', () => {
+      spyOn(console, 'warn');
+      mockGalleryService.getItemLineage.and.returnValue(
+        throwError(() => new Error('Network error')),
+      );
+
+      const host = loadItem({
+        id: 800,
+        originalPrompt: 'Add cello solo',
+        audioAnalysis: {
+          iteration_steps: ['Acoustic guitar intro', 'Add cello solo'],
+          tracks: [null],
+        },
+      });
+
+      const historySection = host.querySelector(
+        '[data-testid="audio-iteration-history-section"]',
+      );
+      expect(historySection).not.toBeNull();
+      expect(historySection?.getAttribute('data-lineage-mode')).toBe('legacy');
+      expect(historySection?.textContent).toContain('Acoustic guitar intro');
+      expect(historySection?.textContent).toContain('Add cello solo');
     });
   });
 });

@@ -12,7 +12,7 @@ PostgreSQL (Cloud SQL in the cloud, the `creative-studio-postgres` container loc
 | Domain | Tables | Models |
 | --- | --- | --- |
 | Identity & tenancy | `users`, `workspaces`, `workspace_members` | `src/users/user_model.py`, `src/workspaces/schema/workspace_model.py` |
-| Library | `folders`, `media_items`, `source_assets`, `tags`, `media_item_tags`, `source_asset_tags`, `media_templates`, `brand_guidelines`, `unified_gallery_view` (a **view** unioning `media_items` and `source_assets` for the gallery) | `src/folders/…`, `src/common/schema/media_item_model.py`, `src/source_assets/…`, `src/tags/…`, `src/media_templates/…`, `src/brand_guidelines/…`, `src/common/schema/unified_gallery_view.py` |
+| Library | `folders`, `media_items`, `source_assets`, `item_lineage`, `tags`, `media_item_tags`, `source_asset_tags`, `media_templates`, `brand_guidelines`, `unified_gallery_view` (a **view** unioning `media_items` and `source_assets` for the gallery) | `src/folders/…`, `src/common/schema/media_item_model.py`, `src/source_assets/…`, `src/lineage/…`, `src/tags/…`, `src/media_templates/…`, `src/brand_guidelines/…`, `src/common/schema/unified_gallery_view.py` |
 | Workbench & Izumi agent | `storyboards`, `scenes`, `timelines`, `video_clips`, `audio_clips`, `agent_chat_events` | `src/projects/schema/project_model.py`, `src/workbench/schema/timeline_model.py`, `src/agents/agent_chat_event_model.py` |
 | Automation | `workflows`, `workflow_runs`, `workflow_templates`, `workflow_user_sessions` | `src/workflows/schema/workflow_model.py`, `src/workflows/schema/workflow_run_model.py` (runs + user sessions), `src/workflows/schema/workflow_template_model.py` |
 
@@ -122,6 +122,20 @@ erDiagram
         timestamp updated_at
         timestamp deleted_at
         int deleted_by FK
+    }
+    item_lineage {
+        int id PK
+        int workspace_id FK
+        varchar child_type
+        int child_id
+        int child_index
+        varchar parent_type
+        int parent_id
+        int parent_index
+        varchar role
+        bool is_primary_parent
+        varchar action_summary
+        timestamp created_at
     }
     tags {
         int id PK
@@ -333,6 +347,7 @@ erDiagram
     workspaces ||--o{ folders : workspace_id
     workspaces ||--o{ media_items : workspace_id
     workspaces ||--o{ source_assets : workspace_id
+    workspaces ||--o{ item_lineage : workspace_id
     workspaces ||--o{ tags : workspace_id
     workspaces ||--o{ storyboards : workspace_id
     workspaces |o--o{ brand_guidelines : workspace_id
@@ -382,6 +397,7 @@ erDiagram
 Notes:
 
 - `unified_gallery_view` is a database **view** (`__table_args__ = {"info": {"is_view": True}}`), not a table: `item_type` tells whether a row comes from `media_items` or `source_assets`, and its `workspace_id` / `user_id` / `folder_id` columns are plain columns of the view, so they are not drawn as foreign keys.
+- `item_lineage` stores polymorphic directed edges across `media_items` and `source_assets`: `child_type` and `parent_type` (`media_item` or `source_asset`) qualify `child_id` and `parent_id`, so those IDs are plain integers rather than single-table foreign keys, while `workspace_id` cascades from `workspaces`.
 - `agent_chat_events` and `timelines` store the agent's `session_id` / `user_id` as strings (they mirror the Izumi agent session, not the `users` table).
 - `workflow_runs` doubles as the workflow **queue**: the `queued_at` … `canceled_by_user` columns hold the dispatch state, retry counters and per-step checkpoints (`step_states`). Its `workspace_id` is a plain column, not a foreign key.
 - `workflow_user_sessions` keeps at most one row per user (`user_id` is the primary key) with the user's short-lived Google ID token **encrypted** with `WORKFLOW_TOKEN_ENCRYPTION_KEY`, so queued runs can start after the browser request that created them has finished.

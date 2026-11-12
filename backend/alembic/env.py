@@ -40,6 +40,7 @@ from src.users.user_model import User
 from src.source_assets.schema.source_asset_model import SourceAsset
 from src.media_templates.schema.media_template_model import MediaTemplate
 from src.common.schema.unified_gallery_view import UnifiedGalleryView
+from src.lineage.schema.item_lineage_model import ItemLineage
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

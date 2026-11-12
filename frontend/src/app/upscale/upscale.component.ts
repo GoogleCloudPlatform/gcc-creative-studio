@@ -212,6 +212,7 @@ export class UpscaleComponent implements OnInit, OnDestroy {
               mediaItem.originalPresignedUrls?.[index] || presignedUrl,
           };
           (asset as any).itemType = 'media_item';
+          (asset as any).mediaIndex = index;
         } else if (result.gcsUris && result.gcsUris.length > 0) {
           const mediaItem: MediaItem = result;
           const index = 0;

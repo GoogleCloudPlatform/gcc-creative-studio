@@ -26,6 +26,9 @@ from src.galleries.dto.unified_gallery_response import (
     UnifiedGalleryItemResponse,
 )
 from src.galleries.gallery_service import GalleryService
+from src.lineage.dto.lineage_dto import ItemLineageResponseDto
+from src.lineage.lineage_service import LineageService
+from src.lineage.schema.item_lineage_model import LineageItemTypeEnum
 from src.users.user_model import UserModel, UserRoleEnum
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
@@ -103,6 +106,24 @@ async def get_single_gallery_item(
             detail="Media item not found",
         )
     return item
+
+
+@router.get(
+    "/lineage/{item_type}/{item_id}",
+    response_model=ItemLineageResponseDto,
+)
+async def get_gallery_item_lineage(
+    item_type: LineageItemTypeEnum,
+    item_id: int,
+    current_user: UserModel = Depends(get_current_user),
+    lineage_service: LineageService = Depends(),
+):
+    """Returns the primary ancestor spine and derived items for a gallery item or source asset."""
+    return await lineage_service.get_item_lineage(
+        item_type=item_type,
+        item_id=item_id,
+        current_user=current_user,
+    )
 
 
 @router.post("/bulk-delete")
