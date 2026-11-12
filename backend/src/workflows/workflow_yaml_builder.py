@@ -809,19 +809,24 @@ def _loop_steps(
 
     The ``Loop`` step is never gated: on resume ``/resolve-loop-items``
     returns its cached snapshot. Only the inputs of the configured mode are
-    sent: ``items_text`` in text mode, the ``linked_items`` list in Linked
-    Items mode (one expression per wire and one literal per Media Gallery
-    pick, in insertion order). A source that resolves to zero items fails
-    the resolver call, so the ``for`` loop is never reached. Each iteration
-    exposes ``<loop>_out.current_item`` to the body steps, which overwrite
-    their ``<step>_out`` (O(1) memory).
+    sent: ``folder`` in folder mode (a Fixed folder id or the linked
+    parameter's ``${args.<name>}`` expression), ``items_text`` in text mode,
+    the ``linked_items`` list in Linked Items mode (one expression per wire
+    and one literal per Media Gallery pick, in insertion order). A source
+    that resolves to zero items fails the resolver call, so the ``for`` loop
+    is never reached. Each iteration exposes ``<loop>_out.current_item`` to
+    the body steps, which overwrite their ``<step>_out`` (O(1) memory).
     """
     loop_id = loop_step.step_id
     settings = _dump_model(loop_step.settings)
     raw_inputs = _dump_model(loop_step.inputs)
     mode = settings.get("mode")
     inputs: dict[str, Any] = {}
-    if mode == "text_input":
+    if mode == "folder":
+        inputs["folder"] = _resolve_value(
+            raw_inputs.get("folder"), user_input_ids
+        )
+    elif mode == "text_input":
         inputs["items_text"] = _resolve_value(
             raw_inputs.get("items_text"), user_input_ids
         )

@@ -1498,3 +1498,93 @@ class TestFolderRepository:
         assert res["folders_copied"] == 1
         folder_repo.merge_folders.assert_awaited_once()
         mock_db.commit.assert_called_once()
+
+
+class TestResolveFolderPath:
+    """Tests for FolderRepository.resolve_folder_path."""
+
+    @staticmethod
+    def _tree_lookup(tree: dict[tuple[int | None, str], int]):
+        """get_folder_by_name double backed by {(parent_id, name): id}."""
+
+        async def lookup(*, workspace_id, parent_id, name):
+            del workspace_id
+            folder_id = tree.get((parent_id, name.strip().lower()))
+            if folder_id is None:
+                return None
+            return SimpleNamespace(id=folder_id)
+
+        return AsyncMock(side_effect=lookup)
+
+    @pytest.mark.anyio
+    async def test_walks_nested_segments_from_root(self, folder_repo):
+        folder_repo.get_folder_by_name = self._tree_lookup(
+            {(None, "summer"): 10, (10, "shoes"): 20}
+        )
+
+        folder_id = await folder_repo.resolve_folder_path(1, "Summer/Shoes")
+
+        assert folder_id == 20
+        calls = folder_repo.get_folder_by_name.await_args_list
+        assert [call.kwargs for call in calls] == [
+            {"workspace_id": 1, "parent_id": None, "name": "Summer"},
+            {"workspace_id": 1, "parent_id": 10, "name": "Shoes"},
+        ]
+
+    @pytest.mark.anyio
+    async def test_trims_segments_and_ignores_case(self, folder_repo):
+        folder_repo.get_folder_by_name = self._tree_lookup(
+            {(None, "summer"): 10, (10, "shoes"): 20}
+        )
+
+        assert (
+            await folder_repo.resolve_folder_path(1, "  sUMMER /  shoes ") == 20
+        )
+
+    @pytest.mark.anyio
+    async def test_digits_only_segment_is_a_name(self, folder_repo):
+        folder_repo.get_folder_by_name = self._tree_lookup({(None, "2024"): 7})
+
+        assert await folder_repo.resolve_folder_path(1, "2024") == 7
+        folder_repo.get_folder_by_name.assert_awaited_once_with(
+            workspace_id=1, parent_id=None, name="2024"
+        )
+
+    @pytest.mark.anyio
+    async def test_unmatched_segment_stops_the_walk(self, folder_repo):
+        folder_repo.get_folder_by_name = self._tree_lookup(
+            {(None, "summer"): 10}
+        )
+
+        assert await folder_repo.resolve_folder_path(1, "Nope/Shoes") is None
+        assert folder_repo.get_folder_by_name.await_count == 1
+
+    @pytest.mark.anyio
+    async def test_unmatched_leaf_returns_none(self, folder_repo):
+        folder_repo.get_folder_by_name = self._tree_lookup(
+            {(None, "summer"): 10}
+        )
+
+        assert await folder_repo.resolve_folder_path(1, "Summer/Nope") is None
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "path", ["", "   ", "/Summer", "Summer/", "Summer//Shoes", " / "]
+    )
+    async def test_empty_segments_return_none_without_queries(
+        self, folder_repo, path
+    ):
+        folder_repo.get_folder_by_name = AsyncMock()
+
+        assert await folder_repo.resolve_folder_path(1, path) is None
+        folder_repo.get_folder_by_name.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("path", [None, 42, ["Summer"], {"a": 1}])
+    async def test_non_string_returns_none_without_queries(
+        self, folder_repo, path
+    ):
+        folder_repo.get_folder_by_name = AsyncMock()
+
+        assert await folder_repo.resolve_folder_path(1, path) is None
+        folder_repo.get_folder_by_name.assert_not_awaited()

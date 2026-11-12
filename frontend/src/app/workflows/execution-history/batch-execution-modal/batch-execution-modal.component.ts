@@ -14,20 +14,37 @@
  * limitations under the License.
  */
 
-import {Component, Inject, computed, signal} from '@angular/core';
+import {Component, Inject, computed, inject, signal} from '@angular/core';
 import {
   MAT_DIALOG_DATA,
   MatDialog,
   MatDialogRef,
 } from '@angular/material/dialog';
 import * as Papa from 'papaparse';
+import {Subscription} from 'rxjs';
 import {take} from 'rxjs/operators';
 import {
   ConfirmationDialogComponent,
   ConfirmationDialogData,
 } from '../../../common/components/confirmation-dialog/confirmation-dialog.component';
+import {
+  FolderSelectionResult,
+  FolderTreeNode,
+} from '../../../common/models/folder.model';
+import {FolderService} from '../../../common/services/folder.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
+import {RunFolderService} from '../../shared/run-folder.service';
+import {
+  FolderChildLookup,
+  buildFolderChildLookup,
+  getFolderInputNames,
+  resolveFolderPathInTree,
+} from '../../utils/folder-path.util';
 import {workflowHasLoopStep} from '../../utils/workflow-loop.util';
+import {
+  FolderIndex,
+  buildFolderIndex,
+} from '../../workflow-editor/step-components/step-configs/folder-setting.util';
 import {
   BatchItemResult,
   BatchItemStatus,
@@ -57,6 +74,81 @@ export interface BatchResultRowViewModel {
   error: string | null;
 }
 
+/** Number of leading CSV rows always shown in the preview. */
+export const BATCH_PREVIEW_ROW_LIMIT = 5;
+
+export type FolderTreeLoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
+
+export type BatchFolderCellStatus = 'valid' | 'invalid' | 'pending';
+
+/** A CSV cell mapped to a Folder parameter, resolved to a folder id. */
+export interface BatchFolderCellViewModel {
+  key: string;
+  rowIndex: number;
+  header: string;
+  inputName: string;
+  rawValue: string;
+  folderId: number | null;
+  status: BatchFolderCellStatus;
+  label: string;
+  statusIcon: string;
+  statusClass: string;
+  tooltip: string;
+  buttonId: string;
+}
+
+export interface BatchPreviewCellViewModel {
+  header: string;
+  text: string;
+  isMapped: boolean;
+  /** Folder state when the column is mapped to a Folder parameter. */
+  folder: BatchFolderCellViewModel | null;
+}
+
+export interface BatchPreviewRowViewModel {
+  rowIndex: number;
+  rowNumber: number;
+  cells: BatchPreviewCellViewModel[];
+}
+
+/** Key of a folder cell in {@link BatchExecutionModalComponent.folderCells}. */
+export function toBatchFolderCellKey(rowIndex: number, header: string): string {
+  return `${rowIndex}::${header}`;
+}
+
+interface BatchFolderColumn {
+  header: string;
+  inputName: string;
+}
+
+type BatchFolderCellMap = ReadonlyMap<string, BatchFolderCellViewModel>;
+
+type BatchFolderCellResolution = Pick<
+  BatchFolderCellViewModel,
+  'folderId' | 'status' | 'label' | 'tooltip'
+>;
+
+interface BatchFolderResolutionContext {
+  overrides: ReadonlyMap<string, FolderSelectionResult>;
+  treeStatus: FolderTreeLoadStatus;
+  lookup: FolderChildLookup | null;
+  index: FolderIndex | null;
+}
+
+const FOLDER_CELL_STATUS_ICONS: Readonly<
+  Record<BatchFolderCellStatus, string>
+> = {
+  valid: '✅',
+  invalid: '⚠️',
+  pending: '…',
+};
+
+const EMPTY_FOLDER_PATH_LABEL = 'Empty folder path';
+
+function toCellText(value: unknown): string {
+  return value === null || value === undefined ? '' : String(value);
+}
+
 @Component({
   selector: 'app-batch-execution-modal',
   templateUrl: './batch-execution-modal.component.html',
@@ -70,13 +162,28 @@ export class BatchExecutionModalComponent {
   readonly isConfirmingBatch = signal<boolean>(false);
 
   csvFile: File | null = null;
-  headers: string[] = [];
+  readonly headersSignal = signal<string[]>([]);
   isProcessing = false;
   validationErrors: string[] = [];
 
   expectedInputs: string[] = [];
-  columnMapping: Record<string, string | null> = {};
+  readonly columnMappingSignal = signal<Record<string, string | null>>({});
   isValid = false;
+
+  get headers(): string[] {
+    return this.headersSignal();
+  }
+  set headers(value: string[]) {
+    this.headersSignal.set(value);
+  }
+
+  /** Assign a new object to update it (in-place mutations are not tracked). */
+  get columnMapping(): Record<string, string | null> {
+    return this.columnMappingSignal();
+  }
+  set columnMapping(value: Record<string, string | null>) {
+    this.columnMappingSignal.set(value);
+  }
 
   readonly parsedItemsSignal = signal<Record<string, unknown>[]>([]);
   readonly missingInputsSignal = signal<string[]>([]);
@@ -103,9 +210,134 @@ export class BatchExecutionModalComponent {
     this.resultsSignal.set(value);
   }
 
-  readonly previewItems = computed<Record<string, unknown>[]>(() =>
-    this.parsedItemsSignal().slice(0, 5),
+  /** Folder parameters of the workflow's user input step. */
+  readonly folderInputNames: ReadonlySet<string>;
+  /** Active workspace folder tree; kept when a refresh fails. */
+  readonly folderTree = signal<FolderTreeNode[] | null>(null);
+  readonly folderTreeStatus = signal<FolderTreeLoadStatus>('idle');
+  /** Folders picked per cell; they win over the CSV path. */
+  readonly folderOverrides = signal<ReadonlyMap<string, FolderSelectionResult>>(
+    new Map(),
   );
+
+  private readonly folderService = inject(FolderService);
+  private readonly runFolderService = inject(RunFolderService);
+  private folderTreeSubscription: Subscription | null = null;
+
+  private readonly folderLookup = computed<FolderChildLookup | null>(() => {
+    const tree = this.folderTree();
+    return tree ? buildFolderChildLookup(tree) : null;
+  });
+
+  private readonly folderIndex = computed<FolderIndex | null>(() => {
+    const tree = this.folderTree();
+    return tree ? buildFolderIndex(tree) : null;
+  });
+
+  /** CSV columns mapped to a folder parameter. */
+  readonly folderColumns = computed<readonly BatchFolderColumn[]>(() => {
+    const mapping = this.columnMappingSignal();
+    return this.headersSignal().flatMap(header => {
+      const inputName = mapping[header];
+      return inputName && this.folderInputNames.has(inputName)
+        ? [{header, inputName}]
+        : [];
+    });
+  });
+
+  /** One resolved folder cell per row × folder column, over all rows. */
+  readonly folderCells = computed<BatchFolderCellMap>(() => {
+    const columns = this.folderColumns();
+    const cells = new Map<string, BatchFolderCellViewModel>();
+    if (columns.length === 0) return cells;
+    const context: BatchFolderResolutionContext = {
+      overrides: this.folderOverrides(),
+      treeStatus: this.folderTreeStatus(),
+      lookup: this.folderLookup(),
+      index: this.folderIndex(),
+    };
+    this.parsedItemsSignal().forEach((row, rowIndex) => {
+      columns.forEach(column => {
+        const cell = this.buildFolderCell(
+          rowIndex,
+          column,
+          toCellText(row[column.header]),
+          context,
+        );
+        cells.set(cell.key, cell);
+      });
+    });
+    return cells;
+  });
+
+  /** Folder cells that are not resolved yet (pending also blocks Run). */
+  readonly unresolvedFolderCellCount = computed<number>(() => {
+    let count = 0;
+    this.folderCells().forEach(cell => {
+      if (cell.status !== 'valid') count++;
+    });
+    return count;
+  });
+
+  readonly hasUnresolvedFolderCells = computed<boolean>(
+    () => this.unresolvedFolderCellCount() > 0,
+  );
+
+  readonly showFolderTreeError = computed<boolean>(
+    () =>
+      this.folderColumns().length > 0 && this.folderTreeStatus() === 'error',
+  );
+
+  readonly folderIssuesText = computed<string | null>(() => {
+    if (this.folderColumns().length === 0) return null;
+    if (this.folderTreeStatus() === 'loading') return 'Checking folder paths…';
+    const count = this.unresolvedFolderCellCount();
+    if (count === 0) return null;
+    const noun = count === 1 ? 'folder cell needs' : 'folder cells need';
+    return `${count} ${noun} a folder. Click a ⚠️ cell to choose one.`;
+  });
+
+  /** First rows plus any later row with a folder cell that is not resolved. */
+  readonly previewRows = computed<BatchPreviewRowViewModel[]>(() => {
+    const headers = this.headersSignal();
+    const mapping = this.columnMappingSignal();
+    const cells = this.folderCells();
+    const columns = this.folderColumns();
+    const rows: BatchPreviewRowViewModel[] = [];
+    this.parsedItemsSignal().forEach((row, rowIndex) => {
+      const hasFolderIssue = columns.some(
+        column =>
+          cells.get(toBatchFolderCellKey(rowIndex, column.header))?.status !==
+          'valid',
+      );
+      if (rowIndex >= BATCH_PREVIEW_ROW_LIMIT && !hasFolderIssue) return;
+      rows.push({
+        rowIndex,
+        rowNumber: rowIndex + 1,
+        cells: headers.map(header => ({
+          header,
+          text: toCellText(row[header]),
+          isMapped: !!mapping[header],
+          folder: cells.get(toBatchFolderCellKey(rowIndex, header)) ?? null,
+        })),
+      });
+    });
+    return rows;
+  });
+
+  readonly previewFooterText = computed<string | null>(() => {
+    const total = this.parsedItemsSignal().length;
+    const shown = this.previewRows().length;
+    if (shown >= total) return null;
+    return shown > BATCH_PREVIEW_ROW_LIMIT
+      ? `Showing ${shown} of ${total} rows (first ${BATCH_PREVIEW_ROW_LIMIT} and rows needing a folder)`
+      : `Showing first ${BATCH_PREVIEW_ROW_LIMIT} of ${total} rows`;
+  });
+
+  readonly trackPreviewRow = (
+    _index: number,
+    row: BatchPreviewRowViewModel,
+  ): number => row.rowIndex;
 
   readonly missingInputsText = computed<string>(() =>
     this.missingInputsSignal().join(', '),
@@ -195,6 +427,9 @@ export class BatchExecutionModalComponent {
   ) {
     this.workflow = data.workflow;
     this.hasLoopStep = workflowHasLoopStep(this.workflow);
+    this.folderInputNames = getFolderInputNames(
+      this.workflow?.steps?.find(s => s.type === NodeTypes.USER_INPUT),
+    );
     this.extractExpectedInputs();
   }
 
@@ -226,6 +461,7 @@ export class BatchExecutionModalComponent {
       complete: (result: Papa.ParseResult<Record<string, unknown>>) => {
         this.headers = result.meta.fields || [];
         this.parsedItems = result.data || [];
+        this.folderOverrides.set(new Map());
         this.validateHeaders();
       },
       error: (error: Error) => {
@@ -247,19 +483,22 @@ export class BatchExecutionModalComponent {
     }
 
     const usedInputs = new Set<string>();
+    const mapping: Record<string, string | null> = {};
 
     this.headers.forEach(header => {
       const normalized = this.normalizeHeader(header);
       if (this.expectedInputs.includes(normalized)) {
-        this.columnMapping[header] = normalized;
+        mapping[header] = normalized;
         usedInputs.add(normalized);
       } else if (this.expectedInputs.includes(header)) {
-        this.columnMapping[header] = header;
+        mapping[header] = header;
         usedInputs.add(header);
       } else {
-        this.columnMapping[header] = null;
+        mapping[header] = null;
       }
     });
+    // A new object so the signal-backed mapping notifies its readers.
+    this.columnMapping = mapping;
 
     this.expectedInputs.forEach(input => {
       if (!usedInputs.has(input)) {
@@ -277,10 +516,134 @@ export class BatchExecutionModalComponent {
     if (this.validationErrors.length === 0) {
       this.isValid = true;
     }
+
+    if (this.folderColumns().length > 0) {
+      this.loadFolderTree();
+    }
   }
 
   normalizeHeader(header: string): string {
     return header.trim().toLowerCase().replace(/\s+/g, '_');
+  }
+
+  /**
+   * Loads the active workspace's folder tree used to resolve folder paths.
+   * A failed refresh keeps the previous tree; the error state is only shown
+   * when there is no tree at all.
+   */
+  loadFolderTree(): void {
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    this.folderTreeSubscription?.unsubscribe();
+    if (workspaceId === null) {
+      if (!this.folderTree()) this.folderTreeStatus.set('error');
+      return;
+    }
+    if (!this.folderTree()) this.folderTreeStatus.set('loading');
+    this.folderTreeSubscription = this.folderService
+      .getFolderTree(workspaceId)
+      .pipe(take(1))
+      .subscribe({
+        next: tree => {
+          this.folderTree.set(tree ?? []);
+          this.folderTreeStatus.set('loaded');
+        },
+        error: (err: unknown) => {
+          console.warn('Failed to load folder tree', err);
+          if (!this.folderTree()) this.folderTreeStatus.set('error');
+        },
+      });
+  }
+
+  /**
+   * Opens the folder picker for one folder cell. The tree is refreshed after
+   * close (folders may change in the picker); a selection overrides the cell.
+   */
+  openFolderPickerForCell(cell: BatchFolderCellViewModel): void {
+    this.runFolderService.pickFolder(cell.folderId).subscribe(selection => {
+      this.loadFolderTree();
+      if (!selection) return;
+      this.folderOverrides.update(overrides =>
+        new Map(overrides).set(cell.key, selection),
+      );
+    });
+  }
+
+  /** Display state of one folder cell, following the resolution rules in order. */
+  private buildFolderCell(
+    rowIndex: number,
+    column: BatchFolderColumn,
+    rawValue: string,
+    context: BatchFolderResolutionContext,
+  ): BatchFolderCellViewModel {
+    const key = toBatchFolderCellKey(rowIndex, column.header);
+    const resolution = this.resolveFolderCell(key, rawValue, context);
+    return {
+      key,
+      rowIndex,
+      header: column.header,
+      inputName: column.inputName,
+      rawValue,
+      ...resolution,
+      statusIcon: FOLDER_CELL_STATUS_ICONS[resolution.status],
+      statusClass: `batch-folder-cell--${resolution.status}`,
+      buttonId: `batch-folder-cell-${rowIndex}-${column.inputName}`,
+    };
+  }
+
+  private resolveFolderCell(
+    key: string,
+    rawValue: string,
+    context: BatchFolderResolutionContext,
+  ): BatchFolderCellResolution {
+    const override = context.overrides.get(key);
+    if (override) {
+      return {
+        folderId: override.folderId,
+        status: 'valid',
+        label: override.path,
+        tooltip: `${override.path}. Click to choose another folder.`,
+      };
+    }
+    if (context.treeStatus === 'error') {
+      return {
+        folderId: null,
+        status: 'invalid',
+        label: rawValue || EMPTY_FOLDER_PATH_LABEL,
+        tooltip: 'Folders could not be loaded. Click to choose a folder.',
+      };
+    }
+    if (!context.lookup) {
+      return {
+        folderId: null,
+        status: 'pending',
+        label: rawValue || EMPTY_FOLDER_PATH_LABEL,
+        tooltip: 'Checking folder path…',
+      };
+    }
+    if (!rawValue.trim()) {
+      return {
+        folderId: null,
+        status: 'invalid',
+        label: EMPTY_FOLDER_PATH_LABEL,
+        tooltip: `${EMPTY_FOLDER_PATH_LABEL}. Click to choose a folder.`,
+      };
+    }
+    const folderId = resolveFolderPathInTree(context.lookup, rawValue);
+    if (folderId !== null) {
+      const path = context.index?.get(folderId)?.path ?? rawValue;
+      return {
+        folderId,
+        status: 'valid',
+        label: path,
+        tooltip: `${path}. Click to choose another folder.`,
+      };
+    }
+    return {
+      folderId: null,
+      status: 'invalid',
+      label: rawValue,
+      tooltip: `"${rawValue}" not found. Click to choose a folder.`,
+    };
   }
 
   /**
@@ -291,6 +654,7 @@ export class BatchExecutionModalComponent {
   runBatch(): void {
     if (!this.isValid || this.parsedItems.length === 0) return;
     if (this.isProcessing || this.isConfirmingBatch()) return;
+    if (this.hasUnresolvedFolderCells()) return;
 
     if (!this.hasLoopStep) {
       this.submitBatch();
@@ -315,6 +679,7 @@ export class BatchExecutionModalComponent {
 
   /** Submits every mapped CSV row as one batch execution. */
   submitBatch(): void {
+    if (this.hasUnresolvedFolderCells()) return;
     this.isProcessing = true;
     this.results = [];
 
@@ -327,15 +692,23 @@ export class BatchExecutionModalComponent {
           return;
         }
 
+        const columnMapping = this.columnMapping;
+        const folderCells = this.folderCells();
         const items = this.parsedItems.map((row, index) => {
           const args: Record<string, unknown> = {
             workspace_id: workspaceId,
           };
 
           Object.keys(row).forEach(header => {
-            const mappedInput = this.columnMapping[header];
+            const mappedInput = columnMapping[header];
             if (mappedInput) {
-              args[mappedInput] = row[header];
+              // Folder cells hold paths in the CSV; the run receives the id.
+              const folderCell = folderCells.get(
+                toBatchFolderCellKey(index, header),
+              );
+              args[mappedInput] = folderCell
+                ? folderCell.folderId
+                : row[header];
             }
           });
 
