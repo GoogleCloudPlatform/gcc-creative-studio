@@ -29,6 +29,7 @@ from src.admin.version_service import (
     normalize_calver_str,
     parse_calver,
 )
+from src.database import get_db
 
 
 def _make_mock_client_factory(
@@ -395,10 +396,17 @@ class TestAdminVersionController:
         response = api_client.get("/api/version")
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    def test_admin_version_requires_authentication(self):
+    def test_admin_version_requires_authentication(self, db_session_mock):
+        async def override_get_db():
+            yield db_session_mock
+
         app.dependency_overrides.clear()
-        with TestClient(app) as unauth_client:
-            response = unauth_client.get("/api/admin/version")
+        app.dependency_overrides[get_db] = override_get_db
+        try:
+            with TestClient(app) as unauth_client:
+                response = unauth_client.get("/api/admin/version")
+        finally:
+            app.dependency_overrides.clear()
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_admin_version_forbids_regular_user(self, api_client):
