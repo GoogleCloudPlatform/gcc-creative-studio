@@ -1,0 +1,238 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: '🛡️ AI PR Verification'
+
+# Two-stage, model-agnostic PR verification pipeline:
+#   - `prepare` (unprivileged, zero secrets): runs on ALL pull requests
+#     (both same-repo branches and forks) to build a deterministic `ContextPack`
+#     artifact (`ai-verify-context-pack`).
+#   - `verify` (GCP IAM / Vertex AI): runs directly here for same-repository
+#     branches; fork pull requests are verified by `ai-verification-fork.yml`
+#     (`on: workflow_run`) once `prepare` completes.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    branches:
+      - main
+      - develop
+      - test
+
+permissions: {}
+
+concurrency:
+  # Label events that the `prepare` filter below ignores get a group of their
+  # own (keyed by run id). Otherwise a skipped label run would cancel an
+  # in-flight verification of the same pull request and leave it unverified.
+  # Keep this condition the exact negation of the `prepare` job `if`.
+  group: "${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ (github.event.action == 'labeled' && github.event.label.name != 'ai-verify' && github.event.label.name != 'ai-review') && github.run_id || 'verify' }}"
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: 'bash'
+
+jobs:
+  prepare:
+    name: 'Prepare Context Pack & Static Signals'
+    # `labeled` is subscribed only for the fork gate labels. Any other label
+    # must not repeat a full verification of a commit that has not changed.
+    if: >-
+      github.event.action != 'labeled' ||
+      github.event.label.name == 'ai-verify' ||
+      github.event.label.name == 'ai-review'
+    runs-on: 'ubuntu-latest'
+    timeout-minutes: 10
+    permissions:
+      contents: 'read'
+    outputs:
+      has_active_steps: '${{ steps.pack.outputs.has_active_steps }}'
+      active_steps: '${{ steps.pack.outputs.active_steps }}'
+    steps:
+      - name: 'Checkout base branch'
+        uses: 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262' # v4
+        with:
+          ref: '${{ github.event.pull_request.base.sha }}'
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 'Fetch pull request head (without full checkout)'
+        env:
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+        run: |-
+          auth="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth}" \
+            fetch --no-tags origin "+refs/pull/${PR_NUMBER}/head:refs/remotes/pr/${PR_NUMBER}"
+
+      # Bootstrap helper: on the initial PR introducing `.github/scripts/ai_verify`
+      # into `develop`/`main`, `base.sha` does not have the package yet. Only for
+      # trusted same-repository branches, materialize `.github/scripts/ai_verify`.
+      - name: 'Ensure ai_verify scripts exist (bootstrap fallback)'
+        if: "github.event.pull_request.head.repo.full_name == github.repository"
+        env:
+          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
+        run: |-
+          if [ ! -f ".github/scripts/ai_verify/pyproject.toml" ]; then
+            git checkout "${HEAD_SHA}" -- .github/scripts/ai_verify
+          fi
+
+      - name: 'Set up Python 3.12 & uv'
+        uses: 'astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86' # v5.4.2
+        with:
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: '.github/scripts/ai_verify/uv.lock'
+
+      - name: 'Run verifier self-tests'
+        run: |-
+          uv run --project .github/scripts/ai_verify --locked --only-group prep \
+            pytest -q .github/scripts/ai_verify/tests
+
+      - name: 'Build deterministic Context Pack'
+        id: 'pack'
+        env:
+          BASE_SHA: '${{ github.event.pull_request.base.sha }}'
+          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          PR_TITLE: '${{ github.event.pull_request.title }}'
+          PR_BODY: '${{ github.event.pull_request.body }}'
+          AI_VERIFY_MAX_PACK_CHARS: "${{ vars.AI_VERIFY_MAX_PACK_CHARS || '800000' }}"
+          PYTHONPATH: '.github/scripts/ai_verify/src'
+        run: |-
+          uv run --project .github/scripts/ai_verify --locked --only-group prep \
+            python -m ai_verify prepare \
+            --base "${BASE_SHA}" \
+            --head "${HEAD_SHA}" \
+            --pr-number "${PR_NUMBER}" \
+            --output "${RUNNER_TEMP}/context-pack.json"
+
+      - name: 'Upload Context Pack artifact'
+        if: "steps.pack.outputs.has_active_steps == 'true'"
+        uses: 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' # v4
+        with:
+          name: 'ai-verify-context-pack'
+          path: '${{ runner.temp }}/context-pack.json'
+          retention-days: 2
+
+  verify:
+    name: 'AI Verification Orchestrator'
+    needs: 'prepare'
+    if: >-
+      needs.prepare.outputs.has_active_steps == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: 'ubuntu-latest'
+    timeout-minutes: 20
+    permissions:
+      contents: 'read'
+      pull-requests: 'write'
+      checks: 'write'
+      id-token: 'write'
+    steps:
+      - name: 'Checkout trusted base branch'
+        uses: 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262' # v4
+        with:
+          ref: '${{ github.event.pull_request.base.sha }}'
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: 'Ensure ai_verify scripts exist (bootstrap fallback)'
+        env:
+          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
+          GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+        run: |-
+          if [ ! -f ".github/scripts/ai_verify/pyproject.toml" ]; then
+            auth="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth}" \
+              fetch --depth=1 --no-tags origin "${HEAD_SHA}"
+            git checkout "${HEAD_SHA}" -- .github/scripts/ai_verify
+          fi
+
+      - name: 'Download Context Pack artifact'
+        uses: 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093' # v4
+        with:
+          name: 'ai-verify-context-pack'
+          path: '${{ runner.temp }}'
+
+      - name: 'Authenticate to Google Cloud (Workload Identity)'
+        id: 'gcp_wif'
+        if: "vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != ''"
+        uses: 'google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed' # v2
+        with:
+          workload_identity_provider: '${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}'
+          service_account: '${{ vars.GCP_SERVICE_ACCOUNT }}'
+
+      - name: 'Detect Service Account JSON fallback'
+        id: 'gcp_creds_check'
+        if: "vars.GCP_WORKLOAD_IDENTITY_PROVIDER == ''"
+        env:
+          GCP_CREDS_PRESENT: '${{ secrets.GCP_CREDENTIALS_JSON }}'
+        run: |-
+          if [ -n "${GCP_CREDS_PRESENT}" ]; then
+            echo "has_creds=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "has_creds=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: 'Authenticate to Google Cloud (Service Account JSON)'
+        id: 'gcp_json'
+        if: "steps.gcp_creds_check.outputs.has_creds == 'true'"
+        uses: 'google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed' # v2
+        with:
+          credentials_json: '${{ secrets.GCP_CREDENTIALS_JSON }}'
+
+      - name: 'Fetch optional secrets from GCP Secret Manager'
+        if: >-
+          vars.GCP_AI_SECRETS_SPEC != '' &&
+          (steps.gcp_wif.outcome == 'success' || steps.gcp_json.outcome == 'success')
+        uses: 'google-github-actions/get-secretmanager-secrets@2b5f97c5a4b9c105e64646762ad4fc3f5128e6f5' # v2
+        with:
+          secrets: '${{ vars.GCP_AI_SECRETS_SPEC }}'
+          export_environment: true
+
+      - name: 'Set up Python 3.12 & uv'
+        uses: 'astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86' # v5.4.2
+        with:
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: '.github/scripts/ai_verify/uv.lock'
+
+      - name: 'Run Multi-Step AI Verification'
+        env:
+          GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+          VERIFIED_PR_NUMBER: '${{ github.event.pull_request.number }}'
+          GCP_PROJECT_ID: '${{ steps.gcp_wif.outputs.project_id || steps.gcp_json.outputs.project_id || vars.GCP_PROJECT_ID }}'
+          VERTEX_LOCATION: "${{ vars.VERTEX_LOCATION || 'global' }}"
+          CLAUDE_VERTEX_REGION: "${{ vars.CLAUDE_VERTEX_REGION || vars.VERTEX_LOCATION || 'global' }}"
+          GEMINI_DEEP_MODEL: "${{ vars.GEMINI_DEEP_MODEL || 'gemini-3.1-pro-preview' }}"
+          GEMINI_FAST_MODEL: "${{ vars.GEMINI_FAST_MODEL || 'gemini-3.8-flash' }}"
+          GEMINI_DEEP_THINKING_LEVEL: "${{ vars.GEMINI_DEEP_THINKING_LEVEL || 'LOW' }}"
+          GEMINI_FAST_THINKING_LEVEL: "${{ vars.GEMINI_FAST_THINKING_LEVEL || 'LOW' }}"
+          CLAUDE_DEEP_MODEL: '${{ vars.CLAUDE_DEEP_MODEL }}'
+          CLAUDE_FAST_MODEL: '${{ vars.CLAUDE_FAST_MODEL }}'
+          AI_VERIFY_GATE_MODE: "${{ vars.AI_VERIFY_GATE_MODE || 'advisory' }}"
+          AI_VERIFY_MAX_TOTAL_TOKENS: "${{ vars.AI_VERIFY_MAX_TOTAL_TOKENS || '4000000' }}"
+          AI_VERIFY_MAX_PARALLEL_STEPS: "${{ vars.AI_VERIFY_MAX_PARALLEL_STEPS || '4' }}"
+          GEMINI_API_KEY_V2: '${{ secrets.GEMINI_API_KEY_V2 }}'
+          GEMINI_API_KEY: '${{ secrets.GEMINI_API_KEY }}'
+          ANTHROPIC_API_KEY: '${{ secrets.ANTHROPIC_API_KEY }}'
+        run: |-
+          uv run --project .github/scripts/ai_verify --locked --no-group prep \
+            ai-verify verify \
+            --pack "${RUNNER_TEMP}/context-pack.json" \
+            --report "${RUNNER_TEMP}/ai-verify-report.md" \
+            --results "${RUNNER_TEMP}/ai-verify-results.json" \
+            --publish-pr "${VERIFIED_PR_NUMBER}" \
+            --post-inline \
+            --publish-agent-checks
