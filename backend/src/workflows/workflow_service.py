@@ -17,10 +17,11 @@ import datetime
 import inspect
 import logging
 import math
+from collections.abc import Mapping
 from typing import Any
 import uuid
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException
 from google.api_core.exceptions import InvalidArgument, NotFound
 from google.cloud import workflows_v1
 from google.cloud.workflows import executions_v1
@@ -29,6 +30,7 @@ from pydantic import ValidationError
 from src.common.dto.pagination_response_dto import PaginationResponseDto
 from src.common.secret_redaction import install_secret_redaction
 from src.config.config_service import config_service
+from src.folders.repository.folder_repository import FolderRepository
 from src.images.imagen_service import ImagenService
 from src.source_assets.source_asset_service import SourceAssetService
 from src.users.user_model import UserModel
@@ -57,6 +59,7 @@ from src.workflows.repository.workflow_template_repository import (
 from src.workflows.schema.workflow_model import (
     WorkflowBase,
     WorkflowCreateDto,
+    NodeTypes,
     WorkflowModel,
     WorkflowRunStatusEnum,
 )
@@ -77,11 +80,42 @@ from src.workflows.workflow_yaml_builder import (
     compute_definition_hash,
     initial_step_states,
 )
+from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
 logger = install_secret_redaction(logging.getLogger(__name__))
 PROJECT_ID = config_service.PROJECT_ID
 LOCATION = config_service.WORKFLOWS_LOCATION
 BACKEND_EXECUTOR_URL = config_service.WORKFLOWS_EXECUTOR_URL
+FOLDER_PARAMETER_TYPE = "folder"
+BATCH_FOLDER_NOT_FOUND_ERROR = "Folder not found for '{name}'."
+BATCH_FOLDER_WORKSPACE_ERROR = "Workspace not found or not accessible."
+
+
+def _folder_arg_names(workflow_model: WorkflowModel | None) -> frozenset[str]:
+    """Execution argument names of the workflow's Folder parameters."""
+    if workflow_model is None:
+        return frozenset()
+    return frozenset(
+        name
+        for step in workflow_model.steps
+        if step.type == NodeTypes.USER_INPUT
+        for name, output in (step.outputs or {}).items()
+        if isinstance(output, Mapping)
+        and output.get("type") == FOLDER_PARAMETER_TYPE
+    )
+
+
+def _batch_workspace_id(raw_workspace_id: Any) -> int | None:
+    """Positive int workspace id from a batch row value (int or digits)."""
+    if isinstance(raw_workspace_id, bool):
+        return None
+    if isinstance(raw_workspace_id, int):
+        workspace_id = raw_workspace_id
+    elif isinstance(raw_workspace_id, str) and raw_workspace_id.isdigit():
+        workspace_id = int(raw_workspace_id)
+    else:
+        return None
+    return workspace_id if workspace_id > 0 else None
 
 
 class WorkflowConflictError(Exception):
@@ -97,12 +131,16 @@ class WorkflowService:
         workflow_run_repository: WorkflowRunRepository = Depends(),
         source_asset_service: SourceAssetService = Depends(),
         workflow_template_repository: WorkflowTemplateRepository = Depends(),
+        folder_repository: FolderRepository = Depends(),
+        workspace_auth: WorkspaceAuth = Depends(),
     ):
         self.imagen_service = ImagenService()
         self.workflow_repository = workflow_repository
         self.workflow_run_repository = workflow_run_repository
         self.source_asset_service = source_asset_service
         self.workflow_template_repository = workflow_template_repository
+        self.folder_repository = folder_repository
+        self.workspace_auth = workspace_auth
         self.run_state_service = RunStateService(
             repository=workflow_run_repository,
         )
@@ -533,13 +571,21 @@ class WorkflowService:
         workflow_model = await self.get_by_id(workflow_id)
         if workflow_model:
             await self._ensure_gcp_workflow_is_current(workflow_model)
+        folder_arg_names = _folder_arg_names(workflow_model)
+        authorized_workspace_ids: set[int] = set()
 
         async def process_row(item) -> BatchItemResultDto:
             try:
                 processed_args: dict[str, Any] = {}
                 workspace_id = item.args.get("workspace_id")
+                folder_args = await self._resolve_batch_folder_args(
+                    item.args, folder_arg_names, user, authorized_workspace_ids
+                )
 
                 for key, value in item.args.items():
+                    if key in folder_args:
+                        processed_args[key] = folder_args[key]
+                        continue
                     is_gcs_string = isinstance(value, str) and value.startswith(
                         "gs://"
                     )
@@ -645,6 +691,80 @@ class WorkflowService:
                         )
 
         return BatchExecutionResponseDto(results=results)
+
+    async def _resolve_batch_folder_args(
+        self,
+        row_args: Mapping[str, Any],
+        folder_arg_names: frozenset[str],
+        user: UserModel,
+        authorized_workspace_ids: set[int],
+    ) -> dict[str, int]:
+        """Folder ids of the row's folder args, after the workspace check.
+
+        Raises ValueError with a generic message when the workspace is not
+        accessible or a folder value does not match an active folder.
+        """
+        present_names = sorted(
+            name for name in folder_arg_names if name in row_args
+        )
+        if not present_names:
+            return {}
+        workspace_id = await self._authorized_batch_workspace(
+            row_args.get("workspace_id"), user, authorized_workspace_ids
+        )
+        resolved: dict[str, int] = {}
+        for name in present_names:
+            folder_id = await self._batch_folder_id(
+                row_args[name], workspace_id
+            )
+            if folder_id is None:
+                raise ValueError(BATCH_FOLDER_NOT_FOUND_ERROR.format(name=name))
+            resolved[name] = folder_id
+        return resolved
+
+    async def _authorized_batch_workspace(
+        self,
+        raw_workspace_id: Any,
+        user: UserModel,
+        authorized_workspace_ids: set[int],
+    ) -> int:
+        """Int id of the row's workspace once the user may access it."""
+        workspace_id = _batch_workspace_id(raw_workspace_id)
+        if workspace_id is None:
+            raise ValueError(BATCH_FOLDER_WORKSPACE_ERROR)
+        if workspace_id in authorized_workspace_ids:
+            return workspace_id
+        try:
+            await self.workspace_auth.authorize(workspace_id, user)
+        except HTTPException as e:
+            logger.warning(
+                "Batch workspace %s rejected for user %s: %s",
+                workspace_id,
+                user.id,
+                e.detail,
+            )
+            raise ValueError(BATCH_FOLDER_WORKSPACE_ERROR) from e
+        authorized_workspace_ids.add(workspace_id)
+        return workspace_id
+
+    async def _batch_folder_id(
+        self, value: Any, workspace_id: int
+    ) -> int | None:
+        """Folder id of one batch value, or None when nothing matches."""
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            if value <= 0:
+                return None
+            folder = await self.folder_repository.get_folder_by_id(value)
+            if folder is None or folder.workspace_id != workspace_id:
+                return None
+            return folder.id
+        if isinstance(value, str):
+            return await self.folder_repository.resolve_folder_path(
+                workspace_id, value
+            )
+        return None
 
     @staticmethod
     def _interpolate_prompt_variables(

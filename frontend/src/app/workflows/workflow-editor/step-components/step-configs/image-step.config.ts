@@ -18,7 +18,10 @@ import {MODEL_CONFIGS} from '../../../../common/config/model-config';
 import {NodeTypes} from '../../../workflow.models';
 import {StepConfig} from '../generic-step/step.model';
 import {LOOP_ENDING_OUTPUT} from './loop-step.config';
-import {OUTPUT_FOLDER_SETTING} from './output-folder-setting';
+import {
+  OUTPUT_FOLDER_INPUT,
+  OUTPUT_FOLDER_INPUT_NAME,
+} from './output-folder-setting';
 
 export const IMAGE_MODE_OPTIONS = [
   {value: 'generate_image', label: 'Text to Image'},
@@ -28,15 +31,16 @@ export const IMAGE_MODE_OPTIONS = [
 ];
 
 export const IMAGE_MODE_ALLOWED_INPUTS: Record<string, string[]> = {
-  generate_image: ['prompt'],
-  edit_image: ['prompt', 'input_images'],
-  upscale_image: ['input_image'],
+  generate_image: ['prompt', OUTPUT_FOLDER_INPUT_NAME],
+  edit_image: ['prompt', 'input_images', OUTPUT_FOLDER_INPUT_NAME],
+  upscale_image: ['input_image', OUTPUT_FOLDER_INPUT_NAME],
   virtual_try_on: [
     'model_image',
     'top_image',
     'bottom_image',
     'dress_image',
     'shoes_image',
+    OUTPUT_FOLDER_INPUT_NAME,
   ],
 };
 
@@ -117,6 +121,7 @@ export const IMAGE_STEP_CONFIG: StepConfig = {
       required: false,
       hidden: true,
     },
+    OUTPUT_FOLDER_INPUT,
   ],
   settings: [
     {
@@ -182,7 +187,6 @@ export const IMAGE_STEP_CONFIG: StepConfig = {
       step: 0.05,
       hidden: true,
     },
-    OUTPUT_FOLDER_SETTING,
   ],
   outputs: [
     {

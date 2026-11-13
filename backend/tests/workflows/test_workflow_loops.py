@@ -63,6 +63,7 @@ def _loop(
     mode: str = "folder",
     items_text: Any = None,
     linked_items: Any = None,
+    folder: Any = 42,
 ) -> LoopStep:
     return LoopStep(
         step_id=step_id,
@@ -70,10 +71,9 @@ def _loop(
             items_text=items_text,
             linked_items=linked_items,
             loop_ending=_ref(end, "loop_ending") if end else None,
+            folder=folder if mode == "folder" else None,
         ),
-        settings=LoopSettings(
-            mode=mode, folder_id=42 if mode == "folder" else None
-        ),
+        settings=LoopSettings(mode=mode),
     )
 
 
@@ -392,8 +392,8 @@ class TestLoopYaml:
         args = run_steps["loop_1"]["try"]["args"]
         assert args["url"] == f"{EXECUTOR_URL}/resolve-loop-items"
         assert args["body"]["step_id"] == "loop_1"
-        assert args["body"]["inputs"] == {}
-        assert args["body"]["config"]["folder_id"] == 42
+        assert args["body"]["inputs"] == {"folder": 42}
+        assert "folder_id" not in args["body"]["config"]
         assert args["body"]["config"]["item_type"] == "image"
 
         loop_block = run_steps["loop_1_loop"]["for"]
@@ -555,7 +555,7 @@ class TestLoopYaml:
     @pytest.mark.parametrize(
         ("mode", "expected_inputs"),
         [
-            ("folder", {}),
+            ("folder", {"folder": 42}),
             ("text_input", {"items_text": "a, b"}),
         ],
     )
@@ -570,6 +570,47 @@ class TestLoopYaml:
         body = _resolve_body(steps)
 
         assert body["inputs"] == expected_inputs
+
+    def test_folder_loop_sends_null_when_no_folder_is_set(self):
+        body = _resolve_body([_loop(folder=None), _image()])
+
+        assert body["inputs"] == {"folder": None}
+
+    def test_folder_loop_linked_to_parameter_reads_execution_arg(self):
+        folder_input = UserInputStep(
+            step_id="user_in",
+            settings=UserInputSettings(
+                definitions=[UserInputDefinition(name="Target", type="folder")]
+            ),
+        )
+        steps = [
+            folder_input,
+            _loop(folder=_ref("user_in", "Target")),
+            _image(),
+        ]
+
+        body = _resolve_body(steps)
+
+        assert body["inputs"] == {"folder": "${args.Target}"}
+        assert analyze_steps(steps).dependencies["loop_1"] == frozenset(
+            {"user_in"}
+        )
+
+    @pytest.mark.parametrize("mode", ["text_input", "linked_items"])
+    def test_folder_not_sent_outside_folder_mode(self, mode):
+        stale_loop = LoopStep(
+            step_id="loop_1",
+            inputs=LoopInputs(
+                items_text="a",
+                folder=42,
+                loop_ending=_ref("gen_image", "loop_ending"),
+            ),
+            settings=LoopSettings(mode=mode),
+        )
+
+        body = _resolve_body([stale_loop, _image()])
+
+        assert "folder" not in body["inputs"]
 
     def test_linked_upstreams_are_top_level_and_referenced(self):
         steps = [

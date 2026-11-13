@@ -48,7 +48,7 @@ export type DragSourcePort = {
 export const MAGNETIC_SNAP_RADIUS = 48;
 export const MAGNETIC_RELEASE_RADIUS = 64;
 
-export type PortShortType = 'IMG' | 'VID' | 'TXT' | 'AUD' | 'LOOP';
+export type PortShortType = 'IMG' | 'VID' | 'TXT' | 'AUD' | 'LOOP' | 'FLD';
 
 export const PORT_TYPE_COLORS: Record<PortShortType, string> = {
   IMG: '#d53f8c', // Pink
@@ -56,12 +56,13 @@ export const PORT_TYPE_COLORS: Record<PortShortType, string> = {
   VID: '#dd6b20', // Orange
   AUD: '#805ad5', // Purple
   LOOP: '#2cb1a1', // Teal
+  FLD: '#d69e2e', // Amber
 };
 
 /**
  * Returns the standardized PortShortType for a given port type, normalizing synonyms
  * (e.g., txt / textarea / string -> 'TXT', img / images -> 'IMG', vid -> 'VID', aud -> 'AUD',
- * loop_ending / loop -> 'LOOP').
+ * loop_ending / loop -> 'LOOP', folder / fld -> 'FLD').
  * Returns null if the type is unknown or empty.
  */
 export function getCanonicalType(
@@ -90,13 +91,17 @@ export function getCanonicalType(
   if (t === 'loop_ending' || t === 'loop') {
     return 'LOOP';
   }
+  if (t === 'folder' || t === 'fld') {
+    return 'FLD';
+  }
   return null;
 }
 
 /**
  * Checks whether an output source data type is compatible with an input target data type.
- * Only known compatible port types (text, image, video, audio, loop_ending) are supported.
- * A `loop_ending` output can only ever connect to a `loop_ending` input.
+ * Only known compatible port types (text, image, video, audio, loop_ending, folder) are supported.
+ * A `loop_ending` output can only ever connect to a `loop_ending` input, and a
+ * `folder` output only to a `folder` input.
  */
 export function isPortTypeCompatible(
   sourceType: string | null | undefined,

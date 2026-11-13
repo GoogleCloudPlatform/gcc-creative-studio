@@ -32,6 +32,7 @@ from src.workflows.schema.workflow_model import (
     NodeTypes,
     StepOutputReference,
     StepStatusEnum,
+    UserInputStep,
     WorkflowCreateDto,
     WorkflowModel,
 )
@@ -69,13 +70,32 @@ def fixture_mock_run_repo():
     return repo
 
 
+@pytest.fixture(name="mock_folder_repo")
+def fixture_mock_folder_repo():
+    repo = AsyncMock()
+    repo.get_folder_by_id = AsyncMock(return_value=None)
+    repo.resolve_folder_path = AsyncMock(return_value=None)
+    return repo
+
+
+@pytest.fixture(name="mock_workspace_auth")
+def fixture_mock_workspace_auth():
+    auth = AsyncMock()
+    auth.authorize = AsyncMock()
+    return auth
+
+
 @pytest.fixture(name="workflow_service")
-def fixture_workflow_service(mock_workflow_repo, mock_run_repo):
+def fixture_workflow_service(
+    mock_workflow_repo, mock_run_repo, mock_folder_repo, mock_workspace_auth
+):
     # Pass None for source_asset_service for now as it's not used in basic tests
     return WorkflowService(
         workflow_repository=mock_workflow_repo,
         workflow_run_repository=mock_run_repo,
         source_asset_service=MagicMock(),
+        folder_repository=mock_folder_repo,
+        workspace_auth=mock_workspace_auth,
     )
 
 
@@ -1163,6 +1183,263 @@ class TestBatchExecuteWorkflow:
             response.results[1].error or ""
         )
         mock_run_repo.db.rollback.assert_awaited_once()
+
+
+class TestBatchFolderArgs:
+    """Folder-typed batch args are checked and resolved per row."""
+
+    @staticmethod
+    def _folder_workflow() -> WorkflowModel:
+        return WorkflowModel(
+            id="wf-folder",
+            user_id=1,
+            name="Folder Workflow",
+            steps=[
+                UserInputStep(
+                    step_id="user_input",
+                    type=NodeTypes.USER_INPUT,
+                    outputs={
+                        "target": {"type": "folder"},
+                        "prompt": {"type": "text"},
+                    },
+                ),
+            ],
+        )
+
+    @staticmethod
+    def _folder(folder_id: int, workspace_id: int) -> MagicMock:
+        folder = MagicMock()
+        folder.id = folder_id
+        folder.workspace_id = workspace_id
+        return folder
+
+    @staticmethod
+    async def _run_batch(service, user, rows: list[dict]):
+        from src.workflows.dto.batch_execution_dto import (
+            BatchExecutionItemDto,
+            BatchExecutionRequestDto,
+        )
+
+        batch_dto = BatchExecutionRequestDto(
+            items=[
+                BatchExecutionItemDto(row_index=index, args=args)
+                for index, args in enumerate(rows)
+            ]
+        )
+        return await service.batch_execute_workflow(
+            workflow_id="wf-folder", batch_dto=batch_dto, user=user
+        )
+
+    @pytest.fixture(name="folder_service")
+    def fixture_folder_service(self, workflow_service):
+        workflow_service.get_by_id = AsyncMock(
+            return_value=self._folder_workflow()
+        )
+        workflow_service._ensure_gcp_workflow_is_current = AsyncMock()
+        workflow_service._trigger_dispatch = AsyncMock()
+        run = MagicMock(
+            id="run-1",
+            status=WorkflowRunStatusEnum.QUEUED.value,
+            queue_reason=None,
+        )
+        workflow_service.submit_run = AsyncMock(return_value=run)
+        return workflow_service
+
+    def test_folder_arg_names_reads_user_input_folder_outputs(self):
+        from src.workflows.workflow_service import _folder_arg_names
+
+        assert _folder_arg_names(self._folder_workflow()) == frozenset(
+            {"target"}
+        )
+        assert _folder_arg_names(None) == frozenset()
+
+    def test_folder_arg_names_ignores_other_steps_and_types(
+        self, sample_workflow_model
+    ):
+        from src.workflows.workflow_service import _folder_arg_names
+
+        assert _folder_arg_names(sample_workflow_model) == frozenset()
+
+    @pytest.mark.anyio
+    async def test_int_id_in_row_workspace_is_submitted(
+        self, folder_service, mock_folder_repo, mock_workspace_auth, sample_user
+    ):
+        mock_folder_repo.get_folder_by_id.return_value = self._folder(42, 5)
+
+        response = await self._run_batch(
+            folder_service,
+            sample_user,
+            [{"target": 42, "prompt": "p", "workspace_id": 5}],
+        )
+
+        assert response.results[0].status == "SUCCESS"
+        mock_workspace_auth.authorize.assert_awaited_once_with(5, sample_user)
+        mock_folder_repo.get_folder_by_id.assert_awaited_once_with(42)
+        submitted_args = folder_service.submit_run.await_args.kwargs["args"]
+        assert submitted_args["target"] == 42
+        assert submitted_args["prompt"] == "p"
+
+    @pytest.mark.anyio
+    async def test_path_string_is_resolved_to_id(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.resolve_folder_path.return_value = 77
+
+        response = await self._run_batch(
+            folder_service,
+            sample_user,
+            [{"target": "Campaign/Shoes", "workspace_id": "5"}],
+        )
+
+        assert response.results[0].status == "SUCCESS"
+        mock_folder_repo.resolve_folder_path.assert_awaited_once_with(
+            5, "Campaign/Shoes"
+        )
+        submitted_args = folder_service.submit_run.await_args.kwargs["args"]
+        assert submitted_args["target"] == 77
+
+    @pytest.mark.anyio
+    async def test_digits_only_string_is_treated_as_path(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.resolve_folder_path.return_value = 9
+
+        response = await self._run_batch(
+            folder_service, sample_user, [{"target": "2024", "workspace_id": 5}]
+        )
+
+        assert response.results[0].status == "SUCCESS"
+        mock_folder_repo.resolve_folder_path.assert_awaited_once_with(5, "2024")
+        mock_folder_repo.get_folder_by_id.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "folder",
+        [None, "foreign"],
+        ids=["missing_or_deleted", "other_workspace"],
+    )
+    async def test_unusable_int_id_fails_with_generic_message(
+        self, folder_service, mock_folder_repo, sample_user, folder
+    ):
+        mock_folder_repo.get_folder_by_id.return_value = (
+            self._folder(42, 99) if folder == "foreign" else None
+        )
+
+        response = await self._run_batch(
+            folder_service, sample_user, [{"target": 42, "workspace_id": 5}]
+        )
+
+        result = response.results[0]
+        assert result.status == "FAILED"
+        assert result.error == "Folder not found for 'target'."
+        folder_service.submit_run.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_unmatched_path_fails_row_and_other_rows_continue(
+        self, folder_service, mock_folder_repo, sample_user
+    ):
+        mock_folder_repo.resolve_folder_path.side_effect = [None, 11]
+
+        response = await self._run_batch(
+            folder_service,
+            sample_user,
+            [
+                {"target": "Nope", "workspace_id": 5},
+                {"target": "Campaign", "workspace_id": 5},
+            ],
+        )
+
+        assert [r.status for r in response.results] == ["FAILED", "SUCCESS"]
+        assert response.results[0].error == "Folder not found for 'target'."
+        folder_service.submit_run.assert_awaited_once()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("value", [None, "", 0, -3, True, 1.5, [1]])
+    async def test_invalid_values_fail_the_row(
+        self, folder_service, mock_folder_repo, sample_user, value
+    ):
+        response = await self._run_batch(
+            folder_service, sample_user, [{"target": value, "workspace_id": 5}]
+        )
+
+        result = response.results[0]
+        assert result.status == "FAILED"
+        assert result.error == "Folder not found for 'target'."
+        mock_folder_repo.get_folder_by_id.assert_not_awaited()
+        folder_service.submit_run.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_missing_folder_arg_is_skipped_without_lookups(
+        self, folder_service, mock_folder_repo, mock_workspace_auth, sample_user
+    ):
+        response = await self._run_batch(
+            folder_service, sample_user, [{"prompt": "only text"}]
+        )
+
+        assert response.results[0].status == "SUCCESS"
+        mock_workspace_auth.authorize.assert_not_awaited()
+        mock_folder_repo.get_folder_by_id.assert_not_awaited()
+        mock_folder_repo.resolve_folder_path.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_denied_workspace_fails_before_any_folder_lookup(
+        self, folder_service, mock_folder_repo, mock_workspace_auth, sample_user
+    ):
+        from fastapi import HTTPException
+
+        mock_workspace_auth.authorize.side_effect = HTTPException(
+            status_code=403, detail="nope"
+        )
+
+        response = await self._run_batch(
+            folder_service, sample_user, [{"target": 42, "workspace_id": 5}]
+        )
+
+        result = response.results[0]
+        assert result.status == "FAILED"
+        assert result.error == "Workspace not found or not accessible."
+        mock_folder_repo.get_folder_by_id.assert_not_awaited()
+        mock_folder_repo.resolve_folder_path.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("workspace_id", [None, "abc", 0, True, "-1"])
+    async def test_invalid_workspace_id_fails_without_auth_or_lookup(
+        self,
+        folder_service,
+        mock_folder_repo,
+        mock_workspace_auth,
+        sample_user,
+        workspace_id,
+    ):
+        response = await self._run_batch(
+            folder_service,
+            sample_user,
+            [{"target": 42, "workspace_id": workspace_id}],
+        )
+
+        result = response.results[0]
+        assert result.status == "FAILED"
+        assert result.error == "Workspace not found or not accessible."
+        mock_workspace_auth.authorize.assert_not_awaited()
+        mock_folder_repo.get_folder_by_id.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_workspace_is_authorized_once_per_batch(
+        self, folder_service, mock_folder_repo, mock_workspace_auth, sample_user
+    ):
+        mock_folder_repo.get_folder_by_id.return_value = self._folder(42, 5)
+
+        response = await self._run_batch(
+            folder_service,
+            sample_user,
+            [
+                {"target": 42, "workspace_id": 5},
+                {"target": 42, "workspace_id": "5"},
+            ],
+        )
+
+        assert [r.status for r in response.results] == ["SUCCESS", "SUCCESS"]
+        mock_workspace_auth.authorize.assert_awaited_once_with(5, sample_user)
 
 
 class TestEnsureGcpWorkflowIsCurrent:

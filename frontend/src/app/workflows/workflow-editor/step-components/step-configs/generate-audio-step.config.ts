@@ -18,7 +18,7 @@ import {MODEL_CONFIGS} from '../../../../common/config/model-config';
 import {NodeTypes} from '../../../workflow.models';
 import {StepConfig} from '../generic-step/step.model';
 import {LOOP_ENDING_OUTPUT} from './loop-step.config';
-import {OUTPUT_FOLDER_SETTING} from './output-folder-setting';
+import {OUTPUT_FOLDER_INPUT} from './output-folder-setting';
 
 const model_options = MODEL_CONFIGS.filter(model => model.type === 'AUDIO').map(
   model => ({
@@ -60,6 +60,7 @@ export const GENERATE_AUDIO_STEP_CONFIG: StepConfig = {
       type: 'textarea',
       required: true,
     },
+    OUTPUT_FOLDER_INPUT,
   ],
   settings: [
     {
@@ -95,7 +96,6 @@ export const GENERATE_AUDIO_STEP_CONFIG: StepConfig = {
       type: 'text',
       defaultValue: '',
     },
-    OUTPUT_FOLDER_SETTING,
   ],
   outputs: [
     {

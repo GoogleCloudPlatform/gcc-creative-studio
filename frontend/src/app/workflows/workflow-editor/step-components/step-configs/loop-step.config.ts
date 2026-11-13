@@ -51,7 +51,7 @@ export const LOOP_CURRENT_ITEM_PORT = 'current_item';
 export const LOOP_ITEMS_TEXT_INPUT = 'items_text';
 export const LOOP_LINKED_ITEMS_INPUT = 'linked_items';
 export const LOOP_MODE_SETTING = 'mode';
-export const LOOP_FOLDER_SETTING = 'folder_id';
+export const LOOP_FOLDER_INPUT = 'folder';
 export const LOOP_ITEM_TYPE_SETTING = 'item_type';
 
 export const LOOP_MODE_FOLDER: LoopMode = 'folder';
@@ -77,7 +77,6 @@ export const LOOP_MODE_LABELS: Readonly<Record<LoopMode, string>> = {
 /** Default settings for a newly added Loop step. */
 export const DEFAULT_LOOP_SETTINGS: LoopSettings = {
   mode: LOOP_MODE_FOLDER,
-  folder_id: null,
   item_type: DEFAULT_LOOP_ITEM_TYPE,
 };
 
@@ -245,6 +244,15 @@ export const LOOP_STEP_CONFIG: StepConfig = {
   icon: 'loop',
   inputs: [
     {
+      // Shown and required only in folder mode; the editor toggles it with the mode.
+      name: LOOP_FOLDER_INPUT,
+      label: LOOP_MODE_LABELS.folder,
+      type: 'folder',
+      allowRoot: false,
+      required: false,
+      hidden: true,
+    },
+    {
       name: LOOP_ITEMS_TEXT_INPUT,
       label: 'Items (comma-separated)',
       type: 'text',
@@ -279,15 +287,6 @@ export const LOOP_STEP_CONFIG: StepConfig = {
         {value: LOOP_MODE_LINKED_ITEMS, label: LOOP_MODE_LABELS.linked_items},
       ],
       defaultValue: LOOP_MODE_FOLDER,
-    },
-    {
-      // Required only in folder mode; the editor toggles it with the mode.
-      name: LOOP_FOLDER_SETTING,
-      label: 'Media Gallery Folder',
-      type: 'folder',
-      allowRoot: false,
-      required: true,
-      defaultValue: null,
     },
     {
       name: LOOP_ITEM_TYPE_SETTING,

@@ -17,6 +17,7 @@
 import {NO_ERRORS_SCHEMA} from '@angular/core';
 import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {Router} from '@angular/router';
+import {FolderPathMap} from '../../utils/folder-path.util';
 import {LoopMediaItem, NodeTypes} from '../../workflow.models';
 import {StepExecutionDetailsComponent} from './step-execution-details.component';
 
@@ -414,6 +415,87 @@ describe('StepExecutionDetailsComponent', () => {
     });
   });
 
+  describe('Folder inputs', () => {
+    const PATHS: FolderPathMap = new Map([[7, 'Campaign / Shoes']]);
+    const query = (selector: string): HTMLElement | null =>
+      fixture.nativeElement.querySelector(selector);
+
+    function renderImageStep(outputFolder: number | null): void {
+      component.stepId = 'img_1';
+      component.stepType = NodeTypes.IMAGE;
+      component.mode = 'generate_image';
+      component.inputs = {prompt: 'Shoes', output_folder: outputFolder};
+      component.outputs = {generated_image: 101};
+    }
+
+    it('shows the output folder path instead of an image', () => {
+      renderImageStep(7);
+      component.folderPaths = PATHS;
+      fixture.detectChanges();
+
+      const folderRow = query('#step-folder-input-img_1-output_folder');
+      expect(component.filteredInputs).toEqual({
+        prompt: 'Shoes',
+        output_folder: 7,
+      });
+      expect(component.isImageInput('output_folder')).toBeFalse();
+      expect(component.folderInputLabels()).toEqual({
+        output_folder: 'Campaign / Shoes',
+      });
+      expect(folderRow?.textContent).toContain('Campaign / Shoes');
+      expect(folderRow?.querySelector('img')).toBeNull();
+    });
+
+    it('falls back to the folder id when the path is unknown', () => {
+      renderImageStep(7);
+      component.folderPaths = null;
+      fixture.detectChanges();
+
+      expect(component.folderInputLabels()).toEqual({
+        output_folder: 'Folder #7',
+      });
+      expect(
+        query('#step-folder-input-img_1-output_folder')?.textContent,
+      ).toContain('Folder #7');
+    });
+
+    it('shows nothing for the root folder', () => {
+      renderImageStep(null);
+      fixture.detectChanges();
+
+      expect(component.folderInputLabels()).toEqual({});
+      expect(component.filteredInputs).toEqual({prompt: 'Shoes'});
+      expect(query('.step-folder-input')).toBeNull();
+    });
+
+    it('labels the Loop folder with its path, else its recorded name', () => {
+      component.stepId = 'loop_1';
+      component.stepType = NodeTypes.LOOP;
+      component.inputs = {
+        mode: 'folder',
+        folder_id: 7,
+        folder_name: 'Shoes',
+        item_type: 'image',
+      };
+      fixture.detectChanges();
+      expect(component.folderInputLabels()['folder']).toBe('Shoes');
+
+      component.folderPaths = PATHS;
+      fixture.detectChanges();
+      expect(component.folderInputLabels()['folder']).toBe('Campaign / Shoes');
+      expect(query('#step-folder-input-loop_1-folder')?.textContent).toContain(
+        'Campaign / Shoes',
+      );
+    });
+
+    it('reads the Loop folder recorded under the folder key', () => {
+      component.stepType = NodeTypes.LOOP;
+      component.inputs = {mode: 'folder', folder: 9, item_type: 'image'};
+      fixture.detectChanges();
+      expect(component.folderInputLabels()).toEqual({folder: 'Folder #9'});
+    });
+  });
+
   describe('Loop Step', () => {
     const query = (selector: string): HTMLElement | null =>
       fixture.nativeElement.querySelector(selector);
@@ -440,9 +522,10 @@ describe('StepExecutionDetailsComponent', () => {
 
       expect(component.filteredInputs).toEqual({
         mode: 'Media Gallery Folder',
-        folder_name: 'Product Photos',
+        folder: 42,
         item_type: 'video',
       });
+      expect(component.folderInputLabels()['folder']).toBe('Product Photos');
       expect(component.filteredOutputs).toEqual({items: [101, 102]});
       expect(component.isVideoOutput('items')).toBeTrue();
       expect(component.isImageOutput('items')).toBeFalse();

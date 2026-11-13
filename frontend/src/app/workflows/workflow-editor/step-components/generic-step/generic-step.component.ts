@@ -51,9 +51,6 @@ import {
   MODEL_CONFIGS,
   getSupportedModelDurations,
 } from '../../../../common/config/model-config';
-import {FolderSelectionResult} from '../../../../common/models/folder.model';
-import {WorkspaceStateService} from '../../../../services/workspace/workspace-state.service';
-import {WorkflowFolderTreeStore} from '../../workflow-folder-tree.store';
 import {
   InputUnlinkState,
   StepConfig,
@@ -86,7 +83,7 @@ import {
 import {
   LOOP_CURRENT_ITEM_PORT,
   LOOP_ENDING_PORT,
-  LOOP_FOLDER_SETTING,
+  LOOP_FOLDER_INPUT,
   LOOP_ITEMS_TEXT_INPUT,
   LOOP_ITEM_TYPE_MIME_MAP,
   LOOP_ITEM_TYPE_SETTING,
@@ -104,16 +101,8 @@ import {
   toLoopMode,
 } from '../step-configs/loop-step.config';
 import {
-  FOLDER_CHOOSE_VALUE,
-  FOLDER_MISSING_TOOLTIP,
-  FOLDER_PLACEHOLDER_LABEL,
-  FOLDER_ROOT_LABEL,
-  FolderChooseValue,
-  FolderIndex,
   FolderPreviewMimeType,
-  buildFolderIndex,
-  folderIdValidator,
-  toFolderId,
+  folderInputValidator,
 } from '../step-configs/folder-setting.util';
 import {getOutputFolderMimeType} from '../step-configs/output-folder-setting';
 import {
@@ -128,47 +117,8 @@ import {
 } from '../../../utils/workflow-magnetic.util';
 import {MatMenuTrigger} from '@angular/material/menu';
 
-/** View model of the current-folder option in a folder setting select. */
-interface FolderOptionView {
-  value: number | null;
-  label: string;
-  /** Full folder path; empty when unknown. */
-  path: string;
-  isPlaceholder: boolean;
-  isMissing: boolean;
-}
-
-/**
- * DOM id/class prefix of the folder control. The Loop keeps its historical
- * `loop-folder-*` names; media nodes use `output-folder-*`.
- */
-type FolderDomPrefix = 'loop-folder' | 'output-folder';
-
 type InputUnlinkStates = Record<string, InputUnlinkState>;
 
-/** DOM ids/classes of the folder control (stable for E2E tests). */
-interface FolderDomNames {
-  selectIdPrefix: string;
-  fieldClass: string;
-  rootOptionClass: string;
-  currentOptionClass: string;
-  chooseOptionClass: string;
-  missingIconClass: string;
-}
-
-function buildFolderDomNames(prefix: FolderDomPrefix): FolderDomNames {
-  return {
-    selectIdPrefix: `${prefix}-select-`,
-    fieldClass: `${prefix}-field`,
-    rootOptionClass: `${prefix}-root-option`,
-    currentOptionClass: `${prefix}-current-option`,
-    chooseOptionClass: `${prefix}-choose-option`,
-    missingIconClass: `${prefix}-missing-icon`,
-  };
-}
-
-const LOOP_FOLDER_DOM_NAMES = buildFolderDomNames('loop-folder');
-const OUTPUT_FOLDER_DOM_NAMES = buildFolderDomNames('output-folder');
 const UNLINK_MENU_OPEN_KEYS: ReadonlySet<string> = new Set(['Enter', ' ']);
 
 /** Media kind of a Generate Video reference input. */
@@ -310,104 +260,10 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
   localConfig!: StepConfig;
   isLoopStep = false;
   readonly loopLinkedItemsInputName = LOOP_LINKED_ITEMS_INPUT;
-  readonly folderChooseValue: FolderChooseValue = FOLDER_CHOOSE_VALUE;
-  readonly folderMissingTooltip = FOLDER_MISSING_TOOLTIP;
-  /** DOM ids/classes of this node's folder control. */
-  folderDomNames: FolderDomNames = OUTPUT_FOLDER_DOM_NAMES;
-  /**
-   * MatSelect renders a `null` value through its placeholder, so the label is
-   * kept floated when `null` is the visible "All Media (root)" choice.
-   */
-  folderFloatLabel: FloatLabelType = 'auto';
-
-  /** This node's `'folder'` setting (at most one per node), or null. */
-  private folderSetting: StepSetting | null = null;
-  /** True when `null` is the enabled "All Media (root)" choice. */
-  private readonly folderAllowRoot = signal<boolean>(false);
-  /** Workspace whose folder tree resolves the saved folder. */
-  private readonly folderWorkspaceId = signal<number | null>(null);
-  /**
-   * Folders confirmed in the picker by this node. They show at once, before
-   * the refreshed tree lists them, and are cleared when the picker reopens.
-   */
-  private readonly pickedFolders = signal<FolderIndex>(new Map());
-  /** Index of the shared editor tree; null while not loaded. */
-  private readonly storeFolderIndex = computed<FolderIndex | null>(() => {
-    const workspaceId = this.folderWorkspaceId();
-    if (workspaceId === null) return null;
-    const tree = this.folderTreeStore.tree(workspaceId);
-    return tree ? buildFolderIndex(tree) : null;
-  });
-
-  /** Folder id → name/path of the workspace tree; null while loading or on error. */
-  readonly folderIndex = computed<FolderIndex | null>(() => {
-    const index = this.storeFolderIndex();
-    const picked = this.pickedFolders();
-    if (picked.size === 0) return index;
-    const merged = new Map(index ?? []);
-    picked.forEach((entry, id) => merged.set(id, entry));
-    return merged;
-  });
-  /** Saved folder id (never the "Choose folder…" value). */
-  readonly folderId = signal<number | null>(null);
-  /** Current-folder option of the folder select. */
-  readonly folderOption = computed<FolderOptionView>(() => {
-    const id = this.folderId();
-    if (id === null) {
-      const allowRoot = this.folderAllowRoot();
-      return {
-        value: null,
-        label: allowRoot ? FOLDER_ROOT_LABEL : FOLDER_PLACEHOLDER_LABEL,
-        path: '',
-        isPlaceholder: !allowRoot,
-        isMissing: false,
-      };
-    }
-    const index = this.folderIndex();
-    const entry = index?.get(id) ?? null;
-    if (entry) {
-      return {
-        value: id,
-        label: entry.name,
-        path: entry.path,
-        isPlaceholder: false,
-        isMissing: false,
-      };
-    }
-    return {
-      value: id,
-      label: `Folder #${id}`,
-      path: '',
-      isPlaceholder: false,
-      isMissing: index !== null,
-    };
-  });
-  /**
-   * Current-folder option as a list tracked by value: a new value re-creates
-   * the mat-option, which makes MatSelect re-match the control value (it does
-   * not re-sync when an existing option's value binding changes).
-   */
-  readonly folderOptions = computed<ReadonlyArray<FolderOptionView>>(() => [
-    this.folderOption(),
-  ]);
-  readonly trackFolderOption = (
-    _index: number,
-    option: FolderOptionView,
-  ): number | null => option.value;
-  readonly folderRootLabel = FOLDER_ROOT_LABEL;
-  /**
-   * Extra "All Media (root)" option shown while a folder is selected, so a
-   * root-allowing setting can always go back to the root (`null`).
-   */
-  readonly showFolderRootOption = computed<boolean>(
-    () => this.folderAllowRoot() && this.folderId() !== null,
-  );
-  private folderWasPristine = true;
+  /** Media previewed by the folder picker of this node's folder inputs. */
+  readonly folderPickerMimeType = signal<FolderPreviewMimeType>('image/*');
 
   private readonly fb = inject(FormBuilder);
-  private readonly folderTreeStore = inject(WorkflowFolderTreeStore);
-  private readonly workspaceStateService = inject(WorkspaceStateService);
-  private readonly dialog = inject(MatDialog);
   private readonly notificationService = inject(NotificationService);
   private settingsSubscription?: Subscription;
   private inputModeSubscription?: Subscription;
@@ -415,7 +271,6 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
   private inputsSubscription?: Subscription;
   private collapsedSubscription?: Subscription;
   private loopItemTypeSubscription?: Subscription;
-  private folderSubscription?: Subscription;
   currentMaxReferenceImages = 1;
 
   isCollapsed = false;
@@ -680,7 +535,6 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
       this.collapsedSubscription.unsubscribe();
     }
     this.loopItemTypeSubscription?.unsubscribe();
-    this.folderSubscription?.unsubscribe();
   }
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -719,7 +573,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     if (!inputs) return;
 
     this.localConfig.inputs.forEach(input => {
-      const validators = input.required ? [Validators.required] : [];
+      const validators = this.buildInputValidators(input);
 
       if (!inputs.contains(input.name)) {
         inputs.addControl(input.name, this.fb.control(null, validators));
@@ -868,7 +722,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
         this.updateImageModeConfig(modeControl?.value);
       }
 
-      this.initializeFolderSetting(settings);
+      this.folderPickerMimeType.set(this.getFolderPickerMimeType());
       if (this.isLoopStep) {
         this.initializeLoopStep(settings);
       }
@@ -885,6 +739,14 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
 
     this.updateCompatibleOutputs();
     this.refreshUnlinkStates();
+  }
+
+  /** Validators of a step input: `required` and, for folders, a valid id or link. */
+  private buildInputValidators(input: StepInput): ValidatorFn[] {
+    const requiredValidators = input.required ? [Validators.required] : [];
+    return input.type === 'folder'
+      ? [...requiredValidators, folderInputValidator]
+      : requiredValidators;
   }
 
   /**
@@ -1433,72 +1295,6 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     this.updateCompatibleOutputs();
   }
 
-  /**
-   * Binds this node's `'folder'` setting (if any) to the folder select state.
-   * The workspace tree is only requested once a folder is actually set (or the
-   * select is opened), through the editor-scoped store.
-   */
-  private initializeFolderSetting(settings: FormGroup): void {
-    this.folderSubscription?.unsubscribe();
-    this.folderSetting =
-      this.localConfig.settings.find(s => s.type === 'folder') ?? null;
-    if (!this.folderSetting) return;
-
-    const folderSetting = this.folderSetting;
-    this.folderDomNames = this.isLoopStep
-      ? LOOP_FOLDER_DOM_NAMES
-      : OUTPUT_FOLDER_DOM_NAMES;
-    this.folderAllowRoot.set(!!folderSetting.allowRoot);
-    this.folderFloatLabel = folderSetting.allowRoot ? 'always' : 'auto';
-    this.syncFolderWorkspace();
-
-    const folderControl = settings.get(folderSetting.name);
-    // The Loop toggles its validators with the source mode.
-    if (folderControl && !this.isLoopStep) {
-      this.applyFolderValidators(folderControl, !!folderSetting.required);
-    }
-    this.setFolderId(folderControl?.value);
-    // Follows external updates (history undo/redo, workflow load, reset). The
-    // transient "Choose folder…" value is ignored so the revert target is kept.
-    this.folderSubscription = folderControl?.valueChanges.subscribe(value => {
-      if (value === FOLDER_CHOOSE_VALUE) return;
-      this.setFolderId(value);
-    });
-  }
-
-  /** Stores the saved folder id and loads the tree when a folder is set. */
-  private setFolderId(value: unknown): void {
-    const folderId = toFolderId(value);
-    this.folderId.set(folderId);
-    if (folderId !== null) {
-      this.ensureFolderTreeLoaded();
-    }
-  }
-
-  private applyFolderValidators(
-    control: AbstractControl,
-    required: boolean,
-  ): void {
-    control.setValidators(
-      required ? [Validators.required, folderIdValidator] : [folderIdValidator],
-    );
-    control.updateValueAndValidity({emitEvent: false});
-  }
-
-  /** Follows the active workspace (its tree resolves the saved folder). */
-  private syncFolderWorkspace(): void {
-    this.folderWorkspaceId.set(
-      this.workspaceStateService.getActiveWorkspaceId(),
-    );
-  }
-
-  /** Idempotent: no request when the tree is already loaded or loading. */
-  private ensureFolderTreeLoaded(): void {
-    const workspaceId = this.folderWorkspaceId();
-    if (workspaceId === null) return;
-    this.folderTreeStore.ensureLoaded(workspaceId);
-  }
-
   private initializeLoopStep(settings: FormGroup): void {
     this.loopItemTypeSubscription?.unsubscribe();
     this.loopItemTypeSubscription = settings
@@ -1524,25 +1320,15 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     const isLinkedMode = mode === LOOP_MODE_LINKED_ITEMS;
 
     this.localConfig.settings.forEach(setting => {
-      if (setting.name === LOOP_FOLDER_SETTING) {
-        setting.hidden = !isFolderMode;
-        setting.required = isFolderMode;
-      } else if (setting.name === LOOP_ITEM_TYPE_SETTING) {
+      if (setting.name === LOOP_ITEM_TYPE_SETTING) {
         setting.hidden = isTextMode;
       }
     });
 
-    // A folder is only required when looping over a Media Gallery folder.
-    const folderControl = settingsGroup?.get(LOOP_FOLDER_SETTING);
-    if (folderControl) {
-      if (isFolderMode) {
-        this.applyFolderValidators(folderControl, true);
-      } else {
-        folderControl.clearValidators();
-        folderControl.updateValueAndValidity({emitEvent: false});
-      }
-    }
-
+    this.applyLoopSourceInput(LOOP_FOLDER_INPUT, isFolderMode, [
+      Validators.required,
+      folderInputValidator,
+    ]);
     this.applyLoopSourceInput(LOOP_ITEMS_TEXT_INPUT, isTextMode, [
       Validators.required,
       loopItemsTextValidator,
@@ -1570,6 +1356,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
       ?.get(LOOP_CURRENT_ITEM_PORT)
       ?.setValue({type: currentItemType}, {emitEvent: false});
 
+    this.folderPickerMimeType.set(this.getFolderPickerMimeType());
     this.updateCompatibleOutputs();
     this.refreshUnlinkStates();
   }
@@ -1603,11 +1390,6 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
     control.updateValueAndValidity({emitEvent: false});
   }
 
-  private getFolderControl(): AbstractControl | null {
-    if (!this.folderSetting) return null;
-    return this.stepForm.get('settings')?.get(this.folderSetting.name) ?? null;
-  }
-
   /** Media previewed by the folder picker for this node. */
   private getFolderPickerMimeType(): FolderPreviewMimeType {
     if (!this.isLoopStep) {
@@ -1617,81 +1399,6 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
       this.stepForm.get('settings')?.get(LOOP_ITEM_TYPE_SETTING)?.value,
     );
     return LOOP_ITEM_TYPE_MIME_MAP[itemType];
-  }
-
-  /**
-   * Remembers whether the folder control was pristine before the user picks
-   * an option, and lazily loads the tree to label the options.
-   */
-  onFolderOpenedChange(opened: boolean): void {
-    if (!opened) return;
-    this.folderWasPristine = this.getFolderControl()?.pristine ?? true;
-    this.syncFolderWorkspace();
-    this.ensureFolderTreeLoaded();
-  }
-
-  /**
-   * "Choose folder…" is an action, not a value: the control is reverted
-   * synchronously (so it is never saved) and the folder selector is opened.
-   */
-  onFolderSelectionChange(event: MatSelectChange): void {
-    if (event.value !== FOLDER_CHOOSE_VALUE) return;
-    const control = this.getFolderControl();
-    if (!control) return;
-    control.setValue(this.folderId());
-    if (this.folderWasPristine) {
-      control.markAsPristine();
-    }
-    this.openFolderSelector();
-  }
-
-  /** Opens the Media Gallery in folder mode and stores the confirmed folder. */
-  openFolderSelector(): void {
-    const control = this.getFolderControl();
-    if (!control || control.disabled) return;
-    const data: ImageSelectorDialogData = {
-      selectionTarget: 'folder',
-      initialFolderId: this.folderId(),
-      mimeType: this.getFolderPickerMimeType(),
-      assetType: AssetTypeEnum.GENERIC_IMAGE,
-    };
-    // The refreshed tree (requested on close) is the source of truth again.
-    this.pickedFolders.set(new Map());
-    this.dialog
-      .open<
-        ImageSelectorComponent,
-        ImageSelectorDialogData,
-        FolderSelectionResult | null
-      >(ImageSelectorComponent, {
-        width: '90vw',
-        height: '80vh',
-        maxWidth: '90vw',
-        panelClass: 'image-selector-dialog',
-        data,
-      })
-      .afterClosed()
-      .pipe(take(1))
-      .subscribe(result => {
-        // The picker embeds the Media Gallery, where folders can be created,
-        // renamed, moved or deleted: every node of the workspace must update.
-        this.refreshFolderTree();
-        const folderId = toFolderId(result?.folderId);
-        if (!result || folderId === null) return;
-        this.pickedFolders.set(
-          new Map([[folderId, {name: result.folderName, path: result.path}]]),
-        );
-        this.folderId.set(folderId);
-        control.setValue(folderId);
-        control.markAsDirty();
-        control.markAsTouched();
-      });
-  }
-
-  private refreshFolderTree(): void {
-    this.syncFolderWorkspace();
-    const workspaceId = this.folderWorkspaceId();
-    if (workspaceId === null) return;
-    this.folderTreeStore.refresh(workspaceId);
   }
 
   getBaseInputs(): StepInput[] {
