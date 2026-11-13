@@ -1,0 +1,44 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<ng-container *ngIf="isBrowserAdmin && versionService.isUpdateAvailable()">
+  <div
+    *ngIf="versionService.versionInfo() as info"
+    role="status"
+    aria-live="polite"
+    class="bg-amber-950/40 border border-amber-700/70 rounded-lg px-5 py-4 mb-6 flex items-center justify-between gap-4 flex-wrap"
+  >
+    <div>
+      <p class="text-sm font-semibold text-amber-100 tabular-nums">
+        New version available: v{{ info.latestVersion }}
+      </p>
+      <p class="text-xs text-amber-200/90 mt-0.5 tabular-nums">
+        Installed: v{{ info.currentVersion }}
+      </p>
+    </div>
+
+    <a
+      *ngIf="versionService.safeReleaseUrl() as releaseUrl"
+      [href]="releaseUrl"
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label="View release notes (opens in new tab)"
+      class="min-h-[40px] inline-flex items-center text-sm text-amber-300 hover:text-amber-200 underline font-medium"
+    >
+      View release notes
+    </a>
+  </div>
+</ng-container>

@@ -23,49 +23,137 @@
     opened
     class="admin-sidenav"
   >
-    <mat-nav-list>
-      <a mat-list-item routerLink="dashboard" routerLinkActive="active-link" [routerLinkActiveOptions]="{exact: true}">
-        <mat-icon matListItemIcon>dashboard</mat-icon>
-        <span matListItemTitle>Dashboard</span>
-      </a>
-      <a mat-list-item routerLink="users" routerLinkActive="active-link">
-        <mat-icon matListItemIcon>people</mat-icon>
-        <span matListItemTitle>Users</span>
-      </a>
-      <a
-        mat-list-item
-        routerLink="source-assets"
-        routerLinkActive="active-link"
+    <div class="flex flex-col min-h-full justify-between">
+      <mat-nav-list class="flex-1">
+        <a
+          mat-list-item
+          routerLink="dashboard"
+          routerLinkActive="active-link"
+          [routerLinkActiveOptions]="{exact: true}"
+        >
+          <mat-icon matListItemIcon>dashboard</mat-icon>
+          <span matListItemTitle>Dashboard</span>
+        </a>
+        <a mat-list-item routerLink="users" routerLinkActive="active-link">
+          <mat-icon matListItemIcon>people</mat-icon>
+          <span matListItemTitle>Users</span>
+        </a>
+        <a
+          mat-list-item
+          routerLink="source-assets"
+          routerLinkActive="active-link"
+        >
+          <mat-icon matListItemIcon>perm_media</mat-icon>
+          <span matListItemTitle>Source Assets</span>
+        </a>
+        <a
+          mat-list-item
+          routerLink="media-templates"
+          routerLinkActive="active-link"
+        >
+          <mat-icon matListItemIcon>inventory_2</mat-icon>
+          <span matListItemTitle>Media Templates</span>
+        </a>
+        <a
+          mat-list-item
+          routerLink="media-gallery"
+          routerLinkActive="active-link"
+        >
+          <mat-icon matListItemIcon>photo_library</mat-icon>
+          <span matListItemTitle>Media Gallery</span>
+        </a>
+        <a mat-list-item routerLink="tags" routerLinkActive="active-link">
+          <mat-icon matListItemIcon>label</mat-icon>
+          <span matListItemTitle>Tags</span>
+        </a>
+        <!-- Add more links for other entities -->
+      </mat-nav-list>
+
+      <div
+        *ngIf="isBrowserAdmin"
+        class="border-t border-zinc-800 pt-3 mt-4 px-4 text-xs text-zinc-400"
       >
-        <mat-icon matListItemIcon>perm_media</mat-icon>
-        <span matListItemTitle>Source Assets</span>
-      </a>
-      <a
-        mat-list-item
-        routerLink="media-templates"
-        routerLinkActive="active-link"
-      >
-        <mat-icon matListItemIcon>inventory_2</mat-icon>
-        <span matListItemTitle>Media Templates</span>
-      </a>
-      <a
-        mat-list-item
-        routerLink="media-gallery"
-        routerLinkActive="active-link"
-      >
-        <mat-icon matListItemIcon>photo_library</mat-icon>
-        <span matListItemTitle>Media Gallery</span>
-      </a>
-      <a
-        mat-list-item
-        routerLink="tags"
-        routerLinkActive="active-link"
-      >
-        <mat-icon matListItemIcon>label</mat-icon>
-        <span matListItemTitle>Tags</span>
-      </a>
-      <!-- Add more links for other entities -->
-    </mat-nav-list>
+        <div class="text-[11px] uppercase tracking-wider text-zinc-400 mb-1">
+          System Version
+        </div>
+
+        <ng-container
+          *ngIf="versionService.versionInfo() as info; else coldStartTemplate"
+        >
+          <div class="font-medium text-zinc-200 tabular-nums">
+            v{{ info.currentVersion }}
+          </div>
+
+          <p
+            *ngIf="info.status === 'update_available'"
+            class="mt-1 text-amber-300 tabular-nums"
+          >
+            New version available: v{{ info.latestVersion }}
+          </p>
+          <p *ngIf="info.status === 'up_to_date'" class="mt-1 text-zinc-400">
+            Up to date
+          </p>
+          <p *ngIf="info.status === 'unavailable'" class="mt-1 text-zinc-400">
+            Update check unavailable
+          </p>
+
+          <p
+            *ngIf="versionService.refreshFailed()"
+            class="mt-1 text-[11px] italic text-zinc-400"
+          >
+            Couldn't refresh — showing last result
+          </p>
+
+          <a
+            *ngIf="versionService.safeReleaseUrl() as releaseUrl"
+            [href]="releaseUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="View release notes (opens in new tab)"
+            class="min-h-[40px] inline-flex items-center mt-1.5 text-zinc-300 hover:text-white underline"
+          >
+            Release notes
+          </a>
+        </ng-container>
+
+        <ng-template #coldStartTemplate>
+          <div *ngIf="versionService.loading()" class="text-zinc-400">
+            Checking for updates…
+          </div>
+          <div
+            *ngIf="!versionService.loading() && versionService.loadFailed()"
+            class="text-zinc-400"
+          >
+            Update check unavailable
+          </div>
+        </ng-template>
+
+        <span
+          [matTooltip]="lastCheckedLabel()"
+          class="block mt-2"
+          [class.cursor-not-allowed]="
+            versionService.loading() || versionService.cooldownActive()
+          "
+        >
+          <button
+            type="button"
+            (click)="onCheckNow()"
+            [disabled]="
+              versionService.loading() || versionService.cooldownActive()
+            "
+            class="min-h-[40px] w-full text-left text-zinc-300 hover:text-white disabled:opacity-50 disabled:pointer-events-none disabled:cursor-not-allowed underline"
+          >
+            {{
+              versionService.loading()
+                ? 'Checking…'
+                : versionService.justChecked()
+                  ? 'Checked'
+                  : 'Check now'
+            }}
+          </button>
+        </span>
+      </div>
+    </div>
   </mat-sidenav>
   <mat-sidenav-content class="!m-0 !p-10">
     <router-outlet></router-outlet>

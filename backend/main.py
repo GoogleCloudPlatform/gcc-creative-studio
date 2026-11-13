@@ -182,11 +182,6 @@ async def root():
     return "You are calling Creative Studio Backend"
 
 
-@app.get("/api/version", tags=["Health Check"])
-def version():
-    return "v0.0.1"
-
-
 configure_cors(app)
 
 app.include_router(imagen_router)
