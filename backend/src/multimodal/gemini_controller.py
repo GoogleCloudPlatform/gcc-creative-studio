@@ -54,7 +54,7 @@ router = APIRouter(
     response_model=RewrittenOrRandomPromptResponse,
     summary="Rewrite and enhance a prompt for image generation",
 )
-async def rewrite_prompt_endpoint(
+def rewrite_prompt_endpoint(
     rewrite_request: RewritePromptRequestDto,
     gemini_service: GeminiService = Depends(),
 ):
@@ -80,7 +80,7 @@ async def rewrite_prompt_endpoint(
     response_model=RewrittenOrRandomPromptResponse,
     summary="Generate a random, creative prompt for image creation",
 )
-async def random_prompt_endpoint(
+def random_prompt_endpoint(
     random_request: RandomPromptRequestDto,
     gemini_service: GeminiService = Depends(),
 ):
@@ -89,7 +89,7 @@ async def random_prompt_endpoint(
     """
     try:
         random_prompt = gemini_service.generate_random_or_rewrite_prompt(
-            random_request.target_type,
+            random_request.target_type
         )
         return RewrittenOrRandomPromptResponse(prompt=random_prompt)
     except Exception as e:
@@ -104,7 +104,7 @@ async def random_prompt_endpoint(
     response_model=GenerateTitleResponseDto,
     summary="Generate a short title and summary for a text message",
 )
-async def generate_title_endpoint(
+def generate_title_endpoint(
     request: GenerateTitleRequestDto,
     gemini_service: GeminiService = Depends(),
 ):

@@ -12,12 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from enum import Enum
 from typing import Annotated
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from src.common.base_dto import BaseDto
-from src.multimodal.gemini_service import PromptTargetEnum
+
+
+class PromptTargetEnum(str, Enum):
+    IMAGE = "image"
+    VIDEO = "video"
+    AUDIO = "audio"
 
 
 class RewritePromptRequestDto(BaseDto):
@@ -26,14 +32,14 @@ class RewritePromptRequestDto(BaseDto):
     target_type: Annotated[
         PromptTargetEnum,
         Field(
-            description="The target media type to tailor the prompt for (e.g., 'image' or 'video').",
+            description="The target media type to tailor the prompt for (e.g., 'image', 'video', or 'audio').",
         ),
     ]
     user_prompt: Annotated[
         str,
         Field(
             description="The simple, user-provided prompt to be rewritten and enhanced.",
-            min_length=5,
+            min_length=2,
         ),
     ]
 
@@ -70,10 +76,51 @@ class GenerateTitleResponseDto(BaseDto):
     summary: str | None = None
 
 
+class MusicalProfileDto(BaseDto):
+    """Structured acoustic / musical DNA extracted per generated music take."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    bpm: int | float | None = Field(
+        default=None, description="Estimated tempo in BPM."
+    )
+    key_signature: str | None = Field(
+        default=None, description="Musical key and mode (e.g., 'Bb Major')."
+    )
+    time_signature: str | None = Field(
+        default=None, description="Meter / time signature (e.g., '4/4', '6/8')."
+    )
+    chord_progression: str | None = Field(
+        default=None, description="Summary of the harmonic / chord progression."
+    )
+    groove: str | None = Field(
+        default=None, description="Rhythmic feel, pocket, and energy profile."
+    )
+    instrumentation: list[str] = Field(
+        default_factory=list,
+        description="Prominent instruments heard in this specific take.",
+    )
+    vocal_profile: str | None = Field(
+        default=None,
+        description=(
+            "Canonical vocal range/timbre (e.g., 'Female Soprano', 'Female "
+            "Alto', 'Male Tenor', 'Male Baritone', 'Weathered Rocker'), "
+            "delivery, harmonies, and language, or 'instrumental'."
+        ),
+    )
+
+
 class MediaItemMetadataItemDto(BaseDto):
     title: str = Field(description="Title for this specific media variation.")
     description: str = Field(
         description="Description for this specific media variation."
+    )
+
+
+class AudioMediaItemMetadataItemDto(MediaItemMetadataItemDto):
+    musical_profile: MusicalProfileDto | None = Field(
+        default=None,
+        description="Acoustic and harmonic profile analyzed from this take.",
     )
 
 
@@ -84,4 +131,11 @@ class GenerateMediaMetadataResponseDto(BaseDto):
             "List of title and description objects corresponding to each media"
             " item in order."
         ),
+    )
+
+
+class GenerateAudioMediaMetadataResponseDto(BaseDto):
+    items: list[AudioMediaItemMetadataItemDto] = Field(
+        default_factory=list,
+        description="Title, description, and musical profile per audio item.",
     )

@@ -21,8 +21,11 @@ export interface AudioState {
   model: string;
   /** Concrete Lyria model ID used when `model === 'lyria'`. */
   lyriaModel: string;
+  /** Concrete TTS model ID used when `model !== 'lyria'`. */
+  ttsModel?: string;
   prompt: string;
   negativePrompt: string;
+  enhancePrompt?: boolean;
   seed?: number;
   sampleCount: number;
   selectedLanguage: string;
@@ -30,6 +33,7 @@ export interface AudioState {
 }
 
 export const DEFAULT_LYRIA_MODEL = 'lyria-3-clip-preview';
+export const DEFAULT_TTS_MODEL = 'gemini-2.5-flash-tts';
 
 @Injectable({
   providedIn: 'root',
@@ -40,8 +44,10 @@ export class AudioStateService {
   private defaultState: AudioState = {
     model: 'lyria',
     lyriaModel: DEFAULT_LYRIA_MODEL,
+    ttsModel: DEFAULT_TTS_MODEL,
     prompt: '',
     negativePrompt: '',
+    enhancePrompt: false,
     seed: undefined,
     sampleCount: 1,
     selectedLanguage: 'en-US',
@@ -55,11 +61,14 @@ export class AudioStateService {
         const parsedState = JSON.parse(saved);
 
         let loadedModel = parsedState.model ?? this.defaultState.model;
+        const isValidUiFamily = ['lyria', 'chirp', 'gemini-tts'].includes(
+          loadedModel,
+        );
         const isValidAudioModel = MODEL_CONFIGS.some(
           m => m.type === 'AUDIO' && m.value === loadedModel,
         );
 
-        if (!isValidAudioModel) {
+        if (!isValidUiFamily && !isValidAudioModel) {
           loadedModel = this.defaultState.model;
         }
 
@@ -76,6 +85,18 @@ export class AudioStateService {
         parsedState.lyriaModel = isValidLyriaModel
           ? loadedLyriaModel
           : this.defaultState.lyriaModel;
+
+        const loadedTtsModel =
+          parsedState.ttsModel ?? this.defaultState.ttsModel;
+        const isValidTtsModel = MODEL_CONFIGS.some(
+          m =>
+            m.type === 'AUDIO' &&
+            m.value === loadedTtsModel &&
+            !m.value.startsWith('lyria'),
+        );
+        parsedState.ttsModel = isValidTtsModel
+          ? loadedTtsModel
+          : this.defaultState.ttsModel;
 
         return {...this.defaultState, ...parsedState};
       } catch (e) {
