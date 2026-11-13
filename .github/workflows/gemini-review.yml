@@ -329,6 +329,10 @@ jobs:
             - Comments on test files or test implementation: `🟢` (Low) or `🟡` (Medium).
 
             - Comments in markdown (.md) files: `🟢` (Low) or `🟡` (Medium).
+
+            #### Pull Request Description Check
+
+            Read the PR title and body from `pull_request_read` (method: `get`). Per `CONTRIBUTING.md`, a good description is short, simple and says **what** changed, **why**, and **how it was tested**, and covers a single fix or feature. Flag it when it is missing, unclear, too long or hard to read, misses the what/why/testing, or mixes several unrelated fixes or features (suggest splitting the PR). Only when it needs changes, post ONE review comment with `add_comment_to_pending_review` (`subjectType: FILE`, no line numbers) on the first file in `.gemini-review/pr.diff`. Start it with `📝 PR description:`, use severity `🟡` (or `🟢` for minor wording), list the requested adjustments and, if useful, a short suggested rewrite. If the description is good, post nothing about it.
             ### Step 3: Submit the Review on GitHub
 
             1. **Create Pending Review:** Call `pull_request_review_write` (method: `create`). Ignore errors like "can only have one pending review per pull request" and proceed to the next step.
