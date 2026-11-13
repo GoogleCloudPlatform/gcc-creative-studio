@@ -217,45 +217,12 @@ For the deployment you can use CloudShell which already has all of the necessary
 - `uv` (Python package installer)
 - `terraform` (version 1.13.0 or newer)
 
-## 🛡️ Quality Standards & CI/CD
-
-To ensure the highest level of quality and security, we enforce strict style guidelines and automated checks both locally and in our CI/CD pipeline.
-
-### 🎨 Code Style Guidelines
-
-- **Python**: We adhere to the [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html), using `pylint` and `black`.
-- **TypeScript**: We follow the [Angular Coding Style Guide](https://angular.dev/style-guide) and [Google's TypeScript Style Guide](https://github.com/google/gts) using `gts`.
-- **Commit Messages**: We suggest following [Angular's Commit Message Guidelines](https://github.com/angular/angular/blob/main/contributing-docs/commit-message-guidelines.md).
-
-### 🌿 Branching Model
-
-We follow the [Git Flow](https://nvie.com/posts/a-successful-git-branching-model/) branching model. Please create feature branches from `dev` and submit pull requests back to `dev`.
-
-### ⚙️ Automated Checks (Pre-commit & GitHub Actions)
-
-Every Pull Request to `develop`, `test`, or `main` branches undergoes automated checks via GitHub Actions, and you can also run them locally:
-
-- **Local Pre-commit Hook**: Runs in a Docker container on every commit to check styling and licenses. See the [Development Guide](./DEVELOPMENT.md#5-code-quality--pre-commit-hooks) for setup instructions.
-- **Backend Tests**: Minimum **80%** code coverage enforced by `pytest-cov`.
-- **Backend Linting**: Minimum score of **9.0/10** enforced by `pylint`.
-- **Frontend Linting**: Enforced by `gts` in CI.
-- **AI-Powered Review**: Automated reviews powered by Gemini to catch issues early.
-
 ## 🛠️ Contributing
 
-We welcome contributions to Creative Studio! Whether it's new templates, features, bug fixes, or documentation improvements, your help is valued.
+We welcome contributions to Creative Studio: new templates, features, bug fixes and docs.
 
-### Prerequisites for Contributing
-
-- A **GitHub Account**.
-- **2-Factor Authentication (2FA)** enabled on your GitHub account.
-- Familiarity with the "Getting Started" section to set up your development environment.
-
-For more detailed contribution guidelines, please refer to the `CONTRIBUTING.md` file.
-
-### Local Development
-
-For a comprehensive, step-by-step guide on how to set up and run Creative Studio on your local machine using Docker Compose, please refer to the [Local Development Guide](./DEVELOPMENT.md).
+- **How to contribute** (CLA, branches, code style, checks, pull requests): see [CONTRIBUTING.md](./CONTRIBUTING.md).
+- **Run it locally** with Docker Compose: see the [Local Development Guide](./DEVELOPMENT.md).
 
 ## Feedback
 
