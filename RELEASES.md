@@ -47,7 +47,7 @@ Welcome to our biggest Creative Studio release yet! This update brings end-to-en
 
 * **Infrastructure, Automated Migrations & Documentation (`bootstrap.sh`):**
   * Added automated Cloud SQL backup, export/import migration, and restore tooling (--use-existing-backup, --skip-db-import, --skip-seeding) with headless CLI flags, progress polling, and placeholder containers to prevent Cloud Run crash-loops during initial setup.
-  * Added **GitLab** repository support alongside GitHub for CI/CD Cloud Build triggers, upgraded the default Cloud Run backend allocation to **12 vCPU / 8 GB RAM**, and published a comprehensive **Deployment Guide & Infrastructure Architecture Diagram** in docs/ and `infrastructure/README.md`.
+  * Added **GitLab** repository support alongside GitHub for CI/CD Cloud Build triggers, upgraded the default Cloud Run backend allocation to **2 vCPU / 8 GiB RAM**, and published a comprehensive **Deployment Guide & Infrastructure Architecture Diagram** in docs/ and `infrastructure/README.md`.
 * **Security & Model Resilience:**
   * Upgraded the backend pillow dependency to `>= 13.0.0` (resolving container vulnerability scan findings) and hardened repository security and automated code review checks.
   * Updated the default Izumi video generation model to production `veo-3.1-generate-001`, standardized global `MODEL_TARGET_LOCATION` routing, and implemented automatic prompt simplification and retry logic when **Lyria 3** audio prompts encounter safety filter blocks.

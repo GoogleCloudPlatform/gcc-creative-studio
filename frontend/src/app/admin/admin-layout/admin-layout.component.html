@@ -23,7 +23,7 @@
     opened
     class="admin-sidenav"
   >
-    <div class="flex flex-col h-full justify-between">
+    <div class="flex flex-col min-h-full justify-between">
       <mat-nav-list class="flex-1">
         <a
           mat-list-item
@@ -73,7 +73,7 @@
         *ngIf="isBrowserAdmin"
         class="border-t border-zinc-800 pt-3 mt-4 px-4 text-xs text-zinc-400"
       >
-        <div class="text-[11px] uppercase tracking-wider text-zinc-500 mb-1">
+        <div class="text-[11px] uppercase tracking-wider text-zinc-400 mb-1">
           System Version
         </div>
 
@@ -85,24 +85,23 @@
           </div>
 
           <p
-            *ngIf="
-              !versionService.loadFailed() && info.status === 'update_available'
-            "
+            *ngIf="info.status === 'update_available'"
             class="mt-1 text-amber-300 tabular-nums"
           >
             New version available: v{{ info.latestVersion }}
           </p>
-          <p
-            *ngIf="!versionService.loadFailed() && info.status === 'up_to_date'"
-            class="mt-1 text-zinc-400"
-          >
+          <p *ngIf="info.status === 'up_to_date'" class="mt-1 text-zinc-400">
             Up to date
           </p>
-          <p
-            *ngIf="versionService.loadFailed() || info.status === 'unavailable'"
-            class="mt-1 text-zinc-400"
-          >
+          <p *ngIf="info.status === 'unavailable'" class="mt-1 text-zinc-400">
             Update check unavailable
+          </p>
+
+          <p
+            *ngIf="versionService.refreshFailed()"
+            class="mt-1 text-[11px] italic text-zinc-400"
+          >
+            Couldn't refresh — showing last result
           </p>
 
           <a
@@ -111,7 +110,7 @@
             target="_blank"
             rel="noopener noreferrer"
             aria-label="View release notes (opens in new tab)"
-            class="inline-flex items-center mt-1.5 text-zinc-300 hover:text-white underline"
+            class="min-h-[40px] inline-flex items-center mt-1.5 text-zinc-300 hover:text-white underline"
           >
             Release notes
           </a>
@@ -129,23 +128,30 @@
           </div>
         </ng-template>
 
-        <button
-          type="button"
-          (click)="onCheckNow()"
-          [disabled]="
+        <span
+          [matTooltip]="lastCheckedLabel()"
+          class="block mt-2"
+          [class.cursor-not-allowed]="
             versionService.loading() || versionService.cooldownActive()
           "
-          [matTooltip]="lastCheckedLabel()"
-          class="mt-2 min-h-[40px] w-full text-left text-zinc-300 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed underline"
         >
-          {{
-            versionService.loading()
-              ? 'Checking…'
-              : versionService.justChecked()
-                ? 'Checked'
-                : 'Check now'
-          }}
-        </button>
+          <button
+            type="button"
+            (click)="onCheckNow()"
+            [disabled]="
+              versionService.loading() || versionService.cooldownActive()
+            "
+            class="min-h-[40px] w-full text-left text-zinc-300 hover:text-white disabled:opacity-50 disabled:pointer-events-none disabled:cursor-not-allowed underline"
+          >
+            {{
+              versionService.loading()
+                ? 'Checking…'
+                : versionService.justChecked()
+                  ? 'Checked'
+                  : 'Check now'
+            }}
+          </button>
+        </span>
       </div>
     </div>
   </mat-sidenav>
