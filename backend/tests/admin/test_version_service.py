@@ -29,6 +29,7 @@ from src.admin.version_service import (
     normalize_calver_str,
     parse_calver,
 )
+from src.auth.auth_guard import get_current_user
 from src.database import get_db
 
 
@@ -390,10 +391,23 @@ class TestVersionService:
 
 
 class TestAdminVersionController:
-    """Tests for GET /api/admin/version and removal of /api/version."""
+    """Tests for GET /api/admin/version and removal of /api/version.
 
-    def test_public_api_version_removed(self, api_client):
-        response = api_client.get("/api/version")
+    Uses ``TestClient(app)`` without entering ``lifespan`` so running in
+    ``tests/admin/`` (alphabetically before ``tests/auth/`` and ``tests/e2e/``)
+    does not register global post-auth DB hooks on the shared engine pool.
+    """
+
+    def test_public_api_version_removed(self, mock_user, db_session_mock):
+        async def override_get_db():
+            yield db_session_mock
+
+        app.dependency_overrides[get_current_user] = lambda: mock_user
+        app.dependency_overrides[get_db] = override_get_db
+        try:
+            response = TestClient(app).get("/api/version")
+        finally:
+            app.dependency_overrides.clear()
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
     def test_admin_version_requires_authentication(self, db_session_mock):
@@ -403,19 +417,31 @@ class TestAdminVersionController:
         app.dependency_overrides.clear()
         app.dependency_overrides[get_db] = override_get_db
         try:
-            with TestClient(app) as unauth_client:
-                response = unauth_client.get("/api/admin/version")
+            response = TestClient(app).get("/api/admin/version")
         finally:
             app.dependency_overrides.clear()
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_admin_version_forbids_regular_user(self, api_client):
-        response = api_client.get("/api/admin/version")
+    def test_admin_version_forbids_regular_user(
+        self, mock_user, db_session_mock
+    ):
+        async def override_get_db():
+            yield db_session_mock
+
+        app.dependency_overrides[get_current_user] = lambda: mock_user
+        app.dependency_overrides[get_db] = override_get_db
+        try:
+            response = TestClient(app).get("/api/admin/version")
+        finally:
+            app.dependency_overrides.clear()
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
     def test_admin_version_returns_camel_case_and_forwards_refresh(
-        self, admin_client
+        self, mock_admin, db_session_mock
     ):
+        async def override_get_db():
+            yield db_session_mock
+
         mock_svc = AsyncMock()
         mock_svc.get_version_info.return_value = AdminVersionInfo(
             current_version="26.11.12",
@@ -426,9 +452,13 @@ class TestAdminVersionController:
             published_at="2026-11-15T18:00:00Z",
             checked_at="2026-11-15T18:05:00Z",
         )
+        app.dependency_overrides[get_current_user] = lambda: mock_admin
+        app.dependency_overrides[get_db] = override_get_db
         app.dependency_overrides[get_version_service] = lambda: mock_svc
-
-        response = admin_client.get("/api/admin/version?refresh=true")
+        try:
+            response = TestClient(app).get("/api/admin/version?refresh=true")
+        finally:
+            app.dependency_overrides.clear()
 
         assert response.status_code == status.HTTP_200_OK
         assert response.json() == {
