@@ -18,12 +18,15 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import re
+import stat
 import tempfile
 import time
 from typing import Any
+import weakref
 
 import httpx
 
@@ -41,17 +44,38 @@ NEGATIVE_CACHE_TTL_SECONDS = 60.0
 MIN_REFRESH_INTERVAL_SECONDS = 5.0
 DEFAULT_CACHE_PATH = Path("/tmp/creative_studio_version_cache.json")
 _REQUEST_TIMEOUT_SECONDS = 5.0
+_RELEASES_PER_PAGE = 100
+_MAX_CACHE_BYTES = 65_536
+_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 _CALVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?$")
-_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_REPO_RE = re.compile(
+    r"^(?!\.\.?(?:/|$))[A-Za-z0-9_.-]{1,100}/"
+    r"(?!\.\.?(?:/|$))[A-Za-z0-9_.-]{1,100}$"
+)
+_UNSAFE_URL_RE = re.compile(r"(?:^|/)\.\.?(?:/|$)|[\\\s]")
 
-_PROCESS_LOCK = asyncio.Lock()
+_PROCESS_LOCKS: weakref.WeakKeyDictionary[
+    asyncio.AbstractEventLoop, asyncio.Lock
+] = weakref.WeakKeyDictionary()
 _IN_MEMORY_CACHE: dict[str, dict[str, Any]] = {}
+_UNWRITABLE_CACHE_PATHS: set[str] = set()
+
+
+def _get_process_lock() -> asyncio.Lock:
+    """Returns the singleflight lock bound to the active event loop."""
+    loop = asyncio.get_running_loop()
+    lock = _PROCESS_LOCKS.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _PROCESS_LOCKS[loop] = lock
+    return lock
 
 
 def normalize_calver_str(raw: str) -> str:
-    """Strips whitespace and optional leading 'v'/'V' prefixes."""
-    return raw.strip().lstrip("vV")
+    """Strips whitespace and at most one leading 'v'/'V' prefix."""
+    stripped = raw.strip()
+    return stripped[1:] if stripped[:1] in ("v", "V") else stripped
 
 
 def parse_calver(raw: str) -> tuple[int, int, int, int] | None:
@@ -102,7 +126,12 @@ class VersionService:
         )
         self._repo = raw_repo.strip()
         self._github_token = raw_token.strip()
-        self._current_version = normalize_calver_str(raw_current)
+        self._current_tuple = parse_calver(raw_current)
+        self._current_version = (
+            normalize_calver_str(raw_current)
+            if isinstance(raw_current, str)
+            else ""
+        )
         self._cache_path = (
             DEFAULT_CACHE_PATH if cache_path is None else cache_path
         )
@@ -117,23 +146,65 @@ class VersionService:
     def _cache_key(self) -> str:
         return f"{self._repo}|{self._current_version}"
 
+    def _is_valid_release_url(self, url: object) -> bool:
+        return (
+            isinstance(url, str)
+            and url.startswith(f"https://github.com/{self._repo}/")
+            and not _UNSAFE_URL_RE.search(url)
+        )
+
     def _read_cache_store(self) -> dict[str, Any]:
         cache_id = str(self._cache_path)
+        if cache_id in _UNWRITABLE_CACHE_PATHS:
+            return dict(_IN_MEMORY_CACHE.get(cache_id, {}))
+
+        fd = -1
         try:
-            if not self._cache_path.exists():
-                return dict(_IN_MEMORY_CACHE.get(cache_id, {}))
-            raw = self._cache_path.read_text(encoding="utf-8")
-            parsed = json.loads(raw)
-            if isinstance(parsed, dict):
-                return parsed
-            return {}
-        except (OSError, ValueError) as exc:
+            fd = os.open(
+                self._cache_path,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            )
+        except FileNotFoundError:
+            return dict(_IN_MEMORY_CACHE.get(cache_id, {}))
+        except OSError as exc:
             logger.warning(
                 "Failed to read version cache %s; using memory fallback: %s",
                 self._cache_path,
                 exc,
             )
             return dict(_IN_MEMORY_CACHE.get(cache_id, {}))
+
+        try:
+            st = os.fstat(fd)
+            if (
+                not stat.S_ISREG(st.st_mode)
+                or st.st_uid != os.getuid()
+                or st.st_size > _MAX_CACHE_BYTES
+            ):
+                logger.warning(
+                    "Ignoring untrusted or oversized version cache %s",
+                    self._cache_path,
+                )
+                return dict(_IN_MEMORY_CACHE.get(cache_id, {}))
+            with os.fdopen(fd, "r", encoding="utf-8") as handle:
+                fd = -1
+                parsed = json.load(handle)
+            if isinstance(parsed, dict):
+                return parsed
+            return {}
+        except (OSError, ValueError, UnicodeDecodeError) as exc:
+            logger.warning(
+                "Failed to read version cache %s; using memory fallback: %s",
+                self._cache_path,
+                exc,
+            )
+            return dict(_IN_MEMORY_CACHE.get(cache_id, {}))
+        finally:
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
 
     def _write_cache_store(self, store: dict[str, Any]) -> None:
         cache_id = str(self._cache_path)
@@ -152,7 +223,9 @@ class VersionService:
                 json.dump(store, tmp_file)
             os.chmod(tmp_path, 0o600)
             os.replace(tmp_path, self._cache_path)
+            _UNWRITABLE_CACHE_PATHS.discard(cache_id)
         except OSError as exc:
+            _UNWRITABLE_CACHE_PATHS.add(cache_id)
             logger.warning(
                 "Failed to write version cache %s; kept in memory: %s",
                 self._cache_path,
@@ -173,13 +246,20 @@ class VersionService:
             return None
         fetched_at = entry.get("fetched_at")
         raw_info = entry.get("info")
-        if not isinstance(fetched_at, (int, float)) or not isinstance(
-            raw_info, dict
+        if (
+            isinstance(fetched_at, bool)
+            or not isinstance(fetched_at, (int, float))
+            or not math.isfinite(fetched_at)
+            or not isinstance(raw_info, dict)
         ):
             return None
         try:
             info = AdminVersionInfo.model_validate(raw_info)
         except ValueError:
+            return None
+        if info.release_url is not None and not self._is_valid_release_url(
+            info.release_url
+        ):
             return None
         return float(fetched_at), info
 
@@ -202,8 +282,7 @@ class VersionService:
 
     async def _fetch_and_evaluate(self, now: float) -> AdminVersionInfo:
         checked_at = _iso_utc_from_epoch(now)
-        current_tuple = parse_calver(self._current_version)
-        if current_tuple is None:
+        if self._current_tuple is None:
             logger.warning(
                 "Invalid installed CalVer string: %r",
                 self._current_version,
@@ -214,7 +293,10 @@ class VersionService:
             logger.warning("Invalid GITHUB_RELEASE_REPO format: %r", self._repo)
             return self._unavailable(checked_at)
 
-        url = f"https://api.github.com/repos/{self._repo}/releases?per_page=30"
+        url = (
+            f"https://api.github.com/repos/{self._repo}"
+            f"/releases?per_page={_RELEASES_PER_PAGE}"
+        )
         headers: dict[str, str] = {
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
@@ -223,9 +305,31 @@ class VersionService:
         if self._github_token:
             headers["Authorization"] = f"Bearer {self._github_token}"
 
+        chunks: list[bytes] = []
+        total_bytes = 0
         try:
             async with self._http_client_factory() as client:
-                response = await client.get(url, headers=headers)
+                async with client.stream(
+                    "GET", url, headers=headers
+                ) as response:
+                    if response.status_code != 200:
+                        logger.warning(
+                            "GitHub release check returned HTTP %s for %s",
+                            response.status_code,
+                            self._repo,
+                        )
+                        return self._unavailable(checked_at)
+
+                    async for chunk in response.aiter_bytes():
+                        total_bytes += len(chunk)
+                        if total_bytes > _MAX_RESPONSE_BYTES:
+                            logger.warning(
+                                "GitHub release body exceeded %s bytes for %s",
+                                _MAX_RESPONSE_BYTES,
+                                self._repo,
+                            )
+                            return self._unavailable(checked_at)
+                        chunks.append(chunk)
         except httpx.HTTPError as exc:
             logger.warning(
                 "GitHub release check failed for %s: %s",
@@ -234,17 +338,9 @@ class VersionService:
             )
             return self._unavailable(checked_at)
 
-        if response.status_code != 200:
-            logger.warning(
-                "GitHub release check returned HTTP %s for %s",
-                response.status_code,
-                self._repo,
-            )
-            return self._unavailable(checked_at)
-
         try:
-            payload = response.json()
-        except ValueError as exc:
+            payload = json.loads(b"".join(chunks))
+        except (ValueError, UnicodeDecodeError) as exc:
             logger.warning(
                 "GitHub release check returned invalid JSON for %s: %s",
                 self._repo,
@@ -286,13 +382,9 @@ class VersionService:
             return self._unavailable(checked_at)
 
         latest_version = normalize_calver_str(best_tag)
-        expected_url_prefix = f"https://github.com/{self._repo}/"
         raw_html_url = best_item.get("html_url")
         release_url = (
-            raw_html_url
-            if isinstance(raw_html_url, str)
-            and raw_html_url.startswith(expected_url_prefix)
-            else None
+            raw_html_url if self._is_valid_release_url(raw_html_url) else None
         )
 
         raw_name = best_item.get("name")
@@ -310,7 +402,9 @@ class VersionService:
         )
 
         status_val: VersionStatusLiteral = (
-            "update_available" if best_tuple > current_tuple else "up_to_date"
+            "update_available"
+            if best_tuple > self._current_tuple
+            else "up_to_date"
         )
 
         return AdminVersionInfo(
@@ -325,7 +419,7 @@ class VersionService:
 
     async def get_version_info(self, refresh: bool = False) -> AdminVersionInfo:
         """Returns cached or freshly fetched version status."""
-        async with _PROCESS_LOCK:
+        async with _get_process_lock():
             now = self._time_fn()
             cached = self._get_cached_entry()
             if cached is not None:

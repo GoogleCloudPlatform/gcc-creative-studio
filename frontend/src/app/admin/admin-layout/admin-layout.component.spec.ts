@@ -19,7 +19,8 @@ import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {MatIconModule} from '@angular/material/icon';
 import {MatListModule} from '@angular/material/list';
 import {MatSidenavModule} from '@angular/material/sidenav';
-import {MatTooltipModule} from '@angular/material/tooltip';
+import {MatTooltip, MatTooltipModule} from '@angular/material/tooltip';
+import {By} from '@angular/platform-browser';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {RouterModule, provideRouter} from '@angular/router';
 import {AuthService} from '../../common/services/auth.service';
@@ -33,6 +34,7 @@ describe('AdminLayoutComponent', () => {
   let versionInfoSig: ReturnType<typeof signal<AdminVersionInfo | null>>;
   let loadingSig: ReturnType<typeof signal<boolean>>;
   let loadFailedSig: ReturnType<typeof signal<boolean>>;
+  let refreshFailedSig: ReturnType<typeof signal<boolean>>;
   let justCheckedSig: ReturnType<typeof signal<boolean>>;
   let cooldownActiveSig: ReturnType<typeof signal<boolean>>;
   let ensureLoadedSpy: jasmine.Spy;
@@ -55,6 +57,7 @@ describe('AdminLayoutComponent', () => {
     });
     loadingSig = signal(false);
     loadFailedSig = signal(false);
+    refreshFailedSig = signal(false);
     justCheckedSig = signal(false);
     cooldownActiveSig = signal(false);
     ensureLoadedSpy = jasmine.createSpy('ensureLoaded');
@@ -66,6 +69,7 @@ describe('AdminLayoutComponent', () => {
       versionInfo: versionInfoSig.asReadonly(),
       loading: loadingSig.asReadonly(),
       loadFailed: loadFailedSig.asReadonly(),
+      refreshFailed: refreshFailedSig.asReadonly(),
       justChecked: justCheckedSig.asReadonly(),
       cooldownActive: cooldownActiveSig.asReadonly(),
       isUpdateAvailable: computed(
@@ -156,16 +160,28 @@ describe('AdminLayoutComponent', () => {
       publishedAt: null,
       checkedAt: '2026-11-12T20:05:00Z',
     });
-    loadFailedSig.set(true);
+    refreshFailedSig.set(true);
     fixture.detectChanges();
     expect(fixture.nativeElement.textContent).toContain('v26.11.12');
+    expect(fixture.nativeElement.textContent).toContain('Up to date');
+    expect(fixture.nativeElement.textContent).toContain('Release notes');
+    expect(fixture.nativeElement.textContent).toContain(
+      "Couldn't refresh — showing last result",
+    );
+    expect(fixture.nativeElement.textContent).not.toContain(
+      'Update check unavailable',
+    );
+
+    refreshFailedSig.set(false);
+    versionInfoSig.set(null);
+    loadingSig.set(false);
+    loadFailedSig.set(true);
+    fixture.detectChanges();
     expect(fixture.nativeElement.textContent).toContain(
       'Update check unavailable',
     );
-    expect(fixture.nativeElement.textContent).not.toContain('Up to date');
 
     loadFailedSig.set(false);
-    versionInfoSig.set(null);
     loadingSig.set(true);
     fixture.detectChanges();
     expect(fixture.nativeElement.textContent).toContain(
@@ -173,7 +189,7 @@ describe('AdminLayoutComponent', () => {
     );
   });
 
-  it('calls refresh() on Check now click and disables button during loading/cooldown', async () => {
+  it('calls refresh() on Check now click, shows Checked, and disables button during loading/cooldown', async () => {
     await configure('browser', true);
 
     const btn = fixture.nativeElement.querySelector(
@@ -183,6 +199,11 @@ describe('AdminLayoutComponent', () => {
     btn.click();
     expect(refreshSpy).toHaveBeenCalledTimes(1);
 
+    justCheckedSig.set(true);
+    fixture.detectChanges();
+    expect(btn.textContent?.trim()).toBe('Checked');
+
+    justCheckedSig.set(false);
     cooldownActiveSig.set(true);
     fixture.detectChanges();
     expect(btn.disabled).toBeTrue();
@@ -192,6 +213,81 @@ describe('AdminLayoutComponent', () => {
     fixture.detectChanges();
     expect(btn.disabled).toBeTrue();
     expect(btn.textContent?.trim()).toBe('Checking…');
+  });
+
+  it('formats lastCheckedLabel for null, invalid ISO, and valid timestamps', async () => {
+    await configure('browser', true);
+
+    const validIso = '2026-11-12T20:05:00Z';
+    const expectedTime = new Date(Date.parse(validIso)).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    expect(component.lastCheckedLabel()).toBe(`Last checked: ${expectedTime}`);
+
+    versionInfoSig.set({
+      currentVersion: '26.11.12',
+      latestVersion: null,
+      status: 'unavailable',
+      releaseUrl: null,
+      releaseName: null,
+      publishedAt: null,
+      checkedAt: 'not-an-iso-timestamp',
+    });
+    expect(component.lastCheckedLabel()).toBe('Last checked: Unknown');
+
+    versionInfoSig.set(null);
+    expect(component.lastCheckedLabel()).toBe('Last checked: Not checked yet');
+  });
+
+  it('attaches tooltip and cursor-not-allowed to wrapper span while keeping accessible layout classes', async () => {
+    await configure('browser', true);
+
+    const tooltipDe = fixture.debugElement.query(By.directive(MatTooltip));
+    expect(tooltipDe).not.toBeNull();
+    const tooltipEl = tooltipDe.nativeElement as HTMLElement;
+    expect(tooltipEl.tagName).toBe('SPAN');
+
+    const tooltipInstance = tooltipDe.injector.get(MatTooltip);
+    expect(tooltipInstance.message).toBe(component.lastCheckedLabel());
+    expect(tooltipEl.classList.contains('cursor-not-allowed')).toBeFalse();
+
+    const btn = tooltipEl.querySelector('button') as HTMLButtonElement;
+    expect(btn).not.toBeNull();
+    expect(btn.classList.contains('disabled:pointer-events-none')).toBeTrue();
+    expect(btn.classList.contains('mt-2')).toBeFalse();
+
+    cooldownActiveSig.set(true);
+    fixture.detectChanges();
+    expect(tooltipInstance.message).toBe(component.lastCheckedLabel());
+    expect(tooltipEl.classList.contains('cursor-not-allowed')).toBeTrue();
+
+    cooldownActiveSig.set(false);
+    loadingSig.set(true);
+    fixture.detectChanges();
+    expect(tooltipEl.classList.contains('cursor-not-allowed')).toBeTrue();
+
+    const innerWrapper = fixture.nativeElement.querySelector(
+      '.admin-sidenav .flex.flex-col',
+    ) as HTMLElement;
+    expect(innerWrapper).not.toBeNull();
+    expect(innerWrapper.classList.contains('min-h-full')).toBeTrue();
+    expect(innerWrapper.classList.contains('h-full')).toBeFalse();
+
+    const versionHeading = Array.from(
+      fixture.nativeElement.querySelectorAll(
+        '.admin-sidenav div',
+      ) as NodeListOf<Element>,
+    ).find(el => el.textContent?.trim() === 'System Version') as HTMLElement;
+    expect(versionHeading).toBeTruthy();
+    expect(versionHeading.classList.contains('text-zinc-400')).toBeTrue();
+    expect(versionHeading.classList.contains('text-zinc-500')).toBeFalse();
+
+    const releaseLink = fixture.nativeElement.querySelector(
+      '.admin-sidenav a[target="_blank"]',
+    ) as HTMLAnchorElement;
+    expect(releaseLink).not.toBeNull();
+    expect(releaseLink.classList.contains('min-h-[40px]')).toBeTrue();
   });
 
   it('hides System Version footer and skips ensureLoaded for non-admin or SSR', async () => {
