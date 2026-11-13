@@ -22,6 +22,7 @@ Related documents:
 7. [Running Terraform by hand](#7-running-terraform-by-hand)
 8. [Tearing a deployment down](#8-tearing-a-deployment-down)
 9. [Reference: files the script generates](#9-reference-files-the-script-generates)
+10. [Configuring Dual-Model AI PR Verification (GitHub Actions + Vertex AI)](#10-configuring-dual-model-ai-pr-verification-github-actions--vertex-ai)
 
 ---
 
@@ -688,3 +689,53 @@ Not managed by Terraform — delete manually if you want a clean project: the Te
 | `~/bin/terraform` | Terraform installed by the script when needed | — |
 | `gs://<project>-cstudio-<env>-tfstate/infra/<env>/state/` | Terraform state | — |
 | `gs://<project>-cstudio-<env>-tfstate/migration_backup.sql.gz` | Migration dump (kept as a safeguard) | — |
+
+---
+
+## 10. Configuring Dual-Model AI PR Verification (GitHub Actions + Vertex AI)
+
+[`.github/workflows/ai-verification.yml`](./.github/workflows/ai-verification.yml) runs a 2-stage, 6-step verification pipeline (**Security & AuthZ**, **Correctness/Async/DB**, **Architecture & `GEMINI.md` Hard Rules**, **Test Adequacy**, **Code Quality & Cloud Run Perf**, and **API Contract & Docs Drift**) on pull requests targeting `main`, `develop`, and `test` without any Terraform changes:
+
+1. **`prepare` (zero secrets):** Builds a noise-stripped `ContextPack`, extracts enclosing Python AST context, runs `bandit` + deterministic repo-rule scanners, and maps changed sources to tests.
+2. **`verify` (Vertex AI Gemini + Claude):** Runs Gemini (`google-genai`) and Claude (`anthropic[vertex]`) concurrently with shared prompt-prefix caching, cross-verifies single-model `CRITICAL`/`HIGH` catches with the peer model, and posts one sticky PR dashboard plus diff-validated inline review comments.
+
+### 10.1 One-time GCP setup (no Terraform changes, zero API keys)
+
+Your existing Cloud Build trigger service account (`cs-trig-sa@<project>.iam.gserviceaccount.com`, created by `infrastructure/ci_cd.tf`) **already** holds `roles/aiplatform.user` and `roles/secretmanager.secretAccessor`. Bind GitHub OIDC to it once:
+
+```bash
+export PROJECT_ID="<your-gcp-project-id>"
+export PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
+export GH_REPO="<owner>/<repo>"              # e.g. GoogleCloudPlatform/gcc-creative-studio
+export TRIG_SA="cs-trig-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+
+gcloud iam workload-identity-pools create "github-ci-pool" \
+  --project="$PROJECT_ID" --location="global" \
+  --display-name="GitHub Actions CI Pool"
+
+gcloud iam workload-identity-pools providers create-oidc "github-oidc" \
+  --project="$PROJECT_ID" --location="global" \
+  --workload-identity-pool="github-ci-pool" \
+  --issuer-uri="https://token.actions.githubusercontent.com" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+  --attribute-condition="assertion.repository == '${GH_REPO}'"
+
+gcloud iam service-accounts add-iam-policy-binding "$TRIG_SA" \
+  --project="$PROJECT_ID" \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-ci-pool/attribute.repository/${GH_REPO}"
+```
+
+Then enable **Claude Sonnet 4.5** and **Claude Haiku 4.5** once in **Vertex AI → Model Garden** for `$PROJECT_ID`. *(If your org policy restricts partner models in Model Garden, store `ANTHROPIC_API_KEY` in GCP Secret Manager and set the repo variable `GCP_AI_SECRETS_SPEC` to `ANTHROPIC_API_KEY:<project>/ANTHROPIC_API_KEY` — `cs-trig-sa` reads it directly via Secret Manager).*
+
+### 10.2 GitHub Repository Variables (`Settings → Secrets and variables → Actions → Variables`)
+
+| Variable | Required | Default | Purpose |
+| --- | :---: | --- | --- |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Yes* | — | `projects/<num>/locations/global/workloadIdentityPools/github-ci-pool/providers/github-oidc` (*or* set secret `GCP_CREDENTIALS_JSON`) |
+| `GCP_SERVICE_ACCOUNT` | Yes* | — | `cs-trig-sa@<project>.iam.gserviceaccount.com` |
+| `VERTEX_LOCATION` | No | `global` | Vertex AI location for Gemini (never hardcoded to `us-central1`) |
+| `CLAUDE_VERTEX_REGION` | No | `global` | Vertex AI region for Anthropic Claude |
+| `AI_VERIFY_GATE_MODE` | No | `advisory` | Set to `blocking` once calibrated to fail PR checks on consensus/cross-verified `CRITICAL`/`HIGH` findings in Steps 1–3 |
+| `GCP_AI_SECRETS_SPEC` | No | `""` | Optional Secret Manager mapping (e.g. `ANTHROPIC_API_KEY:<project>/ANTHROPIC_API_KEY`) |
+
