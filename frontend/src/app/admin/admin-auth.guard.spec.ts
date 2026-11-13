@@ -15,11 +15,7 @@
  */
 
 import {TestBed} from '@angular/core/testing';
-import {
-  ActivatedRouteSnapshot,
-  Router,
-  RouterStateSnapshot,
-} from '@angular/router';
+import {ActivatedRouteSnapshot, RouterStateSnapshot} from '@angular/router';
 import {Observable, firstValueFrom, of, throwError} from 'rxjs';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {HttpClientTestingModule} from '@angular/common/http/testing';
@@ -29,19 +25,18 @@ import {UserService} from '../common/services/user.service';
 
 describe('AdminAuthGuard', () => {
   let service: AdminAuthGuard;
-  let router: {navigate: jasmine.Spy};
   let authService: jasmine.SpyObj<AuthService>;
 
   const route = {} as ActivatedRouteSnapshot;
-  const state = {} as RouterStateSnapshot;
+  const state = {url: '/admin'} as RouterStateSnapshot;
 
   beforeEach(() => {
-    router = {navigate: jasmine.createSpy('navigate')};
     authService = jasmine.createSpyObj<AuthService>('AuthService', [
       'isLoggedIn',
       'hasRenewableSession',
       'getValidIdentityPlatformToken$',
       'onSessionRenewalFailed',
+      'redirectToLogin',
       'isUserAdmin',
       'expireSession',
       'logout',
@@ -51,7 +46,6 @@ describe('AdminAuthGuard', () => {
       providers: [
         AdminAuthGuard,
         {provide: AuthService, useValue: authService},
-        {provide: Router, useValue: router},
         {
           provide: UserService,
           useValue: {getUserDetails: () => ({email: 'admin@example.com'})},
@@ -66,11 +60,11 @@ describe('AdminAuthGuard', () => {
     expect(service).toBeTruthy();
   });
 
-  it('redirects to login when there is no session', () => {
+  it('redirects to login with returnUrl when there is no session', () => {
     authService.isLoggedIn.and.returnValue(false);
     authService.hasRenewableSession.and.returnValue(false);
     expect(service.canActivate(route, state)).toBeFalse();
-    expect(router.navigate).toHaveBeenCalledWith(['/login']);
+    expect(authService.redirectToLogin).toHaveBeenCalledOnceWith('/admin');
   });
 
   it('renews an expired admin session silently before allowing navigation', async () => {
@@ -85,7 +79,20 @@ describe('AdminAuthGuard', () => {
     expect(authService.logout).not.toHaveBeenCalled();
   });
 
-  it('hands a failed renewal to AuthService and blocks navigation', async () => {
+  it('calls expireSession (never logout) when renewed user is not an admin', async () => {
+    authService.isLoggedIn.and.returnValue(false);
+    authService.hasRenewableSession.and.returnValue(true);
+    authService.getValidIdentityPlatformToken$.and.returnValue(of('fresh'));
+    authService.isUserAdmin.and.returnValue(false);
+
+    const result = service.canActivate(route, state) as Observable<boolean>;
+
+    expect(await firstValueFrom(result)).toBeFalse();
+    expect(authService.expireSession).toHaveBeenCalled();
+    expect(authService.logout).not.toHaveBeenCalled();
+  });
+
+  it('passes target state.url to onSessionRenewalFailed when renewal fails', async () => {
     authService.isLoggedIn.and.returnValue(false);
     authService.hasRenewableSession.and.returnValue(true);
     authService.getValidIdentityPlatformToken$.and.returnValue(
@@ -95,6 +102,8 @@ describe('AdminAuthGuard', () => {
     const result = service.canActivate(route, state) as Observable<boolean>;
 
     expect(await firstValueFrom(result)).toBeFalse();
-    expect(authService.onSessionRenewalFailed).toHaveBeenCalled();
+    expect(authService.onSessionRenewalFailed).toHaveBeenCalledOnceWith(
+      '/admin',
+    );
   });
 });

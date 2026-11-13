@@ -26,7 +26,7 @@ import {LoginComponent} from './login.component';
 import {AuthService} from './../common/services/auth.service';
 import {UserModel} from './../common/models/user.model';
 import {MatSnackBar} from '@angular/material/snack-bar';
-import {Router} from '@angular/router';
+import {ActivatedRoute, Router, convertToParamMap} from '@angular/router';
 import {NgZone} from '@angular/core';
 import {environment} from '../../environments/environment';
 import {MatCardModule} from '@angular/material/card';
@@ -266,5 +266,38 @@ describe('LoginComponent', () => {
       expect(component.loader).toBeFalse();
       expect(router.navigate).toHaveBeenCalledWith(['/']);
     });
+
+    it('navigates to safe internal returnUrl after login and rejects external URLs', fakeAsync(() => {
+      (environment as {isLocal: boolean}).isLocal = false;
+      const activatedRoute = TestBed.inject(ActivatedRoute);
+      (activatedRoute as {snapshot: unknown}).snapshot = {
+        queryParamMap: convertToParamMap({
+          returnUrl: '/workbench?sessionId=42',
+        }),
+      };
+      authService.signInForGoogleIdentityPlatform.and.returnValue(
+        of('test-token'),
+      );
+      const navByUrlSpy = spyOn(router, 'navigateByUrl');
+      const navSpy = spyOn(router, 'navigate');
+
+      component.loginWithGoogle();
+      tick();
+
+      expect(navByUrlSpy).toHaveBeenCalledWith('/workbench?sessionId=42');
+      expect(navSpy).not.toHaveBeenCalled();
+
+      navByUrlSpy.calls.reset();
+      (activatedRoute as {snapshot: unknown}).snapshot = {
+        queryParamMap: convertToParamMap({
+          returnUrl: 'https://evil.example/phish',
+        }),
+      };
+      component.loginWithGoogle();
+      tick();
+
+      expect(navByUrlSpy).not.toHaveBeenCalled();
+      expect(navSpy).toHaveBeenCalledWith(['/']);
+    }));
   });
 });

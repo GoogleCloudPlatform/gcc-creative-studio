@@ -26,22 +26,26 @@ import {Observable, firstValueFrom, of, throwError} from 'rxjs';
 import {AuthGuardService} from './auth.guard.service';
 import {AuthService} from './auth.service';
 import {UserService} from './user.service';
+import {UserRolesEnum} from '../models/user.model';
 
 describe('AuthGuardService', () => {
   let service: AuthGuardService;
   let router: {navigate: jasmine.Spy};
   let authService: jasmine.SpyObj<AuthService>;
+  let userRoles: UserRolesEnum[] | null;
 
   const route = {data: {}} as unknown as ActivatedRouteSnapshot;
-  const state = {} as RouterStateSnapshot;
+  const state = {url: '/workflows/7'} as RouterStateSnapshot;
 
   beforeEach(() => {
+    userRoles = null;
     router = {navigate: jasmine.createSpy('navigate')};
     authService = jasmine.createSpyObj<AuthService>('AuthService', [
       'isLoggedIn',
       'hasRenewableSession',
       'getValidIdentityPlatformToken$',
       'onSessionRenewalFailed',
+      'redirectToLogin',
     ]);
     TestBed.configureTestingModule({
       imports: [HttpClientTestingModule],
@@ -49,7 +53,12 @@ describe('AuthGuardService', () => {
         AuthGuardService,
         {provide: AuthService, useValue: authService},
         {provide: Router, useValue: router},
-        {provide: UserService, useValue: {getUserDetails: () => null}},
+        {
+          provide: UserService,
+          useValue: {
+            getUserDetails: () => (userRoles ? {roles: userRoles} : null),
+          },
+        },
       ],
     });
     service = TestBed.inject(AuthGuardService);
@@ -60,25 +69,37 @@ describe('AuthGuardService', () => {
     expect(service.canActivate(route, state)).toBeTrue();
   });
 
-  it('redirects to login when there is no session', () => {
+  it('redirects to login with returnUrl when there is no session', () => {
     authService.isLoggedIn.and.returnValue(false);
     authService.hasRenewableSession.and.returnValue(false);
     expect(service.canActivate(route, state)).toBeFalse();
-    expect(router.navigate).toHaveBeenCalledWith(['/login']);
+    expect(authService.redirectToLogin).toHaveBeenCalledOnceWith(
+      '/workflows/7',
+    );
   });
 
-  it('renews an expired session silently before allowing navigation', async () => {
+  it('renews an expired session silently and enforces requiredRoles', async () => {
+    const roleRoute = {
+      data: {requiredRoles: [UserRolesEnum.WORKFLOWS]},
+    } as unknown as ActivatedRouteSnapshot;
     authService.isLoggedIn.and.returnValue(false);
     authService.hasRenewableSession.and.returnValue(true);
     authService.getValidIdentityPlatformToken$.and.returnValue(of('fresh'));
 
-    const result = service.canActivate(route, state) as Observable<boolean>;
+    userRoles = [UserRolesEnum.WORKFLOWS];
+    const allowed = service.canActivate(
+      roleRoute,
+      state,
+    ) as Observable<boolean>;
+    expect(await firstValueFrom(allowed)).toBeTrue();
 
-    expect(await firstValueFrom(result)).toBeTrue();
-    expect(router.navigate).not.toHaveBeenCalled();
+    userRoles = [];
+    const denied = service.canActivate(roleRoute, state) as Observable<boolean>;
+    expect(await firstValueFrom(denied)).toBeFalse();
+    expect(router.navigate).toHaveBeenCalledWith(['/']);
   });
 
-  it('hands a failed renewal to AuthService and blocks navigation', async () => {
+  it('passes target state.url to onSessionRenewalFailed when renewal fails', async () => {
     authService.isLoggedIn.and.returnValue(false);
     authService.hasRenewableSession.and.returnValue(true);
     authService.getValidIdentityPlatformToken$.and.returnValue(
@@ -88,6 +109,8 @@ describe('AuthGuardService', () => {
     const result = service.canActivate(route, state) as Observable<boolean>;
 
     expect(await firstValueFrom(result)).toBeFalse();
-    expect(authService.onSessionRenewalFailed).toHaveBeenCalled();
+    expect(authService.onSessionRenewalFailed).toHaveBeenCalledOnceWith(
+      '/workflows/7',
+    );
   });
 });
