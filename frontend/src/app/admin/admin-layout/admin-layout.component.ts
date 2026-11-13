@@ -14,11 +14,51 @@
  * limitations under the License.
  */
 
-import {Component} from '@angular/core';
+import {isPlatformBrowser} from '@angular/common';
+import {Component, Inject, OnInit, PLATFORM_ID, computed} from '@angular/core';
+import {AuthService} from '../../common/services/auth.service';
+import {AdminVersionService} from '../admin-version.service';
 
 @Component({
   selector: 'app-admin-layout',
   templateUrl: './admin-layout.component.html',
   styleUrl: './admin-layout.component.scss',
 })
-export class AdminLayoutComponent {}
+export class AdminLayoutComponent implements OnInit {
+  readonly isBrowserAdmin: boolean;
+
+  readonly lastCheckedLabel = computed(() => {
+    const checkedAt = this.versionService.versionInfo()?.checkedAt;
+    if (!checkedAt) {
+      return 'Last checked: Not checked yet';
+    }
+    const parsed = Date.parse(checkedAt);
+    if (Number.isNaN(parsed)) {
+      return 'Last checked: Unknown';
+    }
+    const formatted = new Date(parsed).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    return `Last checked: ${formatted}`;
+  });
+
+  constructor(
+    public readonly versionService: AdminVersionService,
+    private readonly authService: AuthService,
+    @Inject(PLATFORM_ID) private readonly platformId: Object,
+  ) {
+    this.isBrowserAdmin =
+      isPlatformBrowser(this.platformId) && this.authService.isUserAdmin();
+  }
+
+  ngOnInit(): void {
+    if (this.isBrowserAdmin) {
+      this.versionService.ensureLoaded();
+    }
+  }
+
+  onCheckNow(): void {
+    this.versionService.refresh();
+  }
+}

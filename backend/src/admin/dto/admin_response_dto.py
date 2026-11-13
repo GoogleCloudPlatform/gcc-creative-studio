@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Literal
+
 from src.common.base_dto import BaseDto
 
 
@@ -56,3 +58,20 @@ class AdminGenerationHealth(BaseDto):
 class AdminMonthlyActiveUsers(BaseDto):
     month: str
     count: int
+
+
+VersionStatusLiteral = Literal[
+    "up_to_date",
+    "update_available",
+    "unavailable",
+]
+
+
+class AdminVersionInfo(BaseDto):
+    current_version: str
+    latest_version: str | None = None
+    status: VersionStatusLiteral
+    release_url: str | None = None
+    release_name: str | None = None
+    published_at: str | None = None
+    checked_at: str

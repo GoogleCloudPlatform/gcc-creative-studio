@@ -18,6 +18,8 @@
   <h1 class="text-3xl font-semibold mb-6">Admin Dashboard</h1>
   
   <div *ngIf="isSuperAdmin$ | async; else orgAdminView">
+    <app-admin-version-banner></app-admin-version-banner>
+
     <!-- Platform Overview Stats -->
     <div class="bg-[#1E1F22] p-6 rounded-lg shadow border border-zinc-700 mb-6">
       <div class="flex justify-between items-center mb-4 flex-wrap gap-4">
