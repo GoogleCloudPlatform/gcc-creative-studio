@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-import {Component, NgZone, Inject, PLATFORM_ID} from '@angular/core';
+import {Component, NgZone, Inject, PLATFORM_ID, inject} from '@angular/core';
 import {GoogleAuthProvider} from '@angular/fire/auth';
-import {Router} from '@angular/router';
+import {ActivatedRoute, Router} from '@angular/router';
 import {AuthService} from './../common/services/auth.service';
+import {sanitizeReturnUrl} from './../common/services/auth-token.utils';
 import {UserModel} from './../common/models/user.model';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {handleErrorSnackbar} from '../utils/handleMessageSnackbar';
@@ -37,6 +38,7 @@ interface LooseObject {
 })
 export class LoginComponent {
   private readonly provider: GoogleAuthProvider = new GoogleAuthProvider();
+  private readonly route = inject(ActivatedRoute, {optional: true});
 
   loader = false;
   invalidLogin = false;
@@ -66,13 +68,8 @@ export class LoginComponent {
     if (environment?.isLocal) {
       // This will use the Google Identity Services library to get an FIREBASE-compatible token.
       this.authService.signInWithGoogleFirebase().subscribe({
-        next: (firebaseToken: string) => {
-          // The signInForGoogleIdentityPlatform method already stored the token and minimal user details
-          // in localStorage. We just need to redirect to trigger the AuthGuard.
-          this.ngZone.run(() => {
-            this.loader = false;
-            void this.router.navigate([HOME_ROUTE]);
-          });
+        next: () => {
+          this.ngZone.run(() => this.navigateAfterLogin());
         },
         error: error => {
           this.loader = false;
@@ -97,13 +94,8 @@ export class LoginComponent {
     } else {
       // This will use the Google Identity Services library to get an FIREBASE-compatible token.
       this.authService.signInForGoogleIdentityPlatform().subscribe({
-        next: (firebaseToken: string) => {
-          // The signInForGoogleIdentityPlatform method already stored the token and minimal user details
-          // in localStorage. We just need to redirect to trigger the AuthGuard.
-          this.ngZone.run(() => {
-            this.loader = false;
-            void this.router.navigate([HOME_ROUTE]);
-          });
+        next: () => {
+          this.ngZone.run(() => this.navigateAfterLogin());
         },
         error: error => {
           this.loader = false;
@@ -140,7 +132,18 @@ export class LoginComponent {
     if (this.isBrowser) {
       localStorage.setItem('USER_DETAILS', JSON.stringify(user));
     }
+    this.navigateAfterLogin();
+  }
+
+  private navigateAfterLogin(): void {
     this.loader = false;
+    const returnUrl = sanitizeReturnUrl(
+      this.route?.snapshot?.queryParamMap?.get('returnUrl'),
+    );
+    if (returnUrl && returnUrl !== HOME_ROUTE) {
+      void this.router.navigateByUrl(returnUrl);
+      return;
+    }
     void this.router.navigate([HOME_ROUTE]);
   }
 }

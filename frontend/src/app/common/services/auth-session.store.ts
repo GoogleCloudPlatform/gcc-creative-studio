@@ -28,6 +28,8 @@ export const RENEW_RETRY_MS = 60 * 1000;
 export type ZoneRunner = <T>(fn: () => T) => T;
 const runDirectly: ZoneRunner = fn => fn();
 
+export type RenewTrigger = 'timer' | 'wake' | 'online';
+
 export interface StoredSession {
   token: string;
   expiry: number; // Expiration timestamp in milliseconds
@@ -35,7 +37,7 @@ export interface StoredSession {
 
 export interface SessionStoreCallbacks {
   /** The session is inside the renewal buffer (or expired) and should renew. */
-  onRenewNeeded: () => void;
+  onRenewNeeded: (trigger: RenewTrigger) => void;
   /** Another tab removed the session (user signed out there). */
   onSignedOutElsewhere: () => void;
 }
@@ -46,7 +48,8 @@ function parseSession(raw: string | null): StoredSession | null {
     const parsed = JSON.parse(raw) as Partial<StoredSession>;
     if (
       typeof parsed?.token === 'string' &&
-      typeof parsed?.expiry === 'number'
+      typeof parsed?.expiry === 'number' &&
+      Number.isFinite(parsed.expiry)
     ) {
       return {token: parsed.token, expiry: parsed.expiry};
     }
@@ -56,9 +59,19 @@ function parseSession(raw: string | null): StoredSession | null {
   return null;
 }
 
+function isHidden(): boolean {
+  return (
+    typeof document !== 'undefined' && document.visibilityState === 'hidden'
+  );
+}
+
+function isOffline(): boolean {
+  return typeof navigator !== 'undefined' && !navigator.onLine;
+}
+
 /**
  * Single owner of the browser session: localStorage persistence, cross-tab
- * sync, the proactive renewal timer and wake-up (visibility/focus) triggers.
+ * sync, the proactive renewal timer, and wake-up / reconnect triggers.
  * An expired session is kept on purpose so a reload or wake from sleep can
  * try a silent renewal before sending the user to the login page.
  */
@@ -68,8 +81,8 @@ export class AuthSessionStore {
   private listening = false;
 
   private readonly onStorage = (event: StorageEvent) => {
-    if (event.key !== SESSION_STORAGE_KEY) return;
-    const incoming = parseSession(event.newValue);
+    if (event.key !== null && event.key !== SESSION_STORAGE_KEY) return;
+    const incoming = parseSession(event.key === null ? null : event.newValue);
     if (!incoming) {
       if (this.session) {
         this.clearMemory();
@@ -81,14 +94,20 @@ export class AuthSessionStore {
   };
 
   private readonly onWake = () => {
-    if (
-      typeof document !== 'undefined' &&
-      document.visibilityState === 'hidden'
-    ) {
-      return;
-    }
+    if (isHidden()) return;
     if (this.needsRenewal()) {
-      this.callbacks.onRenewNeeded();
+      this.callbacks.onRenewNeeded('wake');
+    } else if (this.session && this.renewTimer === null) {
+      this.scheduleRenewal();
+    }
+  };
+
+  private readonly onOnline = () => {
+    if (isHidden()) return;
+    if (this.needsRenewal()) {
+      this.callbacks.onRenewNeeded('online');
+    } else if (this.session && this.renewTimer === null) {
+      this.scheduleRenewal();
     }
   };
 
@@ -111,11 +130,21 @@ export class AuthSessionStore {
     this.scheduleRenewal();
   }
 
-  /** Re-reads storage and adopts a fresher session written by another tab. */
+  /**
+   * Re-reads storage as the source of truth: adopts a fresher session written
+   * by another tab, or clears memory when another tab signed out.
+   */
   syncFromStorage(): void {
     if (!this.isBrowser) return;
     const stored = parseSession(localStorage.getItem(SESSION_STORAGE_KEY));
-    if (stored) this.adopt(stored);
+    if (!stored) {
+      if (this.session) {
+        this.clearMemory();
+        this.callbacks.onSignedOutElsewhere();
+      }
+      return;
+    }
+    this.adopt(stored);
   }
 
   save(token: string, expiry: number): void {
@@ -157,17 +186,19 @@ export class AuthSessionStore {
   /**
    * Arms the timer for RENEW_BUFFER_MS before expiry (plus jitter), never
    * sooner than `minDelayMs` (use RENEW_RETRY_MS after a failed attempt).
+   * Skips arming while offline (`online` listener recovers on reconnect).
    */
   scheduleRenewal(minDelayMs = MIN_RENEW_DELAY_MS): void {
     this.clearTimer();
-    if (!this.isBrowser || !this.session) return;
+    if (!this.isBrowser || !this.session || isOffline()) return;
     const untilBuffer = this.session.expiry - Date.now() - RENEW_BUFFER_MS;
     const jitter = untilBuffer > 0 ? Math.random() * RENEW_JITTER_MS : 0;
     const delay = Math.max(minDelayMs, untilBuffer + jitter);
     this.renewTimer = this.outsideZone(() =>
       setTimeout(() => {
         this.renewTimer = null;
-        this.callbacks.onRenewNeeded();
+        if (isHidden() || isOffline()) return;
+        this.callbacks.onRenewNeeded('timer');
       }, delay),
     );
   }
@@ -177,6 +208,7 @@ export class AuthSessionStore {
     this.outsideZone(() => {
       window.addEventListener('storage', this.onStorage);
       window.addEventListener('focus', this.onWake);
+      window.addEventListener('online', this.onOnline);
       document.addEventListener('visibilitychange', this.onWake);
     });
     this.listening = true;
@@ -187,6 +219,7 @@ export class AuthSessionStore {
     if (!this.isBrowser || !this.listening) return;
     window.removeEventListener('storage', this.onStorage);
     window.removeEventListener('focus', this.onWake);
+    window.removeEventListener('online', this.onOnline);
     document.removeEventListener('visibilitychange', this.onWake);
     this.listening = false;
   }

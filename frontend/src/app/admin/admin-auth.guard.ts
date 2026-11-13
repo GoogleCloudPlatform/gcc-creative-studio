@@ -20,7 +20,6 @@ import {
   ActivatedRouteSnapshot,
   RouterStateSnapshot,
   UrlTree,
-  Router,
 } from '@angular/router';
 import {isPlatformBrowser} from '@angular/common';
 import {Observable, of} from 'rxjs';
@@ -30,8 +29,6 @@ import {MatSnackBar} from '@angular/material/snack-bar';
 import {AuthService} from '../common/services/auth.service';
 import {handleErrorSnackbar} from '../utils/handleMessageSnackbar';
 
-const LOGIN_ROUTE = '/login';
-
 @Injectable({
   providedIn: 'root',
 })
@@ -40,13 +37,12 @@ export class AdminAuthGuard implements CanActivate {
 
   constructor(
     private authService: AuthService,
-    private router: Router,
     private userService: UserService,
     private _snackBar: MatSnackBar,
   ) {}
 
   canActivate(
-    route: ActivatedRouteSnapshot,
+    _route: ActivatedRouteSnapshot,
     state: RouterStateSnapshot,
   ):
     | Observable<boolean | UrlTree>
@@ -71,19 +67,19 @@ export class AdminAuthGuard implements CanActivate {
         defaultIfEmpty(null),
         map(token => {
           if (!token) {
-            void this.router.navigate([LOGIN_ROUTE]);
+            this.authService.redirectToLogin(state?.url);
             return false;
           }
           return this.isAdmin();
         }),
         catchError(() => {
-          this.authService.onSessionRenewalFailed();
+          this.authService.onSessionRenewalFailed(state?.url);
           return of(false);
         }),
       );
     }
 
-    void this.router.navigate([LOGIN_ROUTE]);
+    this.authService.redirectToLogin(state?.url);
     return false;
   }
 

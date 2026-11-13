@@ -65,7 +65,7 @@ describe('AuthSessionStore', () => {
     tick(ttl - RENEW_BUFFER_MS - 1);
     expect(onRenewNeeded).not.toHaveBeenCalled();
     tick(RENEW_JITTER_MS + 2);
-    expect(onRenewNeeded).toHaveBeenCalledTimes(1);
+    expect(onRenewNeeded).toHaveBeenCalledOnceWith('timer');
   }));
 
   it('never schedules sooner than the requested floor', fakeAsync(() => {
@@ -81,17 +81,44 @@ describe('AuthSessionStore', () => {
     expect(onRenewNeeded).toHaveBeenCalledTimes(2);
   }));
 
-  it('adopts only fresher sessions from storage', () => {
+  it('skips timer-driven renewal while the tab is hidden', fakeAsync(() => {
+    spyOnProperty(document, 'visibilityState', 'get').and.returnValue('hidden');
+    store.save('t', Date.now() + 1_000);
+    tick(MIN_RENEW_DELAY_MS + 10);
+    expect(onRenewNeeded).not.toHaveBeenCalled();
+  }));
+
+  it('does not arm a timer while offline and renews on reconnect', fakeAsync(() => {
+    let online = false;
+    spyOnProperty(navigator, 'onLine', 'get').and.callFake(() => online);
+    store.startListening();
+    store.save('t', Date.now() + 1_000);
+
+    tick(120_000);
+    expect(onRenewNeeded).not.toHaveBeenCalled();
+
+    online = true;
+    window.dispatchEvent(new Event('online'));
+    expect(onRenewNeeded).toHaveBeenCalledOnceWith('online');
+  }));
+
+  it('adopts only fresher sessions and signs out when storage is emptied', () => {
     store.save('mine', Date.now() + 30 * 60_000);
     write('older', Date.now() + 10 * 60_000);
     store.syncFromStorage();
     expect(store.token).toBe('mine');
+
     write('newer', Date.now() + 50 * 60_000);
     store.syncFromStorage();
     expect(store.token).toBe('newer');
+
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+    store.syncFromStorage();
+    expect(store.hasSession()).toBeFalse();
+    expect(onSignedOutElsewhere).toHaveBeenCalledTimes(1);
   });
 
-  it('signs out when another tab removes the session, without touching storage', () => {
+  it('signs out when another tab removes the session or clears storage', () => {
     store.startListening();
     store.save('t', Date.now() + 30 * 60_000);
     spyOn(localStorage, 'removeItem').and.callThrough();
@@ -101,11 +128,28 @@ describe('AuthSessionStore', () => {
     expect(store.hasSession()).toBeFalse();
     expect(onSignedOutElsewhere).toHaveBeenCalledTimes(1);
     expect(localStorage.removeItem).not.toHaveBeenCalled();
+
+    store.save('t2', Date.now() + 30 * 60_000);
+    window.dispatchEvent(
+      new StorageEvent('storage', {key: null, newValue: null}),
+    );
+    expect(store.hasSession()).toBeFalse();
+    expect(onSignedOutElsewhere).toHaveBeenCalledTimes(2);
   });
 
-  it('adopts a fresher session announced by another tab', () => {
+  it('adopts a fresher session via storage event and ignores an older one', () => {
     store.startListening();
-    store.save('t', Date.now() + 2 * 60_000);
+    store.save('t', Date.now() + 10 * 60_000);
+
+    const older = JSON.stringify({
+      token: 'older',
+      expiry: Date.now() + 2 * 60_000,
+    });
+    window.dispatchEvent(
+      new StorageEvent('storage', {key: SESSION_STORAGE_KEY, newValue: older}),
+    );
+    expect(store.token).toBe('t');
+
     const fresh = JSON.stringify({
       token: 'fresh',
       expiry: Date.now() + 3_600_000,
@@ -117,15 +161,50 @@ describe('AuthSessionStore', () => {
     expect(onSignedOutElsewhere).not.toHaveBeenCalled();
   });
 
-  it('requests renewal on focus only when inside the buffer', () => {
+  it('requests renewal on focus and visibilitychange only when visible and inside buffer', () => {
+    let visibility: DocumentVisibilityState = 'visible';
+    spyOnProperty(document, 'visibilityState', 'get').and.callFake(
+      () => visibility,
+    );
     store.startListening();
     store.save('t', Date.now() + 30 * 60_000);
     window.dispatchEvent(new Event('focus'));
     expect(onRenewNeeded).not.toHaveBeenCalled();
+
     store.save('t', Date.now() + 60_000);
-    window.dispatchEvent(new Event('focus'));
-    expect(onRenewNeeded).toHaveBeenCalledTimes(1);
+    visibility = 'hidden';
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(onRenewNeeded).not.toHaveBeenCalled();
+
+    visibility = 'visible';
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(onRenewNeeded).toHaveBeenCalledOnceWith('wake');
   });
+
+  it('re-arms the renewal timer on wake after reconnecting while hidden', fakeAsync(() => {
+    let online = false;
+    let visibility: DocumentVisibilityState = 'hidden';
+    spyOnProperty(navigator, 'onLine', 'get').and.callFake(() => online);
+    spyOnProperty(document, 'visibilityState', 'get').and.callFake(
+      () => visibility,
+    );
+    store.startListening();
+
+    const ttl = RENEW_BUFFER_MS + 60_000;
+    store.save('t', Date.now() + ttl);
+
+    // Reconnect happens while still hidden; user focuses tab with >5 min left.
+    online = true;
+    window.dispatchEvent(new Event('online'));
+    expect(onRenewNeeded).not.toHaveBeenCalled();
+
+    visibility = 'visible';
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(onRenewNeeded).not.toHaveBeenCalled();
+
+    tick(ttl - RENEW_BUFFER_MS + RENEW_JITTER_MS + 5);
+    expect(onRenewNeeded).toHaveBeenCalledOnceWith('timer');
+  }));
 
   it('clear removes storage and stops the timer', fakeAsync(() => {
     store.save('t', Date.now() + 1_000);
@@ -133,5 +212,22 @@ describe('AuthSessionStore', () => {
     tick(MIN_RENEW_DELAY_MS + 1);
     expect(onRenewNeeded).not.toHaveBeenCalled();
     expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+  }));
+
+  it('destroy stops the timer and detaches all browser listeners', fakeAsync(() => {
+    store.startListening();
+    store.save('t', Date.now() + 1_000);
+    store.destroy();
+
+    tick(MIN_RENEW_DELAY_MS + 10);
+    window.dispatchEvent(new Event('focus'));
+    window.dispatchEvent(new Event('online'));
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(
+      new StorageEvent('storage', {key: SESSION_STORAGE_KEY, newValue: null}),
+    );
+
+    expect(onRenewNeeded).not.toHaveBeenCalled();
+    expect(onSignedOutElsewhere).not.toHaveBeenCalled();
   }));
 });

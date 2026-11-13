@@ -29,7 +29,6 @@ import {isPlatformBrowser} from '@angular/common';
 import {Observable, of} from 'rxjs';
 import {catchError, defaultIfEmpty, map} from 'rxjs/operators';
 
-const LOGIN_ROUTE = '/login';
 @Injectable({
   providedIn: 'root',
 })
@@ -68,19 +67,19 @@ export class AuthGuardService implements CanActivate {
         defaultIfEmpty(null),
         map(token => {
           if (!token) {
-            void this.router.navigate([LOGIN_ROUTE]);
+            this.authService.redirectToLogin(state?.url);
             return false;
           }
           return this.hasRequiredRoles(route);
         }),
         catchError(() => {
-          this.authService.onSessionRenewalFailed();
+          this.authService.onSessionRenewalFailed(state?.url);
           return of(false);
         }),
       );
     }
 
-    void this.router.navigate([LOGIN_ROUTE]);
+    this.authService.redirectToLogin(state?.url);
     return false;
   }
 
