@@ -14,10 +14,25 @@
  * limitations under the License.
  */
 
-import {Component, NgZone, Inject, PLATFORM_ID} from '@angular/core';
-import {GoogleAuthProvider} from '@angular/fire/auth';
-import {Router} from '@angular/router';
+import {
+  ChangeDetectorRef,
+  Component,
+  ElementRef,
+  Inject,
+  NgZone,
+  OnDestroy,
+  PLATFORM_ID,
+  QueryList,
+  ViewChildren,
+  inject,
+} from '@angular/core';
+import {ActivatedRoute, Router} from '@angular/router';
+import {Subscription} from 'rxjs';
 import {AuthService} from './../common/services/auth.service';
+import {
+  GisPromptSuppressedError,
+  sanitizeReturnUrl,
+} from './../common/services/auth-token.utils';
 import {UserModel} from './../common/models/user.model';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {handleErrorSnackbar} from '../utils/handleMessageSnackbar';
@@ -26,21 +41,25 @@ import {isPlatformBrowser} from '@angular/common';
 
 const HOME_ROUTE = '/';
 
-interface LooseObject {
-  [key: string]: any;
-}
-
 @Component({
   selector: 'app-login',
   templateUrl: './login.component.html',
   styleUrls: ['./login.component.scss'],
 })
-export class LoginComponent {
-  private readonly provider: GoogleAuthProvider = new GoogleAuthProvider();
+export class LoginComponent implements OnDestroy {
+  private readonly route = inject(ActivatedRoute, {optional: true});
+  private readonly cdr = inject(ChangeDetectorRef);
+  private signInSub: Subscription | null = null;
+  private fallbackSub: Subscription | null = null;
+  private destroyed = false;
+
+  @ViewChildren('googleFallbackBtn')
+  fallbackContainers?: QueryList<ElementRef<HTMLElement>>;
 
   loader = false;
   invalidLogin = false;
   errorMessage = '';
+  showFallbackGoogleButton = false;
   isBrowser: boolean;
 
   constructor(
@@ -48,87 +67,109 @@ export class LoginComponent {
     private router: Router,
     public ngZone: NgZone,
     private _snackBar: MatSnackBar,
-    @Inject(PLATFORM_ID) platformId: Object,
+    @Inject(PLATFORM_ID) platformId: object,
   ) {
     this.isBrowser = isPlatformBrowser(platformId);
-    this.provider.setCustomParameters({
-      prompt: 'select_account',
-    });
   }
 
-  ngOnInit(): void {}
+  ngOnDestroy(): void {
+    this.destroyed = true;
+    this.signInSub?.unsubscribe();
+    this.signInSub = null;
+    this.fallbackSub?.unsubscribe();
+    this.fallbackSub = null;
+  }
 
   loginWithGoogle() {
     this.loader = true;
     this.invalidLogin = false;
     this.errorMessage = '';
+    this.showFallbackGoogleButton = false;
+    this.signInSub?.unsubscribe();
+    this.signInSub = null;
+    this.fallbackSub?.unsubscribe();
+    this.fallbackSub = null;
 
-    if (environment?.isLocal) {
-      // This will use the Google Identity Services library to get an FIREBASE-compatible token.
-      this.authService.signInWithGoogleFirebase().subscribe({
-        next: (firebaseToken: string) => {
-          // The signInForGoogleIdentityPlatform method already stored the token and minimal user details
-          // in localStorage. We just need to redirect to trigger the AuthGuard.
-          this.ngZone.run(() => {
-            this.loader = false;
-            void this.router.navigate([HOME_ROUTE]);
-          });
-        },
-        error: error => {
-          this.loader = false;
-          console.error('Login failed', error);
-          // Handle specific errors from the auth service
-          if (
-            error.message?.includes('timed out') ||
-            error.message?.includes('Access Denied')
-          ) {
-            this.handleLoginError(error);
-          } else {
-            this.handleLoginError(
-              error || {
-                message:
-                  'An unexpected error occurred during sign-in. Please try again.',
-              },
-            );
-          }
-          console.error('FIREBASE Login Process Error:', error);
-        },
-      });
-    } else {
-      // This will use the Google Identity Services library to get an FIREBASE-compatible token.
-      this.authService.signInForGoogleIdentityPlatform().subscribe({
-        next: (firebaseToken: string) => {
-          // The signInForGoogleIdentityPlatform method already stored the token and minimal user details
-          // in localStorage. We just need to redirect to trigger the AuthGuard.
-          this.ngZone.run(() => {
-            this.loader = false;
-            void this.router.navigate([HOME_ROUTE]);
-          });
-        },
-        error: error => {
-          this.loader = false;
-          console.error('Login failed', error);
-          // Handle specific errors from the auth service
-          if (
-            error.message?.includes('timed out') ||
-            error.message?.includes('Access Denied')
-          ) {
-            this.handleLoginError(error);
-          } else {
-            this.handleLoginError(
-              error || {
-                message:
-                  'An unexpected error occurred during sign-in. Please try again.',
-              },
-            );
-          }
-          console.error('FIREBASE Login Process Error:', error);
-        },
-      });
-    }
+    const signIn$ = environment?.isLocal
+      ? this.authService.signInWithGoogleFirebase()
+      : this.authService.signInForGoogleIdentityPlatform();
+
+    this.signInSub = signIn$.subscribe({
+      next: () => {
+        this.ngZone.run(() => this.navigateAfterLogin());
+      },
+      error: (error: unknown) => {
+        this.ngZone.run(() => this.handleSignInAttemptError(error));
+      },
+    });
   }
 
-  private handleLoginError(error: any, postErrorAction?: () => void) {
+  private handleSignInAttemptError(error: unknown): void {
+    if (error instanceof GisPromptSuppressedError) {
+      this.activateFallbackGoogleButton();
+      return;
+    }
+
+    this.loader = false;
+    console.error('Login failed', error);
+    this.handleLoginError(
+      error || {
+        message:
+          'An unexpected error occurred during sign-in. Please try again.',
+      },
+    );
+  }
+
+  private activateFallbackGoogleButton(): void {
+    this.loader = false;
+    this.showFallbackGoogleButton = true;
+    this.cdr.detectChanges();
+    this.renderFallbackGoogleButton();
+  }
+
+  private renderFallbackGoogleButton(isRetryAfterError = false): void {
+    this.fallbackSub?.unsubscribe();
+    this.fallbackSub = null;
+    if (this.destroyed || !this.showFallbackGoogleButton) return;
+
+    const elements =
+      this.fallbackContainers?.toArray().map(ref => ref.nativeElement) ?? [];
+    if (elements.length === 0) return;
+
+    let synchronous = true;
+    let credentialStarted = false;
+    this.fallbackSub = this.authService
+      .renderGoogleSignInButton$(elements, () => {
+        credentialStarted = true;
+        this.ngZone.run(() => {
+          this.loader = true;
+        });
+      })
+      .subscribe({
+        next: () => {
+          this.ngZone.run(() => this.navigateAfterLogin());
+        },
+        error: (error: unknown) => {
+          if (isRetryAfterError && synchronous) {
+            return;
+          }
+          this.ngZone.run(() => {
+            this.handleLoginError(error);
+            if (
+              !synchronous &&
+              credentialStarted &&
+              this.showFallbackGoogleButton &&
+              !this.destroyed
+            ) {
+              this.renderFallbackGoogleButton(true);
+            }
+          });
+        },
+      });
+    synchronous = false;
+  }
+
+  private handleLoginError(error: unknown, postErrorAction?: () => void) {
     this.loader = false;
     handleErrorSnackbar(this._snackBar, error, 'Login Error');
     if (postErrorAction) {
@@ -140,7 +181,18 @@ export class LoginComponent {
     if (this.isBrowser) {
       localStorage.setItem('USER_DETAILS', JSON.stringify(user));
     }
+    this.navigateAfterLogin();
+  }
+
+  private navigateAfterLogin(): void {
     this.loader = false;
+    const returnUrl = sanitizeReturnUrl(
+      this.route?.snapshot?.queryParamMap?.get('returnUrl'),
+    );
+    if (returnUrl && returnUrl !== HOME_ROUTE) {
+      void this.router.navigateByUrl(returnUrl);
+      return;
+    }
     void this.router.navigate([HOME_ROUTE]);
   }
 }

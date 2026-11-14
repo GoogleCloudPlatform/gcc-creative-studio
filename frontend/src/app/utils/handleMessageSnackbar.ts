@@ -16,6 +16,7 @@
 
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {AppInjector} from '../app-injector';
+import {isSessionHandledError} from '../common/services/auth-token.utils';
 import {NotificationService} from '../common/services/notification.service';
 
 function cleanErrorMessage(message: string): string {
@@ -49,6 +50,9 @@ export const handleErrorSnackbar: (
   context: string,
   duration = 5000,
 ) => {
+  if (isSessionHandledError(error)) {
+    return;
+  }
   console.error(`${context} error:`, error);
   let rawMessage =
     error?.error?.detail?.[0]?.msg ||

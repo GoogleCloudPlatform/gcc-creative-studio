@@ -16,16 +16,25 @@
 
 import {Injectable} from '@angular/core';
 import {
-  HttpRequest,
-  HttpHandler,
-  HttpEvent,
-  HttpInterceptor,
+  HttpContextToken,
   HttpErrorResponse,
+  HttpEvent,
+  HttpHandler,
+  HttpInterceptor,
+  HttpRequest,
 } from '@angular/common/http';
-import {Observable, throwError} from 'rxjs';
-import {catchError, switchMap} from 'rxjs/operators';
+import {EMPTY, Observable, throwError} from 'rxjs';
+import {catchError, defaultIfEmpty, switchMap} from 'rxjs/operators';
 import {AuthService} from './common/services/auth.service';
+import {
+  attachFailedSessionToken,
+  markSessionHandled,
+} from './common/services/auth-token.utils';
 import {environment} from '../environments/environment';
+
+const RETRIED_AFTER_401 = new HttpContextToken<boolean>(() => false);
+const UNAUTHORIZED_ORG_DETAIL =
+  'User is not authorized to access this application.';
 
 @Injectable()
 export class AuthInterceptor implements HttpInterceptor {
@@ -39,35 +48,85 @@ export class AuthInterceptor implements HttpInterceptor {
       request.url.startsWith('/') ||
       (environment.backendURL.startsWith('http') &&
         request.url.startsWith(environment.backendURL));
-    // Add validation for not intercepting the Google account url
-    if (!isBackendUrl) {
+    if (!isBackendUrl || request.headers.has('Authorization')) {
       return next.handle(request);
     }
 
-    // Asynchronously get a valid token. This will use the cache or trigger a silent refresh.
     return this.authService.getValidIdentityPlatformToken$().pipe(
+      defaultIfEmpty(null),
       switchMap(token => {
-        // Token was retrieved successfully. Clone the request and add the auth header.
+        if (!token) {
+          return EMPTY;
+        }
         const authorizedRequest = request.clone({
           setHeaders: {Authorization: `Bearer ${token}`},
         });
-        return next.handle(authorizedRequest);
+        return next.handle(authorizedRequest).pipe(
+          catchError(httpError => {
+            if (this.shouldRetryUnauthorized(httpError, request)) {
+              return this.retryAfterUnauthorized(
+                request,
+                next,
+                token,
+                httpError,
+              );
+            }
+            return throwError(() => httpError);
+          }),
+        );
       }),
       catchError(error => {
-        // If the error is NOT an HttpErrorResponse, it's a token refresh failure
-        // from our AuthService. In this case, the session is invalid, and we should log out.
+        // Non-HTTP errors come from session renewal failures in AuthService.
         if (!(error instanceof HttpErrorResponse)) {
           console.error(
-            'AuthInterceptor: Session expired and could not be refreshed. Logging out.',
+            'AuthInterceptor: Session expired and could not be renewed.',
             error,
           );
-          void this.authService.logout();
+          this.authService.onSessionRenewalFailed(undefined, error);
+          return throwError(() => markSessionHandled(error));
         }
-
-        // Otherwise, it's a backend API error (e.g., 404, 500). We should NOT log out.
-        // We just re-throw the original HttpErrorResponse so the calling service
-        // (e.g., UserService) can handle it and display an appropriate error message.
         return throwError(() => error);
+      }),
+    );
+  }
+
+  private shouldRetryUnauthorized(
+    error: unknown,
+    request: HttpRequest<unknown>,
+  ): error is HttpErrorResponse {
+    if (!(error instanceof HttpErrorResponse) || error.status !== 401) {
+      return false;
+    }
+    if (request.context.get(RETRIED_AFTER_401)) {
+      return false;
+    }
+    return error.error?.detail !== UNAUTHORIZED_ORG_DETAIL;
+  }
+
+  private retryAfterUnauthorized(
+    request: HttpRequest<unknown>,
+    next: HttpHandler,
+    rejectedToken: string,
+    original401: HttpErrorResponse,
+  ): Observable<HttpEvent<unknown>> {
+    return this.authService.renewAfterUnauthorized$(rejectedToken).pipe(
+      catchError(renewError => {
+        console.error(
+          'AuthInterceptor: Session renewal after 401 failed.',
+          renewError,
+        );
+        this.authService.onSessionRenewalFailed(
+          undefined,
+          attachFailedSessionToken(renewError, rejectedToken),
+        );
+        return throwError(() => markSessionHandled(original401));
+      }),
+      switchMap(freshToken => {
+        const retried = request.clone({
+          setHeaders: {Authorization: `Bearer ${freshToken}`},
+          context: request.context.set(RETRIED_AFTER_401, true),
+        });
+        return next.handle(retried);
       }),
     );
   }
