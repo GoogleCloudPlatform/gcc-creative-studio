@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import {isSameSessionAccount} from './auth-token.utils';
+
 export const SESSION_STORAGE_KEY = 'firebase_session';
 /** Renew this long before the 1-hour Google ID token expires. */
 export const RENEW_BUFFER_MS = 5 * 60 * 1000;
@@ -40,6 +42,8 @@ export interface SessionStoreCallbacks {
   onRenewNeeded: (trigger: RenewTrigger) => void;
   /** Another tab removed the session (user signed out there). */
   onSignedOutElsewhere: () => void;
+  /** Another tab signed in as a different Google account. */
+  onAccountSwitchedElsewhere?: (incoming: StoredSession) => void;
 }
 
 function parseSession(raw: string | null): StoredSession | null {
@@ -225,6 +229,16 @@ export class AuthSessionStore {
   }
 
   private adopt(incoming: StoredSession): void {
+    if (
+      this.session !== null &&
+      incoming.token !== this.session.token &&
+      !isSameSessionAccount(this.session.token, incoming.token)
+    ) {
+      this.session = incoming;
+      this.scheduleRenewal();
+      this.callbacks.onAccountSwitchedElsewhere?.(incoming);
+      return;
+    }
     if (this.session && incoming.expiry <= this.session.expiry) return;
     this.session = incoming;
     this.scheduleRenewal();

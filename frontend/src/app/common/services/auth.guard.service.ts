@@ -72,8 +72,8 @@ export class AuthGuardService implements CanActivate {
           }
           return this.hasRequiredRoles(route);
         }),
-        catchError(() => {
-          this.authService.onSessionRenewalFailed(state?.url);
+        catchError((error: unknown) => {
+          this.authService.onSessionRenewalFailed(state?.url, error);
           return of(false);
         }),
       );

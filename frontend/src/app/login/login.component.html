@@ -39,6 +39,7 @@
       of <span class="linear-text">thought</span> 🚀
     </p>
     <button
+      *ngIf="!showFallbackGoogleButton"
       mat-raised-button
       color="primary"
       (click)="loginWithGoogle()"
@@ -46,6 +47,15 @@
     >
       Login with Google
     </button>
+    <div
+      *ngIf="showFallbackGoogleButton"
+      class="flex flex-col items-center gap-2 w-full"
+    >
+      <p class="register-text text-sm text-white/90 text-center">
+        Single sign-on was skipped. Click below to continue with Google:
+      </p>
+      <div #googleFallbackBtn class="min-h-[44px] flex justify-center"></div>
+    </div>
     <mat-spinner class="mt-5" [diameter]="50" *ngIf="this.loader"></mat-spinner>
   </div>
 
@@ -68,10 +78,11 @@
         </mat-card-title>
       </mat-card-header>
       <mat-card-content class="flex flex-col items-center">
-        <p class="register-text mb-4">
+        <p class="register-text mb-4" *ngIf="!showFallbackGoogleButton">
           Single Sign on with your Google Account
         </p>
         <button
+          *ngIf="!showFallbackGoogleButton"
           mat-raised-button
           color="primary"
           (click)="loginWithGoogle()"
@@ -79,6 +90,18 @@
         >
           Login with Google
         </button>
+        <div
+          *ngIf="showFallbackGoogleButton"
+          class="flex flex-col items-center gap-2 w-full"
+        >
+          <p class="register-text text-sm text-white/90 text-center">
+            Single sign-on was skipped. Click below to continue with Google:
+          </p>
+          <div
+            #googleFallbackBtn
+            class="min-h-[44px] flex justify-center"
+          ></div>
+        </div>
         <mat-spinner
           class="mt-5 m-auto"
           [diameter]="50"

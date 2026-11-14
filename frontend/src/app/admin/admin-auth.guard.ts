@@ -72,8 +72,8 @@ export class AdminAuthGuard implements CanActivate {
           }
           return this.isAdmin();
         }),
-        catchError(() => {
-          this.authService.onSessionRenewalFailed(state?.url);
+        catchError((error: unknown) => {
+          this.authService.onSessionRenewalFailed(state?.url, error);
           return of(false);
         }),
       );

@@ -111,6 +111,7 @@ describe('AuthGuardService', () => {
     expect(await firstValueFrom(result)).toBeFalse();
     expect(authService.onSessionRenewalFailed).toHaveBeenCalledOnceWith(
       '/workflows/7',
+      jasmine.any(Error),
     );
   });
 });

@@ -26,6 +26,10 @@ import {
 import {EMPTY, Observable, throwError} from 'rxjs';
 import {catchError, defaultIfEmpty, switchMap} from 'rxjs/operators';
 import {AuthService} from './common/services/auth.service';
+import {
+  attachFailedSessionToken,
+  markSessionHandled,
+} from './common/services/auth-token.utils';
 import {environment} from '../environments/environment';
 
 const RETRIED_AFTER_401 = new HttpContextToken<boolean>(() => false);
@@ -78,7 +82,8 @@ export class AuthInterceptor implements HttpInterceptor {
             'AuthInterceptor: Session expired and could not be renewed.',
             error,
           );
-          this.authService.onSessionRenewalFailed();
+          this.authService.onSessionRenewalFailed(undefined, error);
+          return throwError(() => markSessionHandled(error));
         }
         return throwError(() => error);
       }),
@@ -110,8 +115,11 @@ export class AuthInterceptor implements HttpInterceptor {
           'AuthInterceptor: Session renewal after 401 failed.',
           renewError,
         );
-        this.authService.onSessionRenewalFailed();
-        return throwError(() => original401);
+        this.authService.onSessionRenewalFailed(
+          undefined,
+          attachFailedSessionToken(renewError, rejectedToken),
+        );
+        return throwError(() => markSessionHandled(original401));
       }),
       switchMap(freshToken => {
         const retried = request.clone({

@@ -104,6 +104,7 @@ describe('AdminAuthGuard', () => {
     expect(await firstValueFrom(result)).toBeFalse();
     expect(authService.onSessionRenewalFailed).toHaveBeenCalledOnceWith(
       '/admin',
+      jasmine.any(Error),
     );
   });
 });
