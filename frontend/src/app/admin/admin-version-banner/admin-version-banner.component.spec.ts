@@ -136,4 +136,23 @@ describe('AdminVersionBannerComponent', () => {
     expect(ensureLoadedSpy).not.toHaveBeenCalled();
     expect(fixture.nativeElement.querySelector('[role="status"]')).toBeNull();
   });
+
+  it('renders update_available state without link when safeReleaseUrl() is null', async () => {
+    await configure('browser', true, {
+      currentVersion: '26.11.12',
+      latestVersion: '26.11.15',
+      status: 'update_available',
+      releaseUrl: 'https://evil.example.com/phish',
+      releaseName: 'v26.11.15',
+      publishedAt: '2026-11-15T12:00:00Z',
+      checkedAt: '2026-11-15T12:05:00Z',
+    });
+
+    const banner = fixture.nativeElement.querySelector(
+      '[role="status"]',
+    ) as HTMLElement;
+    expect(banner).not.toBeNull();
+    expect(banner.textContent).toContain('New version available: v26.11.15');
+    expect(banner.querySelector('a')).toBeNull();
+  });
 });

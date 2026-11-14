@@ -49,7 +49,14 @@ export class AdminLayoutComponent implements OnInit {
     @Inject(PLATFORM_ID) private readonly platformId: Object,
   ) {
     this.isBrowserAdmin =
-      isPlatformBrowser(this.platformId) && this.authService.isUserAdmin();
+      this.versionService.isBrowserAdmin?.() ??
+      (isPlatformBrowser(this.platformId) && this.authService.isUserAdmin());
+  }
+
+  get showVersionFooter(): boolean {
+    return (
+      this.isBrowserAdmin && (this.versionService.isBrowserAdmin?.() ?? true)
+    );
   }
 
   ngOnInit(): void {

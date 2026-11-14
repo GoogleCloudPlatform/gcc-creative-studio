@@ -32,7 +32,8 @@ export class AdminVersionBannerComponent implements OnInit {
     @Inject(PLATFORM_ID) private readonly platformId: Object,
   ) {
     this.isBrowserAdmin =
-      isPlatformBrowser(this.platformId) && this.authService.isUserAdmin();
+      this.versionService.isBrowserAdmin?.() ??
+      (isPlatformBrowser(this.platformId) && this.authService.isUserAdmin());
   }
 
   ngOnInit(): void {

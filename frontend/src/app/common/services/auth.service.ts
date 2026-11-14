@@ -26,7 +26,7 @@ import {
   signInWithPopup,
   UserCredential,
 } from '@angular/fire/auth';
-import {Observable, Subject, from, throwError, of} from 'rxjs';
+import {Observable, from, throwError, of} from 'rxjs';
 import {catchError, tap, map, switchMap} from 'rxjs/operators';
 import {isPlatformBrowser} from '@angular/common';
 
@@ -54,8 +54,6 @@ export class AuthService {
   private currentOAuthAccessToken: string | null = null;
   private firebaseIdToken: string | null = null; // To store the Firebase token for the test
   private firebaseTokenExpiry: number | null = null; // To store token expiration time (in ms)
-  private readonly sessionChangedSubject = new Subject<void>();
-  readonly sessionChanged$ = this.sessionChangedSubject.asObservable();
 
   constructor(
     private router: Router,
@@ -263,7 +261,6 @@ export class AuthService {
         tap((userDetails: UserModel) => {
           // The backend is the source of truth. Save the returned profile to local storage.
           localStorage.setItem(USER_DETAILS, JSON.stringify(userDetails));
-          this.sessionChangedSubject.next();
         }),
         catchError((error: HttpErrorResponse) => {
           console.error('Failed to sync user with backend', error);
@@ -290,18 +287,13 @@ export class AuthService {
         localStorage.removeItem(FIREBASE_SESSION_KEY);
         localStorage.removeItem(USER_DETAILS);
         localStorage.removeItem('showTooltip');
-        this.sessionChangedSubject.next();
         void this.router.navigateByUrl(route);
       })
       .catch(e => {
         console.error('Sign Out Error', e);
-        this.currentOAuthAccessToken = null;
-        this.firebaseIdToken = null;
-        this.firebaseTokenExpiry = null;
         localStorage.removeItem(FIREBASE_SESSION_KEY);
         localStorage.removeItem(USER_DETAILS);
         localStorage.removeItem('showTooltip');
-        this.sessionChangedSubject.next();
         void this.router.navigate([LOGIN_ROUTE]);
       });
   }
@@ -317,15 +309,8 @@ export class AuthService {
       this.firebaseTokenExpiry > now
     );
 
-    if (!isTokenValid) {
-      if (this.firebaseIdToken !== null) {
-        this.firebaseIdToken = null;
-        this.firebaseTokenExpiry = null;
-        this.sessionChangedSubject.next();
-      }
-      if (this.router.url !== LOGIN_ROUTE) {
-        void this.router.navigate([LOGIN_ROUTE]);
-      }
+    if (!isTokenValid && this.router.url !== LOGIN_ROUTE) {
+      void this.router.navigate([LOGIN_ROUTE]);
     }
 
     return isTokenValid;

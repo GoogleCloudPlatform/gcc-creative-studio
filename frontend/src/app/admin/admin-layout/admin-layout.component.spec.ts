@@ -300,4 +300,45 @@ describe('AdminLayoutComponent', () => {
     expect(ensureLoadedSpy).not.toHaveBeenCalled();
     expect(fixture.nativeElement.textContent).not.toContain('System Version');
   });
+
+  it('clears the 250px fixed right sidenav at 1280px width via container and content padding', async () => {
+    await configure('browser', true);
+    const hostEl = fixture.nativeElement as HTMLElement;
+    const prevDisplay = hostEl.style.display;
+    const prevWidth = hostEl.style.width;
+    hostEl.style.display = 'block';
+    hostEl.style.width = '1280px';
+    fixture.detectChanges();
+
+    try {
+      const containerEl = hostEl.querySelector(
+        '.admin-container',
+      ) as HTMLElement;
+      const contentEl = hostEl.querySelector(
+        'mat-sidenav-content',
+      ) as HTMLElement;
+      const sidenavEl = hostEl.querySelector('.admin-sidenav') as HTMLElement;
+      expect(containerEl).not.toBeNull();
+      expect(contentEl).not.toBeNull();
+      expect(sidenavEl).not.toBeNull();
+
+      const containerStyle = getComputedStyle(containerEl);
+      const containerPadRight = parseFloat(containerStyle.paddingRight);
+      const containerPadLeft = parseFloat(containerStyle.paddingLeft);
+      const contentPadRight = parseFloat(
+        getComputedStyle(contentEl).paddingRight,
+      );
+      const sidenavWidth = parseFloat(getComputedStyle(sidenavEl).width);
+
+      expect(containerPadLeft).toBe(32);
+      expect(containerPadRight).toBe(224);
+      expect(contentPadRight).toBe(40);
+      expect(sidenavWidth).toBe(250);
+      expect(containerPadRight + contentPadRight).toBeGreaterThanOrEqual(260);
+      expect(containerPadRight + contentPadRight).toBeGreaterThan(sidenavWidth);
+    } finally {
+      hostEl.style.display = prevDisplay;
+      hostEl.style.width = prevWidth;
+    }
+  });
 });

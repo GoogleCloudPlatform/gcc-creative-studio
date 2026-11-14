@@ -21,11 +21,13 @@ import logging
 import math
 import os
 from pathlib import Path
+import posixpath
 import re
 import stat
 import tempfile
 import time
 from typing import Any
+import urllib.parse
 import weakref
 
 import httpx
@@ -147,10 +149,34 @@ class VersionService:
         return f"{self._repo}|{self._current_version}"
 
     def _is_valid_release_url(self, url: object) -> bool:
+        if not isinstance(url, str) or not url:
+            return False
+        if any(ord(ch) <= 0x20 or ord(ch) == 0x7F for ch in url):
+            return False
+        if not _REPO_RE.fullmatch(self._repo):
+            return False
+        expected_prefix = f"/{self._repo}/"
+        if not url.startswith(f"https://github.com{expected_prefix}"):
+            return False
+        once_decoded = urllib.parse.unquote(url)
+        twice_decoded = urllib.parse.unquote(once_decoded)
+        if any(
+            ord(ch) <= 0x20 or ord(ch) == 0x7F for ch in twice_decoded
+        ) or any(
+            _UNSAFE_URL_RE.search(candidate)
+            for candidate in (url, once_decoded, twice_decoded)
+        ):
+            return False
+        try:
+            parsed = urllib.parse.urlsplit(url)
+        except ValueError:
+            return False
         return (
-            isinstance(url, str)
-            and url.startswith(f"https://github.com/{self._repo}/")
-            and not _UNSAFE_URL_RE.search(url)
+            parsed.scheme == "https"
+            and parsed.netloc == "github.com"
+            and posixpath.normpath(
+                urllib.parse.unquote(parsed.path)
+            ).startswith(expected_prefix)
         )
 
     def _read_cache_store(self) -> dict[str, Any]:
@@ -162,7 +188,9 @@ class VersionService:
         try:
             fd = os.open(
                 self._cache_path,
-                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0),
             )
         except FileNotFoundError:
             return dict(_IN_MEMORY_CACHE.get(cache_id, {}))

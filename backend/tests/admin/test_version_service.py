@@ -801,6 +801,87 @@ class TestVersionService:
         assert r4.status == "up_to_date"
         assert len(calls) == 2
 
+    @pytest.mark.asyncio
+    async def test_rejects_percent_encoded_dot_segments_and_userinfo_in_release_url(
+        self, tmp_path: Path
+    ):
+        tricky_urls = [
+            f"https://github.com/{_REPO}/%2e%2e/%2e%2e/evil/repo/releases/tag/v1",
+            f"https://github.com/{_REPO}/%252e%252e/evil",
+            f"https://github.com/{_REPO}/..%2fevil",
+            f"https://github.com/{_REPO}/releases%5cevil",
+            f"https://github.com/{_REPO}/releases/tag/v1\nHeader: evil",
+            f"https://github.com/{_REPO}/releases/tag/v1%00evil",
+            f"https://evil.com@github.com/{_REPO}/releases/tag/v26.11.15",
+        ]
+        for idx, bad_url in enumerate(tricky_urls):
+
+            async def handler(
+                unused_request: httpx.Request, url_val: str = bad_url
+            ) -> httpx.Response:
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "tag_name": "v26.11.15",
+                            "draft": False,
+                            "prerelease": False,
+                            "html_url": url_val,
+                        }
+                    ],
+                )
+
+            svc = VersionService(
+                repo=_REPO,
+                current_version="26.11.12",
+                cache_path=tmp_path / f"tricky_url_{idx}.json",
+                time_fn=lambda: 1000.0,
+                http_client_factory=_make_mock_client_factory(handler),
+            )
+            info = await svc.get_version_info()
+            assert info.status == "update_available"
+            assert info.release_url is None
+
+    @pytest.mark.asyncio
+    async def test_default_http_client_disables_redirects_and_provider_returns_service(
+        self,
+    ):
+        svc = get_version_service()
+        assert isinstance(svc, VersionService)
+        async with svc._http_client_factory() as client:
+            assert client.follow_redirects is False
+
+    @pytest.mark.asyncio
+    async def test_cache_ignores_wrong_uid_and_oversized_file(
+        self, tmp_path: Path
+    ):
+        wrong_uid_path = tmp_path / "wrong_uid.json"
+        wrong_uid_path.write_text(
+            json.dumps({"cached": {"fetched_at": 1000.0}}),
+            encoding="utf-8",
+        )
+        svc_uid = VersionService(
+            repo=_REPO,
+            current_version="26.11.12",
+            cache_path=wrong_uid_path,
+            time_fn=lambda: 1000.0,
+        )
+        with patch("src.admin.version_service.os.getuid", return_value=-1):
+            assert svc_uid._read_cache_store() == {}
+
+        oversized_path = tmp_path / "oversized.json"
+        oversized_path.write_text(
+            json.dumps({"blob": "x" * 70_000}),
+            encoding="utf-8",
+        )
+        svc_big = VersionService(
+            repo=_REPO,
+            current_version="26.11.12",
+            cache_path=oversized_path,
+            time_fn=lambda: 1000.0,
+        )
+        assert svc_big._read_cache_store() == {}
+
 
 class TestAdminVersionController:
     """Tests for GET /api/admin/version and removal of /api/version.
