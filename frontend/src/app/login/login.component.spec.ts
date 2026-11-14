@@ -21,17 +21,18 @@ import {
   tick,
 } from '@angular/core/testing';
 import {RouterTestingModule} from '@angular/router/testing';
-import {of, throwError, NEVER} from 'rxjs';
+import {of, throwError, NEVER, Subject} from 'rxjs';
 import {LoginComponent} from './login.component';
 import {AuthService} from './../common/services/auth.service';
+import {GisPromptSuppressedError} from './../common/services/auth-token.utils';
 import {UserModel} from './../common/models/user.model';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {ActivatedRoute, Router, convertToParamMap} from '@angular/router';
-import {NgZone} from '@angular/core';
 import {environment} from '../../environments/environment';
 import {MatCardModule} from '@angular/material/card';
 import {MatFormFieldModule} from '@angular/material/form-field';
 import {MatInputModule} from '@angular/material/input';
+import {MatProgressSpinnerModule} from '@angular/material/progress-spinner';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {useTestBedAppInjector} from '../testing/app-injector.testing';
 import {NotificationService} from '../common/services/notification.service';
@@ -42,16 +43,14 @@ class MockAuthService {
   signInForGoogleIdentityPlatform = jasmine.createSpy(
     'signInForGoogleIdentityPlatform',
   );
-  // Add any other methods from AuthService that are called in LoginComponent
+  renderGoogleSignInButton$ = jasmine.createSpy('renderGoogleSignInButton$');
 }
 
 describe('LoginComponent', () => {
   let component: LoginComponent;
   let fixture: ComponentFixture<LoginComponent>;
-  let authService: MockAuthService; // Use the mocked service
+  let authService: MockAuthService;
   let router: Router;
-  let ngZone: NgZone;
-  let snackBar: jasmine.SpyObj<MatSnackBar>;
   let notificationService: jasmine.SpyObj<NotificationService>;
   let consoleErrorSpy: jasmine.Spy;
 
@@ -75,11 +74,12 @@ describe('LoginComponent', () => {
         MatCardModule,
         MatFormFieldModule,
         MatInputModule,
+        MatProgressSpinnerModule,
         NoopAnimationsModule,
       ],
       declarations: [LoginComponent],
       providers: [
-        {provide: AuthService, useClass: MockAuthService}, // Use useClass for the mock
+        {provide: AuthService, useClass: MockAuthService},
         {provide: MatSnackBar, useValue: snackBarSpy},
         {provide: NotificationService, useValue: notificationServiceSpy},
       ],
@@ -89,12 +89,9 @@ describe('LoginComponent', () => {
 
     fixture = TestBed.createComponent(LoginComponent);
     component = fixture.componentInstance;
-    // fixture.detectChanges(); // No longer needed with autoDetectChanges
-    fixture.autoDetectChanges(true); // Enable auto-detection of changes
-    authService = TestBed.inject(AuthService) as unknown as MockAuthService; // Inject the mock instance
+    fixture.autoDetectChanges(true);
+    authService = TestBed.inject(AuthService) as unknown as MockAuthService;
     router = TestBed.inject(Router);
-    ngZone = TestBed.inject(NgZone);
-    snackBar = TestBed.inject(MatSnackBar) as jasmine.SpyObj<MatSnackBar>;
     notificationService = TestBed.inject(
       NotificationService,
     ) as jasmine.SpyObj<NotificationService>;
@@ -124,7 +121,7 @@ describe('LoginComponent', () => {
     }));
     describe('in local environment', () => {
       beforeEach(() => {
-        (environment as any).isLocal = true;
+        (environment as {isLocal: boolean}).isLocal = true;
       });
 
       it('should call signInWithGoogleFirebase and navigate on success', fakeAsync(() => {
@@ -145,13 +142,16 @@ describe('LoginComponent', () => {
         authService.signInWithGoogleFirebase.and.returnValue(
           throwError(() => error),
         );
-        spyOn(component, 'handleLoginError' as any);
+        const handleSpy = spyOn(
+          component as unknown as {handleLoginError: (err: unknown) => void},
+          'handleLoginError',
+        );
 
         component.loginWithGoogle();
         tick();
 
         expect(component.loader).toBeFalse();
-        expect((component as any).handleLoginError).toHaveBeenCalledWith(error);
+        expect(handleSpy).toHaveBeenCalledWith(error);
       }));
 
       it('should handle string error from signInWithGoogleFirebase', fakeAsync(() => {
@@ -160,19 +160,22 @@ describe('LoginComponent', () => {
         authService.signInWithGoogleFirebase.and.returnValue(
           throwError(() => error),
         );
-        spyOn(component, 'handleLoginError' as any);
+        const handleSpy = spyOn(
+          component as unknown as {handleLoginError: (err: unknown) => void},
+          'handleLoginError',
+        );
 
         component.loginWithGoogle();
         tick();
 
         expect(component.loader).toBeFalse();
-        expect((component as any).handleLoginError).toHaveBeenCalledWith(error);
+        expect(handleSpy).toHaveBeenCalledWith(error);
       }));
     });
 
     describe('in non-local environment', () => {
       beforeEach(() => {
-        (environment as any).isLocal = false;
+        (environment as {isLocal: boolean}).isLocal = false;
       });
 
       it('should call signInForGoogleIdentityPlatform and navigate on success', fakeAsync(() => {
@@ -197,13 +200,16 @@ describe('LoginComponent', () => {
         authService.signInForGoogleIdentityPlatform.and.returnValue(
           throwError(() => error),
         );
-        spyOn(component, 'handleLoginError' as any);
+        const handleSpy = spyOn(
+          component as unknown as {handleLoginError: (err: unknown) => void},
+          'handleLoginError',
+        );
 
         component.loginWithGoogle();
         tick();
 
         expect(component.loader).toBeFalse();
-        expect((component as any).handleLoginError).toHaveBeenCalledWith(error);
+        expect(handleSpy).toHaveBeenCalledWith(error);
       }));
 
       it('should handle string error from signInForGoogleIdentityPlatform', fakeAsync(() => {
@@ -212,13 +218,105 @@ describe('LoginComponent', () => {
         authService.signInForGoogleIdentityPlatform.and.returnValue(
           throwError(() => error),
         );
-        spyOn(component, 'handleLoginError' as any);
+        const handleSpy = spyOn(
+          component as unknown as {handleLoginError: (err: unknown) => void},
+          'handleLoginError',
+        );
 
         component.loginWithGoogle();
         tick();
 
         expect(component.loader).toBeFalse();
-        expect((component as any).handleLoginError).toHaveBeenCalledWith(error);
+        expect(handleSpy).toHaveBeenCalledWith(error);
+      }));
+
+      it('renders fallback Google buttons across containers on GisPromptSuppressedError without a toast and navigates on success', fakeAsync(() => {
+        const activatedRoute = TestBed.inject(ActivatedRoute);
+        (activatedRoute as {snapshot: unknown}).snapshot = {
+          queryParamMap: convertToParamMap({
+            returnUrl: '/gallery?filter=video',
+          }),
+        };
+        const navByUrlSpy = spyOn(router, 'navigateByUrl');
+        const fallback$ = new Subject<string>();
+        let capturedStartCb: (() => void) | undefined;
+        let capturedContainers: readonly HTMLElement[] = [];
+
+        authService.signInForGoogleIdentityPlatform.and.returnValue(
+          throwError(() => new GisPromptSuppressedError()),
+        );
+        authService.renderGoogleSignInButton$.and.callFake(
+          (containers: readonly HTMLElement[], onStart?: () => void) => {
+            capturedContainers = containers;
+            capturedStartCb = onStart;
+            return fallback$.asObservable();
+          },
+        );
+
+        component.loginWithGoogle();
+        tick();
+
+        expect(component.loader).toBeFalse();
+        expect(component.showFallbackGoogleButton).toBeTrue();
+        expect(notificationService.show).not.toHaveBeenCalled();
+        expect(consoleErrorSpy).not.toHaveBeenCalled();
+
+        const host = fixture.nativeElement as HTMLElement;
+        expect(host.textContent).toContain(
+          'Single sign-on was skipped. Click below to continue with Google:',
+        );
+        expect(host.textContent).not.toContain('Login with Google');
+        expect(authService.renderGoogleSignInButton$).toHaveBeenCalledTimes(1);
+        expect(capturedContainers.length).toBe(2);
+
+        capturedStartCb?.();
+        expect(component.loader).toBeTrue();
+
+        fallback$.next('fallback-token');
+        tick();
+        expect(component.loader).toBeFalse();
+        expect(navByUrlSpy).toHaveBeenCalledWith('/gallery?filter=video');
+      }));
+
+      it('keeps fallback button interactive and shows snackbar on /users/me 403 error, then succeeds on retry', fakeAsync(() => {
+        consoleErrorSpy.and.stub();
+        const navSpy = spyOn(router, 'navigate');
+        const attempt1$ = new Subject<string>();
+        const attempt2$ = new Subject<string>();
+        const startCallbacks: Array<(() => void) | undefined> = [];
+
+        authService.signInForGoogleIdentityPlatform.and.returnValue(
+          throwError(() => new GisPromptSuppressedError()),
+        );
+        let callIndex = 0;
+        authService.renderGoogleSignInButton$.and.callFake(
+          (_containers: readonly HTMLElement[], onStart?: () => void) => {
+            startCallbacks.push(onStart);
+            const stream = callIndex === 0 ? attempt1$ : attempt2$;
+            callIndex++;
+            return stream.asObservable();
+          },
+        );
+
+        component.loginWithGoogle();
+        tick();
+
+        startCallbacks[0]?.();
+        expect(component.loader).toBeTrue();
+        attempt1$.error(new Error('Forbidden (403)'));
+        tick();
+
+        expect(component.loader).toBeFalse();
+        expect(component.showFallbackGoogleButton).toBeTrue();
+        expect(notificationService.show).toHaveBeenCalledTimes(1);
+        expect(authService.renderGoogleSignInButton$).toHaveBeenCalledTimes(2);
+
+        startCallbacks[1]?.();
+        expect(component.loader).toBeTrue();
+        attempt2$.next('retry-token');
+        tick();
+        expect(component.loader).toBeFalse();
+        expect(navSpy).toHaveBeenCalledWith(['/']);
       }));
     });
   });
@@ -299,5 +397,23 @@ describe('LoginComponent', () => {
       expect(navByUrlSpy).not.toHaveBeenCalled();
       expect(navSpy).toHaveBeenCalledWith(['/']);
     }));
+  });
+
+  it('unsubscribes in-flight signIn$ on ngOnDestroy without navigating', () => {
+    (environment as {isLocal: boolean}).isLocal = false;
+    const pendingSignIn$ = new Subject<string>();
+    const navSpy = spyOn(router, 'navigate');
+    authService.signInForGoogleIdentityPlatform.and.returnValue(
+      pendingSignIn$.asObservable(),
+    );
+
+    component.loginWithGoogle();
+    expect(pendingSignIn$.observed).toBeTrue();
+
+    fixture.destroy();
+    expect(pendingSignIn$.observed).toBeFalse();
+
+    pendingSignIn$.next('late-token');
+    expect(navSpy).not.toHaveBeenCalled();
   });
 });

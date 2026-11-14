@@ -17,9 +17,18 @@
 import {Injectable, inject, signal} from '@angular/core';
 import {HttpClient} from '@angular/common/http';
 import {Observable, firstValueFrom, Subject, of} from 'rxjs';
-import {tap} from 'rxjs/operators';
+import {defaultIfEmpty, tap} from 'rxjs/operators';
 import {environment} from '../../../environments/environment';
 import {AuthService} from '../../common/services/auth.service';
+import {
+  SessionSupersededError,
+  attachFailedSessionToken,
+  isSessionHandledError,
+  markSessionHandled,
+} from '../../common/services/auth-token.utils';
+
+const UNAUTHORIZED_ORG_DETAIL =
+  'User is not authorized to access this application.';
 import {
   ChatSession,
   SessionDetailResponse,
@@ -281,6 +290,64 @@ export class AgentChatService {
     );
   }
 
+  private isSessionGone(): boolean {
+    return (
+      !this.authService.hasRenewableSession ||
+      !this.authService.hasRenewableSession()
+    );
+  }
+
+  private handleTerminalAuthFailure<T>(
+    callbacks: SSECallbacks<T>,
+    error: unknown,
+  ): void {
+    this.stopPolling();
+    this.isGeneratingStoryboard.set(false);
+    this.isGeneratingVideo.set(false);
+    callbacks.onError?.(
+      markSessionHandled(
+        error instanceof Error ? error : new Error('Session expired'),
+      ),
+    );
+  }
+
+  private async acquireAuthToken(): Promise<string | null> {
+    try {
+      return await firstValueFrom(
+        this.authService
+          .getValidIdentityPlatformToken$()
+          .pipe(defaultIfEmpty(null)),
+      );
+    } catch (error) {
+      this.authService.onSessionRenewalFailed?.(undefined, error);
+      throw markSessionHandled(error);
+    }
+  }
+
+  private async readErrorResponse(response: Response): Promise<{
+    detail: unknown;
+    message: string;
+  }> {
+    let detail: unknown;
+    let message = 'Failed to start chat session';
+    try {
+      const errData = (await response.json()) as {detail?: unknown} | null;
+      detail = errData?.detail;
+      if (detail) {
+        message = typeof detail === 'string' ? detail : JSON.stringify(detail);
+      }
+    } catch {
+      try {
+        const rawText =
+          typeof response.text === 'function' ? await response.text() : '';
+        if (rawText) message = rawText;
+      } catch {
+        // Ignore fallback body-read failures.
+      }
+    }
+    return {detail, message};
+  }
+
   async sendMessage(
     sessionId: string,
     message: string | ChatMessagePart[],
@@ -303,63 +370,79 @@ export class AgentChatService {
 
     this.streamActive.set(true);
     try {
-      // Get valid token from AuthService
-      const token = await firstValueFrom(
-        this.authService.getValidIdentityPlatformToken$(),
-      );
+      const token = await this.acquireAuthToken();
+      if (!token) {
+        this.handleTerminalAuthFailure(callbacks, new Error('Session expired'));
+        return;
+      }
 
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(body),
-      });
+      const sendRequest = (bearerToken: string) =>
+        fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${bearerToken}`,
+          },
+          body: JSON.stringify(body),
+        });
+
+      let response = await sendRequest(token);
 
       if (!response.ok) {
-        let errorMsg = 'Failed to start chat session';
-        try {
-          const errData = await response.json();
-          if (errData && errData.detail) {
-            errorMsg =
-              typeof errData.detail === 'string'
-                ? errData.detail
-                : JSON.stringify(errData.detail);
-          }
-        } catch (e) {
+        let errorInfo = await this.readErrorResponse(response);
+        if (
+          response.status === 401 &&
+          errorInfo.detail !== UNAUTHORIZED_ORG_DETAIL &&
+          this.authService.renewAfterUnauthorized$
+        ) {
+          let refreshedToken: string;
           try {
-            const rawText = await response.text();
-            if (rawText) errorMsg = rawText;
-          } catch (ex) {
-            // Ignore
+            refreshedToken = await firstValueFrom(
+              this.authService.renewAfterUnauthorized$(token),
+            );
+          } catch (renewError) {
+            const taggedError = attachFailedSessionToken(renewError, token);
+            this.authService.onSessionRenewalFailed?.(undefined, taggedError);
+            this.handleTerminalAuthFailure(callbacks, taggedError);
+            return;
+          }
+          response = await sendRequest(refreshedToken);
+          if (!response.ok) {
+            errorInfo = await this.readErrorResponse(response);
           }
         }
-        const errObj = new Error(errorMsg);
-        (errObj as any).status = response.status;
-        (errObj as any).code = response.status;
-        if (response.status === 409) {
-          // The backend refused to start a second run on this session.
-          (errObj as any).type = 'agent_busy';
-        } else if (response.status === 429) {
-          (errObj as any).type = 'quota_exceeded';
-        } else if (response.status === 503) {
-          (errObj as any).type = 'service_unavailable';
-        } else if (response.status === 504) {
-          (errObj as any).type = 'timeout';
-        } else if (response.status === 400) {
-          (errObj as any).type = 'invalid_argument';
+
+        if (!response.ok) {
+          const errObj = Object.assign(new Error(errorInfo.message), {
+            status: response.status,
+            code: response.status,
+            ...(response.status === 409
+              ? {type: 'agent_busy'}
+              : response.status === 429
+                ? {type: 'quota_exceeded'}
+                : response.status === 503
+                  ? {type: 'service_unavailable'}
+                  : response.status === 504
+                    ? {type: 'timeout'}
+                    : response.status === 400
+                      ? {type: 'invalid_argument'}
+                      : {}),
+          });
+          this.streamActive.set(false);
+          if (callbacks.onError) {
+            callbacks.onError(errObj);
+          }
+          return;
         }
-        this.streamActive.set(false);
-        if (callbacks.onError) {
-          callbacks.onError(errObj);
-        }
-        return;
       }
 
       // Start Event Polling Loop
       this.startPolling(sessionId, callbacks);
     } catch (error) {
+      if (isSessionHandledError(error)) {
+        this.handleTerminalAuthFailure(callbacks, error);
+        return;
+      }
       this.streamActive.set(false);
       if (callbacks.onError) callbacks.onError(error);
     }
@@ -377,22 +460,61 @@ export class AgentChatService {
         return;
       }
       try {
-        const pollToken = await firstValueFrom(
-          this.authService.getValidIdentityPlatformToken$(),
-        );
+        const pollToken = await this.acquireAuthToken();
+        if (abortController.signal.aborted) return;
+        if (!pollToken) {
+          if (this.isSessionGone()) {
+            this.handleTerminalAuthFailure(
+              callbacks,
+              new Error('Session expired'),
+            );
+          }
+          return;
+        }
 
+        const pollRequest = (bearerToken: string) =>
+          fetch(pollUrl, {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${bearerToken}`,
+              'Content-Type': 'application/json',
+            },
+            signal: abortController.signal,
+          });
+
+        let pollResp = await pollRequest(pollToken);
         if (abortController.signal.aborted) return;
 
-        const pollResp = await fetch(pollUrl, {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${pollToken}`,
-            'Content-Type': 'application/json',
-          },
-          signal: abortController.signal,
-        });
-
-        if (abortController.signal.aborted) return;
+        if (pollResp.status === 401) {
+          const errorInfo = await this.readErrorResponse(pollResp);
+          if (abortController.signal.aborted) return;
+          if (
+            errorInfo.detail !== UNAUTHORIZED_ORG_DETAIL &&
+            this.authService.renewAfterUnauthorized$
+          ) {
+            let refreshedToken: string;
+            try {
+              refreshedToken = await firstValueFrom(
+                this.authService.renewAfterUnauthorized$(pollToken),
+              );
+            } catch (renewError) {
+              const taggedError = attachFailedSessionToken(
+                renewError,
+                pollToken,
+              );
+              this.authService.onSessionRenewalFailed?.(undefined, taggedError);
+              if (renewError instanceof SessionSupersededError) {
+                this.stopPolling();
+              } else if (this.isSessionGone()) {
+                this.handleTerminalAuthFailure(callbacks, taggedError);
+              }
+              return;
+            }
+            if (abortController.signal.aborted) return;
+            pollResp = await pollRequest(refreshedToken);
+            if (abortController.signal.aborted) return;
+          }
+        }
 
         if (!pollResp.ok) {
           console.warn('Poll failed with status', pollResp.status);
@@ -450,8 +572,19 @@ export class AgentChatService {
             }
           }
         }
-      } catch (pollErr: any) {
-        if (pollErr?.name === 'AbortError' || abortController.signal.aborted) {
+      } catch (pollErr: unknown) {
+        if (
+          (pollErr as {name?: string} | null)?.name === 'AbortError' ||
+          abortController.signal.aborted
+        ) {
+          return;
+        }
+        if (isSessionHandledError(pollErr)) {
+          if (pollErr instanceof SessionSupersededError) {
+            this.stopPolling();
+          } else if (this.isSessionGone()) {
+            this.handleTerminalAuthFailure(callbacks, pollErr);
+          }
           return;
         }
         console.error('Polling tick failed:', pollErr);

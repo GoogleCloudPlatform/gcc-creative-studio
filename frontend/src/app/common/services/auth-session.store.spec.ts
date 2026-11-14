@@ -26,7 +26,17 @@ import {
 describe('AuthSessionStore', () => {
   let onRenewNeeded: jasmine.Spy;
   let onSignedOutElsewhere: jasmine.Spy;
+  let onAccountSwitchedElsewhere: jasmine.Spy;
   let store: AuthSessionStore;
+
+  const makeJwt = (sub: string, email: string, tag = 'x'): string => {
+    const enc = (value: unknown) =>
+      btoa(JSON.stringify(value))
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+    return `${enc({alg: 'RS256'})}.${enc({sub, email, tag})}.sig`;
+  };
 
   const write = (token: string, expiry: number) =>
     localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({token, expiry}));
@@ -35,7 +45,14 @@ describe('AuthSessionStore', () => {
     localStorage.clear();
     onRenewNeeded = jasmine.createSpy('onRenewNeeded');
     onSignedOutElsewhere = jasmine.createSpy('onSignedOutElsewhere');
-    store = new AuthSessionStore(true, {onRenewNeeded, onSignedOutElsewhere});
+    onAccountSwitchedElsewhere = jasmine.createSpy(
+      'onAccountSwitchedElsewhere',
+    );
+    store = new AuthSessionStore(true, {
+      onRenewNeeded,
+      onSignedOutElsewhere,
+      onAccountSwitchedElsewhere,
+    });
   });
 
   afterEach(() => {
@@ -102,15 +119,21 @@ describe('AuthSessionStore', () => {
     expect(onRenewNeeded).toHaveBeenCalledOnceWith('online');
   }));
 
-  it('adopts only fresher sessions and signs out when storage is emptied', () => {
-    store.save('mine', Date.now() + 30 * 60_000);
-    write('older', Date.now() + 10 * 60_000);
-    store.syncFromStorage();
-    expect(store.token).toBe('mine');
+  it('adopts only fresher same-account sessions and signs out when storage is emptied', () => {
+    const mine = makeJwt('sub-1', 'a@example.com', 'mine');
+    const older = makeJwt('sub-1', 'a@example.com', 'older');
+    const newer = makeJwt('sub-1', 'a@example.com', 'newer');
 
-    write('newer', Date.now() + 50 * 60_000);
+    store.save(mine, Date.now() + 30 * 60_000);
+    write(older, Date.now() + 10 * 60_000);
     store.syncFromStorage();
-    expect(store.token).toBe('newer');
+    expect(store.token).toBe(mine);
+    expect(onAccountSwitchedElsewhere).not.toHaveBeenCalled();
+
+    write(newer, Date.now() + 50 * 60_000);
+    store.syncFromStorage();
+    expect(store.token).toBe(newer);
+    expect(onAccountSwitchedElsewhere).not.toHaveBeenCalled();
 
     localStorage.removeItem(SESSION_STORAGE_KEY);
     store.syncFromStorage();
@@ -137,28 +160,73 @@ describe('AuthSessionStore', () => {
     expect(onSignedOutElsewhere).toHaveBeenCalledTimes(2);
   });
 
-  it('adopts a fresher session via storage event and ignores an older one', () => {
-    store.startListening();
-    store.save('t', Date.now() + 10 * 60_000);
+  it('adopts a fresher same-account session via storage event and ignores an older one', () => {
+    const current = makeJwt('sub-1', 'a@example.com', 'current');
+    const older = makeJwt('sub-1', 'a@example.com', 'older');
+    const fresh = makeJwt('sub-1', 'a@example.com', 'fresh');
 
-    const older = JSON.stringify({
-      token: 'older',
+    store.startListening();
+    store.save(current, Date.now() + 10 * 60_000);
+
+    const olderPayload = JSON.stringify({
+      token: older,
       expiry: Date.now() + 2 * 60_000,
     });
     window.dispatchEvent(
-      new StorageEvent('storage', {key: SESSION_STORAGE_KEY, newValue: older}),
+      new StorageEvent('storage', {
+        key: SESSION_STORAGE_KEY,
+        newValue: olderPayload,
+      }),
     );
-    expect(store.token).toBe('t');
+    expect(store.token).toBe(current);
+    expect(onAccountSwitchedElsewhere).not.toHaveBeenCalled();
 
-    const fresh = JSON.stringify({
-      token: 'fresh',
+    const freshPayload = JSON.stringify({
+      token: fresh,
       expiry: Date.now() + 3_600_000,
     });
     window.dispatchEvent(
-      new StorageEvent('storage', {key: SESSION_STORAGE_KEY, newValue: fresh}),
+      new StorageEvent('storage', {
+        key: SESSION_STORAGE_KEY,
+        newValue: freshPayload,
+      }),
     );
-    expect(store.token).toBe('fresh');
+    expect(store.token).toBe(fresh);
     expect(onSignedOutElsewhere).not.toHaveBeenCalled();
+    expect(onAccountSwitchedElsewhere).not.toHaveBeenCalled();
+  });
+
+  it('fires onAccountSwitchedElsewhere on StorageEvent and syncFromStorage even when incoming expiry is older', () => {
+    const accountA = makeJwt('sub-a', 'a@example.com', 'a');
+    const accountB = makeJwt('sub-b', 'b@example.com', 'b');
+    const accountC = makeJwt('sub-b', 'c@example.com', 'c');
+
+    store.startListening();
+    store.save(accountA, Date.now() + 50 * 60_000);
+
+    const olderExpiryB = Date.now() + 10 * 60_000;
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: SESSION_STORAGE_KEY,
+        newValue: JSON.stringify({token: accountB, expiry: olderExpiryB}),
+      }),
+    );
+    expect(store.token).toBe(accountB);
+    expect(onAccountSwitchedElsewhere).toHaveBeenCalledOnceWith({
+      token: accountB,
+      expiry: olderExpiryB,
+    });
+    expect(onSignedOutElsewhere).not.toHaveBeenCalled();
+
+    const olderExpiryC = Date.now() + 5 * 60_000;
+    write(accountC, olderExpiryC);
+    store.syncFromStorage();
+    expect(store.token).toBe(accountC);
+    expect(onAccountSwitchedElsewhere).toHaveBeenCalledTimes(2);
+    expect(onAccountSwitchedElsewhere).toHaveBeenCalledWith({
+      token: accountC,
+      expiry: olderExpiryC,
+    });
   });
 
   it('requests renewal on focus and visibilitychange only when visible and inside buffer', () => {

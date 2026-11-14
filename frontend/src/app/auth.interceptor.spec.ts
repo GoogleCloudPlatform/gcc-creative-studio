@@ -26,19 +26,35 @@ import {
   HttpTestingController,
   provideHttpClientTesting,
 } from '@angular/common/http/testing';
-import {Router} from '@angular/router';
+import {
+  ActivatedRouteSnapshot,
+  Router,
+  RouterStateSnapshot,
+} from '@angular/router';
 import {Auth} from '@angular/fire/auth';
-import {EMPTY, firstValueFrom, of, throwError} from 'rxjs';
+import {MatSnackBar} from '@angular/material/snack-bar';
+import {EMPTY, Observable, firstValueFrom, of, throwError} from 'rxjs';
 
 import {AuthInterceptor} from './auth.interceptor';
+import {AdminAuthGuard} from './admin/admin-auth.guard';
+import {UserRolesEnum} from './common/models/user.model';
 import {AuthService} from './common/services/auth.service';
 import {SESSION_STORAGE_KEY} from './common/services/auth-session.store';
-import {GisInitializeConfig} from './common/services/auth-token.utils';
+import {
+  GisInitializeConfig,
+  isSessionHandledError,
+} from './common/services/auth-token.utils';
 import {NotificationService} from './common/services/notification.service';
 import {UserService} from './common/services/user.service';
+import {useTestBedAppInjector} from './testing/app-injector.testing';
+import {handleErrorSnackbar} from './utils/handleMessageSnackbar';
 import {environment} from '../environments/environment';
 
-function makeJwt(expMs: number, tag = 'x'): string {
+function makeJwt(
+  expMs: number,
+  tag = 'x',
+  extra: Record<string, unknown> = {},
+): string {
   const enc = (o: object) =>
     btoa(JSON.stringify(o))
       .replace(/\+/g, '-')
@@ -49,6 +65,7 @@ function makeJwt(expMs: number, tag = 'x'): string {
     email: 'user@example.com',
     exp: Math.floor(expMs / 1000),
     tag,
+    ...extra,
   })}.sig`;
 }
 
@@ -368,9 +385,303 @@ describe('AuthInterceptor with real AuthService', () => {
 
     expect(err1).toHaveBeenCalled();
     expect(err2).toHaveBeenCalled();
+    expect(isSessionHandledError(err1.calls.mostRecent().args[0])).toBeTrue();
+    expect(isSessionHandledError(err2.calls.mostRecent().args[0])).toBeTrue();
     expect(notificationService.show).toHaveBeenCalledTimes(1);
     expect(router.navigate).toHaveBeenCalledOnceWith(['/login'], {
       queryParams: {returnUrl: '/gallery/123'},
     });
+  });
+
+  it('suppresses duplicate error snackbars via markSessionHandled on pre-request and 401 failures while still notifying subscribers', async () => {
+    useTestBedAppInjector();
+    const snackBar = {} as MatSnackBar;
+    const consoleErrSpy = spyOn(console, 'error');
+
+    // 1. Pre-request renewal failure
+    localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        token: makeJwt(Date.now() - 60_000, 'expired'),
+        expiry: Date.now() - 60_000,
+      }),
+    );
+    shouldFailRenewal = true;
+    const preErr = jasmine.createSpy('preErr');
+    http.get('/api/workspace').subscribe({error: preErr});
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(preErr).toHaveBeenCalled();
+    const preThrown = preErr.calls.mostRecent().args[0];
+    expect(isSessionHandledError(preThrown)).toBeTrue();
+    handleErrorSnackbar(snackBar, preThrown, 'Load Workspace');
+
+    // Only the 1 info session-expired toast from AuthService; zero error snackbars.
+    expect(notificationService.show).toHaveBeenCalledTimes(1);
+    expect(notificationService.show.calls.mostRecent().args[1]).toBe('info');
+
+    // 2. Post-401 renewal failure
+    notificationService.show.calls.reset();
+    const validToken = makeJwt(Date.now() + 20 * 60_000, 'slow');
+    localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({token: validToken, expiry: Date.now() + 20 * 60_000}),
+    );
+    const postErr = jasmine.createSpy('postErr');
+    http.get('/api/items').subscribe({error: postErr});
+    httpMock
+      .expectOne('/api/items')
+      .flush({detail: 'Expired'}, {status: 401, statusText: 'Unauthorized'});
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(postErr).toHaveBeenCalled();
+    const postThrown = postErr.calls.mostRecent().args[0];
+    expect(isSessionHandledError(postThrown)).toBeTrue();
+    handleErrorSnackbar(snackBar, postThrown, 'Load Items');
+
+    expect(notificationService.show).toHaveBeenCalledTimes(1);
+    expect(notificationService.show.calls.mostRecent().args[1]).toBe('info');
+
+    // 3. Regular 500 error is NOT suppressed.
+    localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({token: validToken, expiry: Date.now() + 20 * 60_000}),
+    );
+    const err500 = jasmine.createSpy('err500');
+    http.get('/api/other').subscribe({error: err500});
+    httpMock
+      .expectOne('/api/other')
+      .flush({detail: 'Server boom'}, {status: 500, statusText: 'Error'});
+    expect(
+      isSessionHandledError(err500.calls.mostRecent().args[0]),
+    ).toBeFalse();
+    handleErrorSnackbar(snackBar, err500.calls.mostRecent().args[0], 'Other');
+    expect(notificationService.show).toHaveBeenCalledTimes(2);
+    expect(notificationService.show.calls.mostRecent().args[1]).toBe('error');
+    expect(consoleErrSpy).toHaveBeenCalled();
+  });
+
+  it('recovers pendingNavigationUrl on wake via AdminAuthGuard and rejects non-admin sessions with expireSession', async () => {
+    TestBed.resetTestingModule();
+    let visibility: DocumentVisibilityState = 'hidden';
+    spyOnProperty(document, 'visibilityState', 'get').and.callFake(
+      () => visibility,
+    );
+    const disableAutoSelectSpy = jasmine.createSpy('disableAutoSelect');
+    let gisCb: ((r: {credential?: string}) => void) | null = null;
+    (window as unknown as {google: unknown}).google = {
+      accounts: {
+        id: {
+          initialize: (cfg: GisInitializeConfig) => {
+            gisCb = cfg.callback;
+          },
+          prompt: () => {
+            gisCb?.({credential: nextToken});
+          },
+          cancel: () => undefined,
+          disableAutoSelect: disableAutoSelectSpy,
+        },
+      },
+    };
+    localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        token: makeJwt(Date.now() - 60_000, 'expired'),
+        expiry: Date.now() - 60_000,
+      }),
+    );
+
+    const route = {} as ActivatedRouteSnapshot;
+    const state = {url: '/admin'} as RouterStateSnapshot;
+
+    const routerSpy = {
+      url: '/',
+      navigate: jasmine.createSpy('navigate').and.resolveTo(true),
+      navigateByUrl: jasmine
+        .createSpy('navigateByUrl')
+        .and.callFake(async (url: string) => {
+          if (url === '/admin') {
+            void TestBed.inject(AdminAuthGuard).canActivate(route, state);
+          }
+          return true;
+        }),
+    };
+
+    TestBed.configureTestingModule({
+      providers: [
+        AuthService,
+        AdminAuthGuard,
+        {provide: Router, useValue: routerSpy},
+        {provide: NotificationService, useValue: notificationService},
+        {
+          provide: UserService,
+          useValue: {
+            getUserDetails: () => ({
+              email: 'viewer@example.com',
+              roles: [UserRolesEnum.USER],
+            }),
+          },
+        },
+        {provide: MatSnackBar, useValue: {}},
+        {
+          provide: Auth,
+          useValue: {signOut: jasmine.createSpy('signOut').and.resolveTo()},
+        },
+        provideHttpClient(withInterceptorsFromDi()),
+        provideHttpClientTesting(),
+      ],
+    });
+    useTestBedAppInjector();
+    httpMock = TestBed.inject(HttpTestingController);
+    const adminGuard = TestBed.inject(AdminAuthGuard);
+    const authService = TestBed.inject(AuthService);
+
+    // Cold boot while hidden: guard defers without clearing session.
+    const initialResult = adminGuard.canActivate(
+      route,
+      state,
+    ) as Observable<boolean>;
+    expect(await firstValueFrom(initialResult)).toBeFalse();
+    expect(authService.hasRenewableSession()).toBeTrue();
+
+    // Tab wakes: AuthService renews, navigates to /admin, guard rejects non-admin via expireSession.
+    visibility = 'visible';
+    window.dispatchEvent(new Event('focus'));
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    expect(routerSpy.navigateByUrl).toHaveBeenCalledWith('/admin');
+    expect(authService.hasRenewableSession()).toBeFalse();
+    expect(disableAutoSelectSpy).not.toHaveBeenCalled();
+    expect(routerSpy.navigateByUrl).toHaveBeenCalledWith('/login');
+    httpMock.match(r => r.url.endsWith('/users/me')).forEach(r => r.flush({}));
+  });
+
+  it('preserves Account B and suppresses toast when a hung Account A renewal collides with a cross-tab switch', async () => {
+    const tokenA = makeJwt(Date.now() - 60_000, 'acct-a-expired', {
+      sub: 'sub-a',
+      email: 'a@example.com',
+    });
+    const tokenB = makeJwt(Date.now() + 3_600_000, 'acct-b', {
+      sub: 'sub-b',
+      email: 'b@example.com',
+    });
+
+    localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({token: tokenA, expiry: Date.now() - 60_000}),
+    );
+    const authService = TestBed.inject(AuthService);
+    const reloadSpy = spyOn(
+      authService as unknown as {reloadToHome: () => void},
+      'reloadToHome',
+    );
+    promptSpy.and.stub(); // hang silent GIS prompt
+
+    const onHungErr = jasmine.createSpy('onHungErr');
+    http.get('/api/account-a-data').subscribe({error: onHungErr});
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(promptSpy).toHaveBeenCalledTimes(1);
+
+    const expiryB = Date.now() + 3_600_000;
+    localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({token: tokenB, expiry: expiryB}),
+    );
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: SESSION_STORAGE_KEY,
+        newValue: JSON.stringify({token: tokenB, expiry: expiryB}),
+      }),
+    );
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(onHungErr).toHaveBeenCalled();
+    expect(
+      isSessionHandledError(onHungErr.calls.mostRecent().args[0]),
+    ).toBeTrue();
+    expect(JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY)!).token).toBe(
+      tokenB,
+    );
+    expect(notificationService.show).not.toHaveBeenCalled();
+    const switchMeReq = httpMock.expectOne(r => r.url.endsWith('/users/me'));
+    expect(switchMeReq.request.headers.get('Authorization')).toBe(
+      `Bearer ${tokenB}`,
+    );
+    switchMeReq.flush({email: 'b@example.com'});
+    expect(reloadSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves Account B and suppresses toast when late Account A 401s arrive during or after a cross-tab switch', async () => {
+    const tokenAValid = makeJwt(Date.now() + 20 * 60_000, 'acct-a-valid', {
+      sub: 'sub-a',
+      email: 'a@example.com',
+    });
+    const tokenB = makeJwt(Date.now() + 3_600_000, 'acct-b', {
+      sub: 'sub-b',
+      email: 'b@example.com',
+    });
+
+    localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({token: tokenAValid, expiry: Date.now() + 20 * 60_000}),
+    );
+    const authService = TestBed.inject(AuthService);
+    const reloadSpy = spyOn(
+      authService as unknown as {reloadToHome: () => void},
+      'reloadToHome',
+    );
+
+    const errDuring = jasmine.createSpy('errDuring');
+    const errAfter = jasmine.createSpy('errAfter');
+    http.get('/api/during-switch').subscribe({error: errDuring});
+    http.get('/api/after-sync').subscribe({error: errAfter});
+
+    const reqDuring = httpMock.expectOne('/api/during-switch');
+    const reqAfter = httpMock.expectOne('/api/after-sync');
+    expect(reqDuring.request.headers.get('Authorization')).toBe(
+      `Bearer ${tokenAValid}`,
+    );
+
+    const expiryB = Date.now() + 3_600_000;
+    localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({token: tokenB, expiry: expiryB}),
+    );
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: SESSION_STORAGE_KEY,
+        newValue: JSON.stringify({token: tokenB, expiry: expiryB}),
+      }),
+    );
+
+    // 401 arrives while switchingAccount === true
+    reqDuring.flush(
+      {detail: 'Expired'},
+      {status: 401, statusText: 'Unauthorized'},
+    );
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(errDuring).toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY)!).token).toBe(
+      tokenB,
+    );
+    expect(notificationService.show).not.toHaveBeenCalled();
+
+    // Flush Account B /users/me -> switchingAccount resets to false, reloadToHome called
+    const switchMeReq = httpMock.expectOne(r => r.url.endsWith('/users/me'));
+    switchMeReq.flush({email: 'b@example.com'});
+    expect(reloadSpy).toHaveBeenCalledTimes(1);
+
+    // 401 arrives AFTER reloadToHome() / switchingAccount === false
+    reqAfter.flush(
+      {detail: 'Expired'},
+      {status: 401, statusText: 'Unauthorized'},
+    );
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(errAfter).toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY)!).token).toBe(
+      tokenB,
+    );
+    expect(notificationService.show).not.toHaveBeenCalled();
+    expect(promptSpy).not.toHaveBeenCalled();
   });
 });

@@ -17,9 +17,10 @@
 import {TestBed} from '@angular/core/testing';
 import {provideHttpClient} from '@angular/common/http';
 import {provideHttpClientTesting} from '@angular/common/http/testing';
-import {of} from 'rxjs';
+import {EMPTY, of, throwError} from 'rxjs';
 import {AgentChatService, SSECallbacks} from './agent-chat.service';
 import {AuthService} from '../../common/services/auth.service';
+import {isSessionHandledError} from '../../common/services/auth-token.utils';
 
 /**
  * `streamActive` must mirror the whole lifetime of an agent run: it is what
@@ -30,6 +31,12 @@ describe('AgentChatService streamActive lifecycle', () => {
   let service: AgentChatService;
   let fetchSpy: jasmine.Spy;
   let callbacks: SSECallbacks<any>;
+  let authServiceMock: {
+    getValidIdentityPlatformToken$: jasmine.Spy;
+    renewAfterUnauthorized$: jasmine.Spy;
+    onSessionRenewalFailed: jasmine.Spy;
+    hasRenewableSession: jasmine.Spy;
+  };
 
   /**
    * A microtask-only stand-in for `Response`: a real `Response.json()` reads
@@ -51,15 +58,25 @@ describe('AgentChatService streamActive lifecycle', () => {
   };
 
   beforeEach(() => {
+    authServiceMock = {
+      getValidIdentityPlatformToken$: jasmine
+        .createSpy('getValidIdentityPlatformToken$')
+        .and.returnValue(of('token')),
+      renewAfterUnauthorized$: jasmine
+        .createSpy('renewAfterUnauthorized$')
+        .and.returnValue(of('fresh-token')),
+      onSessionRenewalFailed: jasmine.createSpy('onSessionRenewalFailed'),
+      hasRenewableSession: jasmine
+        .createSpy('hasRenewableSession')
+        .and.returnValue(false),
+    };
     TestBed.configureTestingModule({
       providers: [
         provideHttpClient(),
         provideHttpClientTesting(),
         {
           provide: AuthService,
-          useValue: {
-            getValidIdentityPlatformToken$: () => of('token'),
-          },
+          useValue: authServiceMock,
         },
       ],
     });
@@ -180,5 +197,110 @@ describe('AgentChatService streamActive lifecycle', () => {
     service.stopPolling();
     expect(service.streamActive()).toBeFalse();
     expect(service.isPolling()).toBeFalse();
+  });
+
+  it('stops generating and passes session-handled error when sendMessage renewal fails or returns empty', async () => {
+    service.isGeneratingStoryboard.set(true);
+    service.isGeneratingVideo.set(true);
+    authServiceMock.getValidIdentityPlatformToken$.and.returnValue(
+      throwError(() => new Error('Silent sign-in renewal failed: skipped')),
+    );
+
+    await service.sendMessage('s7', 'hello', 1, callbacks);
+
+    expect(authServiceMock.onSessionRenewalFailed).toHaveBeenCalledTimes(1);
+    expect(service.streamActive()).toBeFalse();
+    expect(service.isGeneratingStoryboard()).toBeFalse();
+    expect(service.isGeneratingVideo()).toBeFalse();
+    expect(callbacks.onError).toHaveBeenCalledTimes(1);
+    const err = (callbacks.onError as jasmine.Spy).calls.mostRecent().args[0];
+    expect(isSessionHandledError(err)).toBeTrue();
+
+    // Empty token (signed out) also cleanly terminates with a session-handled error.
+    (callbacks.onError as jasmine.Spy).calls.reset();
+    service.isGeneratingStoryboard.set(true);
+    authServiceMock.getValidIdentityPlatformToken$.and.returnValue(EMPTY);
+
+    await service.sendMessage('s7', 'hello', 1, callbacks);
+
+    expect(service.isGeneratingStoryboard()).toBeFalse();
+    expect(service.streamActive()).toBeFalse();
+    expect(callbacks.onError).toHaveBeenCalledTimes(1);
+    expect(
+      isSessionHandledError(
+        (callbacks.onError as jasmine.Spy).calls.mostRecent().args[0],
+      ),
+    ).toBeTrue();
+  });
+
+  it('stops polling and resets generating signals when startPolling loses session, but stays armed when deferred', async () => {
+    service.isGeneratingStoryboard.set(true);
+    service.isGeneratingVideo.set(true);
+    authServiceMock.hasRenewableSession.and.returnValue(true);
+    authServiceMock.getValidIdentityPlatformToken$.and.returnValue(
+      throwError(() => new Error('Session renewal deferred while hidden')),
+    );
+
+    service.startPolling('s8', callbacks);
+    jasmine.clock().tick(2600);
+    await settle();
+
+    // Session still exists (deferred while hidden/offline): polling remains armed.
+    expect(authServiceMock.onSessionRenewalFailed).toHaveBeenCalledTimes(1);
+    expect(service.isPolling()).toBeTrue();
+    expect(callbacks.onError).not.toHaveBeenCalled();
+
+    // Once session is cleared (renewal permanently failed), polling stops and notifies.
+    authServiceMock.hasRenewableSession.and.returnValue(false);
+    authServiceMock.getValidIdentityPlatformToken$.and.returnValue(
+      throwError(() => new Error('Silent sign-in renewal failed: timed out')),
+    );
+    jasmine.clock().tick(2600);
+    await settle();
+
+    expect(service.isPolling()).toBeFalse();
+    expect(service.streamActive()).toBeFalse();
+    expect(service.isGeneratingStoryboard()).toBeFalse();
+    expect(service.isGeneratingVideo()).toBeFalse();
+    expect(callbacks.onError).toHaveBeenCalledTimes(1);
+    expect(
+      isSessionHandledError(
+        (callbacks.onError as jasmine.Spy).calls.mostRecent().args[0],
+      ),
+    ).toBeTrue();
+  });
+
+  it('retries fetch once after 401 on sendMessage and startPolling, skipping unauthorized-org 401s', async () => {
+    fetchSpy.and.returnValues(
+      Promise.resolve(jsonResponse(401, {detail: 'Token expired'})),
+      Promise.resolve(jsonResponse(200, {status: 'processing'})),
+      Promise.resolve(jsonResponse(401, {detail: 'Token expired'})),
+      Promise.resolve(jsonResponse(200, {events: ['data: [DONE]']})),
+    );
+
+    await service.sendMessage('s9', 'hello', 1, callbacks);
+    expect(authServiceMock.renewAfterUnauthorized$).toHaveBeenCalledTimes(1);
+    expect(service.isPolling()).toBeTrue();
+
+    jasmine.clock().tick(2600);
+    await settle();
+
+    expect(authServiceMock.renewAfterUnauthorized$).toHaveBeenCalledTimes(2);
+    expect(callbacks.onClose).toHaveBeenCalledTimes(1);
+    expect(authServiceMock.onSessionRenewalFailed).not.toHaveBeenCalled();
+
+    // Org-unauthorized 401 must never trigger renewal or onSessionRenewalFailed.
+    authServiceMock.renewAfterUnauthorized$.calls.reset();
+    fetchSpy.and.returnValue(
+      Promise.resolve(
+        jsonResponse(401, {
+          detail: 'User is not authorized to access this application.',
+        }),
+      ),
+    );
+    await service.sendMessage('s10', 'hello', 1, callbacks);
+    expect(authServiceMock.renewAfterUnauthorized$).not.toHaveBeenCalled();
+    expect(authServiceMock.onSessionRenewalFailed).not.toHaveBeenCalled();
+    expect(callbacks.onError).toHaveBeenCalledTimes(1);
   });
 });

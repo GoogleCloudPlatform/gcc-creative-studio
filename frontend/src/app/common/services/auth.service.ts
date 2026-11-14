@@ -34,7 +34,15 @@ import {
 } from '@angular/fire/auth';
 import {UserService} from '../services/user.service';
 import {NotificationService} from './notification.service';
-import {Observable, defer, firstValueFrom, from, throwError, of} from 'rxjs';
+import {
+  Observable,
+  Subscription,
+  defer,
+  firstValueFrom,
+  from,
+  throwError,
+  of,
+} from 'rxjs';
 import {
   catchError,
   finalize,
@@ -42,35 +50,34 @@ import {
   tap,
   map,
   switchMap,
+  timeout,
 } from 'rxjs/operators';
 import {isPlatformBrowser} from '@angular/common';
 import {
   AuthSessionStore,
   RENEW_RETRY_MS,
   RenewTrigger,
-  SESSION_STORAGE_KEY,
+  StoredSession,
 } from './auth-session.store';
 import {
   AccountMismatchError,
-  GisCredentialResponse,
-  GisIdApi,
-  GisPromptMomentNotification,
   GoogleIdTokenPayload,
+  SessionSupersededError,
+  attachFailedSessionToken,
   decodeGoogleJwtPayload,
-  extractSessionHints,
+  getFailedSessionToken,
+  isLoginPath,
   isSameSessionAccount,
   resolveSessionExpiry,
   sanitizeReturnUrl,
 } from './auth-token.utils';
-
-declare const google: {accounts?: {id?: GisIdApi}} | undefined;
+import {GisClientAdapter} from './gis-client';
 
 const USER_DETAILS = 'USER_DETAILS';
 const LOGIN_ROUTE = '/login';
 const RENEW_LOCK_NAME = 'cs-session-renew';
-const LOGIN_PROMPT_TIMEOUT_MS = 15000;
-const SILENT_PROMPT_TIMEOUT_MS = 10000;
 const LOCK_WAIT_TIMEOUT_MS = 5000;
+const ACCOUNT_SWITCH_SYNC_TIMEOUT_MS = 1500;
 const SESSION_EXPIRED_MESSAGE = 'Your session expired. Please sign in again.';
 const SESSION_EXPIRED_DURATION_MS = 6000;
 
@@ -92,6 +99,9 @@ export class AuthService implements OnDestroy {
   });
   private readonly provider: GoogleAuthProvider = new GoogleAuthProvider();
   private readonly isBrowser = isPlatformBrowser(this.platformId);
+  private readonly gisClient = new GisClientAdapter(this.isBrowser, fn =>
+    this.ngZone.runOutsideAngular(fn),
+  );
 
   // Store token temporarily in memory for the session
   private currentOAuthAccessToken: string | null = null;
@@ -103,10 +113,18 @@ export class AuthService implements OnDestroy {
       onSignedOutElsewhere: () =>
         this.ngZone.run(() => {
           this.sessionGeneration++;
+          this.inFlightRenewal$ = null;
+          this.lastFailedRenewalAt = null;
+          this.promptBlockedToken = null;
           this.pendingNavigationUrl = null;
-          this.cancelGooglePrompt();
+          this.switchingAccount = false;
+          this.accountSwitchSub?.unsubscribe();
+          this.accountSwitchSub = null;
+          this.gisClient.abortActivePrompt();
           this.navigateToLoginIfNeeded();
         }),
+      onAccountSwitchedElsewhere: incoming =>
+        this.ngZone.run(() => this.handleAccountSwitchedElsewhere(incoming)),
     },
     fn => this.ngZone.runOutsideAngular(fn),
   );
@@ -116,6 +134,8 @@ export class AuthService implements OnDestroy {
   private lastFailedRenewalAt: number | null = null;
   private promptBlockedToken: string | null = null;
   private pendingNavigationUrl: string | null = null;
+  private switchingAccount = false;
+  private accountSwitchSub: Subscription | null = null;
 
   constructor(
     private router: Router,
@@ -130,6 +150,11 @@ export class AuthService implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.inFlightRenewal$ = null;
+    this.switchingAccount = false;
+    this.accountSwitchSub?.unsubscribe();
+    this.accountSwitchSub = null;
+    this.gisClient.abortActivePrompt();
     this.session.destroy();
   }
 
@@ -141,7 +166,12 @@ export class AuthService implements OnDestroy {
    * Local development sign-in method to get a Firebase ID token.
    */
   signInWithGoogleFirebase(): Observable<string> {
-    return from(signInWithPopup(this.auth, this.provider)).pipe(
+    return defer(() => {
+      this.sessionGeneration++;
+      this.inFlightRenewal$ = null;
+      this.gisClient.abortActivePrompt();
+      return from(signInWithPopup(this.auth, this.provider));
+    }).pipe(
       switchMap((userCredential: UserCredential) => {
         if (!userCredential.user) {
           return throwError(
@@ -158,9 +188,7 @@ export class AuthService implements OnDestroy {
         } catch {
           // Fall back to Firebase's parsed expirationTime for synthetic test tokens.
         }
-        this.saveFreshSession(token, expiry);
-
-        return this.syncUserWithBackend$(token).pipe(map(() => token));
+        return this.completeInteractiveSignIn$(token, expiry);
       }),
       catchError((error: unknown) => {
         console.error('An error occurred during the sign-in process:', error);
@@ -176,131 +204,60 @@ export class AuthService implements OnDestroy {
    * Cloud Run IAM and the backend accept.
    */
   signInForGoogleIdentityPlatform(): Observable<string> {
-    return this.promptForIdentityPlatformToken$().pipe(
-      switchMap(idToken => {
-        this.saveFreshSession(idToken, this.expiryFromToken(idToken));
-        return this.syncUserWithBackend$(idToken).pipe(map(() => idToken));
-      }),
+    return defer(() => {
+      this.sessionGeneration++;
+      this.inFlightRenewal$ = null;
+      return this.gisClient.prompt$({
+        clientId: environment.GOOGLE_CLIENT_ID,
+        silent: false,
+      });
+    }).pipe(
+      switchMap(idToken =>
+        this.completeInteractiveSignIn$(idToken, this.expiryFromToken(idToken)),
+      ),
     );
   }
 
   /**
-   * Asks Google Identity Services for an ID token.
-   * `silent` renews in the background: Google signs the user in without
-   * interaction when it can (`auto_select`), and the attempt fails fast
-   * (instead of leaving a prompt on screen) when it cannot.
+   * Renders Google's standard Sign-In button across `containers` (used when
+   * One Tap / FedCM prompt is suppressed) and emits each synced Google ID token.
    */
-  private promptForIdentityPlatformToken$(silent = false): Observable<string> {
-    const GOOGLE_CLIENT_ID = environment.GOOGLE_CLIENT_ID;
-
-    return new Observable<string>(observer => {
-      const gisId = typeof google !== 'undefined' ? google?.accounts?.id : null;
-      if (!gisId) {
-        observer.error(
-          new Error(
-            'Google Identity Services script not loaded. Add it to index.html',
-          ),
-        );
-        return;
-      }
-
-      const silentHints = silent
-        ? extractSessionHints(this.session.token)
-        : null;
-      if (silent && !silentHints) {
-        observer.error(
-          new Error(
-            'Silent sign-in renewal failed: missing account hint for stored session',
-          ),
-        );
-        return;
-      }
-
-      let settled = false;
-      const settle = (action: () => void) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        action();
-      };
-      const failSilently = (reason: string, blockBufferPrompt = false) =>
-        settle(() => {
-          if (blockBufferPrompt) {
-            this.promptBlockedToken = this.session.token;
-          }
-          this.cancelGooglePrompt();
-          observer.error(new Error(`Silent sign-in renewal failed: ${reason}`));
-        });
-
-      const timeout = setTimeout(
-        () => {
-          if (silent) {
-            failSilently('timed out', true);
-            return;
-          }
-          settle(() =>
-            observer.error(
-              new Error(
-                'Login timed out or third party sign-in may be disabled. Please try again and enable third party sign-in by clicking on the information button at the top left side of the browser.',
-              ),
-            ),
-          );
-        },
-        silent ? SILENT_PROMPT_TIMEOUT_MS : LOGIN_PROMPT_TIMEOUT_MS,
+  renderGoogleSignInButton$(
+    containers: readonly HTMLElement[],
+    onCredentialStart?: () => void,
+  ): Observable<string> {
+    return defer(() => {
+      this.sessionGeneration++;
+      this.inFlightRenewal$ = null;
+      return this.gisClient.renderButtons$(
+        containers,
+        environment.GOOGLE_CLIENT_ID,
       );
+    }).pipe(
+      switchMap(idToken => {
+        onCredentialStart?.();
+        return this.completeInteractiveSignIn$(
+          idToken,
+          this.expiryFromToken(idToken),
+        );
+      }),
+    );
+  }
 
-      try {
-        gisId.initialize({
-          client_id: GOOGLE_CLIENT_ID,
-          auto_select: silent,
-          use_fedcm_for_prompt: true,
-          ...(silentHints ?? {}),
-          callback: (response: GisCredentialResponse) => {
-            const idToken = response?.credential;
-            settle(() => {
-              if (idToken) {
-                observer.next(idToken);
-                observer.complete();
-              } else {
-                observer.error(
-                  new Error(
-                    'Google Sign-In response did not contain a credential.',
-                  ),
-                );
-              }
-            });
-          },
-        });
-
-        if (silent) {
-          // Fail fast when Google will not sign the user in without a click.
-          gisId.prompt((notification: GisPromptMomentNotification) => {
-            if (notification?.isNotDisplayed?.()) {
-              failSilently('prompt not displayed', true);
-            } else if (notification?.isSkippedMoment?.()) {
-              failSilently('prompt skipped', true);
-            } else if (
-              notification?.isDismissedMoment?.() &&
-              notification?.getDismissedReason?.() !== 'credential_returned'
-            ) {
-              failSilently('prompt dismissed', true);
-            }
-          });
-        } else {
-          gisId.prompt();
+  private completeInteractiveSignIn$(
+    token: string,
+    expiry: number,
+  ): Observable<string> {
+    this.saveFreshSession(token, expiry);
+    return this.syncUserWithBackend$(token).pipe(
+      map(() => token),
+      catchError(error => {
+        if (this.session.token === token) {
+          this.session.clear();
         }
-      } catch (error) {
-        settle(() => {
-          console.error(
-            'Error during Google Identity Platform sign-in initialization:',
-            error,
-          );
-          observer.error(error);
-        });
-      }
-
-      return () => clearTimeout(timeout);
-    });
+        return throwError(() => error);
+      }),
+    );
   }
 
   /**
@@ -312,11 +269,14 @@ export class AuthService implements OnDestroy {
    * - Expired: renews (or fails fast when hidden, offline, or cooling down).
    */
   getValidIdentityPlatformToken$(): Observable<string> {
-    if (!this.isBrowser) {
+    if (!this.isBrowser || this.switchingAccount) {
       return of();
     }
 
     this.session.syncFromStorage();
+    if (this.switchingAccount) {
+      return of();
+    }
     if (!this.session.hasSession()) {
       this.navigateToLoginIfNeeded();
       return of();
@@ -332,15 +292,21 @@ export class AuthService implements OnDestroy {
     }
 
     if (!this.inFlightRenewal$) {
+      const expiredToken = this.session.token;
       if (this.isHidden() || this.isOffline()) {
-        return throwError(
-          () => new Error('Session renewal deferred while hidden or offline.'),
+        return throwError(() =>
+          attachFailedSessionToken(
+            new Error('Session renewal deferred while hidden or offline.'),
+            expiredToken,
+          ),
         );
       }
       if (this.isInFailureCooldown(now)) {
-        return throwError(
-          () =>
+        return throwError(() =>
+          attachFailedSessionToken(
             new Error('Session renewal is in cooldown after recent failure.'),
+            expiredToken,
+          ),
         );
       }
     }
@@ -355,30 +321,76 @@ export class AuthService implements OnDestroy {
    */
   renewAfterUnauthorized$(rejectedToken: string): Observable<string> {
     if (!this.isBrowser) {
-      return throwError(() => new Error('Not running in browser.'));
+      return throwError(() =>
+        attachFailedSessionToken(
+          new Error('Not running in browser.'),
+          rejectedToken,
+        ),
+      );
+    }
+    if (this.switchingAccount) {
+      return throwError(
+        () =>
+          new SessionSupersededError(
+            'Session account switch in progress.',
+            rejectedToken,
+          ),
+      );
     }
     this.session.syncFromStorage();
+    if (this.switchingAccount) {
+      return throwError(
+        () =>
+          new SessionSupersededError(
+            'Session account switch in progress.',
+            rejectedToken,
+          ),
+      );
+    }
     if (!this.session.hasSession()) {
-      return throwError(() => new Error('No active session to renew.'));
+      return throwError(() =>
+        attachFailedSessionToken(
+          new Error('No active session to renew.'),
+          rejectedToken,
+        ),
+      );
     }
     const current = this.session.token;
+    if (current && !isSameSessionAccount(rejectedToken, current)) {
+      return throwError(
+        () =>
+          new SessionSupersededError(
+            'Session belongs to a different account.',
+            rejectedToken,
+          ),
+      );
+    }
     if (current && current !== rejectedToken && this.session.isValid()) {
       return of(current);
     }
     if (!this.inFlightRenewal$) {
       if (this.isHidden() || this.isOffline()) {
-        return throwError(
-          () => new Error('Session renewal deferred while hidden or offline.'),
+        return throwError(() =>
+          attachFailedSessionToken(
+            new Error('Session renewal deferred while hidden or offline.'),
+            rejectedToken,
+          ),
         );
       }
       if (this.isInFailureCooldown()) {
-        return throwError(
-          () =>
+        return throwError(() =>
+          attachFailedSessionToken(
             new Error('Session renewal is in cooldown after recent failure.'),
+            rejectedToken,
+          ),
         );
       }
     }
-    return this.renewSession$(rejectedToken);
+    return this.renewSession$(rejectedToken).pipe(
+      catchError(err =>
+        throwError(() => attachFailedSessionToken(err, rejectedToken)),
+      ),
+    );
   }
 
   /**
@@ -399,10 +411,26 @@ export class AuthService implements OnDestroy {
       // Hand the fresh token to the backend after it is saved and emitted.
       this.inFlightRenewal$.subscribe({
         next: result => {
-          if (result.renewedHere) {
-            setTimeout(() => this.handOffTokenToBackend(result.token));
+          if (
+            result.renewedHere &&
+            generation === this.sessionGeneration &&
+            this.session.token === result.token
+          ) {
+            const expectedToken = result.token;
+            setTimeout(() => {
+              if (
+                generation === this.sessionGeneration &&
+                this.session.token === expectedToken
+              ) {
+                this.handOffTokenToBackend(expectedToken);
+              }
+            });
           }
-          if (this.pendingNavigationUrl && this.session.isValid()) {
+          if (
+            generation === this.sessionGeneration &&
+            this.pendingNavigationUrl &&
+            this.session.isValid()
+          ) {
             const url = this.pendingNavigationUrl;
             this.pendingNavigationUrl = null;
             this.ngZone.run(() => {
@@ -424,14 +452,22 @@ export class AuthService implements OnDestroy {
     const generation = this.sessionGeneration;
     const previousToken = this.session.token;
 
-    const saveIfStillSignedIn = (token: string) => {
-      this.session.syncFromStorage();
+    const ensureActiveSameSession = () => {
       if (
         generation !== this.sessionGeneration ||
+        this.switchingAccount ||
         (this.isBrowser && !this.session.hasSession())
       ) {
-        throw new Error('Signed out during session renewal.');
+        throw new SessionSupersededError(
+          'Signed out or switched account during session renewal.',
+          previousToken,
+        );
       }
+    };
+
+    const saveIfStillSignedIn = (token: string) => {
+      this.session.syncFromStorage();
+      ensureActiveSameSession();
       if (!isSameSessionAccount(previousToken, token)) {
         this.onSessionRenewalFailed();
         throw new AccountMismatchError();
@@ -440,29 +476,88 @@ export class AuthService implements OnDestroy {
     };
 
     if (environment.isLocal) {
-      // Wait for Firebase to restore the user after a reload or wake-up.
-      await this.auth.authStateReady();
-      const user = this.auth.currentUser;
-      if (!user) {
-        throw new Error('Firebase session is no longer available.');
+      try {
+        // Wait for Firebase to restore the user after a reload or wake-up.
+        await this.auth.authStateReady();
+        ensureActiveSameSession();
+        const user = this.auth.currentUser;
+        if (!user) {
+          throw new Error('Firebase session is no longer available.');
+        }
+        const token = await user.getIdToken(true);
+        saveIfStillSignedIn(token);
+        return {token, renewedHere: true};
+      } catch (error) {
+        if (
+          !(error instanceof AccountMismatchError) &&
+          !(error instanceof SessionSupersededError)
+        ) {
+          if (
+            generation !== this.sessionGeneration ||
+            this.switchingAccount ||
+            (this.isBrowser && !this.session.hasSession())
+          ) {
+            throw new SessionSupersededError(
+              'Signed out or switched account during session renewal.',
+              previousToken,
+            );
+          }
+          throw attachFailedSessionToken(error, previousToken);
+        }
+        throw error;
       }
-      const token = await user.getIdToken(true);
-      saveIfStillSignedIn(token);
-      return {token, renewedHere: true};
     }
 
     const renew = async (): Promise<RenewalResult> => {
-      const adopted = this.freshTokenFromOtherTab(rejectedToken);
+      ensureActiveSameSession();
+      const adopted = this.freshTokenFromOtherTab(previousToken, rejectedToken);
       if (adopted) return {token: adopted, renewedHere: false};
       try {
         const token = await firstValueFrom(
-          this.promptForIdentityPlatformToken$(true),
+          this.gisClient.prompt$({
+            clientId: environment.GOOGLE_CLIENT_ID,
+            silent: true,
+            startingToken: previousToken,
+            onBlockToken: blockedToken => {
+              if (
+                generation === this.sessionGeneration &&
+                this.session.token === blockedToken
+              ) {
+                this.promptBlockedToken = blockedToken;
+              }
+            },
+          }),
         );
         saveIfStillSignedIn(token);
         return {token, renewedHere: true};
       } catch (error) {
-        const lateAdopted = this.freshTokenFromOtherTab(rejectedToken);
-        if (lateAdopted) return {token: lateAdopted, renewedHere: false};
+        if (
+          generation === this.sessionGeneration &&
+          !this.switchingAccount &&
+          this.session.hasSession()
+        ) {
+          const lateAdopted = this.freshTokenFromOtherTab(
+            previousToken,
+            rejectedToken,
+          );
+          if (lateAdopted) return {token: lateAdopted, renewedHere: false};
+        }
+        if (
+          !(error instanceof AccountMismatchError) &&
+          !(error instanceof SessionSupersededError)
+        ) {
+          if (
+            generation !== this.sessionGeneration ||
+            this.switchingAccount ||
+            (this.isBrowser && !this.session.hasSession())
+          ) {
+            throw new SessionSupersededError(
+              'Signed out or switched account during session renewal.',
+              previousToken,
+            );
+          }
+          throw attachFailedSessionToken(error, previousToken);
+        }
         throw error;
       }
     };
@@ -500,17 +595,21 @@ export class AuthService implements OnDestroy {
   }
 
   /** Re-reads storage; returns the token if another tab already renewed. */
-  private freshTokenFromOtherTab(rejectedToken?: string): string | null {
+  private freshTokenFromOtherTab(
+    previousToken: string | null,
+    rejectedToken?: string,
+  ): string | null {
     this.session.syncFromStorage();
     const token = this.session.token;
     if (!token || token === rejectedToken) return null;
+    if (!isSameSessionAccount(previousToken, token)) return null;
     if (rejectedToken) {
       return this.session.isValid() ? token : null;
     }
     return !this.session.needsRenewal() ? token : null;
   }
 
-  /** Lets the backend store the fresh token for queued workflows/agent runs. */
+  /** Lets the backend store the fresh token for queued workflows. */
   private handOffTokenToBackend(token: string): void {
     this.syncUserWithBackend$(token).subscribe({
       error: error =>
@@ -521,8 +620,21 @@ export class AuthService implements OnDestroy {
     });
   }
 
+  private getPromptBlockedDelayMs(now: number): number {
+    if (
+      this.session.isValid(now) &&
+      this.promptBlockedToken !== null &&
+      this.promptBlockedToken === this.session.token &&
+      this.session.expiry !== null
+    ) {
+      return Math.max(1, this.session.expiry - now + 1000);
+    }
+    return 0;
+  }
+
   /** Timer / wake / reconnect / in-buffer request trigger. */
   private renewInBackground(trigger: RenewTrigger | 'request'): void {
+    if (this.switchingAccount) return;
     if (trigger === 'online') {
       this.lastFailedRenewalAt = null;
       this.promptBlockedToken = null;
@@ -537,7 +649,11 @@ export class AuthService implements OnDestroy {
       if (this.isInFailureCooldown(now)) {
         if (this.lastFailedRenewalAt !== null) {
           this.session.scheduleRenewal(
-            Math.max(1, RENEW_RETRY_MS - (now - this.lastFailedRenewalAt)),
+            Math.max(
+              1,
+              RENEW_RETRY_MS - (now - this.lastFailedRenewalAt),
+              this.getPromptBlockedDelayMs(now),
+            ),
           );
         }
         return;
@@ -547,22 +663,25 @@ export class AuthService implements OnDestroy {
         this.promptBlockedToken !== null &&
         this.promptBlockedToken === this.session.token
       ) {
+        this.session.scheduleRenewal(this.getPromptBlockedDelayMs(now));
         return;
       }
     }
 
     this.renewSession$().subscribe({
       error: error => {
+        if (error instanceof SessionSupersededError) {
+          return;
+        }
         if (error instanceof AccountMismatchError || !this.session.isValid()) {
-          this.onSessionRenewalFailed();
+          this.onSessionRenewalFailed(undefined, error);
           return;
         }
         console.warn('Session renewal failed; retrying shortly.', error);
-        const expiry = this.session.expiry;
-        const delay =
-          this.promptBlockedToken === this.session.token && expiry !== null
-            ? Math.max(RENEW_RETRY_MS, expiry - Date.now() + 1000)
-            : RENEW_RETRY_MS;
+        const delay = Math.max(
+          RENEW_RETRY_MS,
+          this.getPromptBlockedDelayMs(Date.now()),
+        );
         this.session.scheduleRenewal(delay);
       },
     });
@@ -570,14 +689,43 @@ export class AuthService implements OnDestroy {
 
   /**
    * Called when an expired session could not be renewed. Idempotent once the
-   * session is cleared. Hidden tabs and offline browsers keep the session and
-   * remember `targetUrl` to finish navigating on wake/reconnect; otherwise the
-   * user sees a single session-expired notice and is sent to login with returnUrl.
+   * session is cleared or superseded by another account/newer valid token.
+   * Hidden tabs and offline browsers keep the session and remember `targetUrl`
+   * to finish navigating on wake/reconnect; otherwise the user sees a single
+   * session-expired notice and is sent to login with returnUrl.
    */
-  onSessionRenewalFailed(targetUrl?: string): void {
-    if (!this.isBrowser || !this.session.hasSession()) return;
+  onSessionRenewalFailed(
+    targetUrl?: string,
+    errorOrFailedToken?: unknown,
+  ): void {
+    if (errorOrFailedToken instanceof SessionSupersededError) {
+      return;
+    }
+    if (!this.isBrowser) return;
+
+    this.session.syncFromStorage();
+    if (this.switchingAccount || !this.session.hasSession()) {
+      return;
+    }
+
+    const failedToken =
+      typeof errorOrFailedToken === 'string'
+        ? errorOrFailedToken
+        : getFailedSessionToken(errorOrFailedToken);
+    const currentToken = this.session.token;
+    if (
+      !(errorOrFailedToken instanceof AccountMismatchError) &&
+      failedToken &&
+      currentToken &&
+      currentToken !== failedToken &&
+      (!isSameSessionAccount(failedToken, currentToken) ||
+        this.session.isValid())
+    ) {
+      return;
+    }
+
     const candidateUrl = sanitizeReturnUrl(
-      targetUrl ?? this.pendingNavigationUrl ?? this.router?.url,
+      this.resolveActiveTargetUrl(targetUrl),
     );
     if (this.isHidden() || this.isOffline()) {
       if (candidateUrl) {
@@ -586,14 +734,16 @@ export class AuthService implements OnDestroy {
       return;
     }
     this.pendingNavigationUrl = null;
-    this.notificationService?.show(
-      SESSION_EXPIRED_MESSAGE,
-      'info',
-      undefined,
-      'info',
-      SESSION_EXPIRED_DURATION_MS,
-    );
-    void this.expireSession(LOGIN_ROUTE, candidateUrl);
+    this.ngZone.run(() => {
+      this.notificationService?.show(
+        SESSION_EXPIRED_MESSAGE,
+        'info',
+        undefined,
+        'info',
+        SESSION_EXPIRED_DURATION_MS,
+      );
+      void this.expireSession(LOGIN_ROUTE, candidateUrl);
+    });
   }
 
   redirectToLogin(returnUrl?: string | null): void {
@@ -617,7 +767,7 @@ export class AuthService implements OnDestroy {
           tap((userDetails: UserModel) => {
             if (
               generation === this.sessionGeneration &&
-              (!this.isBrowser || this.session.hasSession())
+              (!this.isBrowser || this.session.token === token)
             ) {
               localStorage.setItem(USER_DETAILS, JSON.stringify(userDetails));
             }
@@ -641,7 +791,7 @@ export class AuthService implements OnDestroy {
    * visit shows the login page. Does not touch queued workflows on the server.
    */
   async logout(route: string = LOGIN_ROUTE) {
-    this.disableGoogleAutoSelect();
+    this.gisClient.disableAutoSelect();
     return this.endSession(route);
   }
 
@@ -655,16 +805,28 @@ export class AuthService implements OnDestroy {
     returnUrl?: string | null,
   ): Promise<void> {
     this.sessionGeneration++; // Any renewal still in flight must not save.
+    this.inFlightRenewal$ = null;
     this.lastFailedRenewalAt = null;
     this.promptBlockedToken = null;
     this.pendingNavigationUrl = null;
-    this.cancelGooglePrompt();
+    this.switchingAccount = false;
+    this.accountSwitchSub?.unsubscribe();
+    this.accountSwitchSub = null;
+    this.gisClient.abortActivePrompt();
     this.currentOAuthAccessToken = null; // Clear stored token on logout
     this.session.clear(); // Removal also signs out other open tabs.
     if (this.isBrowser) {
       localStorage.removeItem(USER_DETAILS);
       localStorage.removeItem('showTooltip');
     }
+    const safeReturnUrl = sanitizeReturnUrl(returnUrl);
+    this.ngZone.run(() => {
+      if (route === LOGIN_ROUTE && safeReturnUrl && safeReturnUrl !== '/') {
+        this.redirectToLogin(safeReturnUrl);
+      } else {
+        void this.router.navigateByUrl(route);
+      }
+    });
     try {
       if (typeof this.auth?.signOut === 'function') {
         await this.auth.signOut();
@@ -672,15 +834,83 @@ export class AuthService implements OnDestroy {
     } catch (e) {
       console.error('Sign Out Error', e);
     }
-    const safeReturnUrl = sanitizeReturnUrl(returnUrl);
-    if (route === LOGIN_ROUTE && safeReturnUrl && safeReturnUrl !== '/') {
-      this.redirectToLogin(safeReturnUrl);
-    } else {
-      void this.router.navigateByUrl(route);
+  }
+
+  protected reloadToHome(): void {
+    if (this.isBrowser) {
+      window.location.assign('/');
+    }
+  }
+
+  private handleAccountSwitchedElsewhere(incoming: StoredSession): void {
+    this.switchingAccount = true;
+    const generation = ++this.sessionGeneration;
+    this.inFlightRenewal$ = null;
+    this.lastFailedRenewalAt = null;
+    this.promptBlockedToken = null;
+    this.pendingNavigationUrl = null;
+    this.accountSwitchSub?.unsubscribe();
+    this.accountSwitchSub = null;
+    this.gisClient.abortActivePrompt();
+
+    this.accountSwitchSub = this.syncUserWithBackend$(incoming.token)
+      .pipe(timeout(ACCOUNT_SWITCH_SYNC_TIMEOUT_MS))
+      .subscribe({
+        next: () => {
+          if (generation !== this.sessionGeneration) return;
+          this.switchingAccount = false;
+          this.accountSwitchSub = null;
+          this.reloadToHome();
+        },
+        error: () => {
+          if (generation !== this.sessionGeneration) return;
+          this.purgeStaleUserDetailsIfMismatch(incoming.token);
+          this.switchingAccount = false;
+          this.accountSwitchSub = null;
+          this.reloadToHome();
+        },
+      });
+  }
+
+  private purgeStaleUserDetailsIfMismatch(token: string): void {
+    if (!this.isBrowser) return;
+    const raw = localStorage.getItem(USER_DETAILS);
+    if (!raw) return;
+
+    let incomingEmail: string | null = null;
+    try {
+      const payload = decodeGoogleJwtPayload(token);
+      incomingEmail =
+        typeof payload.email === 'string' && payload.email.trim()
+          ? payload.email.trim().toLowerCase()
+          : null;
+    } catch {
+      incomingEmail = null;
+    }
+
+    let storedEmail: string | null = null;
+    try {
+      const parsed = JSON.parse(raw) as Partial<UserModel> | null;
+      storedEmail =
+        typeof parsed?.email === 'string' && parsed.email.trim()
+          ? parsed.email.trim().toLowerCase()
+          : null;
+    } catch {
+      storedEmail = null;
+    }
+
+    if (!incomingEmail || !storedEmail || storedEmail !== incomingEmail) {
+      localStorage.removeItem(USER_DETAILS);
     }
   }
 
   private saveFreshSession(token: string, expiry: number): void {
+    if (
+      this.session.token &&
+      !isSameSessionAccount(this.session.token, token)
+    ) {
+      this.sessionGeneration++;
+    }
     this.lastFailedRenewalAt = null;
     this.promptBlockedToken = null;
     this.session.save(token, expiry);
@@ -706,26 +936,50 @@ export class AuthService implements OnDestroy {
     );
   }
 
-  private disableGoogleAutoSelect(): void {
-    if (typeof google !== 'undefined') {
-      google?.accounts?.id?.disableAutoSelect?.();
+  private resolveActiveTargetUrl(explicitUrl?: string | null): string | null {
+    if (explicitUrl) {
+      return explicitUrl;
     }
+    if (this.pendingNavigationUrl) {
+      return this.pendingNavigationUrl;
+    }
+    const nav = this.router?.getCurrentNavigation?.();
+    const navUrl = nav?.finalUrl?.toString() ?? nav?.extractedUrl?.toString();
+    if (navUrl) {
+      return navUrl;
+    }
+    if (this.router?.url && this.router.url !== '/') {
+      return this.router.url;
+    }
+    return this.readBrowserLocationUrl() ?? this.router?.url ?? null;
   }
 
-  private cancelGooglePrompt(): void {
-    if (typeof google !== 'undefined') {
-      google?.accounts?.id?.cancel?.();
+  private readBrowserLocationUrl(): string | null {
+    if (!this.isBrowser || !(this.router instanceof Router)) {
+      return null;
     }
+    const pathname = window.location.pathname;
+    if (
+      !pathname ||
+      pathname === '/context.html' ||
+      pathname === '/debug.html'
+    ) {
+      return null;
+    }
+    return `${pathname}${window.location.search}${window.location.hash}`;
   }
 
   private navigateToLoginIfNeeded(): void {
+    const activeUrl = this.resolveActiveTargetUrl();
     if (
-      this.router?.url &&
-      this.router.url !== LOGIN_ROUTE &&
-      !this.router.url.startsWith(`${LOGIN_ROUTE}?`)
+      isLoginPath(activeUrl) ||
+      (this.router instanceof Router &&
+        this.isBrowser &&
+        isLoginPath(window.location.pathname))
     ) {
-      void this.router.navigate([LOGIN_ROUTE]);
+      return;
     }
+    this.redirectToLogin(activeUrl);
   }
 
   /**
@@ -733,9 +987,10 @@ export class AuthService implements OnDestroy {
    * unauthenticated navigations; cross-tab sign-out is handled in syncFromStorage.
    */
   isLoggedIn(): boolean {
-    if (!this.isBrowser) return false;
+    if (!this.isBrowser || this.switchingAccount) return false;
 
     this.session.syncFromStorage();
+    if (this.switchingAccount) return false;
     const valid = this.session.isValid();
     if (valid) {
       this.pendingNavigationUrl = null;
@@ -749,9 +1004,7 @@ export class AuthService implements OnDestroy {
   }
 
   isUserLoggedIn() {
-    if (!this.isBrowser) return false;
-
-    return localStorage.getItem(SESSION_STORAGE_KEY) !== null;
+    return this.isLoggedIn();
   }
 
   isUserAdmin() {

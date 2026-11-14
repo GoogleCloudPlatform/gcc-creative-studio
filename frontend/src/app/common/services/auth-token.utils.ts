@@ -17,6 +17,10 @@
 const CLOCK_SKEW_TOLERANCE_MS = 2 * 60 * 1000;
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHAR_REGEX = /[\u0000-\u001f\u007f]/;
+const SESSION_HANDLED_SYMBOL = Symbol('csSessionHandled');
+const FAILED_SESSION_TOKEN_SYMBOL = Symbol('csFailedSessionToken');
+const handledFrozenErrors = new WeakSet<object>();
+const failedTokenFrozenErrors = new WeakMap<object, string>();
 
 export interface GoogleIdTokenPayload {
   sub?: string;
@@ -40,10 +44,23 @@ export interface GisPromptMomentNotification {
   getDismissedReason?: () => string;
 }
 
+export interface GisButtonConfiguration {
+  type?: 'standard' | 'icon';
+  theme?: 'outline' | 'filled_blue' | 'filled_black';
+  size?: 'large' | 'medium' | 'small';
+  text?: 'signin_with' | 'signup_with' | 'continue_with' | 'signin';
+  shape?: 'rectangular' | 'pill' | 'circle' | 'square';
+  logo_alignment?: 'left' | 'center';
+  width?: number | string;
+  locale?: string;
+  click_listener?: () => void;
+}
+
 export interface GisInitializeConfig {
   client_id: string;
   auto_select?: boolean;
   use_fedcm_for_prompt?: boolean;
+  use_fedcm_for_button?: boolean;
   login_hint?: string;
   hd?: string;
   callback: (response: GisCredentialResponse) => void;
@@ -54,6 +71,7 @@ export interface GisIdApi {
   prompt: (
     momentListener?: (notification: GisPromptMomentNotification) => void,
   ) => void;
+  renderButton?: (parent: HTMLElement, options: GisButtonConfiguration) => void;
   cancel: () => void;
   disableAutoSelect: () => void;
 }
@@ -63,6 +81,100 @@ export class AccountMismatchError extends Error {
     super('Renewed token belongs to a different Google account.');
     this.name = 'AccountMismatchError';
   }
+}
+
+export class GisPromptSuppressedError extends Error {
+  constructor(message = 'Google One Tap prompt was suppressed.') {
+    super(message);
+    this.name = 'GisPromptSuppressedError';
+  }
+}
+
+export class SessionSupersededError extends Error {
+  constructor(
+    message = 'Session renewal was superseded.',
+    readonly failedToken?: string | null,
+  ) {
+    super(message);
+    this.name = 'SessionSupersededError';
+    markSessionHandled(this);
+  }
+}
+
+export function attachFailedSessionToken<T>(
+  error: T,
+  token: string | null | undefined,
+): T {
+  if (
+    typeof token === 'string' &&
+    token &&
+    error !== null &&
+    (typeof error === 'object' || typeof error === 'function')
+  ) {
+    if (Object.isExtensible(error)) {
+      if (!(FAILED_SESSION_TOKEN_SYMBOL in error)) {
+        Object.defineProperty(error, FAILED_SESSION_TOKEN_SYMBOL, {
+          value: token,
+          configurable: true,
+        });
+      }
+    } else {
+      failedTokenFrozenErrors.set(error, token);
+    }
+  }
+  return error;
+}
+
+export function getFailedSessionToken(error: unknown): string | null {
+  if (
+    error === null ||
+    (typeof error !== 'object' && typeof error !== 'function')
+  ) {
+    return null;
+  }
+  if (error instanceof SessionSupersededError && error.failedToken) {
+    return error.failedToken;
+  }
+  const token =
+    (error as Record<symbol, unknown>)[FAILED_SESSION_TOKEN_SYMBOL] ??
+    failedTokenFrozenErrors.get(error);
+  return typeof token === 'string' && token ? token : null;
+}
+
+/**
+ * Brands an error after session-expiry handling so downstream callers still
+ * clean up loading state without emitting a duplicate error snackbar.
+ */
+export function markSessionHandled<T>(error: T): T {
+  if (
+    error !== null &&
+    (typeof error === 'object' || typeof error === 'function')
+  ) {
+    if (Object.isExtensible(error)) {
+      if (!(SESSION_HANDLED_SYMBOL in error)) {
+        Object.defineProperty(error, SESSION_HANDLED_SYMBOL, {
+          value: true,
+          configurable: true,
+        });
+      }
+    } else {
+      handledFrozenErrors.add(error);
+    }
+  }
+  return error;
+}
+
+export function isSessionHandledError(error: unknown): boolean {
+  if (
+    error === null ||
+    (typeof error !== 'object' && typeof error !== 'function')
+  ) {
+    return false;
+  }
+  return (
+    Boolean((error as Record<symbol, unknown>)[SESSION_HANDLED_SYMBOL]) ||
+    handledFrozenErrors.has(error)
+  );
 }
 
 export function decodeGoogleJwtPayload(token: string): GoogleIdTokenPayload {
@@ -159,17 +271,17 @@ export function isSameSessionAccount(
       if (!prevSub || !nextSub || prevSub !== nextSub) return false;
     }
     const prevEmail =
-      typeof prev.email === 'string' && prev.email
-        ? prev.email.toLowerCase()
+      typeof prev.email === 'string' && prev.email.trim()
+        ? prev.email.trim().toLowerCase()
         : null;
     const nextEmail =
-      typeof next.email === 'string' && next.email
-        ? next.email.toLowerCase()
+      typeof next.email === 'string' && next.email.trim()
+        ? next.email.trim().toLowerCase()
         : null;
-    if (!prevSub && (!prevEmail || !nextEmail)) {
-      return false;
+    if (prevEmail || nextEmail) {
+      if (!prevEmail || !nextEmail || prevEmail !== nextEmail) return false;
     }
-    if (prevEmail && nextEmail && prevEmail !== nextEmail) {
+    if (!prevSub && !prevEmail) {
       return false;
     }
     return true;
@@ -178,10 +290,54 @@ export function isSameSessionAccount(
   }
 }
 
+function decodePathnameSafely(rawPathname: string): string | null {
+  try {
+    return decodeURIComponent(rawPathname);
+  } catch {
+    return null;
+  }
+}
+
+function isNormalizedLoginPathname(pathname: string): boolean {
+  const normalized = pathname.toLowerCase();
+  return normalized === '/login' || normalized.startsWith('/login/');
+}
+
+/**
+ * Checks whether `url` targets `/login` (including `/login/e2e`, subpaths,
+ * matrix/query parameters, and percent-encoded variants), safely ignoring
+ * malformed percent sequences.
+ */
+export function isLoginPath(url: string | null | undefined): boolean {
+  if (typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (
+    !trimmed.startsWith('/') ||
+    trimmed.startsWith('//') ||
+    trimmed.includes('\\') ||
+    CONTROL_CHAR_REGEX.test(trimmed)
+  ) {
+    return false;
+  }
+  const pathEnd = trimmed.search(/[?#;(]/);
+  const rawPathname = pathEnd === -1 ? trimmed : trimmed.slice(0, pathEnd);
+  const decodedPathname = decodePathnameSafely(rawPathname);
+  if (
+    decodedPathname !== null &&
+    (!decodedPathname.startsWith('/') ||
+      decodedPathname.startsWith('//') ||
+      decodedPathname.includes('\\') ||
+      CONTROL_CHAR_REGEX.test(decodedPathname))
+  ) {
+    return false;
+  }
+  return isNormalizedLoginPathname(decodedPathname ?? rawPathname);
+}
+
 /**
  * Validates an internal app URL (including `'/'` for guarded Home recovery,
- * plus query strings and fragments), rejecting external/protocol-relative URLs
- * and `/login` routes.
+ * plus query strings and fragments), rejecting external/protocol-relative URLs,
+ * control characters, malformed path encodings, and `/login` routes.
  */
 export function sanitizeReturnUrl(
   url: string | null | undefined,
@@ -196,9 +352,19 @@ export function sanitizeReturnUrl(
   ) {
     return null;
   }
-  const pathEnd = trimmed.search(/[?#]/);
-  const pathname = pathEnd === -1 ? trimmed : trimmed.slice(0, pathEnd);
-  if (pathname === '/login' || pathname.startsWith('/login/')) {
+  const pathEnd = trimmed.search(/[?#;(]/);
+  const rawPathname = pathEnd === -1 ? trimmed : trimmed.slice(0, pathEnd);
+  const decodedPathname = decodePathnameSafely(rawPathname);
+  if (
+    decodedPathname === null ||
+    !decodedPathname.startsWith('/') ||
+    decodedPathname.startsWith('//') ||
+    decodedPathname.includes('\\') ||
+    CONTROL_CHAR_REGEX.test(decodedPathname)
+  ) {
+    return null;
+  }
+  if (isNormalizedLoginPathname(decodedPathname)) {
     return null;
   }
   return trimmed;
