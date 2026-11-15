@@ -15,11 +15,14 @@
 
 
 import os
+import socket
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import NullPool
 
 # Add src to pythonpath just in case
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__) + "/../"))
@@ -53,6 +56,102 @@ def fixture_mock_migrations():
         "src.database_migrations.run_pending_migrations", AsyncMock()
     ) as mock:
         yield mock
+
+
+# Share one NullPool async engine across all test suites so event-loop switches
+# never reuse stale pooled asyncpg connections when e2e and unit tests run together.
+import src.database
+
+if not isinstance(src.database.engine.pool, NullPool):
+    _test_engine = create_async_engine(
+        src.database.get_conn_string(),
+        poolclass=NullPool,
+        echo=src.database.config_service.LOG_LEVEL == "DEBUG",
+    )
+    src.database.engine = _test_engine
+    src.database.async_session_local.configure(bind=_test_engine)
+
+
+@pytest.fixture(autouse=True)
+def fixture_reset_global_hooks():
+    """Clear process-wide auth and workflow dispatch hooks around each test."""
+    from src.auth.auth_guard import clear_post_auth_hooks
+    from src.workflows.queue.run_state_service import set_dispatch_hook
+    from src.workflows.queue.workflow_dispatcher import (
+        reset_dispatch_tick_throttle,
+    )
+
+    clear_post_auth_hooks()
+    set_dispatch_hook(None)
+    reset_dispatch_tick_throttle()
+    yield
+    clear_post_auth_hooks()
+    set_dispatch_hook(None)
+    reset_dispatch_tick_throttle()
+
+
+@pytest.fixture(autouse=True)
+def _block_external_network_in_unit_tests(request, monkeypatch):
+    """Block unintended outbound network connections in non-e2e unit tests."""
+    fspath = str(request.node.fspath).replace("\\", "/")
+    if "tests/e2e" in fspath:
+        return
+    orig_connect = socket.socket.connect
+    orig_connect_ex = socket.socket.connect_ex
+    orig_getaddrinfo = socket.getaddrinfo
+    resolved_db_ips: set[str] = set()
+
+    def _allowed_hosts() -> set[str]:
+        hosts = {"127.0.0.1", "::1", "localhost"}
+        db_host = os.environ.get("DB_HOST", "").strip()
+        if db_host:
+            hosts.add(db_host)
+        return hosts
+
+    def _check_target(address):
+        if isinstance(address, (str, bytes)):
+            return
+        if (
+            isinstance(address, tuple)
+            and address
+            and (
+                address[0] in _allowed_hosts() or address[0] in resolved_db_ips
+            )
+        ):
+            return
+        raise RuntimeError(
+            f"Hermetic unit test blocked outbound connection to {address!r}; "
+            "mock the external client."
+        )
+
+    def _guarded_connect(self, address):
+        _check_target(address)
+        return orig_connect(self, address)
+
+    def _guarded_connect_ex(self, address):
+        _check_target(address)
+        return orig_connect_ex(self, address)
+
+    def _guarded_getaddrinfo(host, port, *args, **kwargs):
+        host_val = host.decode() if isinstance(host, bytes) else host
+        allowed = _allowed_hosts()
+        if host_val not in (None, "", *allowed):
+            raise RuntimeError(
+                f"Hermetic unit test blocked DNS lookup for {host!r}; "
+                "mock the external client."
+            )
+        results = orig_getaddrinfo(host, port, *args, **kwargs)
+        db_host = os.environ.get("DB_HOST", "").strip()
+        if db_host and host_val == db_host:
+            for entry in results:
+                sockaddr = entry[4]
+                if isinstance(sockaddr, tuple) and sockaddr:
+                    resolved_db_ips.add(str(sockaddr[0]))
+        return results
+
+    monkeypatch.setattr(socket.socket, "connect", _guarded_connect)
+    monkeypatch.setattr(socket.socket, "connect_ex", _guarded_connect_ex)
+    monkeypatch.setattr(socket, "getaddrinfo", _guarded_getaddrinfo)
 
 
 from main import app

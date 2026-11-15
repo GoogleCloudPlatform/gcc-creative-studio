@@ -14,12 +14,14 @@
 
 from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.media_templates.schema.media_template_model import IndustryEnum
 
 
 class CreatePromptTemplateDto(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: Annotated[
         str,
         Field(

@@ -15,22 +15,28 @@
 """Data Transfer Objects for Agent Controller Endpoints."""
 
 from typing import Any, Dict, List, Literal, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from src.projects.dto.project_dto import StoryboardResponse
 
 
 # --- Sub-components for Chat ---
 class InlineDataRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     mimeType: str
     data: str
 
 
 class FileDataRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     mimeType: str
     fileUri: str
 
 
 class SourceMediaItemLinkDto(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     mediaItemId: int
     mediaIndex: int
     role: str
@@ -53,6 +59,8 @@ class ChatMessagePart(BaseModel):
 
 
 class ChatMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     role: str
     parts: List[ChatMessagePart]
 
@@ -60,6 +68,8 @@ class ChatMessage(BaseModel):
 # --- POST /chat ---
 class ChatRequestDto(BaseModel):
     """Payload for starting an agent chat interaction."""
+
+    model_config = ConfigDict(extra="forbid")
 
     sessionId: str
     workspaceId: int
@@ -110,6 +120,8 @@ class CharacterProfileDto(BaseModel):
     into the free-text fields the agent reads (see ``character_state.py``).
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     name: Optional[str] = None
     role: Optional[
         Literal["creator", "reviewer", "spokesperson", "product_user"]
@@ -136,11 +148,15 @@ class CharacterProfileDto(BaseModel):
 class CharacterAssetRefDto(BaseModel):
     """A Creative Studio image to use as the character's headshot."""
 
+    model_config = ConfigDict(extra="forbid")
+
     id: int
     assetType: Literal["generated", "uploaded"]
 
 
 class UpdateCharacterRequestDto(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     workspaceId: int
     appName: Optional[str] = "ads_x"
     profile: CharacterProfileDto = CharacterProfileDto()

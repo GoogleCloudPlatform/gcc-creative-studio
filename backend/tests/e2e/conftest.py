@@ -205,22 +205,15 @@ def mock_init():
 
 @pytest.fixture(autouse=True, scope="session")
 def setup_e2e_mocks():
-    # Configure SQLAlchemy engine to use NullPool to prevent loop/thread sharing conflicts
-    from sqlalchemy.pool import NullPool
-    from sqlalchemy.ext.asyncio import create_async_engine
+    # Reuse the shared NullPool engine configured by backend/tests/conftest.py
+    # so imported references to src.database.engine stay valid.
     import src.database
     import io
     import wave
     import base64
     from unittest.mock import patch, MagicMock
 
-    test_engine = create_async_engine(
-        src.database.get_conn_string(),
-        poolclass=NullPool,
-        echo=src.database.config_service.LOG_LEVEL == "DEBUG",
-    )
-    src.database.engine = test_engine
-    src.database.async_session_local.configure(bind=test_engine)
+    src.database.async_session_local.configure(bind=src.database.engine)
 
     # Store originals
     orig_download = GcsService.download_from_gcs

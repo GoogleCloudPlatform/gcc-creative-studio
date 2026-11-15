@@ -24,4 +24,6 @@ class InviteUserDto(BaseModel):
     email: EmailStr
     role: WorkspaceRoleEnum = Field(default=WorkspaceRoleEnum.VIEWER)
 
-    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel, extra="forbid"
+    )
