@@ -307,7 +307,7 @@ async def test_query_two_stage_sql_structure_and_tiebreaker(mock_db):
     repo = UnifiedGalleryRepository(db=mock_db)
 
     count_res = MagicMock()
-    count_res.scalar_one.return_value = 2
+    count_res.scalar_one.return_value = 30
     data_res = MagicMock()
     data_res.scalars.return_value.all.return_value = []
     mock_db.execute.side_effect = [count_res, data_res]
@@ -341,7 +341,7 @@ async def test_query_branch_pruning_and_base_table_filters(mock_db):
 
     # 1. Filtering by model or non-completed status prunes source_assets.
     c1, d1 = MagicMock(), MagicMock()
-    c1.scalar_one.return_value = 0
+    c1.scalar_one.return_value = 1
     d1.scalars.return_value.all.return_value = []
     mock_db.execute.side_effect = [c1, d1]
 
@@ -367,7 +367,7 @@ async def test_query_branch_pruning_and_base_table_filters(mock_db):
     # 2. Filtering by item_type='source_asset' prunes media_items.
     mock_db.reset_mock()
     c2, d2 = MagicMock(), MagicMock()
-    c2.scalar_one.return_value = 0
+    c2.scalar_one.return_value = 1
     d2.scalars.return_value.all.return_value = []
     mock_db.execute.side_effect = [c2, d2]
     await repo.query(
@@ -400,3 +400,71 @@ async def test_query_branch_pruning_and_base_table_filters(mock_db):
     assert empty.count == 0
     assert empty.data == []
     mock_db.execute.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_query_short_circuits_stage2_when_empty(mock_db):
+    repo = UnifiedGalleryRepository(db=mock_db)
+
+    zero_count = MagicMock()
+    zero_count.scalar_one.return_value = 0
+    mock_db.execute.return_value = zero_count
+
+    res_empty = await repo.query(
+        GallerySearchDto(workspace_id=10, limit=10, offset=0)
+    )
+    assert res_empty.count == 0
+    assert res_empty.total_pages == 0
+    assert res_empty.data == []
+    assert mock_db.execute.await_count == 1
+
+    mock_db.reset_mock()
+    past_end = MagicMock()
+    past_end.scalar_one.return_value = 5
+    mock_db.execute.return_value = past_end
+
+    res_oob = await repo.query(
+        GallerySearchDto(workspace_id=10, limit=10, offset=10)
+    )
+    assert res_oob.count == 5
+    assert res_oob.total_pages == 1
+    assert res_oob.data == []
+    assert mock_db.execute.await_count == 1
+
+
+@pytest.mark.anyio
+async def test_query_multi_tag_and_semantics_and_folder_scoping(mock_db):
+    repo = UnifiedGalleryRepository(db=mock_db)
+
+    c1, d1 = MagicMock(), MagicMock()
+    c1.scalar_one.return_value = 2
+    d1.scalars.return_value.all.return_value = []
+    mock_db.execute.side_effect = [c1, d1]
+
+    await repo.query(
+        GallerySearchDto(
+            workspace_id=10,
+            tags=["hero", "summer"],
+            is_root=True,
+            limit=10,
+            offset=0,
+        )
+    )
+    sql_root = _compiled_sql(mock_db.execute.await_args_list[0].args[0])
+    assert sql_root.count("EXISTS (") == 4
+    assert "'hero'" in sql_root and "'summer'" in sql_root
+    assert "media_items.folder_id IS NULL" in sql_root
+    assert "source_assets.folder_id IS NULL" in sql_root
+
+    mock_db.reset_mock()
+    c2, d2 = MagicMock(), MagicMock()
+    c2.scalar_one.return_value = 2
+    d2.scalars.return_value.all.return_value = []
+    mock_db.execute.side_effect = [c2, d2]
+
+    await repo.query(
+        GallerySearchDto(workspace_id=10, folder_id=7, limit=10, offset=0)
+    )
+    sql_folder = _compiled_sql(mock_db.execute.await_args_list[0].args[0])
+    assert "media_items.folder_id = 7" in sql_folder
+    assert "source_assets.folder_id = 7" in sql_folder

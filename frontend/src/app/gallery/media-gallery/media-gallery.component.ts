@@ -1138,6 +1138,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   public searchTerm(): void {
     // Reset local component state for a new search to show the main loader
     this.images = [];
+    this.filterImages();
     this.selectedItems.clear();
     this.tagsCurrentPage = 1; // Reset tags pagination on search
 

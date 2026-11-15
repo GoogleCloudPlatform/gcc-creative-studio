@@ -19,11 +19,9 @@ import {
   Input,
   Output,
   EventEmitter,
-  OnChanges,
   OnDestroy,
   Inject,
   PLATFORM_ID,
-  SimpleChanges,
 } from '@angular/core';
 import {Router} from '@angular/router';
 import {isPlatformBrowser} from '@angular/common';
@@ -42,7 +40,7 @@ import {GalleryDragPayload} from '../../models/folder.model';
   templateUrl: './gallery-card.component.html',
   styleUrls: ['./gallery-card.component.scss'],
 })
-export class GalleryCardComponent implements OnChanges, OnDestroy {
+export class GalleryCardComponent implements OnDestroy {
   isAdmin = false;
 
   constructor(
@@ -68,16 +66,6 @@ export class GalleryCardComponent implements OnChanges, OnDestroy {
   }
   get item(): GalleryItem {
     return this._item;
-  }
-
-  ngOnChanges(changes: SimpleChanges): void {
-    if (changes['item']) {
-      const prev = changes['item'].previousValue as GalleryItem | undefined;
-      const curr = changes['item'].currentValue as GalleryItem | undefined;
-      if (!prev || prev.id !== curr?.id || prev.itemType !== curr?.itemType) {
-        this.resetCarouselState();
-      }
-    }
   }
 
   private resetCarouselState(): void {

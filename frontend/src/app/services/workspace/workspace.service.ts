@@ -86,16 +86,23 @@ export class WorkspaceService implements OnDestroy {
     if (!isCacheValid) {
       this.cachedUserKey = userKey;
       this.cacheExpiresAt = now + WORKSPACE_CACHE_TTL_MS;
-      this.cachedWorkspaces$ = this.http.get<Workspace[]>(this.apiUrl).pipe(
-        tap(() => {
-          this.cacheExpiresAt = Date.now() + WORKSPACE_CACHE_TTL_MS;
-        }),
-        shareReplay({bufferSize: 1, refCount: false}),
-        catchError(err => {
-          this.clearCache();
-          return throwError(() => err);
-        }),
-      );
+      const request$: Observable<Workspace[]> = this.http
+        .get<Workspace[]>(this.apiUrl)
+        .pipe(
+          tap(() => {
+            if (this.cachedWorkspaces$ === request$) {
+              this.cacheExpiresAt = Date.now() + WORKSPACE_CACHE_TTL_MS;
+            }
+          }),
+          catchError(err => {
+            if (this.cachedWorkspaces$ === request$) {
+              this.clearCache();
+            }
+            return throwError(() => err);
+          }),
+          shareReplay({bufferSize: 1, refCount: false}),
+        );
+      this.cachedWorkspaces$ = request$;
     }
 
     return this.cachedWorkspaces$!;

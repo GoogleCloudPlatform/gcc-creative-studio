@@ -252,6 +252,16 @@ class UnifiedGalleryRepository(
         count_result = await self.db.execute(count_query)
         total_count = count_result.scalar_one()
 
+        total_pages = (total_count + page_size - 1) // page_size
+        if total_count == 0 or search_dto.offset >= total_count:
+            return PaginationResponseDto[UnifiedGalleryItemResponse](
+                count=total_count,
+                page=page,
+                page_size=page_size,
+                total_pages=total_pages,
+                data=[],
+            )
+
         # Stage 2: Page keys on base tables, then hydrate only the visible slice from the view.
         page_keys = (
             select(

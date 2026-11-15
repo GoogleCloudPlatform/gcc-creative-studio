@@ -231,4 +231,38 @@ describe('WorkspaceService', () => {
     req2.flush(mockWorkspaces);
     routedHttpMock.verify();
   });
+
+  it('clears cache on unsubscribed mid-flight error and isolates stale request failures after forceRefresh', () => {
+    // 1. Unsubscribed mid-flight 500 clears cache instead of caching error in ReplaySubject.
+    const sub = service.getWorkspaces().subscribe({error: () => {}});
+    const req1 = httpMock.expectOne(apiUrl);
+    sub.unsubscribe();
+    req1.flush('Boom', {status: 500, statusText: 'Server Error'});
+
+    let recovered: Workspace[] | undefined;
+    service.getWorkspaces().subscribe(res => (recovered = res));
+    const req2 = httpMock.expectOne(apiUrl);
+    req2.flush(mockWorkspaces);
+    expect(recovered).toEqual(mockWorkspaces);
+
+    // 2. Stale failed request after forceRefresh does not clear newer request cache.
+    service.clearCache();
+    let staleErrored = false;
+    service.getWorkspaces().subscribe({
+      error: () => {
+        staleErrored = true;
+      },
+    });
+    service.getWorkspaces(true).subscribe();
+
+    const [staleReq, freshReq] = httpMock.match(apiUrl);
+    staleReq.flush('Stale Error', {status: 500, statusText: 'Server Error'});
+    expect(staleErrored).toBeTrue();
+
+    freshReq.flush(mockWorkspaces);
+    let cachedAfterStaleFailure: Workspace[] | undefined;
+    service.getWorkspaces().subscribe(res => (cachedAfterStaleFailure = res));
+    httpMock.expectNone(apiUrl);
+    expect(cachedAfterStaleFailure).toEqual(mockWorkspaces);
+  });
 });

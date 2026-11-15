@@ -89,4 +89,44 @@ describe('GalleryService', () => {
       data: [],
     });
   });
+
+  it('immediately sets isLoading$ true and allImagesLoaded false on setFilters when workspace is active', fakeAsync(() => {
+    service = TestBed.inject(GalleryService);
+
+    // Without active workspace, setFilters does not flip loading state early.
+    service.setFilters({limit: 40});
+    expect(service.isLoading$.value).toBeFalse();
+
+    // Put service into empty/loaded state via empty response.
+    activeWorkspaceIdSubject.next(7);
+    tick(100);
+    httpMock.expectOne(searchUrl).flush({
+      count: 0,
+      page: 1,
+      pageSize: 40,
+      totalPages: 0,
+      data: [],
+    });
+
+    let allLoaded = false;
+    const sub = service.allImagesLoaded.subscribe(v => (allLoaded = v));
+    expect(allLoaded).toBeTrue();
+    expect(service.isLoading$.value).toBeFalse();
+
+    // Calling setFilters clears allImagesLoaded and enters loading synchronously before debounce.
+    service.setFilters({limit: 40, query: 'next'});
+    expect(service.isLoading$.value).toBeTrue();
+    expect(allLoaded).toBeFalse();
+
+    tick(100);
+    httpMock.expectOne(searchUrl).flush({
+      count: 0,
+      page: 1,
+      pageSize: 40,
+      totalPages: 0,
+      data: [],
+    });
+    expect(service.isLoading$.value).toBeFalse();
+    sub.unsubscribe();
+  }));
 });

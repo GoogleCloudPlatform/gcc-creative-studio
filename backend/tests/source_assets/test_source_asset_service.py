@@ -995,3 +995,46 @@ async def test_upload_asset_image_thumbnail_failure_is_nonfatal(
         )
     assert res.id == 93
     assert res.thumbnail_gcs_uri is None
+
+
+@pytest.mark.anyio
+async def test_upload_asset_upscaled_image_generates_thumbnail_from_gcs(
+    service, mock_dependencies, sample_user
+):
+    mock_dependencies["repo"].find_by_hash.return_value = None
+    mock_dependencies["gcs_service"].store_to_gcs.return_value = (
+        "gs://bucket/orig.png"
+    )
+    mock_dependencies["iam_signer"].generate_presigned_url.return_value = (
+        "https://signed.url"
+    )
+    mock_upscaled = MagicMock()
+    mock_upscaled.image.gcs_uri = "gs://bucket/upscaled.png"
+    mock_dependencies["imagen_service"].upscale_image.return_value = (
+        mock_upscaled
+    )
+    mock_dependencies["repo"].create.side_effect = (
+        lambda model: model.model_copy(update={"id": 94})
+    )
+
+    with patch(
+        "src.source_assets.source_asset_service.generate_image_thumbnail_from_gcs",
+        return_value="gs://bucket/upscaled_thumbnail.webp",
+    ) as mock_thumb_from_gcs:
+        res = await service.upload_asset(
+            user=sample_user,
+            file_bytes=get_dummy_image_bytes(),
+            filename="test.png",
+            workspace_id=1,
+            mime_type="image/png",
+            upscale_factor="x2",
+        )
+
+    assert res.id == 94
+    assert res.thumbnail_gcs_uri == "gs://bucket/upscaled_thumbnail.webp"
+    mock_thumb_from_gcs.assert_called_once_with(
+        mock_dependencies["gcs_service"],
+        "gs://bucket/upscaled.png",
+        "image/webp",
+    )
+    mock_dependencies["gcs_service"].store_to_gcs.assert_called_once()

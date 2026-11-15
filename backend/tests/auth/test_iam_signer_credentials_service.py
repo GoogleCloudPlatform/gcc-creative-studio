@@ -287,3 +287,74 @@ def test_generate_v4_upload_signed_url_uses_shared_storage_client():
         assert url == "https://put-signed"
         assert gcs_uri == "gs://my-bucket/uploads/a.png"
         storage_cls.assert_called_once()
+
+
+def test_generate_presigned_url_sync_multithread_inflight_dedup_and_error_wakeup():
+    from concurrent.futures import ThreadPoolExecutor
+
+    signer = IamSignerCredentials()
+    started = threading.Event()
+    release = threading.Event()
+    sign_calls = 0
+    call_lock = threading.Lock()
+
+    def blocking_sign(version, expiration, method, credentials):
+        del version, expiration, method, credentials
+        nonlocal sign_calls
+        with call_lock:
+            sign_calls += 1
+        started.set()
+        assert release.wait(timeout=2.0)
+        return "https://signed/sync-shared"
+
+    with patch.object(signer_mod.storage, "Client") as storage_cls:
+        mock_blob = MagicMock()
+        mock_blob.generate_signed_url.side_effect = blocking_sign
+        storage_cls.return_value.bucket.return_value.blob.return_value = (
+            mock_blob
+        )
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = [
+                pool.submit(signer.generate_presigned_url, "gs://b/sync.webp")
+                for _ in range(4)
+            ]
+            assert started.wait(timeout=2.0)
+            time.sleep(0.05)
+            release.set()
+            results = [f.result(timeout=2.0) for f in futures]
+
+        assert results == ["https://signed/sync-shared"] * 4
+        assert sign_calls == 1
+
+    # On signing failure, waiting threads wake up cleanly without 30s timeout and return original URI.
+    signer_mod.clear_signer_cache()
+    started.clear()
+    release.clear()
+
+    def failing_sign(version, expiration, method, credentials):
+        del version, expiration, method, credentials
+        started.set()
+        assert release.wait(timeout=2.0)
+        raise RuntimeError("boom")
+
+    with patch.object(signer_mod.storage, "Client") as storage_cls:
+        mock_blob = MagicMock()
+        mock_blob.generate_signed_url.side_effect = failing_sign
+        storage_cls.return_value.bucket.return_value.blob.return_value = (
+            mock_blob
+        )
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            futures = [
+                pool.submit(
+                    signer.generate_presigned_url, "gs://b/sync-fail.webp"
+                )
+                for _ in range(3)
+            ]
+            assert started.wait(timeout=2.0)
+            time.sleep(0.05)
+            release.set()
+            results = [f.result(timeout=2.0) for f in futures]
+
+        assert results == ["gs://b/sync-fail.webp"] * 3

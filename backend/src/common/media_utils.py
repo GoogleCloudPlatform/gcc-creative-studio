@@ -149,8 +149,16 @@ def generate_thumbnail(video_path: str) -> str | None:
         thumbnail_path,
     ]
     try:
-        subprocess.run(command, check=True, capture_output=True, text=True)
+        subprocess.run(
+            command, check=True, capture_output=True, text=True, timeout=30
+        )
         return thumbnail_path
+    except subprocess.TimeoutExpired:
+        logger.error(
+            "Timed out generating video thumbnail for %s after 30s.",
+            video_path,
+        )
+        return None
     except FileNotFoundError:
         logger.error(
             "ffmpeg not found. Please ensure ffmpeg is installed and in "

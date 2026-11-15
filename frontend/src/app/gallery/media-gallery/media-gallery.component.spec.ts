@@ -1462,5 +1462,21 @@ describe('MediaGalleryComponent', () => {
       emptyComp.ngOnInit();
       expect(emptyComp.isLoading).toBeFalse();
     });
+
+    it('clears images and groups synchronously when searchTerm runs', () => {
+      const sampleItem = {
+        id: 1,
+        itemType: 'media_item' as const,
+        workspaceId: 1,
+        createdAt: new Date().toISOString(),
+        metadata: {},
+      };
+      component.images = [sampleItem];
+      component.groups = [{title: 'Today', items: [sampleItem]}];
+
+      component.searchTerm();
+      expect(component.images).toEqual([]);
+      expect(component.groups).toEqual([]);
+    });
   });
 });

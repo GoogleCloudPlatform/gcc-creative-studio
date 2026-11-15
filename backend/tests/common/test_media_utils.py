@@ -128,11 +128,22 @@ def test_generate_thumbnail_video_success():
 
         assert res == "/tmp/thumbnail_video.jpg"
         mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs.get("timeout") == 30
         cmd = mock_run.call_args.args[0]
         assert "-vf" in cmd
         assert "scale='min(512,iw)':-2" in cmd
         assert "-q:v" in cmd
         assert "4" in cmd
+
+
+def test_generate_thumbnail_timeout():
+    import subprocess
+
+    with patch(
+        "src.common.media_utils.subprocess.run",
+        side_effect=subprocess.TimeoutExpired(cmd="ffmpeg", timeout=30),
+    ):
+        assert generate_thumbnail("/tmp/slow.mp4") is None
 
 
 def test_infer_thumbnail_mime_and_ext():

@@ -432,7 +432,7 @@ async def test_schedule_post_auth_session_nonblocking_dedup_and_error_recovery(
         )
         assert mock_tick.call_count == 1
     assert len(workflow_dispatcher._BACKGROUND_POST_AUTH_TASKS) == 1
-    assert 9 in workflow_dispatcher._INFLIGHT_POST_AUTH_USERS
+    assert 9 in workflow_dispatcher._INFLIGHT_POST_AUTH_TOKEN_HASH
 
     # Let the background task run past gate.wait() and clean up.
     gate.set()
@@ -440,7 +440,7 @@ async def test_schedule_post_auth_session_nonblocking_dedup_and_error_recovery(
         *tuple(workflow_dispatcher._BACKGROUND_POST_AUTH_TASKS)
     )
     assert session_opens == 1
-    assert 9 not in workflow_dispatcher._INFLIGHT_POST_AUTH_USERS
+    assert 9 not in workflow_dispatcher._INFLIGHT_POST_AUTH_TOKEN_HASH
     assert len(workflow_dispatcher._BACKGROUND_POST_AUTH_TASKS) == 0
 
     # 3. Errors inside background session are caught without leaking or leaving user stuck.
@@ -461,5 +461,106 @@ async def test_schedule_post_auth_session_nonblocking_dedup_and_error_recovery(
     await asyncio.gather(
         *tuple(workflow_dispatcher._BACKGROUND_POST_AUTH_TASKS)
     )
-    assert 9 not in workflow_dispatcher._INFLIGHT_POST_AUTH_USERS
+    assert 9 not in workflow_dispatcher._INFLIGHT_POST_AUTH_TOKEN_HASH
     assert len(workflow_dispatcher._BACKGROUND_POST_AUTH_TASKS) == 0
+
+
+async def test_schedule_post_auth_session_persists_rotated_token_arriving_inflight(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    import asyncio
+    import hashlib
+
+    from src.workflows.queue import workflow_dispatcher
+
+    key = Fernet.generate_key().decode("ascii")
+    monkeypatch.setattr(
+        "src.config.config_service.config_service.WORKFLOW_TOKEN_ENCRYPTION_KEY",
+        key,
+    )
+    exp_ts = int((FIXED_NOW + datetime.timedelta(hours=1)).timestamp())
+    token_v1 = _make_jwt(exp_ts)
+    token_v2 = _make_jwt(exp_ts + 60)
+    user = UserModel(
+        id=14,
+        email="rotated@example.com",
+        name="User",
+        roles=[UserRoleEnum.USER],
+    )
+
+    gate = asyncio.Event()
+    session_opens = 0
+    fake_db = AsyncMock()
+    unpark_result = MagicMock()
+    unpark_result.scalars.return_value.all.return_value = []
+    no_due_result = MagicMock()
+    no_due_result.scalar_one_or_none.return_value = None
+    fake_db.execute = AsyncMock(
+        side_effect=[
+            MagicMock(),
+            unpark_result,
+            no_due_result,
+            MagicMock(),
+            unpark_result,
+        ]
+    )
+
+    @asynccontextmanager
+    async def session_factory():
+        nonlocal session_opens
+        session_opens += 1
+        if session_opens == 1:
+            await gate.wait()
+        yield fake_db
+
+    workflow_dispatcher.schedule_post_auth_session(
+        user,
+        token_v1,
+        exp_ts,
+        session_factory=session_factory,
+        clock=lambda: FIXED_NOW,
+    )
+    # Rotated token arrives while first task is blocked -> queued, throttle not consumed again.
+    workflow_dispatcher.schedule_post_auth_session(
+        user,
+        token_v2,
+        exp_ts + 60,
+        session_factory=session_factory,
+        clock=lambda: FIXED_NOW,
+    )
+    assert 14 in workflow_dispatcher._PENDING_POST_AUTH_ROTATIONS
+
+    gate.set()
+    await asyncio.gather(
+        *tuple(workflow_dispatcher._BACKGROUND_POST_AUTH_TASKS)
+    )
+    assert session_opens == 2
+    assert (
+        workflow_dispatcher._LAST_STORED_USER_TOKEN_HASH[14]
+        == hashlib.sha256(token_v2.encode()).hexdigest()
+    )
+    assert 14 not in workflow_dispatcher._INFLIGHT_POST_AUTH_TOKEN_HASH
+    assert 14 not in workflow_dispatcher._PENDING_POST_AUTH_ROTATIONS
+
+
+def test_schedule_post_auth_session_without_running_loop():
+    import warnings
+
+    from src.workflows.queue import workflow_dispatcher
+
+    workflow_dispatcher.reset_dispatch_tick_throttle()
+    user = UserModel(
+        id=15,
+        email="sync@example.com",
+        name="Sync",
+        roles=[UserRoleEnum.USER],
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", RuntimeWarning)
+        workflow_dispatcher.schedule_post_auth_session(
+            user, _make_jwt(1890000000), 1890000000
+        )
+
+    assert not [w for w in caught if issubclass(w.category, RuntimeWarning)]
+    assert workflow_dispatcher._last_tick_monotonic is None
+    assert workflow_dispatcher._INFLIGHT_POST_AUTH_TOKEN_HASH == {}

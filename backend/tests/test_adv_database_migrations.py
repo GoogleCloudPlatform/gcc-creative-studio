@@ -162,7 +162,7 @@ def test_alembic_single_head_is_gallery_indexes():
 
 
 def test_gallery_performance_indexes_upgrade_and_downgrade():
-    """Verifies all 7 partial/tag indexes are created and dropped without touching the view."""
+    """Verifies all 8 partial/tag indexes are created and dropped without touching the view."""
     import importlib.util
     from pathlib import Path
 

@@ -109,6 +109,10 @@ export class GalleryService implements OnDestroy {
   }
 
   setFilters(filters: GallerySearchDto) {
+    if (this.workspaceStateService.getActiveWorkspaceId()) {
+      this.isLoading$.next(true);
+      this.allImagesLoaded$.next(false);
+    }
     this.filters$.next(filters);
   }
 

@@ -169,14 +169,14 @@ class IamSignerCredentials(credentials.Signing):
         if not gcs_uri or not gcs_uri.startswith("gs://"):
             return gcs_uri or ""
 
+        # Get the service account email from an environment variable.
+        if not self.service_account_email:
+            return gcs_uri
+
         # Check cache first
         cached_url = self._get_cached_url(gcs_uri, expiration_hours)
         if cached_url:
             return cached_url
-
-        # Get the service account email from an environment variable.
-        if not self.service_account_email:
-            return gcs_uri
 
         cache_key = (gcs_uri, expiration_hours, "GET")
         is_owner = False
@@ -249,12 +249,12 @@ class IamSignerCredentials(credentials.Signing):
         if not gcs_uri or not gcs_uri.startswith("gs://"):
             return gcs_uri or ""
 
+        if not self.service_account_email:
+            return gcs_uri
+
         cached_url = self._get_cached_url(gcs_uri, expiration_hours)
         if cached_url:
             return cached_url
-
-        if not self.service_account_email:
-            return gcs_uri
 
         loop = asyncio.get_running_loop()
         cache_key = (gcs_uri, expiration_hours, "GET")
