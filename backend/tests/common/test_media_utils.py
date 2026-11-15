@@ -14,28 +14,35 @@
 """Tests for Media Utils."""
 
 
+import io
+import os
+import shutil
+import subprocess
+import tracemalloc
 from unittest.mock import MagicMock, patch
 
+from PIL import Image
+import pytest
+
 from src.common.media_utils import (
+    VIDEO_THUMBNAIL_EXT,
+    VIDEO_THUMBNAIL_MIME_TYPE,
     concatenate_videos,
     extract_youtube_video_id,
     format_api_error_message,
     generate_image_thumbnail_bytes,
     generate_image_thumbnail_from_gcs,
     generate_thumbnail,
+    generate_video_thumbnail_from_gcs,
     get_video_dimensions,
     get_youtube_aspect_ratio,
 )
 
 
 def test_generate_image_thumbnail_bytes_success():
-    import io
-
-    from PIL import Image
-
     buf = io.BytesIO()
     Image.new("RGB", (1024, 512), color=(10, 20, 30)).save(buf, format="PNG")
-    res = generate_image_thumbnail_bytes(buf.getvalue(), "image/png")
+    res = generate_image_thumbnail_bytes(buf.getvalue())
 
     assert res is not None
     assert res[:4] == b"RIFF"
@@ -46,10 +53,6 @@ def test_generate_image_thumbnail_bytes_success():
 
 
 def test_generate_image_thumbnail_bytes_preserves_alpha_and_exif():
-    import io
-
-    from PIL import Image
-
     # RGBA alpha preserved
     rgba_buf = io.BytesIO()
     Image.new("RGBA", (600, 300), color=(255, 0, 0, 128)).save(
@@ -62,7 +65,7 @@ def test_generate_image_thumbnail_bytes_preserves_alpha_and_exif():
         assert out.mode == "RGBA"
         assert out.size == (512, 256)
 
-    # EXIF orientation 6 (Rotate 90 CW -> 800x400 becomes 400x800, scaled to 256x512)
+    # EXIF orientation 6 (Rotate 90 CW -> 800x400 becomes 400x800 -> 256x512)
     exif_img = Image.new("RGB", (800, 400), color=(0, 128, 255))
     exif = exif_img.getexif()
     exif[0x0112] = 6
@@ -79,7 +82,7 @@ def test_generate_image_thumbnail_bytes_preserves_alpha_and_exif():
 def test_generate_image_thumbnail_bytes_error():
     with patch("src.common.media_utils.PILImage.open") as mock_open:
         mock_open.side_effect = Exception("Pillow Error")
-        res = generate_image_thumbnail_bytes(b"fakebytes", "image/png")
+        res = generate_image_thumbnail_bytes(b"fakebytes")
         assert res is None
 
 
@@ -98,7 +101,6 @@ def test_generate_image_thumbnail_from_gcs_success():
         res = generate_image_thumbnail_from_gcs(
             mock_gcs,
             "gs://bucket/image.png",
-            "image/png",
         )
 
         assert res == "gs://bucket/image_thumbnail.webp"
@@ -115,7 +117,6 @@ def test_generate_image_thumbnail_from_gcs_download_fail():
     res = generate_image_thumbnail_from_gcs(
         mock_gcs,
         "gs://bucket/image.png",
-        "image/png",
     )
     assert res is None
 
@@ -131,14 +132,16 @@ def test_generate_thumbnail_video_success():
         assert mock_run.call_args.kwargs.get("timeout") == 30
         cmd = mock_run.call_args.args[0]
         assert "-vf" in cmd
-        assert "scale='min(512,iw)':-2" in cmd
+        expected_scale = (
+            "scale='if(gt(iw,ih),min(512,iw),-2)':"
+            "'if(gt(iw,ih),-2,min(512,ih))'"
+        )
+        assert expected_scale in cmd
         assert "-q:v" in cmd
         assert "4" in cmd
 
 
 def test_generate_thumbnail_timeout():
-    import subprocess
-
     with patch(
         "src.common.media_utils.subprocess.run",
         side_effect=subprocess.TimeoutExpired(cmd="ffmpeg", timeout=30),
@@ -146,77 +149,170 @@ def test_generate_thumbnail_timeout():
         assert generate_thumbnail("/tmp/slow.mp4") is None
 
 
-def test_infer_thumbnail_mime_and_ext():
-    from src.common.media_utils import infer_thumbnail_mime_and_ext
+def test_generate_thumbnail_caps_portrait_and_landscape_dimensions(tmp_path):
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg binary not installed")
 
-    assert infer_thumbnail_mime_and_ext("/tmp/thumb.jpg") == (
+    assert (VIDEO_THUMBNAIL_MIME_TYPE, VIDEO_THUMBNAIL_EXT) == (
         "image/jpeg",
         ".jpg",
     )
-    assert infer_thumbnail_mime_and_ext("/tmp/thumb.jpeg") == (
-        "image/jpeg",
-        ".jpg",
+
+    portrait_mp4 = tmp_path / "portrait.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=1080x1920:d=0.1",
+            "-frames:v",
+            "1",
+            str(portrait_mp4),
+        ],
+        check=True,
+        capture_output=True,
     )
-    assert infer_thumbnail_mime_and_ext("/tmp/thumb.webp") == (
-        "image/webp",
-        ".webp",
+    portrait_thumb = generate_thumbnail(str(portrait_mp4))
+    assert portrait_thumb is not None
+    with Image.open(portrait_thumb) as img:
+        assert img.size == (288, 512)
+
+    landscape_mp4 = tmp_path / "landscape.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:s=1920x1080:d=0.1",
+            "-frames:v",
+            "1",
+            str(landscape_mp4),
+        ],
+        check=True,
+        capture_output=True,
     )
-    assert infer_thumbnail_mime_and_ext("/tmp/thumb.png") == (
-        "image/png",
-        ".png",
-    )
+    landscape_thumb = generate_thumbnail(str(landscape_mp4))
+    assert landscape_thumb is not None
+    with Image.open(landscape_thumb) as img:
+        assert img.size == (512, 288)
 
 
-def test_generate_video_thumbnail_from_gcs_success(tmp_path):
-    from src.common.media_utils import generate_video_thumbnail_from_gcs
+def test_generate_thumbnail_skips_when_ffmpeg_absent(tmp_path):
+    with patch("shutil.which", return_value=None):
+        with pytest.raises(pytest.skip.Exception):
+            test_generate_thumbnail_caps_portrait_and_landscape_dimensions(
+                tmp_path
+            )
 
+
+def test_generate_video_thumbnail_from_gcs_success():
     mock_gcs = MagicMock()
-    mock_gcs.download_bytes_from_gcs.return_value = b"fakevideo"
-    mock_gcs.upload_bytes_to_gcs.return_value = (
+    mock_gcs.download_stream_from_gcs.return_value = iter([b"part1", b"part2"])
+    mock_gcs.upload_file_to_gcs.return_value = (
         "gs://bucket/uploads/clip_thumbnail.jpg"
     )
-    fake_thumb = tmp_path / "thumbnail_clip.jpg"
-    fake_thumb.write_bytes(b"fakejpg")
+    captured: dict[str, str] = {}
+
+    def fake_generate_thumbnail(video_path: str) -> str:
+        captured["temp_dir"] = os.path.dirname(video_path)
+        thumb_path = os.path.join(captured["temp_dir"], "thumbnail_video.jpg")
+        with open(thumb_path, "wb") as f:
+            f.write(b"fakejpg")
+        return thumb_path
 
     with patch(
         "src.common.media_utils.generate_thumbnail",
-        return_value=str(fake_thumb),
+        side_effect=fake_generate_thumbnail,
     ):
         res = generate_video_thumbnail_from_gcs(
             mock_gcs, "gs://bucket/uploads/clip.mp4"
         )
 
     assert res == "gs://bucket/uploads/clip_thumbnail.jpg"
-    mock_gcs.download_bytes_from_gcs.assert_called_once_with(
+    mock_gcs.download_bytes_from_gcs.assert_not_called()
+    mock_gcs.download_stream_from_gcs.assert_called_once_with(
         "gs://bucket/uploads/clip.mp4"
     )
-    mock_gcs.upload_bytes_to_gcs.assert_called_once_with(
-        b"fakejpg",
-        "uploads/clip_thumbnail.jpg",
-        "image/jpeg",
+    upload_kwargs = mock_gcs.upload_file_to_gcs.call_args.kwargs
+    assert (
+        upload_kwargs["destination_blob_name"] == "uploads/clip_thumbnail.jpg"
     )
+    assert upload_kwargs["mime_type"] == "image/jpeg"
+    assert not os.path.exists(captured["temp_dir"])
+
+
+def test_generate_video_thumbnail_from_gcs_streams_without_full_buffering():
+    chunk_size = 8192
+    num_chunks = 4096  # 32 MiB virtual stream
+    mock_gcs = MagicMock()
+    mock_gcs.download_stream_from_gcs.return_value = (
+        b"v" * chunk_size for _ in range(num_chunks)
+    )
+    mock_gcs.upload_file_to_gcs.return_value = (
+        "gs://bucket/uploads/large_thumbnail.jpg"
+    )
+    captured: dict[str, int | str] = {}
+
+    def fake_generate_thumbnail(video_path: str) -> str:
+        captured["size"] = os.path.getsize(video_path)
+        captured["temp_dir"] = os.path.dirname(video_path)
+        thumb_path = os.path.join(captured["temp_dir"], "thumbnail_video.jpg")
+        with open(thumb_path, "wb") as f:
+            f.write(b"jpg-bytes")
+        return thumb_path
+
+    tracemalloc.start()
+    try:
+        with patch(
+            "src.common.media_utils.generate_thumbnail",
+            side_effect=fake_generate_thumbnail,
+        ):
+            res = generate_video_thumbnail_from_gcs(
+                mock_gcs, "gs://bucket/uploads/large.mp4"
+            )
+        _, peak_bytes = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert res == "gs://bucket/uploads/large_thumbnail.jpg"
+    assert captured["size"] == chunk_size * num_chunks
+    assert peak_bytes < 4 * 1024 * 1024
+    mock_gcs.download_bytes_from_gcs.assert_not_called()
+    assert not os.path.exists(str(captured["temp_dir"]))
 
 
 def test_generate_video_thumbnail_from_gcs_failures():
-    from src.common.media_utils import generate_video_thumbnail_from_gcs
-
     mock_gcs = MagicMock()
     assert (
         generate_video_thumbnail_from_gcs(mock_gcs, "https://bad/uri") is None
     )
     assert generate_video_thumbnail_from_gcs(mock_gcs, "gs://bucket/") is None
 
-    mock_gcs.download_bytes_from_gcs.return_value = None
+    mock_gcs.download_stream_from_gcs.return_value = iter([])
     assert (
         generate_video_thumbnail_from_gcs(mock_gcs, "gs://bucket/a.mp4") is None
     )
 
-    mock_gcs.download_bytes_from_gcs.return_value = b"video"
-    with patch("src.common.media_utils.generate_thumbnail", return_value=None):
+    mock_gcs.download_stream_from_gcs.return_value = iter([b"video"])
+    captured: dict[str, str] = {}
+
+    def fail_generate_thumbnail(video_path: str) -> None:
+        captured["temp_dir"] = os.path.dirname(video_path)
+        return None
+
+    with patch(
+        "src.common.media_utils.generate_thumbnail",
+        side_effect=fail_generate_thumbnail,
+    ):
         assert (
             generate_video_thumbnail_from_gcs(mock_gcs, "gs://bucket/a.mp4")
             is None
         )
+    assert not os.path.exists(captured["temp_dir"])
 
 
 def test_generate_thumbnail_video_empty():
@@ -225,16 +321,16 @@ def test_generate_thumbnail_video_empty():
 
 
 def test_concatenate_videos_success():
-    with patch("src.common.media_utils.subprocess.run") as mock_run:
-        with patch(
-            "src.common.media_utils.open", create=True
-        ) as mock_file_open:
-            mock_run.return_value.returncode = 0
-            res = concatenate_videos(
-                ["/tmp/v1.mp4", "/tmp/v2.mp4"], "/tmp/output.mp4"
-            )
-            assert res == "/tmp/output.mp4"
-            mock_run.assert_called_once()
+    with (
+        patch("src.common.media_utils.subprocess.run") as mock_run,
+        patch("src.common.media_utils.open", create=True),
+    ):
+        mock_run.return_value.returncode = 0
+        res = concatenate_videos(
+            ["/tmp/v1.mp4", "/tmp/v2.mp4"], "/tmp/output.mp4"
+        )
+        assert res == "/tmp/output.mp4"
+        mock_run.assert_called_once()
 
 
 def test_concatenate_videos_too_few():
@@ -260,7 +356,6 @@ def test_generate_image_thumbnail_from_gcs_exception():
     res = generate_image_thumbnail_from_gcs(
         mock_gcs,
         "gs://bucket/image.png",
-        "image/png",
     )
     assert res is None
 
@@ -274,8 +369,6 @@ def test_generate_thumbnail_ffmpeg_not_found():
 
 def test_generate_thumbnail_called_process_error():
     with patch("src.common.media_utils.subprocess.run") as mock_run:
-        import subprocess
-
         mock_run.side_effect = subprocess.CalledProcessError(
             1, "cmd", stderr="error"
         )
@@ -284,33 +377,31 @@ def test_generate_thumbnail_called_process_error():
 
 
 def test_concatenate_videos_ffmpeg_not_found():
-    with patch("src.common.media_utils.subprocess.run") as mock_run:
-        with patch(
-            "src.common.media_utils.open", create=True
-        ) as mock_file_open:
-            mock_run.side_effect = FileNotFoundError()
-            res = concatenate_videos(
-                ["/tmp/v1.mp4", "/tmp/v2.mp4"], "/tmp/output.mp4"
-            )
-            assert res is None
+    with (
+        patch("src.common.media_utils.subprocess.run") as mock_run,
+        patch("src.common.media_utils.open", create=True),
+    ):
+        mock_run.side_effect = FileNotFoundError()
+        res = concatenate_videos(
+            ["/tmp/v1.mp4", "/tmp/v2.mp4"], "/tmp/output.mp4"
+        )
+        assert res is None
 
 
 def test_concatenate_videos_called_process_error():
-    with patch("src.common.media_utils.subprocess.run") as mock_run:
-        with patch(
-            "src.common.media_utils.open", create=True
-        ) as mock_file_open:
-            import subprocess
-
-            mock_run.side_effect = subprocess.CalledProcessError(
-                1,
-                "cmd",
-                stderr="error",
-            )
-            res = concatenate_videos(
-                ["/tmp/v1.mp4", "/tmp/v2.mp4"], "/tmp/output.mp4"
-            )
-            assert res is None
+    with (
+        patch("src.common.media_utils.subprocess.run") as mock_run,
+        patch("src.common.media_utils.open", create=True),
+    ):
+        mock_run.side_effect = subprocess.CalledProcessError(
+            1,
+            "cmd",
+            stderr="error",
+        )
+        res = concatenate_videos(
+            ["/tmp/v1.mp4", "/tmp/v2.mp4"], "/tmp/output.mp4"
+        )
+        assert res is None
 
 
 def test_extract_youtube_video_id_valid_and_invalid():
@@ -349,12 +440,18 @@ def test_get_youtube_aspect_ratio():
 
 
 def test_format_api_error_message_content_blocked():
-    raw_error = "Error code: 400 - {'error': {'message': \"Unable to show the generated video. The output contains certain restricted individuals that violate Google's Responsible AI practices. Try rephrasing the prompt. If you think this was an error, send feedback.\", 'code': 'content_blocked'}}"
-    msg = format_api_error_message(Exception(raw_error))
-    assert (
-        msg
-        == "Unable to show the generated video. The output contains certain restricted individuals that violate Google's Responsible AI practices. Try rephrasing the prompt. If you think this was an error, send feedback."
+    expected_msg = (
+        "Unable to show the generated video. The output contains certain "
+        "restricted individuals that violate Google's Responsible AI practices. "
+        "Try rephrasing the prompt. If you think this was an error, "
+        "send feedback."
     )
+    raw_error = (
+        f"Error code: 400 - {{'error': {{'message': \"{expected_msg}\", "
+        "'code': 'content_blocked'}}"
+    )
+    msg = format_api_error_message(Exception(raw_error))
+    assert msg == expected_msg
 
 
 def test_format_api_error_message_restricted_individuals_fallback():

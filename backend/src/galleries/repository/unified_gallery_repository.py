@@ -11,16 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import datetime
+"""Repository for unified gallery pagination and workflow loop queries."""
+
 from collections.abc import Iterable
+import datetime
+from enum import Enum
 from typing import Any
 
-from src.workspaces.schema.workspace_model import Workspace
-from src.users.user_model import User
-
-
 from fastapi import Depends
-from sqlalchemy import and_, exists, func, literal, or_, select, union_all
+from sqlalchemy import and_, any_, exists, func, literal, or_, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.base_repository import BaseRepository
@@ -38,6 +37,7 @@ from src.tags.schema.tags_model import (
     media_item_tags,
     source_asset_tags,
 )
+from src.users.user_model import User
 
 # ``item_type`` values of the unified gallery view.
 LOOP_MEDIA_ITEM = "media_item"
@@ -63,7 +63,7 @@ class UnifiedGalleryRepository(
         search_dto: GallerySearchDto,
         user_id: int | None,
     ) -> Any:
-        """Applies shared gallery filters to a MediaItem or SourceAsset key query."""
+        """Applies shared gallery filters to a base-table key query."""
         if not search_dto.include_deleted:
             stmt = stmt.where(table.deleted_at.is_(None))
 
@@ -73,15 +73,16 @@ class UnifiedGalleryRepository(
         if user_id is not None:
             stmt = stmt.where(table.user_id == user_id)
 
-        if getattr(search_dto, "user_email", None):
-            stmt = stmt.join(User, table.user_id == User.id).where(
-                User.email == search_dto.user_email
+        if search_dto.user_email:
+            users_tbl = User.__table__
+            stmt = stmt.join(users_tbl, table.user_id == users_tbl.c.id).where(
+                users_tbl.c.email == search_dto.user_email
             )
 
         if search_dto.mime_type:
             mime_val = (
                 search_dto.mime_type.value
-                if hasattr(search_dto.mime_type, "value")
+                if isinstance(search_dto.mime_type, Enum)
                 else search_dto.mime_type
             )
             if "*" in mime_val:
@@ -91,18 +92,18 @@ class UnifiedGalleryRepository(
             else:
                 stmt = stmt.where(table.mime_type == mime_val)
 
-        if getattr(search_dto, "start_date", None):
+        if search_dto.start_date:
             stmt = stmt.where(table.created_at >= search_dto.start_date)
 
-        if getattr(search_dto, "end_date", None):
+        if search_dto.end_date:
             stmt = stmt.where(
                 table.created_at
                 < search_dto.end_date + datetime.timedelta(days=1)
             )
 
-        if getattr(search_dto, "is_root", False):
+        if search_dto.is_root:
             stmt = stmt.where(table.folder_id.is_(None))
-        elif getattr(search_dto, "folder_id", None) is not None:
+        elif search_dto.folder_id is not None:
             stmt = stmt.where(table.folder_id == search_dto.folder_id)
 
         return stmt
@@ -111,14 +112,19 @@ class UnifiedGalleryRepository(
         self,
         search_dto: GallerySearchDto,
         user_id: int | None = None,
+        *,
+        top_n: int | None = None,
     ) -> Any | None:
         """Builds a base-table subquery yielding (id, item_type, created_at).
 
         Filtering and sorting directly against the indexed base tables avoids
         scanning all rows through ``unified_gallery_view`` (and constructing
         per-row JSONB + tag aggregation) just to count or discard non-page rows.
+        When ``top_n`` is supplied for page-key selection across multiple
+        branches, each branch is pre-limited by ``(created_at DESC, id DESC)``
+        so Postgres can merge-append top keys without sorting the full table.
         """
-        item_type = getattr(search_dto, "item_type", None)
+        item_type = search_dto.item_type
         include_media = True
         include_source = True
         if item_type == LOOP_MEDIA_ITEM:
@@ -135,8 +141,8 @@ class UnifiedGalleryRepository(
             include_source = False
 
         branches: list[Any] = []
-        tags = getattr(search_dto, "tags", None) or []
-        search_text = getattr(search_dto, "query", None)
+        tags = search_dto.tags or []
+        search_text = search_dto.query
         search_pattern = f"%{search_text}%" if search_text else None
 
         if include_media:
@@ -177,6 +183,11 @@ class UnifiedGalleryRepository(
                     | func.coalesce(MediaItem.comment, "").ilike(search_pattern)
                     | func.coalesce(MediaItem.model, "").ilike(search_pattern)
                 )
+            if top_n is not None and include_source:
+                media_stmt = media_stmt.order_by(
+                    MediaItem.created_at.desc(),
+                    MediaItem.id.desc(),
+                ).limit(top_n)
             branches.append(media_stmt)
 
         if include_source:
@@ -215,6 +226,11 @@ class UnifiedGalleryRepository(
                         search_pattern
                     )
                 )
+            if top_n is not None and include_media:
+                source_stmt = source_stmt.order_by(
+                    SourceAsset.created_at.desc(),
+                    SourceAsset.id.desc(),
+                ).limit(top_n)
             branches.append(source_stmt)
 
         if not branches:
@@ -228,17 +244,20 @@ class UnifiedGalleryRepository(
         search_dto: GallerySearchDto,
         user_id: int | None = None,
     ) -> PaginationResponseDto[UnifiedGalleryItemResponse]:
-        """Performs a two-stage paginated query on the gallery base tables and view.
+        """Runs a two-stage paginated query on gallery base tables and view.
 
-        user_id is resolved from search_dto.user_email in the Service layer if present.
+        Contract note: relies on the columns, eligibility, and metadata shape of
+        ``unified_gallery_view`` defined in
+        ``d4e5f6a7b8c9_create_folders_and_hierarchy.py``. ``user_id`` is
+        resolved from ``search_dto.user_email`` in the service layer when set.
         """
         page = (search_dto.offset // search_dto.limit) + 1
         page_size = search_dto.limit
 
-        keys_subq = self._build_filtered_keys_subquery(
+        count_keys_subq = self._build_filtered_keys_subquery(
             search_dto, user_id=user_id
         )
-        if keys_subq is None:
+        if count_keys_subq is None:
             return PaginationResponseDto[UnifiedGalleryItemResponse](
                 count=0,
                 page=page,
@@ -247,8 +266,10 @@ class UnifiedGalleryRepository(
                 data=[],
             )
 
-        # Stage 1: Count matching keys directly on base tables without JSONB view work.
-        count_query = select(func.count()).select_from(keys_subq)
+        # Stage 1: Count matching keys on base tables without view JSONB work.
+        count_query = select(func.count()).select_from(count_keys_subq)
+        if search_dto.include_deleted:
+            count_query = count_query.execution_options(include_deleted=True)
         count_result = await self.db.execute(count_query)
         total_count = count_result.scalar_one()
 
@@ -262,43 +283,66 @@ class UnifiedGalleryRepository(
                 data=[],
             )
 
-        # Stage 2: Page keys on base tables, then hydrate only the visible slice from the view.
+        # Stage 2: Page keys on base tables, then push branch IDs into
+        # unified_gallery_view so Postgres resolves only page rows via PKs.
+        page_keys_subq = self._build_filtered_keys_subquery(
+            search_dto,
+            user_id=user_id,
+            top_n=search_dto.offset + search_dto.limit,
+        )
         page_keys = (
             select(
-                keys_subq.c.id,
-                keys_subq.c.item_type,
-                keys_subq.c.created_at,
+                page_keys_subq.c.id,
+                page_keys_subq.c.item_type,
+                page_keys_subq.c.created_at,
             )
             .order_by(
-                keys_subq.c.created_at.desc(),
-                keys_subq.c.id.desc(),
-                keys_subq.c.item_type.desc(),
+                page_keys_subq.c.created_at.desc(),
+                page_keys_subq.c.id.desc(),
+                page_keys_subq.c.item_type.desc(),
             )
             .offset(search_dto.offset)
             .limit(search_dto.limit)
             .cte("page_keys")
         )
+        # Filter each UNION ALL branch of unified_gallery_view by a constant
+        # item_type + scalar ARRAY(...) so the planner pushes Index Scans down.
         query = (
             select(self.model)
-            .join(
-                page_keys,
-                and_(
-                    self.model.id == page_keys.c.id,
-                    self.model.item_type == page_keys.c.item_type,
-                ),
+            .where(
+                or_(
+                    *(
+                        and_(
+                            self.model.item_type == branch_type,
+                            self.model.id
+                            == any_(
+                                func.array(
+                                    select(page_keys.c.id)
+                                    .where(page_keys.c.item_type == branch_type)
+                                    .scalar_subquery()
+                                )
+                            ),
+                        )
+                        for branch_type in (
+                            LOOP_MEDIA_ITEM,
+                            LOOP_SOURCE_ASSET,
+                        )
+                    )
+                )
             )
             .order_by(
-                page_keys.c.created_at.desc(),
-                page_keys.c.id.desc(),
-                page_keys.c.item_type.desc(),
+                self.model.created_at.desc(),
+                self.model.id.desc(),
+                self.model.item_type.desc(),
             )
         )
+        if search_dto.include_deleted:
+            query = query.execution_options(include_deleted=True)
 
         result = await self.db.execute(query)
         rows = result.scalars().all()
 
         data = [self.schema.model_validate(item) for item in rows]
-        total_pages = (total_count + page_size - 1) // page_size
 
         return PaginationResponseDto[UnifiedGalleryItemResponse](
             count=total_count,

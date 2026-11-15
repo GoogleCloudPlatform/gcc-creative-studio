@@ -778,8 +778,8 @@ class WorkflowDispatcher:
 # --- Process-wide throttled tick & post-auth hook wiring -----
 
 _last_tick_monotonic: float | None = None
-# SHA-256 digests (never raw tokens) of the last ID token persisted per user;
-# only used to detect token changes without keeping credentials in memory.
+# SHA-256 digests (never raw tokens) skip redundant DB writes when unchanged;
+# _PENDING_POST_AUTH_ROTATIONS keeps only the latest coalesced rotation.
 _LAST_STORED_USER_TOKEN_HASH: dict[int, str] = {}
 _BACKGROUND_POST_AUTH_TASKS: set[asyncio.Task[Any]] = set()
 _INFLIGHT_POST_AUTH_TOKEN_HASH: dict[int, str] = {}
@@ -932,6 +932,9 @@ def schedule_post_auth_session(
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
+        logger.debug(
+            "Skipping post-auth session scheduling: no running event loop."
+        )
         return
 
     _, token_hash, token_changed = _inspect_token_change(user.id, token)
@@ -982,13 +985,32 @@ def schedule_post_auth_session(
                 user_id,
                 exc_info=True,
             )
+        finally:
+            _INFLIGHT_POST_AUTH_TOKEN_HASH.pop(user_id, None)
+            _PENDING_POST_AUTH_ROTATIONS.pop(user_id, None)
 
-    task = loop.create_task(_runner())
+    try:
+        task = loop.create_task(_runner())
+    except RuntimeError:
+        _INFLIGHT_POST_AUTH_TOKEN_HASH.pop(user_id, None)
+        _PENDING_POST_AUTH_ROTATIONS.pop(user_id, None)
+        logger.debug(
+            "Skipping post-auth session scheduling: event loop is closing."
+        )
+        return
     _BACKGROUND_POST_AUTH_TASKS.add(task)
 
     def _on_done(done_task: asyncio.Task[Any]) -> None:
         _BACKGROUND_POST_AUTH_TASKS.discard(done_task)
-        _INFLIGHT_POST_AUTH_TOKEN_HASH.pop(user_id, None)
-        _PENDING_POST_AUTH_ROTATIONS.pop(user_id, None)
+        if done_task.cancelled():
+            _INFLIGHT_POST_AUTH_TOKEN_HASH.pop(user_id, None)
+            _PENDING_POST_AUTH_ROTATIONS.pop(user_id, None)
 
     task.add_done_callback(_on_done)
+
+
+async def drain_post_auth_tasks() -> None:
+    """Awaits active background post-auth session tasks during shutdown."""
+    while _BACKGROUND_POST_AUTH_TASKS:
+        pending = tuple(_BACKGROUND_POST_AUTH_TASKS)
+        await asyncio.gather(*pending, return_exceptions=True)

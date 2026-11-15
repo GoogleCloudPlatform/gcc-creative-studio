@@ -19,9 +19,8 @@ import {
   HttpClientTestingModule,
   HttpTestingController,
 } from '@angular/common/http/testing';
+import {Firestore} from '@angular/fire/firestore';
 import {TestBed} from '@angular/core/testing';
-import {NavigationEnd, Router} from '@angular/router';
-import {Subject} from 'rxjs';
 import {environment} from '../../../environments/environment';
 import {WorkspaceRole} from '../../common/models/workspace-member.model';
 import {Workspace, WorkspaceScope} from '../../common/models/workspace.model';
@@ -48,7 +47,7 @@ describe('WorkspaceService', () => {
     );
     TestBed.configureTestingModule({
       imports: [HttpClientTestingModule],
-      providers: [WorkspaceService],
+      providers: [WorkspaceService, {provide: Firestore, useValue: {}}],
     });
     service = TestBed.inject(WorkspaceService);
     httpMock = TestBed.inject(HttpTestingController);
@@ -99,7 +98,7 @@ describe('WorkspaceService', () => {
     expect(latest).toEqual(mockWorkspaces);
   });
 
-  it('invalidates cache on clearCache, forceRefresh, user change, and mutations', () => {
+  it('invalidates cache on clearCache, user change, and mutations', () => {
     service.getWorkspaces().subscribe();
     httpMock.expectOne(apiUrl).flush(mockWorkspaces);
 
@@ -109,12 +108,6 @@ describe('WorkspaceService', () => {
     const afterClear = httpMock.expectOne(apiUrl);
     expect(afterClear.request.method).toBe('GET');
     afterClear.flush(mockWorkspaces);
-
-    // forceRefresh forces a fresh HTTP call even inside TTL.
-    service.getWorkspaces(true).subscribe();
-    const afterForce = httpMock.expectOne(apiUrl);
-    expect(afterForce.request.method).toBe('GET');
-    afterForce.flush(mockWorkspaces);
 
     // Switching logged-in user invalidates previous user's cache.
     localStorage.setItem(
@@ -166,7 +159,11 @@ describe('WorkspaceService', () => {
     TestBed.resetTestingModule();
     TestBed.configureTestingModule({
       imports: [HttpClientTestingModule],
-      providers: [WorkspaceService, {provide: PLATFORM_ID, useValue: 'server'}],
+      providers: [
+        WorkspaceService,
+        {provide: PLATFORM_ID, useValue: 'server'},
+        {provide: Firestore, useValue: {}},
+      ],
     });
     const ssrService = TestBed.inject(WorkspaceService);
     const ssrHttpMock = TestBed.inject(HttpTestingController);
@@ -205,34 +202,7 @@ describe('WorkspaceService', () => {
     reqNoId.flush(mockWorkspaces);
   });
 
-  it('clears cached workspaces automatically on navigation to /login', () => {
-    const events$ = new Subject<NavigationEnd>();
-    TestBed.resetTestingModule();
-    TestBed.configureTestingModule({
-      imports: [HttpClientTestingModule],
-      providers: [
-        WorkspaceService,
-        {provide: Router, useValue: {events: events$}},
-      ],
-    });
-    const routedService = TestBed.inject(WorkspaceService);
-    const routedHttpMock = TestBed.inject(HttpTestingController);
-
-    routedService.getWorkspaces().subscribe();
-    const req1 = routedHttpMock.expectOne(apiUrl);
-    expect(req1.request.method).toBe('GET');
-    req1.flush(mockWorkspaces);
-
-    events$.next(new NavigationEnd(1, '/login', '/login'));
-
-    routedService.getWorkspaces().subscribe();
-    const req2 = routedHttpMock.expectOne(apiUrl);
-    expect(req2.request.method).toBe('GET');
-    req2.flush(mockWorkspaces);
-    routedHttpMock.verify();
-  });
-
-  it('clears cache on unsubscribed mid-flight error and isolates stale request failures after forceRefresh', () => {
+  it('clears cache on unsubscribed mid-flight error and isolates stale request failures after clearCache', () => {
     // 1. Unsubscribed mid-flight 500 clears cache instead of caching error in ReplaySubject.
     const sub = service.getWorkspaces().subscribe({error: () => {}});
     const req1 = httpMock.expectOne(apiUrl);
@@ -245,7 +215,7 @@ describe('WorkspaceService', () => {
     req2.flush(mockWorkspaces);
     expect(recovered).toEqual(mockWorkspaces);
 
-    // 2. Stale failed request after forceRefresh does not clear newer request cache.
+    // 2. Stale failed request after clearCache does not clear newer request cache.
     service.clearCache();
     let staleErrored = false;
     service.getWorkspaces().subscribe({
@@ -253,7 +223,8 @@ describe('WorkspaceService', () => {
         staleErrored = true;
       },
     });
-    service.getWorkspaces(true).subscribe();
+    service.clearCache();
+    service.getWorkspaces().subscribe();
 
     const [staleReq, freshReq] = httpMock.match(apiUrl);
     staleReq.flush('Stale Error', {status: 500, statusText: 'Server Error'});

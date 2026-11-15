@@ -26,6 +26,7 @@ from src.auth.iam_signer_credentials_service import (
     DEFAULT_PRESIGNED_EXPIRATION_HOURS,
     IamSignerCredentials,
     clear_signer_cache,
+    shutdown_signing_executor,
 )
 
 
@@ -126,6 +127,16 @@ def test_six_hour_ttl_and_refresh_buffer():
         assert url3 == "https://signed/refreshed"
         assert mock_blob.generate_signed_url.call_count == 2
 
+        # Explicit expiration_hours override bypasses default 6h cache entry.
+        mock_blob.generate_signed_url.side_effect = ["https://signed/custom-2h"]
+        url_2h = signer.generate_presigned_url(
+            "gs://bucket/a.webp", expiration_hours=2
+        )
+        assert url_2h == "https://signed/custom-2h"
+        assert mock_blob.generate_signed_url.call_args.kwargs[
+            "expiration"
+        ] == datetime.timedelta(hours=2)
+
 
 def test_lru_cache_eviction(monkeypatch):
     monkeypatch.setattr(signer_mod, "_MAX_URL_CACHE_SIZE", 2)
@@ -142,16 +153,34 @@ def test_lru_cache_eviction(monkeypatch):
         )
 
         signer = IamSignerCredentials()
-        signer.generate_presigned_url("gs://b/1")
-        signer.generate_presigned_url("gs://b/2")
-        # Touch gs://b/1 so gs://b/2 becomes least-recently-used.
-        assert signer.generate_presigned_url("gs://b/1") == "https://signed/1"
-        signer.generate_presigned_url("gs://b/3")
+        signer.generate_presigned_url("gs://bucket/obj1")
+        signer.generate_presigned_url("gs://bucket/obj2")
+        # Touch obj1 so obj2 becomes least-recently-used.
+        assert (
+            signer.generate_presigned_url("gs://bucket/obj1")
+            == "https://signed/1"
+        )
+        assert (
+            signer.generate_presigned_url("gs://bucket/obj3")
+            == "https://signed/3"
+        )
+        assert mock_blob.generate_signed_url.call_count == 3
 
-        assert len(IamSignerCredentials._url_cache) == 2
-        assert ("gs://b/1", 6, "GET") in IamSignerCredentials._url_cache
-        assert ("gs://b/3", 6, "GET") in IamSignerCredentials._url_cache
-        assert ("gs://b/2", 6, "GET") not in IamSignerCredentials._url_cache
+        # obj1 and obj3 stay cached, whereas evicted obj2 triggers a re-sign.
+        assert (
+            signer.generate_presigned_url("gs://bucket/obj1")
+            == "https://signed/1"
+        )
+        assert (
+            signer.generate_presigned_url("gs://bucket/obj3")
+            == "https://signed/3"
+        )
+        assert mock_blob.generate_signed_url.call_count == 3
+        assert (
+            signer.generate_presigned_url("gs://bucket/obj2")
+            == "https://signed/2-again"
+        )
+        assert mock_blob.generate_signed_url.call_count == 4
 
 
 @pytest.mark.anyio
@@ -289,72 +318,22 @@ def test_generate_v4_upload_signed_url_uses_shared_storage_client():
         storage_cls.assert_called_once()
 
 
-def test_generate_presigned_url_sync_multithread_inflight_dedup_and_error_wakeup():
-    from concurrent.futures import ThreadPoolExecutor
+@pytest.mark.anyio
+async def test_signing_executor_lazy_init_and_shutdown():
+    shutdown_signing_executor()
+    assert signer_mod._signing_executor is None
 
     signer = IamSignerCredentials()
-    started = threading.Event()
-    release = threading.Event()
-    sign_calls = 0
-    call_lock = threading.Lock()
-
-    def blocking_sign(version, expiration, method, credentials):
-        del version, expiration, method, credentials
-        nonlocal sign_calls
-        with call_lock:
-            sign_calls += 1
-        started.set()
-        assert release.wait(timeout=2.0)
-        return "https://signed/sync-shared"
-
     with patch.object(signer_mod.storage, "Client") as storage_cls:
         mock_blob = MagicMock()
-        mock_blob.generate_signed_url.side_effect = blocking_sign
+        mock_blob.generate_signed_url.return_value = "https://signed/lazy"
         storage_cls.return_value.bucket.return_value.blob.return_value = (
             mock_blob
         )
-
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            futures = [
-                pool.submit(signer.generate_presigned_url, "gs://b/sync.webp")
-                for _ in range(4)
-            ]
-            assert started.wait(timeout=2.0)
-            time.sleep(0.05)
-            release.set()
-            results = [f.result(timeout=2.0) for f in futures]
-
-        assert results == ["https://signed/sync-shared"] * 4
-        assert sign_calls == 1
-
-    # On signing failure, waiting threads wake up cleanly without 30s timeout and return original URI.
-    signer_mod.clear_signer_cache()
-    started.clear()
-    release.clear()
-
-    def failing_sign(version, expiration, method, credentials):
-        del version, expiration, method, credentials
-        started.set()
-        assert release.wait(timeout=2.0)
-        raise RuntimeError("boom")
-
-    with patch.object(signer_mod.storage, "Client") as storage_cls:
-        mock_blob = MagicMock()
-        mock_blob.generate_signed_url.side_effect = failing_sign
-        storage_cls.return_value.bucket.return_value.blob.return_value = (
-            mock_blob
+        assert (
+            await signer.generate_presigned_url_async("gs://b/lazy.webp")
+            == "https://signed/lazy"
         )
-
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            futures = [
-                pool.submit(
-                    signer.generate_presigned_url, "gs://b/sync-fail.webp"
-                )
-                for _ in range(3)
-            ]
-            assert started.wait(timeout=2.0)
-            time.sleep(0.05)
-            release.set()
-            results = [f.result(timeout=2.0) for f in futures]
-
-        assert results == ["gs://b/sync-fail.webp"] * 3
+        assert signer_mod._signing_executor is not None
+    shutdown_signing_executor()
+    assert signer_mod._signing_executor is None

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Service layer for gallery search, enrichment, and bulk asset operations."""
+
 import asyncio
 import logging
 import mimetypes
@@ -104,15 +106,9 @@ class GalleryService:
         self.db = db
 
     async def _sign_uri(self, uri: str | None) -> str:
-        """Generates a presigned URL using the async signer when available."""
-        if isinstance(self.iam_signer_credentials, IamSignerCredentials):
-            return (
-                await self.iam_signer_credentials.generate_presigned_url_async(
-                    uri
-                )
-            )
-        return await asyncio.to_thread(
-            self.iam_signer_credentials.generate_presigned_url, uri
+        """Generates a presigned URL using the async signer."""
+        return await self.iam_signer_credentials.generate_presigned_url_async(
+            uri
         )
 
     async def _enrich_source_asset_link(

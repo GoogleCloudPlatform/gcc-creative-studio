@@ -33,13 +33,14 @@ from src.common.base_dto import (
 )
 from src.common.dto.pagination_response_dto import PaginationResponseDto
 from src.common.media_utils import (
+    VIDEO_THUMBNAIL_EXT,
+    VIDEO_THUMBNAIL_MIME_TYPE,
     extract_youtube_video_id,
     generate_image_thumbnail_bytes,
     generate_image_thumbnail_from_gcs,
     generate_thumbnail,
     generate_video_thumbnail_from_gcs,
     get_video_dimensions,
-    infer_thumbnail_mime_and_ext,
 )
 from src.common.storage_service import GcsService
 from src.images.dto.upscale_imagen_dto import UpscaleImagenDto
@@ -70,6 +71,7 @@ from src.users.repository.user_repository import UserRepository
 from src.users.user_model import UserModel, UserRoleEnum
 
 logger = logging.getLogger(__name__)
+MAX_INLINE_THUMBNAIL_BYTES = 50 * 1024 * 1024
 
 
 class SourceAssetService:
@@ -182,28 +184,17 @@ class SourceAssetService:
             return MimeTypeEnum.IMAGE_WEBP
         return MimeTypeEnum.IMAGE_PNG
 
-    async def _generate_image_asset_thumbnail(
+    async def _generate_image_thumbnail_from_bytes(
         self,
         user_id: int,
         file_hash: str,
-        final_gcs_uri: str,
-        original_gcs_uri: str | None,
         image_bytes: bytes,
     ) -> str | None:
-        """Generates and uploads a WebP thumbnail for an uploaded image asset."""
+        """Generates and uploads a WebP thumbnail from image bytes."""
         try:
-            if original_gcs_uri and final_gcs_uri != original_gcs_uri:
-                return await asyncio.to_thread(
-                    generate_image_thumbnail_from_gcs,
-                    self.gcs_service,
-                    final_gcs_uri,
-                    "image/webp",
-                )
 
             def _upload_from_bytes() -> str | None:
-                thumb_bytes = generate_image_thumbnail_bytes(
-                    image_bytes, "image/webp"
-                )
+                thumb_bytes = generate_image_thumbnail_bytes(image_bytes)
                 if not thumb_bytes:
                     return None
                 return self.gcs_service.store_to_gcs(
@@ -218,7 +209,7 @@ class SourceAssetService:
         except Exception as thumb_err:
             logger.warning(
                 "Failed to generate thumbnail for source asset %s: %s",
-                final_gcs_uri,
+                file_hash,
                 thumb_err,
             )
             return None
@@ -367,13 +358,10 @@ class SourceAssetService:
                 # Generate and upload thumbnail
                 thumbnail_path = generate_thumbnail(local_path)
                 if thumbnail_path:
-                    thumb_mime, thumb_ext = infer_thumbnail_mime_and_ext(
-                        thumbnail_path
-                    )
                     thumbnail_gcs_uri = self.gcs_service.upload_file_to_gcs(
                         local_path=thumbnail_path,
-                        destination_blob_name=f"source_assets/{user.id}/{file_hash}/thumbnail{thumb_ext}",
-                        mime_type=thumb_mime,
+                        destination_blob_name=f"source_assets/{user.id}/{file_hash}/thumbnail{VIDEO_THUMBNAIL_EXT}",
+                        mime_type=VIDEO_THUMBNAIL_MIME_TYPE,
                     )
             elif is_audio:
                 # --- Audio Upload Logic ---
@@ -506,15 +494,20 @@ class SourceAssetService:
                     final_gcs_uri = original_gcs_uri
 
                 if final_gcs_uri:
-                    thumbnail_gcs_uri = (
-                        await self._generate_image_asset_thumbnail(
-                            user_id=user.id,
-                            file_hash=file_hash,
-                            final_gcs_uri=final_gcs_uri,
-                            original_gcs_uri=original_gcs_uri,
-                            image_bytes=png_contents,
+                    if original_gcs_uri and final_gcs_uri != original_gcs_uri:
+                        thumbnail_gcs_uri = await asyncio.to_thread(
+                            generate_image_thumbnail_from_gcs,
+                            self.gcs_service,
+                            final_gcs_uri,
                         )
-                    )
+                    else:
+                        thumbnail_gcs_uri = (
+                            await self._generate_image_thumbnail_from_bytes(
+                                user_id=user.id,
+                                file_hash=file_hash,
+                                image_bytes=png_contents,
+                            )
+                        )
 
             if not final_gcs_uri:
                 raise RuntimeError("Failed to process and upload asset.")
@@ -671,27 +664,43 @@ class SourceAssetService:
         ).hexdigest()
 
         thumbnail_gcs_uri: str | None = None
-        try:
-            if content_type.startswith("image/"):
+        if content_type.startswith(("image/", "video/")):
+            try:
+                blob_size = await asyncio.to_thread(
+                    self._get_gcs_blob_size,
+                    request_dto.gcs_uri,
+                )
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.warning(
+                    "Could not inspect blob size for %s: %s",
+                    request_dto.gcs_uri,
+                    exc,
+                )
+                blob_size = request_dto.size
+
+            if blob_size is None:
+                blob_size = request_dto.size
+
+            if blob_size > MAX_INLINE_THUMBNAIL_BYTES:
+                logger.warning(
+                    "Skipping synchronous thumbnail generation for %s "
+                    "(%s bytes exceeds %s-byte limit).",
+                    request_dto.gcs_uri,
+                    blob_size,
+                    MAX_INLINE_THUMBNAIL_BYTES,
+                )
+            elif content_type.startswith("image/"):
                 thumbnail_gcs_uri = await asyncio.to_thread(
                     generate_image_thumbnail_from_gcs,
                     self.gcs_service,
                     request_dto.gcs_uri,
-                    content_type,
                 )
-            elif content_type.startswith("video/"):
+            else:
                 thumbnail_gcs_uri = await asyncio.to_thread(
                     generate_video_thumbnail_from_gcs,
                     self.gcs_service,
                     request_dto.gcs_uri,
                 )
-        except Exception as thumb_err:
-            logger.warning(
-                "Failed to generate thumbnail for direct upload %s: %s",
-                request_dto.gcs_uri,
-                thumb_err,
-            )
-            thumbnail_gcs_uri = None
 
         new_asset = SourceAssetModel(
             workspace_id=request_dto.workspace_id,
@@ -711,6 +720,23 @@ class SourceAssetService:
         new_asset.id = created_asset.id
 
         return await self._create_asset_response(new_asset)
+
+    def _get_gcs_blob_size(self, gcs_uri: str) -> int | None:
+        """Returns GCS blob size in bytes, reloading metadata when absent."""
+        if not gcs_uri.startswith("gs://"):
+            return None
+        parts = gcs_uri[5:].split("/", 1)
+        if len(parts) != 2 or not parts[1]:
+            return None
+        bucket = self.gcs_service.client.bucket(parts[0])
+        blob = bucket.blob(parts[1])
+        if blob.size is None:
+            blob.reload()
+        return (
+            blob.size
+            if isinstance(blob.size, int) and not isinstance(blob.size, bool)
+            else None
+        )
 
     async def convert_to_png(self, file: UploadFile) -> bytes:
         """Converts an uploaded image file (including HEIC/HEIF) to PNG format in memory."""
@@ -986,13 +1012,10 @@ class SourceAssetService:
                 # Generate and upload thumbnail
                 thumbnail_path = generate_thumbnail(local_path)
                 if thumbnail_path:
-                    thumb_mime, thumb_ext = infer_thumbnail_mime_and_ext(
-                        thumbnail_path
-                    )
                     thumbnail_gcs_uri = self.gcs_service.upload_file_to_gcs(
                         local_path=thumbnail_path,
-                        destination_blob_name=f"source_assets/{user.id}/{file_hash}/thumbnail{thumb_ext}",
-                        mime_type=thumb_mime,
+                        destination_blob_name=f"source_assets/{user.id}/{file_hash}/thumbnail{VIDEO_THUMBNAIL_EXT}",
+                        mime_type=VIDEO_THUMBNAIL_MIME_TYPE,
                     )
             else:
                 # --- Image Upload & Upscale Logic ---
@@ -1028,11 +1051,9 @@ class SourceAssetService:
                 )
                 if final_gcs_uri:
                     thumbnail_gcs_uri = (
-                        await self._generate_image_asset_thumbnail(
+                        await self._generate_image_thumbnail_from_bytes(
                             user_id=user.id,
                             file_hash=file_hash,
-                            final_gcs_uri=final_gcs_uri,
-                            original_gcs_uri=final_gcs_uri,
                             image_bytes=png_contents,
                         )
                     )

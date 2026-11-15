@@ -130,8 +130,12 @@ async def lifespan(app: FastAPI):
         clear_post_auth_hooks,
         register_post_auth_hook,
     )
+    from src.auth.iam_signer_credentials_service import (
+        shutdown_signing_executor,
+    )
     from src.workflows.queue.run_state_service import set_dispatch_hook
     from src.workflows.queue.workflow_dispatcher import (
+        drain_post_auth_tasks,
         run_default_dispatch,
         schedule_post_auth_session,
     )
@@ -144,6 +148,8 @@ async def lifespan(app: FastAPI):
     finally:
         clear_post_auth_hooks()
         set_dispatch_hook(None)
+        await drain_post_auth_tasks()
+        shutdown_signing_executor()
 
     logger.info("Application shutdown terminating")
 

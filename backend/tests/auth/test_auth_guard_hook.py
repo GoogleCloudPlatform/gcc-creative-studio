@@ -564,3 +564,63 @@ def test_schedule_post_auth_session_without_running_loop():
     assert not [w for w in caught if issubclass(w.category, RuntimeWarning)]
     assert workflow_dispatcher._last_tick_monotonic is None
     assert workflow_dispatcher._INFLIGHT_POST_AUTH_TOKEN_HASH == {}
+
+
+async def test_drain_post_auth_tasks_waits_for_inflight_background_work(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    import asyncio
+
+    from src.workflows.queue import workflow_dispatcher
+
+    key = Fernet.generate_key().decode("ascii")
+    monkeypatch.setattr(
+        "src.config.config_service.config_service.WORKFLOW_TOKEN_ENCRYPTION_KEY",
+        key,
+    )
+    exp_ts = int((FIXED_NOW + datetime.timedelta(hours=1)).timestamp())
+    user = UserModel(
+        id=16,
+        email="drain@example.com",
+        name="Drain",
+        roles=[UserRoleEnum.USER],
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+    completed = False
+
+    @asynccontextmanager
+    async def blocking_session_factory():
+        nonlocal completed
+        started.set()
+        await release.wait()
+        fake_db = AsyncMock()
+        unpark_res = MagicMock()
+        unpark_res.scalars.return_value.all.return_value = []
+        no_due = MagicMock()
+        no_due.scalar_one_or_none.return_value = None
+        fake_db.execute = AsyncMock(
+            side_effect=[MagicMock(), unpark_res, no_due]
+        )
+        yield fake_db
+        completed = True
+
+    workflow_dispatcher.schedule_post_auth_session(
+        user,
+        _make_jwt(exp_ts),
+        exp_ts,
+        session_factory=blocking_session_factory,
+        clock=lambda: FIXED_NOW,
+    )
+    await started.wait()
+
+    drain_task = asyncio.create_task(
+        workflow_dispatcher.drain_post_auth_tasks()
+    )
+    await asyncio.sleep(0)
+    assert not drain_task.done()
+
+    release.set()
+    await drain_task
+    assert completed is True
+    assert workflow_dispatcher._BACKGROUND_POST_AUTH_TASKS == set()

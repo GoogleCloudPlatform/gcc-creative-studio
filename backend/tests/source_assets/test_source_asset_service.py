@@ -22,12 +22,18 @@ from fastapi import HTTPException
 from PIL import Image as PILImage
 
 from src.common.base_dto import AspectRatioEnum, MimeTypeEnum
+from src.source_assets.dto.finalize_upload_dto import (
+    FinalizeSourceAssetUploadDto,
+)
 from src.source_assets.schema.source_asset_model import (
     AssetScopeEnum,
     AssetTypeEnum,
     SourceAssetModel,
 )
-from src.source_assets.source_asset_service import SourceAssetService
+from src.source_assets.source_asset_service import (
+    MAX_INLINE_THUMBNAIL_BYTES,
+    SourceAssetService,
+)
 from src.users.user_model import UserModel
 
 
@@ -509,10 +515,6 @@ async def test_create_from_gcs_uri_video(
 
 @pytest.mark.anyio
 async def test_upload_asset_non_png(service, mock_dependencies, sample_user):
-    import io
-
-    from PIL import Image
-
     mock_dependencies["repo"].find_by_hash.return_value = None
     mock_dependencies["gcs_service"].store_to_gcs.return_value = (
         "gs://bucket/asset.png"
@@ -533,7 +535,7 @@ async def test_upload_asset_non_png(service, mock_dependencies, sample_user):
 
     mock_dependencies["repo"].create.return_value = saved_asset
 
-    img = Image.new("RGB", (100, 100), color="red")
+    img = PILImage.new("RGB", (100, 100), color="red")
     img_byte_arr = io.BytesIO()
     img.save(img_byte_arr, format="JPEG")
     contents = img_byte_arr.getvalue()
@@ -615,10 +617,6 @@ async def test_upload_asset_upscale_failure(
 
     mock_dependencies["repo"].create.return_value = saved_asset
 
-    from tests.source_assets.test_source_asset_service import (
-        get_dummy_image_bytes,
-    )
-
     contents = get_dummy_image_bytes()
 
     response = await service.upload_asset(
@@ -693,10 +691,6 @@ async def test_generate_signed_upload_url_error(
 async def test_finalize_direct_upload_success_image(
     service, mock_dependencies, sample_user
 ):
-    from src.source_assets.dto.finalize_upload_dto import (
-        FinalizeSourceAssetUploadDto,
-    )
-
     mock_dependencies["gcs_service"].bucket_name = "bucket"
     mock_dependencies["iam_signer"].generate_presigned_url.return_value = (
         "https://signed.url"
@@ -731,10 +725,6 @@ async def test_finalize_direct_upload_success_image(
 async def test_finalize_direct_upload_video_and_audio(
     service, mock_dependencies, sample_user
 ):
-    from src.source_assets.dto.finalize_upload_dto import (
-        FinalizeSourceAssetUploadDto,
-    )
-
     mock_dependencies["gcs_service"].bucket_name = "bucket"
     mock_dependencies["iam_signer"].generate_presigned_url.return_value = (
         "https://signed.url"
@@ -788,10 +778,6 @@ async def test_finalize_direct_upload_video_and_audio(
 async def test_finalize_direct_upload_non_admin_scope_error(
     service, mock_dependencies, sample_user
 ):
-    from src.source_assets.dto.finalize_upload_dto import (
-        FinalizeSourceAssetUploadDto,
-    )
-
     mock_dependencies["gcs_service"].bucket_name = "bucket"
 
     dto = FinalizeSourceAssetUploadDto(
@@ -873,10 +859,6 @@ async def test_create_asset_response_youtube(service):
 async def test_finalize_direct_upload_generates_image_and_video_thumbnails(
     service, mock_dependencies, sample_user
 ):
-    from src.source_assets.dto.finalize_upload_dto import (
-        FinalizeSourceAssetUploadDto,
-    )
-
     mock_dependencies["iam_signer"].generate_presigned_url.side_effect = (
         lambda u: f"https://signed/{u}"
     )
@@ -885,10 +867,14 @@ async def test_finalize_direct_upload_generates_image_and_video_thumbnails(
         lambda model: model.model_copy(update={"id": 91})
     )
 
-    with patch(
-        "src.source_assets.source_asset_service.generate_image_thumbnail_from_gcs",
-        return_value="gs://test-bucket/source_assets/1/uploads/pic_thumbnail.webp",
-    ) as mock_img_thumb:
+    thumb_fn = (
+        "src.source_assets.source_asset_service."
+        "generate_image_thumbnail_from_gcs"
+    )
+    expected_img_thumb = (
+        "gs://test-bucket/source_assets/1/uploads/pic_thumbnail.webp"
+    )
+    with patch(thumb_fn, return_value=expected_img_thumb) as mock_img_thumb:
         img_res = await service.finalize_direct_upload(
             FinalizeSourceAssetUploadDto(
                 workspace_id=1,
@@ -902,17 +888,17 @@ async def test_finalize_direct_upload_generates_image_and_video_thumbnails(
     mock_img_thumb.assert_called_once_with(
         mock_dependencies["gcs_service"],
         "gs://test-bucket/source_assets/1/uploads/pic.png",
-        "image/png",
     )
-    assert (
-        img_res.thumbnail_gcs_uri
-        == "gs://test-bucket/source_assets/1/uploads/pic_thumbnail.webp"
-    )
+    assert img_res.thumbnail_gcs_uri == expected_img_thumb
 
-    with patch(
-        "src.source_assets.source_asset_service.generate_video_thumbnail_from_gcs",
-        return_value="gs://test-bucket/source_assets/1/uploads/vid_thumbnail.jpg",
-    ) as mock_vid_thumb:
+    vid_thumb_fn = (
+        "src.source_assets.source_asset_service."
+        "generate_video_thumbnail_from_gcs"
+    )
+    expected_vid_thumb = (
+        "gs://test-bucket/source_assets/1/uploads/vid_thumbnail.jpg"
+    )
+    with patch(vid_thumb_fn, return_value=expected_vid_thumb) as mock_vid_thumb:
         vid_res = await service.finalize_direct_upload(
             FinalizeSourceAssetUploadDto(
                 workspace_id=1,
@@ -927,20 +913,13 @@ async def test_finalize_direct_upload_generates_image_and_video_thumbnails(
         mock_dependencies["gcs_service"],
         "gs://test-bucket/source_assets/1/uploads/vid.mp4",
     )
-    assert (
-        vid_res.thumbnail_gcs_uri
-        == "gs://test-bucket/source_assets/1/uploads/vid_thumbnail.jpg"
-    )
+    assert vid_res.thumbnail_gcs_uri == expected_vid_thumb
 
 
 @pytest.mark.anyio
 async def test_finalize_direct_upload_thumbnail_failure_is_nonfatal(
     service, mock_dependencies, sample_user
 ):
-    from src.source_assets.dto.finalize_upload_dto import (
-        FinalizeSourceAssetUploadDto,
-    )
-
     mock_dependencies["iam_signer"].generate_presigned_url.return_value = (
         "https://signed.url"
     )
@@ -949,22 +928,37 @@ async def test_finalize_direct_upload_thumbnail_failure_is_nonfatal(
         lambda model: model.model_copy(update={"id": 92})
     )
 
-    with patch(
-        "src.source_assets.source_asset_service.generate_image_thumbnail_from_gcs",
-        side_effect=RuntimeError("boom"),
-    ):
-        res = await service.finalize_direct_upload(
-            FinalizeSourceAssetUploadDto(
-                workspace_id=1,
-                gcs_uri="gs://test-bucket/source_assets/1/uploads/pic.png",
-                filename="pic.png",
-                mime_type="image/png",
-                size=1024,
-            ),
-            sample_user,
-        )
-    assert res.id == 92
-    assert res.thumbnail_gcs_uri is None
+    mock_dependencies["gcs_service"].download_bytes_from_gcs.side_effect = (
+        RuntimeError("boom")
+    )
+    img_res = await service.finalize_direct_upload(
+        FinalizeSourceAssetUploadDto(
+            workspace_id=1,
+            gcs_uri="gs://test-bucket/source_assets/1/uploads/pic.png",
+            filename="pic.png",
+            mime_type="image/png",
+            size=1024,
+        ),
+        sample_user,
+    )
+    assert img_res.id == 92
+    assert img_res.thumbnail_gcs_uri is None
+
+    mock_dependencies["gcs_service"].download_stream_from_gcs.side_effect = (
+        RuntimeError("stream boom")
+    )
+    vid_res = await service.finalize_direct_upload(
+        FinalizeSourceAssetUploadDto(
+            workspace_id=1,
+            gcs_uri="gs://test-bucket/source_assets/1/uploads/clip.mp4",
+            filename="clip.mp4",
+            mime_type="video/mp4",
+            size=4096,
+        ),
+        sample_user,
+    )
+    assert vid_res.id == 92
+    assert vid_res.thumbnail_gcs_uri is None
 
 
 @pytest.mark.anyio
@@ -1017,8 +1011,12 @@ async def test_upload_asset_upscaled_image_generates_thumbnail_from_gcs(
         lambda model: model.model_copy(update={"id": 94})
     )
 
+    thumb_fn = (
+        "src.source_assets.source_asset_service."
+        "generate_image_thumbnail_from_gcs"
+    )
     with patch(
-        "src.source_assets.source_asset_service.generate_image_thumbnail_from_gcs",
+        thumb_fn,
         return_value="gs://bucket/upscaled_thumbnail.webp",
     ) as mock_thumb_from_gcs:
         res = await service.upload_asset(
@@ -1035,6 +1033,75 @@ async def test_upload_asset_upscaled_image_generates_thumbnail_from_gcs(
     mock_thumb_from_gcs.assert_called_once_with(
         mock_dependencies["gcs_service"],
         "gs://bucket/upscaled.png",
-        "image/webp",
     )
     mock_dependencies["gcs_service"].store_to_gcs.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_finalize_direct_upload_skips_oversize_thumbnail_and_reloads_blob(
+    service, mock_dependencies, sample_user, caplog
+):
+    mock_dependencies["iam_signer"].generate_presigned_url.return_value = (
+        "https://signed.url"
+    )
+    mock_dependencies["gcs_service"].bucket_name = "test-bucket"
+    mock_dependencies["repo"].create.side_effect = (
+        lambda model: model.model_copy(update={"id": 95})
+    )
+
+    mock_blob = MagicMock()
+    mock_blob.size = None
+
+    def _populate_size():
+        mock_blob.size = MAX_INLINE_THUMBNAIL_BYTES + 1024
+
+    mock_blob.reload.side_effect = _populate_size
+    mock_dependencies[
+        "gcs_service"
+    ].client.bucket.return_value.blob.return_value = mock_blob
+
+    with caplog.at_level("WARNING"):
+        img_res = await service.finalize_direct_upload(
+            FinalizeSourceAssetUploadDto(
+                workspace_id=1,
+                gcs_uri="gs://test-bucket/source_assets/1/uploads/huge.png",
+                filename="huge.png",
+                mime_type="image/png",
+                size=1024,
+            ),
+            sample_user,
+        )
+
+    mock_blob.reload.assert_called_once()
+    assert img_res.thumbnail_gcs_uri is None
+    mock_dependencies["gcs_service"].download_bytes_from_gcs.assert_not_called()
+    assert "exceeds" in caplog.text
+
+    mock_vid_blob = MagicMock()
+    mock_vid_blob.size = MAX_INLINE_THUMBNAIL_BYTES + 4096
+    mock_dependencies[
+        "gcs_service"
+    ].client.bucket.return_value.blob.return_value = mock_vid_blob
+    vid_res = await service.finalize_direct_upload(
+        FinalizeSourceAssetUploadDto(
+            workspace_id=1,
+            gcs_uri="gs://test-bucket/source_assets/1/uploads/huge.mp4",
+            filename="huge.mp4",
+            mime_type="video/mp4",
+            size=MAX_INLINE_THUMBNAIL_BYTES + 4096,
+        ),
+        sample_user,
+    )
+    assert vid_res.thumbnail_gcs_uri is None
+    mock_dependencies[
+        "gcs_service"
+    ].download_stream_from_gcs.assert_not_called()
+
+    assert service._get_gcs_blob_size("https://example.com/a.png") is None
+    assert service._get_gcs_blob_size("gs://bucket-only") is None
+    non_int_blob = MagicMock()
+    non_int_blob.size = True
+    mock_dependencies[
+        "gcs_service"
+    ].client.bucket.return_value.blob.return_value = non_int_blob
+    assert service._get_gcs_blob_size("gs://bucket/bool.png") is None

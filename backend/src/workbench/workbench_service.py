@@ -14,7 +14,6 @@
 """Service for workbench project and timeline management."""
 
 import asyncio
-import gc
 import logging
 import os
 import shutil
@@ -23,12 +22,11 @@ import sys
 import tempfile
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from google.cloud.logging.handlers import CloudLoggingHandler
-from google.cloud.logging import Client as LoggerClient
-from urllib.parse import urlparse
 
 from fastapi import Depends
 from google.cloud import storage
+from google.cloud.logging import Client as LoggerClient
+from google.cloud.logging.handlers import CloudLoggingHandler
 
 from src.auth.iam_signer_credentials_service import IamSignerCredentials
 from src.common.base_dto import (
@@ -37,8 +35,9 @@ from src.common.base_dto import (
     AspectRatioEnum,
 )
 from src.common.media_utils import (
+    VIDEO_THUMBNAIL_EXT,
+    VIDEO_THUMBNAIL_MIME_TYPE,
     generate_thumbnail,
-    infer_thumbnail_mime_and_ext,
 )
 from src.common.schema.media_item_model import (
     AssetRoleEnum,
@@ -56,13 +55,10 @@ from src.source_assets.repository.source_asset_repository import (
 )
 from src.users.user_model import UserModel
 from src.workbench.dto.workbench_dto import (
-    AudioClip,
-    RenderTimelineResponse,
     TimelineCreate,
     TimelineRequest,
     TimelineResponse,
     TimelineUpdate,
-    VideoClip,
     VideoTimeline,
 )
 from src.workbench.ffmpeg_service import FFmpegService
@@ -115,7 +111,6 @@ def _process_timeline_in_background(
                     from src.auth.iam_signer_credentials_service import (
                         IamSignerCredentials,
                     )
-                    from types import SimpleNamespace
 
                     timeline_repo = TimelineRepository(db)
                     media_repo = MediaRepository(db)
@@ -167,14 +162,11 @@ def _process_timeline_in_background(
                             )
                             thumbnail_gcs_uri = None
                             if thumbnail_path:
-                                thumb_mime, thumb_ext = (
-                                    infer_thumbnail_mime_and_ext(thumbnail_path)
-                                )
                                 thumbnail_gcs_uri = await asyncio.to_thread(
                                     gcs_service.upload_file_to_gcs,
                                     local_path=thumbnail_path,
-                                    destination_blob_name=f"thumbnails/{media_item_id}{thumb_ext}",
-                                    mime_type=thumb_mime,
+                                    destination_blob_name=f"thumbnails/{media_item_id}{VIDEO_THUMBNAIL_EXT}",
+                                    mime_type=VIDEO_THUMBNAIL_MIME_TYPE,
                                 )
 
                             update_data = {

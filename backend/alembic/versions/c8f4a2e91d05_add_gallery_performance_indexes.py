@@ -49,8 +49,11 @@ _GALLERY_INDEXES: tuple[tuple[str, str], ...] = (
     (
         "ix_media_items_ws_folder_status_created_active",
         """
-        CREATE INDEX IF NOT EXISTS ix_media_items_ws_folder_status_created_active
-        ON media_items (workspace_id, folder_id, status, created_at DESC, id DESC)
+        CREATE INDEX IF NOT EXISTS
+            ix_media_items_ws_folder_status_created_active
+        ON media_items (
+            workspace_id, folder_id, status, created_at DESC, id DESC
+        )
         WHERE deleted_at IS NULL
         """,
     ),
