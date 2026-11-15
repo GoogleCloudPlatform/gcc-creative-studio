@@ -29,6 +29,7 @@ from firebase_admin.exceptions import FirebaseError
 from google.auth import exceptions as google_auth_exceptions
 from google.auth.transport import requests as google_auth_requests
 from google.oauth2 import id_token
+import requests
 
 from src.common.request_context import is_agent_request
 from src.common.secret_redaction import install_secret_redaction
@@ -82,62 +83,69 @@ async def _run_post_auth_hooks(user: UserModel, token: str, exp: Any) -> None:
             )
 
 
+_TOKEN_VERIFICATION_ERRORS = (
+    ValueError,
+    google_auth_exceptions.GoogleAuthError,
+    FirebaseError,
+)
+
+
 def _sanitize_auth_error(err: Exception, token: str) -> str:
     """Redacts bearer secrets and structural hints from auth logs."""
+    # google-auth echoes raw token bytes or single decoded segments in
+    # MalformedError messages where token-string replacement cannot match.
+    if isinstance(err, google_auth_exceptions.MalformedError) or isinstance(
+        getattr(err, "cause", None), google_auth_exceptions.MalformedError
+    ):
+        return "Malformed JWT structure"
     msg = str(err)
-    if token:
-        msg = msg.replace(token, "[REDACTED]")
     if "Can't parse segment" in msg or "Wrong number of segments" in msg:
         return "Malformed JWT structure"
+    if token:
+        msg = msg.replace(token, "[REDACTED]")
     return msg
 
 
 def _raise_token_verification_error(err: Exception, token: str) -> NoReturn:
-    """Maps Firebase/OIDC token verification errors to HTTP 401."""
+    """Maps Firebase/OIDC verification failures to 503 (transport) or 401."""
     sanitized = _sanitize_auth_error(err, token)
     if isinstance(
-        err, (google_auth_exceptions.TransportError, auth.CertificateFetchError)
+        err,
+        (google_auth_exceptions.TransportError, auth.CertificateFetchError),
     ):
         logger.warning(
             "Identity token verification transport error: %s",
             sanitized,
         )
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Failed to contact Google authentication server.",
         ) from err
-    if isinstance(err, (auth.ExpiredIdTokenError, ValueError)):
-        logger.warning("Identity token verification failed: %s", sanitized)
-        detail = (
-            "Authentication token has expired."
-            if (
-                isinstance(err, auth.ExpiredIdTokenError)
-                or "expired" in str(err).lower()
-            )
-            else "Invalid authentication token."
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=detail,
-        ) from err
-    if isinstance(
-        err,
-        (
-            auth.InvalidIdTokenError,
-            google_auth_exceptions.GoogleAuthError,
-            FirebaseError,
-        ),
-    ):
-        logger.warning("Identity token verification failed: %s", sanitized)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication token.",
-        ) from err
-    raise err
+
+    # google-auth raises InvalidValue (subclass of both ValueError and
+    # GoogleAuthError) with "Token expired, ..." rather than a dedicated
+    # ExpiredError class; Firebase raises ExpiredIdTokenError.
+    is_expired = isinstance(err, auth.ExpiredIdTokenError) or (
+        isinstance(err, ValueError) and "expired" in str(err).lower()
+    )
+    detail = (
+        "Authentication token has expired."
+        if is_expired
+        else "Invalid authentication token."
+    )
+    logger.warning("Identity token verification failed: %s", sanitized)
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=detail,
+    ) from err
 
 
 async def _verify_oidc_token(token: str) -> dict[str, Any]:
-    """Verifies a Google Identity Platform OIDC ID token."""
+    """Verifies a Google Identity Platform OIDC ID token.
+
+    The audience must match the OAuth 2.0 client ID of the Identity
+    Platform-protected resource.
+    """
     return await asyncio.to_thread(
         id_token.verify_oauth2_token,
         token,
@@ -152,22 +160,20 @@ async def _verify_identity_token(token: str) -> dict[str, Any]:
         try:
             logger.info("Verifying token using Firebase Admin SDK...")
             return await asyncio.to_thread(auth.verify_id_token, token)
-        except (
-            Exception
-        ) as firebase_err:  # pylint: disable=broad-exception-caught
+        except Exception as err:  # pylint: disable=broad-exception-caught
             logger.info(
                 "Firebase verification failed, falling back to Google OIDC: %s",
-                _sanitize_auth_error(firebase_err, token),
+                _sanitize_auth_error(err, token),
             )
             try:
                 return await _verify_oidc_token(token)
-            except (
-                Exception
-            ) as oidc_err:  # pylint: disable=broad-exception-caught
+            except _TOKEN_VERIFICATION_ERRORS as oidc_err:
+                # Local mode tries Firebase first; keep Firebase expiry or
+                # cert-fetch failures instead of masking them behind OIDC.
                 err_to_classify = (
-                    firebase_err
+                    err
                     if isinstance(
-                        firebase_err,
+                        err,
                         (auth.ExpiredIdTokenError, auth.CertificateFetchError),
                     )
                     else oidc_err
@@ -175,7 +181,7 @@ async def _verify_identity_token(token: str) -> dict[str, Any]:
                 _raise_token_verification_error(err_to_classify, token)
     try:
         return await _verify_oidc_token(token)
-    except Exception as oidc_err:  # pylint: disable=broad-exception-caught
+    except _TOKEN_VERIFICATION_ERRORS as oidc_err:
         _raise_token_verification_error(oidc_err, token)
 
 
@@ -209,7 +215,6 @@ async def get_current_user(
         if token.startswith("ya29."):
             # --- Verify Google OAuth Access Token (Agent Engine) ---
             logger.info("Verifying Google OAuth Access Token...")
-            import requests
 
             try:
                 response = await asyncio.to_thread(
@@ -218,6 +223,18 @@ async def get_current_user(
                     timeout=10,
                 )
                 if response.status_code != 200:
+                    if (
+                        response.status_code >= 500
+                        or response.status_code == 429
+                    ):
+                        logger.warning(
+                            "Google tokeninfo endpoint unavailable (status=%s)",
+                            response.status_code,
+                        )
+                        raise HTTPException(
+                            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="Failed to contact Google authentication server.",
+                        )
                     logger.warning(
                         "Invalid Google access token (status=%s)",
                         response.status_code,
@@ -228,12 +245,12 @@ async def get_current_user(
                     )
                 decoded_token = response.json()
             except requests.RequestException as req_err:
-                logger.error(
+                logger.warning(
                     "Failed to verify Google access token: %s",
                     _sanitize_auth_error(req_err, token),
                 )
                 raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail="Failed to contact Google authentication server.",
                 ) from req_err
 
@@ -316,7 +333,8 @@ async def get_current_user(
         return user_doc
 
     except HTTPException as e:
-        logger.error("[get_current_user - Exception]: %s", e)
+        if e.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR:
+            logger.error("[get_current_user - Exception]: %s", e)
         raise e
     except Exception as e:
         logger.error(
