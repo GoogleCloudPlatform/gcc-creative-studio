@@ -21,7 +21,6 @@ import {
   Injectable,
   NgZone,
   OnDestroy,
-  Optional,
   PLATFORM_ID,
   WritableSignal,
   computed,
@@ -34,6 +33,7 @@ import {environment} from '../../environments/environment';
 import {AuthService} from '../common/services/auth.service';
 import {
   hasSessionAccountMismatch,
+  hasStoredSessionToken,
   isLoginRouteUrl,
   isWatchedSessionStorageKey,
   readBrowserSessionOwner,
@@ -49,29 +49,13 @@ export interface AdminVersionInfo {
   latestVersion: string | null;
   status: AdminVersionStatus;
   releaseUrl: string | null;
-  releaseName: string | null;
-  publishedAt: string | null;
   checkedAt: string;
 }
 
 const JUST_CHECKED_MS = 1500;
 const REFRESH_COOLDOWN_MS = 5000;
 const INITIAL_RETRY_BACKOFF_MS = 60_000;
-const UNSAFE_RELEASE_URL_RE = /[\s\\]|(?:^|\/)\.\.?(?:\/|$)/;
-const GITHUB_REPO_PATH_RE = /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\//;
-const GITHUB_PREFIX = 'https://github.com/';
 type TimerKey = 'justChecked' | 'cooldown';
-type RenewableAuth = {hasRenewableSession?: () => boolean};
-
-function hasControlOrWhitespaceChar(value: string): boolean {
-  for (let i = 0; i < value.length; i++) {
-    const code = value.charCodeAt(i);
-    if (code <= 0x20 || code === 0x7f) {
-      return true;
-    }
-  }
-  return false;
-}
 
 @Injectable({providedIn: 'root'})
 export class AdminVersionService implements OnDestroy {
@@ -82,6 +66,7 @@ export class AdminVersionService implements OnDestroy {
   private readonly _refreshFailed = signal<boolean>(false);
   private readonly _justChecked = signal<boolean>(false);
   private readonly _cooldownActive = signal<boolean>(false);
+  private readonly _isAdmin = signal<boolean>(false);
   private failedAtMs: number | null = null;
   private requestSub: Subscription | null = null;
   private activeRequestId = 0;
@@ -96,106 +81,59 @@ export class AdminVersionService implements OnDestroy {
   readonly refreshFailed = this._refreshFailed.asReadonly();
   readonly justChecked = this._justChecked.asReadonly();
   readonly cooldownActive = this._cooldownActive.asReadonly();
+  readonly isAdmin = this._isAdmin.asReadonly();
   readonly isUpdateAvailable = computed(
     () => this._versionInfo()?.status === 'update_available',
   );
-  readonly safeReleaseUrl = computed(() => {
-    const url = this._versionInfo()?.releaseUrl;
-    if (
-      !url ||
-      hasControlOrWhitespaceChar(url) ||
-      !url.startsWith(GITHUB_PREFIX)
-    ) {
-      return null;
-    }
-    let decoded = url;
-    try {
-      for (let i = 0; i < 2; i++) {
-        decoded = decodeURIComponent(decoded);
-      }
-    } catch {
-      return null;
-    }
-    if (
-      hasControlOrWhitespaceChar(decoded) ||
-      UNSAFE_RELEASE_URL_RE.test(url) ||
-      UNSAFE_RELEASE_URL_RE.test(decoded)
-    ) {
-      return null;
-    }
-    try {
-      // eslint-disable-next-line n/no-unsupported-features/node-builtins
-      const parsed = new URL(url);
-      if (
-        parsed.origin !== 'https://github.com' ||
-        parsed.username ||
-        parsed.password ||
-        !GITHUB_REPO_PATH_RE.test(parsed.pathname)
-      ) {
-        return null;
-      }
-      const rawPrefix = url
-        .slice('https://github.com'.length)
-        .split('/')
-        .slice(1, 3)
-        .join('/');
-      const parsedPrefix = parsed.pathname.split('/').slice(1, 3).join('/');
-      return rawPrefix && rawPrefix === parsedPrefix ? parsed.href : null;
-    } catch {
-      return null;
-    }
-  });
 
   constructor(
     private readonly http: HttpClient,
     private readonly authService: AuthService,
     @Inject(PLATFORM_ID) private readonly platformId: Object,
-    @Optional() @Inject(Router) private readonly router: Router | null = null,
-    @Optional() @Inject(NgZone) private readonly ngZone: NgZone | null = null,
+    private readonly router: Router,
+    private readonly ngZone: NgZone,
   ) {
     if (!isPlatformBrowser(this.platformId)) return;
-    this.routerSub =
-      this.router?.events?.subscribe(e => {
-        if (e instanceof NavigationStart || e instanceof NavigationEnd) {
-          const url =
-            e instanceof NavigationEnd ? e.urlAfterRedirects || e.url : e.url;
-          this.syncSessionOwner(isLoginRouteUrl(url));
-        }
-      }) ?? null;
-    if (typeof window === 'undefined') return;
+    this._isAdmin.set(this.computeBrowserAdmin());
+    this.routerSub = this.router.events.subscribe(e => {
+      if (e instanceof NavigationStart || e instanceof NavigationEnd) {
+        const url =
+          e instanceof NavigationEnd ? e.urlAfterRedirects || e.url : e.url;
+        this.syncSessionOwner(isLoginRouteUrl(url));
+      }
+    });
     this.storageListener = (e: StorageEvent) => {
       if (!isWatchedSessionStorageKey(e.key)) return;
-      const run = () => this.syncSessionOwner(e.key === null || !e.newValue);
-      if (this.ngZone) this.ngZone.run(run);
-      else run();
+      this.ngZone.run(() =>
+        this.syncSessionOwner(e.key === null || !e.newValue),
+      );
     };
     window.addEventListener('storage', this.storageListener);
   }
 
+  private get storage(): Storage | null {
+    return typeof localStorage !== 'undefined' ? localStorage : null;
+  }
+
+  private computeBrowserAdmin(): boolean {
+    const storage = this.storage;
+    return (
+      isPlatformBrowser(this.platformId) &&
+      this.authService.isUserAdmin() &&
+      hasStoredSessionToken(storage) &&
+      !hasSessionAccountMismatch(storage)
+    );
+  }
+
   isBrowserAdmin(): boolean {
-    if (!isPlatformBrowser(this.platformId) || !this.authService.isUserAdmin())
-      return false;
-    if (
-      typeof localStorage !== 'undefined' &&
-      hasSessionAccountMismatch(localStorage)
-    ) {
-      return false;
-    }
-    const loggedIn = this.authService.isUserLoggedIn?.();
-    if (loggedIn === undefined || loggedIn) return true;
-    const renewable = (this.authService as RenewableAuth).hasRenewableSession;
-    return typeof renewable === 'function'
-      ? renewable.call(this.authService)
-      : false;
+    const admin = this.computeBrowserAdmin();
+    this._isAdmin.set(admin);
+    return admin;
   }
 
   private currentSessionOwner(): string | null {
     if (!this.isBrowserAdmin()) return null;
-    const owner =
-      typeof localStorage !== 'undefined'
-        ? readBrowserSessionOwner(localStorage)
-        : null;
-    return owner ?? '__authenticated_admin__';
+    return readBrowserSessionOwner(this.storage) ?? '__authenticated_admin__';
   }
 
   private syncSessionOwner(forceReset = false): string | null {
@@ -254,7 +192,7 @@ export class AdminVersionService implements OnDestroy {
   ngOnDestroy(): void {
     this.routerSub?.unsubscribe();
     this.routerSub = null;
-    if (this.storageListener !== null && typeof window !== 'undefined') {
+    if (this.storageListener !== null) {
       window.removeEventListener('storage', this.storageListener);
       this.storageListener = null;
     }

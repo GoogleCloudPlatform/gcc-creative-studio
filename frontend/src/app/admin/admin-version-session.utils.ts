@@ -32,14 +32,7 @@ export function isLoginRouteUrl(rawUrl: string | null | undefined): boolean {
   if (!rawUrl) return false;
   const pathOnly = rawUrl.split(/[?#;]/, 1)[0].trim();
   const firstSegment = pathOnly.split('/').find(seg => seg.length > 0);
-  if (!firstSegment) return false;
-  let decoded = firstSegment;
-  try {
-    decoded = decodeURIComponent(firstSegment);
-  } catch {
-    // Fall back to raw segment when percent-encoding is malformed.
-  }
-  return decoded.toLowerCase() === 'login';
+  return firstSegment?.toLowerCase() === 'login';
 }
 
 export function decodeJwtIdentity(token: string): JwtIdentity | null {
@@ -84,7 +77,24 @@ function parseJsonObject(raw: string | null): Record<string, unknown> | null {
   }
 }
 
-function readStoredClaims(storage: Pick<Storage, 'getItem'>) {
+export function hasStoredSessionToken(
+  storage: Pick<Storage, 'getItem'> | null | undefined,
+): boolean {
+  if (!storage) return false;
+  try {
+    const token = parseJsonObject(storage.getItem(FIREBASE_SESSION_KEY))?.[
+      'token'
+    ];
+    return typeof token === 'string' && token.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function readStoredClaims(
+  storage: Pick<Storage, 'getItem'> | null | undefined,
+) {
+  if (!storage) return null;
   try {
     const session = parseJsonObject(storage.getItem(FIREBASE_SESSION_KEY));
     const user = parseJsonObject(storage.getItem(USER_DETAILS_KEY));
@@ -107,7 +117,7 @@ function readStoredClaims(storage: Pick<Storage, 'getItem'>) {
 }
 
 export function hasSessionAccountMismatch(
-  storage: Pick<Storage, 'getItem'>,
+  storage: Pick<Storage, 'getItem'> | null | undefined,
 ): boolean {
   const claims = readStoredClaims(storage);
   return (
@@ -119,7 +129,7 @@ export function hasSessionAccountMismatch(
 }
 
 export function readBrowserSessionOwner(
-  storage: Pick<Storage, 'getItem'>,
+  storage: Pick<Storage, 'getItem'> | null | undefined,
 ): string | null {
   const claims = readStoredClaims(storage);
   if (!claims) return null;

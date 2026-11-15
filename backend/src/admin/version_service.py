@@ -15,19 +15,18 @@
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import logging
 import math
 import os
 from pathlib import Path
-import posixpath
 import re
 import stat
 import tempfile
 import time
 from typing import Any
-import urllib.parse
 import weakref
 
 import httpx
@@ -55,13 +54,20 @@ _REPO_RE = re.compile(
     r"^(?!\.\.?(?:/|$))[A-Za-z0-9_.-]{1,100}/"
     r"(?!\.\.?(?:/|$))[A-Za-z0-9_.-]{1,100}$"
 )
-_UNSAFE_URL_RE = re.compile(r"(?:^|/)\.\.?(?:/|$)|[\\\s]")
 
+# Bind locks per event loop because Gunicorn/test suites run across loops.
 _PROCESS_LOCKS: weakref.WeakKeyDictionary[
     asyncio.AbstractEventLoop, asyncio.Lock
 ] = weakref.WeakKeyDictionary()
 _IN_MEMORY_CACHE: dict[str, dict[str, Any]] = {}
 _UNWRITABLE_CACHE_PATHS: set[str] = set()
+
+
+@dataclass(frozen=True)
+class _CachedVersion:
+    fetched_at: float
+    info: AdminVersionInfo
+    failed_at: float | None = None
 
 
 def _get_process_lock() -> asyncio.Lock:
@@ -105,87 +111,30 @@ def _iso_utc_from_epoch(epoch: float) -> str:
     )
 
 
-class VersionService:
-    """Checks installed version against published GitHub Releases."""
+def _is_valid_epoch(value: object) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(value)
+    )
 
-    def __init__(
-        self,
-        repo: str | None = None,
-        github_token: str | None = None,
-        current_version: str | None = None,
-        cache_path: Path | None = None,
-        time_fn: Callable[[], float] = time.time,
-        http_client_factory: Callable[[], httpx.AsyncClient] | None = None,
-    ) -> None:
-        raw_repo = config_service.GITHUB_RELEASE_REPO if repo is None else repo
-        raw_token = (
-            config_service.GITHUB_TOKEN
-            if github_token is None
-            else github_token
-        )
-        raw_current = (
-            APP_VERSION if current_version is None else current_version
-        )
-        self._repo = raw_repo.strip()
-        self._github_token = raw_token.strip()
-        self._current_tuple = parse_calver(raw_current)
-        self._current_version = (
-            normalize_calver_str(raw_current)
-            if isinstance(raw_current, str)
-            else ""
-        )
-        self._cache_path = (
-            DEFAULT_CACHE_PATH if cache_path is None else cache_path
-        )
-        self._time_fn = time_fn
-        self._http_client_factory = http_client_factory or (
-            lambda: httpx.AsyncClient(
-                timeout=_REQUEST_TIMEOUT_SECONDS,
-                follow_redirects=False,
-            )
-        )
 
-    def _cache_key(self) -> str:
-        return f"{self._repo}|{self._current_version}"
+class _VersionFileCache:
+    """Hardened cross-worker JSON cache with in-memory fallback."""
 
-    def _is_valid_release_url(self, url: object) -> bool:
-        if not isinstance(url, str) or not url:
-            return False
-        if any(ord(ch) <= 0x20 or ord(ch) == 0x7F for ch in url):
-            return False
-        if not _REPO_RE.fullmatch(self._repo):
-            return False
-        expected_prefix = f"/{self._repo}/"
-        if not url.startswith(f"https://github.com{expected_prefix}"):
-            return False
-        once_decoded = urllib.parse.unquote(url)
-        twice_decoded = urllib.parse.unquote(once_decoded)
-        if any(
-            ord(ch) <= 0x20 or ord(ch) == 0x7F for ch in twice_decoded
-        ) or any(
-            _UNSAFE_URL_RE.search(candidate)
-            for candidate in (url, once_decoded, twice_decoded)
-        ):
-            return False
-        try:
-            parsed = urllib.parse.urlsplit(url)
-        except ValueError:
-            return False
-        return (
-            parsed.scheme == "https"
-            and parsed.netloc == "github.com"
-            and posixpath.normpath(
-                urllib.parse.unquote(parsed.path)
-            ).startswith(expected_prefix)
-        )
+    def __init__(self, cache_path: Path, cache_key: str, repo: str) -> None:
+        self._cache_path = cache_path
+        self._cache_key = cache_key
+        self._repo = repo
 
-    def _read_cache_store(self) -> dict[str, Any]:
+    def read_store(self) -> dict[str, Any]:
         cache_id = str(self._cache_path)
         if cache_id in _UNWRITABLE_CACHE_PATHS:
             return dict(_IN_MEMORY_CACHE.get(cache_id, {}))
 
         fd = -1
         try:
+            # O_NOFOLLOW blocks symlink poisoning; O_NONBLOCK avoids FIFO hangs.
             fd = os.open(
                 self._cache_path,
                 os.O_RDONLY
@@ -217,9 +166,7 @@ class VersionService:
             with os.fdopen(fd, "r", encoding="utf-8") as handle:
                 fd = -1
                 parsed = json.load(handle)
-            if isinstance(parsed, dict):
-                return parsed
-            return {}
+            return parsed if isinstance(parsed, dict) else {}
         except (OSError, ValueError, UnicodeDecodeError) as exc:
             logger.warning(
                 "Failed to read version cache %s; using memory fallback: %s",
@@ -232,9 +179,10 @@ class VersionService:
                 try:
                     os.close(fd)
                 except OSError:
+                    # Best-effort cleanup on early stat/fdopen errors.
                     pass
 
-    def _write_cache_store(self, store: dict[str, Any]) -> None:
+    def write_store(self, store: dict[str, Any]) -> None:
         cache_id = str(self._cache_path)
         _IN_MEMORY_CACHE[cache_id] = dict(store)
         tmp_path: str | None = None
@@ -249,7 +197,6 @@ class VersionService:
             ) as tmp_file:
                 tmp_path = tmp_file.name
                 json.dump(store, tmp_file)
-            os.chmod(tmp_path, 0o600)
             os.replace(tmp_path, self._cache_path)
             _UNWRITABLE_CACHE_PATHS.discard(cache_id)
         except OSError as exc:
@@ -263,43 +210,102 @@ class VersionService:
                 try:
                     os.unlink(tmp_path)
                 except OSError:
+                    # Best-effort temp cleanup after logging write failure.
                     pass
 
-    def _get_cached_entry(
-        self,
-    ) -> tuple[float, AdminVersionInfo] | None:
-        store = self._read_cache_store()
-        entry = store.get(self._cache_key())
+    def get(self) -> _CachedVersion | None:
+        entry = self.read_store().get(self._cache_key)
         if not isinstance(entry, dict):
             return None
         fetched_at = entry.get("fetched_at")
+        raw_failed = entry.get("failed_at")
         raw_info = entry.get("info")
-        if (
-            isinstance(fetched_at, bool)
-            or not isinstance(fetched_at, (int, float))
-            or not math.isfinite(fetched_at)
-            or not isinstance(raw_info, dict)
-        ):
+        if not _is_valid_epoch(fetched_at) or not isinstance(raw_info, dict):
+            return None
+        if raw_failed is not None and not _is_valid_epoch(raw_failed):
             return None
         try:
             info = AdminVersionInfo.model_validate(raw_info)
         except ValueError:
             return None
-        if info.release_url is not None and not self._is_valid_release_url(
-            info.release_url
-        ):
-            return None
-        return float(fetched_at), info
+        if info.release_url is not None:
+            expected_prefix = f"https://github.com/{self._repo}/releases/tag/"
+            if (
+                not _REPO_RE.fullmatch(self._repo)
+                or not info.release_url.startswith(expected_prefix)
+                or parse_calver(info.release_url[len(expected_prefix) :])
+                is None
+            ):
+                return None
+        return _CachedVersion(
+            fetched_at=float(fetched_at),
+            info=info,
+            failed_at=float(raw_failed) if raw_failed is not None else None,
+        )
 
-    def _store_cached_entry(
-        self, fetched_at: float, info: AdminVersionInfo
-    ) -> None:
-        store = self._read_cache_store()
-        store[self._cache_key()] = {
-            "fetched_at": fetched_at,
-            "info": info.model_dump(),
+    def put(self, entry: _CachedVersion) -> None:
+        store = self.read_store()
+        payload: dict[str, Any] = {
+            "fetched_at": entry.fetched_at,
+            "info": entry.info.model_dump(),
         }
-        self._write_cache_store(store)
+        if entry.failed_at is not None:
+            payload["failed_at"] = entry.failed_at
+        store[self._cache_key] = payload
+        self.write_store(store)
+
+
+class VersionService:
+    """Checks installed version against published GitHub Releases."""
+
+    def __init__(
+        self,
+        repo: str | None = None,
+        github_token: str | None = None,
+        current_version: str | None = None,
+        cache_path: Path | None = None,
+        time_fn: Callable[[], float] = time.time,
+        http_client_factory: Callable[[], httpx.AsyncClient] | None = None,
+    ) -> None:
+        raw_repo = config_service.GITHUB_RELEASE_REPO if repo is None else repo
+        raw_token = (
+            config_service.GITHUB_TOKEN
+            if github_token is None
+            else github_token
+        )
+        raw_current = (
+            APP_VERSION if current_version is None else current_version
+        )
+        self._repo = raw_repo.strip()
+        self._github_token = raw_token.strip()
+        self._current_tuple = parse_calver(raw_current)
+        self._current_version = (
+            normalize_calver_str(raw_current)
+            if isinstance(raw_current, str)
+            else ""
+        )
+        resolved_cache = (
+            DEFAULT_CACHE_PATH if cache_path is None else cache_path
+        )
+        self._cache = _VersionFileCache(
+            resolved_cache,
+            f"{self._repo}|{self._current_version}",
+            self._repo,
+        )
+        self._time_fn = time_fn
+        self._http_client_factory = http_client_factory or (
+            lambda: httpx.AsyncClient(
+                timeout=_REQUEST_TIMEOUT_SECONDS,
+                follow_redirects=False,
+            )
+        )
+
+    def _build_release_url(self, tag_name: str) -> str | None:
+        if not _REPO_RE.fullmatch(self._repo) or parse_calver(tag_name) is None:
+            return None
+        return (
+            f"https://github.com/{self._repo}/releases/tag/{tag_name.strip()}"
+        )
 
     def _unavailable(self, checked_at: str) -> AdminVersionInfo:
         return AdminVersionInfo(
@@ -384,9 +390,7 @@ class VersionService:
             return self._unavailable(checked_at)
 
         best_tuple: tuple[int, int, int, int] | None = None
-        best_item: dict[str, Any] | None = None
         best_tag: str | None = None
-
         for item in payload:
             if not isinstance(item, dict):
                 continue
@@ -400,72 +404,76 @@ class VersionService:
                 continue
             if best_tuple is None or tag_tuple > best_tuple:
                 best_tuple = tag_tuple
-                best_item = item
                 best_tag = tag_name
 
-        if best_tuple is None or best_item is None or best_tag is None:
+        if best_tuple is None or best_tag is None:
             logger.warning(
                 "No published CalVer releases found for %s", self._repo
             )
             return self._unavailable(checked_at)
-
-        latest_version = normalize_calver_str(best_tag)
-        raw_html_url = best_item.get("html_url")
-        release_url = (
-            raw_html_url if self._is_valid_release_url(raw_html_url) else None
-        )
-
-        raw_name = best_item.get("name")
-        release_name = (
-            raw_name.strip()
-            if isinstance(raw_name, str) and raw_name.strip()
-            else None
-        )
-
-        raw_published = best_item.get("published_at")
-        published_at = (
-            raw_published.strip()
-            if isinstance(raw_published, str) and raw_published.strip()
-            else None
-        )
 
         status_val: VersionStatusLiteral = (
             "update_available"
             if best_tuple > self._current_tuple
             else "up_to_date"
         )
-
         return AdminVersionInfo(
             current_version=self._current_version,
-            latest_version=latest_version,
+            latest_version=normalize_calver_str(best_tag),
             status=status_val,
-            release_url=release_url,
-            release_name=release_name,
-            published_at=published_at,
+            release_url=self._build_release_url(best_tag),
             checked_at=checked_at,
         )
+
+    def _can_serve_cached(
+        self, cached: _CachedVersion, now: float, refresh: bool
+    ) -> bool:
+        # Require 0 <= age so clock rollbacks invalidate instead of sticking.
+        last_attempt = (
+            max(cached.fetched_at, cached.failed_at)
+            if cached.failed_at is not None
+            else cached.fetched_at
+        )
+        attempt_age = now - last_attempt
+        if refresh:
+            return 0 <= attempt_age < MIN_REFRESH_INTERVAL_SECONDS
+        age = now - cached.fetched_at
+        if cached.info.status == "unavailable":
+            return 0 <= age < NEGATIVE_CACHE_TTL_SECONDS
+        if 0 <= age < CACHE_TTL_SECONDS:
+            return True
+        if cached.failed_at is not None:
+            return 0 <= (now - cached.failed_at) < NEGATIVE_CACHE_TTL_SECONDS
+        return False
 
     async def get_version_info(self, refresh: bool = False) -> AdminVersionInfo:
         """Returns cached or freshly fetched version status."""
         async with _get_process_lock():
             now = self._time_fn()
-            cached = self._get_cached_entry()
-            if cached is not None:
-                fetched_at, cached_info = cached
-                age = now - fetched_at
-                ttl = (
-                    NEGATIVE_CACHE_TTL_SECONDS
-                    if cached_info.status == "unavailable"
-                    else CACHE_TTL_SECONDS
-                )
-                if refresh:
-                    if 0 <= age < MIN_REFRESH_INTERVAL_SECONDS:
-                        return cached_info
-                elif 0 <= age < ttl:
-                    return cached_info
+            cached = self._cache.get()
+            if cached is not None and self._can_serve_cached(
+                cached, now, refresh
+            ):
+                return cached.info
 
             info = await self._fetch_and_evaluate(now)
-            self._store_cached_entry(now, info)
+            # Preserve last known good version on transient GitHub failures;
+            # negative-cache only failed_at so workers do not hammer GitHub.
+            if (
+                info.status == "unavailable"
+                and cached is not None
+                and cached.info.status != "unavailable"
+            ):
+                self._cache.put(
+                    _CachedVersion(
+                        fetched_at=cached.fetched_at,
+                        info=cached.info,
+                        failed_at=now,
+                    )
+                )
+                return cached.info
+
+            self._cache.put(_CachedVersion(fetched_at=now, info=info))
             return info
 
 

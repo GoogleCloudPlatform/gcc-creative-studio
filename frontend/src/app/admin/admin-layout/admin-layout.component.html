@@ -70,63 +70,71 @@
       </mat-nav-list>
 
       <div
-        *ngIf="showVersionFooter"
+        *ngIf="showVersionFooter()"
         class="border-t border-zinc-800 pt-3 mt-4 px-4 text-xs text-zinc-400"
       >
         <div class="text-[11px] uppercase tracking-wider text-zinc-400 mb-1">
           System Version
         </div>
 
-        <ng-container
-          *ngIf="versionService.versionInfo() as info; else coldStartTemplate"
-        >
-          <div class="font-medium text-zinc-200 tabular-nums">
-            v{{ info.currentVersion }}
-          </div>
-
-          <p
-            *ngIf="info.status === 'update_available'"
-            class="mt-1 text-amber-300 tabular-nums"
+        <div aria-live="polite">
+          <ng-container
+            *ngIf="versionService.versionInfo() as info; else coldStartTemplate"
           >
-            New version available: v{{ info.latestVersion }}
-          </p>
-          <p *ngIf="info.status === 'up_to_date'" class="mt-1 text-zinc-400">
-            Up to date
-          </p>
-          <p *ngIf="info.status === 'unavailable'" class="mt-1 text-zinc-400">
-            Update check unavailable
-          </p>
+            <div class="font-medium text-zinc-200 tabular-nums">
+              v{{ info.currentVersion }}
+            </div>
 
-          <p
-            *ngIf="versionService.refreshFailed()"
-            class="mt-1 text-[11px] italic text-zinc-400"
-          >
-            Couldn't refresh — showing last result
-          </p>
+            <p
+              *ngIf="info.status === 'update_available'"
+              class="mt-1 text-amber-300 tabular-nums"
+            >
+              New version available: v{{ info.latestVersion }}
+            </p>
+            <p *ngIf="info.status === 'up_to_date'" class="mt-1 text-zinc-400">
+              Up to date
+            </p>
+            <p *ngIf="info.status === 'unavailable'" class="mt-1 text-zinc-400">
+              Update check unavailable
+            </p>
 
-          <a
-            *ngIf="versionService.safeReleaseUrl() as releaseUrl"
-            [href]="releaseUrl"
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label="View release notes (opens in new tab)"
-            class="min-h-[40px] inline-flex items-center mt-1.5 text-zinc-300 hover:text-white underline"
-          >
-            Release notes
-          </a>
-        </ng-container>
+            <p
+              *ngIf="versionService.refreshFailed()"
+              class="mt-1 text-[11px] italic text-zinc-400"
+            >
+              Couldn't refresh — showing last result
+            </p>
 
-        <ng-template #coldStartTemplate>
-          <div *ngIf="versionService.loading()" class="text-zinc-400">
-            Checking for updates…
-          </div>
-          <div
-            *ngIf="!versionService.loading() && versionService.loadFailed()"
-            class="text-zinc-400"
-          >
-            Update check unavailable
-          </div>
-        </ng-template>
+            <a
+              *ngIf="info.releaseUrl as releaseUrl"
+              [href]="releaseUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="View release notes (opens in new tab)"
+              class="min-h-[40px] inline-flex items-center mt-1.5 text-zinc-300 hover:text-white underline"
+            >
+              Release notes
+            </a>
+          </ng-container>
+
+          <ng-template #coldStartTemplate>
+            <div *ngIf="versionService.loading()" class="text-zinc-400">
+              Checking for updates…
+            </div>
+            <div
+              *ngIf="!versionService.loading() && versionService.loadFailed()"
+              class="text-zinc-400"
+            >
+              Update check unavailable
+            </div>
+            <div
+              *ngIf="!versionService.loading() && !versionService.loadFailed()"
+              class="text-zinc-400"
+            >
+              Not checked yet
+            </div>
+          </ng-template>
+        </div>
 
         <span
           [matTooltip]="lastCheckedLabel()"
@@ -141,6 +149,7 @@
             [disabled]="
               versionService.loading() || versionService.cooldownActive()
             "
+            [attr.aria-label]="'Check now (' + lastCheckedLabel() + ')'"
             class="min-h-[40px] w-full text-left text-zinc-300 hover:text-white disabled:opacity-50 disabled:pointer-events-none disabled:cursor-not-allowed underline"
           >
             {{

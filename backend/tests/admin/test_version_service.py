@@ -20,7 +20,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from fastapi import status
-from fastapi.testclient import TestClient
 import httpx
 import pytest
 
@@ -32,8 +31,6 @@ from src.admin.version_service import (
     normalize_calver_str,
     parse_calver,
 )
-from src.auth.auth_guard import get_current_user
-from src.database import get_db
 
 _REPO = "GoogleCloudPlatform/gcc-creative-studio"
 _TAG_URL = f"https://github.com/{_REPO}/releases/tag"
@@ -114,8 +111,6 @@ class TestVersionService:
         assert info.latest_version == "26.11.12"
         assert info.status == "up_to_date"
         assert info.release_url == f"{_TAG_URL}/v26.11.12"
-        assert info.release_name == "v26.11.12"
-        assert info.published_at == "2026-11-12T20:00:00Z"
         assert info.checked_at == "1970-01-01T00:16:40Z"
         assert "authorization" not in calls[0]["headers"]
 
@@ -180,7 +175,7 @@ class TestVersionService:
         assert info.status == "up_to_date"
 
     @pytest.mark.asyncio
-    async def test_skips_draft_prerelease_non_calver_and_strips_bad_url(
+    async def test_skips_draft_prerelease_non_calver_and_builds_safe_url(
         self, tmp_path: Path
     ):
         async def handler(unused_request: httpx.Request) -> httpx.Response:
@@ -207,11 +202,9 @@ class TestVersionService:
                     },
                     {
                         "tag_name": "v26.11.15",
-                        "name": " ",
                         "draft": False,
                         "prerelease": False,
                         "html_url": "https://evil.example.com/phish",
-                        "published_at": " ",
                     },
                     {
                         "tag_name": "v26.11.10",
@@ -232,9 +225,7 @@ class TestVersionService:
         info = await service.get_version_info()
         assert info.status == "update_available"
         assert info.latest_version == "26.11.15"
-        assert info.release_url is None
-        assert info.release_name is None
-        assert info.published_at is None
+        assert info.release_url == f"{_TAG_URL}/v26.11.15"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -379,22 +370,85 @@ class TestVersionService:
         ).latest_version == "26.11.15"
         assert len(calls) == 2
 
-        # Negative cache expires after 60s.
+        # Transient upstream 500 preserves last known good version across workers.
         now = 1012.0
         mode["status"] = 500
-        unavail = await worker_one.get_version_info(refresh=True)
-        assert unavail.status == "unavailable"
+        preserved = await worker_one.get_version_info(refresh=True)
+        assert preserved.status == "update_available"
+        assert preserved.latest_version == "26.11.15"
         assert len(calls) == 3
 
-        now = 1050.0
-        assert (await worker_two.get_version_info()).status == "unavailable"
+        # Refresh within 5s of failed refresh is throttled; non-refresh serves good cache.
+        now = 1014.0
+        assert (
+            await worker_two.get_version_info(refresh=True)
+        ).latest_version == "26.11.15"
         assert len(calls) == 3
 
-        now = 1075.0
+        # After 1h TTL expires and GitHub fails, still preserves good version for 60s backoff.
+        now = 5000.0
+        assert (
+            await worker_two.get_version_info()
+        ).latest_version == "26.11.15"
+        assert len(calls) == 4
+
+        now = 5030.0
+        assert (
+            await worker_one.get_version_info()
+        ).latest_version == "26.11.15"
+        assert len(calls) == 4
+
+        # After 60s retry backoff, GitHub recovers with newer tag.
+        now = 5065.0
         mode["status"] = 200
+        mode["tag"] = "v26.11.16"
         recovered = await worker_two.get_version_info()
         assert recovered.status == "update_available"
-        assert len(calls) == 4
+        assert recovered.latest_version == "26.11.16"
+        assert len(calls) == 5
+
+    @pytest.mark.asyncio
+    async def test_cold_start_failure_uses_negative_ttl_and_recovers(
+        self, tmp_path: Path
+    ):
+        now = 1000.0
+        calls: list[dict[str, object]] = []
+        mode = {"status": 500}
+
+        async def handler(unused_request: httpx.Request) -> httpx.Response:
+            if mode["status"] != 200:
+                return httpx.Response(int(mode["status"]))
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "tag_name": "v26.11.15",
+                        "draft": False,
+                        "prerelease": False,
+                    }
+                ],
+            )
+
+        svc = VersionService(
+            repo=_REPO,
+            current_version="26.11.12",
+            cache_path=tmp_path / "cold_fail.json",
+            time_fn=lambda: now,
+            http_client_factory=_make_mock_client_factory(handler, calls),
+        )
+        assert (await svc.get_version_info()).status == "unavailable"
+        assert len(calls) == 1
+
+        now = 1030.0
+        assert (await svc.get_version_info()).status == "unavailable"
+        assert len(calls) == 1
+
+        now = 1065.0
+        mode["status"] = 200
+        recovered = await svc.get_version_info()
+        assert recovered.status == "update_available"
+        assert recovered.latest_version == "26.11.15"
+        assert len(calls) == 2
 
     @pytest.mark.asyncio
     async def test_double_v_current_version_rejected_without_http(
@@ -605,9 +659,21 @@ class TestVersionService:
 
         assert len(calls) == len(bad_payloads)
 
-        # Symlink cache is ignored on read via O_NOFOLLOW; target stays intact
-        target_file = tmp_path / "secret_target.json"
-        target_file.write_text("untouched", encoding="utf-8")
+        # Symlink cache pointing at a valid, fresh payload must still be
+        # ignored via O_NOFOLLOW; target stays intact and HTTP runs.
+        target_payload = json.dumps(
+            {
+                cache_key: {
+                    "fetched_at": 1000.0,
+                    "info": {
+                        **base_info,
+                        "latest_version": "20.01.01",
+                    },
+                }
+            }
+        )
+        target_file = tmp_path / "valid_target.json"
+        target_file.write_text(target_payload, encoding="utf-8")
         symlink_cache = tmp_path / "symlink_cache.json"
         os.symlink(target_file, symlink_cache)
 
@@ -621,7 +687,7 @@ class TestVersionService:
         sym_info = await sym_svc.get_version_info()
         assert sym_info.latest_version == "26.11.15"
         assert len(calls) == len(bad_payloads) + 1
-        assert target_file.read_text(encoding="utf-8") == "untouched"
+        assert target_file.read_text(encoding="utf-8") == target_payload
 
     @pytest.mark.asyncio
     async def test_negative_age_clock_rollback_triggers_refetch(
@@ -662,9 +728,7 @@ class TestVersionService:
         assert len(calls) == 3
 
     @pytest.mark.asyncio
-    async def test_rejects_dot_segment_repos_and_unsafe_release_urls(
-        self, tmp_path: Path
-    ):
+    async def test_rejects_dot_segment_repos_without_http(self, tmp_path: Path):
         calls: list[dict[str, object]] = []
 
         async def fail_if_called(unused_req: httpx.Request) -> httpx.Response:
@@ -682,41 +746,6 @@ class TestVersionService:
             )
             assert (await svc.get_version_info()).status == "unavailable"
         assert not calls
-
-        unsafe_urls = [
-            f"https://github.com/{_REPO}/../../evil",
-            f"https://github.com/{_REPO}/./evil",
-            f"https://github.com/{_REPO}/releases\\evil",
-            f"{_TAG_URL}/v1 evil",
-            f"https://github.com/{_REPO}-evil/releases/tag/v26.11.15",
-        ]
-        for idx, bad_url in enumerate(unsafe_urls):
-
-            async def handler(
-                unused_request: httpx.Request, url_val: str = bad_url
-            ) -> httpx.Response:
-                return httpx.Response(
-                    200,
-                    json=[
-                        {
-                            "tag_name": "v26.11.15",
-                            "draft": False,
-                            "prerelease": False,
-                            "html_url": url_val,
-                        }
-                    ],
-                )
-
-            svc = VersionService(
-                repo=_REPO,
-                current_version="26.11.12",
-                cache_path=tmp_path / f"url_{idx}.json",
-                time_fn=lambda: 1000.0,
-                http_client_factory=_make_mock_client_factory(handler),
-            )
-            info = await svc.get_version_info()
-            assert info.status == "update_available"
-            assert info.release_url is None
 
     @pytest.mark.asyncio
     async def test_oversized_streaming_response_aborts_cleanly(
@@ -802,47 +831,6 @@ class TestVersionService:
         assert len(calls) == 2
 
     @pytest.mark.asyncio
-    async def test_rejects_percent_encoded_dot_segments_and_userinfo_in_release_url(
-        self, tmp_path: Path
-    ):
-        tricky_urls = [
-            f"https://github.com/{_REPO}/%2e%2e/%2e%2e/evil/repo/releases/tag/v1",
-            f"https://github.com/{_REPO}/%252e%252e/evil",
-            f"https://github.com/{_REPO}/..%2fevil",
-            f"https://github.com/{_REPO}/releases%5cevil",
-            f"https://github.com/{_REPO}/releases/tag/v1\nHeader: evil",
-            f"https://github.com/{_REPO}/releases/tag/v1%00evil",
-            f"https://evil.com@github.com/{_REPO}/releases/tag/v26.11.15",
-        ]
-        for idx, bad_url in enumerate(tricky_urls):
-
-            async def handler(
-                unused_request: httpx.Request, url_val: str = bad_url
-            ) -> httpx.Response:
-                return httpx.Response(
-                    200,
-                    json=[
-                        {
-                            "tag_name": "v26.11.15",
-                            "draft": False,
-                            "prerelease": False,
-                            "html_url": url_val,
-                        }
-                    ],
-                )
-
-            svc = VersionService(
-                repo=_REPO,
-                current_version="26.11.12",
-                cache_path=tmp_path / f"tricky_url_{idx}.json",
-                time_fn=lambda: 1000.0,
-                http_client_factory=_make_mock_client_factory(handler),
-            )
-            info = await svc.get_version_info()
-            assert info.status == "update_available"
-            assert info.release_url is None
-
-    @pytest.mark.asyncio
     async def test_default_http_client_disables_redirects_and_provider_returns_service(
         self,
     ):
@@ -867,7 +855,7 @@ class TestVersionService:
             time_fn=lambda: 1000.0,
         )
         with patch("src.admin.version_service.os.getuid", return_value=-1):
-            assert svc_uid._read_cache_store() == {}
+            assert svc_uid._cache.read_store() == {}
 
         oversized_path = tmp_path / "oversized.json"
         oversized_path.write_text(
@@ -880,77 +868,38 @@ class TestVersionService:
             cache_path=oversized_path,
             time_fn=lambda: 1000.0,
         )
-        assert svc_big._read_cache_store() == {}
+        assert svc_big._cache.read_store() == {}
 
 
 class TestAdminVersionController:
-    """Tests for GET /api/admin/version and removal of /api/version.
+    """Tests for GET /api/admin/version and removal of /api/version."""
 
-    Uses ``TestClient(app)`` without entering ``lifespan`` so running in
-    ``tests/admin/`` (alphabetically before ``tests/auth/`` and ``tests/e2e/``)
-    does not register global post-auth DB hooks on the shared engine pool.
-    """
-
-    def test_public_api_version_removed(self, mock_user, db_session_mock):
-        async def override_get_db():
-            yield db_session_mock
-
-        prev_overrides = dict(app.dependency_overrides)
-        app.dependency_overrides[get_current_user] = lambda: mock_user
-        app.dependency_overrides[get_db] = override_get_db
-        try:
-            response = TestClient(app).get("/api/version")
-        finally:
-            app.dependency_overrides.clear()
-            app.dependency_overrides.update(prev_overrides)
+    def test_public_api_version_removed(self, api_client):
+        response = api_client.get("/api/version")
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.parametrize(
         "path",
         ["/api/admin/version", "/api/admin/version?refresh=true"],
     )
-    def test_admin_version_requires_authentication(
-        self, db_session_mock, path: str
-    ):
-        async def override_get_db():
-            yield db_session_mock
+    def test_admin_version_requires_authentication(self, path: str):
+        from fastapi.testclient import TestClient
 
-        prev_overrides = dict(app.dependency_overrides)
-        app.dependency_overrides.clear()
-        app.dependency_overrides[get_db] = override_get_db
-        try:
-            response = TestClient(app).get(path)
-        finally:
-            app.dependency_overrides.clear()
-            app.dependency_overrides.update(prev_overrides)
+        with TestClient(app) as client:
+            response = client.get(path)
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     @pytest.mark.parametrize(
         "path",
         ["/api/admin/version", "/api/admin/version?refresh=true"],
     )
-    def test_admin_version_forbids_regular_user(
-        self, mock_user, db_session_mock, path: str
-    ):
-        async def override_get_db():
-            yield db_session_mock
-
-        prev_overrides = dict(app.dependency_overrides)
-        app.dependency_overrides[get_current_user] = lambda: mock_user
-        app.dependency_overrides[get_db] = override_get_db
-        try:
-            response = TestClient(app).get(path)
-        finally:
-            app.dependency_overrides.clear()
-            app.dependency_overrides.update(prev_overrides)
+    def test_admin_version_forbids_regular_user(self, api_client, path: str):
+        response = api_client.get(path)
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
     def test_admin_version_returns_camel_case_and_forwards_refresh(
-        self, mock_admin, db_session_mock
+        self, admin_client
     ):
-        async def override_get_db():
-            yield db_session_mock
-
         release_url = f"{_TAG_URL}/v26.11.15"
         mock_svc = AsyncMock()
         mock_svc.get_version_info.return_value = AdminVersionInfo(
@@ -958,19 +907,13 @@ class TestAdminVersionController:
             latest_version="26.11.15",
             status="update_available",
             release_url=release_url,
-            release_name="v26.11.15",
-            published_at="2026-11-15T18:00:00Z",
             checked_at="2026-11-15T18:05:00Z",
         )
-        prev_overrides = dict(app.dependency_overrides)
-        app.dependency_overrides[get_current_user] = lambda: mock_admin
-        app.dependency_overrides[get_db] = override_get_db
         app.dependency_overrides[get_version_service] = lambda: mock_svc
         try:
-            response = TestClient(app).get("/api/admin/version?refresh=true")
+            response = admin_client.get("/api/admin/version?refresh=true")
         finally:
-            app.dependency_overrides.clear()
-            app.dependency_overrides.update(prev_overrides)
+            app.dependency_overrides.pop(get_version_service, None)
 
         assert response.status_code == status.HTTP_200_OK
         assert response.json() == {
@@ -978,8 +921,6 @@ class TestAdminVersionController:
             "latestVersion": "26.11.15",
             "status": "update_available",
             "releaseUrl": release_url,
-            "releaseName": "v26.11.15",
-            "publishedAt": "2026-11-15T18:00:00Z",
             "checkedAt": "2026-11-15T18:05:00Z",
         }
         mock_svc.get_version_info.assert_awaited_once_with(refresh=True)

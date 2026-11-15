@@ -72,6 +72,4 @@ class AdminVersionInfo(BaseDto):
     latest_version: str | None = None
     status: VersionStatusLiteral
     release_url: str | None = None
-    release_name: str | None = None
-    published_at: str | None = None
     checked_at: str

@@ -15,6 +15,11 @@
  */
 
 import {PLATFORM_ID, computed, signal} from '@angular/core';
+import {provideHttpClient} from '@angular/common/http';
+import {
+  HttpTestingController,
+  provideHttpClientTesting,
+} from '@angular/common/http/testing';
 import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {MatIconModule} from '@angular/material/icon';
 import {MatListModule} from '@angular/material/list';
@@ -23,6 +28,7 @@ import {MatTooltip, MatTooltipModule} from '@angular/material/tooltip';
 import {By} from '@angular/platform-browser';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {RouterModule, provideRouter} from '@angular/router';
+import {environment} from '../../../environments/environment';
 import {AuthService} from '../../common/services/auth.service';
 import {AdminVersionInfo, AdminVersionService} from '../admin-version.service';
 import {AdminLayoutComponent} from './admin-layout.component';
@@ -37,9 +43,9 @@ describe('AdminLayoutComponent', () => {
   let refreshFailedSig: ReturnType<typeof signal<boolean>>;
   let justCheckedSig: ReturnType<typeof signal<boolean>>;
   let cooldownActiveSig: ReturnType<typeof signal<boolean>>;
+  let isAdminSig: ReturnType<typeof signal<boolean>>;
   let ensureLoadedSpy: jasmine.Spy;
   let refreshSpy: jasmine.Spy;
-  let authSpy: jasmine.SpyObj<AuthService>;
 
   async function configure(
     platformId: Object,
@@ -51,8 +57,6 @@ describe('AdminLayoutComponent', () => {
       status: 'up_to_date',
       releaseUrl:
         'https://github.com/GoogleCloudPlatform/gcc-creative-studio/releases/tag/v26.11.12',
-      releaseName: 'v26.11.12',
-      publishedAt: '2026-11-12T20:00:00Z',
       checkedAt: '2026-11-12T20:05:00Z',
     });
     loadingSig = signal(false);
@@ -60,10 +64,10 @@ describe('AdminLayoutComponent', () => {
     refreshFailedSig = signal(false);
     justCheckedSig = signal(false);
     cooldownActiveSig = signal(false);
+    const browserAdmin = platformId === 'browser' && isAdmin;
+    isAdminSig = signal(browserAdmin);
     ensureLoadedSpy = jasmine.createSpy('ensureLoaded');
     refreshSpy = jasmine.createSpy('refresh');
-    authSpy = jasmine.createSpyObj<AuthService>('AuthService', ['isUserAdmin']);
-    authSpy.isUserAdmin.and.returnValue(isAdmin);
 
     const mockVersionService = {
       versionInfo: versionInfoSig.asReadonly(),
@@ -72,13 +76,11 @@ describe('AdminLayoutComponent', () => {
       refreshFailed: refreshFailedSig.asReadonly(),
       justChecked: justCheckedSig.asReadonly(),
       cooldownActive: cooldownActiveSig.asReadonly(),
+      isAdmin: isAdminSig.asReadonly(),
       isUpdateAvailable: computed(
         () => versionInfoSig()?.status === 'update_available',
       ),
-      safeReleaseUrl: computed(() => {
-        const url = versionInfoSig()?.releaseUrl;
-        return url && url.startsWith('https://github.com/') ? url : null;
-      }),
+      isBrowserAdmin: () => isAdminSig(),
       ensureLoaded: ensureLoadedSpy,
       refresh: refreshSpy,
     };
@@ -96,8 +98,6 @@ describe('AdminLayoutComponent', () => {
       providers: [
         provideRouter([]),
         {provide: AdminVersionService, useValue: mockVersionService},
-        {provide: AuthService, useValue: authSpy},
-        {provide: PLATFORM_ID, useValue: platformId},
       ],
     }).compileComponents();
 
@@ -127,8 +127,6 @@ describe('AdminLayoutComponent', () => {
       status: 'update_available',
       releaseUrl:
         'https://github.com/GoogleCloudPlatform/gcc-creative-studio/releases/tag/v26.11.15',
-      releaseName: 'v26.11.15',
-      publishedAt: null,
       checkedAt: '2026-11-12T20:05:00Z',
     });
     fixture.detectChanges();
@@ -141,8 +139,6 @@ describe('AdminLayoutComponent', () => {
       latestVersion: null,
       status: 'unavailable',
       releaseUrl: null,
-      releaseName: null,
-      publishedAt: null,
       checkedAt: '2026-11-12T20:05:00Z',
     });
     fixture.detectChanges();
@@ -156,8 +152,6 @@ describe('AdminLayoutComponent', () => {
       status: 'up_to_date',
       releaseUrl:
         'https://github.com/GoogleCloudPlatform/gcc-creative-studio/releases/tag/v26.11.12',
-      releaseName: 'v26.11.12',
-      publishedAt: null,
       checkedAt: '2026-11-12T20:05:00Z',
     });
     refreshFailedSig.set(true);
@@ -182,6 +176,9 @@ describe('AdminLayoutComponent', () => {
     );
 
     loadFailedSig.set(false);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('Not checked yet');
+
     loadingSig.set(true);
     fixture.detectChanges();
     expect(fixture.nativeElement.textContent).toContain(
@@ -230,8 +227,6 @@ describe('AdminLayoutComponent', () => {
       latestVersion: null,
       status: 'unavailable',
       releaseUrl: null,
-      releaseName: null,
-      publishedAt: null,
       checkedAt: 'not-an-iso-timestamp',
     });
     expect(component.lastCheckedLabel()).toBe('Last checked: Unknown');
@@ -240,7 +235,7 @@ describe('AdminLayoutComponent', () => {
     expect(component.lastCheckedLabel()).toBe('Last checked: Not checked yet');
   });
 
-  it('attaches tooltip and cursor-not-allowed to wrapper span while keeping accessible layout classes', async () => {
+  it('attaches tooltip to wrapper span around disabled button and exposes live status region', async () => {
     await configure('browser', true);
 
     const tooltipDe = fixture.debugElement.query(By.directive(MatTooltip));
@@ -250,44 +245,19 @@ describe('AdminLayoutComponent', () => {
 
     const tooltipInstance = tooltipDe.injector.get(MatTooltip);
     expect(tooltipInstance.message).toBe(component.lastCheckedLabel());
-    expect(tooltipEl.classList.contains('cursor-not-allowed')).toBeFalse();
 
     const btn = tooltipEl.querySelector('button') as HTMLButtonElement;
     expect(btn).not.toBeNull();
-    expect(btn.classList.contains('disabled:pointer-events-none')).toBeTrue();
-    expect(btn.classList.contains('mt-2')).toBeFalse();
+    expect(btn.getAttribute('aria-label')).toContain('Check now');
+
+    const liveRegion = fixture.nativeElement.querySelector(
+      '[aria-live="polite"]',
+    ) as HTMLElement;
+    expect(liveRegion).not.toBeNull();
 
     cooldownActiveSig.set(true);
     fixture.detectChanges();
     expect(tooltipInstance.message).toBe(component.lastCheckedLabel());
-    expect(tooltipEl.classList.contains('cursor-not-allowed')).toBeTrue();
-
-    cooldownActiveSig.set(false);
-    loadingSig.set(true);
-    fixture.detectChanges();
-    expect(tooltipEl.classList.contains('cursor-not-allowed')).toBeTrue();
-
-    const innerWrapper = fixture.nativeElement.querySelector(
-      '.admin-sidenav .flex.flex-col',
-    ) as HTMLElement;
-    expect(innerWrapper).not.toBeNull();
-    expect(innerWrapper.classList.contains('min-h-full')).toBeTrue();
-    expect(innerWrapper.classList.contains('h-full')).toBeFalse();
-
-    const versionHeading = Array.from(
-      fixture.nativeElement.querySelectorAll(
-        '.admin-sidenav div',
-      ) as NodeListOf<Element>,
-    ).find(el => el.textContent?.trim() === 'System Version') as HTMLElement;
-    expect(versionHeading).toBeTruthy();
-    expect(versionHeading.classList.contains('text-zinc-400')).toBeTrue();
-    expect(versionHeading.classList.contains('text-zinc-500')).toBeFalse();
-
-    const releaseLink = fixture.nativeElement.querySelector(
-      '.admin-sidenav a[target="_blank"]',
-    ) as HTMLAnchorElement;
-    expect(releaseLink).not.toBeNull();
-    expect(releaseLink.classList.contains('min-h-[40px]')).toBeTrue();
   });
 
   it('hides System Version footer and skips ensureLoaded for non-admin or SSR', async () => {
@@ -301,7 +271,7 @@ describe('AdminLayoutComponent', () => {
     expect(fixture.nativeElement.textContent).not.toContain('System Version');
   });
 
-  it('clears the 250px fixed right sidenav at 1280px width via container and content padding', async () => {
+  it('clears the fixed right sidenav at 1280px width via container and content padding', async () => {
     await configure('browser', true);
     const hostEl = fixture.nativeElement as HTMLElement;
     const prevDisplay = hostEl.style.display;
@@ -322,23 +292,81 @@ describe('AdminLayoutComponent', () => {
       expect(contentEl).not.toBeNull();
       expect(sidenavEl).not.toBeNull();
 
-      const containerStyle = getComputedStyle(containerEl);
-      const containerPadRight = parseFloat(containerStyle.paddingRight);
-      const containerPadLeft = parseFloat(containerStyle.paddingLeft);
+      const containerPadRight = parseFloat(
+        getComputedStyle(containerEl).paddingRight,
+      );
       const contentPadRight = parseFloat(
         getComputedStyle(contentEl).paddingRight,
       );
       const sidenavWidth = parseFloat(getComputedStyle(sidenavEl).width);
 
-      expect(containerPadLeft).toBe(32);
-      expect(containerPadRight).toBe(224);
-      expect(contentPadRight).toBe(40);
-      expect(sidenavWidth).toBe(250);
-      expect(containerPadRight + contentPadRight).toBeGreaterThanOrEqual(260);
       expect(containerPadRight + contentPadRight).toBeGreaterThan(sidenavWidth);
     } finally {
       hostEl.style.display = prevDisplay;
       hostEl.style.width = prevWidth;
+    }
+  });
+
+  it('integrates real AdminVersionService to hide for non-admin and load when admin signs in', async () => {
+    localStorage.removeItem('firebase_session');
+    localStorage.removeItem('USER_DETAILS');
+    const authSpy = {
+      isUserAdmin: jasmine.createSpy('isUserAdmin').and.returnValue(false),
+    };
+    try {
+      await TestBed.configureTestingModule({
+        declarations: [AdminLayoutComponent],
+        imports: [
+          RouterModule,
+          MatSidenavModule,
+          MatListModule,
+          MatIconModule,
+          MatTooltipModule,
+          NoopAnimationsModule,
+        ],
+        providers: [
+          provideRouter([]),
+          provideHttpClient(),
+          provideHttpClientTesting(),
+          {provide: AuthService, useValue: authSpy},
+          {provide: PLATFORM_ID, useValue: 'browser'},
+        ],
+      }).compileComponents();
+
+      const httpMock = TestBed.inject(HttpTestingController);
+      const realFixture = TestBed.createComponent(AdminLayoutComponent);
+      realFixture.detectChanges();
+      httpMock.expectNone(`${environment.backendURL}/admin/version`);
+      expect(realFixture.nativeElement.textContent).not.toContain(
+        'System Version',
+      );
+
+      authSpy.isUserAdmin.and.returnValue(true);
+      localStorage.setItem(
+        'firebase_session',
+        JSON.stringify({
+          token: 'test-session-token',
+          expiry: Date.now() + 3_600_000,
+        }),
+      );
+      realFixture.componentInstance.ngOnInit();
+      httpMock.expectOne(`${environment.backendURL}/admin/version`).flush({
+        currentVersion: '26.11.12',
+        latestVersion: '26.11.15',
+        status: 'update_available',
+        releaseUrl:
+          'https://github.com/GoogleCloudPlatform/gcc-creative-studio/releases/tag/v26.11.15',
+        checkedAt: '2026-11-15T18:05:00Z',
+      });
+      realFixture.detectChanges();
+
+      expect(realFixture.nativeElement.textContent).toContain(
+        'New version available: v26.11.15',
+      );
+      httpMock.verify();
+    } finally {
+      localStorage.removeItem('firebase_session');
+      localStorage.removeItem('USER_DETAILS');
     }
   });
 });

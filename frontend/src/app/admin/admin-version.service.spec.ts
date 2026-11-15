@@ -28,6 +28,7 @@ import {AuthService} from '../common/services/auth.service';
 import {
   decodeJwtIdentity,
   hasSessionAccountMismatch,
+  hasStoredSessionToken,
   isLoginRouteUrl,
   readBrowserSessionOwner,
 } from './admin-version-session.utils';
@@ -35,8 +36,6 @@ import {AdminVersionInfo, AdminVersionService} from './admin-version.service';
 
 interface MockAuthService {
   isUserAdmin: jasmine.Spy<() => boolean>;
-  isUserLoggedIn: jasmine.Spy<() => boolean>;
-  hasRenewableSession: jasmine.Spy<() => boolean>;
 }
 
 function makeJwt(payload: Record<string, unknown>): string {
@@ -69,8 +68,6 @@ describe('AdminVersionService', () => {
     status: 'up_to_date',
     releaseUrl:
       'https://github.com/GoogleCloudPlatform/gcc-creative-studio/releases/tag/v26.11.12',
-    releaseName: 'v26.11.12',
-    publishedAt: '2026-11-12T20:00:00Z',
     checkedAt: '2026-11-12T20:05:00Z',
   };
 
@@ -78,17 +75,19 @@ describe('AdminVersionService', () => {
     platformId: Object,
     isAdmin: boolean,
     isLoggedIn = true,
-    hasRenewable = false,
   ): AdminVersionService {
+    if (!isLoggedIn) {
+      localStorage.removeItem('firebase_session');
+      localStorage.removeItem('USER_DETAILS');
+    } else if (
+      platformId === 'browser' &&
+      !localStorage.getItem('firebase_session')
+    ) {
+      setStoredSession('admin@example.com', 'sub-default');
+    }
     routerEvents$ = new Subject<Event>();
     authSpy = {
       isUserAdmin: jasmine.createSpy('isUserAdmin').and.returnValue(isAdmin),
-      isUserLoggedIn: jasmine
-        .createSpy('isUserLoggedIn')
-        .and.returnValue(isLoggedIn),
-      hasRenewableSession: jasmine
-        .createSpy('hasRenewableSession')
-        .and.returnValue(hasRenewable),
     };
 
     TestBed.configureTestingModule({
@@ -128,22 +127,7 @@ describe('AdminVersionService', () => {
     expect(service.versionInfo()).toEqual(mockInfo);
     expect(service.loading()).toBeFalse();
     expect(service.isUpdateAvailable()).toBeFalse();
-    expect(service.safeReleaseUrl()).toBe(mockInfo.releaseUrl);
-  });
-
-  it('supports backwards-compatible 3-argument construction', () => {
-    setup('browser', true);
-    const standalone = new AdminVersionService(
-      TestBed.inject(HttpClient),
-      authSpy as unknown as AuthService,
-      'browser',
-    );
-    standalone.ensureLoaded();
-    httpMock
-      .expectOne(`${environment.backendURL}/admin/version`)
-      .flush(mockInfo);
-    expect(standalone.versionInfo()).toEqual(mockInfo);
-    standalone.ngOnDestroy();
+    expect(service.isAdmin()).toBeTrue();
   });
 
   it('sends refresh=true, sets justChecked for 1.5s, and enforces 5s cooldown', fakeAsync(() => {
@@ -206,7 +190,6 @@ describe('AdminVersionService', () => {
     expect(warnSpy).toHaveBeenCalled();
     expect(service.versionInfo()).toEqual(updateInfo);
     expect(service.isUpdateAvailable()).toBeTrue();
-    expect(service.safeReleaseUrl()).toBe(updateInfo.releaseUrl);
     expect(service.loadFailed()).toBeFalse();
     expect(service.refreshFailed()).toBeTrue();
     expect(service.justChecked()).toBeFalse();
@@ -263,15 +246,13 @@ describe('AdminVersionService', () => {
   }));
 
   it('cancels in-flight refresh and resets timers on login route navigation, ignoring post-destroy events', fakeAsync(() => {
-    setStoredSession('admin-a@google.com', 'sub-a');
+    setStoredSession('admin-a@example.com', 'sub-a');
     const service = setup('browser', true);
 
-    const loginUrls = [
+    for (const loginUrl of [
       '/login',
       '/login?returnUrl=%2Fadmin%2Fdashboard',
-      '/%6cogin',
-    ];
-    for (const loginUrl of loginUrls) {
+    ]) {
       service.refresh();
       const inFlight = httpMock.expectOne(
         r =>
@@ -309,10 +290,9 @@ describe('AdminVersionService', () => {
   }));
 
   it('resets on cross-tab StorageEvent sign-out/clear/mismatch, while preserving same-user renewal', fakeAsync(() => {
-    setStoredSession('admin-a@google.com', 'sub-a');
+    setStoredSession('admin-a@example.com', 'sub-a');
     const service = setup('browser', true);
 
-    // Cross-tab firebase_session removal cancels in-flight refresh.
     service.refresh();
     const req1 = httpMock.expectOne(
       r =>
@@ -329,13 +309,13 @@ describe('AdminVersionService', () => {
     expect(service.versionInfo()).toBeNull();
 
     // Same-user JWT renewal preserves versionInfo.
-    setStoredSession('admin-a@google.com', 'sub-a');
+    setStoredSession('admin-a@example.com', 'sub-a');
     service.ensureLoaded();
     httpMock
       .expectOne(`${environment.backendURL}/admin/version`)
       .flush(mockInfo);
     const renewedSession = JSON.stringify({
-      token: makeJwt({sub: 'sub-a', email: 'admin-a@google.com', iat: 200}),
+      token: makeJwt({sub: 'sub-a', email: 'admin-a@example.com', iat: 200}),
       expiry: Date.now() + 3_600_000,
     });
     localStorage.setItem('firebase_session', renewedSession);
@@ -347,10 +327,9 @@ describe('AdminVersionService', () => {
     );
     expect(service.versionInfo()).toEqual(mockInfo);
 
-    // Cross-tab account switch (firebase_session -> admin-b while USER_DETAILS is admin-a)
-    // triggers mismatch: isBrowserAdmin() becomes false and state resets.
+    // Cross-tab account switch triggers mismatch: isBrowserAdmin() becomes false and state resets.
     const switchedSession = JSON.stringify({
-      token: makeJwt({sub: 'sub-b', email: 'admin-b@google.com'}),
+      token: makeJwt({sub: 'sub-b', email: 'admin-b@example.com'}),
       expiry: Date.now() + 3_600_000,
     });
     localStorage.setItem('firebase_session', switchedSession);
@@ -364,7 +343,7 @@ describe('AdminVersionService', () => {
     expect(service.versionInfo()).toBeNull();
 
     // Reload for admin-b, then localStorage.clear() (key: null) resets state.
-    setStoredSession('admin-b@google.com', 'sub-b');
+    setStoredSession('admin-b@example.com', 'sub-b');
     expect(service.isBrowserAdmin()).toBeTrue();
     service.ensureLoaded();
     httpMock
@@ -375,7 +354,7 @@ describe('AdminVersionService', () => {
     expect(service.versionInfo()).toBeNull();
 
     // Post-destroy storage events must be ignored.
-    setStoredSession('admin-b@google.com', 'sub-b');
+    setStoredSession('admin-b@example.com', 'sub-b');
     service.ensureLoaded();
     httpMock
       .expectOne(`${environment.backendURL}/admin/version`)
@@ -391,7 +370,7 @@ describe('AdminVersionService', () => {
 
   it('resets cached versionInfo and clears 60s loadFailed backoff on same-tab user switch', fakeAsync(() => {
     spyOn(console, 'warn');
-    setStoredSession('admin-a@google.com', 'sub-a');
+    setStoredSession('admin-a@example.com', 'sub-a');
     const service = setup('browser', true);
 
     service.ensureLoaded();
@@ -400,8 +379,7 @@ describe('AdminVersionService', () => {
       .flush(mockInfo);
     expect(service.versionInfo()).toEqual(mockInfo);
 
-    // Same-tab switch to admin-b resets cached info and triggers load for admin-b.
-    setStoredSession('admin-b@google.com', 'sub-b');
+    setStoredSession('admin-b@example.com', 'sub-b');
     service.ensureLoaded();
     const failReq = httpMock.expectOne(
       `${environment.backendURL}/admin/version`,
@@ -410,11 +388,9 @@ describe('AdminVersionService', () => {
     expect(service.versionInfo()).toBeNull();
     expect(service.loadFailed()).toBeTrue();
 
-    // Still within 60s backoff for admin-b -> no request.
     service.ensureLoaded();
     httpMock.expectNone(`${environment.backendURL}/admin/version`);
 
-    // Same-tab switch to admin-c clears prior backoff immediately.
     setStoredSession('admin-c@example.com', 'sub-c');
     service.ensureLoaded();
     httpMock
@@ -424,41 +400,23 @@ describe('AdminVersionService', () => {
     expect(service.versionInfo()).toEqual(mockInfo);
   }));
 
-  it('keeps isBrowserAdmin() true during wake-from-sleep renewable state and resets cleanly on synchronous clear before HTTP failure', fakeAsync(() => {
-    setStoredSession('admin-a@google.com', 'sub-a');
-    const service = setup('browser', true, false, true);
+  it('resets cleanly without refreshFailed when session is cleared before HTTP error arrives', fakeAsync(() => {
+    setStoredSession('admin-a@example.com', 'sub-a');
+    const service = setup('browser', true);
 
-    expect(service.isBrowserAdmin()).toBeTrue();
     service.ensureLoaded();
     httpMock
       .expectOne(`${environment.backendURL}/admin/version`)
       .flush(mockInfo);
-    expect(service.versionInfo()).toEqual(mockInfo);
 
-    service.refresh();
-    const refreshOk = httpMock.expectOne(
-      r =>
-        r.url === `${environment.backendURL}/admin/version` &&
-        r.params.get('refresh') === 'true',
-    );
-    const updatedInfo: AdminVersionInfo = {
-      ...mockInfo,
-      latestVersion: '26.11.15',
-      status: 'update_available',
-    };
-    refreshOk.flush(updatedInfo);
-    expect(service.versionInfo()).toEqual(updatedInfo);
-
-    // Advance past 5s cooldown, start refresh, then clear session synchronously
-    // before HTTP 502/401 arrives: service must reset without refreshFailed=true.
-    tick(5000);
     for (const status of [502, 401]) {
-      setStoredSession('admin-a@google.com', 'sub-a');
-      authSpy.isUserLoggedIn.and.returnValue(false);
-      authSpy.hasRenewableSession.and.returnValue(true);
+      setStoredSession('admin-a@example.com', 'sub-a');
       service.ensureLoaded();
-      const prime = httpMock.match(`${environment.backendURL}/admin/version`);
-      if (prime.length === 1) prime[0].flush(mockInfo);
+      for (const req of httpMock.match(
+        `${environment.backendURL}/admin/version`,
+      )) {
+        req.flush(mockInfo);
+      }
 
       service.refresh();
       const failReq = httpMock.expectOne(
@@ -468,7 +426,6 @@ describe('AdminVersionService', () => {
       );
       localStorage.removeItem('firebase_session');
       localStorage.removeItem('USER_DETAILS');
-      authSpy.hasRenewableSession.and.returnValue(false);
 
       failReq.flush('Error', {status, statusText: 'Auth or Gateway Error'});
       expect(service.versionInfo()).toBeNull();
@@ -476,6 +433,7 @@ describe('AdminVersionService', () => {
       expect(service.loadFailed()).toBeFalse();
       expect(service.loading()).toBeFalse();
       expect(service.cooldownActive()).toBeFalse();
+      tick(5000);
     }
   }));
 
@@ -491,6 +449,7 @@ describe('AdminVersionService', () => {
     authSpy.isUserAdmin.and.returnValue(false);
     service.ensureLoaded();
     expect(service.versionInfo()).toBeNull();
+    expect(service.isAdmin()).toBeFalse();
     httpMock.expectNone(`${environment.backendURL}/admin/version`);
 
     service.refresh();
@@ -506,6 +465,7 @@ describe('AdminVersionService', () => {
 
     httpMock.expectNone(`${environment.backendURL}/admin/version`);
     expect(service.versionInfo()).toBeNull();
+    expect(service.isAdmin()).toBeFalse();
   });
 
   it('makes zero HTTP calls when user is not an admin or logged out', () => {
@@ -518,7 +478,7 @@ describe('AdminVersionService', () => {
     expect(service.versionInfo()).toBeNull();
 
     TestBed.resetTestingModule();
-    const loggedOutService = setup('browser', true, false, false);
+    const loggedOutService = setup('browser', true, false);
     loggedOutService.ensureLoaded();
     loggedOutService.refresh();
     httpMock.expectNone(`${environment.backendURL}/admin/version`);
@@ -537,39 +497,6 @@ describe('AdminVersionService', () => {
     expect(service.loadFailed()).toBeTrue();
     expect(service.versionInfo()).toBeNull();
   });
-
-  it('rejects non-GitHub, spoofed, and traversal release URLs in safeReleaseUrl', () => {
-    const unsafeUrls = [
-      'https://evil.example.com/phish',
-      'javascript:alert(1)',
-      'http://github.com/GoogleCloudPlatform/gcc-creative-studio/releases/tag/v26.11.12',
-      'https://github.com.evil.com/GoogleCloudPlatform/gcc-creative-studio/releases/tag/v26.11.12',
-      'https://github.com/GoogleCloudPlatform/gcc-creative-studio/../../evil',
-      'https://github.com/GoogleCloudPlatform/gcc-creative-studio/releases\\evil',
-      'https://github.com/GoogleCloudPlatform/gcc-creative-studio/%2e%2e/%2e%2e/evil/repo/releases/tag/v1',
-      'https://github.com/GoogleCloudPlatform/gcc-creative-studio/%252e%252e/evil',
-      'https://github.com/GoogleCloudPlatform/gcc-creative-studio/..%2fevil',
-      'https://github.com/GoogleCloudPlatform/gcc-creative-studio/releases%5cevil',
-      'https://github.com/GoogleCloudPlatform/gcc-creative-studio/releases/tag/v1\nHeader',
-      'https://github.com/GoogleCloudPlatform/gcc-creative-studio/releases/tag/v1\x7fevil',
-      'https://evil.com@github.com/GoogleCloudPlatform/gcc-creative-studio/releases/tag/v26.11.15',
-    ];
-
-    for (const badUrl of unsafeUrls) {
-      TestBed.resetTestingModule();
-      const service = setup('browser', true);
-      service.ensureLoaded();
-      const req = httpMock.expectOne(`${environment.backendURL}/admin/version`);
-      req.flush({
-        ...mockInfo,
-        releaseUrl: badUrl,
-      });
-      expect(service.safeReleaseUrl())
-        .withContext(`Expected ${badUrl} to be rejected`)
-        .toBeNull();
-      httpMock.verify();
-    }
-  });
 });
 
 describe('admin-version-session utils', () => {
@@ -578,17 +505,15 @@ describe('admin-version-session utils', () => {
     expect(isLoginRouteUrl('/login?returnUrl=%2Fadmin')).toBeTrue();
     expect(isLoginRouteUrl('/login;foo=1')).toBeTrue();
     expect(isLoginRouteUrl('/login/e2e')).toBeTrue();
-    expect(isLoginRouteUrl('/%6cogin')).toBeTrue();
-    expect(isLoginRouteUrl('/%E0%A4%A')).toBeFalse();
     expect(isLoginRouteUrl('/admin/dashboard')).toBeFalse();
     expect(isLoginRouteUrl(null)).toBeFalse();
   });
 
   it('decodes JWT identity, detects account mismatches, and handles throwing storage', () => {
-    const jwt = makeJwt({sub: ' 42 ', email: ' Admin@Google.com '});
+    const jwt = makeJwt({sub: ' 42 ', email: ' Admin@Example.com '});
     expect(decodeJwtIdentity(jwt)).toEqual({
       sub: '42',
-      email: 'admin@google.com',
+      email: 'admin@example.com',
     });
     expect(decodeJwtIdentity('not-a-jwt')).toBeNull();
 
@@ -608,5 +533,18 @@ describe('admin-version-session utils', () => {
     };
     expect(hasSessionAccountMismatch(throwingStorage)).toBeFalse();
     expect(readBrowserSessionOwner(throwingStorage)).toBeNull();
+    expect(hasStoredSessionToken(throwingStorage)).toBeFalse();
+    expect(hasStoredSessionToken(null)).toBeFalse();
+    expect(hasStoredSessionToken(subOnlyStorage)).toBeTrue();
+    expect(
+      hasStoredSessionToken({
+        getItem: () => JSON.stringify({token: '   '}),
+      }),
+    ).toBeFalse();
+    expect(
+      hasStoredSessionToken({
+        getItem: () => '{not-json',
+      }),
+    ).toBeFalse();
   });
 });

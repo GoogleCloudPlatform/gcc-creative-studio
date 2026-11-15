@@ -14,7 +14,7 @@
  limitations under the License.
 -->
 
-<ng-container *ngIf="isBrowserAdmin && versionService.isUpdateAvailable()">
+<ng-container *ngIf="isBrowserAdmin() && versionService.isUpdateAvailable()">
   <div
     *ngIf="versionService.versionInfo() as info"
     role="status"
@@ -31,7 +31,7 @@
     </div>
 
     <a
-      *ngIf="versionService.safeReleaseUrl() as releaseUrl"
+      *ngIf="info.releaseUrl as releaseUrl"
       [href]="releaseUrl"
       target="_blank"
       rel="noopener noreferrer"

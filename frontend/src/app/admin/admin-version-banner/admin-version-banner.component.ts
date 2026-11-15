@@ -14,9 +14,7 @@
  * limitations under the License.
  */
 
-import {isPlatformBrowser} from '@angular/common';
-import {Component, Inject, OnInit, PLATFORM_ID} from '@angular/core';
-import {AuthService} from '../../common/services/auth.service';
+import {Component, OnInit} from '@angular/core';
 import {AdminVersionService} from '../admin-version.service';
 
 @Component({
@@ -24,20 +22,14 @@ import {AdminVersionService} from '../admin-version.service';
   templateUrl: './admin-version-banner.component.html',
 })
 export class AdminVersionBannerComponent implements OnInit {
-  readonly isBrowserAdmin: boolean;
+  readonly isBrowserAdmin: AdminVersionService['isAdmin'];
 
-  constructor(
-    public readonly versionService: AdminVersionService,
-    private readonly authService: AuthService,
-    @Inject(PLATFORM_ID) private readonly platformId: Object,
-  ) {
-    this.isBrowserAdmin =
-      this.versionService.isBrowserAdmin?.() ??
-      (isPlatformBrowser(this.platformId) && this.authService.isUserAdmin());
+  constructor(public readonly versionService: AdminVersionService) {
+    this.isBrowserAdmin = this.versionService.isAdmin;
   }
 
   ngOnInit(): void {
-    if (this.isBrowserAdmin) {
+    if (this.versionService.isBrowserAdmin()) {
       this.versionService.ensureLoaded();
     }
   }

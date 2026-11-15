@@ -14,16 +14,15 @@
  * limitations under the License.
  */
 
-import {PLATFORM_ID, computed, signal} from '@angular/core';
+import {computed, signal} from '@angular/core';
 import {ComponentFixture, TestBed} from '@angular/core/testing';
-import {AuthService} from '../../common/services/auth.service';
 import {AdminVersionInfo, AdminVersionService} from '../admin-version.service';
 import {AdminVersionBannerComponent} from './admin-version-banner.component';
 
 describe('AdminVersionBannerComponent', () => {
   let fixture: ComponentFixture<AdminVersionBannerComponent>;
   let versionInfoSig: ReturnType<typeof signal<AdminVersionInfo | null>>;
-  let authSpy: jasmine.SpyObj<AuthService>;
+  let isAdminSig: ReturnType<typeof signal<boolean>>;
   let ensureLoadedSpy: jasmine.Spy;
 
   async function configure(
@@ -32,29 +31,22 @@ describe('AdminVersionBannerComponent', () => {
     initialInfo: AdminVersionInfo | null,
   ): Promise<void> {
     versionInfoSig = signal<AdminVersionInfo | null>(initialInfo);
+    isAdminSig = signal(platformId === 'browser' && isAdmin);
     ensureLoadedSpy = jasmine.createSpy('ensureLoaded');
-    authSpy = jasmine.createSpyObj<AuthService>('AuthService', ['isUserAdmin']);
-    authSpy.isUserAdmin.and.returnValue(isAdmin);
 
     const mockVersionService = {
       versionInfo: versionInfoSig.asReadonly(),
+      isAdmin: isAdminSig.asReadonly(),
       isUpdateAvailable: computed(
         () => versionInfoSig()?.status === 'update_available',
       ),
-      safeReleaseUrl: computed(() => {
-        const url = versionInfoSig()?.releaseUrl;
-        return url && url.startsWith('https://github.com/') ? url : null;
-      }),
+      isBrowserAdmin: () => isAdminSig(),
       ensureLoaded: ensureLoadedSpy,
     };
 
     await TestBed.configureTestingModule({
       declarations: [AdminVersionBannerComponent],
-      providers: [
-        {provide: AdminVersionService, useValue: mockVersionService},
-        {provide: AuthService, useValue: authSpy},
-        {provide: PLATFORM_ID, useValue: platformId},
-      ],
+      providers: [{provide: AdminVersionService, useValue: mockVersionService}],
     }).compileComponents();
 
     fixture = TestBed.createComponent(AdminVersionBannerComponent);
@@ -68,8 +60,6 @@ describe('AdminVersionBannerComponent', () => {
       status: 'up_to_date',
       releaseUrl:
         'https://github.com/GoogleCloudPlatform/gcc-creative-studio/releases/tag/v26.11.12',
-      releaseName: 'v26.11.12',
-      publishedAt: null,
       checkedAt: '2026-11-12T20:05:00Z',
     });
     expect(ensureLoadedSpy).toHaveBeenCalledTimes(1);
@@ -80,15 +70,13 @@ describe('AdminVersionBannerComponent', () => {
       latestVersion: null,
       status: 'unavailable',
       releaseUrl: null,
-      releaseName: null,
-      publishedAt: null,
       checkedAt: '2026-11-12T20:05:00Z',
     });
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('[role="status"]')).toBeNull();
   });
 
-  it('renders WCAG-AA banner and GitHub link when update_available for browser admin', async () => {
+  it('renders banner and GitHub link when update_available for browser admin', async () => {
     const releaseUrl =
       'https://github.com/GoogleCloudPlatform/gcc-creative-studio/releases/tag/v26.11.15';
     await configure('browser', true, {
@@ -96,8 +84,6 @@ describe('AdminVersionBannerComponent', () => {
       latestVersion: '26.11.15',
       status: 'update_available',
       releaseUrl,
-      releaseName: 'v26.11.15',
-      publishedAt: '2026-11-15T12:00:00Z',
       checkedAt: '2026-11-15T12:05:00Z',
     });
 
@@ -122,8 +108,6 @@ describe('AdminVersionBannerComponent', () => {
       status: 'update_available',
       releaseUrl:
         'https://github.com/GoogleCloudPlatform/gcc-creative-studio/releases/tag/v26.11.15',
-      releaseName: 'v26.11.15',
-      publishedAt: null,
       checkedAt: '2026-11-15T12:05:00Z',
     };
 
@@ -137,14 +121,12 @@ describe('AdminVersionBannerComponent', () => {
     expect(fixture.nativeElement.querySelector('[role="status"]')).toBeNull();
   });
 
-  it('renders update_available state without link when safeReleaseUrl() is null', async () => {
+  it('renders update_available state without link when releaseUrl is null', async () => {
     await configure('browser', true, {
       currentVersion: '26.11.12',
       latestVersion: '26.11.15',
       status: 'update_available',
-      releaseUrl: 'https://evil.example.com/phish',
-      releaseName: 'v26.11.15',
-      publishedAt: '2026-11-15T12:00:00Z',
+      releaseUrl: null,
       checkedAt: '2026-11-15T12:05:00Z',
     });
 
