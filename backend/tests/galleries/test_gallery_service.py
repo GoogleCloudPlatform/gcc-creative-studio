@@ -1401,3 +1401,35 @@ async def test_bulk_move_reraises_http_exception(service):
 
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail == "Forbidden"
+
+
+@pytest.mark.anyio
+async def test_sign_uri_uses_async_method_for_real_iam_signer(service):
+    from src.auth.iam_signer_credentials_service import IamSignerCredentials
+
+    real_signer = IamSignerCredentials()
+    real_signer.generate_presigned_url_async = AsyncMock(
+        return_value="https://async-signed.url/img.webp"
+    )
+    service.iam_signer_credentials = real_signer
+
+    result = await service._sign_uri("gs://bucket/img.webp")
+
+    assert result == "https://async-signed.url/img.webp"
+    real_signer.generate_presigned_url_async.assert_awaited_once_with(
+        "gs://bucket/img.webp"
+    )
+
+
+@pytest.mark.anyio
+async def test_sign_uri_falls_back_to_sync_for_mock_signer(service):
+    service.mock_iam_signer.generate_presigned_url.return_value = (
+        "https://mock-signed.url/img.webp"
+    )
+
+    result = await service._sign_uri("gs://bucket/img.webp")
+
+    assert result == "https://mock-signed.url/img.webp"
+    service.mock_iam_signer.generate_presigned_url.assert_called_once_with(
+        "gs://bucket/img.webp"
+    )

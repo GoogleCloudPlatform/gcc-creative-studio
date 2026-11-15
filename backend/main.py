@@ -132,11 +132,11 @@ async def lifespan(app: FastAPI):
     )
     from src.workflows.queue.run_state_service import set_dispatch_hook
     from src.workflows.queue.workflow_dispatcher import (
-        handle_post_auth_session,
         run_default_dispatch,
+        schedule_post_auth_session,
     )
 
-    register_post_auth_hook(handle_post_auth_session)
+    register_post_auth_hook(schedule_post_auth_session)
     set_dispatch_hook(run_default_dispatch)
 
     try:

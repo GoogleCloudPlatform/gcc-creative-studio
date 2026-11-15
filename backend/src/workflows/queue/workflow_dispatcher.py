@@ -781,6 +781,22 @@ _last_tick_monotonic: float | None = None
 # SHA-256 digests (never raw tokens) of the last ID token persisted per user;
 # only used to detect token changes without keeping credentials in memory.
 _LAST_STORED_USER_TOKEN_HASH: dict[int, str] = {}
+_BACKGROUND_POST_AUTH_TASKS: set[asyncio.Task[Any]] = set()
+_INFLIGHT_POST_AUTH_USERS: set[int] = set()
+
+
+def _inspect_token_change(user_id: int, token: str) -> tuple[str, str, bool]:
+    """Returns (trimmed_token, sha256_hash, whether_token_changed)."""
+    raw_id_token = (token or "").strip()
+    token_hash = (
+        hashlib.sha256(raw_id_token.encode()).hexdigest()
+        if raw_id_token
+        else ""
+    )
+    token_changed = bool(raw_id_token) and (
+        _LAST_STORED_USER_TOKEN_HASH.get(user_id) != token_hash
+    )
+    return raw_id_token, token_hash, token_changed
 
 
 def reset_dispatch_tick_throttle() -> None:
@@ -788,6 +804,7 @@ def reset_dispatch_tick_throttle() -> None:
     global _last_tick_monotonic  # pylint: disable=global-statement
     _last_tick_monotonic = None
     _LAST_STORED_USER_TOKEN_HASH.clear()
+    _INFLIGHT_POST_AUTH_USERS.clear()
 
 
 def should_run_throttled_tick(
@@ -838,22 +855,19 @@ async def handle_post_auth_session(
     session_factory: Callable[[], Any] = async_session_local,
     dispatcher_factory: Callable[..., WorkflowDispatcher] | None = None,
     clock: Callable[[], datetime.datetime] | None = None,
+    _run_tick: bool | None = None,
 ) -> None:
     """Post-auth hook: stores encrypted ID token, unparks session-waiting runs,
     and runs a throttled dispatcher tick if due work exists.
     """
     if user.id is None:
         return
-    raw_id_token = (token or "").strip()
-    token_hash = (
-        hashlib.sha256(raw_id_token.encode()).hexdigest()
-        if raw_id_token
-        else ""
+    raw_id_token, token_hash, token_changed = _inspect_token_change(
+        user.id, token
     )
-    token_changed = bool(raw_id_token) and (
-        _LAST_STORED_USER_TOKEN_HASH.get(user.id) != token_hash
+    run_tick = (
+        _run_tick if _run_tick is not None else should_run_throttled_tick()
     )
-    run_tick = should_run_throttled_tick()
     if not token_changed and not run_tick:
         return
 
@@ -899,3 +913,58 @@ async def handle_post_auth_session(
                     clock=clock,
                 )
             await dispatcher.dispatch(trigger="tick", user_id=user.id)
+
+
+def schedule_post_auth_session(
+    user: UserModel,
+    token: str,
+    exp: Any,
+    *,
+    session_factory: Callable[[], Any] = async_session_local,
+    dispatcher_factory: Callable[..., WorkflowDispatcher] | None = None,
+    clock: Callable[[], datetime.datetime] | None = None,
+) -> None:
+    """Non-blocking post-auth hook scheduling session persistence off-request."""
+    if user.id is None:
+        return
+    if user.id in _INFLIGHT_POST_AUTH_USERS:
+        return
+    _, _, token_changed = _inspect_token_change(user.id, token)
+    run_tick = should_run_throttled_tick()
+    if not token_changed and not run_tick:
+        return
+
+    user_id = user.id
+    _INFLIGHT_POST_AUTH_USERS.add(user_id)
+
+    async def _runner() -> None:
+        try:
+            await handle_post_auth_session(
+                user,
+                token,
+                exp,
+                session_factory=session_factory,
+                dispatcher_factory=dispatcher_factory,
+                clock=clock,
+                _run_tick=run_tick,
+            )
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "Background post-auth session handling failed for user_id=%s",
+                user_id,
+                exc_info=True,
+            )
+
+    try:
+        task = asyncio.create_task(_runner())
+    except RuntimeError:
+        _INFLIGHT_POST_AUTH_USERS.discard(user_id)
+        return
+
+    _BACKGROUND_POST_AUTH_TASKS.add(task)
+
+    def _on_done(done_task: asyncio.Task[Any]) -> None:
+        _BACKGROUND_POST_AUTH_TASKS.discard(done_task)
+        _INFLIGHT_POST_AUTH_USERS.discard(user_id)
+
+    task.add_done_callback(_on_done)

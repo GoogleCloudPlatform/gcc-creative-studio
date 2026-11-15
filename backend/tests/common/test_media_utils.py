@@ -29,21 +29,51 @@ from src.common.media_utils import (
 
 
 def test_generate_image_thumbnail_bytes_success():
-    with patch("src.common.media_utils.PILImage.open") as mock_open:
-        mock_img = MagicMock()
-        mock_open.return_value.__enter__.return_value = mock_img
+    import io
 
-        # mock_img.save should write to output
-        def fake_save(output, format, **kwargs):
-            output.write(b"thumbdata")
+    from PIL import Image
 
-        mock_img.save.side_effect = fake_save
-        mock_img.mode = "RGB"
+    buf = io.BytesIO()
+    Image.new("RGB", (1024, 512), color=(10, 20, 30)).save(buf, format="PNG")
+    res = generate_image_thumbnail_bytes(buf.getvalue(), "image/png")
 
-        res = generate_image_thumbnail_bytes(b"fakebytes", "image/png")
+    assert res is not None
+    assert res[:4] == b"RIFF"
+    with Image.open(io.BytesIO(res)) as out:
+        assert out.format == "WEBP"
+        assert max(out.size) <= 512
+        assert out.size == (512, 256)
 
-        assert res == b"thumbdata"
-        mock_img.thumbnail.assert_called_once_with((512, 512))
+
+def test_generate_image_thumbnail_bytes_preserves_alpha_and_exif():
+    import io
+
+    from PIL import Image
+
+    # RGBA alpha preserved
+    rgba_buf = io.BytesIO()
+    Image.new("RGBA", (600, 300), color=(255, 0, 0, 128)).save(
+        rgba_buf, format="PNG"
+    )
+    rgba_webp = generate_image_thumbnail_bytes(rgba_buf.getvalue())
+    assert rgba_webp is not None
+    with Image.open(io.BytesIO(rgba_webp)) as out:
+        assert out.format == "WEBP"
+        assert out.mode == "RGBA"
+        assert out.size == (512, 256)
+
+    # EXIF orientation 6 (Rotate 90 CW -> 800x400 becomes 400x800, scaled to 256x512)
+    exif_img = Image.new("RGB", (800, 400), color=(0, 128, 255))
+    exif = exif_img.getexif()
+    exif[0x0112] = 6
+    exif_buf = io.BytesIO()
+    exif_img.save(exif_buf, format="JPEG", exif=exif.tobytes())
+
+    rotated_webp = generate_image_thumbnail_bytes(exif_buf.getvalue())
+    assert rotated_webp is not None
+    with Image.open(io.BytesIO(rotated_webp)) as out:
+        assert out.format == "WEBP"
+        assert out.size == (256, 512)
 
 
 def test_generate_image_thumbnail_bytes_error():
@@ -57,7 +87,7 @@ def test_generate_image_thumbnail_from_gcs_success():
     mock_gcs = MagicMock()
     mock_gcs.download_bytes_from_gcs.return_value = b"fakeimage"
     mock_gcs.upload_bytes_to_gcs.return_value = (
-        "gs://bucket/image_thumbnail.png"
+        "gs://bucket/image_thumbnail.webp"
     )
 
     with patch(
@@ -71,11 +101,11 @@ def test_generate_image_thumbnail_from_gcs_success():
             "image/png",
         )
 
-        assert res == "gs://bucket/image_thumbnail.png"
+        assert res == "gs://bucket/image_thumbnail.webp"
         mock_gcs.upload_bytes_to_gcs.assert_called_once_with(
             b"fakethumb",
-            "image_thumbnail.png",
-            "image/png",
+            "image_thumbnail.webp",
+            "image/webp",
         )
 
 
@@ -96,8 +126,86 @@ def test_generate_thumbnail_video_success():
 
         res = generate_thumbnail("/tmp/video.mp4")
 
-        assert res == "/tmp/thumbnail_video.png"
+        assert res == "/tmp/thumbnail_video.jpg"
         mock_run.assert_called_once()
+        cmd = mock_run.call_args.args[0]
+        assert "-vf" in cmd
+        assert "scale='min(512,iw)':-2" in cmd
+        assert "-q:v" in cmd
+        assert "4" in cmd
+
+
+def test_infer_thumbnail_mime_and_ext():
+    from src.common.media_utils import infer_thumbnail_mime_and_ext
+
+    assert infer_thumbnail_mime_and_ext("/tmp/thumb.jpg") == (
+        "image/jpeg",
+        ".jpg",
+    )
+    assert infer_thumbnail_mime_and_ext("/tmp/thumb.jpeg") == (
+        "image/jpeg",
+        ".jpg",
+    )
+    assert infer_thumbnail_mime_and_ext("/tmp/thumb.webp") == (
+        "image/webp",
+        ".webp",
+    )
+    assert infer_thumbnail_mime_and_ext("/tmp/thumb.png") == (
+        "image/png",
+        ".png",
+    )
+
+
+def test_generate_video_thumbnail_from_gcs_success(tmp_path):
+    from src.common.media_utils import generate_video_thumbnail_from_gcs
+
+    mock_gcs = MagicMock()
+    mock_gcs.download_bytes_from_gcs.return_value = b"fakevideo"
+    mock_gcs.upload_bytes_to_gcs.return_value = (
+        "gs://bucket/uploads/clip_thumbnail.jpg"
+    )
+    fake_thumb = tmp_path / "thumbnail_clip.jpg"
+    fake_thumb.write_bytes(b"fakejpg")
+
+    with patch(
+        "src.common.media_utils.generate_thumbnail",
+        return_value=str(fake_thumb),
+    ):
+        res = generate_video_thumbnail_from_gcs(
+            mock_gcs, "gs://bucket/uploads/clip.mp4"
+        )
+
+    assert res == "gs://bucket/uploads/clip_thumbnail.jpg"
+    mock_gcs.download_bytes_from_gcs.assert_called_once_with(
+        "gs://bucket/uploads/clip.mp4"
+    )
+    mock_gcs.upload_bytes_to_gcs.assert_called_once_with(
+        b"fakejpg",
+        "uploads/clip_thumbnail.jpg",
+        "image/jpeg",
+    )
+
+
+def test_generate_video_thumbnail_from_gcs_failures():
+    from src.common.media_utils import generate_video_thumbnail_from_gcs
+
+    mock_gcs = MagicMock()
+    assert (
+        generate_video_thumbnail_from_gcs(mock_gcs, "https://bad/uri") is None
+    )
+    assert generate_video_thumbnail_from_gcs(mock_gcs, "gs://bucket/") is None
+
+    mock_gcs.download_bytes_from_gcs.return_value = None
+    assert (
+        generate_video_thumbnail_from_gcs(mock_gcs, "gs://bucket/a.mp4") is None
+    )
+
+    mock_gcs.download_bytes_from_gcs.return_value = b"video"
+    with patch("src.common.media_utils.generate_thumbnail", return_value=None):
+        assert (
+            generate_video_thumbnail_from_gcs(mock_gcs, "gs://bucket/a.mp4")
+            is None
+        )
 
 
 def test_generate_thumbnail_video_empty():

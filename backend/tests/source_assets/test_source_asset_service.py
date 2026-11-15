@@ -147,7 +147,10 @@ async def test_upload_asset_success_image(
         sample_user.id, expected_hash, 1
     )
     mock_dependencies["repo"].create.assert_called_once()
-    mock_dependencies["gcs_service"].store_to_gcs.assert_called_once()
+    assert mock_dependencies["gcs_service"].store_to_gcs.call_count == 2
+    thumb_call = mock_dependencies["gcs_service"].store_to_gcs.call_args_list[1]
+    assert thumb_call.kwargs["file_name"] == "thumbnail.webp"
+    assert thumb_call.kwargs["mime_type"] == "image/webp"
 
 
 @pytest.mark.anyio
@@ -444,7 +447,10 @@ async def test_create_from_gcs_uri_success(
     ].download_bytes_from_gcs.assert_called_once_with(
         "gs://input/in.png",
     )
-    mock_dependencies["gcs_service"].store_to_gcs.assert_called_once()
+    assert mock_dependencies["gcs_service"].store_to_gcs.call_count == 2
+    thumb_call = mock_dependencies["gcs_service"].store_to_gcs.call_args_list[1]
+    assert thumb_call.kwargs["file_name"] == "thumbnail.webp"
+    assert thumb_call.kwargs["mime_type"] == "image/webp"
     mock_dependencies["repo"].create.assert_called_once()
 
 
@@ -541,7 +547,10 @@ async def test_upload_asset_non_png(service, mock_dependencies, sample_user):
     )
 
     assert response.id == 60
-    mock_dependencies["gcs_service"].store_to_gcs.assert_called_once()
+    assert mock_dependencies["gcs_service"].store_to_gcs.call_count == 2
+    thumb_call = mock_dependencies["gcs_service"].store_to_gcs.call_args_list[1]
+    assert thumb_call.kwargs["file_name"] == "thumbnail.webp"
+    assert thumb_call.kwargs["mime_type"] == "image/webp"
 
 
 @pytest.mark.anyio
@@ -858,3 +867,131 @@ async def test_create_asset_response_youtube(service):
         == "https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg"
     )
     assert res.user_email == "test@example.com"
+
+
+@pytest.mark.anyio
+async def test_finalize_direct_upload_generates_image_and_video_thumbnails(
+    service, mock_dependencies, sample_user
+):
+    from src.source_assets.dto.finalize_upload_dto import (
+        FinalizeSourceAssetUploadDto,
+    )
+
+    mock_dependencies["iam_signer"].generate_presigned_url.side_effect = (
+        lambda u: f"https://signed/{u}"
+    )
+    mock_dependencies["gcs_service"].bucket_name = "test-bucket"
+    mock_dependencies["repo"].create.side_effect = (
+        lambda model: model.model_copy(update={"id": 91})
+    )
+
+    with patch(
+        "src.source_assets.source_asset_service.generate_image_thumbnail_from_gcs",
+        return_value="gs://test-bucket/source_assets/1/uploads/pic_thumbnail.webp",
+    ) as mock_img_thumb:
+        img_res = await service.finalize_direct_upload(
+            FinalizeSourceAssetUploadDto(
+                workspace_id=1,
+                gcs_uri="gs://test-bucket/source_assets/1/uploads/pic.png",
+                filename="pic.png",
+                mime_type="image/png",
+                size=1024,
+            ),
+            sample_user,
+        )
+    mock_img_thumb.assert_called_once_with(
+        mock_dependencies["gcs_service"],
+        "gs://test-bucket/source_assets/1/uploads/pic.png",
+        "image/png",
+    )
+    assert (
+        img_res.thumbnail_gcs_uri
+        == "gs://test-bucket/source_assets/1/uploads/pic_thumbnail.webp"
+    )
+
+    with patch(
+        "src.source_assets.source_asset_service.generate_video_thumbnail_from_gcs",
+        return_value="gs://test-bucket/source_assets/1/uploads/vid_thumbnail.jpg",
+    ) as mock_vid_thumb:
+        vid_res = await service.finalize_direct_upload(
+            FinalizeSourceAssetUploadDto(
+                workspace_id=1,
+                gcs_uri="gs://test-bucket/source_assets/1/uploads/vid.mp4",
+                filename="vid.mp4",
+                mime_type="video/mp4",
+                size=2048,
+            ),
+            sample_user,
+        )
+    mock_vid_thumb.assert_called_once_with(
+        mock_dependencies["gcs_service"],
+        "gs://test-bucket/source_assets/1/uploads/vid.mp4",
+    )
+    assert (
+        vid_res.thumbnail_gcs_uri
+        == "gs://test-bucket/source_assets/1/uploads/vid_thumbnail.jpg"
+    )
+
+
+@pytest.mark.anyio
+async def test_finalize_direct_upload_thumbnail_failure_is_nonfatal(
+    service, mock_dependencies, sample_user
+):
+    from src.source_assets.dto.finalize_upload_dto import (
+        FinalizeSourceAssetUploadDto,
+    )
+
+    mock_dependencies["iam_signer"].generate_presigned_url.return_value = (
+        "https://signed.url"
+    )
+    mock_dependencies["gcs_service"].bucket_name = "test-bucket"
+    mock_dependencies["repo"].create.side_effect = (
+        lambda model: model.model_copy(update={"id": 92})
+    )
+
+    with patch(
+        "src.source_assets.source_asset_service.generate_image_thumbnail_from_gcs",
+        side_effect=RuntimeError("boom"),
+    ):
+        res = await service.finalize_direct_upload(
+            FinalizeSourceAssetUploadDto(
+                workspace_id=1,
+                gcs_uri="gs://test-bucket/source_assets/1/uploads/pic.png",
+                filename="pic.png",
+                mime_type="image/png",
+                size=1024,
+            ),
+            sample_user,
+        )
+    assert res.id == 92
+    assert res.thumbnail_gcs_uri is None
+
+
+@pytest.mark.anyio
+async def test_upload_asset_image_thumbnail_failure_is_nonfatal(
+    service, mock_dependencies, sample_user
+):
+    mock_dependencies["repo"].find_by_hash.return_value = None
+    mock_dependencies["gcs_service"].store_to_gcs.return_value = (
+        "gs://bucket/asset.png"
+    )
+    mock_dependencies["iam_signer"].generate_presigned_url.return_value = (
+        "https://signed.url"
+    )
+    mock_dependencies["repo"].create.side_effect = (
+        lambda model: model.model_copy(update={"id": 93})
+    )
+
+    with patch(
+        "src.source_assets.source_asset_service.generate_image_thumbnail_bytes",
+        side_effect=RuntimeError("webp boom"),
+    ):
+        res = await service.upload_asset(
+            user=sample_user,
+            file_bytes=get_dummy_image_bytes(),
+            filename="test.png",
+            workspace_id=1,
+            mime_type="image/png",
+        )
+    assert res.id == 93
+    assert res.thumbnail_gcs_uri is None

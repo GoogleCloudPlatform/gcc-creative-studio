@@ -14,27 +14,103 @@
  * limitations under the License.
  */
 
-import {Injectable} from '@angular/core';
+import {
+  Inject,
+  Injectable,
+  OnDestroy,
+  Optional,
+  PLATFORM_ID,
+} from '@angular/core';
+import {isPlatformBrowser} from '@angular/common';
 import {HttpClient} from '@angular/common/http';
-import {Observable} from 'rxjs';
+import {NavigationEnd, Router} from '@angular/router';
+import {Observable, Subscription, throwError} from 'rxjs';
+import {catchError, filter, shareReplay, tap} from 'rxjs/operators';
 import {environment} from '../../../environments/environment';
 import {WorkspaceRole} from '../../common/models/workspace-member.model';
 import {Workspace} from '../../common/models/workspace.model';
 
+const WORKSPACE_CACHE_TTL_MS = 30_000;
+const USER_DETAILS_STORAGE_KEY = 'USER_DETAILS';
+
 @Injectable({
   providedIn: 'root',
 })
-export class WorkspaceService {
+export class WorkspaceService implements OnDestroy {
   private apiUrl = `${environment.backendURL}/workspaces`;
+  private cachedWorkspaces$: Observable<Workspace[]> | null = null;
+  private cachedUserKey: string | null = null;
+  private cacheExpiresAt = 0;
+  private routerSub?: Subscription;
 
-  constructor(private http: HttpClient) {}
+  constructor(
+    private http: HttpClient,
+    @Inject(PLATFORM_ID) private platformId: object,
+    @Optional() router?: Router,
+  ) {
+    this.routerSub = router?.events
+      .pipe(
+        filter(
+          (event): event is NavigationEnd => event instanceof NavigationEnd,
+        ),
+      )
+      .subscribe(event => {
+        if (event.urlAfterRedirects.startsWith('/login')) {
+          this.clearCache();
+        }
+      });
+  }
 
-  getWorkspaces(): Observable<Workspace[]> {
-    return this.http.get<Workspace[]>(this.apiUrl);
+  ngOnDestroy(): void {
+    this.routerSub?.unsubscribe();
+  }
+
+  getWorkspaces(forceRefresh = false): Observable<Workspace[]> {
+    if (!isPlatformBrowser(this.platformId)) {
+      return this.http.get<Workspace[]>(this.apiUrl);
+    }
+
+    const userKey = this.getCacheScopeKey();
+    if (!userKey) {
+      this.clearCache();
+      return this.http.get<Workspace[]>(this.apiUrl);
+    }
+
+    const now = Date.now();
+    const isCacheValid =
+      !forceRefresh &&
+      this.cachedWorkspaces$ !== null &&
+      this.cachedUserKey === userKey &&
+      now < this.cacheExpiresAt;
+
+    if (!isCacheValid) {
+      this.cachedUserKey = userKey;
+      this.cacheExpiresAt = now + WORKSPACE_CACHE_TTL_MS;
+      this.cachedWorkspaces$ = this.http.get<Workspace[]>(this.apiUrl).pipe(
+        tap(() => {
+          this.cacheExpiresAt = Date.now() + WORKSPACE_CACHE_TTL_MS;
+        }),
+        shareReplay({bufferSize: 1, refCount: false}),
+        catchError(err => {
+          this.clearCache();
+          return throwError(() => err);
+        }),
+      );
+    }
+
+    return this.cachedWorkspaces$!;
+  }
+
+  clearCache(): void {
+    this.cachedWorkspaces$ = null;
+    this.cachedUserKey = null;
+    this.cacheExpiresAt = 0;
   }
 
   createWorkspace(name: string): Observable<Workspace> {
-    return this.http.post<Workspace>(this.apiUrl, {name});
+    return this.http
+      .post<Workspace>(this.apiUrl, {name})
+      .pipe(tap(() => this.clearCache()));
   }
 
   inviteUser(
@@ -42,9 +118,33 @@ export class WorkspaceService {
     email: string,
     role: WorkspaceRole,
   ): Observable<void> {
-    return this.http.post<void>(`${this.apiUrl}/${workspaceId}/invites`, {
-      email,
-      role,
-    });
+    return this.http
+      .post<void>(`${this.apiUrl}/${workspaceId}/invites`, {
+        email,
+        role,
+      })
+      .pipe(tap(() => this.clearCache()));
+  }
+
+  private getCacheScopeKey(): string | null {
+    try {
+      const raw = localStorage.getItem(USER_DETAILS_STORAGE_KEY);
+      if (!raw) {
+        return null;
+      }
+      const parsed = JSON.parse(raw) as {
+        email?: string;
+        id?: number | string;
+      };
+      if (parsed?.email) {
+        return `user:${parsed.email}`;
+      }
+      if (parsed?.id !== undefined && parsed?.id !== null) {
+        return `user:${parsed.id}`;
+      }
+      return null;
+    } catch {
+      return null;
+    }
   }
 }

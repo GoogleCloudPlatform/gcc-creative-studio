@@ -36,7 +36,10 @@ from src.common.base_dto import (
     MimeTypeEnum,
     AspectRatioEnum,
 )
-from src.common.media_utils import generate_thumbnail
+from src.common.media_utils import (
+    generate_thumbnail,
+    infer_thumbnail_mime_and_ext,
+)
 from src.common.schema.media_item_model import (
     AssetRoleEnum,
     JobStatusEnum,
@@ -164,11 +167,14 @@ def _process_timeline_in_background(
                             )
                             thumbnail_gcs_uri = None
                             if thumbnail_path:
+                                thumb_mime, thumb_ext = (
+                                    infer_thumbnail_mime_and_ext(thumbnail_path)
+                                )
                                 thumbnail_gcs_uri = await asyncio.to_thread(
                                     gcs_service.upload_file_to_gcs,
                                     local_path=thumbnail_path,
-                                    destination_blob_name=f"thumbnails/{media_item_id}.png",
-                                    mime_type="image/png",
+                                    destination_blob_name=f"thumbnails/{media_item_id}{thumb_ext}",
+                                    mime_type=thumb_mime,
                                 )
 
                             update_data = {

@@ -39,6 +39,7 @@ from src.common.base_dto import (
 from src.common.media_utils import (
     concatenate_videos,
     generate_thumbnail,
+    infer_thumbnail_mime_and_ext,
 )
 from src.common.schema.genai_model_setup import GenAIModelSetup
 from src.common.schema.media_item_model import (
@@ -1069,17 +1070,20 @@ def _process_video_in_background(
                                 local_thumbnail_name = thumbnail_path or ""
 
                                 # Upload thumbnail to GCS
-                                thumbnail_gcs_blob = (
-                                    f"thumbnails/{media_item_id}_{i}.png"
-                                )
                                 thumbnail_gcs_uri = ""
                                 if thumbnail_path:
+                                    thumb_mime, thumb_ext = (
+                                        infer_thumbnail_mime_and_ext(
+                                            thumbnail_path
+                                        )
+                                    )
+                                    thumbnail_gcs_blob = f"thumbnails/{media_item_id}_{i}{thumb_ext}"
                                     thumbnail_gcs_uri = (
                                         await asyncio.to_thread(
                                             gcs_service.upload_file_to_gcs,
                                             local_path=thumbnail_path,
                                             destination_blob_name=thumbnail_gcs_blob,
-                                            mime_type="image/png",
+                                            mime_type=thumb_mime,
                                         )
                                         or ""
                                     )
@@ -1239,6 +1243,11 @@ def _process_video_in_background(
                                             thumbnail_path
                                         )
                                         try:
+                                            thumb_mime, _ = (
+                                                infer_thumbnail_mime_and_ext(
+                                                    thumbnail_path
+                                                )
+                                            )
                                             thumbnail_gcs_uri = (
                                                 await asyncio.to_thread(
                                                     gcs_service.upload_file_to_gcs,
@@ -1247,7 +1256,7 @@ def _process_video_in_background(
                                                         "thumbnails/",
                                                         "",
                                                     ),
-                                                    mime_type="image/png",
+                                                    mime_type=thumb_mime,
                                                 )
                                                 or ""
                                             )
@@ -1499,11 +1508,14 @@ def _process_video_concatenation_in_background(
                         )
                         thumbnail_gcs_uri = None
                         if thumbnail_path:
+                            thumb_mime, thumb_ext = (
+                                infer_thumbnail_mime_and_ext(thumbnail_path)
+                            )
                             thumbnail_gcs_uri = await asyncio.to_thread(
                                 gcs_service.upload_file_to_gcs,
                                 local_path=thumbnail_path,
-                                destination_blob_name=f"concatenated_videos/{media_item_id}_thumb.png",
-                                mime_type="image/png",
+                                destination_blob_name=f"concatenated_videos/{media_item_id}_thumb{thumb_ext}",
+                                mime_type=thumb_mime,
                             )
 
                         end_time = time.monotonic()

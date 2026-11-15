@@ -149,3 +149,53 @@ async def test_migration_runner_exception_in_lock_release():
         )
         # Connection must still be closed
         mock_conn.close.assert_called_once()
+
+
+def test_alembic_single_head_is_gallery_indexes():
+    """Verifies Alembic has a single head pointing at the gallery index revision."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    cfg = Config("alembic.ini")
+    heads = ScriptDirectory.from_config(cfg).get_heads()
+    assert heads == ["c8f4a2e91d05"]
+
+
+def test_gallery_performance_indexes_upgrade_and_downgrade():
+    """Verifies all 7 partial/tag indexes are created and dropped without touching the view."""
+    import importlib.util
+    from pathlib import Path
+
+    migration_path = (
+        Path(__file__).resolve().parent.parent
+        / "alembic"
+        / "versions"
+        / "c8f4a2e91d05_add_gallery_performance_indexes.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "c8f4a2e91d05_add_gallery_performance_indexes", migration_path
+    )
+    assert spec is not None and spec.loader is not None
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+
+    executed: list[str] = []
+    with patch.object(migration.op, "execute", side_effect=executed.append):
+        migration.upgrade()
+        migration.downgrade()
+
+    upgrades = executed[:8]
+    downgrades = executed[8:]
+    assert len(upgrades) == 8
+    assert len(downgrades) == 8
+    assert all("CREATE INDEX IF NOT EXISTS" in sql for sql in upgrades)
+    assert all("unified_gallery_view" not in sql for sql in executed)
+    assert any("ix_media_items_ws_created_active" in sql for sql in upgrades)
+    assert any(
+        "ix_media_items_ws_folder_status_created_active" in sql
+        for sql in upgrades
+    )
+    assert any("ix_source_assets_ws_created_active" in sql for sql in upgrades)
+    assert any("ix_media_item_tags_tag_id" in sql for sql in upgrades)
+    assert any("ix_source_asset_tags_tag_id" in sql for sql in upgrades)
+    assert all("DROP INDEX IF EXISTS" in sql for sql in downgrades)

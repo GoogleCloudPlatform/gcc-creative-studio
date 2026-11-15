@@ -68,7 +68,7 @@ export class GalleryService implements OnDestroy {
       .pipe(
         debounceTime(50),
         switchMap(([workspaceId, filters]) => {
-          if (!filters) {
+          if (!filters || !workspaceId) {
             return of(null);
           }
           this.isLoading$.next(true);
@@ -76,7 +76,7 @@ export class GalleryService implements OnDestroy {
 
           const body: GallerySearchDto = {
             ...filters,
-            workspaceId: workspaceId || undefined,
+            workspaceId,
           };
 
           return this.fetchImages(body).pipe(
@@ -113,7 +113,8 @@ export class GalleryService implements OnDestroy {
   }
 
   loadGallery(reset = false): void {
-    if (this.isLoading$.value) {
+    const activeWorkspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    if (this.isLoading$.value || !activeWorkspaceId) {
       return;
     }
 
@@ -127,8 +128,7 @@ export class GalleryService implements OnDestroy {
 
     const body: GallerySearchDto = {
       ...this.filters$.value,
-      workspaceId:
-        this.workspaceStateService.getActiveWorkspaceId() || undefined,
+      workspaceId: activeWorkspaceId,
       offset: this.currentPage * this.pageSize,
       limit: this.pageSize,
     };
