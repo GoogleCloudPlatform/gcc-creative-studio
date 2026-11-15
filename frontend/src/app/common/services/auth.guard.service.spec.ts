@@ -21,15 +21,17 @@ import {
   Router,
   RouterStateSnapshot,
 } from '@angular/router';
-import {Observable, firstValueFrom, of, throwError} from 'rxjs';
+import {Observable, Subject, firstValueFrom, of} from 'rxjs';
 
 import {AuthGuardService} from './auth.guard.service';
 import {AuthService} from './auth.service';
+import {LoadingService} from './loading.service';
 import {UserService} from './user.service';
 import {UserRolesEnum} from '../models/user.model';
 
 describe('AuthGuardService', () => {
   let service: AuthGuardService;
+  let loadingService: LoadingService;
   let router: {navigate: jasmine.Spy};
   let authService: jasmine.SpyObj<AuthService>;
   let userRoles: UserRolesEnum[] | null;
@@ -62,6 +64,7 @@ describe('AuthGuardService', () => {
       ],
     });
     service = TestBed.inject(AuthGuardService);
+    loadingService = TestBed.inject(LoadingService);
   });
 
   it('allows navigation with a valid session', () => {
@@ -99,19 +102,50 @@ describe('AuthGuardService', () => {
     expect(router.navigate).toHaveBeenCalledWith(['/']);
   });
 
-  it('passes target state.url to onSessionRenewalFailed when renewal fails', async () => {
+  it('passes target state.url to onSessionRenewalFailed when renewal fails and hides loading indicator', async () => {
+    const token$ = new Subject<string>();
+    const loadingStates: boolean[] = [];
+    const sub = loadingService.isLoading$.subscribe(v => loadingStates.push(v));
     authService.isLoggedIn.and.returnValue(false);
     authService.hasRenewableSession.and.returnValue(true);
     authService.getValidIdentityPlatformToken$.and.returnValue(
-      throwError(() => new Error('silent sign-in failed')),
+      token$.asObservable(),
     );
 
-    const result = service.canActivate(route, state) as Observable<boolean>;
+    const resultPromise = firstValueFrom(
+      service.canActivate(route, state) as Observable<boolean>,
+    );
+    expect(loadingStates[loadingStates.length - 1]).toBeTrue();
 
-    expect(await firstValueFrom(result)).toBeFalse();
+    token$.error(new Error('silent sign-in failed'));
+    expect(await resultPromise).toBeFalse();
+    expect(loadingStates[loadingStates.length - 1]).toBeFalse();
     expect(authService.onSessionRenewalFailed).toHaveBeenCalledOnceWith(
       '/workflows/7',
       jasmine.any(Error),
     );
+    sub.unsubscribe();
+  });
+
+  it('shows and clears the loading indicator around successful silent renewal', async () => {
+    const token$ = new Subject<string>();
+    const loadingStates: boolean[] = [];
+    const sub = loadingService.isLoading$.subscribe(v => loadingStates.push(v));
+    authService.isLoggedIn.and.returnValue(false);
+    authService.hasRenewableSession.and.returnValue(true);
+    authService.getValidIdentityPlatformToken$.and.returnValue(
+      token$.asObservable(),
+    );
+
+    const resultPromise = firstValueFrom(
+      service.canActivate(route, state) as Observable<boolean>,
+    );
+    expect(loadingStates[loadingStates.length - 1]).toBeTrue();
+
+    token$.next('fresh-token');
+    token$.complete();
+    expect(await resultPromise).toBeTrue();
+    expect(loadingStates[loadingStates.length - 1]).toBeFalse();
+    sub.unsubscribe();
   });
 });

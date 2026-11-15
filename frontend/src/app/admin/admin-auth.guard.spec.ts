@@ -16,15 +16,17 @@
 
 import {TestBed} from '@angular/core/testing';
 import {ActivatedRouteSnapshot, RouterStateSnapshot} from '@angular/router';
-import {Observable, firstValueFrom, of, throwError} from 'rxjs';
+import {Observable, Subject, firstValueFrom, of, throwError} from 'rxjs';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {HttpClientTestingModule} from '@angular/common/http/testing';
 import {AdminAuthGuard} from './admin-auth.guard';
 import {AuthService} from '../common/services/auth.service';
+import {LoadingService} from '../common/services/loading.service';
 import {UserService} from '../common/services/user.service';
 
 describe('AdminAuthGuard', () => {
   let service: AdminAuthGuard;
+  let loadingService: LoadingService;
   let authService: jasmine.SpyObj<AuthService>;
 
   const route = {} as ActivatedRouteSnapshot;
@@ -54,6 +56,7 @@ describe('AdminAuthGuard', () => {
       ],
     });
     service = TestBed.inject(AdminAuthGuard);
+    loadingService = TestBed.inject(LoadingService);
   });
 
   it('should be created', () => {
@@ -67,16 +70,28 @@ describe('AdminAuthGuard', () => {
     expect(authService.redirectToLogin).toHaveBeenCalledOnceWith('/admin');
   });
 
-  it('renews an expired admin session silently before allowing navigation', async () => {
+  it('renews an expired admin session silently while showing loading indicator', async () => {
+    const token$ = new Subject<string>();
+    const loadingStates: boolean[] = [];
+    const sub = loadingService.isLoading$.subscribe(v => loadingStates.push(v));
     authService.isLoggedIn.and.returnValue(false);
     authService.hasRenewableSession.and.returnValue(true);
-    authService.getValidIdentityPlatformToken$.and.returnValue(of('fresh'));
+    authService.getValidIdentityPlatformToken$.and.returnValue(
+      token$.asObservable(),
+    );
     authService.isUserAdmin.and.returnValue(true);
 
-    const result = service.canActivate(route, state) as Observable<boolean>;
+    const resultPromise = firstValueFrom(
+      service.canActivate(route, state) as Observable<boolean>,
+    );
+    expect(loadingStates[loadingStates.length - 1]).toBeTrue();
 
-    expect(await firstValueFrom(result)).toBeTrue();
+    token$.next('fresh');
+    token$.complete();
+    expect(await resultPromise).toBeTrue();
+    expect(loadingStates[loadingStates.length - 1]).toBeFalse();
     expect(authService.logout).not.toHaveBeenCalled();
+    sub.unsubscribe();
   });
 
   it('calls expireSession (never logout) when renewed user is not an admin', async () => {

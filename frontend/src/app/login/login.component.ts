@@ -47,7 +47,7 @@ const HOME_ROUTE = '/';
   styleUrls: ['./login.component.scss'],
 })
 export class LoginComponent implements OnDestroy {
-  private readonly route = inject(ActivatedRoute, {optional: true});
+  private readonly route = inject(ActivatedRoute);
   private readonly cdr = inject(ChangeDetectorRef);
   private signInSub: Subscription | null = null;
   private fallbackSub: Subscription | null = null;
@@ -127,7 +127,7 @@ export class LoginComponent implements OnDestroy {
     this.renderFallbackGoogleButton();
   }
 
-  private renderFallbackGoogleButton(isRetryAfterError = false): void {
+  private renderFallbackGoogleButton(): void {
     this.fallbackSub?.unsubscribe();
     this.fallbackSub = null;
     if (this.destroyed || !this.showFallbackGoogleButton) return;
@@ -136,37 +136,29 @@ export class LoginComponent implements OnDestroy {
       this.fallbackContainers?.toArray().map(ref => ref.nativeElement) ?? [];
     if (elements.length === 0) return;
 
-    let synchronous = true;
-    let credentialStarted = false;
     this.fallbackSub = this.authService
       .renderGoogleSignInButton$(elements, () => {
-        credentialStarted = true;
         this.ngZone.run(() => {
           this.loader = true;
         });
       })
       .subscribe({
-        next: () => {
-          this.ngZone.run(() => this.navigateAfterLogin());
-        },
-        error: (error: unknown) => {
-          if (isRetryAfterError && synchronous) {
-            return;
-          }
+        next: attempt => {
           this.ngZone.run(() => {
-            this.handleLoginError(error);
-            if (
-              !synchronous &&
-              credentialStarted &&
-              this.showFallbackGoogleButton &&
-              !this.destroyed
-            ) {
-              this.renderFallbackGoogleButton(true);
+            if (attempt.ok) {
+              this.navigateAfterLogin();
+            } else {
+              this.handleLoginError(attempt.error);
             }
           });
         },
+        error: (error: unknown) => {
+          this.ngZone.run(() => {
+            this.showFallbackGoogleButton = false;
+            this.handleLoginError(error);
+          });
+        },
       });
-    synchronous = false;
   }
 
   private handleLoginError(error: unknown, postErrorAction?: () => void) {
@@ -187,7 +179,7 @@ export class LoginComponent implements OnDestroy {
   private navigateAfterLogin(): void {
     this.loader = false;
     const returnUrl = sanitizeReturnUrl(
-      this.route?.snapshot?.queryParamMap?.get('returnUrl'),
+      this.route.snapshot.queryParamMap.get('returnUrl'),
     );
     if (returnUrl && returnUrl !== HOME_ROUTE) {
       void this.router.navigateByUrl(returnUrl);

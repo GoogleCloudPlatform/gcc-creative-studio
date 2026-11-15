@@ -17,7 +17,7 @@
 import {TestBed} from '@angular/core/testing';
 import {provideHttpClient} from '@angular/common/http';
 import {provideHttpClientTesting} from '@angular/common/http/testing';
-import {EMPTY, of, throwError} from 'rxjs';
+import {EMPTY, Observable, of, throwError} from 'rxjs';
 import {AgentChatService, SSECallbacks} from './agent-chat.service';
 import {AuthService} from '../../common/services/auth.service';
 import {isSessionHandledError} from '../../common/services/auth-token.utils';
@@ -48,6 +48,8 @@ describe('AgentChatService streamActive lifecycle', () => {
       ok: status >= 200 && status < 300,
       status,
       json: () => Promise.resolve(body),
+      text: () =>
+        Promise.resolve(typeof body === 'string' ? body : JSON.stringify(body)),
     }) as unknown as Response;
 
   /** Lets the awaited token + fetch + json() steps settle. */
@@ -226,11 +228,10 @@ describe('AgentChatService streamActive lifecycle', () => {
     expect(service.isGeneratingStoryboard()).toBeFalse();
     expect(service.streamActive()).toBeFalse();
     expect(callbacks.onError).toHaveBeenCalledTimes(1);
-    expect(
-      isSessionHandledError(
-        (callbacks.onError as jasmine.Spy).calls.mostRecent().args[0],
-      ),
-    ).toBeTrue();
+    const sendHandled = isSessionHandledError(
+      (callbacks.onError as jasmine.Spy).calls.mostRecent().args[0],
+    );
+    expect(sendHandled).toBeTrue();
   });
 
   it('stops polling and resets generating signals when startPolling loses session, but stays armed when deferred', async () => {
@@ -263,11 +264,10 @@ describe('AgentChatService streamActive lifecycle', () => {
     expect(service.isGeneratingStoryboard()).toBeFalse();
     expect(service.isGeneratingVideo()).toBeFalse();
     expect(callbacks.onError).toHaveBeenCalledTimes(1);
-    expect(
-      isSessionHandledError(
-        (callbacks.onError as jasmine.Spy).calls.mostRecent().args[0],
-      ),
-    ).toBeTrue();
+    const sendHandled = isSessionHandledError(
+      (callbacks.onError as jasmine.Spy).calls.mostRecent().args[0],
+    );
+    expect(sendHandled).toBeTrue();
   });
 
   it('retries fetch once after 401 on sendMessage and startPolling, skipping unauthorized-org 401s', async () => {
@@ -302,5 +302,37 @@ describe('AgentChatService streamActive lifecycle', () => {
     expect(authServiceMock.renewAfterUnauthorized$).not.toHaveBeenCalled();
     expect(authServiceMock.onSessionRenewalFailed).not.toHaveBeenCalled();
     expect(callbacks.onError).toHaveBeenCalledTimes(1);
+  });
+
+  it('prevents concurrent overlapping poll ticks while an earlier tick is in flight', async () => {
+    fetchSpy.and.returnValue(
+      Promise.resolve(jsonResponse(200, {events: ['data: [DONE]']})),
+    );
+    let resolvePendingToken!: (token: string) => void;
+    authServiceMock.getValidIdentityPlatformToken$.and.returnValue(
+      new Observable<string>(sub => {
+        resolvePendingToken = tok => {
+          sub.next(tok);
+          sub.complete();
+        };
+      }),
+    );
+
+    service.startPolling('s-overlap', callbacks);
+    jasmine.clock().tick(2600);
+    expect(
+      authServiceMock.getValidIdentityPlatformToken$,
+    ).toHaveBeenCalledTimes(1);
+
+    // Next 2.5s tick fires while token renewal from tick #1 is still in flight: skipped.
+    jasmine.clock().tick(2600);
+    expect(
+      authServiceMock.getValidIdentityPlatformToken$,
+    ).toHaveBeenCalledTimes(1);
+
+    resolvePendingToken('renewed-tok');
+    await settle();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(callbacks.onClose).toHaveBeenCalledTimes(1);
   });
 });

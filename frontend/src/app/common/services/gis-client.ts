@@ -21,6 +21,8 @@ import {
   GisCredentialResponse,
   GisIdApi,
   GisPromptMomentNotification,
+} from './gis.types';
+import {
   GisPromptSuppressedError,
   SessionSupersededError,
   extractSessionHints,
@@ -31,6 +33,8 @@ declare const google: {accounts?: {id?: GisIdApi}} | undefined;
 export const GIS_SCRIPT_LOAD_TIMEOUT_MS = 4000;
 const GIS_SCRIPT_POLL_MS = 50;
 const GIS_SCRIPT_SELECTOR = 'script[src*="accounts.google.com/gsi/client"]';
+export const GIS_SCRIPT_MISSING_ERROR =
+  'Google Identity Services script not loaded. Add it to index.html';
 const LOGIN_PROMPT_TIMEOUT_MS = 15000;
 const SILENT_PROMPT_TIMEOUT_MS = 10000;
 const FALLBACK_BUTTON_OPTIONS: GisButtonConfiguration = {
@@ -69,22 +73,12 @@ export class GisClientAdapter {
         return of(ready);
       }
       if (!this.isBrowser || typeof document === 'undefined') {
-        return throwError(
-          () =>
-            new Error(
-              'Google Identity Services script not loaded. Add it to index.html',
-            ),
-        );
+        return throwError(() => new Error(GIS_SCRIPT_MISSING_ERROR));
       }
       const script =
         document.querySelector<HTMLScriptElement>(GIS_SCRIPT_SELECTOR);
       if (!script) {
-        return throwError(
-          () =>
-            new Error(
-              'Google Identity Services script not loaded. Add it to index.html',
-            ),
-        );
+        return throwError(() => new Error(GIS_SCRIPT_MISSING_ERROR));
       }
 
       return new Observable<GisIdApi>(observer => {
@@ -93,7 +87,6 @@ export class GisClientAdapter {
         let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
         const cleanup = () => {
-          script.removeEventListener('load', onLoad);
           script.removeEventListener('error', onError);
           if (pollId !== null) {
             clearInterval(pollId);
@@ -129,18 +122,8 @@ export class GisClientAdapter {
           return false;
         };
 
-        const onLoad = () => {
-          if (!checkReady()) {
-            fail(
-              'Google Identity Services script not loaded. Add it to index.html',
-            );
-          }
-        };
-
         const onError = () => {
-          fail(
-            'Google Identity Services script not loaded. Add it to index.html',
-          );
+          fail(GIS_SCRIPT_MISSING_ERROR);
         };
 
         if (checkReady()) {
@@ -148,16 +131,13 @@ export class GisClientAdapter {
         }
 
         this.outsideZone(() => {
-          script.addEventListener('load', onLoad);
           script.addEventListener('error', onError);
           pollId = setInterval(() => {
             checkReady();
           }, GIS_SCRIPT_POLL_MS);
           timeoutId = setTimeout(() => {
             if (!checkReady()) {
-              fail(
-                'Google Identity Services script not loaded. Add it to index.html',
-              );
+              fail(GIS_SCRIPT_MISSING_ERROR);
             }
           }, GIS_SCRIPT_LOAD_TIMEOUT_MS);
         });
@@ -246,23 +226,30 @@ export class GisClientAdapter {
       scriptSub = this.waitForGisApi$().subscribe({
         next: gisId => {
           if (settled) return;
-          timer = setTimeout(
-            () => {
-              if (options.silent) {
-                failSilently('timed out', true);
-                return;
-              }
-              settle(() => {
-                this.cancelPrompt();
-                observer.error(
-                  new Error(
-                    'Login timed out or third party sign-in may be disabled. Please try again and enable third party sign-in by clicking on the information button at the top left side of the browser.',
-                  ),
-                );
-              });
-            },
-            options.silent ? SILENT_PROMPT_TIMEOUT_MS : LOGIN_PROMPT_TIMEOUT_MS,
-          );
+          this.outsideZone(() => {
+            timer = setTimeout(
+              () => {
+                if (options.silent) {
+                  failSilently('timed out', true);
+                  return;
+                }
+                settle(() => {
+                  this.cancelPrompt();
+                  observer.error(
+                    new Error(
+                      'Login timed out or third party sign-in may be disabled. ' +
+                        'Please try again and enable third party sign-in by ' +
+                        'clicking on the information button at the top left ' +
+                        'side of the browser.',
+                    ),
+                  );
+                });
+              },
+              options.silent
+                ? SILENT_PROMPT_TIMEOUT_MS
+                : LOGIN_PROMPT_TIMEOUT_MS,
+            );
+          });
 
           try {
             gisId.initialize({
@@ -402,16 +389,6 @@ export class GisClientAdapter {
       scriptSub = this.waitForGisApi$().subscribe({
         next: gisId => {
           if (closed) return;
-          if (typeof gisId.renderButton !== 'function') {
-            closed = true;
-            clearActiveAbort();
-            observer.error(
-              new Error(
-                'Google Identity Services renderButton is unavailable.',
-              ),
-            );
-            return;
-          }
           try {
             gisId.initialize({
               client_id: clientId,

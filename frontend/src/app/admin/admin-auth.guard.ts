@@ -22,11 +22,12 @@ import {
   UrlTree,
 } from '@angular/router';
 import {isPlatformBrowser} from '@angular/common';
-import {Observable, of} from 'rxjs';
-import {catchError, defaultIfEmpty, map} from 'rxjs/operators';
+import {Observable} from 'rxjs';
 import {UserService} from '../common/services/user.service';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {AuthService} from '../common/services/auth.service';
+import {canActivateWithSilentRenewal} from '../common/services/auth-token.utils';
+import {LoadingService} from '../common/services/loading.service';
 import {handleErrorSnackbar} from '../utils/handleMessageSnackbar';
 
 @Injectable({
@@ -34,6 +35,7 @@ import {handleErrorSnackbar} from '../utils/handleMessageSnackbar';
 })
 export class AdminAuthGuard implements CanActivate {
   private platformId = inject(PLATFORM_ID);
+  private loadingService = inject(LoadingService);
 
   constructor(
     private authService: AuthService,
@@ -56,31 +58,12 @@ export class AdminAuthGuard implements CanActivate {
       return true;
     }
 
-    // --- BROWSER SIDE ---
-    if (this.authService.isLoggedIn()) {
-      return this.isAdmin();
-    }
-
-    // Expired but renewable (e.g. waking from sleep): renew silently first.
-    if (this.authService.hasRenewableSession()) {
-      return this.authService.getValidIdentityPlatformToken$().pipe(
-        defaultIfEmpty(null),
-        map(token => {
-          if (!token) {
-            this.authService.redirectToLogin(state?.url);
-            return false;
-          }
-          return this.isAdmin();
-        }),
-        catchError((error: unknown) => {
-          this.authService.onSessionRenewalFailed(state?.url, error);
-          return of(false);
-        }),
-      );
-    }
-
-    this.authService.redirectToLogin(state?.url);
-    return false;
+    return canActivateWithSilentRenewal(
+      this.authService,
+      this.loadingService,
+      state?.url ?? '',
+      () => this.isAdmin(),
+    );
   }
 
   private isAdmin(): boolean {

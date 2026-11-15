@@ -23,7 +23,10 @@ import {
 import {RouterTestingModule} from '@angular/router/testing';
 import {of, throwError, NEVER, Subject} from 'rxjs';
 import {LoginComponent} from './login.component';
-import {AuthService} from './../common/services/auth.service';
+import {
+  AuthService,
+  FallbackSignInAttempt,
+} from './../common/services/auth.service';
 import {GisPromptSuppressedError} from './../common/services/auth-token.utils';
 import {UserModel} from './../common/models/user.model';
 import {MatSnackBar} from '@angular/material/snack-bar';
@@ -238,7 +241,7 @@ describe('LoginComponent', () => {
           }),
         };
         const navByUrlSpy = spyOn(router, 'navigateByUrl');
-        const fallback$ = new Subject<string>();
+        const fallback$ = new Subject<FallbackSignInAttempt>();
         let capturedStartCb: (() => void) | undefined;
         let capturedContainers: readonly HTMLElement[] = [];
 
@@ -272,7 +275,7 @@ describe('LoginComponent', () => {
         capturedStartCb?.();
         expect(component.loader).toBeTrue();
 
-        fallback$.next('fallback-token');
+        fallback$.next({ok: true, token: 'fallback-token'});
         tick();
         expect(component.loader).toBeFalse();
         expect(navByUrlSpy).toHaveBeenCalledWith('/gallery?filter=video');
@@ -281,42 +284,64 @@ describe('LoginComponent', () => {
       it('keeps fallback button interactive and shows snackbar on /users/me 403 error, then succeeds on retry', fakeAsync(() => {
         consoleErrorSpy.and.stub();
         const navSpy = spyOn(router, 'navigate');
-        const attempt1$ = new Subject<string>();
-        const attempt2$ = new Subject<string>();
-        const startCallbacks: Array<(() => void) | undefined> = [];
+        const fallback$ = new Subject<FallbackSignInAttempt>();
+        let capturedStartCb: (() => void) | undefined;
 
         authService.signInForGoogleIdentityPlatform.and.returnValue(
           throwError(() => new GisPromptSuppressedError()),
         );
-        let callIndex = 0;
         authService.renderGoogleSignInButton$.and.callFake(
           (_containers: readonly HTMLElement[], onStart?: () => void) => {
-            startCallbacks.push(onStart);
-            const stream = callIndex === 0 ? attempt1$ : attempt2$;
-            callIndex++;
-            return stream.asObservable();
+            capturedStartCb = onStart;
+            return fallback$.asObservable();
           },
         );
 
         component.loginWithGoogle();
         tick();
 
-        startCallbacks[0]?.();
+        capturedStartCb?.();
         expect(component.loader).toBeTrue();
-        attempt1$.error(new Error('Forbidden (403)'));
+        fallback$.next({ok: false, error: new Error('Forbidden (403)')});
         tick();
 
         expect(component.loader).toBeFalse();
         expect(component.showFallbackGoogleButton).toBeTrue();
         expect(notificationService.show).toHaveBeenCalledTimes(1);
-        expect(authService.renderGoogleSignInButton$).toHaveBeenCalledTimes(2);
+        expect(authService.renderGoogleSignInButton$).toHaveBeenCalledTimes(1);
 
-        startCallbacks[1]?.();
+        capturedStartCb?.();
         expect(component.loader).toBeTrue();
-        attempt2$.next('retry-token');
+        fallback$.next({ok: true, token: 'retry-token'});
         tick();
         expect(component.loader).toBeFalse();
         expect(navSpy).toHaveBeenCalledWith(['/']);
+      }));
+
+      it('resets showFallbackGoogleButton to false when fallback stream errors', fakeAsync(() => {
+        consoleErrorSpy.and.stub();
+        const fallback$ = new Subject<FallbackSignInAttempt>();
+        authService.signInForGoogleIdentityPlatform.and.returnValue(
+          throwError(() => new GisPromptSuppressedError()),
+        );
+        authService.renderGoogleSignInButton$.and.returnValue(
+          fallback$.asObservable(),
+        );
+
+        component.loginWithGoogle();
+        tick();
+        expect(component.showFallbackGoogleButton).toBeTrue();
+
+        fallback$.error(new Error('GSI button render aborted'));
+        tick();
+        fixture.detectChanges();
+
+        expect(component.showFallbackGoogleButton).toBeFalse();
+        expect(component.loader).toBeFalse();
+        expect(notificationService.show).toHaveBeenCalledTimes(1);
+        expect((fixture.nativeElement as HTMLElement).textContent).toContain(
+          'Login with Google',
+        );
       }));
     });
   });

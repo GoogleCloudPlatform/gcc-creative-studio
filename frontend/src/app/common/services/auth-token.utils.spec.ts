@@ -15,6 +15,8 @@
  */
 
 import {
+  AuthRenewalError,
+  SessionSupersededError,
   decodeGoogleJwtPayload,
   extractSessionHints,
   isLoginPath,
@@ -23,6 +25,7 @@ import {
   markSessionHandled,
   resolveSessionExpiry,
   sanitizeReturnUrl,
+  toAuthRenewalError,
 } from './auth-token.utils';
 
 function makeJwt(payload: unknown): string {
@@ -41,7 +44,8 @@ describe('auth-token.utils', () => {
         'Invalid JWT token',
       );
       expect(() => decodeGoogleJwtPayload('a.!!!.c')).toThrow();
-      expect(() => decodeGoogleJwtPayload(makeJwt(['array']))).toThrowError(
+      const nonObjectToken = makeJwt(['array']);
+      expect(() => decodeGoogleJwtPayload(nonObjectToken)).toThrowError(
         'Invalid JWT token',
       );
     });
@@ -74,18 +78,22 @@ describe('auth-token.utils', () => {
     });
 
     it('throws for missing, zero, negative, or non-finite exp', () => {
-      expect(() => resolveSessionExpiry(makeJwt({sub: '1'}))).toThrowError(
+      const missingExp = makeJwt({sub: '1'});
+      const zeroExp = makeJwt({exp: 0});
+      const negativeExp = makeJwt({exp: -10});
+      const stringExp = makeJwt({exp: '1700000000'});
+      expect(() => resolveSessionExpiry(missingExp)).toThrowError(
         'JWT token missing valid exp claim',
       );
-      expect(() => resolveSessionExpiry(makeJwt({exp: 0}))).toThrowError(
+      expect(() => resolveSessionExpiry(zeroExp)).toThrowError(
         'JWT token missing valid exp claim',
       );
-      expect(() => resolveSessionExpiry(makeJwt({exp: -10}))).toThrowError(
+      expect(() => resolveSessionExpiry(negativeExp)).toThrowError(
         'JWT token missing valid exp claim',
       );
-      expect(() =>
-        resolveSessionExpiry(makeJwt({exp: '1700000000'})),
-      ).toThrowError('JWT token missing valid exp claim');
+      expect(() => resolveSessionExpiry(stringExp)).toThrowError(
+        'JWT token missing valid exp claim',
+      );
     });
   });
 
@@ -125,10 +133,11 @@ describe('auth-token.utils', () => {
       expect(isSameSessionAccount(aNoSub, a)).toBeFalse();
       expect(isSameSessionAccount(a, otherEmail)).toBeFalse();
       expect(isSameSessionAccount(a, otherSub)).toBeFalse();
-      expect(
-        isSameSessionAccount(aNoEmail, makeJwt({sub: 'sub-1'})),
-      ).toBeTrue();
-      expect(isSameSessionAccount(makeJwt({}), makeJwt({}))).toBeFalse();
+      const sameSubNoEmail = makeJwt({sub: 'sub-1'});
+      expect(isSameSessionAccount(aNoEmail, sameSubNoEmail)).toBeTrue();
+      const emptyA = makeJwt({});
+      const emptyB = makeJwt({});
+      expect(isSameSessionAccount(emptyA, emptyB)).toBeFalse();
       expect(isSameSessionAccount(null, a)).toBeFalse();
       expect(isSameSessionAccount('bad', a)).toBeFalse();
     });
@@ -196,8 +205,31 @@ describe('auth-token.utils', () => {
       expect(isSessionHandledError(plain)).toBeTrue();
       expect(JSON.stringify(plain)).toBe('{"detail":"Unauthorized"}');
 
-      const frozen = Object.freeze(new Error('frozen'));
-      expect(isSessionHandledError(markSessionHandled(frozen))).toBeTrue();
+      const renewalErr = new AuthRenewalError(
+        'renewal failed',
+        'secret-bearer-token',
+      );
+      expect(Object.keys(renewalErr)).toEqual(['name']);
+      expect(JSON.stringify(renewalErr)).not.toContain('secret-bearer-token');
+      expect(renewalErr.rejectedToken).toBe('secret-bearer-token');
+
+      const wrapped = toAuthRenewalError(
+        new Error('upstream 401'),
+        'secret-bearer-token',
+      );
+      expect(wrapped instanceof AuthRenewalError).toBeTrue();
+      expect((wrapped as AuthRenewalError).rejectedToken).toBe(
+        'secret-bearer-token',
+      );
+
+      const superseded = new SessionSupersededError(
+        'superseded',
+        'secret-bearer-token',
+      );
+      expect(isSessionHandledError(superseded)).toBeTrue();
+      expect(Object.keys(superseded)).toEqual(['name']);
+      expect(JSON.stringify(superseded)).not.toContain('secret-bearer-token');
+      expect(superseded.rejectedToken).toBe('secret-bearer-token');
 
       expect(isSessionHandledError('plain string')).toBeFalse();
       expect(isSessionHandledError(null)).toBeFalse();

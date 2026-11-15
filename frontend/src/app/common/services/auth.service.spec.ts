@@ -23,19 +23,19 @@ import {Router} from '@angular/router';
 import {RouterTestingModule} from '@angular/router/testing';
 import {Auth} from '@angular/fire/auth';
 import {firstValueFrom} from 'rxjs';
-import {AuthService} from './auth.service';
+import {AuthService, FallbackSignInAttempt} from './auth.service';
 import {NotificationService} from './notification.service';
 import {UserService} from './user.service';
 import {RENEW_RETRY_MS, SESSION_STORAGE_KEY} from './auth-session.store';
 import {
-  GisInitializeConfig,
-  GisPromptMomentNotification,
+  AuthRenewalError,
   GisPromptSuppressedError,
   SessionSupersededError,
-  attachFailedSessionToken,
+  decodeGoogleJwtPayload,
   resolveSessionExpiry,
   sanitizeReturnUrl,
 } from './auth-token.utils';
+import {GisInitializeConfig, GisPromptMomentNotification} from './gis.types';
 import {GIS_SCRIPT_LOAD_TIMEOUT_MS} from './gis-client';
 import {environment} from '../../../environments/environment';
 
@@ -75,7 +75,7 @@ describe('AuthService', () => {
     url: string;
     navigate: jasmine.Spy;
     navigateByUrl: jasmine.Spy;
-    getCurrentNavigation?: jasmine.Spy;
+    getCurrentNavigation: jasmine.Spy;
   };
   let notificationService: jasmine.SpyObj<NotificationService>;
   let authMock: Record<string, unknown>;
@@ -93,6 +93,8 @@ describe('AuthService', () => {
   let gisCallback: ((r: {credential?: string}) => void) | null;
   let locksSpy: jasmine.Spy;
   let addedScripts: HTMLScriptElement[];
+  let visibilityState: DocumentVisibilityState;
+  let onlineState: boolean;
 
   const createService = () => {
     TestBed.configureTestingModule({
@@ -121,6 +123,12 @@ describe('AuthService', () => {
   beforeEach(() => {
     localStorage.clear();
     addedScripts = [];
+    visibilityState = 'visible';
+    onlineState = true;
+    spyOnProperty(document, 'visibilityState', 'get').and.callFake(
+      () => visibilityState,
+    );
+    spyOnProperty(navigator, 'onLine', 'get').and.callFake(() => onlineState);
     // Other specs mutate the shared environment object; pin deployed mode.
     isLocalBeforeTest = environment.isLocal;
     (environment as {isLocal: boolean}).isLocal = false;
@@ -128,6 +136,9 @@ describe('AuthService', () => {
       url: '/home',
       navigate: jasmine.createSpy('navigate').and.resolveTo(true),
       navigateByUrl: jasmine.createSpy('navigateByUrl').and.resolveTo(true),
+      getCurrentNavigation: jasmine
+        .createSpy('getCurrentNavigation')
+        .and.returnValue(null),
     };
     notificationService = jasmine.createSpyObj<NotificationService>(
       'NotificationService',
@@ -194,19 +205,17 @@ describe('AuthService', () => {
   });
 
   it('decodes JWT payloads with Base64URL and UTF-8 characters', () => {
-    const service = createService();
     const payload =
       'eyJuYW1lIjoiVG9tYXN6IMWad2l0b8WEIiwic3ViIjoiMTIzLTQ1Nl83ODkifQ';
-    const decoded = service.decodeJwtPayload(`header.${payload}.signature`);
+    const decoded = decodeGoogleJwtPayload(`header.${payload}.signature`);
     expect(decoded.name).toEqual('Tomasz Świtoń');
     expect(decoded.sub).toEqual('123-456_789');
   });
 
   it('throws for invalid JWT structure or missing exp claim', () => {
-    const service = createService();
-    expect(() =>
-      service.decodeJwtPayload('invalid_token_without_dots'),
-    ).toThrow(new Error('Invalid JWT token'));
+    expect(() => decodeGoogleJwtPayload('invalid_token_without_dots')).toThrow(
+      new Error('Invalid JWT token'),
+    );
     const noExp = `${btoa('{}')}.${btoa(JSON.stringify({sub: '1'}))}.sig`;
     expect(() => resolveSessionExpiry(noExp)).toThrow(
       new Error('JWT token missing valid exp claim'),
@@ -264,9 +273,10 @@ describe('AuthService', () => {
       {iat: skewedIatSec},
     );
     nextGisToken = skewedRenewToken;
-    expect(
-      await firstValueFrom(service.renewAfterUnauthorized$(skewedLoginToken)),
-    ).toBe(skewedRenewToken);
+    const renewedSkewed = await firstValueFrom(
+      service.renewAfterUnauthorized$(skewedLoginToken),
+    );
+    expect(renewedSkewed).toBe(skewedRenewToken);
     await flushTimers();
     httpMock.expectOne(r => r.url.endsWith('/users/me')).flush({});
 
@@ -618,8 +628,7 @@ describe('AuthService', () => {
   });
 
   it('remembers pending navigation URL (including Home "/") when offline and navigates on reconnect', async () => {
-    let online = false;
-    spyOnProperty(navigator, 'onLine', 'get').and.callFake(() => online);
+    onlineState = false;
     writeSession(makeJwt(Date.now() - 60_000), Date.now() - 60_000);
     const service = createService();
 
@@ -627,7 +636,7 @@ describe('AuthService', () => {
     expect(service.hasRenewableSession()).toBeTrue();
     expect(notificationService.show).not.toHaveBeenCalled();
 
-    online = true;
+    onlineState = true;
     window.dispatchEvent(new Event('online'));
     await flushTimers();
 
@@ -671,11 +680,10 @@ describe('AuthService', () => {
     // Start a second hand-off via forced 401 renewal, then logout before /users/me responds.
     const newerToken = makeJwt(Date.now() + 3_700_000, 'newer');
     nextGisToken = newerToken;
-    expect(
-      await firstValueFrom(
-        service.renewAfterUnauthorized$(service.getToken()!),
-      ),
-    ).toBe(newerToken);
+    const forcedRenewal = await firstValueFrom(
+      service.renewAfterUnauthorized$(service.getToken()!),
+    );
+    expect(forcedRenewal).toBe(newerToken);
     await flushTimers();
     const lateHandOff = httpMock.expectOne(r => r.url.endsWith('/users/me'));
     await service.logout();
@@ -688,9 +696,7 @@ describe('AuthService', () => {
   it('shows 1 session-expired toast and preserves returnUrl when renewal fails while visible and online', async () => {
     writeSession(makeJwt(Date.now() - 60_000), Date.now() - 60_000);
     const service = createService();
-    spyOnProperty(document, 'visibilityState', 'get').and.returnValue(
-      'visible',
-    );
+    visibilityState = 'visible';
 
     service.onSessionRenewalFailed('/workbench?sessionId=42');
     service.onSessionRenewalFailed('/login?returnUrl=%2Fworkbench');
@@ -753,9 +759,10 @@ describe('AuthService', () => {
       writeSession(makeJwt(Date.now() - 60_000), Date.now() - 60_000);
       const service = createService();
 
-      expect(
-        await firstValueFrom(service.getValidIdentityPlatformToken$()),
-      ).toBe(localToken);
+      const resolvedLocal = await firstValueFrom(
+        service.getValidIdentityPlatformToken$(),
+      );
+      expect(resolvedLocal).toBe(localToken);
       expect(calls).toEqual(['authStateReady', 'getIdToken']);
       expect(gis.prompt).not.toHaveBeenCalled();
       await flushTimers();
@@ -1149,16 +1156,17 @@ describe('AuthService', () => {
     ).toBeRejectedWithError(GisPromptSuppressedError);
     expect(gis.cancel).toHaveBeenCalledTimes(2);
 
-    // 2. renderGoogleSignInButton$ initializes once, renders all containers, invokes onCredentialStart, and rolls back on 403.
+    // 2. renderGoogleSignInButton$ initializes once, renders all containers, rolls back 403, and keeps listening for retry.
     const el1 = document.createElement('div');
     const el2 = document.createElement('div');
     const onStart = jasmine.createSpy('onStart');
     const token403 = makeJwt(Date.now() + 3_600_000, 'unauth');
+    const tokenOk = makeJwt(Date.now() + 3_600_000, 'retry-ok');
 
-    let btnErr: unknown;
+    const attempts: FallbackSignInAttempt[] = [];
     const sub = service
       .renderGoogleSignInButton$([el1, el2], onStart)
-      .subscribe({error: e => (btnErr = e)});
+      .subscribe(attempt => attempts.push(attempt));
 
     expect(gis.initialize).toHaveBeenCalledTimes(3);
     const btnInitCfg = gis.initialize.calls.mostRecent().args[0];
@@ -1170,18 +1178,34 @@ describe('AuthService', () => {
 
     gisCallback?.({credential: token403});
     expect(onStart).toHaveBeenCalledTimes(1);
-    expect(localStorage.getItem(SESSION_STORAGE_KEY)).not.toBeNull();
+    // Candidate token must not overwrite shared storage before /users/me succeeds.
+    expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
 
     httpMock
       .expectOne(r => r.url.endsWith('/users/me'))
       .flush({detail: 'Forbidden'}, {status: 403, statusText: 'Forbidden'});
 
-    expect(btnErr).toBeDefined();
+    expect(attempts.length).toBe(1);
+    expect(attempts[0].ok).toBeFalse();
     expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
     expect(service.hasRenewableSession()).toBeFalse();
+
+    // Retrying via the same rendered button succeeds without re-initializing GIS.
+    gisCallback?.({credential: tokenOk});
+    httpMock
+      .expectOne(r => r.url.endsWith('/users/me'))
+      .flush({email: 'ok@example.com'});
+    expect(attempts).toEqual([
+      jasmine.objectContaining({ok: false}),
+      {ok: true, token: tokenOk},
+    ]);
+    expect(gis.initialize).toHaveBeenCalledTimes(3);
+    expect(service.isLoggedIn()).toBeTrue();
     sub.unsubscribe();
 
-    // 3. signInForGoogleIdentityPlatform also rolls back firebase_session on 403 /users/me.
+    // 3. Unauthenticated signInForGoogleIdentityPlatform keeps storage clean on 403 /users/me.
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+    localStorage.removeItem('USER_DETAILS');
     promptBehavior = 'credential';
     nextGisToken = token403;
     let interactiveErr: unknown;
@@ -1193,6 +1217,75 @@ describe('AuthService', () => {
       .flush({detail: 'Forbidden'}, {status: 403, statusText: 'Forbidden'});
     expect(interactiveErr).toBeDefined();
     expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+  });
+
+  it('preserves Tab 1 valid stored session when Tab 2 interactive sign-in fails 403/401 org validation', async () => {
+    const tab1Token = makeJwt(Date.now() + 3_600_000, 'tab1-acct-a', {
+      sub: 'sub-a',
+      email: 'a@example.com',
+    });
+    const tab1User = {email: 'a@example.com', roles: ['USER']};
+    writeSession(tab1Token, Date.now() + 3_600_000);
+    localStorage.setItem('USER_DETAILS', JSON.stringify(tab1User));
+
+    const service = createService();
+    const tab2Candidate = makeJwt(Date.now() + 3_600_000, 'tab2-acct-b', {
+      sub: 'sub-b',
+      email: 'external-b@other.com',
+    });
+    promptBehavior = 'credential';
+    nextGisToken = tab2Candidate;
+
+    let interactiveErr: unknown;
+    service
+      .signInForGoogleIdentityPlatform()
+      .subscribe({error: e => (interactiveErr = e)});
+
+    // In-flight /users/me sends Authorization for candidate token without touching Tab 1 storage.
+    expect(JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY)!).token).toBe(
+      tab1Token,
+    );
+    const req = httpMock.expectOne(r => r.url.endsWith('/users/me'));
+    expect(req.request.headers.get('Authorization')).toBe(
+      `Bearer ${tab2Candidate}`,
+    );
+    req.flush({detail: 'Forbidden'}, {status: 403, statusText: 'Forbidden'});
+
+    expect(interactiveErr).toBeDefined();
+    expect(JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY)!).token).toBe(
+      tab1Token,
+    );
+    expect(JSON.parse(localStorage.getItem('USER_DETAILS')!).email).toBe(
+      'a@example.com',
+    );
+    expect(service.isLoggedIn()).toBeTrue();
+    expect(service.getToken()).toBe(tab1Token);
+
+    // Fallback button 401 org rejection also leaves Tab 1 valid session intact.
+    const container = document.createElement('div');
+    const attempts: FallbackSignInAttempt[] = [];
+    const btnSub = service
+      .renderGoogleSignInButton$([container])
+      .subscribe(attempt => attempts.push(attempt));
+    gisCallback?.({credential: tab2Candidate});
+    const btnReq = httpMock.expectOne(r => r.url.endsWith('/users/me'));
+    expect(btnReq.request.headers.get('Authorization')).toBe(
+      `Bearer ${tab2Candidate}`,
+    );
+    btnReq.flush(
+      {detail: 'User is not authorized to access this application.'},
+      {status: 401, statusText: 'Unauthorized'},
+    );
+    expect(attempts.length).toBe(1);
+    expect(attempts[0].ok).toBeFalse();
+    expect(JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY)!).token).toBe(
+      tab1Token,
+    );
+    expect(JSON.parse(localStorage.getItem('USER_DETAILS')!).email).toBe(
+      'a@example.com',
+    );
+    expect(service.isLoggedIn()).toBeTrue();
+    btnSub.unsubscribe();
   });
 
   it('guards onSessionRenewalFailed against superseded errors, stale-account tokens, and already-renewed valid sessions', () => {
@@ -1229,7 +1322,7 @@ describe('AuthService', () => {
     // 2. Plain error tagged with Account A token must not wipe Account B session.
     service.onSessionRenewalFailed(
       '/gallery',
-      attachFailedSessionToken(new Error('late 401'), tokenA),
+      new AuthRenewalError('late 401', tokenA),
     );
     expect(service.isLoggedIn()).toBeTrue();
     expect(service.getToken()).toBe(tokenB);
@@ -1243,10 +1336,74 @@ describe('AuthService', () => {
 
     service.onSessionRenewalFailed(
       '/gallery',
-      attachFailedSessionToken(new Error('stale 401'), tokenA),
+      new AuthRenewalError('stale 401', tokenA),
     );
     expect(service.isLoggedIn()).toBeTrue();
     expect(service.getToken()).toBe(tokenAValid);
     expect(notificationService.show).not.toHaveBeenCalled();
+
+    // 4. Untagged error never wipes an already valid session.
+    service.onSessionRenewalFailed('/gallery', new Error('stray untagged'));
+    expect(service.isLoggedIn()).toBeTrue();
+    expect(service.getToken()).toBe(tokenAValid);
+    expect(notificationService.show).not.toHaveBeenCalled();
+  });
+
+  it('does not let focus renewal abort an active interactive Google sign-in prompt', () => {
+    const expired = makeJwt(Date.now() - 60_000, 'expired');
+    const interactiveToken = makeJwt(Date.now() + 3_600_000, 'interactive');
+    writeSession(expired, Date.now() - 60_000);
+    const service = createService();
+
+    // Interactive prompt stays pending until user picks an account.
+    gis.prompt.and.stub();
+    const emitted: string[] = [];
+    const sub = service
+      .signInForGoogleIdentityPlatform()
+      .subscribe(tok => emitted.push(tok));
+
+    expect(gis.prompt).toHaveBeenCalledTimes(1);
+
+    // Focus event fires while interactive sign-in is open: must not run silent renewal.
+    window.dispatchEvent(new Event('focus'));
+    expect(gis.prompt).toHaveBeenCalledTimes(1);
+    expect(gis.cancel).not.toHaveBeenCalled();
+
+    gisCallback?.({credential: interactiveToken});
+    httpMock
+      .expectOne(r => r.url.endsWith('/users/me'))
+      .flush({email: 'user@example.com'});
+    expect(emitted).toEqual([interactiveToken]);
+    expect(service.isLoggedIn()).toBeTrue();
+    sub.unsubscribe();
+  });
+
+  it('aborts renewal with SessionSupersededError before GIS prompt if another tab clears session while waiting for the lock', async () => {
+    const expired = makeJwt(Date.now() - 60_000, 'expired');
+    writeSession(expired, Date.now() - 60_000);
+    const service = createService();
+
+    const locks = navigator.locks as LockManager | undefined;
+    if (locks) {
+      spyOn(locks, 'request').and.callFake(
+        async (
+          _name: string,
+          optsOrCb: LockOptions | LockGrantedCallback,
+          callback?: LockGrantedCallback,
+        ) => {
+          localStorage.removeItem(SESSION_STORAGE_KEY);
+          const fn = callback ?? (optsOrCb as LockGrantedCallback);
+          return await fn(null);
+        },
+      );
+    } else {
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+    }
+
+    await expectAsync(firstValueFrom(service.renewSession$())).toBeRejectedWith(
+      jasmine.any(SessionSupersededError),
+    );
+    expect(gis.prompt).not.toHaveBeenCalled();
+    service.ngOnDestroy();
   });
 });

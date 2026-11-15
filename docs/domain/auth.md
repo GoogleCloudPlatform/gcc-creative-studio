@@ -25,11 +25,12 @@ Source files:
 
 ## Browser Session & Renewal
 
-- **Client persistence (`AuthService`):**
-  - Stores the session `{token, expiry}` JSON in `localStorage` under `FIREBASE_SESSION_KEY` (`"firebase_session"`) and the synced backend `UserModel` under `USER_DETAILS` (`"USER_DETAILS"`).
-  - `loadSessionFromStorage()` discards expired entries on startup (`session.expiry <= Date.now()`).
-  - `isLoggedIn()` returns `false` on the server (`!isPlatformBrowser`) and checks in-memory `firebaseIdToken && firebaseTokenExpiry > Date.now()` in the browser, navigating to `/login` when expired or missing.
-- **Request interception & silent renewal (`AuthInterceptor`):**
-  - Attaches `Authorization: Bearer <token>` only for relative `/` URLs and requests matching `environment.backendURL`.
-  - Calls `AuthService.getValidIdentityPlatformToken$()` to reuse the cached token or silently refresh before dispatching the HTTP request.
-  - Only non-`HttpErrorResponse` failures (silent token renewal failures) trigger `AuthService.logout()`, which clears `firebase_session`, `USER_DETAILS`, and `showTooltip` and navigates to `/login`. Backend `HttpErrorResponse` errors (`404`, `500`, etc.) are re-thrown without logging the user out.
+- **Client persistence & proactive renewal (`AuthSessionStore` / `GisClientAdapter`):**
+  - Stores `{token, expiry}` in `localStorage['firebase_session']` and the synced `UserModel` in `USER_DETAILS`. Keeps an expired session at boot so reload or sleep recovery attempts silent GIS renewal (`auto_select`, 5-minute buffer + 0-30 s jitter, `RENEW_RETRY_MS = 60 s` cooldown, `focus`/`visibilitychange`/`online` wake triggers) before redirecting to `/login`.
+  - Pure JWT clock-skew (`iat`), symmetric `sub`/`email` identity checks, `returnUrl` sanitization, `AuthRenewalError` (non-enumerable `rejectedToken`), and `markSessionHandled` live in `auth-token.utils.ts`; GIS SDK interfaces live in `gis.types.ts`.
+  - `GisClientAdapter` enforces interactive `use_fedcm_for_button: true` fallback (`GisPromptSuppressedError`) and cancels stale prompts via `abortActivePrompt()`.
+- **Cross-tab safety, single-flight renewal & sign-out paths (`AuthService`):**
+  - Interactive sign-in validates the candidate token against `GET /users/me` (`Authorization: Bearer <token>`) **before** writing `firebase_session` or `USER_DETAILS`, so rejected logins (401/403) never disturb an active session in another tab.
+  - Silent renewal is single-flight per tab (`shareReplay`) and cross-tab (`navigator.locks` + storage re-check), syncs `/users/me` asynchronously, and handles cross-tab `storage` account switches without serving stale tokens.
+  - **Request retry & error handling (`AuthInterceptor` / `AgentChatService`):** Perform at most one `401` renew-and-retry (skipping org-unauthorized `401`s) and brand terminal renewal errors via `markSessionHandled` so duplicate error toasts never stack.
+  - **Two sign-out paths:** Manual `logout()` disables GIS auto-select; automatic `onSessionRenewalFailed()` -> `expireSession()` preserves silent sign-in and deep-link `?returnUrl=...`. Neither clears server-side queued workflows.

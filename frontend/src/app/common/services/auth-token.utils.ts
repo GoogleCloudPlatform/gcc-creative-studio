@@ -14,67 +14,17 @@
  * limitations under the License.
  */
 
+import {Observable, of, throwError} from 'rxjs';
+import {catchError, defaultIfEmpty, finalize, map} from 'rxjs/operators';
+import {GoogleIdTokenPayload} from './gis.types';
+
+export const UNAUTHORIZED_ORG_DETAIL =
+  'User is not authorized to access this application.';
+
 const CLOCK_SKEW_TOLERANCE_MS = 2 * 60 * 1000;
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHAR_REGEX = /[\u0000-\u001f\u007f]/;
 const SESSION_HANDLED_SYMBOL = Symbol('csSessionHandled');
-const FAILED_SESSION_TOKEN_SYMBOL = Symbol('csFailedSessionToken');
-const handledFrozenErrors = new WeakSet<object>();
-const failedTokenFrozenErrors = new WeakMap<object, string>();
-
-export interface GoogleIdTokenPayload {
-  sub?: string;
-  email?: string;
-  hd?: string;
-  exp?: number;
-  iat?: number;
-  name?: string;
-  [key: string]: unknown;
-}
-
-export interface GisCredentialResponse {
-  credential?: string;
-  select_by?: string;
-}
-
-export interface GisPromptMomentNotification {
-  isNotDisplayed?: () => boolean;
-  isSkippedMoment?: () => boolean;
-  isDismissedMoment?: () => boolean;
-  getDismissedReason?: () => string;
-}
-
-export interface GisButtonConfiguration {
-  type?: 'standard' | 'icon';
-  theme?: 'outline' | 'filled_blue' | 'filled_black';
-  size?: 'large' | 'medium' | 'small';
-  text?: 'signin_with' | 'signup_with' | 'continue_with' | 'signin';
-  shape?: 'rectangular' | 'pill' | 'circle' | 'square';
-  logo_alignment?: 'left' | 'center';
-  width?: number | string;
-  locale?: string;
-  click_listener?: () => void;
-}
-
-export interface GisInitializeConfig {
-  client_id: string;
-  auto_select?: boolean;
-  use_fedcm_for_prompt?: boolean;
-  use_fedcm_for_button?: boolean;
-  login_hint?: string;
-  hd?: string;
-  callback: (response: GisCredentialResponse) => void;
-}
-
-export interface GisIdApi {
-  initialize: (config: GisInitializeConfig) => void;
-  prompt: (
-    momentListener?: (notification: GisPromptMomentNotification) => void,
-  ) => void;
-  renderButton?: (parent: HTMLElement, options: GisButtonConfiguration) => void;
-  cancel: () => void;
-  disableAutoSelect: () => void;
-}
 
 export class AccountMismatchError extends Error {
   constructor() {
@@ -90,55 +40,74 @@ export class GisPromptSuppressedError extends Error {
   }
 }
 
-export class SessionSupersededError extends Error {
+export class AuthRenewalError extends Error {
+  readonly rejectedToken?: string;
+
+  constructor(message: string, rejectedToken?: string | null) {
+    super(message);
+    this.name = 'AuthRenewalError';
+    const token =
+      typeof rejectedToken === 'string' && rejectedToken
+        ? rejectedToken
+        : undefined;
+    // Keep any rejected token non-enumerable so error logs never leak bearer tokens.
+    Object.defineProperty(this, 'rejectedToken', {
+      value: token,
+      enumerable: false,
+      configurable: true,
+    });
+  }
+}
+
+export class SessionSupersededError extends AuthRenewalError {
   constructor(
     message = 'Session renewal was superseded.',
-    readonly failedToken?: string | null,
+    failedToken?: string | null,
   ) {
-    super(message);
+    super(message, failedToken);
     this.name = 'SessionSupersededError';
     markSessionHandled(this);
   }
 }
 
-export function attachFailedSessionToken<T>(
-  error: T,
-  token: string | null | undefined,
-): T {
-  if (
-    typeof token === 'string' &&
-    token &&
-    error !== null &&
-    (typeof error === 'object' || typeof error === 'function')
-  ) {
-    if (Object.isExtensible(error)) {
-      if (!(FAILED_SESSION_TOKEN_SYMBOL in error)) {
-        Object.defineProperty(error, FAILED_SESSION_TOKEN_SYMBOL, {
-          value: token,
-          configurable: true,
-        });
-      }
-    } else {
-      failedTokenFrozenErrors.set(error, token);
-    }
-  }
-  return error;
+function isBrandedTarget(
+  error: unknown,
+): error is object & Record<symbol, unknown> {
+  return error !== null && typeof error === 'object';
 }
 
-export function getFailedSessionToken(error: unknown): string | null {
-  if (
-    error === null ||
-    (typeof error !== 'object' && typeof error !== 'function')
-  ) {
-    return null;
+export function toAuthRenewalError(
+  error: unknown,
+  rejectedToken?: string | null,
+): Error {
+  const alreadyHandled = isSessionHandledError(error);
+  if (error instanceof SessionSupersededError) {
+    if (error.rejectedToken || !rejectedToken) {
+      return error;
+    }
+    return new SessionSupersededError(error.message, rejectedToken);
   }
-  if (error instanceof SessionSupersededError && error.failedToken) {
-    return error.failedToken;
+  if (error instanceof AccountMismatchError) {
+    return error;
   }
-  const token =
-    (error as Record<symbol, unknown>)[FAILED_SESSION_TOKEN_SYMBOL] ??
-    failedTokenFrozenErrors.get(error);
-  return typeof token === 'string' && token ? token : null;
+  if (error instanceof AuthRenewalError) {
+    if (error.rejectedToken || !rejectedToken) {
+      return error;
+    }
+    const wrapped = new AuthRenewalError(error.message, rejectedToken);
+    return alreadyHandled ? markSessionHandled(wrapped) : wrapped;
+  }
+  if (error instanceof Error && !rejectedToken) {
+    return error;
+  }
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'string' && error
+        ? error
+        : 'Session renewal failed.';
+  const wrapped = new AuthRenewalError(message, rejectedToken);
+  return alreadyHandled ? markSessionHandled(wrapped) : wrapped;
 }
 
 /**
@@ -147,34 +116,20 @@ export function getFailedSessionToken(error: unknown): string | null {
  */
 export function markSessionHandled<T>(error: T): T {
   if (
-    error !== null &&
-    (typeof error === 'object' || typeof error === 'function')
+    isBrandedTarget(error) &&
+    Object.isExtensible(error) &&
+    !(SESSION_HANDLED_SYMBOL in error)
   ) {
-    if (Object.isExtensible(error)) {
-      if (!(SESSION_HANDLED_SYMBOL in error)) {
-        Object.defineProperty(error, SESSION_HANDLED_SYMBOL, {
-          value: true,
-          configurable: true,
-        });
-      }
-    } else {
-      handledFrozenErrors.add(error);
-    }
+    Object.defineProperty(error, SESSION_HANDLED_SYMBOL, {
+      value: true,
+      configurable: true,
+    });
   }
   return error;
 }
 
 export function isSessionHandledError(error: unknown): boolean {
-  if (
-    error === null ||
-    (typeof error !== 'object' && typeof error !== 'function')
-  ) {
-    return false;
-  }
-  return (
-    Boolean((error as Record<symbol, unknown>)[SESSION_HANDLED_SYMBOL]) ||
-    handledFrozenErrors.has(error)
-  );
+  return isBrandedTarget(error) && Boolean(error[SESSION_HANDLED_SYMBOL]);
 }
 
 export function decodeGoogleJwtPayload(token: string): GoogleIdTokenPayload {
@@ -303,35 +258,51 @@ function isNormalizedLoginPathname(pathname: string): boolean {
   return normalized === '/login' || normalized.startsWith('/login/');
 }
 
+function isSafeInternalSegment(path: string): boolean {
+  return (
+    path.startsWith('/') &&
+    !path.startsWith('//') &&
+    !path.includes('\\') &&
+    !CONTROL_CHAR_REGEX.test(path)
+  );
+}
+
+function parseInternalUrlCandidate(url: string | null | undefined): {
+  trimmed: string;
+  rawPathname: string;
+  decodedPathname: string | null;
+} | null {
+  if (typeof url !== 'string') return null;
+  const trimmed = url.trim();
+  if (!isSafeInternalSegment(trimmed)) {
+    return null;
+  }
+  const pathEnd = trimmed.search(/[?#;(]/);
+  const rawPathname = pathEnd === -1 ? trimmed : trimmed.slice(0, pathEnd);
+  return {
+    trimmed,
+    rawPathname,
+    decodedPathname: decodePathnameSafely(rawPathname),
+  };
+}
+
 /**
  * Checks whether `url` targets `/login` (including `/login/e2e`, subpaths,
  * matrix/query parameters, and percent-encoded variants), safely ignoring
  * malformed percent sequences.
  */
 export function isLoginPath(url: string | null | undefined): boolean {
-  if (typeof url !== 'string') return false;
-  const trimmed = url.trim();
+  const parsed = parseInternalUrlCandidate(url);
+  if (!parsed) return false;
   if (
-    !trimmed.startsWith('/') ||
-    trimmed.startsWith('//') ||
-    trimmed.includes('\\') ||
-    CONTROL_CHAR_REGEX.test(trimmed)
+    parsed.decodedPathname !== null &&
+    !isSafeInternalSegment(parsed.decodedPathname)
   ) {
     return false;
   }
-  const pathEnd = trimmed.search(/[?#;(]/);
-  const rawPathname = pathEnd === -1 ? trimmed : trimmed.slice(0, pathEnd);
-  const decodedPathname = decodePathnameSafely(rawPathname);
-  if (
-    decodedPathname !== null &&
-    (!decodedPathname.startsWith('/') ||
-      decodedPathname.startsWith('//') ||
-      decodedPathname.includes('\\') ||
-      CONTROL_CHAR_REGEX.test(decodedPathname))
-  ) {
-    return false;
-  }
-  return isNormalizedLoginPathname(decodedPathname ?? rawPathname);
+  return isNormalizedLoginPathname(
+    parsed.decodedPathname ?? parsed.rawPathname,
+  );
 }
 
 /**
@@ -342,30 +313,93 @@ export function isLoginPath(url: string | null | undefined): boolean {
 export function sanitizeReturnUrl(
   url: string | null | undefined,
 ): string | null {
-  if (typeof url !== 'string') return null;
-  const trimmed = url.trim();
+  const parsed = parseInternalUrlCandidate(url);
   if (
-    !trimmed.startsWith('/') ||
-    trimmed.startsWith('//') ||
-    trimmed.includes('\\') ||
-    CONTROL_CHAR_REGEX.test(trimmed)
+    !parsed ||
+    parsed.decodedPathname === null ||
+    !isSafeInternalSegment(parsed.decodedPathname) ||
+    isNormalizedLoginPathname(parsed.decodedPathname)
   ) {
     return null;
   }
-  const pathEnd = trimmed.search(/[?#;(]/);
-  const rawPathname = pathEnd === -1 ? trimmed : trimmed.slice(0, pathEnd);
-  const decodedPathname = decodePathnameSafely(rawPathname);
-  if (
-    decodedPathname === null ||
-    !decodedPathname.startsWith('/') ||
-    decodedPathname.startsWith('//') ||
-    decodedPathname.includes('\\') ||
-    CONTROL_CHAR_REGEX.test(decodedPathname)
-  ) {
-    return null;
+  return parsed.trimmed;
+}
+
+export interface RouteGuardAuthSession {
+  isLoggedIn(): boolean;
+  hasRenewableSession(): boolean;
+  getValidIdentityPlatformToken$(): Observable<string>;
+  onSessionRenewalFailed(targetUrl?: string, error?: Error): void;
+  redirectToLogin(targetUrl?: string): void;
+}
+
+export interface RouteGuardLoadingIndicator {
+  show(): void;
+  hide(): void;
+}
+
+/**
+ * Shared route-guard flow: allows active sessions immediately, waits for one
+ * silent renewal with a loading indicator when a renewable expired session is
+ * stored, and delegates role authorization once authenticated.
+ */
+export function canActivateWithSilentRenewal(
+  authService: RouteGuardAuthSession,
+  loadingService: RouteGuardLoadingIndicator,
+  targetUrl: string,
+  authorize: () => boolean,
+): Observable<boolean> | boolean {
+  if (authService.isLoggedIn()) {
+    return authorize();
   }
-  if (isNormalizedLoginPathname(decodedPathname)) {
-    return null;
+  if (authService.hasRenewableSession()) {
+    loadingService.show();
+    return authService.getValidIdentityPlatformToken$().pipe(
+      defaultIfEmpty(null),
+      map(token => {
+        if (!token) {
+          authService.redirectToLogin(targetUrl);
+          return false;
+        }
+        return authorize();
+      }),
+      catchError(error => {
+        authService.onSessionRenewalFailed(
+          targetUrl,
+          toAuthRenewalError(error),
+        );
+        return of(false);
+      }),
+      finalize(() => loadingService.hide()),
+    );
   }
-  return trimmed;
+  authService.redirectToLogin(targetUrl);
+  return false;
+}
+
+export interface UnauthorizedRenewalClient {
+  renewAfterUnauthorized$(rejectedToken: string): Observable<string>;
+  onSessionRenewalFailed(targetUrl?: string, error?: Error): void;
+}
+
+/**
+ * Shared 401 token renewal and failure handling for HTTP and streaming callers:
+ * tags the rejected token non-enumerably, skips console logging on expected
+ * supersede errors, and runs session-expiry handling before rethrowing.
+ */
+export function renewAfterUnauthorizedWithHandling$(
+  authService: UnauthorizedRenewalClient,
+  rejectedToken: string,
+  logContext: string,
+): Observable<string> {
+  return authService.renewAfterUnauthorized$(rejectedToken).pipe(
+    catchError(renewError => {
+      const renewalError = toAuthRenewalError(renewError, rejectedToken);
+      if (!(renewalError instanceof SessionSupersededError)) {
+        console.error(logContext, renewalError.message);
+      }
+      authService.onSessionRenewalFailed(undefined, renewalError);
+      return throwError(() => markSessionHandled(renewalError));
+    }),
+  );
 }

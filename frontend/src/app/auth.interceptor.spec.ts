@@ -40,10 +40,8 @@ import {AdminAuthGuard} from './admin/admin-auth.guard';
 import {UserRolesEnum} from './common/models/user.model';
 import {AuthService} from './common/services/auth.service';
 import {SESSION_STORAGE_KEY} from './common/services/auth-session.store';
-import {
-  GisInitializeConfig,
-  isSessionHandledError,
-} from './common/services/auth-token.utils';
+import {isSessionHandledError} from './common/services/auth-token.utils';
+import {GisInitializeConfig} from './common/services/gis.types';
 import {NotificationService} from './common/services/notification.service';
 import {UserService} from './common/services/user.service';
 import {useTestBedAppInjector} from './testing/app-injector.testing';
@@ -226,26 +224,43 @@ describe('AuthInterceptor', () => {
 
   it('leaves non-backend requests untouched', () => {
     http.get('https://example.com/asset.json').subscribe();
+    http.get('//evil.example/asset.json').subscribe();
 
-    const req = httpMock.expectOne('https://example.com/asset.json');
-    expect(req.request.headers.has('Authorization')).toBeFalse();
+    const httpsReq = httpMock.expectOne('https://example.com/asset.json');
+    expect(httpsReq.request.headers.has('Authorization')).toBeFalse();
+    httpsReq.flush({});
+
+    const protoRelReq = httpMock.expectOne('//evil.example/asset.json');
+    expect(protoRelReq.request.headers.has('Authorization')).toBeFalse();
+    protoRelReq.flush({});
+
     expect(authService.getValidIdentityPlatformToken$).not.toHaveBeenCalled();
-    req.flush({});
   });
 });
 
 describe('AuthInterceptor with real AuthService', () => {
   let http: HttpClient;
   let httpMock: HttpTestingController;
-  let router: {url: string; navigate: jasmine.Spy; navigateByUrl: jasmine.Spy};
+  let router: {
+    url: string;
+    navigate: jasmine.Spy;
+    navigateByUrl: jasmine.Spy;
+    getCurrentNavigation: jasmine.Spy;
+  };
   let notificationService: jasmine.SpyObj<NotificationService>;
   let promptSpy: jasmine.Spy;
   let isLocalBefore: boolean;
   let nextToken: string;
   let shouldFailRenewal: boolean;
+  let visibilityState: DocumentVisibilityState;
 
   beforeEach(() => {
     localStorage.clear();
+    visibilityState = 'visible';
+    spyOnProperty(document, 'visibilityState', 'get').and.callFake(
+      () => visibilityState,
+    );
+    spyOnProperty(navigator, 'onLine', 'get').and.returnValue(true);
     isLocalBefore = environment.isLocal;
     (environment as {isLocal: boolean}).isLocal = false;
     nextToken = makeJwt(Date.now() + 3_600_000, 'fresh');
@@ -266,6 +281,7 @@ describe('AuthInterceptor with real AuthService', () => {
             gisCb = cfg.callback;
           },
           prompt: promptSpy,
+          renderButton: () => undefined,
           cancel: () => undefined,
           disableAutoSelect: () => undefined,
         },
@@ -290,6 +306,9 @@ describe('AuthInterceptor with real AuthService', () => {
       url: '/gallery/123',
       navigate: jasmine.createSpy('navigate').and.resolveTo(true),
       navigateByUrl: jasmine.createSpy('navigateByUrl').and.resolveTo(true),
+      getCurrentNavigation: jasmine
+        .createSpy('getCurrentNavigation')
+        .and.returnValue(null),
     };
     notificationService = jasmine.createSpyObj<NotificationService>(
       'NotificationService',
@@ -363,9 +382,6 @@ describe('AuthInterceptor with real AuthService', () => {
       }),
     );
     shouldFailRenewal = true;
-    spyOnProperty(document, 'visibilityState', 'get').and.returnValue(
-      'visible',
-    );
 
     const err1 = jasmine.createSpy('err1');
     const err2 = jasmine.createSpy('err2');
@@ -452,9 +468,8 @@ describe('AuthInterceptor with real AuthService', () => {
     httpMock
       .expectOne('/api/other')
       .flush({detail: 'Server boom'}, {status: 500, statusText: 'Error'});
-    expect(
-      isSessionHandledError(err500.calls.mostRecent().args[0]),
-    ).toBeFalse();
+    const handled500 = isSessionHandledError(err500.calls.mostRecent().args[0]);
+    expect(handled500).toBeFalse();
     handleErrorSnackbar(snackBar, err500.calls.mostRecent().args[0], 'Other');
     expect(notificationService.show).toHaveBeenCalledTimes(2);
     expect(notificationService.show.calls.mostRecent().args[1]).toBe('error');
@@ -463,10 +478,7 @@ describe('AuthInterceptor with real AuthService', () => {
 
   it('recovers pendingNavigationUrl on wake via AdminAuthGuard and rejects non-admin sessions with expireSession', async () => {
     TestBed.resetTestingModule();
-    let visibility: DocumentVisibilityState = 'hidden';
-    spyOnProperty(document, 'visibilityState', 'get').and.callFake(
-      () => visibility,
-    );
+    visibilityState = 'hidden';
     const disableAutoSelectSpy = jasmine.createSpy('disableAutoSelect');
     let gisCb: ((r: {credential?: string}) => void) | null = null;
     (window as unknown as {google: unknown}).google = {
@@ -478,6 +490,7 @@ describe('AuthInterceptor with real AuthService', () => {
           prompt: () => {
             gisCb?.({credential: nextToken});
           },
+          renderButton: () => undefined,
           cancel: () => undefined,
           disableAutoSelect: disableAutoSelectSpy,
         },
@@ -505,6 +518,7 @@ describe('AuthInterceptor with real AuthService', () => {
           }
           return true;
         }),
+      getCurrentNavigation: () => null,
     };
 
     TestBed.configureTestingModule({
@@ -545,7 +559,7 @@ describe('AuthInterceptor with real AuthService', () => {
     expect(authService.hasRenewableSession()).toBeTrue();
 
     // Tab wakes: AuthService renews, navigates to /admin, guard rejects non-admin via expireSession.
-    visibility = 'visible';
+    visibilityState = 'visible';
     window.dispatchEvent(new Event('focus'));
     await new Promise(resolve => setTimeout(resolve, 20));
 
@@ -596,12 +610,14 @@ describe('AuthInterceptor with real AuthService', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
 
     expect(onHungErr).toHaveBeenCalled();
-    expect(
-      isSessionHandledError(onHungErr.calls.mostRecent().args[0]),
-    ).toBeTrue();
-    expect(JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY)!).token).toBe(
-      tokenB,
+    const hungHandled = isSessionHandledError(
+      onHungErr.calls.mostRecent().args[0],
     );
+    expect(hungHandled).toBeTrue();
+    const storedAfterSwitch = JSON.parse(
+      localStorage.getItem(SESSION_STORAGE_KEY)!,
+    ) as {token: string};
+    expect(storedAfterSwitch.token).toBe(tokenB);
     expect(notificationService.show).not.toHaveBeenCalled();
     const switchMeReq = httpMock.expectOne(r => r.url.endsWith('/users/me'));
     expect(switchMeReq.request.headers.get('Authorization')).toBe(
@@ -654,6 +670,7 @@ describe('AuthInterceptor with real AuthService', () => {
       }),
     );
 
+    const consoleErrSpy = spyOn(console, 'error');
     // 401 arrives while switchingAccount === true
     reqDuring.flush(
       {detail: 'Expired'},
@@ -661,6 +678,7 @@ describe('AuthInterceptor with real AuthService', () => {
     );
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(errDuring).toHaveBeenCalled();
+    expect(consoleErrSpy).not.toHaveBeenCalled();
     expect(JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY)!).token).toBe(
       tokenB,
     );

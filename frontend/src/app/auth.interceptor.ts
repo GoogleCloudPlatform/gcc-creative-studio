@@ -27,14 +27,15 @@ import {EMPTY, Observable, throwError} from 'rxjs';
 import {catchError, defaultIfEmpty, switchMap} from 'rxjs/operators';
 import {AuthService} from './common/services/auth.service';
 import {
-  attachFailedSessionToken,
+  SessionSupersededError,
+  UNAUTHORIZED_ORG_DETAIL,
   markSessionHandled,
+  renewAfterUnauthorizedWithHandling$,
+  toAuthRenewalError,
 } from './common/services/auth-token.utils';
 import {environment} from '../environments/environment';
 
 const RETRIED_AFTER_401 = new HttpContextToken<boolean>(() => false);
-const UNAUTHORIZED_ORG_DETAIL =
-  'User is not authorized to access this application.';
 
 @Injectable()
 export class AuthInterceptor implements HttpInterceptor {
@@ -45,7 +46,7 @@ export class AuthInterceptor implements HttpInterceptor {
     next: HttpHandler,
   ): Observable<HttpEvent<unknown>> {
     const isBackendUrl =
-      request.url.startsWith('/') ||
+      (request.url.startsWith('/') && !request.url.startsWith('//')) ||
       (environment.backendURL.startsWith('http') &&
         request.url.startsWith(environment.backendURL));
     if (!isBackendUrl || request.headers.has('Authorization')) {
@@ -78,12 +79,15 @@ export class AuthInterceptor implements HttpInterceptor {
       catchError(error => {
         // Non-HTTP errors come from session renewal failures in AuthService.
         if (!(error instanceof HttpErrorResponse)) {
-          console.error(
-            'AuthInterceptor: Session expired and could not be renewed.',
-            error,
-          );
-          this.authService.onSessionRenewalFailed(undefined, error);
-          return throwError(() => markSessionHandled(error));
+          const renewalError = toAuthRenewalError(error);
+          if (!(renewalError instanceof SessionSupersededError)) {
+            console.error(
+              'AuthInterceptor: Session expired and could not be renewed.',
+              renewalError.message,
+            );
+          }
+          this.authService.onSessionRenewalFailed(undefined, renewalError);
+          return throwError(() => markSessionHandled(renewalError));
         }
         return throwError(() => error);
       }),
@@ -109,18 +113,12 @@ export class AuthInterceptor implements HttpInterceptor {
     rejectedToken: string,
     original401: HttpErrorResponse,
   ): Observable<HttpEvent<unknown>> {
-    return this.authService.renewAfterUnauthorized$(rejectedToken).pipe(
-      catchError(renewError => {
-        console.error(
-          'AuthInterceptor: Session renewal after 401 failed.',
-          renewError,
-        );
-        this.authService.onSessionRenewalFailed(
-          undefined,
-          attachFailedSessionToken(renewError, rejectedToken),
-        );
-        return throwError(() => markSessionHandled(original401));
-      }),
+    return renewAfterUnauthorizedWithHandling$(
+      this.authService,
+      rejectedToken,
+      'AuthInterceptor: Session renewal after 401 failed.',
+    ).pipe(
+      catchError(() => throwError(() => markSessionHandled(original401))),
       switchMap(freshToken => {
         const retried = request.clone({
           setHeaders: {Authorization: `Bearer ${freshToken}`},
