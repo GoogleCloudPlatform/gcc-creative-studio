@@ -376,13 +376,17 @@ class TestVersionService:
         preserved = await worker_one.get_version_info(refresh=True)
         assert preserved.status == "update_available"
         assert preserved.latest_version == "26.11.15"
+        assert preserved.refresh_failed is True
         assert len(calls) == 3
 
-        # Refresh within 5s of failed refresh is throttled; non-refresh serves good cache.
+        # Refresh within 5s of failed refresh is throttled; non-refresh serves clean cache.
         now = 1014.0
-        assert (
-            await worker_two.get_version_info(refresh=True)
-        ).latest_version == "26.11.15"
+        throttled = await worker_two.get_version_info(refresh=True)
+        assert throttled.latest_version == "26.11.15"
+        assert throttled.refresh_failed is True
+        non_refresh = await worker_two.get_version_info()
+        assert non_refresh.latest_version == "26.11.15"
+        assert non_refresh.refresh_failed is False
         assert len(calls) == 3
 
         # After 1h TTL expires and GitHub fails, still preserves good version for 60s backoff.
@@ -922,5 +926,24 @@ class TestAdminVersionController:
             "status": "update_available",
             "releaseUrl": release_url,
             "checkedAt": "2026-11-15T18:05:00Z",
+            "refreshFailed": False,
         }
         mock_svc.get_version_info.assert_awaited_once_with(refresh=True)
+
+    def test_admin_version_serializes_refresh_failed_true(self, admin_client):
+        mock_svc = AsyncMock()
+        mock_svc.get_version_info.return_value = AdminVersionInfo(
+            current_version="26.11.12",
+            latest_version="26.11.12",
+            status="up_to_date",
+            checked_at="2026-11-15T18:05:00Z",
+            refresh_failed=True,
+        )
+        app.dependency_overrides[get_version_service] = lambda: mock_svc
+        try:
+            response = admin_client.get("/api/admin/version?refresh=true")
+        finally:
+            app.dependency_overrides.pop(get_version_service, None)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["refreshFailed"] is True

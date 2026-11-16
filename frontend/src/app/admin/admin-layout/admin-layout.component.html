@@ -99,10 +99,10 @@
             </p>
 
             <p
-              *ngIf="versionService.refreshFailed()"
+              *ngIf="versionService.refreshFailed() && info.status !== 'unavailable'"
               class="mt-1 text-[11px] italic text-zinc-400"
             >
-              Couldn't refresh — showing last result
+              Couldn't refresh - showing last result
             </p>
 
             <a

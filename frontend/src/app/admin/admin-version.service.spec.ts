@@ -25,13 +25,7 @@ import {Event, NavigationEnd, NavigationStart, Router} from '@angular/router';
 import {EMPTY, Subject} from 'rxjs';
 import {environment} from '../../environments/environment';
 import {AuthService} from '../common/services/auth.service';
-import {
-  decodeJwtIdentity,
-  hasSessionAccountMismatch,
-  hasStoredSessionToken,
-  isLoginRouteUrl,
-  readBrowserSessionOwner,
-} from './admin-version-session.utils';
+import {UserService} from '../common/services/user.service';
 import {AdminVersionInfo, AdminVersionService} from './admin-version.service';
 
 interface MockAuthService {
@@ -89,12 +83,24 @@ describe('AdminVersionService', () => {
     authSpy = {
       isUserAdmin: jasmine.createSpy('isUserAdmin').and.returnValue(isAdmin),
     };
+    const userSpy = {
+      getUserDetails: jasmine.createSpy('getUserDetails').and.callFake(() => {
+        const raw = localStorage.getItem('USER_DETAILS');
+        if (!raw) return null;
+        try {
+          return JSON.parse(raw);
+        } catch {
+          return null;
+        }
+      }),
+    };
 
     TestBed.configureTestingModule({
       providers: [
         provideHttpClient(),
         provideHttpClientTesting(),
         {provide: AuthService, useValue: authSpy},
+        {provide: UserService, useValue: userSpy},
         {provide: PLATFORM_ID, useValue: platformId},
         {provide: Router, useValue: {events: routerEvents$.asObservable()}},
       ],
@@ -497,54 +503,46 @@ describe('AdminVersionService', () => {
     expect(service.loadFailed()).toBeTrue();
     expect(service.versionInfo()).toBeNull();
   });
-});
 
-describe('admin-version-session utils', () => {
-  it('detects login route variants safely', () => {
-    expect(isLoginRouteUrl('/login')).toBeTrue();
-    expect(isLoginRouteUrl('/login?returnUrl=%2Fadmin')).toBeTrue();
-    expect(isLoginRouteUrl('/login;foo=1')).toBeTrue();
-    expect(isLoginRouteUrl('/login/e2e')).toBeTrue();
-    expect(isLoginRouteUrl('/admin/dashboard')).toBeFalse();
-    expect(isLoginRouteUrl(null)).toBeFalse();
-  });
+  it('sets refreshFailed and suppresses justChecked when backend returns refreshFailed=true', fakeAsync(() => {
+    const service = setup('browser', true);
 
-  it('decodes JWT identity, detects account mismatches, and handles throwing storage', () => {
-    const jwt = makeJwt({sub: ' 42 ', email: ' Admin@Example.com '});
-    expect(decodeJwtIdentity(jwt)).toEqual({
-      sub: '42',
-      email: 'admin@example.com',
-    });
-    expect(decodeJwtIdentity('not-a-jwt')).toBeNull();
+    service.ensureLoaded();
+    httpMock
+      .expectOne(`${environment.backendURL}/admin/version`)
+      .flush(mockInfo);
 
-    const subOnlyStorage = {
-      getItem: (k: string) =>
-        k === 'firebase_session'
-          ? JSON.stringify({token: makeJwt({sub: 'sub-only'})})
-          : null,
-    };
-    expect(hasSessionAccountMismatch(subOnlyStorage)).toBeFalse();
-    expect(readBrowserSessionOwner(subOnlyStorage)).toBe('sub:sub-only');
+    service.refresh();
+    const refreshReq = httpMock.expectOne(
+      r =>
+        r.url === `${environment.backendURL}/admin/version` &&
+        r.params.get('refresh') === 'true',
+    );
+    refreshReq.flush({...mockInfo, refreshFailed: true});
 
-    const throwingStorage = {
-      getItem: () => {
-        throw new Error('storage blocked');
-      },
-    };
-    expect(hasSessionAccountMismatch(throwingStorage)).toBeFalse();
-    expect(readBrowserSessionOwner(throwingStorage)).toBeNull();
-    expect(hasStoredSessionToken(throwingStorage)).toBeFalse();
-    expect(hasStoredSessionToken(null)).toBeFalse();
-    expect(hasStoredSessionToken(subOnlyStorage)).toBeTrue();
-    expect(
-      hasStoredSessionToken({
-        getItem: () => JSON.stringify({token: '   '}),
-      }),
-    ).toBeFalse();
-    expect(
-      hasStoredSessionToken({
-        getItem: () => '{not-json',
-      }),
-    ).toBeFalse();
+    expect(service.refreshFailed()).toBeTrue();
+    expect(service.justChecked()).toBeFalse();
+    expect(service.versionInfo()).toEqual({...mockInfo, refreshFailed: true});
+    tick(5000);
+  }));
+
+  it('keeps isBrowserAdmin() pure without mutating isAdmin signal', () => {
+    const service = setup('browser', false);
+    expect(service.isAdmin()).toBeFalse();
+    authSpy.isUserAdmin.and.returnValue(true);
+    setStoredSession('admin@example.com', 'sub-pure');
+    expect(service.isBrowserAdmin()).toBeTrue();
+    expect(service.isAdmin()).toBeFalse();
+    service.ensureLoaded();
+    httpMock
+      .expectOne(`${environment.backendURL}/admin/version`)
+      .flush(mockInfo);
+    expect(service.isAdmin()).toBeTrue();
+
+    localStorage.setItem(
+      'firebase_session',
+      JSON.stringify({token: 'hdr.!!!bad-b64!!!.sig', expiry: 9_999_999_999}),
+    );
+    expect(service.isBrowserAdmin()).toBeTrue();
   });
 });

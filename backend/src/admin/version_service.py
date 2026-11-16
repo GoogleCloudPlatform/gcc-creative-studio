@@ -49,16 +49,23 @@ _RELEASES_PER_PAGE = 100
 _MAX_CACHE_BYTES = 65_536
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
+try:
+    _O_NOFOLLOW = os.O_NOFOLLOW
+except AttributeError:
+    _O_NOFOLLOW = 0
+try:
+    _O_NONBLOCK = os.O_NONBLOCK
+except AttributeError:
+    _O_NONBLOCK = 0
+
 _CALVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?$")
 _REPO_RE = re.compile(
     r"^(?!\.\.?(?:/|$))[A-Za-z0-9_.-]{1,100}/"
     r"(?!\.\.?(?:/|$))[A-Za-z0-9_.-]{1,100}$"
 )
 
-# Bind locks per event loop because Gunicorn/test suites run across loops.
-_PROCESS_LOCKS: weakref.WeakKeyDictionary[
-    asyncio.AbstractEventLoop, asyncio.Lock
-] = weakref.WeakKeyDictionary()
+# Singleflight lock rebound only if a new event loop runs across asyncio.run().
+_SINGLEFLIGHT_LOCK: list[Any] = [None, None]
 _IN_MEMORY_CACHE: dict[str, dict[str, Any]] = {}
 _UNWRITABLE_CACHE_PATHS: set[str] = set()
 
@@ -71,12 +78,13 @@ class _CachedVersion:
 
 
 def _get_process_lock() -> asyncio.Lock:
-    """Returns the singleflight lock bound to the active event loop."""
+    """Returns the singleflight lock for the active event loop."""
     loop = asyncio.get_running_loop()
-    lock = _PROCESS_LOCKS.get(loop)
-    if lock is None:
+    loop_ref, lock = _SINGLEFLIGHT_LOCK
+    if lock is None or loop_ref is None or loop_ref() is not loop:
         lock = asyncio.Lock()
-        _PROCESS_LOCKS[loop] = lock
+        _SINGLEFLIGHT_LOCK[0] = weakref.ref(loop)
+        _SINGLEFLIGHT_LOCK[1] = lock
     return lock
 
 
@@ -137,9 +145,7 @@ class _VersionFileCache:
             # O_NOFOLLOW blocks symlink poisoning; O_NONBLOCK avoids FIFO hangs.
             fd = os.open(
                 self._cache_path,
-                os.O_RDONLY
-                | getattr(os, "O_NOFOLLOW", 0)
-                | getattr(os, "O_NONBLOCK", 0),
+                os.O_RDONLY | _O_NOFOLLOW | _O_NONBLOCK,
             )
         except FileNotFoundError:
             return dict(_IN_MEMORY_CACHE.get(cache_id, {}))
@@ -394,7 +400,11 @@ class VersionService:
         for item in payload:
             if not isinstance(item, dict):
                 continue
-            if item.get("draft") is True or item.get("prerelease") is True:
+            draft = item.get("draft")
+            prerelease = item.get("prerelease")
+            if (isinstance(draft, bool) and draft) or (
+                isinstance(prerelease, bool) and prerelease
+            ):
                 continue
             tag_name = item.get("tag_name")
             if not isinstance(tag_name, str):
@@ -454,6 +464,14 @@ class VersionService:
             if cached is not None and self._can_serve_cached(
                 cached, now, refresh
             ):
+                if (
+                    refresh
+                    and cached.failed_at is not None
+                    and cached.failed_at > cached.fetched_at
+                ):
+                    return cached.info.model_copy(
+                        update={"refresh_failed": True}
+                    )
                 return cached.info
 
             info = await self._fetch_and_evaluate(now)
@@ -471,7 +489,11 @@ class VersionService:
                         failed_at=now,
                     )
                 )
-                return cached.info
+                return (
+                    cached.info.model_copy(update={"refresh_failed": True})
+                    if refresh
+                    else cached.info
+                )
 
             self._cache.put(_CachedVersion(fetched_at=now, info=info))
             return info

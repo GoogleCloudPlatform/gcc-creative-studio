@@ -30,6 +30,7 @@ import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {RouterModule, provideRouter} from '@angular/router';
 import {environment} from '../../../environments/environment';
 import {AuthService} from '../../common/services/auth.service';
+import {UserService} from '../../common/services/user.service';
 import {AdminVersionInfo, AdminVersionService} from '../admin-version.service';
 import {AdminLayoutComponent} from './admin-layout.component';
 
@@ -160,10 +161,25 @@ describe('AdminLayoutComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('Up to date');
     expect(fixture.nativeElement.textContent).toContain('Release notes');
     expect(fixture.nativeElement.textContent).toContain(
-      "Couldn't refresh — showing last result",
+      "Couldn't refresh - showing last result",
     );
     expect(fixture.nativeElement.textContent).not.toContain(
       'Update check unavailable',
+    );
+
+    versionInfoSig.set({
+      currentVersion: '26.11.12',
+      latestVersion: null,
+      status: 'unavailable',
+      releaseUrl: null,
+      checkedAt: '2026-11-12T20:05:00Z',
+    });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain(
+      'Update check unavailable',
+    );
+    expect(fixture.nativeElement.textContent).not.toContain(
+      "Couldn't refresh - showing last result",
     );
 
     refreshFailedSig.set(false);
@@ -313,6 +329,9 @@ describe('AdminLayoutComponent', () => {
     const authSpy = {
       isUserAdmin: jasmine.createSpy('isUserAdmin').and.returnValue(false),
     };
+    const userSpy = {
+      getUserDetails: jasmine.createSpy('getUserDetails').and.returnValue(null),
+    };
     try {
       await TestBed.configureTestingModule({
         declarations: [AdminLayoutComponent],
@@ -329,6 +348,7 @@ describe('AdminLayoutComponent', () => {
           provideHttpClient(),
           provideHttpClientTesting(),
           {provide: AuthService, useValue: authSpy},
+          {provide: UserService, useValue: userSpy},
           {provide: PLATFORM_ID, useValue: 'browser'},
         ],
       }).compileComponents();

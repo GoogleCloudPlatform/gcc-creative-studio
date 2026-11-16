@@ -73,3 +73,4 @@ class AdminVersionInfo(BaseDto):
     status: VersionStatusLiteral
     release_url: str | None = None
     checked_at: str
+    refresh_failed: bool = False

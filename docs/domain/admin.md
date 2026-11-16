@@ -27,3 +27,9 @@ Source files:
 - **`AdminAuthGuard` (`frontend/src/app/admin/admin-auth.guard.ts`):**
   - Allows SSR shell rendering when `!isPlatformBrowser(this.platformId)`.
   - In the browser, requires both `this.authService.isLoggedIn()` and `userEmail && this.authService.isUserAdmin()`. Otherwise shows an access-denied snackbar, triggers `this.authService.logout()`, and denies activation (`return false`).
+
+## System Version Check
+
+- **Admin-only endpoint (`GET /api/admin/version`):** Version checking is restricted to admins via `/api/admin` (`RoleChecker([UserRoleEnum.ADMIN])`); the legacy unauthenticated `/api/version` endpoint was removed so release metadata is never exposed publicly.
+- **CalVer validation & fallback (`VersionService` in `backend/src/admin/version_service.py`):** Compares `APP_VERSION` (`backend/src/version.py`) against bare CalVer tags from `GITHUB_RELEASE_REPO`, skips drafts/prereleases, constructs `release_url` from the validated repo and tag, enforces `3600s` TTL / `60s` error backoff / `5s` refresh cooldown, and returns `refreshFailed: true` when a forced refresh falls back to cached data.
+- **Browser admin state (`AdminVersionService`):** Polls `/api/admin/version` only in the browser when `AuthService.isUserAdmin()` and session identity (`UserService.getUserDetails()` + `firebase_session`) agree without mismatch, suppresses `justChecked` when `refreshFailed` is `true`, and renders `"Couldn't refresh - showing last result"` without stacking with `"Update check unavailable"`.

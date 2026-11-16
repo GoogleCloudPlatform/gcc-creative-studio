@@ -31,13 +31,7 @@ import {Subscription} from 'rxjs';
 import {finalize} from 'rxjs/operators';
 import {environment} from '../../environments/environment';
 import {AuthService} from '../common/services/auth.service';
-import {
-  hasSessionAccountMismatch,
-  hasStoredSessionToken,
-  isLoginRouteUrl,
-  isWatchedSessionStorageKey,
-  readBrowserSessionOwner,
-} from './admin-version-session.utils';
+import {UserService} from '../common/services/user.service';
 
 export type AdminVersionStatus =
   | 'up_to_date'
@@ -50,12 +44,47 @@ export interface AdminVersionInfo {
   status: AdminVersionStatus;
   releaseUrl: string | null;
   checkedAt: string;
+  refreshFailed?: boolean;
 }
 
+const FIREBASE_SESSION_KEY = 'firebase_session';
+const USER_DETAILS_KEY = 'USER_DETAILS';
 const JUST_CHECKED_MS = 1500;
 const REFRESH_COOLDOWN_MS = 5000;
 const INITIAL_RETRY_BACKOFF_MS = 60_000;
 type TimerKey = 'justChecked' | 'cooldown';
+
+function isLoginRouteUrl(rawUrl: string | null | undefined): boolean {
+  if (!rawUrl) return false;
+  const pathOnly = rawUrl.split(/[?#;]/, 1)[0].trim();
+  return (
+    pathOnly
+      .split('/')
+      .find(seg => seg.length > 0)
+      ?.toLowerCase() === 'login'
+  );
+}
+
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  const parts = token.split('.');
+  if (parts.length !== 3 || !parts[1]) return null;
+  try {
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padLen = (4 - (b64.length % 4)) % 4;
+    const raw = atob(b64 + '='.repeat(padLen));
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) {
+      bytes[i] = raw.charCodeAt(i);
+    }
+    // eslint-disable-next-line n/no-unsupported-features/node-builtins
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 @Injectable({providedIn: 'root'})
 export class AdminVersionService implements OnDestroy {
@@ -89,6 +118,7 @@ export class AdminVersionService implements OnDestroy {
   constructor(
     private readonly http: HttpClient,
     private readonly authService: AuthService,
+    private readonly userService: UserService,
     @Inject(PLATFORM_ID) private readonly platformId: Object,
     private readonly router: Router,
     private readonly ngZone: NgZone,
@@ -103,7 +133,13 @@ export class AdminVersionService implements OnDestroy {
       }
     });
     this.storageListener = (e: StorageEvent) => {
-      if (!isWatchedSessionStorageKey(e.key)) return;
+      if (
+        e.key !== null &&
+        e.key !== FIREBASE_SESSION_KEY &&
+        e.key !== USER_DETAILS_KEY
+      ) {
+        return;
+      }
       this.ngZone.run(() =>
         this.syncSessionOwner(e.key === null || !e.newValue),
       );
@@ -111,33 +147,81 @@ export class AdminVersionService implements OnDestroy {
     window.addEventListener('storage', this.storageListener);
   }
 
-  private get storage(): Storage | null {
-    return typeof localStorage !== 'undefined' ? localStorage : null;
+  private readStoredToken(): string | null {
+    if (typeof localStorage === 'undefined') return null;
+    try {
+      const raw = localStorage.getItem(FIREBASE_SESSION_KEY);
+      if (!raw) return null;
+      const parsed: unknown = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return null;
+      }
+      const token = (parsed as Record<string, unknown>)['token'];
+      return typeof token === 'string' && token.trim() ? token.trim() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private readSessionIdentity(): {
+    token: string | null;
+    email: string | null;
+    sub: string | null;
+    mismatch: boolean;
+  } {
+    const token = this.readStoredToken();
+    const rawUserEmail = this.userService.getUserDetails()?.email;
+    const userEmail =
+      typeof rawUserEmail === 'string' && rawUserEmail.trim()
+        ? rawUserEmail.trim().toLowerCase()
+        : null;
+    let tokenEmail: string | null = null;
+    let tokenSub: string | null = null;
+    const payload = token ? decodeJwtPayload(token) : null;
+    if (payload) {
+      if (typeof payload['email'] === 'string' && payload['email'].trim()) {
+        tokenEmail = payload['email'].trim().toLowerCase();
+      }
+      if (typeof payload['sub'] === 'string' && payload['sub'].trim()) {
+        tokenSub = payload['sub'].trim();
+      }
+    }
+    const mismatch =
+      tokenEmail !== null && userEmail !== null && tokenEmail !== userEmail;
+    return {
+      token,
+      email: tokenEmail ?? userEmail,
+      sub: tokenSub,
+      mismatch,
+    };
   }
 
   private computeBrowserAdmin(): boolean {
-    const storage = this.storage;
-    return (
-      isPlatformBrowser(this.platformId) &&
-      this.authService.isUserAdmin() &&
-      hasStoredSessionToken(storage) &&
-      !hasSessionAccountMismatch(storage)
-    );
+    if (
+      !isPlatformBrowser(this.platformId) ||
+      !this.authService.isUserAdmin()
+    ) {
+      return false;
+    }
+    const id = this.readSessionIdentity();
+    return id.token !== null && !id.mismatch;
   }
 
   isBrowserAdmin(): boolean {
-    const admin = this.computeBrowserAdmin();
-    this._isAdmin.set(admin);
-    return admin;
+    return this.computeBrowserAdmin();
   }
 
   private currentSessionOwner(): string | null {
-    if (!this.isBrowserAdmin()) return null;
-    return readBrowserSessionOwner(this.storage) ?? '__authenticated_admin__';
+    if (!this.computeBrowserAdmin()) return null;
+    const id = this.readSessionIdentity();
+    if (id.email) return `email:${id.email}`;
+    if (id.sub) return `sub:${id.sub}`;
+    return id.token ? `token:${id.token}` : null;
   }
 
   private syncSessionOwner(forceReset = false): string | null {
     const owner = this.currentSessionOwner();
+    this._isAdmin.set(owner !== null);
     if (
       forceReset ||
       owner === null ||
@@ -251,11 +335,13 @@ export class AdminVersionService implements OnDestroy {
           if (isStale()) return;
           received = true;
           this.failedAtMs = null;
+          const refreshFailed = Boolean(info.refreshFailed);
           this._versionInfo.set(info);
           this._loadFailed.set(false);
-          this._refreshFailed.set(false);
-          if (isRefresh)
+          this._refreshFailed.set(refreshFailed);
+          if (isRefresh && !refreshFailed) {
             this.setFlag('justChecked', this._justChecked, JUST_CHECKED_MS);
+          }
         },
         error: err => onFail(err),
         complete: () => {
