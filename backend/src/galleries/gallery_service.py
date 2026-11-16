@@ -76,6 +76,7 @@ from src.workspaces.repository.workspace_repository import WorkspaceRepository
 from src.workspaces.schema.workspace_model import WorkspaceScopeEnum
 from src.workspaces.workspace_auth_guard import (
     WorkspaceAuth,
+    get_accessible_shared_workspace_ids,
     is_workspace_manager,
 )
 from src.tags.repository.tags_repository import TagsRepository
@@ -396,6 +397,49 @@ class GalleryService:
         item.presigned_thumbnail_urls = presigned_thumbnail_urls
         return item
 
+    @staticmethod
+    def _extract_promotion_workspace_id(promo: object) -> int | None:
+        if not isinstance(promo, dict):
+            return None
+        raw = promo.get("target_workspace_id")
+        if raw is None:
+            raw = promo.get("targetWorkspaceId")
+        if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
+            return raw
+        return None
+
+    async def _filter_accessible_promotions(
+        self,
+        items: list[UnifiedGalleryItemResponse],
+        current_user: UserModel,
+    ) -> None:
+        """Strips promotions targeting workspaces the caller cannot read."""
+        target_ids: set[int] = set()
+        for item in items:
+            promos = item.metadata.get("promotions") if item.metadata else None
+            if not isinstance(promos, list):
+                continue
+            for promo in promos:
+                target_ws_id = self._extract_promotion_workspace_id(promo)
+                if target_ws_id is not None:
+                    target_ids.add(target_ws_id)
+        if not target_ids:
+            return
+
+        allowed_ids = await get_accessible_shared_workspace_ids(
+            self.db, target_ids, current_user
+        )
+        for item in items:
+            if not item.metadata or not isinstance(
+                item.metadata.get("promotions"), list
+            ):
+                continue
+            item.metadata["promotions"] = [
+                promo
+                for promo in item.metadata["promotions"]
+                if self._extract_promotion_workspace_id(promo) in allowed_ids
+            ]
+
     async def get_paginated_gallery(
         self,
         search_dto: GallerySearchDto,
@@ -430,6 +474,7 @@ class GalleryService:
             requesting_user_id=current_user.id,
         )
         unified_items = unified_items_query.data or []
+        await self._filter_accessible_promotions(unified_items, current_user)
 
         # Convert each MediaItem to a GalleryItemResponse in parallel
         response_tasks = [
@@ -815,7 +860,7 @@ class GalleryService:
         ):
             raise HTTPException(
                 400,
-                detail="Items in My Workspace cannot be moved directly to another workspace.",
+                detail="Use Promote to share items from My Workspace.",
             )
         if item_type == "folder":
             assert isinstance(entity, Folder)

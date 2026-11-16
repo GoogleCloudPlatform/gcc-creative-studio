@@ -127,6 +127,62 @@ def _extract_primary_media_id(
     return source_media_items[0].media_item_id
 
 
+async def _resolve_promoted_personal_origin(
+    db: AsyncSession,
+    parent: MediaItem,
+    output_workspace_id: int,
+) -> tuple[int, int | None] | None:
+    """Folds edits on one's own promoted copy back into its personal stack."""
+    origin_root_id = parent.promoted_from_root_id
+    if origin_root_id is None:
+        return None
+    root_res = await db.execute(
+        select(
+            MediaItem.id,
+            MediaItem.workspace_id,
+            MediaItem.user_id,
+            MediaItem.deleted_at,
+        )
+        .where(MediaItem.id == origin_root_id)
+        .execution_options(include_deleted=True)
+    )
+    root_row = root_res.first()
+    if (
+        root_row is None
+        or root_row.workspace_id != output_workspace_id
+        or root_row.user_id != parent.user_id
+    ):
+        return None
+    origin_parent_id = parent.promoted_from_media_item_id
+    if origin_parent_id is not None:
+        src_res = await db.execute(
+            select(MediaItem.id)
+            .where(
+                MediaItem.id == origin_parent_id,
+                MediaItem.workspace_id == output_workspace_id,
+                MediaItem.deleted_at.is_(None),
+            )
+            .limit(1)
+        )
+        if src_res.scalar_one_or_none() is None:
+            origin_parent_id = None
+    if origin_parent_id is None and root_row.deleted_at is None:
+        origin_parent_id = origin_root_id
+    if origin_parent_id is None:
+        active_res = await db.execute(
+            select(MediaItem.id)
+            .where(
+                MediaItem.workspace_id == output_workspace_id,
+                MediaItem.deleted_at.is_(None),
+                stack_root_expr(MediaItem) == origin_root_id,
+            )
+            .limit(1)
+        )
+        if active_res.scalar_one_or_none() is None:
+            return None
+    return origin_root_id, origin_parent_id
+
+
 async def resolve_revision_lineage(
     db: AsyncSession,
     user: UserModel,
@@ -139,8 +195,8 @@ async def resolve_revision_lineage(
     """Computes revision stack lineage and inherited folder for an iteration.
 
     Iterations referencing an item outside ``output_workspace_id`` start a fresh
-    stack (``revision_number=1``), while iterations within ``output_workspace_id``
-    append under an exclusive ``FOR UPDATE`` lock on the stack root.
+    stack (``revision_number=1``) unless iterating on the caller's own promoted
+    copy, which folds back into its personal stack under a ``FOR UPDATE`` lock.
     """
     del user
     candidate_id = _extract_primary_media_id(
@@ -155,11 +211,19 @@ async def resolve_revision_lineage(
         )
     )
     parent = parent_res.scalar_one_or_none()
-    if parent is None or parent.workspace_id != output_workspace_id:
+    if parent is None:
         return RevisionLineage(None, None, 1, None)
 
-    root_id = parent.revision_root_id or parent.id
-    parent_id = parent.id
+    if parent.workspace_id == output_workspace_id:
+        root_id = parent.revision_root_id or parent.id
+        parent_id: int | None = parent.id
+    else:
+        folded = await _resolve_promoted_personal_origin(
+            db, parent, output_workspace_id
+        )
+        if folded is None:
+            return RevisionLineage(None, None, 1, None)
+        root_id, parent_id = folded
 
     await lock_media_stack_root(db, root_id)
     root_expr = stack_root_expr(MediaItem)

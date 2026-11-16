@@ -30,6 +30,7 @@ from src.common.schema.media_item_model import (
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.galleries.revision_lineage import (
     RevisionLineage,
+    _resolve_promoted_personal_origin,
     effective_revision_folder,
     lock_media_stack_root,
     resolve_revision_lineage,
@@ -344,8 +345,17 @@ class TestRevisionService:
 
         takes_res = MagicMock()
         takes_res.scalars.return_value.all.return_value = [v1, v2]
+        promo_row = MagicMock(
+            id=90,
+            workspace_id=88,
+            workspace_name="Campaign Team",
+            folder_id=5,
+            promoted_from_media_item_id=10,
+        )
+        promo_res = MagicMock()
+        promo_res.all.return_value = [promo_row]
         mock_db = AsyncMock()
-        mock_db.execute.return_value = takes_res
+        mock_db.execute.side_effect = [takes_res, promo_res]
 
         service = RevisionService(
             db=mock_db,
@@ -359,4 +369,155 @@ class TestRevisionService:
         assert res.root_id == 10
         assert res.revision_count == 2
         assert [t.id for t in res.takes] == [10, 11]
+        assert len(res.promotions) == 1
+        assert res.promotions[0].target_item_id == 90
+        assert res.promotions[0].promoted_revision_number == 1
         gallery_service.hydrate_media_items.assert_awaited_once()
+
+    @pytest.mark.anyio
+    async def test_resolve_revision_lineage_folds_back_own_promoted_copy(self):
+        promoted = MagicMock(
+            id=90,
+            workspace_id=88,
+            user_id=1,
+            revision_root_id=None,
+            promoted_from_root_id=10,
+            promoted_from_media_item_id=11,
+        )
+        parent_res = MagicMock()
+        parent_res.scalar_one_or_none.return_value = promoted
+        root_lookup = MagicMock()
+        root_lookup.first.return_value = MagicMock(
+            id=10, workspace_id=1, user_id=1, deleted_at=None
+        )
+        src_lookup = MagicMock()
+        src_lookup.scalar_one_or_none.return_value = 11
+        lock_res = MagicMock()
+        max_res = MagicMock()
+        max_res.scalar_one.return_value = 2
+        folder_res = MagicMock()
+        folder_res.scalar_one_or_none.return_value = 4
+
+        mock_db = AsyncMock()
+        mock_db.execute.side_effect = [
+            parent_res,
+            root_lookup,
+            src_lookup,
+            lock_res,
+            max_res,
+            folder_res,
+        ]
+
+        lineage = await resolve_revision_lineage(
+            mock_db, _user(1), output_workspace_id=1, explicit_parent_id=90
+        )
+
+        assert lineage == RevisionLineage(
+            revision_root_id=10,
+            revision_parent_id=11,
+            revision_number=3,
+            inherited_folder_id=4,
+        )
+
+        mock_db.execute.side_effect = [
+            parent_res,
+            root_lookup,
+            src_lookup,
+            lock_res,
+            max_res,
+            folder_res,
+        ]
+        cross_folder = await resolve_revision_lineage(
+            mock_db,
+            _user(1),
+            output_workspace_id=1,
+            explicit_parent_id=90,
+            requested_folder_id=9,
+            resolved_folder_id=9,
+        )
+        assert cross_folder == RevisionLineage(None, None, 1, None)
+
+    @pytest.mark.anyio
+    async def test_load_accessible_promotions_and_origin_helpers_edge_cases(
+        self,
+    ):
+        promo_row = MagicMock(
+            id=95,
+            workspace_id=88,
+            workspace_name="Brand Team",
+            folder_id=None,
+            promoted_from_media_item_id=8,
+        )
+        promo_res = MagicMock()
+        promo_res.all.return_value = [promo_row]
+        missing_rev_res = MagicMock()
+        missing_rev_res.all.return_value = [(8, 2)]
+
+        mock_db = AsyncMock()
+        mock_db.execute.side_effect = [promo_res, missing_rev_res]
+        service = RevisionService(
+            db=mock_db,
+            media_repo=AsyncMock(),
+            workspace_auth=AsyncMock(),
+            gallery_service=AsyncMock(),
+        )
+        promos = await service._load_accessible_promotions(
+            root_id=10, workspace_id=1, current_user=_user(1), take_models=[]
+        )
+        assert len(promos) == 1
+        assert promos[0].promoted_revision_number == 2
+
+        parent = MagicMock(
+            user_id=1, promoted_from_root_id=10, promoted_from_media_item_id=8
+        )
+        root_deleted = MagicMock()
+        root_deleted.first.return_value = MagicMock(
+            id=10,
+            workspace_id=1,
+            user_id=1,
+            deleted_at=datetime.now(timezone.utc),
+        )
+        src_gone = MagicMock()
+        src_gone.scalar_one_or_none.return_value = None
+        no_active = MagicMock()
+        no_active.scalar_one_or_none.return_value = None
+        mock_db.execute.side_effect = [root_deleted, src_gone, no_active]
+
+        assert (
+            await _resolve_promoted_personal_origin(
+                mock_db, parent, output_workspace_id=1
+            )
+            is None
+        )
+
+    @pytest.mark.anyio
+    async def test_load_accessible_promotions_excludes_personal_even_for_admin(
+        self,
+    ):
+        from sqlalchemy.dialects import postgresql
+
+        promo_res = MagicMock()
+        promo_res.all.return_value = []
+        mock_db = AsyncMock()
+        mock_db.execute.return_value = promo_res
+        service = RevisionService(
+            db=mock_db,
+            media_repo=AsyncMock(),
+            workspace_auth=AsyncMock(),
+            gallery_service=AsyncMock(),
+        )
+        promos = await service._load_accessible_promotions(
+            root_id=10,
+            workspace_id=1,
+            current_user=_user(1, role=UserRoleEnum.ADMIN),
+            take_models=[],
+        )
+        assert promos == []
+        stmt = mock_db.execute.await_args.args[0]
+        sql = str(
+            stmt.compile(
+                dialect=postgresql.dialect(),
+                compile_kwargs={"literal_binds": True},
+            )
+        )
+        assert "workspaces.scope != 'personal'" in sql

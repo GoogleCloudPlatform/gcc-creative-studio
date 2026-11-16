@@ -1601,7 +1601,7 @@ async def test_bulk_move_out_of_personal_workspace_rejected_400(service):
             user,
         )
     assert exc.value.status_code == 400
-    assert "cannot be moved directly to another workspace" in exc.value.detail
+    assert "Use Promote" in exc.value.detail
 
 
 @pytest.mark.anyio
@@ -1843,3 +1843,67 @@ async def test_bulk_move_same_workspace_colocates_stack_to_root(service):
     assert "revision_root_id" in stmt_text
     assert "deleted_at IS NULL" in stmt_text
     service.mock_tags_repo.clear_tags_for_media_item.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_get_paginated_gallery_filters_inaccessible_promotions(service):
+    current_user = UserModel(
+        id=2,
+        email="user@test.com",
+        name="User",
+        roles=[UserRoleEnum.USER],
+    )
+    search_dto = GallerySearchDto(workspace_id=1, limit=10, offset=0)
+
+    mock_item = UnifiedGalleryItemResponse(
+        id=1,
+        workspace_id=1,
+        created_at=datetime.now(),
+        item_type="media_item",
+        gcs_uris=[],
+        thumbnail_uris=[],
+        metadata_={
+            "promotions": [
+                {
+                    "target_workspace_id": 10,
+                    "target_workspace_name": "Shared Public",
+                    "target_item_id": 100,
+                },
+                {
+                    "target_workspace_id": 20,
+                    "target_workspace_name": "Secret Private",
+                    "target_item_id": 200,
+                },
+                {
+                    "target_workspace_id": 30,
+                    "target_workspace_name": "Foreign Personal",
+                    "target_item_id": 300,
+                },
+            ]
+        },
+    )
+    mock_query_result = MagicMock()
+    mock_query_result.data = [mock_item]
+    mock_query_result.count = 1
+    mock_query_result.page = 1
+    mock_query_result.page_size = 10
+    mock_query_result.total_pages = 1
+    service.mock_unified_gallery_repo.query.return_value = mock_query_result
+
+    ws_res = MagicMock()
+    ws_res.scalars.return_value.all.return_value = [10]
+    service.mock_db.execute.return_value = ws_res
+
+    result = await service.get_paginated_gallery(search_dto, current_user)
+
+    assert len(result.data) == 1
+    assert result.data[0].metadata["promotions"] == [
+        {
+            "target_workspace_id": 10,
+            "target_workspace_name": "Shared Public",
+            "target_item_id": 100,
+        }
+    ]
+    executed_stmt = str(service.mock_db.execute.call_args[0][0])
+    assert "workspaces.scope !=" in executed_stmt
+    assert "workspace_members" in executed_stmt
