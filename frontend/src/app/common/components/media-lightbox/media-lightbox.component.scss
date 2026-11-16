@@ -26,6 +26,23 @@
   gap: 1rem;
 }
 
+.lightbox-workspace-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  margin-left: auto; margin-right: 0.75rem;
+}
+.workspace-origin-label {
+  font-size: 13px; color: rgba(255, 255, 255, 0.72); font-variant-numeric: tabular-nums;
+}
+.lightbox-promote-btn {
+  --mdc-filled-button-container-color: #5b4bff;
+  --mdc-filled-button-label-text-color: #ffffff;
+  --mdc-filled-button-container-shape: 9999px;
+  background-color: #5b4bff !important; color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.22); border-radius: 9999px;
+  min-height: 40px; padding: 0 16px; font-weight: 500;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+
 .main-media-container {
   flex-grow: 1;
   display: flex;

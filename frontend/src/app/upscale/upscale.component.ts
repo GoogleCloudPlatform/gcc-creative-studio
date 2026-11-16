@@ -30,6 +30,7 @@ import {AssetTypeEnum} from '../admin/source-assets-management/source-asset.mode
 import {MediaItem, JobStatus} from '../common/models/media-item.model';
 import {handleErrorSnackbar} from '../utils/handleMessageSnackbar';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
+import {PromoteLauncherService} from '../common/services/promote-launcher.service';
 import {MatIconRegistry} from '@angular/material/icon';
 import {DomSanitizer, SafeResourceUrl} from '@angular/platform-browser';
 
@@ -65,6 +66,7 @@ export class UpscaleComponent implements OnInit, OnDestroy {
 
   selectedAsset: SourceAssetResponseDto | null = null;
   completedJobId: number | null = null; // Track completed job ID
+  completedJob: MediaItem | null = null;
 
   private destroy$ = new Subject<void>();
 
@@ -79,9 +81,32 @@ export class UpscaleComponent implements OnInit, OnDestroy {
     private _snackBar: MatSnackBar,
     private router: Router,
     private workspaceStateService: WorkspaceStateService,
+    private promoteLauncher: PromoteLauncherService,
   ) {
     // Initialize the combined job stream
     this.activeUpscaleJob$ = this.sourceAssetService.activeUpscaleJob$;
+  }
+
+  get isCompletedInPersonalWorkspace(): boolean {
+    return this.workspaceStateService.isPersonalItem(this.completedJob);
+  }
+
+  get promoteButtonLabel(): string {
+    return this.promoteLauncher.getPromoteButtonLabel();
+  }
+
+  openPromoteDialog(): void {
+    const jobId = this.completedJob?.id ?? this.completedJobId;
+    if (!jobId) {
+      return;
+    }
+    this.promoteLauncher
+      .openPromoteDialog({
+        sourceWorkspaceId: this.completedJob?.workspaceId,
+        items: [{id: jobId, type: 'media_item'}],
+        itemLabel: this.completedJob?.prompt || 'Upscaled image',
+      })
+      .subscribe();
   }
 
   ngOnInit(): void {
@@ -106,6 +131,7 @@ export class UpscaleComponent implements OnInit, OnDestroy {
             // Reset error overlay for future jobs
             this.showErrorOverlay = true;
             this.completedJobId = activeJob.id; // Store job ID
+            this.completedJob = activeJob;
 
             const originalUrl =
               activeJob.originalPresignedUrls &&
@@ -134,6 +160,7 @@ export class UpscaleComponent implements OnInit, OnDestroy {
             this.isLoadingUpscale = false;
             this.showErrorOverlay = false;
             this.completedJobId = null;
+            this.completedJob = null;
 
             if (activeJob.errorMessage) {
               handleErrorSnackbar(
@@ -254,6 +281,7 @@ export class UpscaleComponent implements OnInit, OnDestroy {
           this.assetPair.aspectRatio = asset.aspectRatio;
           this.assetPair.upscaled = null; // Reset upscaled
           this.completedJobId = null; // Reset previous job ID
+          this.completedJob = null;
           this.cdr.detectChanges();
         }
       }
@@ -332,6 +360,7 @@ export class UpscaleComponent implements OnInit, OnDestroy {
     this.isLoadingUpscale = false;
     this.selectedAsset = null;
     this.completedJobId = null;
+    this.completedJob = null;
     // Notify services to clear status to allow new uploads
     (this.sourceAssetService as any).activeUpscaleJob.next(null);
   }

@@ -27,7 +27,10 @@ import {
 import {MatButtonModule} from '@angular/material/button';
 import {MatIconModule} from '@angular/material/icon';
 import {MatTooltipModule} from '@angular/material/tooltip';
-import {GalleryItem} from '../../../common/models/gallery-item.model';
+import {
+  GalleryItem,
+  PromotionSummary,
+} from '../../../common/models/gallery-item.model';
 
 @Component({
   selector: 'app-revision-history-strip',
@@ -38,16 +41,25 @@ import {GalleryItem} from '../../../common/models/gallery-item.model';
 })
 export class RevisionHistoryStripComponent implements OnChanges {
   @Input({required: true}) takes: GalleryItem[] = [];
+  @Input() promotions: PromotionSummary[] = [];
   @Input() selectedTakeId: number | null = null;
+  @Input() canPromote = false;
   @Input() isDeleting = false;
 
   @Output() takeSelected = new EventEmitter<GalleryItem>();
+  @Output() promoteRequested = new EventEmitter<GalleryItem>();
   @Output() editFromRequested = new EventEmitter<GalleryItem>();
   @Output() deleteTakeRequested = new EventEmitter<GalleryItem>();
 
   readonly pendingDeleteTakeId = signal<number | null>(null);
+  private promotedTakeIds = new Set<number>();
+  private promotedRevNumbers = new Set<number>();
+  promotionSummaryText = '';
 
   ngOnChanges(changes: SimpleChanges): void {
+    if (changes['promotions'] || changes['takes']) {
+      this.rebuildPromotionLookup();
+    }
     if (changes['selectedTakeId'] || changes['takes']) {
       const pendingId = this.pendingDeleteTakeId();
       if (pendingId !== null && !this.takes.some(t => t.id === pendingId)) {
@@ -82,9 +94,24 @@ export class RevisionHistoryStripComponent implements OnChanges {
     return this.getTakeVersionNumber(active, Math.max(0, idx));
   }
 
+  isPromotedTake(take: GalleryItem, index: number): boolean {
+    if (this.promotedTakeIds.has(take.id)) {
+      return true;
+    }
+    const revNum = this.getTakeVersionNumber(take, index);
+    return this.promotedRevNumbers.has(revNum);
+  }
+
   selectTake(take: GalleryItem): void {
     this.pendingDeleteTakeId.set(null);
     this.takeSelected.emit(take);
+  }
+
+  requestPromote(): void {
+    const active = this.activeTake;
+    if (active) {
+      this.promoteRequested.emit(active);
+    }
   }
 
   requestEditFrom(): void {
@@ -124,5 +151,28 @@ export class RevisionHistoryStripComponent implements OnChanges {
       return true;
     }
     return (take.model || '').toLowerCase().startsWith('lyria');
+  }
+
+  private rebuildPromotionLookup(): void {
+    this.promotedTakeIds.clear();
+    this.promotedRevNumbers.clear();
+    const summarySet = new Set<string>();
+    for (const promo of this.promotions || []) {
+      if (promo.promotedFromMediaItemId) {
+        this.promotedTakeIds.add(promo.promotedFromMediaItemId);
+      }
+      if (
+        promo.promotedRevisionNumber !== undefined &&
+        promo.promotedRevisionNumber !== null
+      ) {
+        this.promotedRevNumbers.add(promo.promotedRevisionNumber);
+        summarySet.add(
+          `v${promo.promotedRevisionNumber} shared in ${promo.targetWorkspaceName}`,
+        );
+      } else {
+        summarySet.add(`Shared in ${promo.targetWorkspaceName}`);
+      }
+    }
+    this.promotionSummaryText = Array.from(summarySet).join(' · ');
   }
 }

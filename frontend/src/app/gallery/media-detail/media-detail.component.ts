@@ -46,6 +46,7 @@ import {
 } from '../../utils/handleMessageSnackbar';
 import {GalleryService} from '../gallery.service';
 import {ConfirmationDialogComponent} from '../../common/components/confirmation-dialog/confirmation-dialog.component';
+import {PromoteLauncherService} from '../../common/services/promote-launcher.service';
 import {WorkspaceStateService} from '../../services/workspace/workspace-state.service';
 import {FolderService} from '../../common/services/folder.service';
 import {FolderBreadcrumb} from '../../common/models/folder.model';
@@ -409,6 +410,7 @@ export class MediaDetailComponent implements OnDestroy {
     private sanitizer: DomSanitizer,
     private workspaceStateService: WorkspaceStateService,
     private folderService: FolderService,
+    private promoteLauncher: PromoteLauncherService,
     public dialog: MatDialog,
   ) {
     // Check if user is admin
@@ -416,6 +418,37 @@ export class MediaDetailComponent implements OnDestroy {
 
     // Always trigger fetch to get full source assets, metadata, etc.
     this.fetchMediaItem();
+  }
+
+  get canPromoteItem(): boolean {
+    return (
+      !!this.mediaItem &&
+      this.workspaceStateService.isPersonalItem(this.mediaItem)
+    );
+  }
+
+  openPromoteDialog(
+    targetItem: GalleryItem | undefined = this.mediaItem,
+  ): void {
+    if (!targetItem) {
+      return;
+    }
+    this.promoteLauncher
+      .openPromoteDialog({
+        sourceWorkspaceId: targetItem.workspaceId,
+        items: [{id: targetItem.id, type: targetItem.itemType || 'media_item'}],
+        itemLabel:
+          targetItem.titles?.[0] || targetItem.prompt || 'Selected item',
+      })
+      .subscribe(() => this.onMediaPromoted());
+  }
+
+  onMediaPromoted(): void {
+    if (!this.mediaItem) {
+      return;
+    }
+    const isAsset = this.mediaItem.itemType === 'source_asset';
+    this.fetchMediaDetails(this.mediaItem.id, isAsset);
   }
 
   fetchMediaItem() {

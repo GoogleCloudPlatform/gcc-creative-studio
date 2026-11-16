@@ -42,12 +42,14 @@ export class FolderCardComponent {
    * the backend remains the source of truth and answers 403 otherwise.
    */
   @Input() canManage = true;
+  @Input() canPromote = false;
 
   @Output() folderClicked = new EventEmitter<Folder>();
   @Output() editRequested = new EventEmitter<Folder>();
   @Output() deleteRequested = new EventEmitter<Folder>();
   @Output() moveRequested = new EventEmitter<Folder>();
   @Output() copyRequested = new EventEmitter<Folder>();
+  @Output() promoteRequested = new EventEmitter<Folder>();
   @Output() itemDropped = new EventEmitter<{
     folder: Folder;
     payload: GalleryDragPayload;
@@ -194,6 +196,12 @@ export class FolderCardComponent {
     event.stopPropagation();
     this.menuTrigger.closeMenu();
     this.copyRequested.emit(this.folder);
+  }
+
+  onPromote(event: MouseEvent): void {
+    event.stopPropagation();
+    this.menuTrigger.closeMenu();
+    this.promoteRequested.emit(this.folder);
   }
 
   onMove(event: MouseEvent): void {

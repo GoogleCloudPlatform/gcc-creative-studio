@@ -17,7 +17,7 @@
 import {ComponentFixture, TestBed} from '@angular/core/testing';
 import {HttpClientTestingModule} from '@angular/common/http/testing';
 import {ElementRef, NO_ERRORS_SCHEMA} from '@angular/core';
-import {DomSanitizer} from '@angular/platform-browser';
+import {By, DomSanitizer} from '@angular/platform-browser';
 import {MatIconModule} from '@angular/material/icon';
 import {MatMenuModule} from '@angular/material/menu';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
@@ -202,9 +202,21 @@ describe('MediaGalleryComponent', () => {
         },
         {
           provide: WorkspaceStateService,
-          useFactory: () => {
+          deps: [UserService],
+          useFactory: (userService: UserService) => {
             const real = new WorkspaceStateService();
-            real.setWorkspaces(mockWorkspaces);
+            real.syncUser(userService.getUserDetails());
+            real.setWorkspaces([
+              ...mockWorkspaces,
+              {
+                id: 10,
+                name: 'My Workspace',
+                ownerId: '7',
+                scope: WorkspaceScope.PERSONAL,
+                members: [],
+                memberIds: ['7'],
+              } as Workspace,
+            ]);
             return {
               activeWorkspaceId$: activeWorkspaceIdSubject.asObservable(),
               getActiveWorkspaceId: () => activeWorkspaceIdSubject.value,
@@ -213,8 +225,12 @@ describe('MediaGalleryComponent', () => {
               syncUser: real.syncUser.bind(real),
               setWorkspaces: real.setWorkspaces.bind(real),
               workspaces: real.workspaces,
+              personalWorkspaceId: real.personalWorkspaceId,
+              activeWorkspace: real.activeWorkspace,
+              canEditActiveWorkspace: real.canEditActiveWorkspace,
               canEditWorkspace: real.canEditWorkspace.bind(real),
               canManageWorkspace: real.canManageWorkspace.bind(real),
+              isPersonalItem: real.isPersonalItem.bind(real),
             };
           },
         },
@@ -1782,6 +1798,146 @@ describe('MediaGalleryComponent', () => {
           }),
         }),
       );
+    });
+
+    it('launches bulk promote and folder promote from personal workspace', () => {
+      activeWorkspaceIdSubject.next(10);
+      expect(component.isPersonalEffectiveWorkspace).toBeTrue();
+
+      const openDialogSpy = spyOn(component.dialog, 'open').and.returnValue({
+        afterClosed: () =>
+          of({
+            response: {
+              promotedCount: 2,
+              createdCount: 2,
+              updatedCount: 0,
+              promotedItems: [],
+            },
+            targetWorkspaceName: 'Private',
+          }),
+      } as never);
+      component.selectedItems = new Set(['media_item:5', 'source_asset:9']);
+      component.isSelectionMode = true;
+      let clearedCount = 0;
+      const clearedSub = component.selectionCleared.subscribe(
+        () => clearedCount++,
+      );
+
+      component.openBulkPromoteDialog();
+
+      expect(openDialogSpy).toHaveBeenCalledWith(
+        jasmine.any(Function),
+        jasmine.objectContaining({
+          data: jasmine.objectContaining({
+            sourceWorkspaceId: 10,
+            items: [
+              {id: 5, type: 'media_item'},
+              {id: 9, type: 'source_asset'},
+            ],
+          }),
+        }),
+      );
+      expect(component.selectedItems.size).toBe(0);
+      expect(component.isSelectionMode).toBeFalse();
+      expect(clearedCount).toBe(1);
+      clearedSub.unsubscribe();
+
+      openDialogSpy.calls.reset();
+      component.openPromoteFolderDialog({
+        id: 77,
+        name: 'Finals',
+        workspaceId: 10,
+      } as Folder);
+      expect(openDialogSpy).toHaveBeenCalledWith(
+        jasmine.any(Function),
+        jasmine.objectContaining({
+          data: jasmine.objectContaining({
+            sourceWorkspaceId: 10,
+            items: [{id: 77, type: 'folder'}],
+          }),
+        }),
+      );
+    });
+
+    it('hides bulk and folder promote controls when isSelectorMode is true', () => {
+      activeWorkspaceIdSubject.next(10);
+      component.isLoading = false;
+      component.folders = [
+        {
+          id: 77,
+          name: 'Finals',
+          workspaceId: 10,
+        } as Folder,
+      ];
+      component.selectedItems = new Set(['media_item:5']);
+
+      component.isSelectorMode = false;
+      fixture.detectChanges();
+      const root = fixture.nativeElement as HTMLElement;
+      expect(root.querySelector('#gallery-bulk-promote-btn')).not.toBeNull();
+      expect(
+        fixture.debugElement.query(By.css('app-folder-card')).properties[
+          'canPromote'
+        ],
+      ).toBeTrue();
+
+      component.isSelectorMode = true;
+      fixture.detectChanges();
+      expect(root.querySelector('#gallery-bulk-promote-btn')).toBeNull();
+      expect(
+        fixture.debugElement.query(By.css('app-folder-card')).properties[
+          'canPromote'
+        ],
+      ).toBeFalse();
+
+      const openDialogSpy = spyOn(component.dialog, 'open');
+      component.openBulkPromoteDialog();
+      expect(openDialogSpy).not.toHaveBeenCalled();
+    });
+
+    it('renders empty shared workspace CTAs by role and locks Promote picker', async () => {
+      component.isAdmin = false;
+      component.isLoading = false;
+      component.allImagesLoaded = true;
+      component.images = [];
+      component.folders = [];
+      component.isSelectorMode = false;
+      component.currentFolderId = null;
+
+      activeWorkspaceIdSubject.next(3);
+      fixture.detectChanges();
+
+      const root = fixture.nativeElement as HTMLElement;
+      expect(
+        root.querySelector('#shared-workspace-empty-state'),
+      ).not.toBeNull();
+      expect(root.querySelector('#empty-upload-team-btn')).not.toBeNull();
+      expect(root.querySelector('#empty-promote-personal-btn')).not.toBeNull();
+
+      const openDialogSpy = spyOn(component.dialog, 'open').and.returnValue({
+        afterClosed: () => of(undefined),
+      } as never);
+      component.promoteFromPersonalWorkspace();
+      for (let i = 0; i < 40 && !openDialogSpy.calls.any(); i++) {
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      expect(openDialogSpy).toHaveBeenCalledWith(
+        jasmine.anything(),
+        jasmine.objectContaining({
+          data: jasmine.objectContaining({
+            defaultSourceMode: 'personal',
+            lockToPersonalWorkspace: true,
+          }),
+        }),
+      );
+
+      activeWorkspaceIdSubject.next(4);
+      fixture.detectChanges();
+      expect(
+        root.querySelector('#shared-workspace-empty-state'),
+      ).not.toBeNull();
+      expect(root.querySelector('#empty-upload-team-btn')).toBeNull();
+      expect(root.querySelector('#empty-promote-personal-btn')).toBeNull();
     });
   });
 });

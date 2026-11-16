@@ -34,8 +34,8 @@ import {AssignTagsDialogComponent} from '../assign-tags-dialog/assign-tags-dialo
 import {MediaItem} from '../../models/media-item.model';
 import {TagModel} from '../../services/tags.service';
 import {GalleryDragPayload} from '../../models/folder.model';
-import {WorkspaceScope} from '../../models/workspace.model';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
+import {PromoteLauncherService} from '../../services/promote-launcher.service';
 
 @Component({
   selector: 'app-gallery-card',
@@ -51,6 +51,7 @@ export class GalleryCardComponent implements OnDestroy {
     public dialog: MatDialog,
     @Inject(PLATFORM_ID) private platformId: Object,
     private workspaceStateService: WorkspaceStateService,
+    private promoteLauncher: PromoteLauncherService,
   ) {
     const userDetails = this.userService.getUserDetails();
     this.isAdmin = userDetails?.roles?.includes(UserRolesEnum.ADMIN) || false;
@@ -98,6 +99,7 @@ export class GalleryCardComponent implements OnDestroy {
 
   @Output() mediaItemSelected = new EventEmitter<MediaItemSelection>();
   @Output() mediaSelected = new EventEmitter<GalleryItem>();
+  @Output() promoted = new EventEmitter<void>();
   @Output() selectionToggled = new EventEmitter<{
     item: GalleryItem;
     event: MouseEvent;
@@ -112,14 +114,7 @@ export class GalleryCardComponent implements OnDestroy {
   hoveredAudioId: number | null = null;
 
   get isInPersonalWorkspace(): boolean {
-    const personalId = this.workspaceStateService.personalWorkspaceId();
-    if (!this.item) {
-      return false;
-    }
-    if (this.item.workspaceScope === WorkspaceScope.PERSONAL) {
-      return true;
-    }
-    return personalId !== null && this.item.workspaceId === personalId;
+    return this.workspaceStateService.isPersonalItem(this.item);
   }
 
   get cardStatusText(): string {
@@ -128,7 +123,66 @@ export class GalleryCardComponent implements OnDestroy {
     }
     const revCount = this.item.revisionCount ?? 1;
     const revNum = this.item.revisionNumber ?? revCount;
-    return revCount > 1 ? `v${revNum} · ${revCount} versions` : '';
+    const promos = this.item.promotions ?? [];
+    const maxPromotedRev =
+      promos.length > 0
+        ? Math.max(...promos.map(p => p.promotedRevisionNumber ?? 0))
+        : 0;
+    const targetNames = Array.from(
+      new Set(
+        promos
+          .map(p => p.targetWorkspaceName)
+          .filter((name): name is string => !!name),
+      ),
+    );
+    const sharedLabel =
+      targetNames.length === 1
+        ? `in ${targetNames[0]}`
+        : targetNames.length > 1
+          ? `in ${targetNames.length} workspaces`
+          : promos.length > 1
+            ? `in ${promos.length} workspaces`
+            : 'shared';
+
+    if (
+      promos.length > 0 &&
+      maxPromotedRev > 0 &&
+      revCount > 1 &&
+      revNum > maxPromotedRev
+    ) {
+      return `${revCount} versions · v${maxPromotedRev} ${sharedLabel} · v${revNum} latest`;
+    }
+
+    const parts: string[] = [];
+    if (revCount > 1) {
+      parts.push(`v${revNum} · ${revCount} versions`);
+    }
+    if (promos.length > 0) {
+      parts.push(
+        targetNames.length === 1
+          ? `Shared to ${targetNames[0]}`
+          : targetNames.length > 1
+            ? `Shared to ${targetNames.join(', ')}`
+            : 'Promoted',
+      );
+    }
+    return parts.join(' · ');
+  }
+
+  openQuickPromote(event: MouseEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!this.item?.id) {
+      return;
+    }
+    this.promoteLauncher
+      .openPromoteDialog({
+        sourceWorkspaceId: this.item.workspaceId,
+        items: [{id: this.item.id, type: this.item.itemType || 'media_item'}],
+        itemLabel:
+          this.item.titles?.[0] || this.getShortPrompt(this.item.prompt),
+      })
+      .subscribe(() => this.promoted.emit());
   }
 
   get displayUrls(): string[] {

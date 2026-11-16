@@ -23,7 +23,9 @@ import {MatSliderModule} from '@angular/material/slider';
 import {MatSnackBar} from '@angular/material/snack-bar';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {Router} from '@angular/router';
-import {of} from 'rxjs';
+import {BehaviorSubject, of} from 'rxjs';
+import {JobStatus, MediaItem} from '../common/models/media-item.model';
+import {PromoteLauncherService} from '../common/services/promote-launcher.service';
 import {SourceAssetService} from '../common/services/source-asset.service';
 import {GalleryService} from '../gallery/gallery.service';
 import {WorkspaceStateService} from '../services/workspace/workspace-state.service';
@@ -34,10 +36,13 @@ describe('UpscaleComponent', () => {
   let fixture: ComponentFixture<UpscaleComponent>;
   let mockSourceAssetService: any;
   let mockWorkspaceStateService: any;
+  let promoteLauncherSpy: jasmine.SpyObj<PromoteLauncherService>;
+  let activeUpscaleJobSubject: BehaviorSubject<MediaItem | null>;
 
   beforeEach(async () => {
+    activeUpscaleJobSubject = new BehaviorSubject<MediaItem | null>(null);
     mockSourceAssetService = {
-      activeUpscaleJob$: of(null),
+      activeUpscaleJob$: activeUpscaleJobSubject.asObservable(),
       upscaleExistingAsset: jasmine
         .createSpy('upscaleExistingAsset')
         .and.returnValue(of({id: 901, status: 'processing'})),
@@ -46,7 +51,16 @@ describe('UpscaleComponent', () => {
       getTargetWorkspaceParam: jasmine
         .createSpy('getTargetWorkspaceParam')
         .and.returnValue({workspaceId: 11}),
+      isPersonalItem: jasmine
+        .createSpy('isPersonalItem')
+        .and.returnValue(false),
     };
+    promoteLauncherSpy = jasmine.createSpyObj<PromoteLauncherService>(
+      'PromoteLauncherService',
+      ['getPromoteButtonLabel', 'openPromoteDialog'],
+    );
+    promoteLauncherSpy.getPromoteButtonLabel.and.returnValue('Promote...');
+    promoteLauncherSpy.openPromoteDialog.and.returnValue(of());
 
     await TestBed.configureTestingModule({
       declarations: [UpscaleComponent],
@@ -60,6 +74,7 @@ describe('UpscaleComponent', () => {
         {provide: SourceAssetService, useValue: mockSourceAssetService},
         {provide: GalleryService, useValue: {}},
         {provide: WorkspaceStateService, useValue: mockWorkspaceStateService},
+        {provide: PromoteLauncherService, useValue: promoteLauncherSpy},
         {
           provide: MatDialog,
           useValue: jasmine.createSpyObj('MatDialog', ['open']),
@@ -124,6 +139,35 @@ describe('UpscaleComponent', () => {
       image_preservation_factor: component.imagePreservationFactor,
       workspaceId: 11,
       parentMediaItemId: 42,
+    });
+  });
+
+  it('shows Promote CTA for personal completed upscale and launches dialog', () => {
+    mockWorkspaceStateService.isPersonalItem.and.returnValue(true);
+    promoteLauncherSpy.getPromoteButtonLabel.and.returnValue(
+      'Promote to Team Brand',
+    );
+    activeUpscaleJobSubject.next({
+      id: 888,
+      workspaceId: 10,
+      status: JobStatus.COMPLETED,
+      prompt: 'Crisp upscaled banner',
+      originalPresignedUrls: ['https://signed/before.png'],
+      presignedUrls: ['https://signed/after.png'],
+    } as MediaItem);
+    fixture.detectChanges();
+
+    const promoteBtn = fixture.nativeElement.querySelector(
+      '#upscale-promote-btn',
+    ) as HTMLButtonElement;
+    expect(promoteBtn).not.toBeNull();
+    expect(promoteBtn.textContent).toContain('Promote to Team Brand');
+    promoteBtn.click();
+
+    expect(promoteLauncherSpy.openPromoteDialog).toHaveBeenCalledWith({
+      sourceWorkspaceId: 10,
+      items: [{id: 888, type: 'media_item'}],
+      itemLabel: 'Crisp upscaled banner',
     });
   });
 });

@@ -39,6 +39,7 @@ import {GalleryService} from '../../../gallery/gallery.service';
 import {UserService} from '../../services/user.service';
 import {WorkspaceScope} from '../../models/workspace.model';
 import {WorkspaceRole} from '../../models/workspace-member.model';
+import {PromoteLauncherService} from '../../services/promote-launcher.service';
 import {MatDialogRef} from '@angular/material/dialog';
 import {of, throwError} from 'rxjs';
 
@@ -225,6 +226,64 @@ describe('MediaLightboxComponent', () => {
       ).not.toBeNull();
       expect(root.querySelector('[matTooltip="Assign tags"]')).not.toBeNull();
       expect(root.querySelector('[matTooltip="Delete"]')).not.toBeNull();
+    });
+
+    it('defaults showWorkspacePromoteBar to false and renders bar only when enabled for personal items', () => {
+      const promoteLauncher = TestBed.inject(PromoteLauncherService);
+      const mockPromoResult = {
+        response: {
+          targetWorkspaceId: 30,
+          promotedCount: 1,
+          createdCount: 1,
+          updatedCount: 0,
+          promotedItems: [],
+        },
+        targetWorkspaceName: 'Team Editor',
+      };
+      const openSpy = spyOn(
+        promoteLauncher,
+        'openPromoteDialog',
+      ).and.returnValue(of(mockPromoResult));
+
+      expect(component.showWorkspacePromoteBar).toBeFalse();
+      component.mediaItem = {
+        id: 12,
+        workspaceId: 1,
+        itemType: 'media_item',
+        mimeType: 'image/png',
+        prompt: 'Personal Draft',
+        presignedUrls: ['https://example.com/p.png'],
+        createdAt: '2026-01-01T00:00:00Z',
+      } as any;
+      fixture.detectChanges();
+      expect(
+        fixture.nativeElement.querySelector('#lightbox-promote-btn'),
+      ).toBeNull();
+
+      component.showWorkspacePromoteBar = true;
+      fixture.detectChanges();
+
+      const promoteBtn = fixture.nativeElement.querySelector(
+        '#lightbox-promote-btn',
+      ) as HTMLButtonElement;
+      expect(promoteBtn).not.toBeNull();
+
+      let emitted: unknown = null;
+      component.promoted.subscribe(r => (emitted = r));
+      promoteBtn.click();
+
+      expect(openSpy).toHaveBeenCalledWith({
+        sourceWorkspaceId: 1,
+        items: [{id: 12, type: 'media_item'}],
+        itemLabel: 'Personal Draft',
+      });
+      expect(emitted).toEqual(mockPromoResult);
+
+      component.mediaItem = {...component.mediaItem!, workspaceId: 20} as any;
+      fixture.detectChanges();
+      expect(
+        fixture.nativeElement.querySelector('#lightbox-promote-btn'),
+      ).toBeNull();
     });
   });
 

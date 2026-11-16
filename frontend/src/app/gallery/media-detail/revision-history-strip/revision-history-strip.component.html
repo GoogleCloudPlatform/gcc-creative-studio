@@ -20,6 +20,10 @@
       <span class="revision-title">Revision History</span>
       <span class="sep">·</span>
       <span class="revision-count">{{ takes.length }} {{ takes.length === 1 ? 'version' : 'versions' }}</span>
+      @if (promotionSummaryText) {
+        <span class="sep">·</span>
+        <span class="promotion-summary">{{ promotionSummaryText }}</span>
+      }
     </div>
   </header>
 
@@ -49,6 +53,9 @@
         </div>
         <div class="take-meta tabular-nums">
           <span class="take-version">v{{ getTakeVersionNumber(take, idx) }}</span>
+          @if (isPromotedTake(take, idx)) {
+            <span class="take-shared-label">Shared</span>
+          }
         </div>
       </button>
     }
@@ -56,6 +63,18 @@
 
   @if (activeTake; as currentTake) {
     <div class="take-actions">
+      @if (canPromote) {
+        <button
+          id="revision-promote-btn"
+          mat-flat-button
+          color="primary"
+          type="button"
+          class="action-btn promote-primary-btn tabular-nums"
+          (click)="requestPromote()"
+        >
+          Promote v{{ getActiveVersionNumber() }}
+        </button>
+      }
       @if (canEditTake(currentTake)) {
         <button
           id="revision-edit-btn"
