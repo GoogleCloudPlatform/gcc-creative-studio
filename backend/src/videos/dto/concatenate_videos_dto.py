@@ -14,7 +14,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PositiveInt, model_validator
 
 from src.common.base_dto import AspectRatioEnum, BaseDto
 
@@ -49,6 +49,10 @@ class ConcatenateVideosDto(BaseDto):
     aspect_ratio: AspectRatioEnum = Field(
         default=AspectRatioEnum.RATIO_16_9,
         description="Aspect ratio of the image.",
+    )
+    parent_media_item_id: PositiveInt | None = Field(
+        default=None,
+        description="Optional parent media item ID to link this concatenation into its revision stack.",
     )
 
     @model_validator(mode="after")

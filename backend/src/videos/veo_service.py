@@ -54,6 +54,10 @@ from src.common.storage_service import GcsService
 from src.config.config_service import config_service
 from src.folders.agent_output_folder import resolve_agent_output_folder_id
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
+from src.galleries.revision_lineage import (
+    effective_revision_folder,
+    resolve_revision_lineage,
+)
 from src.images.repository.media_item_repository import MediaRepository
 from src.multimodal.gemini_service import GeminiService, PromptTargetEnum
 from src.source_assets.repository.source_asset_repository import (
@@ -1814,6 +1818,20 @@ class VeoService:
                 )
 
         # 1. Create a placeholder MediaItem (without ID, let DB generate it)
+        combined_source_media_items = (
+            request_dto.source_media_items or []
+        ) + source_media_items
+        # Only video-extension sources continue an existing video stack;
+        # image start/end frames and R2V ingredients start a fresh video stack.
+        revision_source_media = [
+            item
+            for item in combined_source_media_items
+            if item.role
+            in (
+                AssetRoleEnum.VIDEO_EXTENSION_SOURCE,
+                AssetRoleEnum.VIDEO_EXTENSION_CHUNK,
+            )
+        ]
         ctx = await resolve_generation_context(
             self.media_repo.db,
             request_dto.workspace_id,
@@ -1821,9 +1839,24 @@ class VeoService:
             requested_folder_id=request_dto.folder_id,
             context_workspace_id=request_dto.context_workspace_id,
         )
+        lineage = await resolve_revision_lineage(
+            self.media_repo.db,
+            user,
+            ctx.output_workspace_id,
+            explicit_parent_id=request_dto.parent_media_item_id,
+            source_media_items=revision_source_media or None,
+            requested_folder_id=request_dto.folder_id,
+            resolved_folder_id=ctx.resolved_folder_id,
+        )
+        effective_folder_id = effective_revision_folder(
+            request_dto.folder_id, ctx.resolved_folder_id, lineage
+        )
         placeholder_item = MediaItemModel(
             workspace_id=ctx.output_workspace_id,
-            folder_id=ctx.resolved_folder_id,
+            folder_id=effective_folder_id,
+            revision_root_id=lineage.revision_root_id,
+            revision_parent_id=lineage.revision_parent_id,
+            revision_number=lineage.revision_number,
             user_email=user.email,
             user_id=user.id,
             mime_type=MimeTypeEnum.VIDEO_MP4,
@@ -1838,9 +1871,7 @@ class VeoService:
             composition=request_dto.composition,
             negative_prompt=request_dto.negative_prompt,
             duration_seconds=request_dto.duration_seconds,
-            source_media_items=(request_dto.source_media_items or [])
-            + source_media_items
-            or None,
+            source_media_items=combined_source_media_items or None,
             source_assets=source_assets or None,
             gcs_uris=[],
             thumbnail_uris=[],
@@ -1935,6 +1966,9 @@ class VeoService:
                     ),
                 )
 
+        if request_dto.parent_media_item_id is not None:
+            auth_media_ids.append(request_dto.parent_media_item_id)
+
         await ensure_can_reference_inputs(
             self.media_repo.db,
             user,
@@ -1942,16 +1976,31 @@ class VeoService:
             source_asset_ids=auth_asset_ids,
         )
 
-        # 1. Create placeholder (let DB generate ID)
+        # 1. Create a placeholder (let DB generate ID)
         ctx = await resolve_generation_context(
             self.media_repo.db,
             request_dto.workspace_id,
             user,
             agent_folder_resolver=resolve_agent_output_folder_id,
         )
+        lineage = await resolve_revision_lineage(
+            self.media_repo.db,
+            user,
+            ctx.output_workspace_id,
+            explicit_parent_id=request_dto.parent_media_item_id,
+            source_media_items=source_media_items or None,
+            requested_folder_id=None,
+            resolved_folder_id=ctx.resolved_folder_id,
+        )
+        effective_folder_id = effective_revision_folder(
+            None, ctx.resolved_folder_id, lineage
+        )
         placeholder_item = MediaItemModel(
             workspace_id=ctx.output_workspace_id,
-            folder_id=ctx.resolved_folder_id,
+            folder_id=effective_folder_id,
+            revision_root_id=lineage.revision_root_id,
+            revision_parent_id=lineage.revision_parent_id,
+            revision_number=lineage.revision_number,
             user_email=user.email,
             user_id=user.id,
             mime_type=MimeTypeEnum.VIDEO_MP4,

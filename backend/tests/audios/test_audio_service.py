@@ -836,3 +836,66 @@ class TestLyria3Helpers:
         audio, mime = _extract_lyria3_audio(interaction)
         assert audio is None
         assert mime == "audio/mpeg"
+
+
+class TestAudioServiceRevisionLineage:
+    """Behavioral tests for audio parent_media_item_id authorization and lineage."""
+
+    @pytest.mark.anyio
+    async def test_start_audio_job_authorizes_parent_and_inherits_stack_folder(
+        self,
+        audio_service,
+        mock_media_repo,
+        sample_create_lyria_dto,
+        sample_user,
+    ):
+        from src.galleries.revision_lineage import RevisionLineage
+        from src.workspaces.generation_workspace import GenerationContext
+
+        captured: list[MediaItemModel] = []
+
+        async def _create(item: MediaItemModel) -> MediaItemModel:
+            captured.append(item)
+            item.id = 810
+            return item
+
+        mock_media_repo.create.side_effect = _create
+        mock_executor = MagicMock()
+        dto = sample_create_lyria_dto.model_copy(
+            update={"workspace_id": 10, "parent_media_item_id": 805}
+        )
+
+        with (
+            patch(
+                "src.audios.audio_service.ensure_can_reference_inputs",
+                new=AsyncMock(return_value=None),
+            ) as ensure_refs,
+            patch(
+                "src.audios.audio_service.resolve_generation_context",
+                new=AsyncMock(return_value=GenerationContext(10, 10, None)),
+            ),
+            patch(
+                "src.audios.audio_service.resolve_revision_lineage",
+                new=AsyncMock(
+                    return_value=RevisionLineage(
+                        revision_root_id=800,
+                        revision_parent_id=805,
+                        revision_number=2,
+                        inherited_folder_id=33,
+                    )
+                ),
+            ) as mock_lineage,
+        ):
+            res = await audio_service.start_audio_generation_job(
+                request_dto=dto,
+                user=sample_user,
+                executor=mock_executor,
+            )
+
+        assert res.id == 810
+        assert ensure_refs.await_args.kwargs["media_item_ids"] == [805]
+        assert mock_lineage.await_args.kwargs["explicit_parent_id"] == 805
+        assert captured[0].revision_root_id == 800
+        assert captured[0].revision_parent_id == 805
+        assert captured[0].revision_number == 2
+        assert captured[0].folder_id == 33

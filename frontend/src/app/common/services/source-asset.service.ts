@@ -65,6 +65,7 @@ export interface SourceAssetOptionsDto {
   enhance_input_image?: boolean;
   image_preservation_factor?: number | null;
   workspaceId?: number;
+  parentMediaItemId?: number | null;
   folderId?: number | null;
 }
 
@@ -207,6 +208,13 @@ export class SourceAssetService {
       formData.append('workspaceId', String(targetWorkspaceId));
     }
 
+    if (
+      options.parentMediaItemId !== undefined &&
+      options.parentMediaItemId !== null
+    ) {
+      formData.append('parentMediaItemId', String(options.parentMediaItemId));
+    }
+
     if (options.aspectRatio) {
       formData.append('aspectRatio', options.aspectRatio);
     }
@@ -254,10 +262,14 @@ export class SourceAssetService {
   ): Observable<MediaItem> {
     const formData = new FormData();
 
-    if (
-      (asset as any).itemType === 'media_item' ||
-      (asset as any).isMediaItem
-    ) {
+    const assetMeta = asset as SourceAssetResponseDto & {
+      itemType?: string;
+      isMediaItem?: boolean;
+    };
+    const isMediaItem =
+      assetMeta.itemType === 'media_item' || assetMeta.isMediaItem === true;
+
+    if (isMediaItem) {
       formData.append('mediaItemId', String(asset.id));
     } else {
       formData.append('id', String(asset.id));
@@ -270,6 +282,12 @@ export class SourceAssetService {
     const workspaceId = this.resolveTargetWorkspaceId(options.workspaceId);
     if (workspaceId) {
       formData.append('workspaceId', String(workspaceId));
+    }
+
+    const parentMediaItemId =
+      options.parentMediaItemId ?? (isMediaItem ? asset.id : null);
+    if (parentMediaItemId !== undefined && parentMediaItemId !== null) {
+      formData.append('parentMediaItemId', String(parentMediaItemId));
     }
 
     if (options.upscaleFactor) {

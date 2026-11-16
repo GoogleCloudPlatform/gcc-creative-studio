@@ -31,6 +31,7 @@ from src.galleries.dto.gallery_search_dto import GallerySearchDto
 from src.galleries.dto.unified_gallery_response import (
     UnifiedGalleryItemResponse,
 )
+from src.galleries.revision_lineage import latest_completed_take_predicate
 from src.source_assets.schema.source_asset_model import SourceAsset
 from src.tags.schema.tags_model import (
     Tag,
@@ -168,6 +169,20 @@ class UnifiedGalleryRepository(
             media_stmt = self._apply_common_filters(
                 media_stmt, MediaItem, search_dto, user_id, requesting_user_id
             )
+            if not search_dto.include_deleted:
+                # Collapse completed stacks to latest take via shared predicate
+                # backed by ix_media_items_stack_root_active while keeping
+                # processing/failed jobs visible alongside latest cover.
+                latest_completed_filter = latest_completed_take_predicate()
+                if search_dto.status == JobStatusEnum.COMPLETED:
+                    media_stmt = media_stmt.where(latest_completed_filter)
+                else:
+                    media_stmt = media_stmt.where(
+                        or_(
+                            MediaItem.status != JobStatusEnum.COMPLETED.value,
+                            latest_completed_filter,
+                        )
+                    )
             if search_dto.status:
                 media_stmt = media_stmt.where(
                     MediaItem.status == search_dto.status.value
@@ -441,6 +456,7 @@ class UnifiedGalleryRepository(
             *self._loop_item_conditions(
                 workspace_id=workspace_id, mime_type_prefix=mime_type_prefix
             ),
+            self.model.is_latest_revision.is_(True),
             self.model.folder_id == folder_id,
         )
         count_result = await self.db.execute(

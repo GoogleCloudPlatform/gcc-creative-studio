@@ -35,6 +35,7 @@ import {MediaItem} from '../common/models/media-item.model';
 import {
   GalleryItem,
   PaginatedGalleryResponse,
+  RevisionHistoryResponse,
 } from '../common/models/gallery-item.model';
 import {
   GalleryFiltersState,
@@ -185,6 +186,25 @@ export class GalleryService implements OnDestroy {
     );
   }
 
+  public getItemRevisions(itemId: number): Observable<RevisionHistoryResponse> {
+    const url = `${environment.backendURL}/gallery/item/${itemId}/revisions`;
+    return this.http
+      .get<{
+        rootId: number;
+        revisionCount: number;
+        takes: Record<string, unknown>[];
+      }>(url)
+      .pipe(
+        map(res => ({
+          rootId: res.rootId,
+          revisionCount: res.revisionCount,
+          takes: (res.takes || []).map(take =>
+            this.mapUnifiedItem({...take, itemType: 'media_item'}),
+          ),
+        })),
+      );
+  }
+
   private resetCache() {
     this.allFetchedImages = [];
     this.currentPage = 0;
@@ -275,11 +295,39 @@ export class GalleryService implements OnDestroy {
       id: item.id,
       tags: item.tags,
       workspaceId: item.workspaceId,
+      workspaceName: item.workspaceName || item.workspace_name,
+      workspaceScope: item.workspaceScope || item.workspace_scope,
       folderId: item.folderId,
       userId: item.userId,
       createdAt: item.createdAt,
       itemType: item.itemType || 'media_item',
       status: item.status,
+      revisionRootId:
+        item.revisionRootId ??
+        item.revision_root_id ??
+        metadata.revisionRootId ??
+        metadata.revision_root_id ??
+        null,
+      revisionParentId:
+        item.revisionParentId ??
+        item.revision_parent_id ??
+        metadata.revisionParentId ??
+        metadata.revision_parent_id ??
+        null,
+      revisionNumber:
+        item.revisionNumber ??
+        item.revision_number ??
+        metadata.revisionNumber ??
+        metadata.revision_number ??
+        1,
+      revisionCount:
+        item.revisionCount ??
+        item.revision_count ??
+        metadata.revisionCount ??
+        metadata.revision_count ??
+        1,
+      isLatestRevision:
+        item.isLatestRevision ?? item.is_latest_revision ?? true,
       gcsUris: item.gcsUris,
       thumbnailUris: item.thumbnailUris,
       presignedUrls: item.presignedUrls,

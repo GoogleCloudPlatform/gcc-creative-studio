@@ -98,6 +98,10 @@ class VtoDto(BaseDto):
         default=None,
         description="Optional gallery folder (same workspace) to save the generated media into. Defaults to the root folder.",
     )
+    parent_media_item_id: PositiveInt | None = Field(
+        default=None,
+        description="Optional parent media item ID to link this generation into its revision stack.",
+    )
 
     @model_validator(mode="after")
     def check_at_least_one_garment(self) -> "VtoDto":

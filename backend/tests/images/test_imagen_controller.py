@@ -480,3 +480,17 @@ def test_generation_routes_reject_unauthorized_403(
     mock_service.start_image_generation_job.assert_not_called()
     mock_service.start_vto_generation_job.assert_not_called()
     mock_service.start_upload_upscale_job.assert_not_called()
+
+
+def test_upload_upscale_passes_parent_media_item_id(client, mock_service):
+    mock_service.start_upload_upscale_job.return_value = (
+        _processing_image_response(338)
+    )
+    files = {"file": ("test.png", b"fake_bytes", "image/png")}
+    data = {"workspaceId": "1", "parentMediaItemId": "91"}
+
+    response = client.post("/api/images/upload-upscale", files=files, data=data)
+
+    assert response.status_code == 200
+    kwargs = mock_service.start_upload_upscale_job.call_args.kwargs
+    assert kwargs["parent_media_item_id"] == 91

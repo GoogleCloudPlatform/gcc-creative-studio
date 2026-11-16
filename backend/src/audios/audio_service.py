@@ -48,13 +48,20 @@ from src.common.schema.media_item_model import JobStatusEnum, MediaItemModel
 from src.common.storage_service import GcsService
 from src.config.config_service import config_service
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
+from src.galleries.revision_lineage import (
+    effective_revision_folder,
+    resolve_revision_lineage,
+)
 from src.images.repository.media_item_repository import MediaRepository
 from src.brand_guidelines.repository.brand_guideline_repository import (
     BrandGuidelineRepository,
 )
 from src.multimodal.gemini_service import GeminiService
 from src.users.user_model import UserModel
-from src.workspaces.generation_workspace import resolve_generation_context
+from src.workspaces.generation_workspace import (
+    ensure_can_reference_inputs,
+    resolve_generation_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -661,11 +668,28 @@ class AudioService:
         user: UserModel,
         executor: ThreadPoolExecutor,
     ) -> MediaItemResponse:
+        if request_dto.parent_media_item_id is not None:
+            await ensure_can_reference_inputs(
+                self.media_repo.db,
+                user,
+                media_item_ids=[request_dto.parent_media_item_id],
+            )
         ctx = await resolve_generation_context(
             self.media_repo.db,
             request_dto.workspace_id,
             user,
             requested_folder_id=request_dto.folder_id,
+        )
+        lineage = await resolve_revision_lineage(
+            self.media_repo.db,
+            user,
+            ctx.output_workspace_id,
+            explicit_parent_id=request_dto.parent_media_item_id,
+            requested_folder_id=request_dto.folder_id,
+            resolved_folder_id=ctx.resolved_folder_id,
+        )
+        effective_folder_id = effective_revision_folder(
+            request_dto.folder_id, ctx.resolved_folder_id, lineage
         )
         media_post_to_save = MediaItemModel(
             user_email=user.email,
@@ -674,7 +698,10 @@ class AudioService:
             model=request_dto.model,
             aspect_ratio=AspectRatioEnum.RATIO_16_9,
             workspace_id=ctx.output_workspace_id,
-            folder_id=ctx.resolved_folder_id,
+            folder_id=effective_folder_id,
+            revision_root_id=lineage.revision_root_id,
+            revision_parent_id=lineage.revision_parent_id,
+            revision_number=lineage.revision_number,
             prompt=request_dto.prompt,
             original_prompt=request_dto.prompt,
             num_media=request_dto.sample_count,

@@ -195,7 +195,7 @@ class CreateVeoDto(BaseDto):
         default=None,
         description="Deprecated reference audio field; audio references are rejected for video generation.",
     )
-    parent_media_item_id: int | None = Field(
+    parent_media_item_id: PositiveInt | None = Field(
         default=None,
         description="The ID of the parent media item for multi-turn conversation editing.",
     )

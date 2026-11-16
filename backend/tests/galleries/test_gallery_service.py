@@ -369,6 +369,7 @@ async def test_bulk_copy_success(service):
         id: int
         workspace_id: int
         folder_id: int | None = None
+        revision_root_id: int | None = None
         user_id: int
         user_email: str
         gcs_uris: list
@@ -782,6 +783,7 @@ async def test_bulk_move_media_item_success(service):
         id: int
         workspace_id: int
         folder_id: int | None = None
+        revision_root_id: int | None = None
         user_id: int
         user_email: str
         gcs_uris: list
@@ -826,6 +828,7 @@ async def test_bulk_move_media_item_same_workspace(service):
         id: int
         workspace_id: int
         folder_id: int | None
+        revision_root_id: int | None = None
         user_id: int
         user_email: str
         gcs_uris: list[str] = []
@@ -1126,6 +1129,7 @@ async def test_bulk_move_partial_failure_with_savepoint(service):
         id: int
         workspace_id: int
         folder_id: int | None = None
+        revision_root_id: int | None = None
         user_id: int
         user_email: str
         gcs_uris: list
@@ -1312,6 +1316,7 @@ async def test_bulk_copy_partial_failure_with_savepoint(service):
         id: int
         workspace_id: int
         folder_id: int | None = None
+        revision_root_id: int | None = None
         user_id: int
         user_email: str
         gcs_uris: list
@@ -1368,6 +1373,7 @@ async def test_bulk_copy_reraises_http_exception(service):
         id: int
         workspace_id: int
         folder_id: int | None = None
+        revision_root_id: int | None = None
         user_id: int
         user_email: str
         gcs_uris: list
@@ -1421,6 +1427,7 @@ async def test_bulk_move_reraises_http_exception(service):
         id: int
         workspace_id: int
         folder_id: int | None = None
+        revision_root_id: int | None = None
         user_id: int
         user_email: str
         gcs_uris: list
@@ -1485,11 +1492,6 @@ async def test_bulk_copy_sanitizes_cross_workspace_references_and_clears_lineage
 ):
     from src.galleries.dto.bulk_copy_dto import BulkCopyDto, BulkCopyItemDto
     from src.common.schema.media_item_model import SourceMediaItemLink
-    from src.source_assets.schema.source_asset_model import (
-        AssetScopeEnum,
-        AssetTypeEnum,
-        SourceAssetModel,
-    )
 
     current_user = UserModel(
         id=1, email="user@test.com", name="User", roles=[UserRoleEnum.USER]
@@ -1519,51 +1521,15 @@ async def test_bulk_copy_sanitizes_cross_workspace_references_and_clears_lineage
             ),
         ],
     )
-    service.mock_media_repo.get_by_id.side_effect = lambda mid: {
-        50: src_item,
-        3: MediaItemModel(
-            id=3,
-            workspace_id=10,
-            user_email="user@test.com",
-            mime_type=MimeTypeEnum.IMAGE_PNG,
-            model=GenerationModelEnum.IMAGEN_3_FAST,
-            aspect_ratio=AspectRatioEnum.RATIO_1_1,
-            gcs_uris=["gs://b/m3.png"],
-        ),  # foreign -> strip
-        4: MediaItemModel(
-            id=4,
-            workspace_id=88,
-            user_email="user@test.com",
-            mime_type=MimeTypeEnum.IMAGE_PNG,
-            model=GenerationModelEnum.IMAGEN_3_FAST,
-            aspect_ratio=AspectRatioEnum.RATIO_1_1,
-            gcs_uris=["gs://b/m4.png"],
-        ),  # target workspace -> keep
-    }.get(mid)
-    service.mock_source_asset_repo.get_by_id.side_effect = lambda aid: {
-        1: SourceAssetModel(
-            id=1,
-            workspace_id=10,
-            user_id=1,
-            gcs_uri="gs://b/p.png",
-            original_filename="p.png",
-            file_hash="h1",
-            scope=AssetScopeEnum.PRIVATE,
-            asset_type=AssetTypeEnum.GENERIC_IMAGE,
-            mime_type=MimeTypeEnum.IMAGE_PNG,
-        ),  # foreign private -> strip
-        2: SourceAssetModel(
-            id=2,
-            workspace_id=1,
-            user_id=1,
-            gcs_uri="gs://b/sys.png",
-            original_filename="sys.png",
-            file_hash="h2",
-            scope=AssetScopeEnum.SYSTEM,
-            asset_type=AssetTypeEnum.GENERIC_IMAGE,
-            mime_type=MimeTypeEnum.IMAGE_PNG,
-        ),  # SYSTEM -> keep
-    }.get(aid)
+    service.mock_media_repo.get_by_id.return_value = src_item
+    mock_allowed_assets = MagicMock()
+    mock_allowed_assets.fetchall.return_value = [(2,)]
+    mock_allowed_media = MagicMock()
+    mock_allowed_media.fetchall.return_value = [(4,)]
+    service.mock_db.execute.side_effect = [
+        mock_allowed_assets,
+        mock_allowed_media,
+    ]
     service.mock_media_repo.create.return_value = MediaItemModel(
         id=200,
         workspace_id=88,
@@ -1747,7 +1713,69 @@ async def test_enrich_source_links_skip_inaccessible_foreign_workspace(service):
 
 
 @pytest.mark.anyio
-async def test_authorize_move_source_and_entry_id_direct(service):
+async def test_hydrate_media_items_batches_tags_and_user_pictures(service):
+    from src.tags.schema.tags_model import Tag
+
+    caller = UserModel(
+        id=1, email="user@test.com", name="User", roles=[UserRoleEnum.USER]
+    )
+    service.mock_iam_signer.generate_presigned_url_async.return_value = (
+        "https://signed"
+    )
+    items = [
+        MediaItemModel(
+            id=11,
+            workspace_id=10,
+            user_id=1,
+            user_email="a@test.com",
+            mime_type=MimeTypeEnum.IMAGE_PNG,
+            model=GenerationModelEnum.IMAGEN_3_001,
+            aspect_ratio="1:1",
+            gcs_uris=["gs://bucket/img-1.png"],
+        ),
+        MediaItemModel(
+            id=12,
+            workspace_id=10,
+            user_id=2,
+            user_email="b@test.com",
+            mime_type=MimeTypeEnum.IMAGE_PNG,
+            model=GenerationModelEnum.IMAGEN_3_001,
+            aspect_ratio="1:1",
+            gcs_uris=["gs://bucket/img-2.png"],
+        ),
+    ]
+    tag_res = MagicMock()
+    now_dt = datetime.now()
+    tag_res.all.return_value = [
+        (
+            11,
+            Tag(
+                id=5,
+                workspace_id=10,
+                name="hero",
+                color="#112233",
+                created_at=now_dt,
+                updated_at=now_dt,
+            ),
+        )
+    ]
+    user_res = MagicMock()
+    user_res.all.return_value = [(1, "https://pic/1"), (2, "https://pic/2")]
+    service.mock_db.execute.side_effect = [tag_res, user_res]
+
+    assert await service.hydrate_media_items([], caller) == []
+    hydrated = await service.hydrate_media_items(items, caller)
+
+    assert len(hydrated) == 2
+    assert service.mock_db.execute.await_count == 2
+    assert [t.name for t in hydrated[0].tags] == ["hero"]
+    assert hydrated[1].tags == []
+    assert hydrated[0].user_picture == "https://pic/1"
+    assert hydrated[1].user_picture == "https://pic/2"
+
+
+@pytest.mark.anyio
+async def test_authorize_move_source_forbidden_for_foreign_folder(service):
     from src.folders.schema.folder_model import Folder
     from src.workspaces.schema.workspace_model import (
         WorkspaceModel,
@@ -1773,4 +1801,45 @@ async def test_authorize_move_source_and_entry_id_direct(service):
             10, 10, foreign_folder, "folder", caller
         )
     assert exc.value.status_code == 403
-    assert service._entry_id({"asset_id": 9}, "asset_id") == 9
+
+
+@pytest.mark.anyio
+async def test_bulk_move_same_workspace_colocates_stack_to_root(service):
+    from pydantic import BaseModel
+
+    from src.galleries.dto.bulk_move_dto import BulkMoveDto, BulkMoveItemDto
+
+    class DummyStackMedia(BaseModel):
+        id: int
+        workspace_id: int
+        folder_id: int | None = None
+        revision_root_id: int | None = None
+        user_id: int
+        user_email: str
+        gcs_uris: list
+
+    bulk_dto = BulkMoveDto(
+        target_workspace_id=88,
+        items=[BulkMoveItemDto(id=202, type="media_item")],
+    )
+    current_user = UserModel(
+        id=1, email="user@test.com", name="User", roles=[UserRoleEnum.USER]
+    )
+    service.mock_media_repo.get_by_id.return_value = DummyStackMedia(
+        id=202,
+        workspace_id=88,
+        folder_id=12,
+        revision_root_id=101,
+        user_id=1,
+        user_email="user@test.com",
+        gcs_uris=[],
+    )
+
+    result = await service.bulk_move(bulk_dto, current_user)
+
+    assert result["moved_count"] == 1
+    executed_stmt = service.mock_db.execute.call_args[0][0]
+    stmt_text = str(executed_stmt)
+    assert "revision_root_id" in stmt_text
+    assert "deleted_at IS NULL" in stmt_text
+    service.mock_tags_repo.clear_tags_for_media_item.assert_not_called()

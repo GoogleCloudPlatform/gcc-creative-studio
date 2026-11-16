@@ -30,6 +30,7 @@ export type ImagenRequest = {
   sourceMediaItems?: SourceMediaItemLink[];
   workspaceId?: number;
   contextWorkspaceId?: number;
+  parentMediaItemId?: number | null;
   useBrandGuidelines: boolean;
   enhancePrompt?: boolean;
   googleSearch?: boolean;
