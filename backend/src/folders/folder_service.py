@@ -30,10 +30,10 @@ from src.folders.dto.folder_dto import (
 )
 from src.folders.repository.folder_repository import FolderRepository
 from src.folders.schema.folder_model import Folder
-from src.users.user_model import UserModel, UserRoleEnum
-from src.workspaces.schema.workspace_model import (
-    WorkspaceModel,
-    WorkspaceScopeEnum,
+from src.users.user_model import UserModel
+from src.workspaces.schema.workspace_model import WorkspaceModel
+from src.workspaces.workspace_auth_guard import (
+    is_workspace_manager as _is_workspace_manager,
 )
 
 logger = logging.getLogger(__name__)
@@ -64,15 +64,8 @@ class FolderService:
     def is_workspace_manager(
         user: UserModel, workspace: WorkspaceModel
     ) -> bool:
-        """Global admins manage every folder; the owner of a *private*
-        workspace manages every folder in it. On public workspaces only
-        admins get blanket rights."""
-        if UserRoleEnum.ADMIN in (user.roles or []):
-            return True
-        return (
-            workspace.scope == WorkspaceScopeEnum.PRIVATE
-            and workspace.owner_id == user.id
-        )
+        """Delegates to the canonical ``workspace_auth_guard`` manager policy."""
+        return _is_workspace_manager(user, workspace)
 
     async def ensure_can_manage_folder(
         self,

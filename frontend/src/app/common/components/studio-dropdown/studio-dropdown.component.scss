@@ -235,6 +235,15 @@
     width: 100%;
     transition: background 0.2s ease;
 
+    .studio-menu-item-btn {
+      color: inherit !important;
+      font-family: inherit !important;
+      height: 100% !important;
+      padding: 0 !important;
+      min-width: 0;
+      text-align: left;
+    }
+
     ::ng-deep .mdc-button__label {
       width: 100%;
       text-align: left;

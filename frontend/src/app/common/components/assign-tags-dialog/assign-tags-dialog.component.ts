@@ -42,7 +42,12 @@ export class AssignTagsDialogComponent implements OnInit {
   constructor(
     public dialogRef: MatDialogRef<AssignTagsDialogComponent>,
     @Inject(MAT_DIALOG_DATA)
-    public data: {assetId: number; assetType: string; existingTags: string[]},
+    public data: {
+      assetId: number;
+      assetType: string;
+      existingTags: string[];
+      workspaceId?: number | null;
+    },
     private tagsService: TagsService,
     private workspaceStateService: WorkspaceStateService,
     private userService: UserService,
@@ -57,7 +62,9 @@ export class AssignTagsDialogComponent implements OnInit {
   }
 
   loadTags(): void {
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const workspaceId =
+      this.data.workspaceId ??
+      this.workspaceStateService.getActiveWorkspaceId();
     if (workspaceId) {
       const filterUserId = this.onlyMyTags ? this.userId : undefined;
       this.tagsService

@@ -13,17 +13,24 @@
 # limitations under the License.
 
 from fastapi import Depends
-from sqlalchemy import delete, select, update, func
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.common.base_repository import BaseRepository
 from src.common.dto.pagination_response_dto import PaginationResponseDto
+from src.common.schema.media_item_model import MediaItem
 from src.database import get_db
+from src.source_assets.schema.source_asset_model import SourceAsset
 from src.tags.schema.tags_model import (
     Tag,
     TagModel,
     media_item_tags,
     source_asset_tags,
+)
+from src.workspaces.schema.workspace_model import (
+    Workspace,
+    WorkspaceScopeEnum,
 )
 
 
@@ -75,6 +82,57 @@ class TagsRepository(BaseRepository[Tag, TagModel]):
             page_size=page_size,
             total_pages=total_pages,
             data=data,
+        )
+
+    async def list_global_tags(
+        self,
+        *,
+        requesting_user_id: int | None = None,
+        search: str | None = None,
+        limit: int = 10,
+        offset: int = 0,
+        user_id: int | None = None,
+    ) -> PaginationResponseDto[TagModel]:
+        """Lists shared workspace tags, excluding other users' personal workspaces."""
+        not_personal = Workspace.scope != WorkspaceScopeEnum.PERSONAL.value
+        visibility = (
+            or_(not_personal, Workspace.owner_id == requesting_user_id)
+            if requesting_user_id is not None
+            else not_personal
+        )
+        query = (
+            select(self.model)
+            .join(Workspace, self.model.workspace_id == Workspace.id)
+            .where(visibility)
+        )
+        if search:
+            query = query.where(self.model.name.ilike(f"%{search}%"))
+        if user_id:
+            query = query.where(self.model.user_id == user_id)
+
+        total_count = (
+            await self.db.execute(
+                select(func.count()).select_from(query.subquery())
+            )
+        ).scalar_one()
+        safe_limit = max(limit, 1)
+        tags = (
+            (
+                await self.db.execute(
+                    query.order_by(self.model.updated_at.desc())
+                    .offset(offset)
+                    .limit(safe_limit)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return PaginationResponseDto[TagModel](
+            count=total_count,
+            page=(offset // safe_limit) + 1,
+            page_size=safe_limit,
+            total_pages=(total_count + safe_limit - 1) // safe_limit,
+            data=[self.schema.model_validate(t) for t in tags],
         )
 
     async def find_by_name(
@@ -170,6 +228,22 @@ class TagsRepository(BaseRepository[Tag, TagModel]):
             )
         )
         await self.db.commit()
+
+    async def get_item_workspaces(
+        self, item_ids: list[int], item_type: str
+    ) -> dict[int, int]:
+        """Returns ``{item_id: workspace_id}`` for non-deleted items."""
+        if not item_ids:
+            return {}
+        unique_ids = list(dict.fromkeys(item_ids))
+        model = MediaItem if item_type == "media_item" else SourceAsset
+        result = await self.db.execute(
+            select(model.id, model.workspace_id).where(
+                model.id.in_(unique_ids),
+                model.deleted_at.is_(None),
+            )
+        )
+        return {row.id: row.workspace_id for row in result.all()}
 
     async def clear_tags_for_items(
         self, item_ids: list[int], item_type: str, commit: bool = True

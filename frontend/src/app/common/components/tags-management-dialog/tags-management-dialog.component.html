@@ -57,7 +57,7 @@
           <ng-container *ngIf="editingTagId !== tag.id">
             <div class="tag-color" [style.backgroundColor]="tag.color || '#1D8DF8'"></div>
             <span class="tag-name">{{ tag.name }}</span>
-            <div class="tag-actions">
+            <div class="tag-actions" *ngIf="canManageTag(tag)">
               <button mat-icon-button (click)="startEdit(tag)" title="Edit">
                 <mat-icon>edit</mat-icon>
               </button>

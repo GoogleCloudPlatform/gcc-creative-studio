@@ -199,15 +199,31 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   userId: number | undefined;
 
   get displayedTagOptions(): DropdownOption[] {
-    const options = [
+    const options: DropdownOption[] = [
       {value: '', label: 'All Tags', deletable: false},
       ...this.availableTags.map(t => ({
         value: t.name,
         label: t.name,
         color: t.color,
+        deletable: this.canManageTag(t),
       })),
     ];
     return options.slice(0, 1 + this.tagsCurrentPage * this.tagsPageSize);
+  }
+
+  canManageTag(tag: TagModel): boolean {
+    const wsId = this.workspaceStateService.getActiveWorkspaceId();
+    const workspace = this.findWorkspace(wsId);
+    if (
+      workspace &&
+      this.workspaceStateService.canManageWorkspace(
+        workspace,
+        this.permissionUser(),
+      )
+    ) {
+      return true;
+    }
+    return this.userId !== undefined && tag.userId === this.userId;
   }
 
   loadMoreTags(): void {
@@ -300,6 +316,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     this.waitingForInitialWorkspace =
       this.isBrowser && !this.workspaceStateService.getActiveWorkspaceId();
     const userDetails = this.userService.getUserDetails();
+    this.workspaceStateService.syncUser(userDetails);
     this.isAdmin = userDetails?.roles?.includes(UserRolesEnum.ADMIN) || false;
     this.loadWorkspaces();
 
@@ -481,6 +498,10 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   onTagDelete(option: DropdownOption): void {
+    const tag = this.availableTags.find(t => t.name === option.value);
+    if (!this.canEditActiveWorkspace || (tag && !this.canManageTag(tag))) {
+      return;
+    }
     const dialogRef = this.dialog.open(ConfirmationDialogComponent, {
       data: {
         title: 'Delete Tag',
@@ -491,13 +512,18 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     dialogRef.afterClosed().subscribe(result => {
       if (result) {
         const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
-        const tag = this.availableTags.find(t => t.name === option.value);
         if (workspaceId && tag) {
-          this.tagsService.deleteTag(workspaceId, tag.id).subscribe(() => {
-            this.snackBar.open(`Tag "${option.label}" deleted.`, 'Close', {
-              duration: 3000,
-            });
-            this.loadTags(); // Reload
+          this.tagsService.deleteTag(workspaceId, tag.id).subscribe({
+            next: () => {
+              this.snackBar.open(`Tag "${option.label}" deleted.`, 'Close', {
+                duration: 3000,
+              });
+              this.loadTags(); // Reload
+            },
+            error: err => {
+              const detail = err?.error?.detail || 'Failed to delete tag.';
+              this.snackBar.open(detail, 'Close', {duration: 4000});
+            },
           });
         }
       }
@@ -1299,15 +1325,12 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
             this.workspaceStateService.getActiveWorkspaceId();
           if (folder.workspaceId && folder.workspaceId !== currentWorkspaceId) {
             this.isProgrammaticWorkspaceSwitch = true;
-            if (typeof window !== 'undefined' && window.localStorage) {
-              localStorage.setItem(
-                'activeWorkspaceId',
-                folder.workspaceId.toString(),
-              );
-            }
             this.snackBar.open("Switched to folder's workspace.", 'Close', {
               duration: 3000,
             });
+            this.workspaceStateService.syncUser(
+              this.userService.getUserDetails(),
+            );
             this.workspaceStateService.setActiveWorkspaceId(folder.workspaceId);
             return;
           }
@@ -1514,23 +1537,79 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     });
   }
 
+  private findWorkspace(workspaceId: number | null): Workspace | undefined {
+    if (!workspaceId) {
+      return undefined;
+    }
+    return (
+      this.workspaceStateService.workspaces().find(w => w.id === workspaceId) ??
+      this.workspaces.find(w => w.id === workspaceId)
+    );
+  }
+
+  private permissionUser(): {id?: number | string; roles?: UserRolesEnum[]} {
+    const details = this.userService.getUserDetails();
+    return {
+      id: this.userId ?? details?.id,
+      roles: this.isAdmin
+        ? [UserRolesEnum.ADMIN]
+        : (details?.roles ?? []).filter(r => r !== UserRolesEnum.ADMIN),
+    };
+  }
+
+  get newFolderTooltip(): string {
+    if (this.breadcrumbs.length >= this.folderMaxDepth) {
+      return `Maximum folder depth of ${this.folderMaxDepth} reached`;
+    }
+    return 'Create a new folder';
+  }
+
+  get canEditActiveWorkspace(): boolean {
+    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    if (!workspaceId) {
+      return false;
+    }
+    const workspace = this.findWorkspace(workspaceId);
+    if (!workspace) {
+      return false;
+    }
+    return this.workspaceStateService.canEditWorkspace(
+      workspace,
+      this.permissionUser(),
+    );
+  }
+
   /**
    * Client-side mirror of the backend folder policy
-   * (`FolderService.ensure_can_manage_folder`): admins and private-workspace
-   * owners manage every folder; everyone else only the folders they created.
-   * The backend remains authoritative (subtree ownership is only checked
-   * there) and answers 403 when this optimistic check is wrong.
+   * (`FolderService.ensure_can_manage_folder`): workspace managers (admins and
+   * private-workspace OWNER/ADMIN members) manage every folder; other editors
+   * manage only the folders they created; viewers cannot manage folders.
    */
   canManageFolder(folder: Folder): boolean {
-    if (this.isAdmin) return true;
-    if (this.userId === undefined || this.userId === null) return false;
-    if (folder.userId === this.userId) return true;
-    const workspace = this.workspaces.find(w => w.id === folder.workspaceId);
-    return (
-      !!workspace &&
-      workspace.scope === WorkspaceScope.PRIVATE &&
-      Number(workspace.ownerId) === Number(this.userId)
-    );
+    const workspace = this.findWorkspace(folder.workspaceId);
+    if (this.isAdmin) {
+      if (workspace?.scope === WorkspaceScope.PERSONAL) {
+        return Number(workspace.ownerId) === Number(this.userId);
+      }
+      return true;
+    }
+    if (this.userId === undefined || this.userId === null) {
+      return false;
+    }
+    const user = this.permissionUser();
+    if (
+      workspace &&
+      this.workspaceStateService.canManageWorkspace(workspace, user)
+    ) {
+      return true;
+    }
+    if (
+      workspace &&
+      !this.workspaceStateService.canEditWorkspace(workspace, user)
+    ) {
+      return false;
+    }
+    return folder.userId === this.userId;
   }
 
   openCopyFolderDialog(folder: Folder): void {
@@ -1736,7 +1815,7 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   onBreadcrumbDragOver(event: DragEvent, folderId: number | null): void {
-    if (this.currentFolderId === folderId) {
+    if (!this.canEditActiveWorkspace || this.currentFolderId === folderId) {
       return;
     }
     if (event.dataTransfer?.types.includes('application/json')) {
@@ -1762,7 +1841,10 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
   onBreadcrumbDrop(event: DragEvent, targetFolderId: number | null): void {
     event.preventDefault();
     this.dragOverBreadcrumbId = null;
-    if (this.currentFolderId === targetFolderId) {
+    if (
+      !this.canEditActiveWorkspace ||
+      this.currentFolderId === targetFolderId
+    ) {
       return;
     }
     const data = event.dataTransfer?.getData('application/json');
@@ -1791,7 +1873,10 @@ export class MediaGalleryComponent implements OnInit, OnDestroy, AfterViewInit {
     targetFolder: Folder,
     payload: GalleryDragPayload,
   ): void {
-    if (this.currentFolderId === targetFolder.id) {
+    if (
+      !this.canEditActiveWorkspace ||
+      this.currentFolderId === targetFolder.id
+    ) {
       return;
     }
     this.executeMove(

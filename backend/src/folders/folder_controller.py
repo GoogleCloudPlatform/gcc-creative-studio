@@ -59,7 +59,7 @@ async def create_folder(
     workspace_auth: WorkspaceAuth = Depends(),
 ) -> FolderResponseDto:
     """Create a new folder in a workspace."""
-    await workspace_auth.authorize(
+    await workspace_auth.authorize_write(
         workspace_id=dto.workspace_id,
         user=current_user,
     )
@@ -187,7 +187,7 @@ async def update_folder(
 ) -> FolderResponseDto:
     """Update folder properties or move folder to new parent."""
     folder = await service.get_raw_folder(folder_id=folder_id)
-    workspace = await workspace_auth.authorize(
+    workspace = await workspace_auth.authorize_write(
         workspace_id=folder.workspace_id,
         user=current_user,
     )
@@ -215,7 +215,7 @@ async def delete_folder(
 ) -> dict[str, bool]:
     """Soft delete a folder and all its subfolders."""
     folder = await service.get_raw_folder(folder_id=folder_id)
-    workspace = await workspace_auth.authorize(
+    workspace = await workspace_auth.authorize_write(
         workspace_id=folder.workspace_id,
         user=current_user,
     )
@@ -238,7 +238,7 @@ async def move_items(
     workspace_auth: WorkspaceAuth = Depends(),
 ) -> dict[str, int]:
     """Batch move media items, source assets, and folders to a destination folder."""
-    workspace = await workspace_auth.authorize(
+    workspace = await workspace_auth.authorize_write(
         workspace_id=dto.workspace_id,
         user=current_user,
     )
@@ -256,7 +256,7 @@ async def copy_items(
     workspace_auth: WorkspaceAuth = Depends(),
 ) -> dict[str, int]:
     """Batch copy media items, source assets, and folders to a destination folder."""
-    await workspace_auth.authorize(
+    await workspace_auth.authorize_write(
         workspace_id=dto.workspace_id,
         user=current_user,
     )

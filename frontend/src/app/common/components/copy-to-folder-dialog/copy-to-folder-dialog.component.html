@@ -98,7 +98,7 @@
                   <mat-icon
                     class="folder-opt-icon"
                   >
-                    {{ opt.scope === 'public' ? 'public' : 'lock' }}
+                    {{ opt.scope === 'personal' ? 'person' : opt.scope === 'public' ? 'public' : 'lock' }}
                   </mat-icon>
                   <span class="folder-opt-name truncate">{{ opt.name }}</span>
                   @if (opt.disabled) {

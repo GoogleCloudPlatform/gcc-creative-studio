@@ -15,10 +15,15 @@
 
 from unittest.mock import AsyncMock, MagicMock
 import pytest
-from fastapi import status
+from fastapi import HTTPException, status
 
 from main import app
 from src.tags.tags_service import TagsService
+from src.workspaces.schema.workspace_model import (
+    WorkspaceModel,
+    WorkspaceRoleEnum,
+    WorkspaceScopeEnum,
+)
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
 from src.tags.schema.tags_model import TagModel
 
@@ -104,7 +109,9 @@ class TestListTags:
 class TestCreateTag:
     """Tests for POST /api/tags/."""
 
-    def test_create_tag_success(self, api_client, mock_tags_service):
+    def test_create_tag_success(
+        self, api_client, mock_tags_service, mock_workspace_auth
+    ):
         mock_tags_service.create_tag.return_value = TagModel(
             id=1, name="new_tag", workspace_id=1
         )
@@ -116,6 +123,7 @@ class TestCreateTag:
         assert response.status_code == status.HTTP_201_CREATED
         data = response.json()
         assert data["name"] == "new_tag"
+        mock_workspace_auth.authorize_write.assert_awaited_once()
 
 
 class TestDeleteTag:
@@ -142,7 +150,9 @@ class TestDeleteTag:
 class TestBulkAssign:
     """Tests for POST /api/tags/bulk-assign."""
 
-    def test_bulk_assign_success(self, api_client, mock_tags_service):
+    def test_bulk_assign_success(
+        self, api_client, mock_tags_service, mock_workspace_auth
+    ):
         mock_tags_service.bulk_assign.return_value = True
 
         response = api_client.post(
@@ -156,6 +166,7 @@ class TestBulkAssign:
         )
 
         assert response.status_code == status.HTTP_200_OK
+        mock_workspace_auth.authorize_write.assert_awaited_once()
 
 
 class TestUpdateTag:
@@ -190,3 +201,57 @@ class TestUpdateTag:
         )
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+class TestTagRoleParity:
+    """Verifies PRIVATE workspace OWNER/ADMIN/EDITOR/VIEWER parity on foreign tags."""
+
+    @pytest.mark.parametrize(
+        "role,expected_status",
+        [
+            (WorkspaceRoleEnum.OWNER, status.HTTP_200_OK),
+            (WorkspaceRoleEnum.ADMIN, status.HTTP_200_OK),
+            (WorkspaceRoleEnum.EDITOR, status.HTTP_403_FORBIDDEN),
+            (WorkspaceRoleEnum.VIEWER, status.HTTP_403_FORBIDDEN),
+        ],
+    )
+    def test_foreign_tag_update_and_delete_by_workspace_role(
+        self,
+        api_client,
+        mock_workspace_auth,
+        role,
+        expected_status,
+    ):
+        mock_repo = AsyncMock()
+        foreign_tag = TagModel(
+            id=5, name="team_tag", workspace_id=10, user_id=999
+        )
+        mock_repo.get_by_id.return_value = foreign_tag
+        mock_repo.update_tag.return_value = TagModel(
+            id=5, name="renamed", workspace_id=10, user_id=999
+        )
+        mock_repo.delete.return_value = True
+
+        real_service = TagsService(repo=mock_repo)
+        app.dependency_overrides[TagsService] = lambda: real_service
+
+        if role == WorkspaceRoleEnum.VIEWER:
+            mock_workspace_auth.authorize_write.side_effect = HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Viewer role has read-only access to this workspace.",
+            )
+        else:
+            mock_workspace_auth.authorize_write.side_effect = None
+            mock_workspace_auth.authorize_write.return_value = WorkspaceModel(
+                id=10,
+                name="Private Team",
+                owner_id=1 if role == WorkspaceRoleEnum.OWNER else 999,
+                scope=WorkspaceScopeEnum.PRIVATE,
+                current_user_role=role,
+            )
+
+        put_res = api_client.put("/api/tags/5", json={"name": "renamed"})
+        del_res = api_client.delete("/api/tags/5")
+
+        assert put_res.status_code == expected_status
+        assert del_res.status_code == expected_status

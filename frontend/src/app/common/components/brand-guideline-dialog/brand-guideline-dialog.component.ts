@@ -82,14 +82,17 @@ export class BrandGuidelineDialogComponent {
   }
 
   onUpload(): void {
+    if (!this.data.canEdit) return;
     this.dialogRef.close(this.form.value);
   }
 
   onDelete(): void {
+    if (!this.data.canEdit) return;
     this.dialogRef.close({delete: true});
   }
 
   replaceGuideline(): void {
+    if (!this.data.canEdit) return;
     this.isEditing = false;
   }
 

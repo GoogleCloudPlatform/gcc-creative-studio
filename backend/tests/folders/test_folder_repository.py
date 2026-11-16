@@ -1498,3 +1498,264 @@ class TestFolderRepository:
         assert res["folders_copied"] == 1
         folder_repo.merge_folders.assert_awaited_once()
         mock_db.commit.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_copy_folder_to_workspace_strips_lineage_scope_and_foreign_links(
+        self, folder_repo, mock_db
+    ):
+        root_folder = Folder(
+            id=1,
+            workspace_id=10,
+            user_email="a@b.com",
+            name="PersonalFolder",
+            parent_id=None,
+            color="#fff",
+        )
+        mock_get_root = MagicMock()
+        mock_get_root.scalars.return_value.first.return_value = root_folder
+
+        mock_desc_res = MagicMock()
+        mock_desc_res.fetchall.return_value = [
+            SimpleNamespace(
+                id=1,
+                name="PersonalFolder",
+                color="#fff",
+                parent_id=None,
+                depth=0,
+            )
+        ]
+
+        mock_existing_root_res = MagicMock()
+        mock_existing_root_res.fetchall.return_value = []
+
+        src_media = MediaItem(
+            id=10,
+            workspace_id=10,
+            folder_id=1,
+            user_id=1,
+            user_email="a@b.com",
+            mime_type="image/png",
+            model="imagen",
+            aspect_ratio="1:1",
+            status="completed",
+            revision_root_id=5,
+            revision_parent_id=9,
+            revision_number=4,
+            promoted_from_media_item_id=77,
+            promoted_from_root_id=70,
+            source_assets=[
+                {"asset_id": 100, "role": "input"},
+                {"asset_id": 101, "role": "style_reference"},
+            ],
+            source_media_items=[
+                {"media_item_id": 200, "media_index": 0, "role": "input"},
+                {"media_item_id": 201, "media_index": 0, "role": "input"},
+            ],
+        )
+        mock_media_res = MagicMock()
+        mock_media_res.scalars.return_value.all.return_value = [src_media]
+
+        # Allowed source assets (101 is SYSTEM or in target ws 99; 100 is foreign private)
+        mock_allowed_assets_res = MagicMock()
+        mock_allowed_assets_res.fetchall.return_value = [(101,)]
+        # Allowed source media items (201 in target ws 99; 200 is foreign ws 10)
+        mock_allowed_media_res = MagicMock()
+        mock_allowed_media_res.fetchall.return_value = [(201,)]
+
+        src_asset = SourceAsset(
+            id=20,
+            workspace_id=10,
+            folder_id=1,
+            user_id=1,
+            gcs_uri="gs://bucket/a.png",
+            original_filename="a.png",
+            file_hash="h",
+            mime_type="image/png",
+            scope="system",
+            asset_type="generic_image",
+            promoted_from_source_asset_id=88,
+        )
+        mock_asset_res = MagicMock()
+        mock_asset_res.scalars.return_value.all.return_value = [src_asset]
+
+        mock_db.execute.side_effect = [
+            mock_get_root,
+            mock_desc_res,
+            mock_existing_root_res,
+            mock_media_res,
+            mock_allowed_assets_res,
+            mock_allowed_media_res,
+            mock_asset_res,
+        ]
+
+        res = await folder_repo.copy_folder_to_workspace(
+            folder_id=1,
+            target_workspace_id=99,
+            user_id=2,
+            user_email="b@b.com",
+            commit=False,
+        )
+
+        assert res["media_copied"] == 1
+        assert res["assets_copied"] == 1
+        added = [c.args[0] for c in mock_db.add.call_args_list]
+        copied_media = next(e for e in added if isinstance(e, MediaItem))
+        copied_asset = next(e for e in added if isinstance(e, SourceAsset))
+        assert copied_media.revision_root_id is None
+        assert copied_media.revision_parent_id is None
+        assert copied_media.revision_number == 1
+        assert copied_media.promoted_from_media_item_id is None
+        assert copied_media.promoted_from_root_id is None
+        assert copied_media.source_assets == [
+            {"asset_id": 101, "role": "style_reference"}
+        ]
+        assert copied_media.source_media_items == [
+            {"media_item_id": 201, "media_index": 0, "role": "input"}
+        ]
+        assert copied_asset.scope == "private"
+        assert copied_asset.promoted_from_source_asset_id is None
+
+    @pytest.mark.anyio
+    async def test_merge_folders_cross_workspace_copy_strips_lineage_and_links(
+        self, folder_repo, mock_db
+    ):
+        source = Folder(
+            id=1,
+            workspace_id=10,
+            user_id=1,
+            name="Src",
+            parent_id=None,
+            color="#fff",
+        )
+        target = Folder(
+            id=2,
+            workspace_id=99,
+            user_id=2,
+            name="Tgt",
+            parent_id=None,
+            color="#fff",
+        )
+        folder_repo.get_folder_by_id = AsyncMock(
+            side_effect=lambda fid: (
+                source if fid == 1 else target if fid == 2 else None
+            )
+        )
+
+        src_media = MediaItem(
+            id=10,
+            workspace_id=10,
+            folder_id=1,
+            user_id=1,
+            user_email="a@b.com",
+            mime_type="image/png",
+            model="imagen",
+            aspect_ratio="1:1",
+            status="completed",
+            revision_root_id=5,
+            revision_parent_id=9,
+            revision_number=3,
+            promoted_from_media_item_id=77,
+            promoted_from_root_id=70,
+            source_assets=[{"asset_id": 100, "role": "input"}],
+            source_media_items=[
+                {"media_item_id": 200, "media_index": 0, "role": "input"}
+            ],
+        )
+        src_asset = SourceAsset(
+            id=20,
+            workspace_id=10,
+            folder_id=1,
+            user_id=1,
+            gcs_uri="gs://b/a.png",
+            original_filename="a.png",
+            file_hash="h",
+            mime_type="image/png",
+            scope="system",
+            asset_type="generic_image",
+            promoted_from_source_asset_id=88,
+        )
+
+        mock_media_res = MagicMock()
+        mock_media_res.scalars.return_value.all.return_value = [src_media]
+        mock_allowed_assets_res = MagicMock()
+        mock_allowed_assets_res.fetchall.return_value = []
+        mock_allowed_media_res = MagicMock()
+        mock_allowed_media_res.fetchall.return_value = []
+        mock_asset_res = MagicMock()
+        mock_asset_res.scalars.return_value.all.return_value = [src_asset]
+        mock_empty = MagicMock()
+        mock_empty.scalars.return_value.all.return_value = []
+
+        mock_db.execute.side_effect = [
+            mock_media_res,
+            mock_allowed_assets_res,
+            mock_allowed_media_res,
+            mock_asset_res,
+            mock_empty,
+            mock_empty,
+        ]
+
+        res = await folder_repo.merge_folders(
+            source_folder_id=1,
+            target_folder_id=2,
+            target_workspace_id=99,
+            user_id=2,
+            user_email="b@b.com",
+            is_copy=True,
+            clear_tags=True,
+            commit=False,
+        )
+
+        assert res["media_copied"] == 1
+        assert res["assets_copied"] == 1
+        added = [c.args[0] for c in mock_db.add.call_args_list]
+        copied_media = next(e for e in added if isinstance(e, MediaItem))
+        copied_asset = next(e for e in added if isinstance(e, SourceAsset))
+        assert copied_media.revision_root_id is None
+        assert copied_media.revision_parent_id is None
+        assert copied_media.revision_number == 1
+        assert copied_media.promoted_from_media_item_id is None
+        assert copied_media.promoted_from_root_id is None
+        assert copied_media.source_assets == []
+        assert copied_media.source_media_items == []
+        assert copied_asset.scope == "private"
+        assert copied_asset.promoted_from_source_asset_id is None
+
+    @pytest.mark.anyio
+    async def test_sanitize_copied_media_kwargs_handles_typed_and_dict_links(
+        self, folder_repo, mock_db
+    ):
+        from src.common.schema.media_item_model import (
+            AssetRoleEnum,
+            SourceAssetLink,
+            SourceMediaItemLink,
+        )
+
+        allowed_assets_res = MagicMock()
+        allowed_assets_res.fetchall.return_value = [(2,)]
+        allowed_media_res = MagicMock()
+        allowed_media_res.fetchall.return_value = [(4,)]
+        mock_db.execute.side_effect = [allowed_assets_res, allowed_media_res]
+
+        kwargs = {
+            "source_assets": [
+                SourceAssetLink(asset_id=1, role=AssetRoleEnum.INPUT),
+                SourceAssetLink(asset_id=2, role=AssetRoleEnum.INPUT),
+            ],
+            "source_media_items": [
+                SourceMediaItemLink(
+                    media_item_id=3, media_index=0, role=AssetRoleEnum.INPUT
+                ),
+                {"media_item_id": 4, "media_index": 0, "role": "input"},
+            ],
+        }
+        await folder_repo._sanitize_copied_media_kwargs(kwargs, target_ws_id=88)
+
+        assert [
+            folder_repo._entry_id(a, "asset_id")
+            for a in kwargs["source_assets"]
+        ] == [2]
+        assert [
+            folder_repo._entry_id(m, "media_item_id")
+            for m in kwargs["source_media_items"]
+        ] == [4]

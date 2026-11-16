@@ -19,7 +19,9 @@ import {provideRouter} from '@angular/router';
 import {provideHttpClient} from '@angular/common/http';
 import {provideHttpClientTesting} from '@angular/common/http/testing';
 import {MatDialogModule} from '@angular/material/dialog';
+import {MatMenuModule} from '@angular/material/menu';
 import {MatSnackBarModule} from '@angular/material/snack-bar';
+import {MatTooltipModule} from '@angular/material/tooltip';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {CUSTOM_ELEMENTS_SCHEMA} from '@angular/core';
 
@@ -27,33 +29,83 @@ import {MediaLightboxComponent} from './media-lightbox.component';
 import {TagsService} from '../../services/tags.service';
 import {WorkspaceStateService} from '../../../services/workspace/workspace-state.service';
 import {FolderService} from '../../services/folder.service';
+import {GalleryService} from '../../../gallery/gallery.service';
+import {UserService} from '../../services/user.service';
+import {WorkspaceScope} from '../../models/workspace.model';
+import {WorkspaceRole} from '../../models/workspace-member.model';
+import {MatDialogRef} from '@angular/material/dialog';
 import {of, throwError} from 'rxjs';
 
 describe('MediaLightboxComponent', () => {
   let component: MediaLightboxComponent;
   let fixture: ComponentFixture<MediaLightboxComponent>;
+  let workspaceStateService: WorkspaceStateService;
+  let mockUserDetails: {id: number; roles: string[]};
 
   beforeEach(async () => {
+    mockUserDetails = {id: 7, roles: []};
     await TestBed.configureTestingModule({
       declarations: [MediaLightboxComponent],
-      imports: [MatDialogModule, MatSnackBarModule, NoopAnimationsModule],
+      imports: [
+        MatDialogModule,
+        MatMenuModule,
+        MatSnackBarModule,
+        MatTooltipModule,
+        NoopAnimationsModule,
+      ],
       providers: [
         provideRouter([]),
         provideHttpClient(),
         provideHttpClientTesting(),
         {
           provide: TagsService,
-          useValue: {},
+          useValue: {bulkAssign: () => of(null)},
         },
         {
-          provide: WorkspaceStateService,
+          provide: GalleryService,
           useValue: {
-            getActiveWorkspaceId: () => 1,
+            bulkMove: jasmine.createSpy('bulkMove').and.returnValue(of({})),
           },
         },
+        {
+          provide: UserService,
+          useValue: {getUserDetails: () => mockUserDetails},
+        },
+        WorkspaceStateService,
       ],
       schemas: [CUSTOM_ELEMENTS_SCHEMA],
     }).compileComponents();
+
+    workspaceStateService = TestBed.inject(WorkspaceStateService);
+    workspaceStateService.setWorkspaces([
+      {
+        id: 1,
+        name: 'My Workspace',
+        ownerId: '7',
+        scope: WorkspaceScope.PERSONAL,
+        members: [],
+        memberIds: ['7'],
+      },
+      {
+        id: 20,
+        name: 'Team Viewer',
+        ownerId: '99',
+        scope: WorkspaceScope.PRIVATE,
+        currentUserRole: WorkspaceRole.VIEWER,
+        members: [],
+        memberIds: ['7', '99'],
+      },
+      {
+        id: 30,
+        name: 'Team Editor',
+        ownerId: '99',
+        scope: WorkspaceScope.PRIVATE,
+        currentUserRole: WorkspaceRole.EDITOR,
+        members: [],
+        memberIds: ['7', '99'],
+      },
+    ]);
+    workspaceStateService.setActiveWorkspaceId(1);
 
     fixture = TestBed.createComponent(MediaLightboxComponent);
     component = fixture.componentInstance;
@@ -112,6 +164,61 @@ describe('MediaLightboxComponent', () => {
       component['executeMove'](1, 2, 'Same');
       expect(moveSpy).not.toHaveBeenCalled();
       expect(emitted).toEqual([]);
+    });
+
+    it('resolves workspace-tab move destination via galleryService.bulkMove', () => {
+      const galleryService = TestBed.inject(GalleryService);
+      spyOn(component.dialog, 'open').and.returnValue({
+        afterClosed: () =>
+          of({destinationWorkspaceId: 30, destinationName: 'Team Editor'}),
+      } as MatDialogRef<unknown>);
+      const emitted: Array<number | null> = [];
+      component.moved.subscribe(id => emitted.push(id));
+
+      component.openBatchMoveDialog();
+
+      expect(galleryService.bulkMove).toHaveBeenCalledWith(
+        [{id: 9, type: 'media_item'}],
+        30,
+      );
+      expect(component.mediaItem?.workspaceId).toBe(30);
+      expect(emitted).toEqual([null]);
+    });
+  });
+
+  describe('flat toolbar permission gating', () => {
+    it('keeps actions flat and hides move/tags/delete for shared VIEWER items', () => {
+      component.showMoveButton = true;
+      component.showDeleteButton = true;
+      component.mediaItem = {
+        id: 11,
+        workspaceId: 20, // Team Viewer
+        itemType: 'media_item',
+        mimeType: 'image/png',
+        presignedUrls: ['https://example.com/img.png'],
+        createdAt: '2026-01-01T00:00:00Z',
+      } as any;
+      fixture.detectChanges();
+
+      expect(component.canEditItemWorkspace).toBeFalse();
+      const root = fixture.nativeElement as HTMLElement;
+      expect(root.querySelector('#lightbox-more-actions-btn')).toBeNull();
+      expect(
+        root.querySelector('[matTooltip="Edit this media"]'),
+      ).not.toBeNull();
+      expect(root.querySelector('[matTooltip="Move to folder"]')).toBeNull();
+      expect(root.querySelector('[matTooltip="Assign tags"]')).toBeNull();
+      expect(root.querySelector('[matTooltip="Delete"]')).toBeNull();
+
+      // Switching to editable workspace reveals move/tags/delete inline.
+      component.mediaItem = {...component.mediaItem!, workspaceId: 30} as any;
+      fixture.detectChanges();
+      expect(component.canEditItemWorkspace).toBeTrue();
+      expect(
+        root.querySelector('[matTooltip="Move to folder"]'),
+      ).not.toBeNull();
+      expect(root.querySelector('[matTooltip="Assign tags"]')).not.toBeNull();
+      expect(root.querySelector('[matTooltip="Delete"]')).not.toBeNull();
     });
   });
 });

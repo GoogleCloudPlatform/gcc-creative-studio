@@ -13,8 +13,6 @@
 # limitations under the License.
 """Controller for handling source asset API requests."""
 
-import asyncio
-
 from fastapi import (
     APIRouter,
     Depends,
@@ -96,7 +94,7 @@ async def generate_source_asset_upload_url(
 
     Uses same strategy as: backend/src/brand_guidelines/brand_guideline_controller.py
     """
-    await workspace_auth.authorize(
+    await workspace_auth.authorize_write(
         workspace_id=request_dto.workspace_id,
         user=current_user,
     )
@@ -133,7 +131,7 @@ async def finalize_source_asset_upload(
     workspace_auth: WorkspaceAuth = Depends(),
 ):
     """Finalizes registration of a source asset in the database after direct GCS upload."""
-    await workspace_auth.authorize(
+    await workspace_auth.authorize_write(
         workspace_id=request_dto.workspace_id,
         user=current_user,
     )
@@ -169,6 +167,8 @@ async def upload_source_asset(
     ),
     title: str | None = Form(None),
     description: str | None = Form(None),
+    folder_id: int | None = Form(None, alias="folder_id"),
+    folder_id_camel: int | None = Form(None, alias="folderId"),
     current_user: UserModel = Depends(get_current_user),
     service: SourceAssetService = Depends(SourceAssetService),
     workspace_auth: WorkspaceAuth = Depends(),
@@ -180,11 +180,13 @@ async def upload_source_asset(
     - **workspace_id**: The ID of the workspace to upload the asset to.
     - **assetType**: Set the asset's type. Defaults to 'generic_image'.
     """
-    # Use our centralized dependency to authorize the user for the workspace
-    # before proceeding with the upload.
-    await workspace_auth.authorize(
+    await workspace_auth.authorize_write(
         workspace_id=workspace_id,
         user=current_user,
+    )
+
+    effective_folder_id = (
+        folder_id if folder_id is not None else folder_id_camel
     )
 
     effective_enhance_input_image = (
@@ -214,6 +216,7 @@ async def upload_source_asset(
         metadata_generation_model=metadata_generation_model,
         title=title,
         description=description,
+        folder_id=effective_folder_id,
     )
 
 
@@ -241,41 +244,58 @@ async def list_source_assets(
     current_user: UserModel = Depends(get_current_user),
     service: SourceAssetService = Depends(),
     user_repo: UserRepository = Depends(),
+    workspace_auth: WorkspaceAuth = Depends(),
 ):
-    """Performs a paginated search for user assets with role-based access control.
-    - Regular users can only search their own assets.
-    - Admins can search all assets, or filter by a specific user's email.
+    """Performs a paginated search for assets with workspace & role access control.
+    - When workspace_id is provided: authorizes workspace read access and
+      returns all non-deleted assets in that workspace.
+    - When workspace_id is omitted: regular users see only their own assets,
+      and admins never see another user's personal workspace assets.
     """
     target_user_id: int | None = None
+    is_admin = UserRoleEnum.ADMIN in (current_user.roles or [])
 
-    is_admin = UserRoleEnum.ADMIN in current_user.roles
-
-    if not is_admin:
-        # For regular users, force the search to their own ID.
+    if search_dto.workspace_id is not None:
+        await workspace_auth.authorize(
+            workspace_id=search_dto.workspace_id,
+            user=current_user,
+        )
+        if not is_admin:
+            search_dto.scope = None
+    elif not is_admin:
+        # For unscoped regular-user searches, restrict to caller's own uploads.
         target_user_id = current_user.id
-        # Clear any admin-only filters that might have been sent
         search_dto.user_email = None
         search_dto.scope = None
         search_dto.asset_type = None
         search_dto.original_filename = None
-    elif search_dto.user_email:
-        # Admin is searching for a specific user. You'll need to find the user's ID.
+
+    if search_dto.user_email and (
+        is_admin or search_dto.workspace_id is not None
+    ):
         if search_dto.user_email == current_user.email:
             target_user_id = current_user.id
         else:
-            target_user = await asyncio.to_thread(
-                user_repo.get_by_email,
-                search_dto.user_email,
-            )
+            target_user = await user_repo.get_by_email(search_dto.user_email)
             if not target_user:
-                raise HTTPException(
-                    status.HTTP_404_NOT_FOUND, "User email not found."
+                if is_admin:
+                    raise HTTPException(
+                        status.HTTP_404_NOT_FOUND, "User email not found."
+                    )
+                safe_limit = max(search_dto.limit, 1)
+                return PaginationResponseDto[SourceAssetResponseDto](
+                    count=0,
+                    page=(search_dto.offset // safe_limit) + 1,
+                    page_size=safe_limit,
+                    total_pages=0,
+                    data=[],
                 )
             target_user_id = target_user.id
 
     return await service.list_assets_for_user(
         search_dto=search_dto,
         target_user_id=target_user_id,
+        requesting_user_id=current_user.id,
     )
 
 
@@ -304,12 +324,13 @@ async def get_vto_assets(
 )
 async def delete_source_asset(
     asset_id: int,
+    current_user: UserModel = Depends(get_current_user),
     service: SourceAssetService = Depends(),
 ):
     """Deletes a source asset by its ID. (Admin only)
     This will also remove the corresponding file from Google Cloud Storage.
     """
-    success = await service.delete_asset(asset_id)
+    success = await service.delete_asset(asset_id, current_user=current_user)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

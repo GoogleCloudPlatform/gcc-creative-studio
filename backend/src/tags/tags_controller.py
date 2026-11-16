@@ -24,7 +24,10 @@ from src.tags.dto.tags_dto import (
 from src.tags.tags_service import TagsService
 from src.tags.schema.tags_model import TagModel
 from src.users.user_model import UserModel, UserRoleEnum
-from src.workspaces.workspace_auth_guard import WorkspaceAuth
+from src.workspaces.workspace_auth_guard import (
+    WorkspaceAuth,
+    is_workspace_manager,
+)
 
 router = APIRouter(
     prefix="/api/tags",
@@ -73,9 +76,11 @@ async def search_tags(
         )
 
     return await service.list_tags(
+        search=search_dto.search,
         limit=search_dto.limit,
         offset=search_dto.offset,
-        user_id=search_dto.user_id,
+        creator_user_id=search_dto.user_id,
+        requesting_user_id=current_user.id,
     )
 
 
@@ -87,7 +92,7 @@ async def create_tag(
     workspace_auth: WorkspaceAuth = Depends(),
 ):
     """Creates a new tag in a workspace."""
-    await workspace_auth.authorize(
+    await workspace_auth.authorize_write(
         workspace_id=dto.workspace_id,
         user=current_user,
     )
@@ -110,12 +115,15 @@ async def update_tag(
             detail="Tag not found",
         )
 
-    await workspace_auth.authorize(
+    workspace = await workspace_auth.authorize_write(
         workspace_id=tag.workspace_id,
         user=current_user,
     )
     return await service.update_tag(
-        tag_id, dto, current_user.id, UserRoleEnum.ADMIN in current_user.roles
+        tag_id,
+        dto,
+        current_user.id,
+        is_workspace_manager(current_user, workspace),
     )
 
 
@@ -127,8 +135,6 @@ async def delete_tag(
     workspace_auth: WorkspaceAuth = Depends(),
 ):
     """Deletes a tag."""
-    is_admin = UserRoleEnum.ADMIN in current_user.roles
-
     tag = await service.repo.get_by_id(tag_id)
     if not tag:
         raise HTTPException(
@@ -136,13 +142,17 @@ async def delete_tag(
             detail="Tag not found",
         )
 
-    if not is_admin:
-        await workspace_auth.authorize(
-            workspace_id=tag.workspace_id,
-            user=current_user,
-        )
+    workspace = await workspace_auth.authorize_write(
+        workspace_id=tag.workspace_id,
+        user=current_user,
+    )
 
-    return await service.delete_tag(tag_id, current_user.id, is_admin, tag=tag)
+    return await service.delete_tag(
+        tag_id,
+        current_user.id,
+        is_workspace_manager(current_user, workspace),
+        tag=tag,
+    )
 
 
 @router.post("/bulk-assign")
@@ -153,7 +163,7 @@ async def bulk_assign_tags(
     workspace_auth: WorkspaceAuth = Depends(),
 ):
     """Bulk assigns tags to multiple items."""
-    await workspace_auth.authorize(
+    await workspace_auth.authorize_write(
         workspace_id=dto.workspace_id,
         user=current_user,
     )

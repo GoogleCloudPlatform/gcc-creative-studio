@@ -213,20 +213,28 @@ async def test_delete_asset(service, mock_dependencies):
     )
     mock_dependencies["repo"].get_by_id.return_value = asset
     mock_dependencies["repo"].soft_delete.return_value = True
+    deleter = UserModel(
+        id=2, email="deleter@test.com", name="Deleter", roles=[]
+    )
 
-    result = await service.delete_asset(asset_id=1, current_user_id=2)
+    with patch(
+        "src.source_assets.source_asset_service.WorkspaceAuth.authorize_write",
+        new=AsyncMock(),
+    ) as mock_auth_write:
+        result = await service.delete_asset(asset_id=1, current_user=deleter)
 
     assert result is True
+    mock_auth_write.assert_awaited_once_with(1, deleter)
     mock_dependencies["repo"].soft_delete.assert_called_once_with(
         1, deleted_by=2
     )
 
 
 @pytest.mark.anyio
-async def test_delete_asset_not_found(service, mock_dependencies):
+async def test_delete_asset_not_found(service, mock_dependencies, sample_user):
     mock_dependencies["repo"].get_by_id.return_value = None
 
-    result = await service.delete_asset(asset_id=1)
+    result = await service.delete_asset(asset_id=1, current_user=sample_user)
 
     assert result is False
     mock_dependencies["repo"].soft_delete.assert_not_called()
@@ -407,11 +415,46 @@ async def test_get_asset_by_id_authorized_owner(
         "https://signed.url"
     )
 
-    response = await service.get_asset_by_id(asset_id=40, user=sample_user)
+    with patch(
+        "src.source_assets.source_asset_service.WorkspaceAuth.authorize",
+        new=AsyncMock(),
+    ) as mock_auth:
+        response = await service.get_asset_by_id(asset_id=40, user=sample_user)
 
     assert response is not None
+    mock_auth.assert_awaited_once_with(1, sample_user)
     assert response.id == 40
     assert response.user_email == "test@example.com"
+
+
+@pytest.mark.anyio
+async def test_get_asset_by_id_unauthorized_returns_none_for_404(
+    service,
+    mock_dependencies,
+    sample_user,
+):
+    from fastapi import HTTPException
+
+    asset = SourceAssetModel(
+        id=41,
+        workspace_id=9,
+        user_id=2,
+        gcs_uri="gs://b",
+        original_filename="a",
+        file_hash="h5",
+        scope=AssetScopeEnum.PRIVATE,
+        mime_type=MimeTypeEnum.IMAGE_PNG,
+    )
+    mock_dependencies["repo"].get_by_id.return_value = asset
+
+    with patch(
+        "src.source_assets.source_asset_service.WorkspaceAuth.authorize",
+        new=AsyncMock(side_effect=HTTPException(status_code=403)),
+    ) as mock_auth:
+        response = await service.get_asset_by_id(asset_id=41, user=sample_user)
+
+    assert response is None
+    mock_auth.assert_awaited_once_with(9, sample_user)
 
 
 @pytest.mark.anyio
@@ -1105,3 +1148,76 @@ async def test_finalize_direct_upload_skips_oversize_thumbnail_and_reloads_blob(
         "gcs_service"
     ].client.bucket.return_value.blob.return_value = non_int_blob
     assert service._get_gcs_blob_size("gs://bucket/invalid.png") is None
+
+
+@pytest.mark.anyio
+async def test_upload_asset_persists_validated_folder_id_on_new_asset(
+    service, mock_dependencies, sample_user
+):
+    mock_dependencies["repo"].find_by_hash.return_value = None
+    mock_dependencies["gcs_service"].store_to_gcs.return_value = (
+        "gs://bucket/folder_asset.png"
+    )
+    mock_dependencies["iam_signer"].generate_presigned_url.return_value = (
+        "https://signed.url"
+    )
+    mock_dependencies["repo"].create.side_effect = (
+        lambda model: model.model_copy(update={"id": 95})
+    )
+
+    with patch(
+        "src.source_assets.source_asset_service.ensure_folder_in_workspace",
+        new=AsyncMock(return_value=12),
+    ) as mock_ensure:
+        res = await service.upload_asset(
+            user=sample_user,
+            file_bytes=get_dummy_image_bytes(),
+            filename="foldered.png",
+            workspace_id=1,
+            mime_type="image/png",
+            folder_id=12,
+        )
+
+    mock_ensure.assert_awaited_once_with(mock_dependencies["repo"].db, 1, 12)
+    created_asset = mock_dependencies["repo"].create.call_args.args[0]
+    assert created_asset.folder_id == 12
+    assert res.folder_id == 12
+
+
+@pytest.mark.anyio
+async def test_finalize_direct_upload_persists_validated_folder_id(
+    service, mock_dependencies, sample_user
+):
+    mock_dependencies["iam_signer"].generate_presigned_url.return_value = (
+        "https://signed.url"
+    )
+    mock_dependencies["gcs_service"].bucket_name = "test-bucket"
+    mock_dependencies["repo"].create.side_effect = (
+        lambda model: model.model_copy(update={"id": 96})
+    )
+    mock_blob = MagicMock()
+    mock_blob.size = 1024
+    mock_dependencies[
+        "gcs_service"
+    ].client.bucket.return_value.blob.return_value = mock_blob
+
+    with patch(
+        "src.source_assets.source_asset_service.ensure_folder_in_workspace",
+        new=AsyncMock(return_value=14),
+    ) as mock_ensure:
+        res = await service.finalize_direct_upload(
+            FinalizeSourceAssetUploadDto(
+                workspace_id=1,
+                gcs_uri="gs://test-bucket/source_assets/1/uploads/foldered.png",
+                filename="foldered.png",
+                mime_type="image/png",
+                size=1024,
+                folder_id=14,
+            ),
+            sample_user,
+        )
+
+    mock_ensure.assert_awaited_once_with(mock_dependencies["repo"].db, 1, 14)
+    created_asset = mock_dependencies["repo"].create.call_args.args[0]
+    assert created_asset.folder_id == 14
+    assert res.folder_id == 14

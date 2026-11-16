@@ -236,6 +236,34 @@ class MediaItem(Base):
         nullable=True,
     )
 
+    # Revision stack & promotion lineage
+    revision_root_id: Mapped[int | None] = mapped_column(
+        ForeignKey("media_items.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    revision_parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("media_items.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    revision_number: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default="1",
+    )
+    promoted_from_media_item_id: Mapped[int | None] = mapped_column(
+        ForeignKey("media_items.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    promoted_from_root_id: Mapped[int | None] = mapped_column(
+        ForeignKey("media_items.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True),
         insert_default=func.now(),
@@ -376,5 +404,16 @@ class MediaItemModel(BaseDocument):
         default=None,
         description="The ID of the template used to generate this item, if any.",
     )
+    revision_root_id: int | None = None
+    revision_parent_id: int | None = None
+    revision_number: int = 1
+    promoted_from_media_item_id: int | None = None
+    promoted_from_root_id: int | None = None
     deleted_at: datetime.datetime | None = None
     deleted_by: int | None = None
+
+    @field_validator("revision_number", mode="before")
+    @classmethod
+    def default_revision_number(cls, v: int | None) -> int:
+        """Defaults unpopulated/None revision_number values to 1."""
+        return 1 if v is None else v
