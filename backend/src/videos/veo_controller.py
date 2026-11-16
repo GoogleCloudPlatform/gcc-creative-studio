@@ -47,7 +47,7 @@ async def generate_videos(
     try:
         # Use our centralized dependency to authorize the user for the workspace
         # before proceeding with the expensive generation job.
-        await workspace_auth.authorize_write(
+        await workspace_auth.authorize(
             workspace_id=video_request.workspace_id,
             user=current_user,
         )
@@ -90,7 +90,7 @@ async def concatenate_videos(
     This is an asynchronous operation that returns a placeholder immediately.
     """
     try:
-        await workspace_auth.authorize_write(
+        await workspace_auth.authorize(
             workspace_id=concat_request.workspace_id,
             user=current_user,
         )

@@ -52,6 +52,7 @@ import {
   getSupportedModelDurations,
 } from '../../../../common/config/model-config';
 import {FolderSelectionResult} from '../../../../common/models/folder.model';
+import {WorkspaceScope} from '../../../../common/models/workspace.model';
 import {WorkspaceStateService} from '../../../../services/workspace/workspace-state.service';
 import {WorkflowFolderTreeStore} from '../../workflow-folder-tree.store';
 import {
@@ -319,6 +320,21 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
    * kept floated when `null` is the visible "All Media (root)" choice.
    */
   folderFloatLabel: FloatLabelType = 'auto';
+
+  /**
+   * True when this media node saves into each runner's My Workspace instead of
+   * the active shared workspace, so a team-workspace Output folder cannot be picked.
+   */
+  get isOutputFolderRoutedToPersonal(): boolean {
+    if (this.isLoopStep) {
+      return false;
+    }
+    const ws = this.workspaceStateService.activeWorkspace?.();
+    if (ws) {
+      return ws.scope !== WorkspaceScope.PERSONAL;
+    }
+    return this.workspaceStateService.isPersonalWorkspaceActive?.() === false;
+  }
 
   /** This node's `'folder'` setting (at most one per node), or null. */
   private folderSetting: StepSetting | null = null;
@@ -1470,7 +1486,7 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
   private setFolderId(value: unknown): void {
     const folderId = toFolderId(value);
     this.folderId.set(folderId);
-    if (folderId !== null) {
+    if (folderId !== null && !this.isOutputFolderRoutedToPersonal) {
       this.ensureFolderTreeLoaded();
     }
   }
@@ -1648,7 +1664,9 @@ export class GenericStepComponent implements OnInit, OnChanges, OnDestroy {
   /** Opens the Media Gallery in folder mode and stores the confirmed folder. */
   openFolderSelector(): void {
     const control = this.getFolderControl();
-    if (!control || control.disabled) return;
+    if (!control || control.disabled || this.isOutputFolderRoutedToPersonal) {
+      return;
+    }
     const data: ImageSelectorDialogData = {
       selectionTarget: 'folder',
       initialFolderId: this.folderId(),

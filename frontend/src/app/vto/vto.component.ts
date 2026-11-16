@@ -394,10 +394,18 @@ export class VtoComponent implements OnInit, AfterViewInit {
     file: File,
     assetType?: AssetTypeEnum,
   ): Observable<SourceAssetResponseDto> {
-    return this.sourceAssetService.uploadAsset(file, {
-      assetType: assetType,
-      scope: AssetScopeEnum.PRIVATE,
-    });
+    const uploadWorkspaceId =
+      this.workspaceStateService.personalWorkspaceId() ??
+      this.workspaceStateService.getActiveWorkspaceId();
+    return this.sourceAssetService.uploadAsset(
+      file,
+      {
+        assetType: assetType,
+        scope: AssetScopeEnum.PRIVATE,
+      },
+      uploadWorkspaceId,
+      null,
+    );
   }
 
   onDrop(event: DragEvent) {
@@ -465,9 +473,11 @@ export class VtoComponent implements OnInit, AfterViewInit {
 
     this.isLoading = true;
 
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
+    const {workspaceId, contextWorkspaceId} =
+      this.workspaceStateService.getReferencedGenerationWorkspaceParams();
 
     if (!workspaceId) {
+      this.isLoading = false;
       handleErrorSnackbar(
         this._snackBar,
         {message: 'Workspace ID is missing'},
@@ -479,7 +489,8 @@ export class VtoComponent implements OnInit, AfterViewInit {
     const payload: VtoRequest = {
       numberOfMedia: 4, // Defaulting to 4 as per DTO
       personImage: selectedModel.inputLink,
-      workspaceId: workspaceId,
+      workspaceId,
+      contextWorkspaceId,
     };
 
     if (this.selectedTop) payload.topImage = this.selectedTop.inputLink;
@@ -731,8 +742,10 @@ export class VtoComponent implements OnInit, AfterViewInit {
   deleteGeneratedMedia() {
     if (!this.imagenDocuments?.id) return;
 
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
-    if (workspaceId === null) return;
+    const workspaceId =
+      this.imagenDocuments.workspaceId ??
+      this.workspaceStateService.getActiveWorkspaceId();
+    if (workspaceId === null || workspaceId === undefined) return;
 
     const confirmDelete = confirm(
       'Are you sure you want to delete this try-on result?',

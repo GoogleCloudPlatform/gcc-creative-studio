@@ -151,6 +151,33 @@ def _start_imagen_job(imagen_service, job, user, executor, folder_id):
 class TestImagenServiceMethods:
     """Tests for ImagenService wrapper methods."""
 
+    @pytest.fixture(autouse=True)
+    def _mock_generation_workspace(self):
+        personal_ws = MagicMock(id=1, scope="personal")
+        with (
+            patch(
+                "src.workspaces.generation_workspace.WorkspaceRepository"
+            ) as repo_cls,
+            patch(
+                "src.workspaces.generation_workspace.WorkspaceAuth"
+            ) as auth_cls,
+            patch(
+                "src.workspaces.generation_workspace.resolve_output_folder_id",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "src.images.imagen_service.ensure_can_reference_inputs",
+                new=AsyncMock(return_value=None),
+            ) as ensure_refs,
+        ):
+            repo_cls.return_value.ensure_personal_workspace = AsyncMock(
+                return_value=personal_ws
+            )
+            auth_cls.return_value.authorize = AsyncMock(
+                return_value=personal_ws
+            )
+            yield repo_cls, auth_cls, ensure_refs
+
     @pytest.mark.anyio
     async def test_start_upload_upscale_job_success(
         self,
@@ -605,7 +632,7 @@ class TestImagenServiceMethods:
         mock_executor = MagicMock()
 
         with patch(
-            "src.images.imagen_service.resolve_output_folder_id",
+            "src.workspaces.generation_workspace.resolve_output_folder_id",
             AsyncMock(return_value=RESOLVED_FOLDER_ID),
         ) as resolver:
             response = await _start_imagen_job(
@@ -633,7 +660,7 @@ class TestImagenServiceMethods:
 
         with (
             patch(
-                "src.images.imagen_service.resolve_output_folder_id",
+                "src.workspaces.generation_workspace.resolve_output_folder_id",
                 AsyncMock(
                     side_effect=HTTPException(
                         status_code=422, detail="Folder not found"
@@ -649,6 +676,78 @@ class TestImagenServiceMethods:
         assert exc_info.value.status_code == 422
         mock_media_repo.create.assert_not_called()
         mock_executor.submit.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_shared_workspace_routes_to_personal_and_guards_refs(
+        self,
+        _mock_generation_workspace,
+        imagen_service,
+        mock_media_repo,
+        sample_user,
+    ):
+        repo_cls, auth_cls, ensure_refs = _mock_generation_workspace
+        shared_ws = MagicMock(id=30, scope="private")
+        personal_ws = MagicMock(id=10, scope="personal")
+        auth_cls.return_value.authorize.return_value = shared_ws
+        repo_cls.return_value.ensure_personal_workspace.return_value = (
+            personal_ws
+        )
+        mock_media_repo.create.side_effect = _assign_placeholder_id
+        mock_executor = MagicMock()
+
+        response = await imagen_service.start_image_generation_job(
+            request_dto=CreateImagenDto(
+                workspace_id=30,
+                prompt="Brand shot",
+                source_asset_ids=[5],
+                reference_video={"id": 88, "type": "media_item", "index": 0},
+            ),
+            user=sample_user,
+            executor=mock_executor,
+        )
+
+        ensure_refs.assert_awaited_once_with(
+            mock_media_repo.db,
+            sample_user,
+            media_item_ids=[88],
+            source_asset_ids=[5],
+        )
+        assert response.workspace_id == 10
+        submitted_dto = mock_executor.submit.call_args.kwargs["request_dto"]
+        assert submitted_dto.workspace_id == 10
+        assert submitted_dto.context_workspace_id == 30
+
+        vto_response = await imagen_service.start_vto_generation_job(
+            request_dto=VtoDto(
+                workspace_id=30,
+                context_workspace_id=30,
+                person_image={"source_asset_id": 11},
+                top_image={
+                    "source_media_item": {"media_item_id": 12, "media_index": 0}
+                },
+            ),
+            user=sample_user,
+            executor=mock_executor,
+        )
+        assert vto_response.workspace_id == 10
+        vto_worker_dto = mock_executor.submit.call_args.kwargs["request_dto"]
+        assert vto_worker_dto.workspace_id == 10
+        assert vto_worker_dto.context_workspace_id == 30
+
+        ensure_refs.side_effect = HTTPException(status_code=403, detail="Nope")
+        mock_media_repo.create.reset_mock()
+        with pytest.raises(HTTPException) as exc_info:
+            await imagen_service.start_vto_generation_job(
+                request_dto=VtoDto(
+                    workspace_id=30,
+                    person_image={"source_asset_id": 999},
+                    top_image={"source_asset_id": 998},
+                ),
+                user=sample_user,
+                executor=mock_executor,
+            )
+        assert exc_info.value.status_code == 403
+        mock_media_repo.create.assert_not_called()
 
     @pytest.mark.anyio
     async def test_get_media_item_with_presigned_urls_success(

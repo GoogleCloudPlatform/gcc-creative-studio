@@ -26,6 +26,7 @@ import {
   SourceAssetResponseDto,
   SourceAssetService,
 } from '../../../../../../common/services/source-asset.service';
+import {WorkspaceStateService} from '../../../../../../services/workspace/workspace-state.service';
 import {handleErrorSnackbar} from '../../../../../../utils/handleMessageSnackbar';
 import {StepOutputReference} from '../../../../../workflow.models';
 import {isInputAlreadyLinked} from '../../../../../utils/workflow-magnetic.util';
@@ -102,6 +103,7 @@ export class StepMediaInputComponent implements OnInit {
     private dialog: MatDialog,
     private sourceAssetService: SourceAssetService,
     private snackBar: MatSnackBar,
+    private workspaceStateService: WorkspaceStateService,
   ) {}
 
   ngOnInit(): void {}
@@ -220,19 +222,25 @@ export class StepMediaInputComponent implements OnInit {
       ? {aspectRatio: 'other', assetType: AssetTypeEnum.GENERIC_IMAGE}
       : {assetType: AssetTypeEnum.GENERIC_VIDEO};
 
-    this.sourceAssetService.uploadAsset(file, options).subscribe({
-      next: (result: SourceAssetResponseDto) => {
-        if (result && result.id) {
-          this.addItem({
-            sourceAssetId: result.id,
-            previewUrl: getPreviewUrl(result),
-          });
-        }
-      },
-      error: (err: unknown) => {
-        handleErrorSnackbar(this.snackBar, err, 'Upload dropped media');
-      },
-    });
+    const uploadWorkspaceId =
+      this.workspaceStateService.personalWorkspaceId() ??
+      this.workspaceStateService.getActiveWorkspaceId();
+
+    this.sourceAssetService
+      .uploadAsset(file, options, uploadWorkspaceId, null)
+      .subscribe({
+        next: (result: SourceAssetResponseDto) => {
+          if (result && result.id) {
+            this.addItem({
+              sourceAssetId: result.id,
+              previewUrl: getPreviewUrl(result),
+            });
+          }
+        },
+        error: (err: unknown) => {
+          handleErrorSnackbar(this.snackBar, err, 'Upload dropped media');
+        },
+      });
   }
 
   addLinkedOutput(outputValue: any) {

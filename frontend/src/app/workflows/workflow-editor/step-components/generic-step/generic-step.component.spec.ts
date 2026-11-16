@@ -63,6 +63,7 @@ import {WorkflowStatusPipe} from '../../../workflow-status.pipe';
 import {GenericStepComponent} from './generic-step.component';
 import {NEVER, Subject, of, throwError} from 'rxjs';
 import {FolderService} from '../../../../common/services/folder.service';
+import {WorkspaceScope} from '../../../../common/models/workspace.model';
 import {WorkspaceStateService} from '../../../../services/workspace/workspace-state.service';
 import {WorkflowFolderTreeStore} from '../../workflow-folder-tree.store';
 import {
@@ -2589,6 +2590,70 @@ describe('GenericStepComponent - Image Node Dynamic Mode Selection', () => {
       afterClosed$.next(null);
 
       expect(other.component.folderOption().label).toBe('Q4 Final');
+    });
+
+    it('hides the Output folder picker in a shared workspace while keeping Loop folders enabled', () => {
+      const wsSpy = TestBed.inject(WorkspaceStateService) as unknown as Record<
+        string,
+        unknown
+      >;
+      wsSpy['activeWorkspace'] = () => ({
+        id: 5,
+        name: 'Team Space',
+        scope: WorkspaceScope.PRIVATE,
+        ownerId: 1,
+        members: [],
+        createdAt: '',
+        updatedAt: '',
+      });
+      try {
+        mountMediaStep(IMAGE_STEP_CONFIG, 'img_shared', 2);
+        const host: HTMLElement = fixture.nativeElement;
+        expect(host.querySelector('.output-folder-field')).toBeNull();
+        expect(
+          host.querySelector('.output-folder-personal-notice')?.textContent,
+        ).toContain("Outputs save to each runner's My Workspace");
+        expect(folderServiceSpy.getFolderTree).not.toHaveBeenCalled();
+
+        component.openFolderSelector();
+        expect(dialogSpy.open).not.toHaveBeenCalled();
+
+        const loopForm = fb.group({
+          stepId: ['loop_shared'],
+          type: [NodeTypes.LOOP],
+          status: ['idle'],
+          collapsed: [false],
+          inputs: fb.group({linked_items: [null], items_text: ['']}),
+          settings: fb.group({
+            mode: ['folder'],
+            item_type: ['image'],
+            folder_id: [null],
+          }),
+          outputs: fb.group({current_item: [null]}),
+        });
+        const loopFixture = TestBed.createComponent(GenericStepComponent);
+        const loopComponent = loopFixture.componentInstance;
+        loopComponent.stepForm = loopForm;
+        loopComponent.config = LOOP_STEP_CONFIG;
+        loopComponent.ngOnChanges({
+          stepForm: {
+            currentValue: loopForm,
+            previousValue: null,
+            firstChange: true,
+            isFirstChange: () => true,
+          },
+        });
+        loopFixture.detectChanges();
+        const loopHost: HTMLElement = loopFixture.nativeElement;
+        expect(
+          loopHost.querySelector('#loop-folder-select-loop_shared'),
+        ).not.toBeNull();
+        expect(
+          loopHost.querySelector('.output-folder-personal-notice'),
+        ).toBeNull();
+      } finally {
+        delete wsSpy['activeWorkspace'];
+      }
     });
   });
 

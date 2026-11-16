@@ -291,8 +291,9 @@ export class AudioComponent implements OnInit {
     this.isLoading = true;
     this.mediaItem = null; // Clear previous result
 
-    const activeWorkspaceId = this.workspaceStateService.getActiveWorkspaceId();
-    if (!activeWorkspaceId) {
+    const {workspaceId} = this.workspaceStateService.getTargetWorkspaceParam();
+    if (!workspaceId) {
+      this.isLoading = false;
       handleErrorSnackbar(
         this.snackBar,
         {message: 'Please select a workspace first.'},
@@ -317,7 +318,7 @@ export class AudioComponent implements OnInit {
     const request: CreateAudioDto = {
       model: backendModel,
       prompt: this.prompt,
-      workspaceId: activeWorkspaceId,
+      workspaceId,
       // Optional fields (backend ignores them if not relevant to the specific model)
       negativePrompt:
         this.selectedModel === 'lyria' ? this.negativePrompt : undefined,
@@ -401,8 +402,10 @@ export class AudioComponent implements OnInit {
   deleteGeneratedMedia() {
     if (!this.mediaItem?.id) return;
 
-    const workspaceId = this.workspaceStateService.getActiveWorkspaceId();
-    if (workspaceId === null) return;
+    const workspaceId =
+      this.mediaItem.workspaceId ??
+      this.workspaceStateService.getActiveWorkspaceId();
+    if (workspaceId === null || workspaceId === undefined) return;
 
     const confirmDelete = confirm(
       'Are you sure you want to delete this generation result?',

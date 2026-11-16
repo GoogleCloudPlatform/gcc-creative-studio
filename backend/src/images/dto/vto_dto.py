@@ -62,6 +62,13 @@ class VtoDto(BaseDto):
         ge=1,
         description="The ID of the workspace for this generation.",
     )
+    context_workspace_id: PositiveInt | None = Field(
+        default=None,
+        description=(
+            "Optional shared workspace ID providing context while outputting "
+            "to the user's personal workspace."
+        ),
+    )
     number_of_media: int = Field(
         default=1,
         ge=1,

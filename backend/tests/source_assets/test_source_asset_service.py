@@ -756,12 +756,19 @@ async def test_finalize_direct_upload_success_image(
         filename="image.png",
         mime_type="image/png",
         size=2048,
+        folder_id=12,
     )
-    response = await service.finalize_direct_upload(dto, sample_user)
+    with patch(
+        "src.source_assets.source_asset_service.ensure_folder_in_workspace",
+        new=AsyncMock(return_value=12),
+    ) as ensure_folder:
+        response = await service.finalize_direct_upload(dto, sample_user)
 
+    ensure_folder.assert_awaited_once_with(mock_dependencies["repo"].db, 1, 12)
     assert response.id == 101
     assert response.original_filename == "image.png"
     mock_dependencies["repo"].create.assert_called_once()
+    assert mock_dependencies["repo"].create.call_args.args[0].folder_id == 12
 
 
 @pytest.mark.anyio

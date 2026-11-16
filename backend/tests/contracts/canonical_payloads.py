@@ -154,6 +154,21 @@ CANONICAL_BROWSER_PAYLOADS: list[tuple[str, str, dict]] = [
     ),
     (
         "POST",
+        "/api/images/generate-images",
+        {
+            "prompt": "Hero shoe shot with shared brand context",
+            "workspaceId": 1,
+            "contextWorkspaceId": 5,
+            "aspectRatio": "1:1",
+            "numberOfMedia": 1,
+            "useBrandGuidelines": True,
+            "sourceMediaItems": [
+                {"mediaItemId": 10, "mediaIndex": 0, "role": "input"}
+            ],
+        },
+    ),
+    (
+        "POST",
         "/api/videos/generate-videos",
         {
             "prompt": "Slow pan across studio",
@@ -164,10 +179,47 @@ CANONICAL_BROWSER_PAYLOADS: list[tuple[str, str, dict]] = [
     ),
     (
         "POST",
+        "/api/videos/generate-videos",
+        {
+            "prompt": "Slow pan with shared context",
+            "workspaceId": 1,
+            "contextWorkspaceId": 5,
+            "aspectRatio": "16:9",
+            "numberOfMedia": 1,
+        },
+    ),
+    (
+        "POST",
+        "/api/videos/concatenate",
+        {
+            "name": "Concatenated Video",
+            "workspaceId": 1,
+            "inputs": [
+                {"id": 10, "type": "media_item"},
+                {"id": 11, "type": "source_asset"},
+            ],
+            "aspectRatio": "16:9",
+        },
+    ),
+    (
+        "POST",
         "/api/images/generate-images-for-vto",
         {
             "workspaceId": 1,
             "numberOfMedia": 1,
+            "personImage": {"sourceAssetId": 5},
+            "topImage": {
+                "sourceMediaItem": {"mediaItemId": 9, "mediaIndex": 0}
+            },
+        },
+    ),
+    (
+        "POST",
+        "/api/images/generate-images-for-vto",
+        {
+            "workspaceId": 1,
+            "contextWorkspaceId": 5,
+            "numberOfMedia": 4,
             "personImage": {"sourceAssetId": 5},
             "topImage": {
                 "sourceMediaItem": {"mediaItemId": 9, "mediaIndex": 0}
@@ -214,6 +266,7 @@ CANONICAL_BROWSER_PAYLOADS: list[tuple[str, str, dict]] = [
         "/api/source_assets/finalize-upload",
         {
             "workspaceId": 1,
+            "folderId": 3,
             "gcsUri": "gs://b/photo.png",
             "filename": "photo.png",
             "mimeType": "image/png",

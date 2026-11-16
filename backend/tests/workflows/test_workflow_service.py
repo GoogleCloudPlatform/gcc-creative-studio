@@ -925,6 +925,8 @@ class TestBatchExecuteWorkflow:
             return_value=mock_asset,
         )
 
+        from src.workspaces.generation_workspace import GenerationContext
+
         batch_dto = BatchExecutionRequestDto(
             items=[
                 BatchExecutionItemDto(
@@ -934,11 +936,21 @@ class TestBatchExecuteWorkflow:
             ],
         )
 
-        response = await workflow_service.batch_execute_workflow(
-            workflow_id="id-123",
-            batch_dto=batch_dto,
-            user=sample_user,
-        )
+        with patch(
+            "src.workflows.workflow_service.resolve_generation_context",
+            new=AsyncMock(
+                return_value=GenerationContext(
+                    output_workspace_id=1,
+                    brand_workspace_id=1,
+                    resolved_folder_id=None,
+                )
+            ),
+        ):
+            response = await workflow_service.batch_execute_workflow(
+                workflow_id="id-123",
+                batch_dto=batch_dto,
+                user=sample_user,
+            )
 
         assert response is not None
         assert len(response.results) == 1
@@ -1073,6 +1085,8 @@ class TestBatchExecuteWorkflow:
         )
         mock_run_repo.create = AsyncMock(side_effect=guarded_run_create)
 
+        from src.workspaces.generation_workspace import GenerationContext
+
         batch_dto = BatchExecutionRequestDto(
             items=[
                 BatchExecutionItemDto(
@@ -1090,11 +1104,21 @@ class TestBatchExecuteWorkflow:
             ]
         )
 
-        response = await workflow_service.batch_execute_workflow(
-            workflow_id="id-123",
-            batch_dto=batch_dto,
-            user=sample_user,
-        )
+        with patch(
+            "src.workflows.workflow_service.resolve_generation_context",
+            new=AsyncMock(
+                return_value=GenerationContext(
+                    output_workspace_id=1,
+                    brand_workspace_id=1,
+                    resolved_folder_id=None,
+                )
+            ),
+        ):
+            response = await workflow_service.batch_execute_workflow(
+                workflow_id="id-123",
+                batch_dto=batch_dto,
+                user=sample_user,
+            )
 
         assert len(response.results) == 50
         assert [r.row_index for r in response.results] == list(range(50))
@@ -1163,6 +1187,63 @@ class TestBatchExecuteWorkflow:
             response.results[1].error or ""
         )
         mock_run_repo.db.rollback.assert_awaited_once()
+
+    @pytest.mark.anyio
+    async def test_batch_execute_gcs_ingestion_targets_personal_workspace_keeps_run_workspace(
+        self,
+        workflow_service,
+        sample_user,
+        sample_workflow_model,
+    ):
+        from src.workflows.dto.batch_execution_dto import (
+            BatchExecutionItemDto,
+            BatchExecutionRequestDto,
+        )
+        from src.workspaces.generation_workspace import GenerationContext
+
+        workflow_service.get_by_id = AsyncMock(
+            return_value=sample_workflow_model
+        )
+        workflow_service._ensure_gcp_workflow_is_current = AsyncMock()
+        workflow_service.submit_run = AsyncMock(
+            wraps=workflow_service.submit_run
+        )
+        mock_asset = MagicMock(id=222)
+        workflow_service.source_asset_service.create_from_gcs_uri = AsyncMock(
+            return_value=mock_asset
+        )
+        batch_dto = BatchExecutionRequestDto(
+            items=[
+                BatchExecutionItemDto(
+                    row_index=0,
+                    args={"image": "gs://bucket/a.png", "workspace_id": "1"},
+                ),
+            ]
+        )
+        with patch(
+            "src.workflows.workflow_service.resolve_generation_context",
+            new=AsyncMock(
+                return_value=GenerationContext(
+                    output_workspace_id=10,
+                    brand_workspace_id=1,
+                    resolved_folder_id=None,
+                )
+            ),
+        ):
+            response = await workflow_service.batch_execute_workflow(
+                workflow_id="id-123",
+                batch_dto=batch_dto,
+                user=sample_user,
+            )
+
+        assert response.results[0].status == "SUCCESS"
+        ingest_kwargs = (
+            workflow_service.source_asset_service.create_from_gcs_uri.await_args.kwargs
+        )
+        assert ingest_kwargs["workspace_id"] == 10
+        submitted_args = workflow_service.submit_run.await_args.kwargs["args"]
+        assert submitted_args["workspace_id"] == "1"
+        assert submitted_args["image"]["sourceAssetId"] == 222
 
 
 class TestEnsureGcpWorkflowIsCurrent:

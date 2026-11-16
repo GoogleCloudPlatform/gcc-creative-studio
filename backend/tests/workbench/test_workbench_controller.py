@@ -105,10 +105,10 @@ class TestWorkbenchController:
         response_legacy = api_client.post("/api/workbench/render", json=payload)
         assert response_legacy.status_code == status.HTTP_200_OK
         assert response_legacy.json()["id"] == 10
-        assert mock_workspace_auth.authorize_write.await_count == 2
-        mock_workspace_auth.authorize.assert_not_awaited()
+        assert mock_workspace_auth.authorize.await_count == 2
+        mock_workspace_auth.authorize_write.assert_not_awaited()
 
-    def test_render_timeline_viewer_forbidden_403(
+    def test_render_timeline_unauthorized_403(
         self, api_client, mock_workbench_service, mock_workspace_auth
     ):
         from fastapi import HTTPException
@@ -116,8 +116,8 @@ class TestWorkbenchController:
         mock_workbench_service.get_timeline.return_value = TimelineResponse(
             timeline_id=1, workspace_id="1", title="T1"
         )
-        mock_workspace_auth.authorize_write.side_effect = HTTPException(
-            status_code=403, detail="Viewers have read-only access"
+        mock_workspace_auth.authorize.side_effect = HTTPException(
+            status_code=403, detail="Forbidden workspace access"
         )
         assert (
             api_client.post("/api/workbench/timelines/1/render").status_code

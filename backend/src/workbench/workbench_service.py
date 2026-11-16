@@ -48,6 +48,7 @@ from src.common.schema.media_item_model import (
     SourceMediaItemLink,
 )
 from src.common.storage_service import GcsService
+from src.folders.agent_output_folder import resolve_agent_output_folder_id
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.images.repository.media_item_repository import MediaRepository
 from src.projects.schema.project_model import Storyboard
@@ -55,7 +56,10 @@ from src.source_assets.repository.source_asset_repository import (
     SourceAssetRepository,
 )
 from src.users.user_model import UserModel
-from src.workspaces.generation_workspace import ensure_can_reference_inputs
+from src.workspaces.generation_workspace import (
+    ensure_can_reference_inputs,
+    resolve_generation_context,
+)
 from src.workbench.dto.workbench_dto import (
     TimelineCreate,
     TimelineRequest,
@@ -548,14 +552,20 @@ class WorkbenchService:
             )
         ws_id = int(raw_ws_id)
 
+        ctx = await resolve_generation_context(
+            self.media_repo.db,
+            ws_id,
+            user,
+            agent_folder_resolver=resolve_agent_output_folder_id,
+        )
         new_media_item = MediaItemModel(
             prompt=f"Render of timeline {timeline_id}",
             mime_type=MimeTypeEnum.VIDEO_MP4,
             status=JobStatusEnum.PROCESSING,
             user_id=user.id,
             user_email=user.email,
-            workspace_id=ws_id,
-            folder_id=None,
+            workspace_id=ctx.output_workspace_id,
+            folder_id=ctx.resolved_folder_id,
             model=GenerationModelEnum.WORKBENCH_RENDER,
             aspect_ratio=timeline_aspect_ratio,
             gcs_uris=[],

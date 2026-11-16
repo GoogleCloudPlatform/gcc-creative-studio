@@ -1758,7 +1758,42 @@ class WorkflowsExecutorService:
             ],
             mime_type_prefix=item_type,
         )
-        missing_count = len(requested - found)
+        missing = requested - found
+        if missing:
+            ws_map = (
+                await gallery_repository.lookup_linked_loop_item_workspaces(
+                    media_item_ids=[
+                        item_id
+                        for kind, item_id in missing
+                        if kind == LOOP_MEDIA_ITEM
+                    ],
+                    source_asset_ids=[
+                        item_id
+                        for kind, item_id in missing
+                        if kind == LOOP_SOURCE_ASSET
+                    ],
+                    mime_type_prefix=item_type,
+                )
+            )
+            if missing.issubset(ws_map.keys()):
+                checked_ws: set[int] = {request.workspace_id}
+                try:
+                    for key in missing:
+                        ws_id = ws_map[key]
+                        if ws_id not in checked_ws:
+                            await workspace_auth.authorize(
+                                workspace_id=ws_id, user=user
+                            )
+                            checked_ws.add(ws_id)
+                    missing = set()
+                except HTTPException as error:
+                    logger.warning(
+                        "Loop step %s cross-workspace linked item denied: %s",
+                        request.step_id,
+                        error.status_code,
+                    )
+
+        missing_count = len(missing)
         if missing_count:
             logger.warning(
                 "Loop step %s of run %s: %s of %s linked items are not "

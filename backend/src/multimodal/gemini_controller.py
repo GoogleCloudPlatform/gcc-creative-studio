@@ -136,7 +136,9 @@ async def generate_multimodal_endpoint(
             workspace_id=request.workspace_id,
             user=current_user,
         )
-        response_text = await gemini_service.generate_multimodal(request)
+        response_text = await gemini_service.generate_multimodal(
+            request, current_user=current_user
+        )
         return MultimodalGenerationResponseDto(text=response_text)
     except HTTPException as http_exc:
         raise http_exc
