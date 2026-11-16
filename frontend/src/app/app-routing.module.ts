@@ -51,6 +51,7 @@ const routes: Routes = [
   {
     path: 'projects',
     redirectTo: '/workbench',
+    pathMatch: 'full',
   },
   // When a user goes to '/gallery', show the main feed.
   {
