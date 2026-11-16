@@ -48,6 +48,10 @@ const routes: Routes = [
     component: WorkbenchComponent,
     canActivate: [AuthGuardService],
   },
+  {
+    path: 'projects',
+    redirectTo: '/workbench',
+  },
   // When a user goes to '/gallery', show the main feed.
   {
     path: 'gallery',
