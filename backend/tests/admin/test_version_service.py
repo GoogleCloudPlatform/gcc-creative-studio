@@ -11,13 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for admin version checking service and controller endpoint."""
+"""Unit and controller tests for Admin VersionService."""
 
 import asyncio
-import json
-import os
-from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from collections.abc import Awaitable, Callable
+from unittest.mock import AsyncMock
 
 from fastapi import status
 import httpx
@@ -27,6 +25,7 @@ from main import app
 from src.admin.dto.admin_response_dto import AdminVersionInfo
 from src.admin.version_service import (
     VersionService,
+    clear_version_cache,
     get_version_service,
     normalize_calver_str,
     parse_calver,
@@ -36,36 +35,41 @@ _REPO = "GoogleCloudPlatform/gcc-creative-studio"
 _TAG_URL = f"https://github.com/{_REPO}/releases/tag"
 
 
-def _make_mock_client_factory(
-    handler,
-    calls: list[dict[str, object]] | None = None,
-):
-    def factory() -> httpx.AsyncClient:
-        async def _dispatch(request: httpx.Request) -> httpx.Response:
-            if calls is not None:
-                calls.append(
-                    {
-                        "url": str(request.url),
-                        "headers": dict(request.headers),
-                    }
-                )
-            return await handler(request)
+@pytest.fixture(autouse=True)
+def _reset_cache():
+    clear_version_cache()
+    yield
+    clear_version_cache()
 
-        return httpx.AsyncClient(transport=httpx.MockTransport(_dispatch))
+
+def _make_mock_client_factory(
+    handler: Callable[[httpx.Request], Awaitable[httpx.Response]],
+    calls: list[dict[str, object]] | None = None,
+) -> Callable[[], httpx.AsyncClient]:
+    async def transport_handler(request: httpx.Request) -> httpx.Response:
+        if calls is not None:
+            calls.append(
+                {"url": str(request.url), "headers": dict(request.headers)}
+            )
+        return await handler(request)
+
+    def factory() -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            transport=httpx.MockTransport(transport_handler),
+            follow_redirects=False,
+        )
 
     return factory
 
 
-class TestParseCalver:
-    """Tests for CalVer normalization and parsing."""
+class TestCalverParsing:
+    """Tests for CalVer normalization and validation."""
 
-    def test_parses_three_and_four_part_versions(self):
+    def test_parse_and_normalize_calver(self):
         assert parse_calver("26.11.12") == (26, 11, 12, 0)
         assert parse_calver("v26.11.12") == (26, 11, 12, 0)
         assert parse_calver(" V26.11.12.1 ") == (26, 11, 12, 1)
         assert normalize_calver_str(" v26.11.12 ") == "26.11.12"
-
-    def test_rejects_non_calver_strings(self):
         assert normalize_calver_str("vv26.11.12") == "v26.11.12"
         assert parse_calver("vv26.11.12") is None
         assert parse_calver("VV26.11.12") is None
@@ -77,10 +81,10 @@ class TestParseCalver:
 
 
 class TestVersionService:
-    """Tests for VersionService release checking and caching."""
+    """Tests for VersionService release checking and in-process caching."""
 
     @pytest.mark.asyncio
-    async def test_up_to_date_normalizes_leading_v(self, tmp_path: Path):
+    async def test_up_to_date_without_token_omits_auth_header(self):
         calls: list[dict[str, object]] = []
 
         async def handler(unused_request: httpx.Request) -> httpx.Response:
@@ -89,19 +93,17 @@ class TestVersionService:
                 json=[
                     {
                         "tag_name": "v26.11.12",
-                        "name": "v26.11.12",
                         "draft": False,
                         "prerelease": False,
                         "html_url": f"{_TAG_URL}/v26.11.12",
-                        "published_at": "2026-11-12T20:00:00Z",
                     }
                 ],
             )
 
         service = VersionService(
             repo=_REPO,
+            github_token="",
             current_version="26.11.12",
-            cache_path=tmp_path / "cache.json",
             time_fn=lambda: 1000.0,
             http_client_factory=_make_mock_client_factory(handler, calls),
         )
@@ -115,9 +117,7 @@ class TestVersionService:
         assert "authorization" not in calls[0]["headers"]
 
     @pytest.mark.asyncio
-    async def test_hotfix_update_available_and_token_header(
-        self, tmp_path: Path
-    ):
+    async def test_hotfix_update_available_and_token_header(self):
         calls: list[dict[str, object]] = []
 
         async def handler(unused_request: httpx.Request) -> httpx.Response:
@@ -126,11 +126,9 @@ class TestVersionService:
                 json=[
                     {
                         "tag_name": "v26.11.12.1",
-                        "name": "Hotfix 1",
                         "draft": False,
                         "prerelease": False,
                         "html_url": f"{_TAG_URL}/v26.11.12.1",
-                        "published_at": "2026-11-12T22:00:00Z",
                     }
                 ],
             )
@@ -139,7 +137,6 @@ class TestVersionService:
             repo=_REPO,
             github_token="ghp_testtoken",
             current_version="26.11.12",
-            cache_path=tmp_path / "cache.json",
             time_fn=lambda: 2000.0,
             http_client_factory=_make_mock_client_factory(handler, calls),
         )
@@ -150,7 +147,7 @@ class TestVersionService:
         assert calls[0]["headers"]["authorization"] == "Bearer ghp_testtoken"
 
     @pytest.mark.asyncio
-    async def test_ahead_dev_build_is_up_to_date(self, tmp_path: Path):
+    async def test_ahead_dev_build_is_up_to_date(self):
         async def handler(unused_request: httpx.Request) -> httpx.Response:
             return httpx.Response(
                 200,
@@ -167,7 +164,6 @@ class TestVersionService:
         service = VersionService(
             repo=_REPO,
             current_version="26.12.01",
-            cache_path=tmp_path / "cache.json",
             time_fn=lambda: 1000.0,
             http_client_factory=_make_mock_client_factory(handler),
         )
@@ -175,9 +171,7 @@ class TestVersionService:
         assert info.status == "up_to_date"
 
     @pytest.mark.asyncio
-    async def test_skips_draft_prerelease_non_calver_and_builds_safe_url(
-        self, tmp_path: Path
-    ):
+    async def test_skips_draft_prerelease_non_calver_and_builds_safe_url(self):
         async def handler(unused_request: httpx.Request) -> httpx.Response:
             return httpx.Response(
                 200,
@@ -218,7 +212,6 @@ class TestVersionService:
         service = VersionService(
             repo=_REPO,
             current_version="26.11.12",
-            cache_path=tmp_path / "cache.json",
             time_fn=lambda: 1000.0,
             http_client_factory=_make_mock_client_factory(handler),
         )
@@ -239,7 +232,7 @@ class TestVersionService:
         ],
     )
     async def test_graceful_unavailable_on_empty_or_bad_responses(
-        self, tmp_path: Path, response_obj: httpx.Response
+        self, response_obj: httpx.Response
     ):
         async def handler(unused_request: httpx.Request) -> httpx.Response:
             return response_obj
@@ -247,7 +240,6 @@ class TestVersionService:
         service = VersionService(
             repo=_REPO,
             current_version="26.11.12",
-            cache_path=tmp_path / "cache.json",
             time_fn=lambda: 1000.0,
             http_client_factory=_make_mock_client_factory(handler),
         )
@@ -257,14 +249,13 @@ class TestVersionService:
         assert info.latest_version is None
 
     @pytest.mark.asyncio
-    async def test_timeout_returns_unavailable(self, tmp_path: Path):
+    async def test_timeout_returns_unavailable(self):
         async def handler(request: httpx.Request) -> httpx.Response:
             raise httpx.ReadTimeout("timed out", request=request)
 
         service = VersionService(
             repo=_REPO,
             current_version="26.11.12",
-            cache_path=tmp_path / "cache.json",
             time_fn=lambda: 1000.0,
             http_client_factory=_make_mock_client_factory(handler),
         )
@@ -272,191 +263,20 @@ class TestVersionService:
         assert info.status == "unavailable"
 
     @pytest.mark.asyncio
-    async def test_invalid_repo_or_current_version_skips_http(
-        self, tmp_path: Path
-    ):
-        calls: list[dict[str, object]] = []
-
-        async def handler(unused_request: httpx.Request) -> httpx.Response:
-            raise AssertionError("HTTP should not be called")
-
-        bad_repo_svc = VersionService(
-            repo="https://evil.com/owner/repo",
-            current_version="26.11.12",
-            cache_path=tmp_path / "cache1.json",
-            time_fn=lambda: 1000.0,
-            http_client_factory=_make_mock_client_factory(handler, calls),
-        )
-        assert (await bad_repo_svc.get_version_info()).status == "unavailable"
-
-        bad_ver_svc = VersionService(
-            repo=_REPO,
-            current_version="not-a-calver",
-            cache_path=tmp_path / "cache2.json",
-            time_fn=lambda: 1000.0,
-            http_client_factory=_make_mock_client_factory(handler, calls),
-        )
-        assert (await bad_ver_svc.get_version_info()).status == "unavailable"
-        assert not calls
-
-    @pytest.mark.asyncio
-    async def test_shared_cache_hit_refresh_cooldown_and_negative_ttl(
-        self, tmp_path: Path
-    ):
-        now = 1000.0
-        calls: list[dict[str, object]] = []
-        mode = {"status": 200, "tag": "v26.11.12"}
-
-        async def handler(unused_request: httpx.Request) -> httpx.Response:
-            if mode["status"] != 200:
-                return httpx.Response(int(mode["status"]))
-            tag = str(mode["tag"])
-            return httpx.Response(
-                200,
-                json=[
-                    {
-                        "tag_name": tag,
-                        "draft": False,
-                        "prerelease": False,
-                        "html_url": f"{_TAG_URL}/{tag}",
-                    }
-                ],
-            )
-
-        cache_file = tmp_path / "shared_cache.json"
-        factory = _make_mock_client_factory(handler, calls)
-
-        worker_one = VersionService(
-            repo="GoogleCloudPlatform/gcc-creative-studio",
-            current_version="26.11.12",
-            cache_path=cache_file,
-            time_fn=lambda: now,
-            http_client_factory=factory,
-        )
-        worker_two = VersionService(
-            repo="GoogleCloudPlatform/gcc-creative-studio",
-            current_version="26.11.12",
-            cache_path=cache_file,
-            time_fn=lambda: now,
-            http_client_factory=factory,
-        )
-
-        first = await worker_one.get_version_info()
-        assert first.status == "up_to_date"
-        assert len(calls) == 1
-
-        # Separate worker instance reuses shared JSON cache within 1h.
-        now = 1002.0
-        second = await worker_two.get_version_info()
-        assert second.status == "up_to_date"
-        assert len(calls) == 1
-
-        # Refresh within <5s cooldown reuses cached value.
-        mode["tag"] = "v26.11.15"
-        cooldown_res = await worker_two.get_version_info(refresh=True)
-        assert cooldown_res.status == "up_to_date"
-        assert len(calls) == 1
-
-        # Refresh after >=5s bypasses 1h cache and updates shared cache.
-        now = 1006.0
-        refreshed = await worker_two.get_version_info(refresh=True)
-        assert refreshed.status == "update_available"
-        assert refreshed.latest_version == "26.11.15"
-        assert len(calls) == 2
-
-        # Worker one sees the refreshed value from disk cache without HTTP call.
-        assert (
-            await worker_one.get_version_info()
-        ).latest_version == "26.11.15"
-        assert len(calls) == 2
-
-        # Transient upstream 500 preserves last known good version across workers.
-        now = 1012.0
-        mode["status"] = 500
-        preserved = await worker_one.get_version_info(refresh=True)
-        assert preserved.status == "update_available"
-        assert preserved.latest_version == "26.11.15"
-        assert preserved.refresh_failed is True
-        assert len(calls) == 3
-
-        # Refresh within 5s of failed refresh is throttled; non-refresh serves clean cache.
-        now = 1014.0
-        throttled = await worker_two.get_version_info(refresh=True)
-        assert throttled.latest_version == "26.11.15"
-        assert throttled.refresh_failed is True
-        non_refresh = await worker_two.get_version_info()
-        assert non_refresh.latest_version == "26.11.15"
-        assert non_refresh.refresh_failed is False
-        assert len(calls) == 3
-
-        # After 1h TTL expires and GitHub fails, still preserves good version for 60s backoff.
-        now = 5000.0
-        assert (
-            await worker_two.get_version_info()
-        ).latest_version == "26.11.15"
-        assert len(calls) == 4
-
-        now = 5030.0
-        assert (
-            await worker_one.get_version_info()
-        ).latest_version == "26.11.15"
-        assert len(calls) == 4
-
-        # After 60s retry backoff, GitHub recovers with newer tag.
-        now = 5065.0
-        mode["status"] = 200
-        mode["tag"] = "v26.11.16"
-        recovered = await worker_two.get_version_info()
-        assert recovered.status == "update_available"
-        assert recovered.latest_version == "26.11.16"
-        assert len(calls) == 5
-
-    @pytest.mark.asyncio
-    async def test_cold_start_failure_uses_negative_ttl_and_recovers(
-        self, tmp_path: Path
-    ):
-        now = 1000.0
-        calls: list[dict[str, object]] = []
-        mode = {"status": 500}
-
-        async def handler(unused_request: httpx.Request) -> httpx.Response:
-            if mode["status"] != 200:
-                return httpx.Response(int(mode["status"]))
-            return httpx.Response(
-                200,
-                json=[
-                    {
-                        "tag_name": "v26.11.15",
-                        "draft": False,
-                        "prerelease": False,
-                    }
-                ],
-            )
-
-        svc = VersionService(
-            repo=_REPO,
-            current_version="26.11.12",
-            cache_path=tmp_path / "cold_fail.json",
-            time_fn=lambda: now,
-            http_client_factory=_make_mock_client_factory(handler, calls),
-        )
-        assert (await svc.get_version_info()).status == "unavailable"
-        assert len(calls) == 1
-
-        now = 1030.0
-        assert (await svc.get_version_info()).status == "unavailable"
-        assert len(calls) == 1
-
-        now = 1065.0
-        mode["status"] = 200
-        recovered = await svc.get_version_info()
-        assert recovered.status == "update_available"
-        assert recovered.latest_version == "26.11.15"
-        assert len(calls) == 2
-
-    @pytest.mark.asyncio
-    async def test_double_v_current_version_rejected_without_http(
-        self, tmp_path: Path
+    @pytest.mark.parametrize(
+        ("repo", "current_version"),
+        [
+            ("https://evil.com/owner/repo", "26.11.12"),
+            (_REPO, "not-a-calver"),
+            (_REPO, "vv26.11.12"),
+            ("../orgs", "26.11.12"),
+            ("owner/..", "26.11.12"),
+            ("./repo", "26.11.12"),
+            ("owner/.", "26.11.12"),
+        ],
+    )
+    async def test_invalid_inputs_skip_http(
+        self, repo: str, current_version: str
     ):
         calls: list[dict[str, object]] = []
 
@@ -464,19 +284,17 @@ class TestVersionService:
             raise AssertionError("HTTP should not be called")
 
         svc = VersionService(
-            repo=_REPO,
-            current_version="vv26.11.12",
-            cache_path=tmp_path / "cache.json",
+            repo=repo,
+            current_version=current_version,
             time_fn=lambda: 1000.0,
             http_client_factory=_make_mock_client_factory(handler, calls),
         )
-        info = await svc.get_version_info()
-        assert info.status == "unavailable"
+        assert (await svc.get_version_info()).status == "unavailable"
         assert not calls
 
     @pytest.mark.asyncio
     async def test_requests_per_page_100_and_finds_release_past_30_prereleases(
-        self, tmp_path: Path
+        self,
     ):
         calls: list[dict[str, object]] = []
         items = [
@@ -503,7 +321,6 @@ class TestVersionService:
         svc = VersionService(
             repo=_REPO,
             current_version="26.11.12",
-            cache_path=tmp_path / "cache.json",
             time_fn=lambda: 1000.0,
             http_client_factory=_make_mock_client_factory(handler, calls),
         )
@@ -513,31 +330,15 @@ class TestVersionService:
         assert info.latest_version == "26.11.15"
 
     @pytest.mark.asyncio
-    async def test_unwritable_cache_fallback_cleans_temp_and_ignores_stale_disk(
-        self, tmp_path: Path
-    ):
-        cache_file = tmp_path / "cache.json"
-        cache_file.write_text(
-            json.dumps(
-                {
-                    f"{_REPO}|26.11.12": {
-                        "fetched_at": 990.0,
-                        "info": {
-                            "current_version": "26.11.12",
-                            "latest_version": "26.01.01",
-                            "status": "up_to_date",
-                            "checked_at": "1970-01-01T00:16:30Z",
-                        },
-                    }
-                }
-            ),
-            encoding="utf-8",
-        )
+    async def test_shared_cache_hit_refresh_cooldown_and_negative_ttl(self):
         now = 1000.0
-        tag = "v26.11.15"
         calls: list[dict[str, object]] = []
+        mode = {"status": 200, "tag": "v26.11.12"}
 
         async def handler(unused_request: httpx.Request) -> httpx.Response:
+            if mode["status"] != 200:
+                return httpx.Response(int(mode["status"]))
+            tag = str(mode["tag"])
             return httpx.Response(
                 200,
                 json=[
@@ -551,51 +352,85 @@ class TestVersionService:
             )
 
         factory = _make_mock_client_factory(handler, calls)
-        svc1 = VersionService(
+        svc_one = VersionService(
             repo=_REPO,
             current_version="26.11.12",
-            cache_path=cache_file,
             time_fn=lambda: now,
             http_client_factory=factory,
         )
-        svc2 = VersionService(
+        svc_two = VersionService(
             repo=_REPO,
             current_version="26.11.12",
-            cache_path=cache_file,
             time_fn=lambda: now,
             http_client_factory=factory,
         )
 
-        with patch(
-            "src.admin.version_service.os.replace",
-            side_effect=PermissionError("read-only"),
-        ):
-            res1 = await svc1.get_version_info(refresh=True)
-        assert res1.latest_version == "26.11.15"
+        first = await svc_one.get_version_info()
+        assert first.status == "up_to_date"
         assert len(calls) == 1
-        leftovers = [p for p in tmp_path.iterdir() if p.name.startswith(".")]
-        assert not leftovers
 
-        # Memory cache takes precedence over stale disk file while unwritable
         now = 1002.0
-        res2 = await svc2.get_version_info()
-        assert res2.latest_version == "26.11.15"
+        assert (await svc_two.get_version_info()).status == "up_to_date"
         assert len(calls) == 1
 
-        # Once disk becomes writable again, refresh persists and recovers
-        now = 5000.0
-        tag = "v26.11.16"
-        res3 = await svc2.get_version_info()
-        assert res3.latest_version == "26.11.16"
+        # Refresh within 5s cooldown reuses cache.
+        mode["tag"] = "v26.11.15"
+        assert (
+            await svc_two.get_version_info(refresh=True)
+        ).status == "up_to_date"
+        assert len(calls) == 1
+
+        # Refresh after >=5s updates shared cache.
+        now = 1006.0
+        refreshed = await svc_two.get_version_info(refresh=True)
+        assert refreshed.status == "update_available"
+        assert refreshed.latest_version == "26.11.15"
+        assert len(calls) == 2
+        assert (await svc_one.get_version_info()).latest_version == "26.11.15"
         assert len(calls) == 2
 
+        # Transient 500 preserves good version, flagging only refresh calls.
+        now = 1012.0
+        mode["status"] = 500
+        preserved = await svc_one.get_version_info(refresh=True)
+        assert preserved.latest_version == "26.11.15"
+        assert preserved.refresh_failed is True
+        assert len(calls) == 3
+
+        now = 1014.0
+        throttled = await svc_two.get_version_info(refresh=True)
+        assert throttled.latest_version == "26.11.15"
+        assert throttled.refresh_failed is True
+        non_refresh = await svc_two.get_version_info()
+        assert non_refresh.latest_version == "26.11.15"
+        assert non_refresh.refresh_failed is False
+        assert len(calls) == 3
+
+        # After TTL expires and upstream still fails, enters 60s backoff.
+        now = 5000.0
+        assert (await svc_two.get_version_info()).latest_version == "26.11.15"
+        assert len(calls) == 4
+        now = 5030.0
+        assert (await svc_one.get_version_info()).latest_version == "26.11.15"
+        assert len(calls) == 4
+
+        now = 5065.0
+        mode["status"] = 200
+        mode["tag"] = "v26.11.16"
+        recovered = await svc_two.get_version_info()
+        assert recovered.status == "update_available"
+        assert recovered.latest_version == "26.11.16"
+        assert len(calls) == 5
+
     @pytest.mark.asyncio
-    async def test_corrupt_nan_bool_tampered_url_and_symlink_cache_recovery(
-        self, tmp_path: Path
-    ):
+    async def test_cold_start_failure_uses_negative_ttl_and_recovers(self):
+        now = 1000.0
         calls: list[dict[str, object]] = []
+        mode = {"status": 500}
 
         async def handler(unused_request: httpx.Request) -> httpx.Response:
+            if mode["status"] != 200:
+                return httpx.Response(int(mode["status"]))
             return httpx.Response(
                 200,
                 json=[
@@ -603,100 +438,32 @@ class TestVersionService:
                         "tag_name": "v26.11.15",
                         "draft": False,
                         "prerelease": False,
-                        "html_url": f"{_TAG_URL}/v26.11.15",
                     }
                 ],
             )
 
-        factory = _make_mock_client_factory(handler, calls)
-        cache_key = f"{_REPO}|26.11.12"
-        base_info = {
-            "current_version": "26.11.12",
-            "latest_version": "26.11.12",
-            "status": "up_to_date",
-            "release_url": f"{_TAG_URL}/v26.11.12",
-            "checked_at": "1970-01-01T00:16:40Z",
-        }
-        nan_entry = {cache_key: {"fetched_at": float("nan"), "info": base_info}}
-        bad_payloads = [
-            "{not-json",
-            json.dumps(nan_entry),
-            json.dumps({cache_key: {"fetched_at": True, "info": base_info}}),
-            json.dumps(
-                {
-                    cache_key: {
-                        "fetched_at": 999.0,
-                        "info": {
-                            **base_info,
-                            "release_url": "https://evil.example.com/phish",
-                        },
-                    }
-                }
-            ),
-            json.dumps(
-                {
-                    cache_key: {
-                        "fetched_at": 999.0,
-                        "info": {
-                            **base_info,
-                            "release_url": (
-                                f"https://github.com/{_REPO}/../../evil"
-                            ),
-                        },
-                    }
-                }
-            ),
-        ]
-
-        for idx, content in enumerate(bad_payloads):
-            cache_file = tmp_path / f"bad_{idx}.json"
-            cache_file.write_text(content, encoding="utf-8")
-            svc = VersionService(
-                repo=_REPO,
-                current_version="26.11.12",
-                cache_path=cache_file,
-                time_fn=lambda: 1000.0,
-                http_client_factory=factory,
-            )
-            info = await svc.get_version_info()
-            assert info.latest_version == "26.11.15"
-
-        assert len(calls) == len(bad_payloads)
-
-        # Symlink cache pointing at a valid, fresh payload must still be
-        # ignored via O_NOFOLLOW; target stays intact and HTTP runs.
-        target_payload = json.dumps(
-            {
-                cache_key: {
-                    "fetched_at": 1000.0,
-                    "info": {
-                        **base_info,
-                        "latest_version": "20.01.01",
-                    },
-                }
-            }
-        )
-        target_file = tmp_path / "valid_target.json"
-        target_file.write_text(target_payload, encoding="utf-8")
-        symlink_cache = tmp_path / "symlink_cache.json"
-        os.symlink(target_file, symlink_cache)
-
-        sym_svc = VersionService(
+        svc = VersionService(
             repo=_REPO,
             current_version="26.11.12",
-            cache_path=symlink_cache,
-            time_fn=lambda: 1000.0,
-            http_client_factory=factory,
+            time_fn=lambda: now,
+            http_client_factory=_make_mock_client_factory(handler, calls),
         )
-        sym_info = await sym_svc.get_version_info()
-        assert sym_info.latest_version == "26.11.15"
-        assert len(calls) == len(bad_payloads) + 1
-        assert target_file.read_text(encoding="utf-8") == target_payload
+        assert (await svc.get_version_info()).status == "unavailable"
+        assert len(calls) == 1
+
+        now = 1030.0
+        assert (await svc.get_version_info()).status == "unavailable"
+        assert len(calls) == 1
+
+        now = 1065.0
+        mode["status"] = 200
+        recovered = await svc.get_version_info()
+        assert recovered.status == "update_available"
+        assert recovered.latest_version == "26.11.15"
+        assert len(calls) == 2
 
     @pytest.mark.asyncio
-    async def test_negative_age_clock_rollback_triggers_refetch(
-        self, tmp_path: Path
-    ):
+    async def test_negative_age_clock_rollback_triggers_refetch(self):
         now = 2000.0
         calls: list[dict[str, object]] = []
 
@@ -708,7 +475,6 @@ class TestVersionService:
                         "tag_name": "v26.11.12",
                         "draft": False,
                         "prerelease": False,
-                        "html_url": f"{_TAG_URL}/v26.11.12",
                     }
                 ],
             )
@@ -716,7 +482,6 @@ class TestVersionService:
         svc = VersionService(
             repo=_REPO,
             current_version="26.11.12",
-            cache_path=tmp_path / "clock.json",
             time_fn=lambda: now,
             http_client_factory=_make_mock_client_factory(handler, calls),
         )
@@ -732,41 +497,16 @@ class TestVersionService:
         assert len(calls) == 3
 
     @pytest.mark.asyncio
-    async def test_rejects_dot_segment_repos_without_http(self, tmp_path: Path):
-        calls: list[dict[str, object]] = []
-
-        async def fail_if_called(unused_req: httpx.Request) -> httpx.Response:
-            raise AssertionError("HTTP should not be called")
-
-        for bad_repo in ("../orgs", "owner/..", "./repo", "owner/."):
-            svc = VersionService(
-                repo=bad_repo,
-                current_version="26.11.12",
-                cache_path=tmp_path / f"repo_{abs(hash(bad_repo))}.json",
-                time_fn=lambda: 1000.0,
-                http_client_factory=_make_mock_client_factory(
-                    fail_if_called, calls
-                ),
-            )
-            assert (await svc.get_version_info()).status == "unavailable"
-        assert not calls
-
-    @pytest.mark.asyncio
-    async def test_oversized_streaming_response_aborts_cleanly(
-        self, tmp_path: Path
-    ):
+    async def test_oversized_streaming_response_aborts_cleanly(self):
         chunks_yielded = 0
 
-        class _HugeValidJsonStream(httpx.AsyncByteStream):
+        class _HugeJsonStream(httpx.AsyncByteStream):
             """Yields >2 MiB of valid JSON chunks."""
 
             async def __aiter__(self):
                 nonlocal chunks_yielded
                 chunks_yielded += 1
-                yield (
-                    b'[{"tag_name":"v26.11.15","draft":false,'
-                    b'"prerelease":false,"body":"'
-                )
+                yield b'[{"tag_name":"v26.11.15","body":"'
                 filler = b"a" * (512 * 1024)
                 for _ in range(8):
                     chunks_yielded += 1
@@ -775,12 +515,11 @@ class TestVersionService:
                 yield b'"}]'
 
         async def handler(unused_request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, stream=_HugeValidJsonStream())
+            return httpx.Response(200, stream=_HugeJsonStream())
 
         svc = VersionService(
             repo=_REPO,
             current_version="26.11.12",
-            cache_path=tmp_path / "huge.json",
             time_fn=lambda: 1000.0,
             http_client_factory=_make_mock_client_factory(handler),
         )
@@ -789,9 +528,7 @@ class TestVersionService:
         assert info.latest_version is None
         assert chunks_yielded < 10
 
-    def test_concurrent_singleflight_across_sequential_event_loops(
-        self, tmp_path: Path
-    ):
+    def test_concurrent_singleflight_across_sequential_event_loops(self):
         now = 1000.0
         calls: list[dict[str, object]] = []
 
@@ -804,7 +541,6 @@ class TestVersionService:
                         "tag_name": "v26.11.12",
                         "draft": False,
                         "prerelease": False,
-                        "html_url": f"{_TAG_URL}/v26.11.12",
                     }
                 ],
             )
@@ -812,7 +548,6 @@ class TestVersionService:
         svc = VersionService(
             repo=_REPO,
             current_version="26.11.12",
-            cache_path=tmp_path / "loops.json",
             time_fn=lambda: now,
             http_client_factory=_make_mock_client_factory(handler, calls),
         )
@@ -827,7 +562,6 @@ class TestVersionService:
         assert r2.status == "up_to_date"
         assert len(calls) == 1
 
-        # Second event loop after TTL must acquire its own loop-bound lock
         now = 5000.0
         r3, r4 = asyncio.run(run_pair())
         assert r3.status == "up_to_date"
@@ -835,44 +569,11 @@ class TestVersionService:
         assert len(calls) == 2
 
     @pytest.mark.asyncio
-    async def test_default_http_client_disables_redirects_and_provider_returns_service(
-        self,
-    ):
+    async def test_default_http_client_disables_redirects(self):
         svc = get_version_service()
         assert isinstance(svc, VersionService)
         async with svc._http_client_factory() as client:
             assert client.follow_redirects is False
-
-    @pytest.mark.asyncio
-    async def test_cache_ignores_wrong_uid_and_oversized_file(
-        self, tmp_path: Path
-    ):
-        wrong_uid_path = tmp_path / "wrong_uid.json"
-        wrong_uid_path.write_text(
-            json.dumps({"cached": {"fetched_at": 1000.0}}),
-            encoding="utf-8",
-        )
-        svc_uid = VersionService(
-            repo=_REPO,
-            current_version="26.11.12",
-            cache_path=wrong_uid_path,
-            time_fn=lambda: 1000.0,
-        )
-        with patch("src.admin.version_service.os.getuid", return_value=-1):
-            assert svc_uid._cache.read_store() == {}
-
-        oversized_path = tmp_path / "oversized.json"
-        oversized_path.write_text(
-            json.dumps({"blob": "x" * 70_000}),
-            encoding="utf-8",
-        )
-        svc_big = VersionService(
-            repo=_REPO,
-            current_version="26.11.12",
-            cache_path=oversized_path,
-            time_fn=lambda: 1000.0,
-        )
-        assert svc_big._cache.read_store() == {}
 
 
 class TestAdminVersionController:

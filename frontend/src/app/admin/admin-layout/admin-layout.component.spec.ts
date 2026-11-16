@@ -328,6 +328,7 @@ describe('AdminLayoutComponent', () => {
     localStorage.removeItem('USER_DETAILS');
     const authSpy = {
       isUserAdmin: jasmine.createSpy('isUserAdmin').and.returnValue(false),
+      getToken: jasmine.createSpy('getToken').and.returnValue(null),
     };
     const userSpy = {
       getUserDetails: jasmine.createSpy('getUserDetails').and.returnValue(null),
@@ -362,13 +363,11 @@ describe('AdminLayoutComponent', () => {
       );
 
       authSpy.isUserAdmin.and.returnValue(true);
-      localStorage.setItem(
-        'firebase_session',
-        JSON.stringify({
-          token: 'test-session-token',
-          expiry: Date.now() + 3_600_000,
-        }),
-      );
+      authSpy.getToken.and.returnValue('test-session-token');
+      userSpy.getUserDetails.and.returnValue({
+        email: 'admin@example.com',
+        roles: ['ADMIN'],
+      });
       realFixture.componentInstance.ngOnInit();
       httpMock.expectOne(`${environment.backendURL}/admin/version`).flush({
         currentVersion: '26.11.12',

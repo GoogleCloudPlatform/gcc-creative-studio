@@ -14,48 +14,30 @@
  * limitations under the License.
  */
 
-import {PLATFORM_ID} from '@angular/core';
-import {HttpClient, provideHttpClient} from '@angular/common/http';
+import {provideHttpClient} from '@angular/common/http';
 import {
   HttpTestingController,
   provideHttpClientTesting,
 } from '@angular/common/http/testing';
+import {PLATFORM_ID} from '@angular/core';
 import {TestBed, fakeAsync, tick} from '@angular/core/testing';
-import {Event, NavigationEnd, NavigationStart, Router} from '@angular/router';
-import {EMPTY, Subject} from 'rxjs';
 import {environment} from '../../environments/environment';
 import {AuthService} from '../common/services/auth.service';
 import {UserService} from '../common/services/user.service';
-import {AdminVersionInfo, AdminVersionService} from './admin-version.service';
-
-interface MockAuthService {
-  isUserAdmin: jasmine.Spy<() => boolean>;
-}
-
-function makeJwt(payload: Record<string, unknown>): string {
-  const encoded = btoa(JSON.stringify(payload))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-  return `eyJhbGciOiJSUzI1NiJ9.${encoded}.sig`;
-}
-
-function setStoredSession(email: string, sub = 'sub-1'): void {
-  localStorage.setItem(
-    'firebase_session',
-    JSON.stringify({
-      token: makeJwt({sub, email}),
-      expiry: Date.now() + 3_600_000,
-    }),
-  );
-  localStorage.setItem('USER_DETAILS', JSON.stringify({email}));
-}
+import {
+  AdminVersionInfo,
+  AdminVersionService,
+  JUST_CHECKED_MS,
+  REFRESH_COOLDOWN_MS,
+} from './admin-version.service';
 
 describe('AdminVersionService', () => {
   let httpMock: HttpTestingController;
-  let authSpy: MockAuthService;
-  let routerEvents$: Subject<Event>;
+  let isAdminFlag: boolean;
+  let tokenValue: string | null;
+  let userEmail: string | null;
 
+  const endpoint = `${environment.backendURL}/admin/version`;
   const mockInfo: AdminVersionInfo = {
     currentVersion: '26.11.12',
     latestVersion: '26.11.12',
@@ -66,43 +48,26 @@ describe('AdminVersionService', () => {
   };
 
   function setup(
-    platformId: Object,
-    isAdmin: boolean,
-    isLoggedIn = true,
+    platformId: 'browser' | 'server' = 'browser',
   ): AdminVersionService {
-    if (!isLoggedIn) {
-      localStorage.removeItem('firebase_session');
-      localStorage.removeItem('USER_DETAILS');
-    } else if (
-      platformId === 'browser' &&
-      !localStorage.getItem('firebase_session')
-    ) {
-      setStoredSession('admin@example.com', 'sub-default');
-    }
-    routerEvents$ = new Subject<Event>();
-    authSpy = {
-      isUserAdmin: jasmine.createSpy('isUserAdmin').and.returnValue(isAdmin),
-    };
-    const userSpy = {
-      getUserDetails: jasmine.createSpy('getUserDetails').and.callFake(() => {
-        const raw = localStorage.getItem('USER_DETAILS');
-        if (!raw) return null;
-        try {
-          return JSON.parse(raw);
-        } catch {
-          return null;
-        }
-      }),
-    };
-
     TestBed.configureTestingModule({
       providers: [
         provideHttpClient(),
         provideHttpClientTesting(),
-        {provide: AuthService, useValue: authSpy},
-        {provide: UserService, useValue: userSpy},
+        {
+          provide: AuthService,
+          useValue: {
+            isUserAdmin: () => isAdminFlag,
+            getToken: () => tokenValue,
+          },
+        },
+        {
+          provide: UserService,
+          useValue: {
+            getUserDetails: () => (userEmail ? {email: userEmail} : null),
+          },
+        },
         {provide: PLATFORM_ID, useValue: platformId},
-        {provide: Router, useValue: {events: routerEvents$.asObservable()}},
       ],
     });
     httpMock = TestBed.inject(HttpTestingController);
@@ -110,439 +75,185 @@ describe('AdminVersionService', () => {
   }
 
   beforeEach(() => {
-    localStorage.removeItem('firebase_session');
-    localStorage.removeItem('USER_DETAILS');
+    isAdminFlag = true;
+    tokenValue = 'admin-jwt';
+    userEmail = 'admin@example.com';
   });
 
   afterEach(() => {
-    httpMock.verify();
-    localStorage.removeItem('firebase_session');
-    localStorage.removeItem('USER_DETAILS');
+    httpMock?.verify();
+    TestBed.resetTestingModule();
   });
 
-  it('loads version info once via ensureLoaded() for browser admins', () => {
-    const service = setup('browser', true);
+  it('skips loading on SSR, non-admin users, missing tokens, or missing user details', () => {
+    const ssrService = setup('server');
+    expect(ssrService.isBrowserAdmin()).toBeFalse();
+    expect(ssrService.isAdmin()).toBeFalse();
+    ssrService.ensureLoaded();
+    ssrService.refresh();
+    httpMock.expectNone(endpoint);
+    TestBed.resetTestingModule();
+
+    isAdminFlag = false;
+    const userService = setup('browser');
+    expect(userService.isBrowserAdmin()).toBeFalse();
+    userService.ensureLoaded();
+    httpMock.expectNone(endpoint);
+    TestBed.resetTestingModule();
+
+    isAdminFlag = true;
+    tokenValue = null;
+    const noTokenService = setup('browser');
+    expect(noTokenService.isBrowserAdmin()).toBeFalse();
+    noTokenService.ensureLoaded();
+    httpMock.expectNone(endpoint);
+    TestBed.resetTestingModule();
+
+    tokenValue = 'admin-jwt';
+    userEmail = null;
+    const noUserService = setup('browser');
+    expect(noUserService.isBrowserAdmin()).toBeFalse();
+    noUserService.ensureLoaded();
+    httpMock.expectNone(endpoint);
+  });
+
+  it('keeps isBrowserAdmin() pure without mutating isAdmin signal', () => {
+    isAdminFlag = false;
+    const service = setup('browser');
+    expect(service.isAdmin()).toBeFalse();
+
+    isAdminFlag = true;
+    expect(service.isBrowserAdmin()).toBeTrue();
+    expect(service.isAdmin()).toBeFalse();
 
     service.ensureLoaded();
-    service.ensureLoaded();
-
-    const req = httpMock.expectOne(`${environment.backendURL}/admin/version`);
-    expect(req.request.method).toBe('GET');
-    req.flush(mockInfo);
-
-    expect(service.versionInfo()).toEqual(mockInfo);
-    expect(service.loading()).toBeFalse();
-    expect(service.isUpdateAvailable()).toBeFalse();
+    httpMock.expectOne(endpoint).flush(mockInfo);
     expect(service.isAdmin()).toBeTrue();
   });
 
-  it('sends refresh=true, sets justChecked for 1.5s, and enforces 5s cooldown', fakeAsync(() => {
-    const service = setup('browser', true);
-
-    service.refresh();
-    service.refresh();
-
-    const req = httpMock.expectOne(
-      r =>
-        r.url === `${environment.backendURL}/admin/version` &&
-        r.params.get('refresh') === 'true',
-    );
-    req.flush({
-      ...mockInfo,
-      latestVersion: '26.11.15',
-      status: 'update_available',
-    });
-
-    expect(service.isUpdateAvailable()).toBeTrue();
-    expect(service.justChecked()).toBeTrue();
-    expect(service.cooldownActive()).toBeTrue();
-
-    tick(1500);
-    expect(service.justChecked()).toBeFalse();
-    expect(service.cooldownActive()).toBeTrue();
-
-    service.refresh();
-    httpMock.expectNone(`${environment.backendURL}/admin/version`);
-
-    tick(3500);
-    expect(service.cooldownActive()).toBeFalse();
-  }));
-
-  it('preserves last-known state and sets refreshFailed on failed refresh(), then clears on next success', fakeAsync(() => {
-    const service = setup('browser', true);
-    const warnSpy = spyOn(console, 'warn');
-
-    service.ensureLoaded();
-    const initReq = httpMock.expectOne(
-      `${environment.backendURL}/admin/version`,
-    );
+  it('loads version once for browser admins and tracks update availability', () => {
     const updateInfo: AdminVersionInfo = {
       ...mockInfo,
       latestVersion: '26.11.15',
       status: 'update_available',
-      releaseUrl:
-        'https://github.com/GoogleCloudPlatform/gcc-creative-studio/releases/tag/v26.11.15',
     };
-    initReq.flush(updateInfo);
+    const service = setup('browser');
 
-    service.refresh();
-    const failReq = httpMock.expectOne(
-      r =>
-        r.url === `${environment.backendURL}/admin/version` &&
-        r.params.get('refresh') === 'true',
-    );
-    failReq.flush('Bad gateway', {status: 502, statusText: 'Bad Gateway'});
+    service.ensureLoaded();
+    service.ensureLoaded();
+    const req = httpMock.expectOne(endpoint);
+    expect(req.request.method).toBe('GET');
+    expect(service.loading()).toBeTrue();
 
-    expect(warnSpy).toHaveBeenCalled();
+    req.flush(updateInfo);
+    expect(service.loading()).toBeFalse();
     expect(service.versionInfo()).toEqual(updateInfo);
     expect(service.isUpdateAvailable()).toBeTrue();
-    expect(service.loadFailed()).toBeFalse();
-    expect(service.refreshFailed()).toBeTrue();
-    expect(service.justChecked()).toBeFalse();
 
-    tick(5000);
+    service.ensureLoaded();
+    httpMock.expectNone(endpoint);
+  });
+
+  it('forces refresh with cooldown and temporary justChecked indicator', fakeAsync(() => {
+    const service = setup('browser');
+
+    service.ensureLoaded();
+    httpMock.expectOne(endpoint).flush(mockInfo);
+
     service.refresh();
-    const okReq = httpMock.expectOne(
-      r =>
-        r.url === `${environment.backendURL}/admin/version` &&
-        r.params.get('refresh') === 'true',
-    );
-    okReq.flush(mockInfo);
+    expect(service.cooldownActive()).toBeTrue();
+    service.refresh();
 
-    expect(service.refreshFailed()).toBeFalse();
-    expect(service.versionInfo()).toEqual(mockInfo);
-    expect(service.isUpdateAvailable()).toBeFalse();
+    const refreshReq = httpMock.expectOne(`${endpoint}?refresh=true`);
+    refreshReq.flush(mockInfo);
     expect(service.justChecked()).toBeTrue();
-    tick(1500);
+    expect(service.refreshFailed()).toBeFalse();
+
+    tick(JUST_CHECKED_MS);
     expect(service.justChecked()).toBeFalse();
-    tick(3500);
+    expect(service.cooldownActive()).toBeTrue();
+
+    tick(REFRESH_COOLDOWN_MS - JUST_CHECKED_MS);
     expect(service.cooldownActive()).toBeFalse();
-  }));
-
-  it('handles cold-start EMPTY completion from AuthInterceptor and retries after 60s backoff', fakeAsync(() => {
-    const warnSpy = spyOn(console, 'warn');
-    let nowMs = 1_000_000;
-    spyOn(Date, 'now').and.callFake(() => nowMs);
-
-    const service = setup('browser', true);
-    const http = TestBed.inject(HttpClient);
-    const getSpy = spyOn(http, 'get').and.returnValue(EMPTY);
-
-    service.ensureLoaded();
-    expect(getSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy).toHaveBeenCalled();
-    expect(service.loading()).toBeFalse();
-    expect(service.loadFailed()).toBeTrue();
-    expect(service.versionInfo()).toBeNull();
-
-    nowMs += 30_000;
-    service.ensureLoaded();
-    expect(getSpy).toHaveBeenCalledTimes(1);
-
-    getSpy.and.callThrough();
-    nowMs += 30_000;
-    service.ensureLoaded();
-    const retryReq = httpMock.expectOne(
-      `${environment.backendURL}/admin/version`,
-    );
-    retryReq.flush(mockInfo);
-
-    expect(service.loadFailed()).toBeFalse();
-    expect(service.versionInfo()).toEqual(mockInfo);
-  }));
-
-  it('cancels in-flight refresh and resets timers on login route navigation, ignoring post-destroy events', fakeAsync(() => {
-    setStoredSession('admin-a@example.com', 'sub-a');
-    const service = setup('browser', true);
-
-    for (const loginUrl of [
-      '/login',
-      '/login?returnUrl=%2Fadmin%2Fdashboard',
-    ]) {
-      service.refresh();
-      const inFlight = httpMock.expectOne(
-        r =>
-          r.url === `${environment.backendURL}/admin/version` &&
-          r.params.get('refresh') === 'true',
-      );
-      expect(service.loading()).toBeTrue();
-      expect(service.cooldownActive()).toBeTrue();
-
-      routerEvents$.next(
-        loginUrl.includes('returnUrl')
-          ? new NavigationEnd(1, '/admin/dashboard', loginUrl)
-          : new NavigationStart(1, loginUrl),
-      );
-
-      expect(inFlight.cancelled).toBeTrue();
-      expect(service.loading()).toBeFalse();
-      expect(service.cooldownActive()).toBeFalse();
-      expect(service.versionInfo()).toBeNull();
-    }
-
-    // Navigating within the app as the same admin keeps loaded versionInfo.
-    service.ensureLoaded();
-    httpMock
-      .expectOne(`${environment.backendURL}/admin/version`)
-      .flush(mockInfo);
-    routerEvents$.next(new NavigationEnd(2, '/admin/users', '/admin/users'));
-    expect(service.versionInfo()).toEqual(mockInfo);
-
-    // After ngOnDestroy(), router events must no longer trigger reset().
-    service.ngOnDestroy();
-    routerEvents$.next(new NavigationStart(3, '/login'));
-    expect(service.versionInfo()).toEqual(mockInfo);
-    tick(5000);
-  }));
-
-  it('resets on cross-tab StorageEvent sign-out/clear/mismatch, while preserving same-user renewal', fakeAsync(() => {
-    setStoredSession('admin-a@example.com', 'sub-a');
-    const service = setup('browser', true);
 
     service.refresh();
-    const req1 = httpMock.expectOne(
-      r =>
-        r.url === `${environment.backendURL}/admin/version` &&
-        r.params.get('refresh') === 'true',
-    );
-    localStorage.removeItem('firebase_session');
-    window.dispatchEvent(
-      new StorageEvent('storage', {key: 'firebase_session', newValue: null}),
-    );
-    expect(req1.cancelled).toBeTrue();
-    expect(service.loading()).toBeFalse();
-    expect(service.cooldownActive()).toBeFalse();
-    expect(service.versionInfo()).toBeNull();
-
-    // Same-user JWT renewal preserves versionInfo.
-    setStoredSession('admin-a@example.com', 'sub-a');
-    service.ensureLoaded();
-    httpMock
-      .expectOne(`${environment.backendURL}/admin/version`)
-      .flush(mockInfo);
-    const renewedSession = JSON.stringify({
-      token: makeJwt({sub: 'sub-a', email: 'admin-a@example.com', iat: 200}),
-      expiry: Date.now() + 3_600_000,
-    });
-    localStorage.setItem('firebase_session', renewedSession);
-    window.dispatchEvent(
-      new StorageEvent('storage', {
-        key: 'firebase_session',
-        newValue: renewedSession,
-      }),
-    );
-    expect(service.versionInfo()).toEqual(mockInfo);
-
-    // Cross-tab account switch triggers mismatch: isBrowserAdmin() becomes false and state resets.
-    const switchedSession = JSON.stringify({
-      token: makeJwt({sub: 'sub-b', email: 'admin-b@example.com'}),
-      expiry: Date.now() + 3_600_000,
-    });
-    localStorage.setItem('firebase_session', switchedSession);
-    expect(service.isBrowserAdmin()).toBeFalse();
-    window.dispatchEvent(
-      new StorageEvent('storage', {
-        key: 'firebase_session',
-        newValue: switchedSession,
-      }),
-    );
-    expect(service.versionInfo()).toBeNull();
-
-    // Reload for admin-b, then localStorage.clear() (key: null) resets state.
-    setStoredSession('admin-b@example.com', 'sub-b');
-    expect(service.isBrowserAdmin()).toBeTrue();
-    service.ensureLoaded();
-    httpMock
-      .expectOne(`${environment.backendURL}/admin/version`)
-      .flush(mockInfo);
-    localStorage.clear();
-    window.dispatchEvent(new StorageEvent('storage', {key: null}));
-    expect(service.versionInfo()).toBeNull();
-
-    // Post-destroy storage events must be ignored.
-    setStoredSession('admin-b@example.com', 'sub-b');
-    service.ensureLoaded();
-    httpMock
-      .expectOne(`${environment.backendURL}/admin/version`)
-      .flush(mockInfo);
-    service.ngOnDestroy();
-    localStorage.removeItem('firebase_session');
-    window.dispatchEvent(
-      new StorageEvent('storage', {key: 'firebase_session', newValue: null}),
-    );
-    expect(service.versionInfo()).toEqual(mockInfo);
-    tick(5000);
+    httpMock.expectOne(`${endpoint}?refresh=true`).flush(mockInfo);
+    tick(REFRESH_COOLDOWN_MS);
   }));
 
-  it('resets cached versionInfo and clears 60s loadFailed backoff on same-tab user switch', fakeAsync(() => {
-    spyOn(console, 'warn');
-    setStoredSession('admin-a@example.com', 'sub-a');
-    const service = setup('browser', true);
-
+  it('sets refreshFailed without clearing cached data on HTTP or backend refresh failure', fakeAsync(() => {
+    const service = setup('browser');
     service.ensureLoaded();
-    httpMock
-      .expectOne(`${environment.backendURL}/admin/version`)
-      .flush(mockInfo);
-    expect(service.versionInfo()).toEqual(mockInfo);
-
-    setStoredSession('admin-b@example.com', 'sub-b');
-    service.ensureLoaded();
-    const failReq = httpMock.expectOne(
-      `${environment.backendURL}/admin/version`,
-    );
-    failReq.flush('Server error', {status: 500, statusText: 'Internal Error'});
-    expect(service.versionInfo()).toBeNull();
-    expect(service.loadFailed()).toBeTrue();
-
-    service.ensureLoaded();
-    httpMock.expectNone(`${environment.backendURL}/admin/version`);
-
-    setStoredSession('admin-c@example.com', 'sub-c');
-    service.ensureLoaded();
-    httpMock
-      .expectOne(`${environment.backendURL}/admin/version`)
-      .flush(mockInfo);
-    expect(service.loadFailed()).toBeFalse();
-    expect(service.versionInfo()).toEqual(mockInfo);
-  }));
-
-  it('resets cleanly without refreshFailed when session is cleared before HTTP error arrives', fakeAsync(() => {
-    setStoredSession('admin-a@example.com', 'sub-a');
-    const service = setup('browser', true);
-
-    service.ensureLoaded();
-    httpMock
-      .expectOne(`${environment.backendURL}/admin/version`)
-      .flush(mockInfo);
-
-    for (const status of [502, 401]) {
-      setStoredSession('admin-a@example.com', 'sub-a');
-      service.ensureLoaded();
-      for (const req of httpMock.match(
-        `${environment.backendURL}/admin/version`,
-      )) {
-        req.flush(mockInfo);
-      }
-
-      service.refresh();
-      const failReq = httpMock.expectOne(
-        r =>
-          r.url === `${environment.backendURL}/admin/version` &&
-          r.params.get('refresh') === 'true',
-      );
-      localStorage.removeItem('firebase_session');
-      localStorage.removeItem('USER_DETAILS');
-
-      failReq.flush('Error', {status, statusText: 'Auth or Gateway Error'});
-      expect(service.versionInfo()).toBeNull();
-      expect(service.refreshFailed()).toBeFalse();
-      expect(service.loadFailed()).toBeFalse();
-      expect(service.loading()).toBeFalse();
-      expect(service.cooldownActive()).toBeFalse();
-      tick(5000);
-    }
-  }));
-
-  it('resets state on non-admin transition', fakeAsync(() => {
-    const service = setup('browser', true);
-
-    service.ensureLoaded();
-    httpMock
-      .expectOne(`${environment.backendURL}/admin/version`)
-      .flush(mockInfo);
-    expect(service.versionInfo()).toEqual(mockInfo);
-
-    authSpy.isUserAdmin.and.returnValue(false);
-    service.ensureLoaded();
-    expect(service.versionInfo()).toBeNull();
-    expect(service.isAdmin()).toBeFalse();
-    httpMock.expectNone(`${environment.backendURL}/admin/version`);
+    httpMock.expectOne(endpoint).flush(mockInfo);
 
     service.refresh();
-    httpMock.expectNone(`${environment.backendURL}/admin/version`);
-    tick(5000);
-  }));
-
-  it('makes zero HTTP calls on SSR server platform', () => {
-    const service = setup('server', true);
-
-    service.ensureLoaded();
-    service.refresh();
-
-    httpMock.expectNone(`${environment.backendURL}/admin/version`);
-    expect(service.versionInfo()).toBeNull();
-    expect(service.isAdmin()).toBeFalse();
-  });
-
-  it('makes zero HTTP calls when user is not an admin or logged out', () => {
-    const service = setup('browser', false);
-
-    service.ensureLoaded();
-    service.refresh();
-
-    httpMock.expectNone(`${environment.backendURL}/admin/version`);
-    expect(service.versionInfo()).toBeNull();
-
-    TestBed.resetTestingModule();
-    const loggedOutService = setup('browser', true, false);
-    loggedOutService.ensureLoaded();
-    loggedOutService.refresh();
-    httpMock.expectNone(`${environment.backendURL}/admin/version`);
-  });
-
-  it('handles HTTP errors gracefully without throwing or setting undefined version', () => {
-    const service = setup('browser', true);
-    const warnSpy = spyOn(console, 'warn');
-
-    service.ensureLoaded();
-    const req = httpMock.expectOne(`${environment.backendURL}/admin/version`);
-    req.flush('Server error', {status: 500, statusText: 'Internal Error'});
-
-    expect(warnSpy).toHaveBeenCalled();
-    expect(service.loading()).toBeFalse();
-    expect(service.loadFailed()).toBeTrue();
-    expect(service.versionInfo()).toBeNull();
-  });
-
-  it('sets refreshFailed and suppresses justChecked when backend returns refreshFailed=true', fakeAsync(() => {
-    const service = setup('browser', true);
-
-    service.ensureLoaded();
     httpMock
-      .expectOne(`${environment.backendURL}/admin/version`)
-      .flush(mockInfo);
-
-    service.refresh();
-    const refreshReq = httpMock.expectOne(
-      r =>
-        r.url === `${environment.backendURL}/admin/version` &&
-        r.params.get('refresh') === 'true',
-    );
-    refreshReq.flush({...mockInfo, refreshFailed: true});
+      .expectOne(`${endpoint}?refresh=true`)
+      .flush('upstream error', {status: 500, statusText: 'Server Error'});
 
     expect(service.refreshFailed()).toBeTrue();
+    expect(service.loadFailed()).toBeFalse();
     expect(service.justChecked()).toBeFalse();
-    expect(service.versionInfo()).toEqual({...mockInfo, refreshFailed: true});
-    tick(5000);
+    expect(service.versionInfo()).toEqual(mockInfo);
+
+    tick(REFRESH_COOLDOWN_MS);
+
+    service.refresh();
+    httpMock
+      .expectOne(`${endpoint}?refresh=true`)
+      .flush({...mockInfo, refreshFailed: true});
+    expect(service.refreshFailed()).toBeTrue();
+    expect(service.justChecked()).toBeFalse();
+
+    tick(REFRESH_COOLDOWN_MS);
   }));
 
-  it('keeps isBrowserAdmin() pure without mutating isAdmin signal', () => {
-    const service = setup('browser', false);
-    expect(service.isAdmin()).toBeFalse();
-    authSpy.isUserAdmin.and.returnValue(true);
-    setStoredSession('admin@example.com', 'sub-pure');
-    expect(service.isBrowserAdmin()).toBeTrue();
-    expect(service.isAdmin()).toBeFalse();
+  it('sets loadFailed on initial error and recovers on retry', () => {
+    const service = setup('browser');
     service.ensureLoaded();
     httpMock
-      .expectOne(`${environment.backendURL}/admin/version`)
-      .flush(mockInfo);
-    expect(service.isAdmin()).toBeTrue();
+      .expectOne(endpoint)
+      .flush('down', {status: 502, statusText: 'Bad Gateway'});
 
-    localStorage.setItem(
-      'firebase_session',
-      JSON.stringify({token: 'hdr.!!!bad-b64!!!.sig', expiry: 9_999_999_999}),
-    );
-    expect(service.isBrowserAdmin()).toBeTrue();
+    expect(service.loadFailed()).toBeTrue();
+    expect(service.versionInfo()).toBeNull();
+
+    service.ensureLoaded();
+    httpMock.expectOne(endpoint).flush(mockInfo);
+    expect(service.loadFailed()).toBeFalse();
+    expect(service.versionInfo()).toEqual(mockInfo);
+  });
+
+  it('resets state and discards stale responses on user change, sign-out, or 401/403', () => {
+    const service = setup('browser');
+    service.ensureLoaded();
+    httpMock.expectOne(endpoint).flush(mockInfo);
+
+    userEmail = 'second-admin@example.com';
+    service.ensureLoaded();
+    const secondReq = httpMock.expectOne(endpoint);
+    expect(service.versionInfo()).toBeNull();
+    secondReq.flush({
+      ...mockInfo,
+      latestVersion: '26.11.15',
+      status: 'update_available',
+    });
+    expect(service.versionInfo()?.latestVersion).toBe('26.11.15');
+
+    tokenValue = null;
+    service.ensureLoaded();
+    expect(service.isAdmin()).toBeFalse();
+    expect(service.versionInfo()).toBeNull();
+
+    tokenValue = 'admin-jwt';
+    service.ensureLoaded();
+    httpMock
+      .expectOne(endpoint)
+      .flush(
+        {detail: 'Unauthorized'},
+        {status: 401, statusText: 'Unauthorized'},
+      );
+    expect(service.isAdmin()).toBeFalse();
+    expect(service.versionInfo()).toBeNull();
   });
 });
