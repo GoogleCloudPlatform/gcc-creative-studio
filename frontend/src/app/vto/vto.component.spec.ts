@@ -145,9 +145,41 @@ describe('VtoComponent', () => {
     const payload = searchService.startVtoGeneration.calls.mostRecent().args[0];
     expect(payload.workspaceId).toBe(11);
     expect(payload.contextWorkspaceId).toBe(22);
+    expect('parentMediaItemId' in payload).toBeFalse();
     expect(payload.personImage).toEqual({sourceAssetId: 101});
     expect(payload.topImage).toEqual({
       sourceMediaItem: {mediaItemId: 202, mediaIndex: 0},
+    });
+  });
+
+  it('should set parentMediaItemId when personImage references a sourceMediaItem', () => {
+    const searchService = TestBed.inject(SearchService) as any;
+    const workspaceStateService = TestBed.inject(WorkspaceStateService) as any;
+    workspaceStateService.getReferencedGenerationWorkspaceParams = () => ({
+      workspaceId: 11,
+      contextWorkspaceId: 22,
+    });
+    component.firstFormGroup.get('model')?.setValue({
+      id: 'model-2',
+      name: 'Generated Model',
+      imageUrl: 'https://example.com/model2.png',
+      size: 'M',
+      inputLink: {sourceMediaItem: {mediaItemId: 55, mediaIndex: 0}},
+    });
+    component.secondFormGroup.get('top')?.setValue({
+      id: 'top-1',
+      name: 'Shirt',
+      imageUrl: 'https://example.com/shirt.png',
+      type: 'top',
+      inputLink: {sourceMediaItem: {mediaItemId: 202, mediaIndex: 0}},
+    });
+
+    component.tryOn();
+
+    const payload = searchService.startVtoGeneration.calls.mostRecent().args[0];
+    expect(payload.parentMediaItemId).toBe(55);
+    expect(payload.personImage).toEqual({
+      sourceMediaItem: {mediaItemId: 55, mediaIndex: 0},
     });
   });
 

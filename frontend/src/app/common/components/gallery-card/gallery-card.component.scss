@@ -52,7 +52,10 @@
   position: relative;
   display: block;
   height: auto;
-  transition: opacity 500ms ease, transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), padding 0.25s ease;
+  transition:
+    opacity 500ms ease,
+    transform 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+    padding 0.25s ease;
   -webkit-user-drag: none;
   user-select: none;
 
@@ -345,8 +348,9 @@
     border: none !important;
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     // text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
-    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8),
-    0 0 1px rgba(0, 0, 0, 0.8);
+    text-shadow:
+      0 1px 3px rgba(0, 0, 0, 0.8),
+      0 0 1px rgba(0, 0, 0, 0.8);
 
     /* Colored background layer using CSS variable */
     // &::before {
@@ -371,5 +375,30 @@
       color: white;
       background: rgba(0, 0, 0, 0.6);
     }
+  }
+}
+
+.card-status-line {
+  position: absolute;
+  bottom: 10px;
+  left: 34px;
+  right: 12px;
+  z-index: 15;
+  pointer-events: none;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: rgba(255, 255, 255, 0.92);
+  font-variant-numeric: tabular-nums;
+  text-shadow:
+    0 1px 4px rgba(0, 0, 0, 0.9),
+    0 0 2px rgba(0, 0, 0, 0.9);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+
+  &.with-tags {
+    bottom: 38px;
+    left: 12px;
   }
 }

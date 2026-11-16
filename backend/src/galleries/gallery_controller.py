@@ -23,9 +23,11 @@ from src.galleries.dto.bulk_move_dto import BulkMoveDto
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
 from src.galleries.dto.gallery_search_dto import GallerySearchDto
 from src.galleries.dto.unified_gallery_response import (
+    RevisionHistoryResponseDto,
     UnifiedGalleryItemResponse,
 )
 from src.galleries.gallery_service import GalleryService
+from src.galleries.revision_service import RevisionService
 from src.users.user_model import UserModel, UserRoleEnum
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
@@ -103,6 +105,21 @@ async def get_single_gallery_item(
             detail="Media item not found",
         )
     return item
+
+
+@router.get(
+    "/item/{item_id}/revisions",
+    response_model=RevisionHistoryResponseDto,
+)
+async def get_gallery_item_revisions(
+    item_id: int,
+    current_user: UserModel = Depends(get_current_user),
+    revision_service: RevisionService = Depends(),
+):
+    """Returns revision stack history for a media item."""
+    return await revision_service.get_revisions(
+        item_id=item_id, current_user=current_user
+    )
 
 
 @router.post("/bulk-delete")

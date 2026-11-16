@@ -14,7 +14,12 @@
  * limitations under the License.
  */
 
-import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {
+  ComponentFixture,
+  fakeAsync,
+  TestBed,
+  tick,
+} from '@angular/core/testing';
 import {ReactiveFormsModule, FormsModule} from '@angular/forms';
 import {MatDialogModule} from '@angular/material/dialog';
 import {MatSnackBarModule} from '@angular/material/snack-bar';
@@ -379,4 +384,43 @@ describe('VideoComponent', () => {
     });
     expect('contextWorkspaceId' in payload).toBeFalse();
   });
+
+  it('forwards parentMediaItemId when concatenating generated media items', () => {
+    const searchService = TestBed.inject(SearchService) as any;
+    const workspaceStateService = TestBed.inject(WorkspaceStateService) as any;
+    workspaceStateService.getReferencedGenerationWorkspaceParams = () => ({
+      workspaceId: 10,
+      contextWorkspaceId: 30,
+    });
+
+    component.isConcatenateMode = true;
+    component.parentMediaItemId = 41;
+    component.sourceMediaItems = [
+      {mediaItemId: 41, mediaIndex: 0, role: 'input'},
+      {mediaItemId: 42, mediaIndex: 0, role: 'input'},
+    ];
+    component.searchTerm();
+
+    expect(searchService.concatenateVideos).toHaveBeenCalledTimes(1);
+    const payload = searchService.concatenateVideos.calls.mostRecent().args[0];
+    expect(payload.workspaceId).toBe(10);
+    expect(payload.parentMediaItemId).toBe(41);
+    expect(payload.inputs).toEqual([
+      {id: 41, type: 'media_item'},
+      {id: 42, type: 'media_item'},
+    ]);
+  });
+
+  it('cancels pending ngAfterViewInit concatenation selector timer on destroy', fakeAsync(() => {
+    const openSpy = spyOn(component, 'openImageSelector');
+    history.replaceState({remixState: {startConcatenation: true}}, '');
+    try {
+      component.ngAfterViewInit();
+      component.ngOnDestroy();
+      tick(2000);
+      expect(openSpy).not.toHaveBeenCalled();
+    } finally {
+      history.replaceState({}, '');
+    }
+  }));
 });

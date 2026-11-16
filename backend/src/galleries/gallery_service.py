@@ -22,7 +22,7 @@ import zipfile
 
 from fastapi import Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.iam_signer_credentials_service import IamSignerCredentials
@@ -52,6 +52,12 @@ from src.galleries.dto.unified_gallery_response import (
 from src.galleries.repository.unified_gallery_repository import (
     UnifiedGalleryRepository,
 )
+from src.galleries.revision_lineage import (
+    COPIED_ASSET_EXCLUDE_FIELDS,
+    COPIED_MEDIA_EXCLUDE_FIELDS,
+    sanitize_copied_media_kwargs,
+    stack_root_expr,
+)
 from src.images.imagen_service import ImagenService
 from src.images.repository.media_item_repository import MediaRepository
 from src.source_assets.repository.source_asset_repository import (
@@ -65,7 +71,7 @@ from src.source_assets.schema.source_asset_model import (
     SourceAssetModel,
 )
 from src.users.repository.user_repository import UserRepository
-from src.users.user_model import UserModel, UserRoleEnum
+from src.users.user_model import User, UserModel, UserRoleEnum
 from src.workspaces.repository.workspace_repository import WorkspaceRepository
 from src.workspaces.schema.workspace_model import WorkspaceScopeEnum
 from src.workspaces.workspace_auth_guard import (
@@ -73,17 +79,14 @@ from src.workspaces.workspace_auth_guard import (
     is_workspace_manager,
 )
 from src.tags.repository.tags_repository import TagsRepository
+from src.tags.schema.tags_model import Tag, TagModel, media_item_tags
 from src.folders.dto.folder_dto import ConflictStrategyEnum
 from src.folders.folder_service import (
     FolderService,
     ITEMS_NOT_OWNED_DETAIL,
 )
 from src.folders.schema.folder_model import Folder
-from src.folders.repository.folder_repository import (
-    COPIED_ASSET_EXCLUDE_FIELDS,
-    COPIED_MEDIA_EXCLUDE_FIELDS,
-    FolderRepository,
-)
+from src.folders.repository.folder_repository import FolderRepository
 
 logger = logging.getLogger(__name__)
 
@@ -475,13 +478,69 @@ class GalleryService:
             user=current_user,
         )
 
+        return await self.hydrate_media_item(item, current_user)
+
+    async def hydrate_media_item(
+        self,
+        item: MediaItemModel,
+        current_user: UserModel,
+    ) -> MediaItemResponse:
+        """Enriches a MediaItemModel with presigned URLs, tags, and user picture."""
         response = await self._create_gallery_response(item, current_user)
-        response.tags = await self.tags_repo.get_tags_for_media_item(item_id)
+        if item.id is not None:
+            response.tags = await self.tags_repo.get_tags_for_media_item(
+                item.id
+            )
         if item.user_id:
             user = await self.user_repo.get_by_id(item.user_id)
             if user:
                 response.user_picture = user.picture
         return response
+
+    async def hydrate_media_items(
+        self,
+        items: list[MediaItemModel],
+        current_user: UserModel,
+    ) -> list[MediaItemResponse]:
+        """Batch-enriches MediaItemModels with presigned URLs, tags, and pictures."""
+        if not items:
+            return []
+        if len(items) == 1:
+            return [await self.hydrate_media_item(items[0], current_user)]
+
+        item_ids = [m.id for m in items if m.id is not None]
+        tags_by_id: dict[int, list[TagModel]] = {}
+        if item_ids:
+            tag_res = await self.db.execute(
+                select(media_item_tags.c.media_item_id, Tag)
+                .join(Tag, media_item_tags.c.tag_id == Tag.id)
+                .where(media_item_tags.c.media_item_id.in_(item_ids))
+            )
+            for media_id, tag_row in tag_res.all():
+                tags_by_id.setdefault(media_id, []).append(
+                    TagModel.model_validate(tag_row)
+                )
+
+        user_ids = sorted({m.user_id for m in items if m.user_id})
+        pictures_by_uid: dict[int, str | None] = {}
+        if user_ids:
+            user_res = await self.db.execute(
+                select(User.id, User.picture).where(User.id.in_(user_ids))
+            )
+            for uid, pic in user_res.all():
+                pictures_by_uid[uid] = pic
+
+        responses = list(
+            await asyncio.gather(
+                *(self._create_gallery_response(m, current_user) for m in items)
+            )
+        )
+        for item, response in zip(items, responses, strict=True):
+            if item.id is not None:
+                response.tags = tags_by_id.get(item.id, [])
+            if item.user_id:
+                response.user_picture = pictures_by_uid.get(item.user_id)
+        return responses
 
     async def bulk_delete(
         self,
@@ -739,54 +798,6 @@ class GalleryService:
             temp_file.close()
             raise e
 
-    @staticmethod
-    def _entry_id(
-        entry: dict | SourceAssetLink | SourceMediaItemLink, key: str
-    ) -> int | None:
-        if isinstance(entry, dict):
-            return entry.get(key)
-        if isinstance(entry, SourceAssetLink):
-            return entry.asset_id if key == "asset_id" else None
-        if isinstance(entry, SourceMediaItemLink):
-            return entry.media_item_id if key == "media_item_id" else None
-        return None
-
-    async def _sanitize_media_references(
-        self, item_data: dict, target_ws_id: int
-    ) -> None:
-        """Strips source links outside ``target_ws_id`` (or ``SYSTEM``)."""
-        specs = (
-            (
-                "source_assets",
-                "asset_id",
-                self.source_asset_repo.get_by_id,
-                lambda a: a.workspace_id == target_ws_id
-                or a.scope == AssetScopeEnum.SYSTEM,
-            ),
-            (
-                "source_media_items",
-                "media_item_id",
-                self.media_repo.get_by_id,
-                lambda m: m.workspace_id == target_ws_id,
-            ),
-        )
-        for field, key, fetch_fn, is_ok in specs:
-            raw = item_data.get(field)
-            if not raw:
-                continue
-            allowed = set()
-            for entry in raw:
-                eid = self._entry_id(entry, key)
-                if (
-                    eid is not None
-                    and (ent := await fetch_fn(eid)) is not None
-                    and is_ok(ent)
-                ):
-                    allowed.add(eid)
-            item_data[field] = [
-                e for e in raw if self._entry_id(e, key) in allowed
-            ]
-
     async def _authorize_move_source(
         self,
         src_ws_id: int,
@@ -896,7 +907,8 @@ class GalleryService:
                             media_item.workspace_id
                             != bulk_copy_dto.target_workspace_id
                         ):
-                            await self._sanitize_media_references(
+                            await sanitize_copied_media_kwargs(
+                                self.db,
                                 new_item_data,
                                 bulk_copy_dto.target_workspace_id,
                             )
@@ -1076,9 +1088,24 @@ class GalleryService:
                                 item.id
                             )
 
+                        root_id = media_item.revision_root_id or media_item.id
+                        is_same_ws = (
+                            media_item.workspace_id
+                            == bulk_move_dto.target_workspace_id
+                        )
+                        target_where = (
+                            (
+                                MediaItem.workspace_id
+                                == media_item.workspace_id,
+                                MediaItem.deleted_at.is_(None),
+                                stack_root_expr(MediaItem) == root_id,
+                            )
+                            if is_same_ws
+                            else (MediaItem.id == item.id,)
+                        )
                         stmt = (
                             update(MediaItem)
-                            .where(MediaItem.id == item.id)
+                            .where(*target_where)
                             .values(
                                 workspace_id=bulk_move_dto.target_workspace_id,
                                 folder_id=None,

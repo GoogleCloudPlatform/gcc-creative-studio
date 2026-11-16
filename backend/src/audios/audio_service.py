@@ -68,6 +68,10 @@ from src.common.schema.media_item_model import (
 from src.common.storage_service import GcsService
 from src.config.config_service import config_service
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
+from src.galleries.revision_lineage import (
+    effective_revision_folder,
+    resolve_revision_lineage,
+)
 from src.images.repository.media_item_repository import MediaRepository
 from src.brand_guidelines.repository.brand_guideline_repository import (
     BrandGuidelineRepository,
@@ -1349,6 +1353,8 @@ class AudioService:
             for item in (request_dto.source_media_items or [])
         ]
         ref_asset_ids = list(request_dto.source_asset_ids or [])
+        if request_dto.parent_media_item_id is not None:
+            ref_media_ids.append(request_dto.parent_media_item_id)
         if request_dto.reference_audio is not None:
             if request_dto.reference_audio.type == "media_item":
                 ref_media_ids.append(request_dto.reference_audio.id)
@@ -1366,6 +1372,17 @@ class AudioService:
             user,
             requested_folder_id=request_dto.folder_id,
         )
+        lineage = await resolve_revision_lineage(
+            self.media_repo.db,
+            user,
+            ctx.output_workspace_id,
+            explicit_parent_id=request_dto.parent_media_item_id,
+            requested_folder_id=request_dto.folder_id,
+            resolved_folder_id=ctx.resolved_folder_id,
+        )
+        effective_folder_id = effective_revision_folder(
+            request_dto.folder_id, ctx.resolved_folder_id, lineage
+        )
         media_post_to_save = MediaItemModel(
             user_email=user.email,
             user_id=user.id,
@@ -1373,7 +1390,10 @@ class AudioService:
             model=request_dto.model,
             aspect_ratio=AspectRatioEnum.RATIO_16_9,
             workspace_id=ctx.output_workspace_id,
-            folder_id=ctx.resolved_folder_id,
+            folder_id=effective_folder_id,
+            revision_root_id=lineage.revision_root_id,
+            revision_parent_id=lineage.revision_parent_id,
+            revision_number=lineage.revision_number,
             prompt=request_dto.prompt,
             original_prompt=request_dto.prompt,
             num_media=request_dto.sample_count,

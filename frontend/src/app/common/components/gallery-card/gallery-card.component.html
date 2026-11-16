@@ -164,7 +164,16 @@
   >
     <mat-icon *ngIf="isSelected">check</mat-icon>
   </div>
-  
+
+  <!-- Inline revision status -->
+  <div
+    *ngIf="isInPersonalWorkspace && !isSelectorMode && cardStatusText"
+    class="card-status-line tabular-nums"
+    [class.with-tags]="(item.tags?.length ?? 0) > 0"
+  >
+    {{ cardStatusText }}
+  </div>
+
   <!-- Tags Section -->
   <div class="tags-section" *ngIf="(item.tags?.length ?? 0) > 0 || isAdmin">
     <mat-chip-set>

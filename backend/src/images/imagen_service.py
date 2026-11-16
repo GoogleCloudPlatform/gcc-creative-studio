@@ -54,6 +54,11 @@ from src.common.storage_service import GcsService
 from src.config.config_service import config_service
 from src.database import WorkerDatabase
 from src.galleries.dto.gallery_response_dto import MediaItemResponse
+from src.galleries.revision_lineage import (
+    RevisionLineage,
+    effective_revision_folder,
+    resolve_revision_lineage,
+)
 from src.images.dto.create_imagen_dto import CreateImagenDto
 from src.images.dto.upscale_imagen_dto import UpscaleImagenDto
 from src.images.dto.vto_dto import VtoDto
@@ -1679,6 +1684,8 @@ class ImagenService:
             for item in (request_dto.source_media_items or [])
         ]
         asset_ids = list(request_dto.source_asset_ids or [])
+        if request_dto.parent_media_item_id is not None:
+            media_ids.append(request_dto.parent_media_item_id)
         if request_dto.reference_video is not None:
             if request_dto.reference_video.type == "media_item":
                 media_ids.append(request_dto.reference_video.id)
@@ -1705,9 +1712,11 @@ class ImagenService:
                 asset_ids.append(link.source_asset_id)
             if link.source_media_item is not None:
                 media_ids.append(link.source_media_item.media_item_id)
+        if request_dto.parent_media_item_id is not None:
+            media_ids.append(request_dto.parent_media_item_id)
         return media_ids, asset_ids
 
-    async def _prepare_generation_target(
+    async def _authorize_generation_target(
         self,
         *,
         user: UserModel,
@@ -1731,6 +1740,40 @@ class ImagenService:
             context_workspace_id=context_workspace_id,
         )
 
+    async def _prepare_generation_target(
+        self,
+        *,
+        user: UserModel,
+        workspace_id: int,
+        folder_id: int | None,
+        context_workspace_id: int | None = None,
+        media_ids: list[int] | tuple[int, ...] = (),
+        asset_ids: list[int] | tuple[int, ...] = (),
+        explicit_parent_id: int | None = None,
+        source_media_items: list[SourceMediaItemLink] | None = None,
+    ) -> tuple[GenerationContext, RevisionLineage, int | None]:
+        ctx = await self._authorize_generation_target(
+            user=user,
+            workspace_id=workspace_id,
+            folder_id=folder_id,
+            context_workspace_id=context_workspace_id,
+            media_ids=media_ids,
+            asset_ids=asset_ids,
+        )
+        lineage = await resolve_revision_lineage(
+            self.media_repo.db,
+            user,
+            ctx.output_workspace_id,
+            explicit_parent_id=explicit_parent_id,
+            source_media_items=source_media_items,
+            requested_folder_id=folder_id,
+            resolved_folder_id=ctx.resolved_folder_id,
+        )
+        effective_folder = effective_revision_folder(
+            folder_id, ctx.resolved_folder_id, lineage
+        )
+        return ctx, lineage, effective_folder
+
     async def start_upload_upscale_job(
         self,
         user: UserModel,
@@ -1750,6 +1793,7 @@ class ImagenService:
         enhance_input_image: bool | None = None,
         image_preservation_factor: float | None = None,
         folder_id: int | None = None,
+        parent_media_item_id: int | None = None,
     ) -> MediaItemResponse:
         """Starts a background job to upload and/or upscale an image.
 
@@ -1772,6 +1816,7 @@ class ImagenService:
             image_preservation_factor: Factor for image preservation during upscaling.
             folder_id: Optional gallery folder of the workspace to save the
                 result into; the root folder when omitted.
+            parent_media_item_id: Optional parent MediaItem ID for revision lineage.
 
         Returns:
             A MediaItemResponse representing the placeholder item.
@@ -1786,14 +1831,18 @@ class ImagenService:
                     f"Invalid source asset id: {source_asset_id}"
                 ) from exc
 
-        ctx = await self._prepare_generation_target(
+        ctx = await self._authorize_generation_target(
             user=user,
             workspace_id=workspace_id,
             folder_id=folder_id,
-            media_ids=(
-                [media_item_id_existing] if media_item_id_existing else ()
+            media_ids=[
+                mid
+                for mid in (media_item_id_existing, parent_media_item_id)
+                if mid
+            ],
+            asset_ids=(
+                [parsed_asset_id] if parsed_asset_id is not None else ()
             ),
-            asset_ids=[parsed_asset_id] if parsed_asset_id is not None else (),
         )
 
         # --- Validation for Existing Assets (Sync Check) ---
@@ -1860,10 +1909,26 @@ class ImagenService:
                         e,
                     )
 
+        # Acquire stack-root FOR UPDATE lock only after external GCS I/O completes.
+        lineage = await resolve_revision_lineage(
+            self.media_repo.db,
+            user,
+            ctx.output_workspace_id,
+            explicit_parent_id=parent_media_item_id or media_item_id_existing,
+            requested_folder_id=folder_id,
+            resolved_folder_id=ctx.resolved_folder_id,
+        )
+        effective_folder_id = effective_revision_folder(
+            folder_id, ctx.resolved_folder_id, lineage
+        )
+
         # 1. Create Placeholder
         placeholder_item = MediaItemModel(
             workspace_id=ctx.output_workspace_id,
-            folder_id=ctx.resolved_folder_id,
+            folder_id=effective_folder_id,
+            revision_root_id=lineage.revision_root_id,
+            revision_parent_id=lineage.revision_parent_id,
+            revision_number=lineage.revision_number,
             user_email=user.email,
             user_id=user.id,
             mime_type=MimeTypeEnum.IMAGE_PNG,
@@ -1928,18 +1993,25 @@ class ImagenService:
         generation in the background.
         """
         media_ids, asset_ids = self._collect_imagen_input_ids(request_dto)
-        ctx = await self._prepare_generation_target(
-            user=user,
-            workspace_id=request_dto.workspace_id,
-            folder_id=request_dto.folder_id,
-            context_workspace_id=request_dto.context_workspace_id,
-            media_ids=media_ids,
-            asset_ids=asset_ids,
+        ctx, lineage, effective_folder_id = (
+            await self._prepare_generation_target(
+                user=user,
+                workspace_id=request_dto.workspace_id,
+                folder_id=request_dto.folder_id,
+                context_workspace_id=request_dto.context_workspace_id,
+                media_ids=media_ids,
+                asset_ids=asset_ids,
+                explicit_parent_id=request_dto.parent_media_item_id,
+                source_media_items=request_dto.source_media_items,
+            )
         )
         # Create a placeholder document
         placeholder_item = MediaItemModel(
             workspace_id=ctx.output_workspace_id,
-            folder_id=ctx.resolved_folder_id,
+            folder_id=effective_folder_id,
+            revision_root_id=lineage.revision_root_id,
+            revision_parent_id=lineage.revision_parent_id,
+            revision_number=lineage.revision_number,
             user_email=user.email,
             user_id=user.id,
             # Default to PNG, will update if needed
@@ -2010,19 +2082,38 @@ class ImagenService:
 
         """
         media_ids, asset_ids = self._collect_vto_input_ids(request_dto)
-        ctx = await self._prepare_generation_target(
-            user=user,
-            workspace_id=request_dto.workspace_id,
-            folder_id=request_dto.folder_id,
-            context_workspace_id=request_dto.context_workspace_id,
-            media_ids=media_ids,
-            asset_ids=asset_ids,
+        person_source_media = (
+            [
+                SourceMediaItemLink(
+                    media_item_id=request_dto.person_image.source_media_item.media_item_id,
+                    media_index=request_dto.person_image.source_media_item.media_index,
+                    role=AssetRoleEnum.INPUT,
+                )
+            ]
+            if request_dto.person_image
+            and request_dto.person_image.source_media_item
+            else None
+        )
+        ctx, lineage, effective_folder_id = (
+            await self._prepare_generation_target(
+                user=user,
+                workspace_id=request_dto.workspace_id,
+                folder_id=request_dto.folder_id,
+                context_workspace_id=request_dto.context_workspace_id,
+                media_ids=media_ids,
+                asset_ids=asset_ids,
+                explicit_parent_id=request_dto.parent_media_item_id,
+                source_media_items=person_source_media,
+            )
         )
         # 2. Create a placeholder document
         # Do not allow manually setting ID for auto-increment columns
         placeholder_item = MediaItemModel(
             workspace_id=ctx.output_workspace_id,
-            folder_id=ctx.resolved_folder_id,
+            folder_id=effective_folder_id,
+            revision_root_id=lineage.revision_root_id,
+            revision_parent_id=lineage.revision_parent_id,
+            revision_number=lineage.revision_number,
             user_email=user.email,
             user_id=user.id,
             mime_type=MimeTypeEnum.IMAGE_PNG,

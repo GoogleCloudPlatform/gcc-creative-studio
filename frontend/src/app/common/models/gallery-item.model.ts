@@ -20,12 +20,20 @@ import {TagModel} from '../services/tags.service';
 export interface BaseGalleryItem {
   id: number;
   workspaceId: number;
+  workspaceName?: string;
+  workspaceScope?: string;
   folderId?: number;
   userId?: number;
   createdAt: string;
   status?: string;
   deletedAt?: string;
   tags?: TagModel[];
+
+  revisionRootId?: number | null;
+  revisionParentId?: number | null;
+  revisionNumber?: number;
+  revisionCount?: number;
+  isLatestRevision?: boolean;
 
   // Display fields
   titles?: string[];
@@ -132,3 +140,9 @@ export interface SourceAssetGallery extends BaseGalleryItem {
 
 export type GalleryItem = MediaItemGallery | SourceAssetGallery;
 export type PaginatedGalleryResponse = PaginatedResponse<GalleryItem>;
+
+export interface RevisionHistoryResponse {
+  rootId: number;
+  revisionCount: number;
+  takes: GalleryItem[];
+}

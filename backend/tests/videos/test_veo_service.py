@@ -22,6 +22,7 @@ import pytest
 from fastapi import HTTPException
 
 from src.common.base_dto import GenerationModelEnum
+from src.galleries.revision_lineage import RevisionLineage
 from src.common.schema.media_item_model import (
     MediaItemModel,
     MimeTypeEnum,
@@ -131,6 +132,12 @@ class TestVeoServiceMethods:
             patch(
                 "src.videos.veo_service.ensure_can_reference_inputs",
                 new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "src.videos.veo_service.resolve_revision_lineage",
+                new=AsyncMock(
+                    return_value=RevisionLineage(None, None, 1, None)
+                ),
             ),
         ):
             repo_cls.return_value.ensure_personal_workspace = AsyncMock(
@@ -2954,6 +2961,12 @@ class TestVeoPrivateFirstAndWorkerCrossWorkspace:
                 "src.videos.veo_service.resolve_generation_context",
                 new=AsyncMock(return_value=GenerationContext(10, 30, 5)),
             ),
+            patch(
+                "src.videos.veo_service.resolve_revision_lineage",
+                new=AsyncMock(
+                    return_value=RevisionLineage(None, None, 1, None)
+                ),
+            ),
         ):
             gen_res = await veo_service.start_video_generation_job(
                 request_dto=CreateVeoDto(
@@ -3092,3 +3105,151 @@ class TestVeoPrivateFirstAndWorkerCrossWorkspace:
             assert "Reference video media_item 50" in (
                 last_update.get("error_message") or ""
             )
+
+
+class TestVeoServiceRevisionLineage:
+    """Behavioral tests for video revision lineage scoping and inheritance."""
+
+    @pytest.mark.anyio
+    async def test_video_generation_limits_implicit_lineage_to_extensions(
+        self, veo_service, mock_media_repo, sample_user
+    ):
+        from src.common.schema.media_item_model import (
+            AssetRoleEnum,
+            SourceMediaItemLink,
+        )
+        from src.workspaces.generation_workspace import GenerationContext
+
+        captured: list[MediaItemModel] = []
+        mock_media_repo.get_by_id.return_value = _build_video_media_item(
+            50, workspace_id=10
+        )
+
+        async def _create(item: MediaItemModel) -> MediaItemModel:
+            captured.append(item)
+            item.id = 700
+            return item
+
+        mock_media_repo.create.side_effect = _create
+        mock_executor = MagicMock()
+
+        # Non-extension frame/reference must pass source_media_items=None
+        dto_start_frame = CreateVeoDto(
+            workspace_id=10,
+            prompt="Animate start frame",
+            generation_model=GenerationModelEnum.VEO_3_QUALITY,
+            start_image_asset_id={"id": 50, "type": "media_item", "index": 0},
+        )
+        # Video extension source must forward source_media_items to lineage
+        dto_extension = CreateVeoDto(
+            workspace_id=10,
+            prompt="Extend shot",
+            generation_model=GenerationModelEnum.VEO_3_1_GENERATE_001,
+            source_media_items=[
+                SourceMediaItemLink(
+                    media_item_id=50,
+                    media_index=0,
+                    role=AssetRoleEnum.VIDEO_EXTENSION_SOURCE,
+                )
+            ],
+        )
+
+        with (
+            patch(
+                "src.videos.veo_service.ensure_can_reference_inputs",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "src.videos.veo_service.resolve_generation_context",
+                new=AsyncMock(return_value=GenerationContext(10, 10, 5)),
+            ),
+            patch(
+                "src.videos.veo_service.resolve_revision_lineage",
+                new=AsyncMock(
+                    return_value=RevisionLineage(
+                        revision_root_id=40,
+                        revision_parent_id=50,
+                        revision_number=2,
+                        inherited_folder_id=77,
+                    )
+                ),
+            ) as mock_lineage,
+        ):
+            await veo_service.start_video_generation_job(
+                request_dto=dto_start_frame,
+                user=sample_user,
+                executor=mock_executor,
+            )
+            assert mock_lineage.await_args.kwargs["source_media_items"] is None
+
+            await veo_service.start_video_generation_job(
+                request_dto=dto_extension,
+                user=sample_user,
+                executor=mock_executor,
+            )
+            ext_sources = mock_lineage.await_args.kwargs["source_media_items"]
+            assert [s.media_item_id for s in ext_sources] == [50]
+
+        assert captured[1].revision_root_id == 40
+        assert captured[1].revision_number == 2
+        assert captured[1].folder_id == 77
+
+    @pytest.mark.anyio
+    async def test_video_concatenation_validates_and_applies_parent_lineage(
+        self, veo_service, mock_media_repo, sample_user
+    ):
+        from src.workspaces.generation_workspace import GenerationContext
+
+        captured: list[MediaItemModel] = []
+        mock_item = _build_video_media_item(1, workspace_id=10)
+        mock_media_repo.get_by_id.return_value = mock_item
+
+        async def _create(item: MediaItemModel) -> MediaItemModel:
+            captured.append(item)
+            item.id = 701
+            return item
+
+        mock_media_repo.create.side_effect = _create
+        mock_executor = MagicMock()
+
+        with (
+            patch(
+                "src.videos.veo_service.ensure_can_reference_inputs",
+                new=AsyncMock(return_value=None),
+            ) as ensure_refs,
+            patch(
+                "src.videos.veo_service.resolve_generation_context",
+                new=AsyncMock(return_value=GenerationContext(10, 10, None)),
+            ),
+            patch(
+                "src.videos.veo_service.resolve_revision_lineage",
+                new=AsyncMock(
+                    return_value=RevisionLineage(
+                        revision_root_id=88,
+                        revision_parent_id=99,
+                        revision_number=3,
+                        inherited_folder_id=21,
+                    )
+                ),
+            ) as mock_lineage,
+        ):
+            res = await veo_service.start_video_concatenation_job(
+                request_dto=ConcatenateVideosDto(
+                    workspace_id=10,
+                    name="Concat v3",
+                    parent_media_item_id=99,
+                    inputs=[
+                        ConcatenationInput(type="media_item", id=1),
+                        ConcatenationInput(type="media_item", id=2),
+                    ],
+                ),
+                user=sample_user,
+                executor=mock_executor,
+            )
+
+        assert res.id == 701
+        assert ensure_refs.await_args.kwargs["media_item_ids"] == [1, 2, 99]
+        assert mock_lineage.await_args.kwargs["explicit_parent_id"] == 99
+        assert captured[0].revision_root_id == 88
+        assert captured[0].revision_number == 3
+        assert captured[0].folder_id == 21

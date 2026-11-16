@@ -129,4 +129,51 @@ describe('GalleryService', () => {
     expect(service.isLoading$.value).toBeFalse();
     sub.unsubscribe();
   }));
+
+  it('fetches item revision history and maps revision metadata', () => {
+    service = TestBed.inject(GalleryService);
+    let takesLen = 0;
+    let firstTakeScope: string | undefined;
+    let firstTakeIsLatest: boolean | undefined;
+    let revisionCount = 0;
+
+    service.getItemRevisions(55).subscribe(res => {
+      takesLen = res.takes.length;
+      revisionCount = res.revisionCount;
+      firstTakeScope = res.takes[0]?.workspaceScope;
+      firstTakeIsLatest = res.takes[0]?.isLatestRevision;
+    });
+
+    const req = httpMock.expectOne(
+      `${environment.backendURL}/gallery/item/55/revisions`,
+    );
+    expect(req.request.method).toBe('GET');
+    req.flush({
+      rootId: 50,
+      revisionCount: 2,
+      takes: [
+        {
+          id: 50,
+          itemType: 'media_item',
+          workspaceId: 1,
+          revisionNumber: 1,
+          isLatestRevision: false,
+          workspaceName: 'My Workspace',
+          workspaceScope: 'personal',
+        },
+        {
+          id: 55,
+          itemType: 'media_item',
+          workspaceId: 1,
+          revisionNumber: 2,
+          isLatestRevision: true,
+        },
+      ],
+    });
+
+    expect(revisionCount).toBe(2);
+    expect(takesLen).toBe(2);
+    expect(firstTakeScope).toBe('personal');
+    expect(firstTakeIsLatest).toBeFalse();
+  });
 });
