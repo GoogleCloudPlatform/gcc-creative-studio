@@ -26,4 +26,4 @@ Source files:
 
 - **`AdminAuthGuard` (`frontend/src/app/admin/admin-auth.guard.ts`):**
   - Allows SSR shell rendering when `!isPlatformBrowser(this.platformId)`.
-  - In the browser, requires both `this.authService.isLoggedIn()` and `userEmail && this.authService.isUserAdmin()`. Otherwise shows an access-denied snackbar, triggers `this.authService.logout()`, and denies activation (`return false`).
+  - In the browser, delegates route activation to `canActivateWithSilentRenewal(...)`, allowing an expired local session a single silent renewal before evaluating `userEmail && this.authService.isUserAdmin()`. Otherwise shows an access-denied snackbar, triggers `this.authService.expireSession()` (keeping GIS silent auto-select intact), and denies activation (`return false`).

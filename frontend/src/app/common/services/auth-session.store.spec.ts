@@ -27,6 +27,8 @@ describe('AuthSessionStore', () => {
   let onRenewNeeded: jasmine.Spy;
   let onSignedOutElsewhere: jasmine.Spy;
   let onAccountSwitchedElsewhere: jasmine.Spy;
+  let visibilityState: DocumentVisibilityState;
+  let onlineState: boolean;
   let store: AuthSessionStore;
 
   const makeJwt = (sub: string, email: string, tag = 'x'): string => {
@@ -43,6 +45,12 @@ describe('AuthSessionStore', () => {
 
   beforeEach(() => {
     localStorage.clear();
+    visibilityState = 'visible';
+    onlineState = true;
+    spyOnProperty(document, 'visibilityState', 'get').and.callFake(
+      () => visibilityState,
+    );
+    spyOnProperty(navigator, 'onLine', 'get').and.callFake(() => onlineState);
     onRenewNeeded = jasmine.createSpy('onRenewNeeded');
     onSignedOutElsewhere = jasmine.createSpy('onSignedOutElsewhere');
     onAccountSwitchedElsewhere = jasmine.createSpy(
@@ -99,22 +107,21 @@ describe('AuthSessionStore', () => {
   }));
 
   it('skips timer-driven renewal while the tab is hidden', fakeAsync(() => {
-    spyOnProperty(document, 'visibilityState', 'get').and.returnValue('hidden');
+    visibilityState = 'hidden';
     store.save('t', Date.now() + 1_000);
     tick(MIN_RENEW_DELAY_MS + 10);
     expect(onRenewNeeded).not.toHaveBeenCalled();
   }));
 
   it('does not arm a timer while offline and renews on reconnect', fakeAsync(() => {
-    let online = false;
-    spyOnProperty(navigator, 'onLine', 'get').and.callFake(() => online);
+    onlineState = false;
     store.startListening();
     store.save('t', Date.now() + 1_000);
 
     tick(120_000);
     expect(onRenewNeeded).not.toHaveBeenCalled();
 
-    online = true;
+    onlineState = true;
     window.dispatchEvent(new Event('online'));
     expect(onRenewNeeded).toHaveBeenCalledOnceWith('online');
   }));
@@ -230,43 +237,36 @@ describe('AuthSessionStore', () => {
   });
 
   it('requests renewal on focus and visibilitychange only when visible and inside buffer', () => {
-    let visibility: DocumentVisibilityState = 'visible';
-    spyOnProperty(document, 'visibilityState', 'get').and.callFake(
-      () => visibility,
-    );
+    visibilityState = 'visible';
     store.startListening();
     store.save('t', Date.now() + 30 * 60_000);
     window.dispatchEvent(new Event('focus'));
     expect(onRenewNeeded).not.toHaveBeenCalled();
 
     store.save('t', Date.now() + 60_000);
-    visibility = 'hidden';
+    visibilityState = 'hidden';
     document.dispatchEvent(new Event('visibilitychange'));
     expect(onRenewNeeded).not.toHaveBeenCalled();
 
-    visibility = 'visible';
+    visibilityState = 'visible';
     document.dispatchEvent(new Event('visibilitychange'));
     expect(onRenewNeeded).toHaveBeenCalledOnceWith('wake');
   });
 
   it('re-arms the renewal timer on wake after reconnecting while hidden', fakeAsync(() => {
-    let online = false;
-    let visibility: DocumentVisibilityState = 'hidden';
-    spyOnProperty(navigator, 'onLine', 'get').and.callFake(() => online);
-    spyOnProperty(document, 'visibilityState', 'get').and.callFake(
-      () => visibility,
-    );
+    onlineState = false;
+    visibilityState = 'hidden';
     store.startListening();
 
     const ttl = RENEW_BUFFER_MS + 60_000;
     store.save('t', Date.now() + ttl);
 
     // Reconnect happens while still hidden; user focuses tab with >5 min left.
-    online = true;
+    onlineState = true;
     window.dispatchEvent(new Event('online'));
     expect(onRenewNeeded).not.toHaveBeenCalled();
 
-    visibility = 'visible';
+    visibilityState = 'visible';
     document.dispatchEvent(new Event('visibilitychange'));
     expect(onRenewNeeded).not.toHaveBeenCalled();
 

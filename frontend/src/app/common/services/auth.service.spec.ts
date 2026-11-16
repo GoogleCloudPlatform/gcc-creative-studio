@@ -722,7 +722,7 @@ describe('AuthService', () => {
     let result: string | undefined;
 
     service.renewSession$().subscribe({next: t => (result = t)});
-    tick(5_000);
+    tick(12_000);
     flushMicrotasks();
     tick();
 
@@ -1406,4 +1406,30 @@ describe('AuthService', () => {
     expect(gis.prompt).not.toHaveBeenCalled();
     service.ngOnDestroy();
   });
+
+  it('enforces RENEW_RETRY_MS cooldown after recordRejectedRenewedToken on repeated 401s', fakeAsync(() => {
+    const initialToken = makeJwt(Date.now() + 60_000, 'initial');
+    writeSession(initialToken, Date.now() + 60_000);
+    nextGisToken = makeJwt(Date.now() + 3_600_000, 'renewed');
+    const service = createService();
+
+    let renewed: string | undefined;
+    service.renewAfterUnauthorized$(initialToken).subscribe(t => (renewed = t));
+    tick();
+    expect(renewed).toBe(nextGisToken);
+    expect(gis.prompt).toHaveBeenCalledTimes(1);
+    httpMock.expectOne(r => r.url.endsWith('/users/me')).flush({});
+
+    service.recordRejectedRenewedToken(nextGisToken);
+
+    let cooldownErr: unknown;
+    service.renewAfterUnauthorized$(nextGisToken).subscribe({
+      error: e => (cooldownErr = e),
+    });
+    tick();
+    expect(cooldownErr).toBeDefined();
+    expect((cooldownErr as Error).message).toContain('cooldown');
+    expect(gis.prompt).toHaveBeenCalledTimes(1);
+    service.ngOnDestroy();
+  }));
 });

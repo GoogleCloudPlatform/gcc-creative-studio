@@ -124,7 +124,17 @@ export class AuthInterceptor implements HttpInterceptor {
           setHeaders: {Authorization: `Bearer ${freshToken}`},
           context: request.context.set(RETRIED_AFTER_401, true),
         });
-        return next.handle(retried);
+        return next.handle(retried).pipe(
+          catchError((retryErr: unknown) => {
+            if (
+              retryErr instanceof HttpErrorResponse &&
+              retryErr.status === 401
+            ) {
+              this.authService.recordRejectedRenewedToken(freshToken);
+            }
+            return throwError(() => retryErr);
+          }),
+        );
       }),
     );
   }

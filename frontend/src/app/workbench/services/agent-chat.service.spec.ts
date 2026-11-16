@@ -36,6 +36,7 @@ describe('AgentChatService streamActive lifecycle', () => {
     renewAfterUnauthorized$: jasmine.Spy;
     onSessionRenewalFailed: jasmine.Spy;
     hasRenewableSession: jasmine.Spy;
+    recordRejectedRenewedToken: jasmine.Spy;
   };
 
   /**
@@ -71,6 +72,9 @@ describe('AgentChatService streamActive lifecycle', () => {
       hasRenewableSession: jasmine
         .createSpy('hasRenewableSession')
         .and.returnValue(false),
+      recordRejectedRenewedToken: jasmine.createSpy(
+        'recordRejectedRenewedToken',
+      ),
     };
     TestBed.configureTestingModule({
       providers: [
@@ -302,6 +306,16 @@ describe('AgentChatService streamActive lifecycle', () => {
     expect(authServiceMock.renewAfterUnauthorized$).not.toHaveBeenCalled();
     expect(authServiceMock.onSessionRenewalFailed).not.toHaveBeenCalled();
     expect(callbacks.onError).toHaveBeenCalledTimes(1);
+
+    // Post-renewal retry still returning 401 records failure cooldown.
+    fetchSpy.and.returnValues(
+      Promise.resolve(jsonResponse(401, {detail: 'Expired'})),
+      Promise.resolve(jsonResponse(401, {detail: 'Wrong audience'})),
+    );
+    await service.sendMessage('s11', 'hello', 1, callbacks);
+    expect(authServiceMock.recordRejectedRenewedToken).toHaveBeenCalledOnceWith(
+      'fresh-token',
+    );
   });
 
   it('prevents concurrent overlapping poll ticks while an earlier tick is in flight', async () => {

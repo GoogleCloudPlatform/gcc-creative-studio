@@ -388,6 +388,9 @@ export class AgentChatService {
       }
       response = await sendRequest(refreshedToken);
       if (!abortSignal?.aborted && !response.ok) {
+        if (response.status === 401) {
+          this.authService.recordRejectedRenewedToken(refreshedToken);
+        }
         errorInfo = await this.readErrorResponse(response);
       }
     }

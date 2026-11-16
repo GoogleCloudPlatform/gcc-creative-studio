@@ -79,7 +79,7 @@ export type FallbackSignInAttempt =
 const USER_DETAILS = 'USER_DETAILS';
 const LOGIN_ROUTE = '/login';
 const RENEW_LOCK_NAME = 'cs-session-renew';
-const LOCK_WAIT_TIMEOUT_MS = 5000;
+const LOCK_WAIT_TIMEOUT_MS = 12000;
 const ACCOUNT_SWITCH_SYNC_TIMEOUT_MS = 1500;
 const SESSION_EXPIRED_MESSAGE = 'Your session expired. Please sign in again.';
 const SESSION_EXPIRED_DURATION_MS = 6000;
@@ -362,6 +362,15 @@ export class AuthService implements OnDestroy {
         throwError(() => toAuthRenewalError(err, rejectedToken)),
       ),
     );
+  }
+
+  /** Starts a failure cooldown if a freshly renewed token still draws a 401. */
+  recordRejectedRenewedToken(token: string): void {
+    if (this.session.token !== token) return;
+    this.lastFailedRenewalAt = Date.now();
+    if (this.session.isValid()) {
+      this.session.scheduleRenewal(RENEW_RETRY_MS);
+    }
   }
 
   /**

@@ -380,6 +380,7 @@ export function canActivateWithSilentRenewal(
 export interface UnauthorizedRenewalClient {
   renewAfterUnauthorized$(rejectedToken: string): Observable<string>;
   onSessionRenewalFailed(targetUrl?: string, error?: Error): void;
+  recordRejectedRenewedToken?(token: string): void;
 }
 
 /**

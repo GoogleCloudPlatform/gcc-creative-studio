@@ -77,6 +77,7 @@ describe('AuthInterceptor', () => {
       'getValidIdentityPlatformToken$',
       'renewAfterUnauthorized$',
       'onSessionRenewalFailed',
+      'recordRejectedRenewedToken',
     ]);
     TestBed.configureTestingModule({
       providers: [
@@ -202,6 +203,9 @@ describe('AuthInterceptor', () => {
       );
 
     expect(authService.renewAfterUnauthorized$).toHaveBeenCalledTimes(1);
+    expect(authService.recordRejectedRenewedToken).toHaveBeenCalledOnceWith(
+      'fresh-tok',
+    );
     expect(onError).toHaveBeenCalled();
   });
 
